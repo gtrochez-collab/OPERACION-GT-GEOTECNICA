@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { store } from "./supabase.js";
 
 const COMPANIES = {
   subterra: { name: "Subterra Honduras", color: "#0F4C75", accent: "#3282B8" },
@@ -37,24 +38,7 @@ const calcISR = (salarioBrutoMensual, bonifMensual, rapMensual, gastosMedicos = 
 };
 const IHSS_AMOUNT = 595.16;
 
-// ── localStorage-based persistence (migrated from window.storage) ──
-const store = {
-  get(k) {
-    try {
-      const v = localStorage.getItem(k);
-      return v ? JSON.parse(v) : null;
-    } catch {
-      return null;
-    }
-  },
-  set(k, v) {
-    try {
-      localStorage.setItem(k, JSON.stringify(v));
-    } catch (e) {
-      console.error("localStorage write error:", e);
-    }
-  },
-};
+// store is now imported from ./supabase.js (shared Supabase DB)
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = d => d ? new Date(d).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -158,22 +142,20 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [sb, setSb] = useState(true);
 
   useEffect(() => {
-    const e = store.get("hr-emps5");
-    const v = store.get("hr-vacs");
-    const l = store.get("hr-lvs");
-    const a = store.get("hr-atts2");
-    const c = store.get("hr-cons");
-    const p = store.get("hr-pays");
-    const cq = store.get("hr-cuad");
-
-    if (!e || e.length === 0) {
-      const s = [];
-      SEED_SUB.forEach(x => s.push({ id: uid(), company: "subterra", fullName: x.n, dni: x.d, position: x.p, department: "Operaciones", contractType: x.ct, startDate: x.sd, endDate: x.ed || "", salary: x.s, bonificacion: x.b, cooperativa: x.coop || 0, gastosMedicos: x.gm || 40000, status: "active", phone: "", email: "" }));
-      SEED_GEO.forEach(x => s.push({ id: uid(), company: "geotecnica", fullName: x.n, dni: x.d, position: x.p, department: "Operaciones", contractType: x.ct, startDate: x.sd, endDate: x.ed || "", salary: x.s, bonificacion: x.b, cooperativa: x.coop || 0, gastosMedicos: x.gm || 40000, status: "active", phone: "", email: "" }));
-      setEmps(s); store.set("hr-emps5", s);
-    } else setEmps(e);
-    if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq) setCuadrillas(cq);
-    setLoaded(true);
+    (async () => {
+      const [e, v, l, a, c, p, cq2] = await Promise.all([
+        store.get("hr-emps5"), store.get("hr-vacs"), store.get("hr-lvs"),
+        store.get("hr-atts2"), store.get("hr-cons"), store.get("hr-pays"), store.get("hr-cuad"),
+      ]);
+      if (!e || e.length === 0) {
+        const s = [];
+        SEED_SUB.forEach(x => s.push({ id: uid(), company: "subterra", fullName: x.n, dni: x.d, position: x.p, department: "Operaciones", contractType: x.ct, startDate: x.sd, endDate: x.ed || "", salary: x.s, bonificacion: x.b, cooperativa: x.coop || 0, gastosMedicos: x.gm || 40000, status: "active", phone: "", email: "" }));
+        SEED_GEO.forEach(x => s.push({ id: uid(), company: "geotecnica", fullName: x.n, dni: x.d, position: x.p, department: "Operaciones", contractType: x.ct, startDate: x.sd, endDate: x.ed || "", salary: x.s, bonificacion: x.b, cooperativa: x.coop || 0, gastosMedicos: x.gm || 40000, status: "active", phone: "", email: "" }));
+        setEmps(s); store.set("hr-emps5", s);
+      } else setEmps(e);
+      if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2);
+      setLoaded(true);
+    })();
   }, []);
 
   const sE = d => { setEmps(d); store.set("hr-emps5", d); };
