@@ -234,8 +234,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // ── Export helpers (used by PayrollGen and PayDetail) ──
   const exportCSV = (rows, filename) => {
     const fN = n => Number(n || 0).toFixed(2);
-    const headers = ["Nombre","Cargo","Tipo","Proyecto","Sal.Bruto","Sal.Diario","Dias","NSP","Desc.NSP","Sal.Ordinario","Bonif.Q","Otros Ing.","ISR","IHSS","RAP","Cooperativa","Otros Ded.","Total Ded.","Neto","Notas"];
-    const csv = [headers.join(","), ...rows.map(l => ['"'+l.name+'"','"'+l.pos+'"',l.ct==="permanent"?"PMNT":l.ct==="temporary"?"TMPR":"HON",'"'+(l.proj||"")+'"',fN(l.sb),fN(l.sd),l.diasPresente||0,l.diasNSP||0,fN(l.descuentoNSP),fN(l.so),fN(l.bq),fN(l.o1),fN(l.isr),fN(l.ihss),fN(l.rap),fN(l.coop),fN(l.otros),fN(l.tDed||0),fN(l.neto||0),'"'+(l.nota||"")+'"'].join(","))].join("\n");
+    const headers = ["Nombre","Cargo","Tipo","Proyecto","Sal.Bruto","Sal.Diario","Dias","NSP","Desc.NSP","Sal.Ordinario","Dom.Trab","Bono Domingo","Bonif.Q","Otros Ing.","ISR","IHSS","RAP","Cooperativa","Otros Ded.","Total Ded.","Neto","Notas"];
+    const csv = [headers.join(","), ...rows.map(l => ['"'+l.name+'"','"'+l.pos+'"',l.ct==="permanent"?"PMNT":l.ct==="temporary"?"TMPR":"HON",'"'+(l.proj||"")+'"',fN(l.sb),fN(l.sd),l.diasPresente||0,l.diasNSP||0,fN(l.descuentoNSP),fN(l.so),l.domTrab||0,fN(l.bonoDomingo||0),fN(l.bq),fN(l.o1),fN(l.isr),fN(l.ihss),fN(l.rap),fN(l.coop),fN(l.otros),fN(l.tDed||0),fN(l.neto||0),'"'+(l.nota||"")+'"'].join(","))].join("\n");
     const a = document.createElement("a");
     a.href = "data:text/csv;charset=utf-8," + encodeURIComponent("\uFEFF" + csv);
     a.download = filename;
@@ -243,12 +243,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   };
   const exportPrint = (rows, titulo, subtitulo, totalNeto) => {
     const fL = n => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 });
-    const trs = rows.map(l => "<tr><td>"+l.name+"</td><td>"+l.pos+"</td><td>"+(l.proj||"")+"</td><td style='text-align:right'>"+fL(l.sb)+"</td><td>"+(l.diasPresente||0)+"</td><td style='color:red'>"+(l.diasNSP||0)+"</td><td style='text-align:right'>"+fL(l.so)+"</td><td style='text-align:right'>"+fL(l.isr)+"</td><td style='text-align:right'>"+fL(l.ihss)+"</td><td style='text-align:right'>"+fL(l.rap)+"</td><td style='text-align:right'>"+fL(l.coop)+"</td><td style='text-align:right;font-weight:bold;color:green'>"+fL(l.neto||0)+"</td><td>"+(l.nota||"")+"</td></tr>").join("");
+    const trs = rows.map(l => "<tr><td>"+l.name+"</td><td>"+l.pos+"</td><td>"+(l.proj||"")+"</td><td style='text-align:right'>"+fL(l.sb)+"</td><td>"+(l.diasPresente||0)+"</td><td style='color:red'>"+(l.diasNSP||0)+"</td><td style='text-align:right'>"+fL(l.so)+"</td><td style='text-align:center;color:purple;font-weight:bold'>"+(l.domTrab||"")+"</td><td style='text-align:right;color:purple'>"+((l.bonoDomingo||0)>0?fL(l.bonoDomingo):"")+"</td><td style='text-align:right'>"+fL(l.isr)+"</td><td style='text-align:right'>"+fL(l.ihss)+"</td><td style='text-align:right'>"+fL(l.rap)+"</td><td style='text-align:right'>"+fL(l.coop)+"</td><td style='text-align:right;font-weight:bold;color:green'>"+fL(l.neto||0)+"</td><td>"+(l.nota||"")+"</td></tr>").join("");
     const w = window.open("","_blank");
     if(!w){alert("Permite popups para imprimir");return;}
     w.document.write("<!DOCTYPE html><html><head><meta charset='utf-8'><title>"+titulo+"</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;padding:30px}table{border-collapse:collapse;width:100%;margin-top:15px}th,td{border:1px solid #ccc;padding:5px 8px;font-size:10px}th{background:#eee}@media print{.np{display:none}}</style></head><body>");
     w.document.write("<h1 style='font-size:20px'>"+titulo+"</h1><h2 style='font-size:13px;color:#666'>"+subtitulo+"</h2><p style='font-size:16px;font-weight:bold;margin:12px 0'>Total Neto: "+fL(totalNeto)+" | "+rows.length+" empleados</p>");
-    w.document.write("<table><thead><tr><th>Nombre</th><th>Cargo</th><th>Proy.</th><th>Sal.Bruto</th><th>Dias</th><th>NSP</th><th>Sal.Ord.</th><th>ISR</th><th>IHSS</th><th>RAP</th><th>Coop.</th><th>Neto</th><th>Notas</th></tr></thead><tbody>"+trs+"</tbody></table>");
+    w.document.write("<table><thead><tr><th>Nombre</th><th>Cargo</th><th>Proy.</th><th>Sal.Bruto</th><th>Dias</th><th>NSP</th><th>Sal.Ord.</th><th style='color:purple'>DOM</th><th style='color:purple'>Bono Dom.</th><th>ISR</th><th>IHSS</th><th>RAP</th><th>Coop.</th><th>Neto</th><th>Notas</th></tr></thead><tbody>"+trs+"</tbody></table>");
     w.document.write("<br><button class='np' onclick='window.print()' style='padding:10px 24px;font-size:14px;cursor:pointer;background:#059669;color:white;border:none;border-radius:8px'>Imprimir / Guardar como PDF</button></body></html>");
     w.document.close();
   };
@@ -283,14 +283,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         const isPerm = emp.contractType === "permanent";
         const isGeo = emp.company === "geotecnica";
 
-        let diasPresente = 0, diasNSP = 0, diasIncap = 0;
+        let diasPresente = 0, diasNSP = 0, diasIncap = 0, domTrab = 0;
         for (let d = start; d <= end; d++) {
           const v = grid[`${emp.id}-${d}`] || "";
-          if (v === "1") diasPresente++;
+          const dt = new Date(y, m - 1, d);
+          const esDomingo = dt.getDay() === 0;
+          if (v === "1") { diasPresente++; if (esDomingo) domTrab++; }
           else if (v === "0") diasNSP++;
           else if (v === "INC") diasIncap++;
         }
         const descuentoNSP = +(diasNSP * sd).toFixed(2);
+        const bonoDomingo = +(domTrab * sd).toFixed(2);
 
         const so = +(sb / 2 - descuentoNSP).toFixed(2);
         const bq = +(bn / 2).toFixed(2);
@@ -308,16 +311,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         const cuad = cq.find(x => x.periodo === per && x.quincena === q);
         const proj = cuad?.assignments?.[emp.id] || emp.project || "";
 
-        return { id: uid(), eid: emp.id, name: emp.fullName, pos: emp.position, ct: emp.contractType, proj, sb, bn, sd, so, bq, diasPresente, diasNSP, diasIncap, descuentoNSP, o1: 0, o2: 0, isr, amdc: 0, ihss, rap, coop: is2Q ? cp : 0, aus: 0, otros: 0, gm, nota: "" };
+        return { id: uid(), eid: emp.id, name: emp.fullName, pos: emp.position, ct: emp.contractType, proj, sb, bn, sd, so, bq, diasPresente, diasNSP, diasIncap, descuentoNSP, domTrab, bonoDomingo, o1: 0, o2: 0, isr, amdc: 0, ihss, rap, coop: is2Q ? cp : 0, aus: 0, otros: 0, gm, nota: "" };
       }));
       setGen(true);
     };
 
     const ul = (id, k, v) => setLines(ls => ls.map(l => l.id === id ? { ...l, [k]: v } : l));
     const calc = l => {
-      const tOtros = +l.bq + +l.o1 + +l.o2;
+      const bd = +(l.bonoDomingo || 0);
+      const tOtros = +l.bq + +l.o1 + +l.o2 + bd;
       const tDed = +l.isr + +l.amdc + +l.ihss + +l.rap + +l.coop + +l.aus + +l.otros;
-      return { tOtros: +tOtros.toFixed(2), tDed: +tDed.toFixed(2), neto: +(l.so + tOtros - tDed).toFixed(2) };
+      return { tOtros: +tOtros.toFixed(2), tDed: +tDed.toFixed(2), neto: +(l.so + tOtros - tDed).toFixed(2), bonoDomingo: bd };
     };
     const totalNeto = lines.reduce((s, l) => s + calc(l).neto, 0);
     const permLines = lines.filter(l => l.ct === "permanent");
@@ -337,8 +341,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const renderTable = (rows, label, color) => {
       if (rows.length === 0) return null;
       const subtotal = rows.reduce((s, l) => s + calc(l).neto, 0);
-      const sums = { sb: 0, sd: 0, dias: 0, nsp: 0, dNSP: 0, so: 0, bq: 0, oi: 0, isr: 0, ihss: 0, rap: 0, coop: 0, otros: 0, tDed: 0, neto: 0 };
-      rows.forEach(l => { const c = calc(l); sums.sb += l.sb; sums.so += l.so; sums.bq += l.bq; sums.oi += l.o1 + l.o2; sums.dias += l.diasPresente; sums.nsp += l.diasNSP; sums.dNSP += l.descuentoNSP; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
+      const sums = { sb: 0, sd: 0, dias: 0, nsp: 0, dNSP: 0, so: 0, dom: 0, bdom: 0, bq: 0, oi: 0, isr: 0, ihss: 0, rap: 0, coop: 0, otros: 0, tDed: 0, neto: 0 };
+      rows.forEach(l => { const c = calc(l); sums.sb += l.sb; sums.so += l.so; sums.dom += (l.domTrab || 0); sums.bdom += (l.bonoDomingo || 0); sums.bq += l.bq; sums.oi += l.o1 + l.o2; sums.dias += l.diasPresente; sums.nsp += l.diasNSP; sums.dNSP += l.descuentoNSP; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
       return <div style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden" }}>
         <div style={{ background: color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between" }}>
           <span>{label} ({rows.length})</span><span>Subtotal: {fmtL(subtotal)}</span>
@@ -349,7 +353,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <th style={TH}>#</th><th style={{ ...TH, minWidth: 150 }}>Nombre</th><th style={TH}>Proy.</th>
               <th style={TH}>Sal.Bruto</th><th style={TH}>Sal.Diario</th>
               <th style={TH}>Dias</th><th style={{ ...TH, color: "#DC2626" }}>NSP</th><th style={TH}>Desc.NSP</th>
-              <th style={TH}>Sal.Ord.</th><th style={TH}>Bonif.Q</th><th style={TH}>Otros Ing.</th>
+              <th style={TH}>Sal.Ord.</th><th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>DOM</th><th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>Bono Dom.</th>
+              <th style={TH}>Bonif.Q</th><th style={TH}>Otros Ing.</th>
               {is2Q && <><th style={TH}>ISR</th><th style={TH}>IHSS</th><th style={TH}>RAP</th><th style={TH}>Coop.</th></>}
               <th style={TH}>Otros Ded.</th><th style={TH}>Tot.Ded</th><th style={{ ...TH, background: "#ECFDF5" }}>Neto</th><th style={TH}>Notas</th>
             </tr></thead>
@@ -363,6 +368,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <td style={{ ...TD, color: l.diasNSP > 0 ? "#DC2626" : "#94A3B8", fontWeight: l.diasNSP > 0 ? 700 : 400 }}>{l.diasNSP}</td>
               <td style={{ ...TD, color: "#DC2626" }}>{l.descuentoNSP > 0 ? fmtL(l.descuentoNSP) : ""}</td>
               <td style={TD}>{fmtL(l.so)}</td>
+              <td style={{ ...TD, color: "#7C3AED", fontWeight: 700, background: (l.domTrab || 0) > 0 ? "#F3E8FF" : "transparent" }}>{l.domTrab || ""}</td>
+              <td style={{ ...TD, color: "#7C3AED", fontWeight: 600 }}>{(l.bonoDomingo || 0) > 0 ? fmtL(l.bonoDomingo) : ""}</td>
               <td style={TD}><input type="number" value={l.bq} onChange={e => ul(l.id, "bq", +e.target.value)} style={INP} /></td>
               <td style={TD}><input type="number" value={l.o1} onChange={e => ul(l.id, "o1", +e.target.value)} style={INP} /></td>
               {is2Q && <>
@@ -383,6 +390,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <td style={{ padding: "8px 10px", color: "#DC2626" }}>{sums.nsp}</td>
               <td style={{ padding: "8px 10px", color: "#DC2626" }}>{sums.dNSP > 0 ? fmtL(sums.dNSP) : ""}</td>
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.so)}</td>
+              <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.dom || ""}</td>
+              <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.bdom > 0 ? fmtL(sums.bdom) : ""}</td>
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.bq)}</td>
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.oi)}</td>
               {is2Q && <>
@@ -567,9 +576,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const cellFontColor = v => v === "1" ? "#166534" : v === "0" ? "#991B1B" : v === "INC" ? "#92400E" : "#CBD5E1";
 
     const empStats = (eid) => {
-      let present = 0, absent = 0, incap = 0;
-      days.forEach(d => { const v = getVal(eid, d.day); if (v === "1") present++; else if (v === "0") absent++; else if (v === "INC") incap++; });
-      return { present, absent, incap };
+      let present = 0, absent = 0, incap = 0, domTrab = 0;
+      days.forEach(d => { const v = getVal(eid, d.day); if (v === "1") { present++; if (d.isSun) domTrab++; } else if (v === "0") absent++; else if (v === "INC") incap++; });
+      return { present, absent, incap, domTrab };
     };
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -579,7 +588,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <span style={{ background: "#DCFCE7", padding: "2px 8px", borderRadius: 4, marginRight: 4 }}>1 = Presente</span>
           <span style={{ background: "#FEE2E2", padding: "2px 8px", borderRadius: 4, marginRight: 4 }}>0 = NSP</span>
           <span style={{ background: "#FEF9C3", padding: "2px 8px", borderRadius: 4, marginRight: 4 }}>I = Incapacidad</span>
-          <span style={{ background: "#DBEAFE", padding: "2px 8px", borderRadius: 4 }}>1* = Otro proyecto</span>
+          <span style={{ background: "#DBEAFE", padding: "2px 8px", borderRadius: 4, marginRight: 4 }}>1* = Otro proyecto</span>
+          <span style={{ background: "#F3E8FF", padding: "2px 8px", borderRadius: 4, color: "#7C3AED" }}>D = Domingo (+dia)</span>
         </span>
       </div>
       {projGroups.map(proj => {
@@ -601,10 +611,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead><tr style={{ background: "#F1F5F9" }}>
                 <th style={{ ...TH, position: "sticky", left: 0, background: "#F1F5F9", zIndex: 2, minWidth: 170 }}>Nombre</th>
-                {days.map(d => <th key={d.day} style={{ ...TH, textAlign: "center", minWidth: 32, background: d.isSun ? "#FEE2E2" : d.isSat ? "#FEF3C7" : "#F1F5F9" }}>
+                {days.map(d => <th key={d.day} style={{ ...TH, textAlign: "center", minWidth: 32, background: d.isSun ? "#F3E8FF" : d.isSat ? "#FEF3C7" : "#F1F5F9" }}>
                   <div style={{ fontSize: 10, color: "#94A3B8" }}>{d.dow}</div>{d.day}
                 </th>)}
                 <th style={{ ...TH, textAlign: "center", background: "#ECFDF5" }}>Dias</th>
+                <th style={{ ...TH, textAlign: "center", background: "#F3E8FF", color: "#7C3AED" }}>DOM</th>
                 <th style={{ ...TH, textAlign: "center", background: "#FEE2E2" }}>NSP</th>
                 <th style={{ ...TH, textAlign: "center", background: "#FEF9C3" }}>INC</th>
               </tr></thead>
@@ -633,6 +644,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                     </td>;
                   })}
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: "#ECFDF5", color: "#059669" }}>{st.present}</td>
+                  <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.domTrab > 0 ? "#F3E8FF" : "transparent", color: "#7C3AED" }}>{st.domTrab || ""}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.absent > 0 ? "#FEE2E2" : "transparent", color: "#DC2626" }}>{st.absent || ""}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.incap > 0 ? "#FEF9C3" : "transparent", color: "#92400E" }}>{st.incap || ""}</td>
                 </tr>;
@@ -717,12 +729,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const renderCons = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cc2.length} emitidas</span><Btn onClick={() => setModal({ t: "cn" })}>+ Generar</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "t", label: "Tipo", render: r => <Badge color="#0891B2">{r.type === "laboral" ? "Laboral" : "Ingresos"}</Badge> }, { key: "d", label: "Fecha", render: r => fmt(r.date) }]} data={cc2} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => { navigator.clipboard?.writeText(r.text); alert("Copiado"); }}>Copiar</Btn><Btn small variant="danger" onClick={() => sC(cons.filter(c => c.id !== r.id))}>×</Btn></div>} /></div>;
 
   const PayDetail = ({ p }) => {
-    const [lines, setLn] = useState((p.lines || []).map(l => ({ ...l, bq: l.bq || 0, o1: l.o1 || 0, o2: l.o2 || 0, isr: l.isr || 0, amdc: l.amdc || 0, ihss: l.ihss || 0, rap: l.rap || 0, coop: l.coop || 0, aus: l.aus || 0, otros: l.otros || 0, nota: l.nota || "", diasPresente: l.diasPresente || 0, diasNSP: l.diasNSP || 0, descuentoNSP: l.descuentoNSP || 0, proj: l.proj || "", so: l.so || 0, sb: l.sb || 0, sd: l.sd || 0 })));
+    const [lines, setLn] = useState((p.lines || []).map(l => ({ ...l, bq: l.bq || 0, o1: l.o1 || 0, o2: l.o2 || 0, isr: l.isr || 0, amdc: l.amdc || 0, ihss: l.ihss || 0, rap: l.rap || 0, coop: l.coop || 0, aus: l.aus || 0, otros: l.otros || 0, nota: l.nota || "", diasPresente: l.diasPresente || 0, diasNSP: l.diasNSP || 0, descuentoNSP: l.descuentoNSP || 0, domTrab: l.domTrab || 0, bonoDomingo: l.bonoDomingo || 0, proj: l.proj || "", so: l.so || 0, sb: l.sb || 0, sd: l.sd || 0 })));
     const ul2 = (id, k, v) => setLn(ls => ls.map(l => l.id === id ? { ...l, [k]: v } : l));
     const calc2 = l => {
-      const tOtros = +(+l.bq + +l.o1 + (+l.o2 || 0)).toFixed(2);
+      const bd = +(l.bonoDomingo || 0);
+      const tOtros = +(+l.bq + +l.o1 + (+l.o2 || 0) + bd).toFixed(2);
       const tDed = +(+l.isr + (+l.amdc || 0) + +l.ihss + +l.rap + +l.coop + (+l.aus || 0) + +l.otros).toFixed(2);
-      return { tOtros, tDed, neto: +(l.so + tOtros - tDed).toFixed(2) };
+      return { tOtros, tDed, neto: +(l.so + tOtros - tDed).toFixed(2), bonoDomingo: bd };
     };
     const totalNeto = lines.reduce((s, l) => s + calc2(l).neto, 0);
     const is2Q = p.quincena === "2Q";
@@ -740,8 +753,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const renderBlock = (rows, label, color) => {
       if (rows.length === 0) return null;
       const sub = rows.reduce((s, l) => s + calc2(l).neto, 0);
-      const sums = { sb: 0, so: 0, bq: 0, oi: 0, dias: 0, nsp: 0, dNSP: 0, isr: 0, ihss: 0, rap: 0, coop: 0, otros: 0, tDed: 0, neto: 0 };
-      rows.forEach(l => { const c = calc2(l); sums.sb += l.sb; sums.so += l.so; sums.bq += l.bq; sums.oi += l.o1; sums.dias += l.diasPresente || 0; sums.nsp += l.diasNSP || 0; sums.dNSP += l.descuentoNSP || 0; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
+      const sums = { sb: 0, so: 0, bq: 0, oi: 0, dias: 0, nsp: 0, dNSP: 0, dom: 0, bdom: 0, isr: 0, ihss: 0, rap: 0, coop: 0, otros: 0, tDed: 0, neto: 0 };
+      rows.forEach(l => { const c = calc2(l); sums.sb += l.sb; sums.so += l.so; sums.dom += (l.domTrab || 0); sums.bdom += (l.bonoDomingo || 0); sums.bq += l.bq; sums.oi += l.o1; sums.dias += l.diasPresente || 0; sums.nsp += l.diasNSP || 0; sums.dNSP += l.descuentoNSP || 0; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
       return <div style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden" }}>
         <div style={{ background: color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between" }}>
           <span>{label} ({rows.length})</span><span>Subtotal: {fmtL(sub)}</span>
@@ -751,7 +764,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <thead><tr style={{ background: "#F1F5F9" }}>
               <th style={TH}>#</th><th style={{ ...TH, minWidth: 150 }}>Nombre</th><th style={TH}>Proy.</th>
               <th style={TH}>Sal.Bruto</th><th style={TH}>Dias</th><th style={{ ...TH, color: "#DC2626" }}>NSP</th><th style={TH}>Desc.NSP</th>
-              <th style={TH}>Sal.Ord.</th><th style={TH}>Bonif.Q</th><th style={TH}>Otros Ing.</th>
+              <th style={TH}>Sal.Ord.</th><th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>DOM</th><th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>Bono Dom.</th>
+              <th style={TH}>Bonif.Q</th><th style={TH}>Otros Ing.</th>
               {is2Q && <><th style={TH}>ISR</th><th style={TH}>IHSS</th><th style={TH}>RAP</th><th style={TH}>Coop.</th></>}
               <th style={TH}>Otros Ded.</th><th style={TH}>Tot.Ded</th><th style={{ ...TH, background: "#ECFDF5" }}>Neto</th><th style={TH}>Notas</th>
             </tr></thead>
@@ -764,6 +778,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <td style={{ ...TD, color: (l.diasNSP || 0) > 0 ? "#DC2626" : "#94A3B8" }}>{l.diasNSP || 0}</td>
               <td style={{ ...TD, color: "#DC2626" }}>{(l.descuentoNSP || 0) > 0 ? fmtL(l.descuentoNSP) : ""}</td>
               <td style={TD}>{fmtL(l.so)}</td>
+              <td style={{ ...TD, color: "#7C3AED", fontWeight: 700, background: (l.domTrab || 0) > 0 ? "#F3E8FF" : "transparent" }}>{l.domTrab || ""}</td>
+              <td style={{ ...TD, color: "#7C3AED", fontWeight: 600 }}>{(l.bonoDomingo || 0) > 0 ? fmtL(l.bonoDomingo) : ""}</td>
               <td style={TD}><input type="number" value={l.bq} onChange={e => ul2(l.id, "bq", +e.target.value)} style={INP} /></td>
               <td style={TD}><input type="number" value={l.o1} onChange={e => ul2(l.id, "o1", +e.target.value)} style={INP} /></td>
               {is2Q && <>
@@ -784,6 +800,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <td style={{ padding: "8px 10px", color: "#DC2626" }}>{sums.nsp}</td>
               <td style={{ padding: "8px 10px" }}>{sums.dNSP > 0 ? fmtL(sums.dNSP) : ""}</td>
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.so)}</td>
+              <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.dom || ""}</td>
+              <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.bdom > 0 ? fmtL(sums.bdom) : ""}</td>
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.bq)}</td>
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.oi)}</td>
               {is2Q && <><td style={{ padding: "8px 10px" }}>{fmtL(sums.isr)}</td><td style={{ padding: "8px 10px" }}>{fmtL(sums.ihss)}</td><td style={{ padding: "8px 10px" }}>{fmtL(sums.rap)}</td><td style={{ padding: "8px 10px" }}>{fmtL(sums.coop)}</td></>}
