@@ -142,9 +142,10 @@ const TD = { padding: "6px 10px", color: "#334155", whiteSpace: "nowrap" };
 const INP = { width: 75, padding: "4px 6px", border: "1px solid #E2E8F0", borderRadius: 6, fontSize: 12, textAlign: "right", background: "#F8FAFC" };
 
 // ── APP ──
-export default function HRModule() {
+export default function HRModule({ userRole = "admin", userName, onBack, onLogout }) {
+  const isAsistente = userRole === "asistente";
   const [co, setCo] = useState("subterra");
-  const [sec, setSec] = useState("dashboard");
+  const [sec, setSec] = useState(isAsistente ? "attendance" : "dashboard");
   const [emps, setEmps] = useState([]);
   const [vacs, setVacs] = useState([]);
   const [lvs, setLvs] = useState([]);
@@ -194,7 +195,7 @@ export default function HRModule() {
   const en = id => emps.find(e => e.id === id)?.fullName || "—";
   const cc = COMPANIES[co];
 
-  const nav = [
+  const allNav = [
     { id: "dashboard", icon: "📊", label: "Dashboard" },
     { id: "employees", icon: "👥", label: "Empleados" },
     { id: "payroll", icon: "💰", label: "Planilla" },
@@ -203,6 +204,7 @@ export default function HRModule() {
     { id: "attendance", icon: "⏱️", label: "Asistencia" },
     { id: "constancias", icon: "📄", label: "Constancias" },
   ];
+  const nav = isAsistente ? allNav.filter(n => n.id === "attendance") : allNav;
 
   if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "'Segoe UI', sans-serif", color: "#64748b" }}>Cargando RRHH...</div>;
 
@@ -876,7 +878,11 @@ export default function HRModule() {
       <div style={{ padding: "8px 0", flex: 1 }}>
         {nav.map(n => <button key={n.id} onClick={() => setSec(n.id)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: sb ? "10px 20px" : "10px 18px", background: sec === n.id ? cc.color + "40" : "transparent", border: "none", color: sec === n.id ? "#fff" : "#94A3B8", cursor: "pointer", fontSize: 14, textAlign: "left", borderLeft: sec === n.id ? `3px solid ${cc.accent}` : "3px solid transparent" }}><span style={{ fontSize: 18, flexShrink: 0 }}>{n.icon}</span>{sb && <span>{n.label}</span>}</button>)}
       </div>
-      {sb && <div style={{ padding: "16px", borderTop: "1px solid #1E293B", fontSize: 11, color: "#475569" }}>Lic. Gerson Trochez<br />Recursos Humanos</div>}
+      {sb && <div style={{ padding: "12px", borderTop: "1px solid #1E293B", display: "flex", flexDirection: "column", gap: 6 }}>
+        {onBack && <button onClick={onBack} style={{ background: "rgba(255,255,255,0.08)", border: "1px solid #334155", borderRadius: 8, color: "#94A3B8", padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left" }}>← Volver al panel</button>}
+        {onLogout && <button onClick={onLogout} style={{ background: "rgba(220,38,38,0.15)", border: "1px solid #7F1D1D", borderRadius: 8, color: "#FCA5A5", padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left" }}>Cerrar sesion</button>}
+        <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>{userName || "Lic. Gerson Trochez"}<br />Recursos Humanos</div>
+      </div>}
     </div>
     <div style={{ flex: 1, overflow: "auto" }}>
       <div style={{ padding: "20px 28px", borderBottom: "1px solid #E2E8F0", background: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
