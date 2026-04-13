@@ -21,6 +21,28 @@ const projLabel = (short) => { const p = PROJECTS.find(x => x.short === short); 
 const projShort = (short) => { const p = PROJECTS.find(x => x.short === short); return p ? p.short : short; };
 const DAYS_ES = ["D", "L", "M", "M", "J", "V", "S"];
 
+// ── Grupos para reportes de altas/bajas ──
+// A = Permanentes Subterra | B = Temporales Subterra | C = Permanentes Geotecnica | D = Honorarios
+const getGrupo = (company, contractType) => {
+  if (contractType === "honorarios") return "D";
+  if (company === "subterra") return contractType === "permanent" ? "A" : "B";
+  if (company === "geotecnica") return contractType === "permanent" ? "C" : "B";
+  return "—";
+};
+const GRUPO_DESC = { A: "Permanentes Subterra", B: "Temporales Subterra", C: "Permanentes Geotecnica", D: "Honorarios" };
+const GRUPO_COLOR = { A: "#0F4C75", B: "#D97706", C: "#1B4332", D: "#7C3AED" };
+const MOTIVOS_ALTA = ["Contratacion nueva", "Reingreso", "Cambio de empresa", "Conversion temporal a permanente", "Otro"];
+const MOTIVOS_BAJA = ["Renuncia voluntaria", "Despido", "Fin de contrato temporal", "Mutuo acuerdo", "Jubilacion", "Fallecimiento", "Otro"];
+
+// Devuelve la quincena (1Q/2Q) y periodo (YYYY-MM) de una fecha
+const getQuincena = (dateStr) => {
+  if (!dateStr) return { periodo: "", quincena: "" };
+  const d = new Date(dateStr);
+  const periodo = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const quincena = d.getDate() <= 15 ? "1Q" : "2Q";
+  return { periodo, quincena };
+};
+
 // ── Deduction Calculators ──
 const calcRAP = (salarioBruto) => Math.max(0, +(((salarioBruto - 11903.13) * 0.015).toFixed(2)));
 const calcISR = (salarioBrutoMensual, bonifMensual, rapMensual, gastosMedicos = 40000) => {
@@ -137,15 +159,18 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [cons, setCons] = useState([]);
   const [pays, setPays] = useState([]);
   const [cuadrillas, setCuadrillas] = useState([]);
+  const [movs, setMovs] = useState([]);
+  const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
   const [sb, setSb] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const [e, v, l, a, c, p, cq2] = await Promise.all([
+      const [e, v, l, a, c, p, cq2, mv] = await Promise.all([
         store.get("hr-emps5"), store.get("hr-vacs"), store.get("hr-lvs"),
         store.get("hr-atts2"), store.get("hr-cons"), store.get("hr-pays"), store.get("hr-cuad"),
+        store.get("hr-movs"),
       ]);
       if (!e || e.length === 0) {
         const s = [];
@@ -153,7 +178,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         SEED_GEO.forEach(x => s.push({ id: uid(), company: "geotecnica", fullName: x.n, dni: x.d, position: x.p, department: "Operaciones", contractType: x.ct, startDate: x.sd, endDate: x.ed || "", salary: x.s, bonificacion: x.b, cooperativa: x.coop || 0, gastosMedicos: x.gm || 40000, status: "active", phone: "", email: "" }));
         setEmps(s); store.set("hr-emps5", s);
       } else setEmps(e);
-      if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2);
+      if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2); if (mv) setMovs(mv);
       setLoaded(true);
     })();
   }, []);
@@ -165,6 +190,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const sC = d => { setCons(d); store.set("hr-cons", d); };
   const sP = d => { setPays(d); store.set("hr-pays", d); };
   const sCq = d => { setCuadrillas(d); store.set("hr-cuad", d); };
+  const sM = d => { setMovs(d); store.set("hr-movs", d); };
 
   const ce = emps.filter(e => e.company === co);
   const ae = ce.filter(e => e.status === "active");
@@ -174,6 +200,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const cq = cuadrillas.filter(q => q.company === co);
   const cc2 = cons.filter(c => ce.some(e => e.id === c.employeeId));
   const cp = pays.filter(p => p.company === co);
+  const cmov = movs.filter(m => m.company === co);
   const en = id => emps.find(e => e.id === id)?.fullName || "—";
   const cc = COMPANIES[co];
 
@@ -184,6 +211,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     { id: "vacations", icon: "🏖️", label: "Vacaciones" },
     { id: "leaves", icon: "📋", label: "Permisos" },
     { id: "attendance", icon: "⏱️", label: "Asistencia" },
+    { id: "movimientos", icon: "🔄", label: "Movimientos" },
     { id: "constancias", icon: "📄", label: "Constancias" },
   ];
   const nav = isAsistente ? allNav.filter(n => n.id === "attendance") : allNav;
@@ -848,7 +876,257 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
-  const renderSec = () => { switch (sec) { case "employees": return renderEmps(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "constancias": return renderCons(); default: return renderDashboard(); } };
+  // ── MOVIMIENTOS (Altas y Bajas) ──
+  const AltaForm = ({ onSave }) => {
+    const [f, setF] = useState({
+      company: co, fullName: "", dni: "", position: "", department: "Operaciones",
+      contractType: "permanent", startDate: new Date().toISOString().slice(0, 10),
+      endDate: "", salary: "", bonificacion: 0, motivo: "Contratacion nueva", notas: "",
+    });
+    const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const grupo = getGrupo(f.company, f.contractType);
+    return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <Select label="Empresa" options={[{ value: "subterra", label: "Subterra Honduras" }, { value: "geotecnica", label: "Geotecnica Soluciones" }]} value={f.company} onChange={e => u("company", e.target.value)} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Grupo (auto)</label>
+        <div style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, background: GRUPO_COLOR[grupo] + "15", color: GRUPO_COLOR[grupo], fontWeight: 700, fontSize: 14 }}>
+          {grupo} — {GRUPO_DESC[grupo] || "—"}
+        </div>
+      </div>
+      <Input label="Nombre completo" value={f.fullName} onChange={e => u("fullName", e.target.value)} />
+      <Input label="DNI / Identidad" value={f.dni} onChange={e => u("dni", e.target.value)} />
+      <Input label="Posicion / Cargo" value={f.position} onChange={e => u("position", e.target.value)} />
+      <Select label="Departamento" options={DEPARTMENTS} value={f.department} onChange={e => u("department", e.target.value)} />
+      <Select label="Tipo de contrato" options={[{ value: "permanent", label: "Permanente" }, { value: "temporary", label: "Temporal" }, { value: "honorarios", label: "Honorarios" }]} value={f.contractType} onChange={e => u("contractType", e.target.value)} />
+      <Input label="Fecha de ingreso" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
+      {f.contractType === "temporary" && <Input label="Duracion / Fecha fin" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />}
+      <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
+      <Input label="Bonificacion (L)" type="number" value={f.bonificacion} onChange={e => u("bonificacion", e.target.value)} />
+      <Select label="Motivo de alta" options={MOTIVOS_ALTA} value={f.motivo} onChange={e => u("motivo", e.target.value)} />
+      <div style={{ gridColumn: "1/-1" }}>
+        <Input label="Notas" value={f.notas} onChange={e => u("notas", e.target.value)} />
+      </div>
+      <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+        <Btn variant="success" onClick={() => {
+          if (!f.fullName || !f.dni || !f.startDate || !f.salary) return alert("Complete nombre, DNI, fecha de ingreso y salario");
+          if (f.contractType === "temporary" && !f.endDate) return alert("Indique fecha de fin del contrato temporal");
+          const empId = uid();
+          const newEmp = {
+            id: empId, company: f.company, fullName: f.fullName, dni: f.dni, position: f.position,
+            department: f.department, contractType: f.contractType, startDate: f.startDate,
+            endDate: f.endDate || "", salary: Number(f.salary), bonificacion: Number(f.bonificacion) || 0,
+            cooperativa: 0, gastosMedicos: 40000, status: "active", phone: "", email: "",
+          };
+          sE([...emps, newEmp]);
+          const mov = {
+            id: uid(), tipo: "alta", company: f.company, employeeId: empId,
+            fullName: f.fullName, dni: f.dni, position: f.position, contractType: f.contractType,
+            grupo: getGrupo(f.company, f.contractType), salary: Number(f.salary), endDate: f.endDate || "",
+            date: f.startDate, motivo: f.motivo, notas: f.notas, createdAt: new Date().toISOString(),
+          };
+          sM([...movs, mov]);
+          setModal(null);
+        }}>Registrar alta</Btn>
+      </div>
+    </div>;
+  };
+
+  const BajaForm = ({ onSave }) => {
+    const [f, setF] = useState({
+      employeeId: "", date: new Date().toISOString().slice(0, 10),
+      motivo: "Renuncia voluntaria", notas: "",
+    });
+    const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const emp = ce.find(x => x.id === f.employeeId);
+    const grupo = emp ? getGrupo(emp.company, emp.contractType) : "—";
+    return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ gridColumn: "1/-1" }}>
+        <Select label="Empleado a dar de baja" options={ae.map(e => ({ value: e.id, label: `${e.fullName} — ${e.position}` }))} value={f.employeeId} onChange={e => u("employeeId", e.target.value)} />
+      </div>
+      {emp && <div style={{ gridColumn: "1/-1", background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, fontSize: 13 }}>
+        <div><span style={{ color: "#64748b" }}>DNI:</span> <b>{emp.dni}</b></div>
+        <div><span style={{ color: "#64748b" }}>Cargo:</span> <b>{emp.position}</b></div>
+        <div><span style={{ color: "#64748b" }}>Empresa:</span> <b>{COMPANIES[emp.company].name}</b></div>
+        <div><span style={{ color: "#64748b" }}>Contrato:</span> <Badge color={emp.contractType === "temporary" ? "#D97706" : emp.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{emp.contractType === "temporary" ? "Temporal" : emp.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge></div>
+        <div><span style={{ color: "#64748b" }}>Salario:</span> <b>{fmtL(emp.salary)}</b></div>
+        <div><span style={{ color: "#64748b" }}>Grupo:</span> <Badge color={GRUPO_COLOR[grupo]}>{grupo} — {GRUPO_DESC[grupo]}</Badge></div>
+      </div>}
+      <Input label="Fecha de baja" type="date" value={f.date} onChange={e => u("date", e.target.value)} />
+      <Select label="Motivo de baja" options={MOTIVOS_BAJA} value={f.motivo} onChange={e => u("motivo", e.target.value)} />
+      <div style={{ gridColumn: "1/-1" }}>
+        <Input label="Notas / Observaciones" value={f.notas} onChange={e => u("notas", e.target.value)} />
+      </div>
+      <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+        <Btn variant="danger" onClick={() => {
+          if (!emp) return alert("Seleccione un empleado");
+          if (!f.date) return alert("Indique fecha de baja");
+          sE(emps.map(x => x.id === emp.id ? { ...x, status: "inactive", endDate: f.date } : x));
+          const mov = {
+            id: uid(), tipo: "baja", company: emp.company, employeeId: emp.id,
+            fullName: emp.fullName, dni: emp.dni, position: emp.position, contractType: emp.contractType,
+            grupo: getGrupo(emp.company, emp.contractType), salary: Number(emp.salary) || 0, endDate: emp.endDate || "",
+            date: f.date, motivo: f.motivo, notas: f.notas, createdAt: new Date().toISOString(),
+          };
+          sM([...movs, mov]);
+          setModal(null);
+        }}>Registrar baja</Btn>
+      </div>
+    </div>;
+  };
+
+  const renderMovs = () => {
+    const [filterPer, filterQ] = [movsFilter.periodo, movsFilter.quincena];
+    const filtered = cmov.filter(m => {
+      if (!filterPer) return true;
+      const q = getQuincena(m.date);
+      if (q.periodo !== filterPer) return false;
+      if (filterQ && q.quincena !== filterQ) return false;
+      return true;
+    });
+    const altas = filtered.filter(m => m.tipo === "alta");
+    const bajas = filtered.filter(m => m.tipo === "baja");
+
+    const exportMovsCSV = () => {
+      const headers = ["Tipo", "Fecha", "Quincena", "Grupo", "Nombre", "DNI", "Posicion", "Empresa", "Contrato", "Salario", "Motivo", "Notas"];
+      const rows = filtered.map(m => {
+        const q = getQuincena(m.date);
+        return [m.tipo.toUpperCase(), m.date, `${q.quincena} ${q.periodo}`, m.grupo, '"' + m.fullName + '"', m.dni, '"' + (m.position || "") + '"',
+          COMPANIES[m.company]?.name || "", m.contractType, m.salary, '"' + (m.motivo || "") + '"', '"' + (m.notas || "") + '"'].join(",");
+      });
+      const csv = [headers.join(","), ...rows].join("\n");
+      const a = document.createElement("a");
+      a.href = "data:text/csv;charset=utf-8," + encodeURIComponent("\uFEFF" + csv);
+      a.download = `Movimientos_${cc.name.replace(/ /g, "_")}_${filterPer || "todos"}${filterQ ? "_" + filterQ : ""}.csv`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    };
+
+    const exportMovsPDF = () => {
+      const titulo = `Reporte de Movimientos — ${cc.name.toUpperCase()}`;
+      const sub = filterPer ? `Periodo: ${filterQ || ""} ${filterPer}` : "Todos los periodos";
+      const renderRows = (rows, color) => rows.map(m => {
+        const q = getQuincena(m.date);
+        return `<tr><td style='background:${color};color:#fff;font-weight:bold;text-align:center'>${m.tipo.toUpperCase()}</td><td>${m.date}</td><td>${q.quincena}</td><td style='text-align:center;font-weight:bold;background:${GRUPO_COLOR[m.grupo]}22;color:${GRUPO_COLOR[m.grupo]}'>${m.grupo}</td><td>${m.fullName}</td><td>${m.dni}</td><td>${m.position || ""}</td><td>${COMPANIES[m.company]?.name || ""}</td><td>${m.contractType}</td><td style='text-align:right'>L ${Number(m.salary || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</td><td>${m.motivo || ""}</td><td>${m.notas || ""}</td></tr>`;
+      }).join("");
+      const w = window.open("", "_blank");
+      if (!w) { alert("Permite popups para imprimir"); return; }
+      w.document.write("<!DOCTYPE html><html><head><meta charset='utf-8'><title>" + titulo + "</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;padding:30px}h1{font-size:18px}h2{font-size:13px;color:#666;margin:6px 0 10px}h3{font-size:14px;margin:18px 0 6px}table{border-collapse:collapse;width:100%;margin-top:8px}th,td{border:1px solid #ccc;padding:5px 8px;font-size:10px;text-align:left}th{background:#eee}.np{margin-top:18px}@media print{.np{display:none}}</style></head><body>");
+      w.document.write("<h1>" + titulo + "</h1><h2>" + sub + "</h2>");
+      w.document.write(`<p style='font-size:12px'><b>Total altas:</b> ${altas.length} &nbsp;|&nbsp; <b>Total bajas:</b> ${bajas.length}</p>`);
+      if (altas.length > 0) {
+        w.document.write("<h3 style='color:#059669'>ALTAS (" + altas.length + ")</h3>");
+        w.document.write("<table><thead><tr><th>Tipo</th><th>Fecha</th><th>Q</th><th>Grupo</th><th>Nombre</th><th>DNI</th><th>Posicion</th><th>Empresa</th><th>Contrato</th><th>Salario</th><th>Motivo</th><th>Notas</th></tr></thead><tbody>" + renderRows(altas, "#059669") + "</tbody></table>");
+      }
+      if (bajas.length > 0) {
+        w.document.write("<h3 style='color:#DC2626'>BAJAS (" + bajas.length + ")</h3>");
+        w.document.write("<table><thead><tr><th>Tipo</th><th>Fecha</th><th>Q</th><th>Grupo</th><th>Nombre</th><th>DNI</th><th>Posicion</th><th>Empresa</th><th>Contrato</th><th>Salario</th><th>Motivo</th><th>Notas</th></tr></thead><tbody>" + renderRows(bajas, "#DC2626") + "</tbody></table>");
+      }
+      // Resumen por grupo
+      const grupoStats = {};
+      ["A", "B", "C", "D"].forEach(g => grupoStats[g] = { altas: 0, bajas: 0 });
+      filtered.forEach(m => { if (grupoStats[m.grupo]) grupoStats[m.grupo][m.tipo === "alta" ? "altas" : "bajas"]++; });
+      w.document.write("<h3>Resumen por Grupo</h3><table><thead><tr><th>Grupo</th><th>Descripcion</th><th>Altas</th><th>Bajas</th><th>Neto</th></tr></thead><tbody>");
+      ["A", "B", "C", "D"].forEach(g => {
+        const s = grupoStats[g];
+        w.document.write(`<tr><td style='font-weight:bold;background:${GRUPO_COLOR[g]}22;color:${GRUPO_COLOR[g]};text-align:center'>${g}</td><td>${GRUPO_DESC[g]}</td><td style='color:#059669;font-weight:bold;text-align:center'>${s.altas}</td><td style='color:#DC2626;font-weight:bold;text-align:center'>${s.bajas}</td><td style='font-weight:bold;text-align:center'>${s.altas - s.bajas >= 0 ? "+" : ""}${s.altas - s.bajas}</td></tr>`);
+      });
+      w.document.write("</tbody></table>");
+      w.document.write("<button class='np' onclick='window.print()' style='padding:10px 24px;font-size:14px;cursor:pointer;background:#059669;color:white;border:none;border-radius:8px'>Imprimir / Guardar como PDF</button></body></html>");
+      w.document.close();
+    };
+
+    // Stats por grupo
+    const grupoStats = { A: { altas: 0, bajas: 0 }, B: { altas: 0, bajas: 0 }, C: { altas: 0, bajas: 0 }, D: { altas: 0, bajas: 0 } };
+    filtered.forEach(m => { if (grupoStats[m.grupo]) grupoStats[m.grupo][m.tipo === "alta" ? "altas" : "bajas"]++; });
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", flexWrap: "wrap", gap: 12 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap" }}>
+          <div style={{ minWidth: 160 }}>
+            <Input label="Filtrar por mes" type="month" value={filterPer} onChange={e => setMovsFilter(s => ({ ...s, periodo: e.target.value }))} />
+          </div>
+          <div style={{ minWidth: 140 }}>
+            <Select label="Quincena" options={[{ value: "1Q", label: "1Q (1-15)" }, { value: "2Q", label: "2Q (16-31)" }]} value={filterQ} onChange={e => setMovsFilter(s => ({ ...s, quincena: e.target.value }))} />
+          </div>
+          {(filterPer || filterQ) && <Btn small variant="ghost" onClick={() => setMovsFilter({ periodo: "", quincena: "" })}>Limpiar</Btn>}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="success" onClick={() => setModal({ t: "mn" })}>+ Alta</Btn>
+          <Btn variant="danger" onClick={() => setModal({ t: "mb" })}>+ Baja</Btn>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <StatCard icon="📈" label="Altas" value={altas.length} color="#059669" />
+        <StatCard icon="📉" label="Bajas" value={bajas.length} color="#DC2626" />
+        <StatCard icon="⚖️" label="Neto" value={(altas.length - bajas.length >= 0 ? "+" : "") + (altas.length - bajas.length)} color={altas.length - bajas.length >= 0 ? "#059669" : "#DC2626"} />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+        {["A", "B", "C", "D"].map(g => {
+          const s = grupoStats[g];
+          const neto = s.altas - s.bajas;
+          return <div key={g} style={{ background: "#fff", border: "1px solid #E2E8F0", borderLeft: `4px solid ${GRUPO_COLOR[g]}`, borderRadius: 10, padding: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div style={{ fontWeight: 800, fontSize: 18, color: GRUPO_COLOR[g] }}>Grupo {g}</div>
+              <Badge color={GRUPO_COLOR[g]}>{neto >= 0 ? "+" : ""}{neto}</Badge>
+            </div>
+            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>{GRUPO_DESC[g]}</div>
+            <div style={{ display: "flex", gap: 12, fontSize: 13 }}>
+              <span style={{ color: "#059669", fontWeight: 700 }}>↑ {s.altas}</span>
+              <span style={{ color: "#DC2626", fontWeight: 700 }}>↓ {s.bajas}</span>
+            </div>
+          </div>;
+        })}
+      </div>
+
+      {altas.length > 0 && <div>
+        <div style={{ background: "#059669", color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, borderRadius: "10px 10px 0 0" }}>
+          ALTAS ({altas.length})
+        </div>
+        <Table columns={[
+          { key: "date", label: "Fecha", render: r => fmt(r.date) },
+          { key: "q", label: "Q", render: r => { const q = getQuincena(r.date); return <Badge color="#0891B2">{q.quincena}</Badge>; } },
+          { key: "grupo", label: "Grupo", render: r => <Badge color={GRUPO_COLOR[r.grupo]}>{r.grupo}</Badge> },
+          { key: "fullName", label: "Nombre" },
+          { key: "dni", label: "DNI" },
+          { key: "position", label: "Posicion" },
+          { key: "contractType", label: "Contrato", render: r => <Badge color={r.contractType === "temporary" ? "#D97706" : r.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{r.contractType === "temporary" ? "Temporal" : r.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge> },
+          { key: "salary", label: "Salario", render: r => fmtL(r.salary) },
+          { key: "motivo", label: "Motivo" },
+        ]} data={altas.slice().reverse()} actions={r => <Btn small variant="danger" onClick={() => { if (confirm(`Eliminar registro de alta de ${r.fullName}?`)) sM(movs.filter(m => m.id !== r.id)); }}>×</Btn>} />
+      </div>}
+
+      {bajas.length > 0 && <div>
+        <div style={{ background: "#DC2626", color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, borderRadius: "10px 10px 0 0" }}>
+          BAJAS ({bajas.length})
+        </div>
+        <Table columns={[
+          { key: "date", label: "Fecha", render: r => fmt(r.date) },
+          { key: "q", label: "Q", render: r => { const q = getQuincena(r.date); return <Badge color="#0891B2">{q.quincena}</Badge>; } },
+          { key: "grupo", label: "Grupo", render: r => <Badge color={GRUPO_COLOR[r.grupo]}>{r.grupo}</Badge> },
+          { key: "fullName", label: "Nombre" },
+          { key: "dni", label: "DNI" },
+          { key: "position", label: "Posicion" },
+          { key: "contractType", label: "Contrato", render: r => <Badge color={r.contractType === "temporary" ? "#D97706" : r.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{r.contractType === "temporary" ? "Temporal" : r.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge> },
+          { key: "motivo", label: "Motivo" },
+          { key: "notas", label: "Notas" },
+        ]} data={bajas.slice().reverse()} actions={r => <Btn small variant="danger" onClick={() => { if (confirm(`Eliminar registro de baja de ${r.fullName}?`)) sM(movs.filter(m => m.id !== r.id)); }}>×</Btn>} />
+      </div>}
+
+      {filtered.length === 0 && <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 30, textAlign: "center", color: "#94A3B8" }}>
+        Sin movimientos en el periodo seleccionado.
+      </div>}
+
+      {filtered.length > 0 && <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <Btn small variant="ghost" onClick={exportMovsCSV}>📊 Descargar CSV</Btn>
+        <Btn small variant="ghost" onClick={exportMovsPDF}>🖨️ Imprimir / PDF</Btn>
+      </div>}
+    </div>;
+  };
+
+  const renderSec = () => { switch (sec) { case "employees": return renderEmps(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); default: return renderDashboard(); } };
 
   const renderModal = () => { if (!modal) return null; const m = modal; switch (m.t) {
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;
@@ -862,6 +1140,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     case "cuad": return <Modal title={`Distribucion de cuadrilla — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm /></Modal>;
     case "cuad-edit": return <Modal title={`Editar cuadrilla — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm /></Modal>;
     case "ag": return <Modal title={`Asistencia ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><AttendanceGrid sheet={m.d} /></Modal>;
+    case "mn": return <Modal title="Registrar ALTA de empleado" onClose={() => setModal(null)} wide><AltaForm /></Modal>;
+    case "mb": return <Modal title="Registrar BAJA de empleado" onClose={() => setModal(null)} wide><BajaForm /></Modal>;
     case "cn": return <Modal title="Constancia" onClose={() => setModal(null)} wide><ConForm /></Modal>;
     default: return null;
   }};

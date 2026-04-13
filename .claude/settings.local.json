@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//usr/local/bin/**)",
+      "Read(//Users/gersontrochez/**)",
+      "Bash(mdfind \"kMDItemFSName == 'node'\" -onlyin /usr/local)",
+      "Bash(mdfind \"kMDItemFSName == 'npm'\" -onlyin /usr/local)",
+      "Read(//opt/homebrew/**)",
+      "Bash(ls /usr/local/bin/n*)",
+      "Bash(export PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:$PATH\")",
+      "Bash(brew --version)",
+      "Bash(curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh)",
+      "Bash(bash)",
+      "Bash(touch ~/.zshrc)"
+    ]
+  }
+}
