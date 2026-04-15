@@ -18,12 +18,19 @@ const PROJECTS = [
 const UNITS = ["Unidad", "Bolsa", "Caja", "Rollo", "Galon", "Litro", "Kg", "Quintal", "Metro", "m2", "m3", "Par", "Set", "Servicio", "Global", "Viaje", "Hora"];
 const PAYMENT_METHODS = ["Transferencia BAC", "Transferencia Banco Atlantida", "Transferencia Ficohsa", "Cheque", "Efectivo", "Tarjeta corporativa", "Otro"];
 
-// Estados del proceso (simplificado y claro)
+// Estados del proceso de Operaciones
 const STATUSES = {
-  borrador:   { label: "Borrador",               color: "#64748b", bg: "#F1F5F9", order: 1, desc: "Operaciones aun no valida" },
-  validado:   { label: "Validado — Pendiente de pago", color: "#D97706", bg: "#FEF3C7", order: 2, desc: "Operaciones valido, tesoreria debe pagar" },
-  pagado:     { label: "Pagado (sin comprobante)", color: "#2563EB", bg: "#DBEAFE", order: 3, desc: "Pago realizado, falta cargar comprobante" },
-  finalizado: { label: "Finalizado",             color: "#059669", bg: "#DCFCE7", order: 4, desc: "Pago con comprobante cargado" },
+  borrador:   { label: "Borrador",                        color: "#64748b", bg: "#F1F5F9", order: 1, desc: "Operaciones aun no aprueba" },
+  validado:   { label: "Aprobado por Coord. Operaciones", color: "#D97706", bg: "#FEF3C7", order: 2, desc: "Aprobado por Operaciones, en gestion de Tesoreria" },
+  pagado:     { label: "Pagado (sin comprobante)",        color: "#2563EB", bg: "#DBEAFE", order: 3, desc: "Pago realizado, falta cargar comprobante" },
+  finalizado: { label: "Finalizado",                      color: "#059669", bg: "#DCFCE7", order: 4, desc: "Pago con comprobante cargado" },
+};
+
+// Estados que maneja Tesoreria (paralelos al estado de Operaciones)
+const TREASURY_STATUSES = {
+  pendiente: { label: "Pendiente Lic. Carolina", color: "#B45309", bg: "#FEF3C7" },
+  recibida:  { label: "Recibida",                color: "#1D4ED8", bg: "#DBEAFE" },
+  pagada:    { label: "Pagada",                  color: "#047857", bg: "#D1FAE5" },
 };
 
 // ── Utils ──
@@ -61,7 +68,7 @@ const Input = ({ label, ...p }) => <div style={{ display: "flex", flexDirection:
 
 const Textarea = ({ label, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<textarea style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, outline: "none", background: "#F8FAFC", fontFamily: "inherit", resize: "vertical", minHeight: 70 }} {...p} /></div>;
 
-const Select = ({ label, options, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} {...p}><option value="">—</option>{options.map(o => <option key={typeof o === "string" ? o : o.value} value={typeof o === "string" ? o : o.value}>{typeof o === "string" ? o : o.label}</option>)}</select></div>;
+const Select = ({ label, options, emptyLabel = "—", ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} {...p}><option value="">{emptyLabel}</option>{options.map(o => <option key={typeof o === "string" ? o : o.value} value={typeof o === "string" ? o : o.value}>{typeof o === "string" ? o : o.label}</option>)}</select></div>;
 
 const Modal = ({ title, onClose, children, wide, size }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onClose}>
   <div style={{ background: "#fff", borderRadius: 16, padding: 28, width: size === "xl" ? "96vw" : wide ? "85vw" : 620, maxWidth: "98vw", maxHeight: "94vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,.25)" }} onClick={e => e.stopPropagation()}>
@@ -153,10 +160,26 @@ const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = "#2563E
   </div>;
 };
 
-// Status badge
+// Status badge (estado de Operaciones)
 const StatusBadge = ({ status }) => {
   const s = STATUSES[status] || STATUSES.borrador;
   return <span style={{ background: s.bg, color: s.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>{s.label}</span>;
+};
+
+// Treasury badge (estado paralelo que maneja Tesoreria)
+const TreasuryBadge = ({ status }) => {
+  if (!status) return null;
+  const s = TREASURY_STATUSES[status];
+  if (!s) return null;
+  return <span style={{ background: s.bg, color: s.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", border: `1px solid ${s.color}30` }}>💼 {s.label}</span>;
+};
+
+// Deriva el treasuryStatus para registros legacy que no lo tengan
+const deriveTreasury = (p) => {
+  if (p.treasuryStatus) return p.treasuryStatus;
+  if (p.status === "pagado" || p.status === "finalizado") return "pagada";
+  if (p.status === "validado") return "pendiente";
+  return null;
 };
 
 // ── MODULO ──
@@ -187,7 +210,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   useEffect(() => {
     (async () => {
       const [p, cps] = await Promise.all([store.get("cp-purchases"), store.get("cp-projects")]);
-      if (p) setPurchases(p);
+      if (p) {
+        // Migracion: asegurar que todos los registros tengan treasuryStatus
+        const migrated = p.map(x => ({ ...x, treasuryStatus: deriveTreasury(x) }));
+        setPurchases(migrated);
+      }
       if (cps) setCustomProjects(cps);
       setLoaded(true);
     })();
@@ -315,7 +342,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       />
 
       <div style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 12, fontSize: 12, color: "#64748b" }}>
-        💡 Al <b>Validar</b> la solicitud pasa a Tesoreria con estado <b>Pendiente de pago</b>. Antes de validar podes guardar como <b>Borrador</b> y completar luego.
+        💡 Al <b>Aprobar</b> la solicitud pasa a Tesoreria con estado <b>Pendiente Lic. Carolina</b>. Antes de aprobar podes guardar como <b>Borrador</b> y completar luego.
       </div>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
@@ -326,20 +353,20 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
           <Btn variant="warn" onClick={() => {
             if (!f.projectCode || !f.provider || !f.description || !f.amount) return alert("Complete proyecto, proveedor, descripcion y monto");
-            const rec = { ...f, id: f.id || uid(), status: "borrador" };
+            const rec = { ...f, id: f.id || uid(), status: "borrador", treasuryStatus: null };
             const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
             if (purchase) updatePurchase(saved); else sP([...purchases, saved]);
             setModal(null);
           }}>💾 Guardar borrador</Btn>
           <Btn variant="success" onClick={() => {
-            if (!f.projectCode || !f.provider || !f.description || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert("Para validar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
-            if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Validar de todas formas?")) return; }
-            const rec = { ...f, id: f.id || uid(), status: "validado", validatedAt: new Date().toISOString() };
-            const saved = addAudit(rec, "validated", `Validado por Operaciones (${f.opsResponsible})`);
+            if (!f.projectCode || !f.provider || !f.description || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert("Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
+            if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
+            const rec = { ...f, id: f.id || uid(), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
+            const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
             if (purchase) updatePurchase(saved); else sP([...purchases, saved]);
             setModal(null);
-            alert("✓ Solicitud validada. Tesoreria la vera en el listado de pendientes de pago.");
-          }}>✓ Validar y enviar a Tesoreria</Btn>
+            alert("✓ Solicitud aprobada. Paso a Tesoreria como 'Pendiente Lic. Carolina'.");
+          }}>✓ Aprobar y enviar a Tesoreria</Btn>
         </div>
       </div>
     </div>;
@@ -349,10 +376,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const PaymentForm = ({ purchase }) => {
     const [f, setF] = useState({
       paymentMethod: purchase.paymentMethod || "Transferencia BAC",
-      paymentReference: purchase.paymentReference || "",
       paymentDate: purchase.paymentDate || new Date().toISOString().slice(0, 10),
       treasuryNotes: purchase.treasuryNotes || "",
-      bacAccount: purchase.bacAccount || "",
+      receiptFile: purchase.receiptFile || null,
     });
     const u = (k, v) => setF(p => ({ ...p, [k]: v }));
 
@@ -365,33 +391,48 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           <div><b>Descripcion:</b> {purchase.description}</div>
           <div><b>Monto:</b> <span style={{ color: "#059669", fontWeight: 700, fontSize: 15 }}>{fmtL(purchase.amount)}</span></div>
           <div><b>N° Cotizacion:</b> {purchase.quoteNumber || "—"}</div>
-          <div><b>Validado por:</b> {purchase.opsResponsible || "—"}</div>
+          <div><b>Aprobado por:</b> {purchase.opsResponsible || "—"}</div>
         </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Select label="Metodo de pago" options={PAYMENT_METHODS} value={f.paymentMethod} onChange={e => u("paymentMethod", e.target.value)} />
-        <Input label="N° de referencia / transferencia / cheque" value={f.paymentReference} onChange={e => u("paymentReference", e.target.value)} placeholder="Ej: TRF-29384756" />
         <Input label="Fecha del pago" type="date" value={f.paymentDate} onChange={e => u("paymentDate", e.target.value)} />
-        <Input label="Cuenta BAC destino" value={f.bacAccount} onChange={e => u("bacAccount", e.target.value)} placeholder="Cuenta del proveedor" />
-        <div style={{ gridColumn: "1/-1" }}>
-          <Textarea label="Notas de Tesoreria" value={f.treasuryNotes} onChange={e => u("treasuryNotes", e.target.value)} placeholder="Observaciones, descuentos aplicados, retenciones, etc." />
-        </div>
       </div>
+
+      <FileSlot
+        label="🧾 Adjuntar transferencia (foto, PDF o Excel)"
+        file={f.receiptFile}
+        canUpload
+        accent="#059669"
+        onUpload={fd => u("receiptFile", fd)}
+        onRemove={() => u("receiptFile", null)}
+      />
+
+      <Textarea label="Notas de Tesoreria" value={f.treasuryNotes} onChange={e => u("treasuryNotes", e.target.value)} placeholder="Observaciones, descuentos aplicados, retenciones, etc." />
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
         <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
         <Btn variant="success" onClick={() => {
-          if (!f.paymentReference || !f.paymentDate) return alert("Ingrese referencia y fecha de pago");
+          if (!f.paymentMethod || !f.paymentDate) return alert("Seleccione metodo y fecha de pago");
+          const hasReceipt = !!f.receiptFile;
           const rec = {
             ...purchase, ...f,
-            status: "pagado",
+            status: hasReceipt ? "finalizado" : "pagado",
+            treasuryStatus: "pagada",
             paidAt: new Date(f.paymentDate).toISOString(),
+            finalizedAt: hasReceipt ? new Date().toISOString() : purchase.finalizedAt || null,
           };
-          const saved = addAudit(rec, "paid", `Pago ${f.paymentMethod} — ref. ${f.paymentReference}`);
+          const note = hasReceipt
+            ? `Pago ${f.paymentMethod} registrado con comprobante — FINALIZADA`
+            : `Pago ${f.paymentMethod} registrado sin comprobante`;
+          const saved = addAudit(rec, "paid", note);
           updatePurchase(saved);
           setModal({ t: "detail", d: saved });
-          setTimeout(() => alert("✓ Pago registrado. Ahora sube el comprobante de transferencia."), 100);
+          setTimeout(() => alert(hasReceipt
+            ? "✓ Pago registrado y comprobante adjuntado. Solicitud FINALIZADA."
+            : "✓ Pago registrado. Podes adjuntar el comprobante mas tarde desde el detalle."
+          ), 100);
         }}>💰 Registrar pago</Btn>
       </div>
     </div>;
@@ -414,21 +455,27 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     };
 
     const setReceiptFile = (fd) => {
-      const rec = { ...p, receiptFile: fd, status: "finalizado", finalizedAt: new Date().toISOString() };
+      const rec = { ...p, receiptFile: fd, status: "finalizado", treasuryStatus: "pagada", finalizedAt: new Date().toISOString() };
       const saved = addAudit(rec, "receipt_uploaded", `Comprobante cargado — solicitud FINALIZADA`);
       setP(saved); updatePurchase(saved);
     };
     const removeReceiptFile = () => {
       if (!confirm("¿Eliminar comprobante? La solicitud volvera a estado 'Pagado sin comprobante'.")) return;
-      const rec = { ...p, receiptFile: null, status: "pagado", finalizedAt: null };
+      const rec = { ...p, receiptFile: null, status: "pagado", treasuryStatus: "pagada", finalizedAt: null };
       const saved = addAudit(rec, "receipt_removed", "Comprobante eliminado");
       setP(saved); updatePurchase(saved);
     };
 
     const revertToValidado = () => {
-      if (!confirm("¿Revertir pago? Borrara datos del pago y volvera a estado 'Pendiente de pago'.")) return;
-      const rec = { ...p, status: "validado", paidAt: null, paymentMethod: "", paymentReference: "", paymentDate: "", receiptFile: null };
+      if (!confirm("¿Revertir pago? Borrara datos del pago y volvera al proceso de Tesoreria.")) return;
+      const rec = { ...p, status: "validado", treasuryStatus: "recibida", paidAt: null, paymentMethod: "", paymentDate: "", receiptFile: null };
       const saved = addAudit(rec, "payment_reverted", "Pago revertido por Tesoreria");
+      setP(saved); updatePurchase(saved);
+    };
+
+    const markAsReceived = () => {
+      const rec = { ...p, treasuryStatus: "recibida" };
+      const saved = addAudit(rec, "received", "Recibida por Lic. Carolina");
       setP(saved); updatePurchase(saved);
     };
 
@@ -436,14 +483,20 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const canRegisterPay = canPay && p.status === "validado";
     const canUploadReceipt = canPay && (p.status === "pagado" || p.status === "finalizado");
     const canRevertPay = canPay && (p.status === "pagado" || p.status === "finalizado");
+    const canMarkReceived = canPay && p.status === "validado" && p.treasuryStatus === "pendiente";
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Header de estado */}
       <div style={{ background: s.bg, border: `2px solid ${s.color}`, borderRadius: 12, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-        <div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Estado actual</div>
           <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.label}</div>
           <div style={{ fontSize: 12, color: s.color, opacity: 0.85 }}>{s.desc}</div>
+          {p.treasuryStatus && <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+            <span style={{ fontSize: 11, color: "#475569", fontWeight: 600 }}>Tesoreria:</span>
+            <TreasuryBadge status={p.treasuryStatus} />
+            {canPay && p.treasuryStatus === "pendiente" && <Btn small variant="info" onClick={markAsReceived}>✓ Marcar como Recibida</Btn>}
+          </div>}
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 26, fontWeight: 800, color: "#059669" }}>{fmtL(p.amount)}</div>
@@ -477,9 +530,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       {/* Pago (si aplica) */}
       {(p.status === "pagado" || p.status === "finalizado") && <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 12, padding: 18 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#065F46", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>💰 Datos del pago (Tesoreria)</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, fontSize: 13 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, fontSize: 13 }}>
           <div><div style={{ fontSize: 11, color: "#047857" }}>Metodo</div><div style={{ fontWeight: 600 }}>{p.paymentMethod}</div></div>
-          <div><div style={{ fontSize: 11, color: "#047857" }}>Referencia</div><div style={{ fontWeight: 600 }}>{p.paymentReference}</div></div>
           <div><div style={{ fontSize: 11, color: "#047857" }}>Fecha de pago</div><div style={{ fontWeight: 600 }}>{fmt(p.paymentDate)}</div></div>
           {p.treasuryNotes && <div style={{ gridColumn: "1/-1" }}>
             <div style={{ fontSize: 11, color: "#047857" }}>Notas de Tesoreria</div>
@@ -749,7 +801,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
       {/* Filtros + acciones */}
       <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14, display: "grid", gridTemplateColumns: "1.2fr 1.2fr 1.5fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
-        <Select label="Estado" options={Object.entries(STATUSES).map(([k, v]) => ({ value: k, label: v.label }))} value={filter.status} onChange={e => setFilter(s => ({ ...s, status: e.target.value }))} />
+        <Select label="Estado" emptyLabel="Todas" options={Object.entries(STATUSES).map(([k, v]) => ({ value: k, label: v.label }))} value={filter.status} onChange={e => setFilter(s => ({ ...s, status: e.target.value }))} />
         <Select label="Proyecto" options={allProjects.map(p => ({ value: p.short, label: p.short }))} value={filter.project} onChange={e => setFilter(s => ({ ...s, project: e.target.value }))} />
         <Input label="Proveedor" value={filter.provider} onChange={e => setFilter(s => ({ ...s, provider: e.target.value }))} placeholder="Buscar..." list="providers-list" />
         <datalist id="providers-list">{providers.map(pv => <option key={pv} value={pv} />)}</datalist>
@@ -785,7 +837,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
               {cp.length === 0 ? "Aun no hay solicitudes registradas para esta empresa." : "No hay resultados con los filtros aplicados."}
             </td></tr>}
             {dataSorted.map(p => <tr key={p.id} style={{ borderBottom: "1px solid #F1F5F9", cursor: "pointer" }} onClick={() => setModal({ t: "detail", d: p })}>
-              <td style={TD}><StatusBadge status={p.status} /></td>
+              <td style={TD}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+                  <StatusBadge status={p.status} />
+                  <TreasuryBadge status={p.treasuryStatus} />
+                </div>
+              </td>
               <td style={TD}><Badge color={cc.color}>{p.projectCode}</Badge></td>
               <td style={{ ...TD, fontWeight: 600 }}>{p.provider}</td>
               <td style={{ ...TD, maxWidth: 280, whiteSpace: "normal" }}>{p.description}</td>
