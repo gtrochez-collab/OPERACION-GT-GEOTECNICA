@@ -8,38 +8,78 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 /**
  * Shared store backed by Supabase (replaces localStorage).
  * Uses a simple key-value table: app_data(key TEXT, value JSONB).
- * Falls back to localStorage if Supabase fails.
+ * Falls back to localStorage if Supabase fails, so nothing is lost.
  */
+
+// Estado global de sincronizacion
+let syncListeners = new Set();
+let lastSyncState = { ok: true, error: null, at: null };
+const notifySync = (state) => {
+  lastSyncState = { ...lastSyncState, ...state, at: new Date().toISOString() };
+  syncListeners.forEach(fn => { try { fn(lastSyncState); } catch {} });
+};
+export const onSyncStateChange = (fn) => {
+  syncListeners.add(fn);
+  fn(lastSyncState);
+  return () => syncListeners.delete(fn);
+};
+export const getSyncState = () => lastSyncState;
+
 export const store = {
   async get(k) {
+    // 1) Intentar Supabase primero
+    let cloudValue = undefined;
     try {
       const { data, error } = await supabase
         .from('app_data')
         .select('value')
         .eq('key', k)
-        .single();
-      if (error || !data) return null;
-      return data.value;
-    } catch {
-      // Fallback to localStorage
-      try {
-        const v = localStorage.getItem(k);
-        return v ? JSON.parse(v) : null;
-      } catch { return null; }
+        .maybeSingle();
+      if (!error && data) {
+        cloudValue = data.value;
+        // Refrescar cache local
+        try { localStorage.setItem(k, JSON.stringify(cloudValue)); } catch {}
+      } else if (error && error.code !== 'PGRST116') {
+        console.warn('Supabase get warning for', k, error);
+      }
+    } catch (e) {
+      console.warn('Supabase get network error for', k, e);
     }
+    if (cloudValue !== undefined && cloudValue !== null) return cloudValue;
+
+    // 2) Fallback a localStorage si la nube no tiene nada
+    try {
+      const v = localStorage.getItem(k);
+      if (v) {
+        const parsed = JSON.parse(v);
+        // Si tenemos datos locales pero nube vacia, reportar que hay datos sin sincronizar
+        if (parsed) console.info(`[store] usando cache local para ${k} (nube sin datos)`);
+        return parsed;
+      }
+    } catch {}
+    return null;
   },
 
   async set(k, v) {
+    // 1) Guardar SIEMPRE en localStorage primero (red de seguridad)
+    try {
+      localStorage.setItem(k, JSON.stringify(v));
+    } catch (e) {
+      console.error(`[store] no se pudo guardar en cache local: ${k}`, e);
+    }
+
+    // 2) Intentar Supabase
     try {
       const { error } = await supabase
         .from('app_data')
         .upsert({ key: k, value: v, updated_at: new Date().toISOString() }, { onConflict: 'key' });
       if (error) throw error;
-      // Also save to localStorage as cache
-      localStorage.setItem(k, JSON.stringify(v));
+      notifySync({ ok: true, error: null, lastKey: k });
+      return true;
     } catch (e) {
-      console.error('Supabase write error, saving to localStorage:', e);
-      localStorage.setItem(k, JSON.stringify(v));
+      console.error(`[store] NO se sincronizo a la nube: ${k}`, e);
+      notifySync({ ok: false, error: { key: k, message: e.message || String(e) }, lastKey: k });
+      return false;
     }
   },
 };

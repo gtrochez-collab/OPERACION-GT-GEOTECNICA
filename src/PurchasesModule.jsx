@@ -111,8 +111,13 @@ const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = "#2563E
   const onPick = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.size > 5 * 1024 * 1024) {
-      if (!confirm(`El archivo pesa ${fmtMB(f.size)}. Recomendado menor a 5 MB. ¿Continuar?`)) {
+    // Limite duro: 2 MB. Archivos mas grandes fallan la sincronizacion con Supabase.
+    if (f.size > 2 * 1024 * 1024) {
+      alert(`❌ El archivo pesa ${fmtMB(f.size)}.\n\nLimite maximo: 2 MB.\n\nPara reducir el tamaño:\n• PDFs: usar Adobe "Reducir tamaño" o https://smallpdf.com/compress-pdf\n• Imagenes: exportar como JPG de menor calidad\n• Excel: guardar como CSV si es posible\n\nArchivos mas grandes no se guardan correctamente en la nube.`);
+      e.target.value = ""; return;
+    }
+    if (f.size > 1 * 1024 * 1024) {
+      if (!confirm(`⚠️ El archivo pesa ${fmtMB(f.size)}. Mas de 1 MB puede ralentizar la app.\n\n¿Subir de todas formas?`)) {
         e.target.value = ""; return;
       }
     }
@@ -160,12 +165,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const isTesoreria = userRole === "tesoreria";
   const isGerencia = userRole === "gerencia";
 
-  // Permisos:
-  // admin → Operaciones (crea, valida) + Tesoreria (paga, sube comprobante). FULL.
-  // tesoreria → registra pago, cambia estado pagado/finalizado, sube comprobante.
+  // Permisos (segregacion de funciones):
+  // admin → SOLO Operaciones: crea, edita borradores, valida y envia a Tesoreria.
+  //         NO puede pagar ni cambiar estado a pagado/finalizado.
+  // tesoreria (Lic. Carolina) → UNICA que registra pago, sube comprobante,
+  //         y cambia estado a pagado/finalizado.
   // gerencia → solo lectura.
   const canCreate = isAdmin;                       // crear/editar/validar solicitudes
-  const canPay = isAdmin || isTesoreria;           // registrar pago y subir comprobante
+  const canPay = isTesoreria;                      // SOLO Carolina registra pago y cambia estado financiero
   const canViewOnly = isGerencia;
 
   const [co, setCo] = useState("subterra");
@@ -690,7 +697,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
               {canCreate && <div style={{ marginTop: 6 }}>
                 <input type="file" accept=".pdf,image/*,.xls,.xlsx,.doc,.docx" style={{ display: "none" }} id={`costs-${project.short}`} onChange={async (e) => {
                   const file = e.target.files?.[0]; if (!file) return;
-                  if (file.size > 5 * 1024 * 1024 && !confirm(`${fmtMB(file.size)}. ¿Continuar?`)) { e.target.value = ""; return; }
+                  if (file.size > 2 * 1024 * 1024) {
+                    alert(`❌ ${fmtMB(file.size)}. Maximo 2 MB. Reduci el PDF en https://smallpdf.com/compress-pdf`);
+                    e.target.value = ""; return;
+                  }
+                  if (file.size > 1 * 1024 * 1024 && !confirm(`⚠️ ${fmtMB(file.size)}. ¿Continuar?`)) { e.target.value = ""; return; }
                   const fd = await readFileAsDataUrl(file);
                   uploadCostsFile(project.short, fd);
                   e.target.value = "";

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import HRModule from "./HRModule.jsx";
 import PurchasesModule from "./PurchasesModule.jsx";
+import { onSyncStateChange } from "./supabase.js";
 
 // ── Credenciales y roles ──
 const USERS = [
@@ -24,6 +25,7 @@ const MODULES = [
 export default function App() {
   const [user, setUser] = useState(null);
   const [activeModule, setActiveModule] = useState(null);
+  const [syncState, setSyncState] = useState({ ok: true, error: null });
 
   // Restaurar sesion
   useEffect(() => {
@@ -32,6 +34,9 @@ export default function App() {
       if (s) setUser(JSON.parse(s));
     } catch {}
   }, []);
+
+  // Escuchar estado de sincronizacion
+  useEffect(() => onSyncStateChange(s => setSyncState(s)), []);
 
   const login = (username, password) => {
     const found = USERS.find(u => u.username === username && u.password === password);
@@ -51,12 +56,20 @@ export default function App() {
   // ── Pantalla 1: Login ──
   if (!user) return <LoginScreen onLogin={login} />;
 
+  // Banner global de sincronizacion
+  const syncBanner = !syncState.ok && syncState.error ? (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, background: "#DC2626", color: "#fff", padding: "10px 18px", fontSize: 13, fontWeight: 600, zIndex: 9999, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, boxShadow: "0 2px 10px rgba(0,0,0,.2)" }}>
+      <span>⚠️ No se sincronizo a la nube ({syncState.error.key}). Los datos estan en este navegador pero NO en Supabase. Posible causa: archivos muy grandes. Probar con archivos menores a 2MB.</span>
+      <button onClick={() => setSyncState(s => ({ ...s, ok: true }))} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", color: "#fff", padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Ocultar</button>
+    </div>
+  ) : null;
+
   // ── Pantalla 3: Modulo activo ──
   if (activeModule === "rrhh") {
-    return <HRModule userRole={user.role} userName={user.label} onBack={() => setActiveModule(null)} onLogout={logout} />;
+    return <>{syncBanner}<HRModule userRole={user.role} userName={user.label} onBack={() => setActiveModule(null)} onLogout={logout} /></>;
   }
   if (activeModule === "compras-operaciones") {
-    return <PurchasesModule userRole={user.role} userName={user.label} onBack={() => setActiveModule(null)} onLogout={logout} />;
+    return <>{syncBanner}<PurchasesModule userRole={user.role} userName={user.label} onBack={() => setActiveModule(null)} onLogout={logout} /></>;
   }
 
   // ── Pantalla 2: Panel de modulos ──
