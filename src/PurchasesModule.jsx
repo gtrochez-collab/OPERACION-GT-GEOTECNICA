@@ -170,6 +170,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
   const [co, setCo] = useState("subterra");
   const [purchases, setPurchases] = useState([]);
+  const [customProjects, setCustomProjects] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
   const [sb, setSb] = useState(true);
@@ -178,14 +179,45 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
   useEffect(() => {
     (async () => {
-      const p = await store.get("cp-purchases");
+      const [p, cps] = await Promise.all([store.get("cp-purchases"), store.get("cp-projects")]);
       if (p) setPurchases(p);
+      if (cps) setCustomProjects(cps);
       setLoaded(true);
     })();
   }, []);
 
   const sP = d => { setPurchases(d); store.set("cp-purchases", d); };
+  const sCP = d => { setCustomProjects(d); store.set("cp-projects", d); };
   const cp = purchases.filter(p => p.company === co);
+
+  // Lista unificada de proyectos (base + custom con metadata adicional)
+  const getAllProjects = () => {
+    const baseShorts = new Set(PROJECTS.map(p => p.short));
+    const result = PROJECTS.map(p => {
+      const extra = customProjects.find(cp => cp.short === p.short);
+      return { ...p, costsRequestFile: extra?.costsRequestFile || null, isCustom: false };
+    });
+    customProjects.forEach(cp => {
+      if (!baseShorts.has(cp.short)) {
+        result.push({ ...cp, isCustom: true });
+      }
+    });
+    return result;
+  };
+  const allProjects = getAllProjects();
+  const getProject = (short) => allProjects.find(p => p.short === short);
+
+  // Actualizar metadata custom de un proyecto (base o nuevo)
+  const upsertProjectMeta = (short, patch) => {
+    const base = PROJECTS.find(p => p.short === short);
+    const existing = customProjects.find(cp => cp.short === short);
+    if (existing) {
+      sCP(customProjects.map(cp => cp.short === short ? { ...cp, ...patch } : cp));
+    } else {
+      const seed = base ? { short: base.short, name: base.name, code: base.code } : { short };
+      sCP([...customProjects, { ...seed, ...patch, createdAt: new Date().toISOString() }]);
+    }
+  };
 
   const addAudit = (p, action, note) => ({
     ...p,
@@ -223,32 +255,48 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // ── FORMULARIO: Nueva / Editar solicitud (Operaciones) ──
   const PurchaseForm = ({ purchase }) => {
     const [f, setF] = useState(purchase || {
-      company: co, projectCode: "", provider: "", description: "", quantity: 1, unit: "Unidad",
+      company: co, projectCode: "", provider: "", description: "",
       amount: "", quoteNumber: "", opsNotes: "", opsResponsible: userName || "",
       bacAccount: "", quoteFile: null, receiptFile: null,
       status: "borrador", createdAt: new Date().toISOString(), audit: [],
       paymentMethod: "Transferencia BAC", paymentReference: "", paymentDate: "", treasuryNotes: "",
     });
     const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const linkedProject = getProject(f.projectCode);
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Select label="Empresa" options={[{ value: "subterra", label: "Subterra Honduras" }, { value: "geotecnica", label: "Geotecnica Soluciones" }]} value={f.company} onChange={e => u("company", e.target.value)} />
-        <Select label="Proyecto" options={PROJECTS.map(p => ({ value: p.short, label: `${p.short} — ${p.name}` }))} value={f.projectCode} onChange={e => u("projectCode", e.target.value)} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "flex", justifyContent: "space-between" }}>
+            <span>Proyecto</span>
+            <button type="button" onClick={() => setModal({ t: "new-project", returnTo: purchase ? { t: "edit", d: purchase } : { t: "new" } })} style={{ background: "none", border: "none", color: "#BE185D", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>+ Nuevo proyecto</button>
+          </label>
+          <select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} value={f.projectCode} onChange={e => u("projectCode", e.target.value)}>
+            <option value="">—</option>
+            {allProjects.map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}{p.isCustom ? " (nuevo)" : ""}{p.code ? "" : " · sin codigo"}</option>)}
+          </select>
+        </div>
         <Input label="Proveedor" value={f.provider} onChange={e => u("provider", e.target.value)} placeholder="Nombre del proveedor" />
         <Input label="N° de Cotizacion" value={f.quoteNumber} onChange={e => u("quoteNumber", e.target.value)} placeholder="Ej: COT-2026-0123" />
         <div style={{ gridColumn: "1/-1" }}>
           <Textarea label="Descripcion de la compra" value={f.description} onChange={e => u("description", e.target.value)} placeholder="Detalle del bien o servicio a adquirir" />
         </div>
-        <Input label="Cantidad" type="number" step="0.01" value={f.quantity} onChange={e => u("quantity", e.target.value)} />
-        <Select label="Unidad" options={UNITS} value={f.unit} onChange={e => u("unit", e.target.value)} />
         <Input label="Monto total (Lempiras)" type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
         <Input label="Responsable de Operaciones" value={f.opsResponsible} onChange={e => u("opsResponsible", e.target.value)} placeholder="Quien valida por Operaciones" />
         <Input label="Cuenta BAC del proveedor (opcional)" value={f.bacAccount} onChange={e => u("bacAccount", e.target.value)} placeholder="Ej: 10-251-000123" />
+        <div />
         <div style={{ gridColumn: "1/-1" }}>
           <Textarea label="Notas de Operaciones para Tesoreria" value={f.opsNotes} onChange={e => u("opsNotes", e.target.value)} placeholder="Urgencia, condiciones de pago, referencias al proyecto, etc." />
         </div>
       </div>
+
+      {linkedProject && !linkedProject.costsRequestFile && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: 12, fontSize: 12, color: "#92400E" }}>
+        ⚠️ El proyecto <b>{linkedProject.short}</b> aun no tiene cargada la solicitud original validada por Costos. Podes subirla en la pestaña <b>Proyectos</b>.
+      </div>}
+      {linkedProject && linkedProject.costsRequestFile && <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 10, padding: 12, fontSize: 12, color: "#065F46" }}>
+        ✓ Proyecto <b>{linkedProject.short}</b> ya tiene solicitud validada por Costos adjunta: <b>{linkedProject.costsRequestFile.name}</b>
+      </div>}
 
       <FileSlot
         label="Cotizacion aprobada del proveedor"
@@ -406,7 +454,6 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Proveedor</div><div style={{ fontWeight: 600 }}>{p.provider}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>N° Cotizacion</div><div style={{ fontWeight: 600 }}>{p.quoteNumber || "—"}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Cuenta BAC</div><div style={{ fontWeight: 600 }}>{p.bacAccount || "—"}</div></div>
-          <div><div style={{ fontSize: 11, color: "#64748b" }}>Cantidad</div><div style={{ fontWeight: 600 }}>{p.quantity} {p.unit}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Responsable Ops</div><div style={{ fontWeight: 600 }}>{p.opsResponsible || "—"}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Validado</div><div style={{ fontWeight: 600 }}>{fmtDT(p.validatedAt)}</div></div>
           <div style={{ gridColumn: "1/-1" }}>
@@ -435,7 +482,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       </div>}
 
       {/* Archivos */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+        <FileSlot
+          label="📐 Solicitud original (Costos)"
+          file={getProject(p.projectCode)?.costsRequestFile}
+          canUpload={false}
+          accent="#7C3AED"
+          onUpload={() => {}}
+          onRemove={() => {}}
+        />
         <FileSlot
           label="📄 Cotizacion del proveedor"
           file={p.quoteFile}
@@ -482,7 +537,178 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     </div>;
   };
 
+  // ── FORMULARIO: Crear / Editar proyecto ──
+  const ProjectForm = ({ project, onSaved }) => {
+    const [f, setF] = useState(project || { short: "", name: "", code: "" });
+    const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const isEdit = !!project;
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 12, fontSize: 12, color: "#1E40AF" }}>
+        💡 El <b>codigo contable</b> es opcional. Podes dejarlo vacio ahora y agregarlo luego cuando lo tengas.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Input label="Alias / Identificador corto *" value={f.short} onChange={e => u("short", e.target.value.toUpperCase())} placeholder="Ej: ICON" disabled={isEdit} />
+        <Input label="Codigo contable (opcional)" value={f.code} onChange={e => u("code", e.target.value)} placeholder="Ej: HF-12-4-17-2026" />
+        <div style={{ gridColumn: "1/-1" }}>
+          <Input label="Nombre completo del proyecto *" value={f.name} onChange={e => u("name", e.target.value)} placeholder="Ej: Cimentacion Torre ICON" />
+        </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+        <Btn variant="success" onClick={() => {
+          if (!f.short || !f.name) return alert("Alias y nombre son obligatorios");
+          const all = getAllProjects();
+          if (!isEdit && all.some(p => p.short === f.short)) return alert("Ya existe un proyecto con ese alias. Usa otro.");
+          upsertProjectMeta(f.short, { short: f.short, name: f.name, code: f.code });
+          if (onSaved) onSaved(f.short);
+          setModal(null);
+          alert(isEdit ? "Proyecto actualizado" : `Proyecto "${f.short}" creado. Ya podes usarlo al crear solicitudes.`);
+        }}>{isEdit ? "Guardar cambios" : "Crear proyecto"}</Btn>
+      </div>
+    </div>;
+  };
+
   // ── SECCIONES ──
+  const renderProjects = () => {
+    const projectStats = allProjects.map(proj => {
+      const ps = cp.filter(x => x.projectCode === proj.short);
+      const paid = ps.filter(x => x.status === "pagado" || x.status === "finalizado");
+      const pending = ps.filter(x => x.status === "validado");
+      const draft = ps.filter(x => x.status === "borrador");
+      return {
+        project: proj,
+        count: ps.length,
+        total: ps.reduce((s, x) => s + (Number(x.amount) || 0), 0),
+        pendingAmt: pending.reduce((s, x) => s + (Number(x.amount) || 0), 0),
+        paidAmt: paid.reduce((s, x) => s + (Number(x.amount) || 0), 0),
+        pendingCount: pending.length,
+        paidCount: paid.length,
+        draftCount: draft.length,
+        finalizedCount: ps.filter(x => x.status === "finalizado").length,
+      };
+    });
+
+    // Totales por empresa seleccionada
+    const empresa = {
+      total: projectStats.reduce((s, p) => s + p.total, 0),
+      pending: projectStats.reduce((s, p) => s + p.pendingAmt, 0),
+      paid: projectStats.reduce((s, p) => s + p.paidAmt, 0),
+      count: projectStats.reduce((s, p) => s + p.count, 0),
+    };
+
+    const uploadCostsFile = async (short, fd) => {
+      upsertProjectMeta(short, { costsRequestFile: fd });
+    };
+    const removeCostsFile = (short) => {
+      if (!confirm("¿Eliminar el archivo de solicitud de Costos de este proyecto?")) return;
+      upsertProjectMeta(short, { costsRequestFile: null });
+    };
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 13, color: "#64748b" }}>Dashboard por proyecto — {cc.name}</div>
+          <div style={{ fontSize: 13, color: "#94A3B8" }}>{allProjects.length} proyectos · {empresa.count} solicitudes · total movido {fmtL(empresa.total)}</div>
+        </div>
+        {canCreate && <Btn variant="primary" onClick={() => setModal({ t: "new-project" })}>+ Nuevo proyecto</Btn>}
+      </div>
+
+      {/* Totales rapidos */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <StatCard icon="🏗️" label="Proyectos activos" value={projectStats.filter(p => p.count > 0).length} color="#BE185D" />
+        <StatCard icon="📋" label="Total solicitudes" value={empresa.count} color="#2563EB" />
+        <StatCard icon="⏳" label="Por pagar" value={fmtL(empresa.pending)} color="#D97706" />
+        <StatCard icon="✅" label="Ya pagado" value={fmtL(empresa.paid)} color="#059669" />
+      </div>
+
+      {/* Cards por proyecto */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
+        {projectStats.map(({ project, count, total, pendingAmt, paidAmt, pendingCount, paidCount, draftCount, finalizedCount }) => {
+          const ref = { current: null };
+          return <div key={project.short} style={{ background: "#fff", border: "1px solid #E2E8F0", borderLeft: `4px solid ${cc.color}`, borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 800, fontSize: 16, color: cc.color }}>{project.short}</span>
+                  {project.isCustom && <Badge color="#BE185D">NUEVO</Badge>}
+                  {!project.code && <Badge color="#D97706">SIN CODIGO</Badge>}
+                </div>
+                <div style={{ fontSize: 13, color: "#334155", marginTop: 2 }}>{project.name}</div>
+                <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 2, fontFamily: "monospace" }}>{project.code || "codigo contable pendiente"}</div>
+              </div>
+              {canCreate && <button onClick={() => setModal({ t: "edit-project", d: project })} style={{ background: "none", border: "1px solid #E2E8F0", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", color: "#64748b" }}>✏️</button>}
+            </div>
+
+            {/* Stats del proyecto */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
+              <div style={{ background: "#F1F5F9", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 600 }}>SOLICITUDES</div>
+                <div style={{ fontWeight: 700, fontSize: 18, color: "#1E293B" }}>{count}</div>
+              </div>
+              <div style={{ background: "#ECFDF5", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#047857", fontSize: 10, fontWeight: 600 }}>TOTAL</div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: "#059669" }}>{fmtL(total)}</div>
+              </div>
+              <div style={{ background: "#FEF3C7", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#92400E", fontSize: 10, fontWeight: 600 }}>PENDIENTE ({pendingCount})</div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "#D97706" }}>{fmtL(pendingAmt)}</div>
+              </div>
+              <div style={{ background: "#DBEAFE", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ color: "#1E40AF", fontSize: 10, fontWeight: 600 }}>PAGADO ({paidCount})</div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "#2563EB" }}>{fmtL(paidAmt)}</div>
+              </div>
+            </div>
+
+            {/* Barra de estados */}
+            {count > 0 && <div style={{ display: "flex", height: 6, borderRadius: 10, overflow: "hidden", background: "#F1F5F9" }}>
+              {draftCount > 0 && <div style={{ flex: draftCount, background: "#94A3B8" }} title={`${draftCount} borradores`} />}
+              {pendingCount > 0 && <div style={{ flex: pendingCount, background: "#D97706" }} title={`${pendingCount} pendientes de pago`} />}
+              {(paidCount - finalizedCount) > 0 && <div style={{ flex: paidCount - finalizedCount, background: "#2563EB" }} title={`${paidCount - finalizedCount} pagados sin comprobante`} />}
+              {finalizedCount > 0 && <div style={{ flex: finalizedCount, background: "#059669" }} title={`${finalizedCount} finalizados`} />}
+            </div>}
+
+            {/* Solicitud de Costos */}
+            <div style={{ borderTop: "1px dashed #E2E8F0", paddingTop: 10 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>📐 Solicitud original (Costos / Ingenieria)</div>
+              {project.costsRequestFile ? <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 120 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, wordBreak: "break-all" }}>📎 {project.costsRequestFile.name}</div>
+                  <div style={{ fontSize: 10, color: "#64748b" }}>{fmtMB(project.costsRequestFile.size)}</div>
+                </div>
+                <Btn small variant="info" onClick={() => {
+                  const f = project.costsRequestFile;
+                  if (f.type?.startsWith("image/") || f.type === "application/pdf") {
+                    const w = window.open();
+                    if (w) w.document.write(`<html><body style='margin:0;background:#222'>${f.type === "application/pdf" ? `<iframe src='${f.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>` : `<img src='${f.dataUrl}' style='max-width:100vw;max-height:100vh;display:block;margin:auto'/>`}</body></html>`);
+                  } else {
+                    const a = document.createElement("a"); a.href = f.dataUrl; a.download = f.name; a.click();
+                  }
+                }}>Ver</Btn>
+                {canCreate && <Btn small variant="danger" onClick={() => removeCostsFile(project.short)}>×</Btn>}
+              </div> : <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Sin archivo adjunto</div>}
+              {canCreate && <div style={{ marginTop: 6 }}>
+                <input type="file" accept=".pdf,image/*,.xls,.xlsx,.doc,.docx" style={{ display: "none" }} id={`costs-${project.short}`} onChange={async (e) => {
+                  const file = e.target.files?.[0]; if (!file) return;
+                  if (file.size > 5 * 1024 * 1024 && !confirm(`${fmtMB(file.size)}. ¿Continuar?`)) { e.target.value = ""; return; }
+                  const fd = await readFileAsDataUrl(file);
+                  uploadCostsFile(project.short, fd);
+                  e.target.value = "";
+                }} />
+                <Btn small variant="ghost" onClick={() => document.getElementById(`costs-${project.short}`).click()}>
+                  {project.costsRequestFile ? "Reemplazar archivo" : "+ Subir solicitud de Costos"}
+                </Btn>
+              </div>}
+            </div>
+
+            {/* Ver solicitudes del proyecto */}
+            {count > 0 && <Btn small variant="ghost" onClick={() => { setFilter(s => ({ ...s, project: project.short })); setSec("list"); }}>Ver {count} solicitud{count === 1 ? "" : "es"} →</Btn>}
+          </div>;
+        })}
+      </div>
+    </div>;
+  };
+
   const renderList = () => {
     const dataSorted = filtered.slice().sort((a, b) => {
       // Orden: primero validados (pendientes de pago), luego pagados sin comprobante, luego borradores, al final finalizados
@@ -513,7 +739,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       {/* Filtros + acciones */}
       <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14, display: "grid", gridTemplateColumns: "1.2fr 1.2fr 1.5fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
         <Select label="Estado" options={Object.entries(STATUSES).map(([k, v]) => ({ value: k, label: v.label }))} value={filter.status} onChange={e => setFilter(s => ({ ...s, status: e.target.value }))} />
-        <Select label="Proyecto" options={PROJECTS.map(p => ({ value: p.short, label: p.short }))} value={filter.project} onChange={e => setFilter(s => ({ ...s, project: e.target.value }))} />
+        <Select label="Proyecto" options={allProjects.map(p => ({ value: p.short, label: p.short }))} value={filter.project} onChange={e => setFilter(s => ({ ...s, project: e.target.value }))} />
         <Input label="Proveedor" value={filter.provider} onChange={e => setFilter(s => ({ ...s, provider: e.target.value }))} placeholder="Buscar..." list="providers-list" />
         <datalist id="providers-list">{providers.map(pv => <option key={pv} value={pv} />)}</datalist>
         <Input label="Desde" type="date" value={filter.from} onChange={e => setFilter(s => ({ ...s, from: e.target.value }))} />
@@ -577,6 +803,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseForm purchase={m.d} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentForm purchase={m.d} /></Modal>;
+      case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectForm onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
+      case "edit-project": return <Modal title={`Editar proyecto — ${m.d.short}`} onClose={() => setModal(null)}><ProjectForm project={m.d} /></Modal>;
       default: return null;
     }
   };
@@ -594,9 +822,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         {Object.entries(COMPANIES).map(([k, v]) => <button key={k} onClick={() => setCo(k)} style={{ background: co === k ? v.accent : "transparent", color: co === k ? "#fff" : "#94A3B8", border: co === k ? "none" : "1px solid #334155", borderRadius: 8, padding: "8px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600, textAlign: "left" }}>{v.name}</button>)}
       </div>}
       <div style={{ padding: "8px 0", flex: 1 }}>
-        <button onClick={() => setSec("list")} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: sb ? "10px 20px" : "10px 18px", background: sec === "list" ? "#BE185D40" : "transparent", border: "none", color: sec === "list" ? "#fff" : "#94A3B8", cursor: "pointer", fontSize: 14, textAlign: "left", borderLeft: sec === "list" ? "3px solid #EC4899" : "3px solid transparent" }}>
-          <span style={{ fontSize: 18 }}>📋</span>{sb && <span>Solicitudes</span>}
-        </button>
+        {[
+          { id: "list", icon: "📋", label: "Solicitudes" },
+          { id: "projects", icon: "🏗️", label: "Proyectos" },
+        ].map(n => <button key={n.id} onClick={() => setSec(n.id)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: sb ? "10px 20px" : "10px 18px", background: sec === n.id ? "#BE185D40" : "transparent", border: "none", color: sec === n.id ? "#fff" : "#94A3B8", cursor: "pointer", fontSize: 14, textAlign: "left", borderLeft: sec === n.id ? "3px solid #EC4899" : "3px solid transparent" }}>
+          <span style={{ fontSize: 18 }}>{n.icon}</span>{sb && <span>{n.label}</span>}
+        </button>)}
       </div>
       {sb && <div style={{ padding: "12px", borderTop: "1px solid #1E293B", display: "flex", flexDirection: "column", gap: 6 }}>
         {onBack && <button onClick={onBack} style={{ background: "rgba(255,255,255,0.08)", border: "1px solid #334155", borderRadius: 8, color: "#94A3B8", padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left" }}>← Volver al panel</button>}
@@ -614,12 +845,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     <div style={{ flex: 1, overflow: "auto" }}>
       <div style={{ padding: "20px 28px", borderBottom: "1px solid #E2E8F0", background: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 20 }}>Solicitudes de compra validadas</h2>
+          <h2 style={{ margin: 0, fontSize: 20 }}>{sec === "projects" ? "Proyectos" : "Solicitudes de compra validadas"}</h2>
           <span style={{ fontSize: 13, color: cc.accent, fontWeight: 600 }}>{cc.name}</span>
         </div>
         <Badge color={cc.color}>{cp.length} solicitudes</Badge>
       </div>
-      <div style={{ padding: 28 }}>{renderList()}</div>
+      <div style={{ padding: 28 }}>{sec === "projects" ? renderProjects() : renderList()}</div>
     </div>
     {renderModal()}
   </div>;
