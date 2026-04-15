@@ -1,15 +1,21 @@
 import { useState, useEffect } from "react";
 import HRModule from "./HRModule.jsx";
+import PurchasesModule from "./PurchasesModule.jsx";
 
 // ── Credenciales y roles ──
 const USERS = [
   { username: "administrador", password: "1234geo", role: "admin", label: "Administrador" },
   { username: "asistente", password: "asistente1234", role: "asistente", label: "Asistente" },
+  { username: "carolina", password: "carolina1234", role: "tesoreria", label: "Lic. Carolina Flores-Hernandez" },
+  { username: "gerencia", password: "gerencia1234", role: "gerencia", label: "Gerencia" },
 ];
+
+const ROLE_LABEL = { admin: "Administrador", asistente: "Asistente", tesoreria: "Tesoreria", gerencia: "Gerencia (solo lectura)" };
 
 // ── Modulos del sistema ──
 const MODULES = [
   { id: "rrhh", name: "Recursos Humanos", icon: "👥", desc: "Empleados, planilla, asistencia, vacaciones, permisos", color: "#0F4C75", roles: ["admin", "asistente"] },
+  { id: "compras-operaciones", name: "Compras-Operaciones", icon: "🧾", desc: "Solicitudes validadas, pagos y comprobantes de tesoreria", color: "#BE185D", roles: ["admin", "tesoreria", "gerencia"] },
   { id: "almacen", name: "Almacen", icon: "📦", desc: "Inventario, entradas, salidas, requisiciones", color: "#7C3AED", roles: ["admin"], soon: true },
   { id: "logistica", name: "Logistica", icon: "🚛", desc: "Transporte, rutas, despachos, vehiculos", color: "#D97706", roles: ["admin"], soon: true },
   { id: "operaciones", name: "Operaciones", icon: "⚙️", desc: "Proyectos, avances, reportes de campo", color: "#059669", roles: ["admin"], soon: true },
@@ -49,6 +55,9 @@ export default function App() {
   if (activeModule === "rrhh") {
     return <HRModule userRole={user.role} userName={user.label} onBack={() => setActiveModule(null)} onLogout={logout} />;
   }
+  if (activeModule === "compras-operaciones") {
+    return <PurchasesModule userRole={user.role} userName={user.label} onBack={() => setActiveModule(null)} onLogout={logout} />;
+  }
 
   // ── Pantalla 2: Panel de modulos ──
   const availableModules = MODULES.filter(m => m.roles.includes(user.role));
@@ -64,7 +73,7 @@ export default function App() {
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 14, fontWeight: 600 }}>{user.label}</div>
-            <div style={{ fontSize: 11, color: "#94A3B8" }}>{user.role === "admin" ? "Administrador" : "Asistente"}</div>
+            <div style={{ fontSize: 11, color: "#94A3B8" }}>{ROLE_LABEL[user.role] || user.role}</div>
           </div>
           <button onClick={logout} style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8, color: "#fff", padding: "8px 16px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
             Cerrar sesion

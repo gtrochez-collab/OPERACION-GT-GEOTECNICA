@@ -11,7 +11,14 @@
       "Bash(brew --version)",
       "Bash(curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh)",
       "Bash(bash)",
-      "Bash(touch ~/.zshrc)"
+      "Bash(touch ~/.zshrc)",
+      "Bash(gh --version)",
+      "Bash(mkdir -p ~/bin)",
+      "Read(//private/tmp/**)",
+      "Bash(curl -fsSL https://github.com/cli/cli/releases/download/v2.74.0/gh_2.74.0_macOS_arm64.zip -o gh.zip)",
+      "Bash(unzip -o -q gh.zip)",
+      "Bash(cp gh_2.74.0_macOS_arm64/bin/gh ~/bin/gh)",
+      "Bash(~/bin/gh auth:*)"
     ]
   }
 }
