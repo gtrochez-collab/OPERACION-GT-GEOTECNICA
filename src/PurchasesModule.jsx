@@ -205,125 +205,202 @@ const deriveDelivery = (p) => {
   return null;
 };
 
-// ── Generador de Ficha de Recibido (imprimible) ──
-const generateFichaPDF = (purchase, projectObj, companyName) => {
+// ── Generador de Ficha de Recibido — PDF descargable (jsPDF carga bajo demanda) ──
+const generateFichaPDF = async (purchase, projectObj, companyName) => {
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const W = 210, M = 18, CW = W - 2 * M;
+  let y = 15;
+
   const today = new Date().toLocaleDateString("es-HN", { day: "2-digit", month: "long", year: "numeric" });
   const projFull = projectObj ? `${projectObj.short} — ${projectObj.name}` : (purchase.projectCode || "—");
-  const html = `<!DOCTYPE html><html lang="es">
-<head>
-<meta charset="UTF-8">
-<title>Ficha de Recibido — ${purchase.projectCode} — ${purchase.provider}</title>
-<style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:Arial,sans-serif; padding:36px 40px; color:#111; font-size:12.5px; }
-.hdr { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #0F4C75; padding-bottom:14px; margin-bottom:18px; }
-.co-name { font-size:19px; font-weight:900; color:#0F4C75; }
-.co-sub { font-size:11px; color:#475569; margin-top:3px; }
-.doc-title { font-size:15px; font-weight:800; background:#0F4C75; color:#fff; padding:10px 22px; border-radius:6px; text-align:center; }
-.folio { text-align:right; font-size:11px; color:#475569; line-height:1.8; }
-.sec { font-size:10.5px; font-weight:700; color:#0F4C75; text-transform:uppercase; letter-spacing:.5px; background:#EFF6FF; padding:5px 10px; border-left:3px solid #0F4C75; margin:16px 0 10px; }
-.g2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.g3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
-.f { display:flex; flex-direction:column; gap:3px; }
-.f label { font-size:9.5px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:.3px; }
-.v { border-bottom:1.5px solid #CBD5E1; min-height:22px; padding:2px 4px; font-size:12.5px; font-weight:600; color:#1E293B; }
-.blank { border-bottom:1.5px solid #1a1a1a; min-height:26px; padding:2px 4px; font-size:12.5px; }
-.amount { font-size:22px; font-weight:900; color:#059669; }
-.warn { background:#FEF3C7; border:1px solid #F59E0B; border-radius:6px; padding:10px; color:#92400E; font-size:12px; font-weight:600; margin:8px 0; }
-.checks { display:flex; flex-direction:column; gap:7px; margin:6px 0; }
-.ci { display:flex; align-items:center; gap:10px; font-size:12.5px; }
-.cb { width:15px; height:15px; border:2px solid #1a1a1a; display:inline-block; flex-shrink:0; border-radius:2px; }
-.obs { border:1px solid #CBD5E1; border-radius:6px; min-height:72px; padding:8px; font-size:12px; margin-top:4px; }
-.sigs { display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px; margin-top:38px; }
-.sig { display:flex; flex-direction:column; align-items:center; gap:6px; }
-.sig-space { min-height:56px; border-bottom:1.5px solid #1a1a1a; width:100%; }
-.sig-label { text-align:center; font-size:10.5px; color:#475569; padding-top:5px; line-height:1.6; }
-.footer { margin-top:26px; border-top:1px solid #E2E8F0; padding-top:8px; font-size:10px; color:#94A3B8; text-align:center; }
-@media print { body{padding:20px 24px;} @page{margin:1.5cm;} }
-</style>
-</head>
-<body>
-<div class="hdr">
-  <div>
-    <div class="co-name">GRUPO GEOTECNICA</div>
-    <div class="co-sub">${companyName || "Compras y Operaciones"}</div>
-  </div>
-  <div class="doc-title">FICHA DE RECIBIDO DE MATERIALES</div>
-  <div class="folio">
-    <div>Folio N°: _______________</div>
-    <div>Generada: ${today}</div>
-  </div>
-</div>
+  const fileName = `Ficha-Recibido-${purchase.projectCode}-${(purchase.provider || "").replace(/[^a-zA-Z0-9]/g, "_")}.pdf`;
 
-<div class="sec">Datos de la Compra</div>
-<div class="g2">
-  <div class="f"><label>Proyecto</label><div class="v">${projFull}</div></div>
-  <div class="f"><label>N° Solicitud (ID interno)</label><div class="v" style="font-size:10px">${purchase.id || "—"}</div></div>
-  <div class="f"><label>Empresa</label><div class="v">${companyName || "—"}</div></div>
-  <div class="f"><label>N° Cotizacion</label><div class="v">${purchase.quoteNumber || "—"}</div></div>
-</div>
-<div class="f" style="margin-top:10px"><label>Proveedor</label><div class="v">${purchase.provider}</div></div>
-<div class="f" style="margin-top:8px"><label>Descripcion de materiales / servicio adquirido</label><div class="v" style="min-height:36px;white-space:pre-wrap">${purchase.description}</div></div>
-<div style="margin-top:12px;display:flex;align-items:baseline;gap:20px;flex-wrap:wrap">
-  <div><span style="font-size:10.5px;font-weight:700;color:#475569;text-transform:uppercase">Monto pagado:</span> <span class="amount">${fmtL(purchase.amount)}</span></div>
-  <div style="font-size:11px;color:#475569">Metodo: <b>${purchase.paymentMethod || "—"}</b></div>
-  <div style="font-size:11px;color:#475569">Fecha de pago: <b>${fmt(purchase.paymentDate)}</b></div>
-  <div style="font-size:11px;color:#475569">Aprobado por: <b>${purchase.opsResponsible || "—"}</b></div>
-</div>
+  // ── paleta ──
+  const BLUE = [15, 76, 117], BLUE_LT = [239, 246, 255];
+  const ORANGE = [217, 119, 6], ORANGE_LT = [254, 243, 199];
+  const GREEN = [5, 150, 105];
+  const GRAY = [71, 85, 105], GRAY_LT = [241, 245, 249];
+  const DARK = [30, 41, 59], BORDER = [203, 213, 225];
+  const WHITE = [255, 255, 255], BLACK = [26, 26, 26];
 
-<div class="sec">Datos de Recepcion <span style="color:#D97706;font-style:italic">(completar en campo al momento de recibir)</span></div>
-<div class="g3">
-  <div class="f"><label>Fecha esperada de entrega</label><div class="blank"></div></div>
-  <div class="f"><label>Fecha real de entrega</label><div class="blank"></div></div>
-  <div class="f"><label>Hora de recepcion</label><div class="blank"></div></div>
-</div>
-<div class="g2" style="margin-top:10px">
-  <div class="f"><label>Nombre completo de quien recibe</label><div class="blank"></div></div>
-  <div class="f"><label>Cargo / Departamento</label><div class="blank"></div></div>
-</div>
-<div class="f" style="margin-top:10px"><label>Lugar de entrega / Bodega / Nombre del proyecto en sitio</label><div class="blank"></div></div>
-<div class="g2" style="margin-top:10px">
-  <div class="f"><label>N° de factura del proveedor</label><div class="blank"></div></div>
-  <div class="f"><label>Guia de transporte / Remision (si aplica)</label><div class="blank"></div></div>
-</div>
+  const tc = (c) => doc.setTextColor(...c);
+  const fc = (c) => doc.setFillColor(...c);
+  const dc = (c) => doc.setDrawColor(...c);
+  const lw = (n) => doc.setLineWidth(n);
+  const fs = (n, w = "normal") => { doc.setFontSize(n); doc.setFont("helvetica", w); };
 
-<div class="sec">Verificacion de lo Recibido</div>
-<div class="warn">⚠️ Verificar que los materiales correspondan exactamente a la descripcion y cotizacion aprobada. Cualquier discrepancia debe anotarse en observaciones.</div>
-<div class="checks">
-  <div class="ci"><div class="cb"></div><span>Los materiales recibidos corresponden a la descripcion de la solicitud</span></div>
-  <div class="ci"><div class="cb"></div><span>Las cantidades recibidas son correctas y completas</span></div>
-  <div class="ci"><div class="cb"></div><span>Los materiales estan en buen estado (sin danos ni faltantes visibles)</span></div>
-  <div class="ci"><div class="cb"></div><span>Se recibio factura o documento de entrega del proveedor</span></div>
-  <div class="ci"><div class="cb"></div><span>Entrega parcial — pendiente: ________________________________________________</span></div>
-</div>
+  // ── helpers ──
+  const secHeader = (title, color = BLUE, bgColor = BLUE_LT, accent = BLUE) => {
+    fc(bgColor); doc.rect(M, y, CW, 7, "F");
+    fc(accent);  doc.rect(M, y, 3,  7, "F");
+    fs(8, "bold"); tc(accent);
+    doc.text(title, M + 6, y + 4.8);
+    y += 10;
+  };
 
-<div class="sec">Observaciones de Recepcion</div>
-<div class="obs"></div>
+  const label = (text, x) => { fs(7, "bold"); tc(GRAY); doc.text(text.toUpperCase(), x, y); };
 
-<div class="sigs">
-  <div class="sig">
-    <div class="sig-space"></div>
-    <div class="sig-label"><b>${purchase.opsResponsible || "Responsable de Operaciones"}</b><br>Recibido por / Operaciones</div>
-  </div>
-  <div class="sig">
-    <div class="sig-space"></div>
-    <div class="sig-label">Representante del Proveedor / Transporte<br>Nombre: _______________________</div>
-  </div>
-  <div class="sig">
-    <div class="sig-space"></div>
-    <div class="sig-label">Visto Bueno<br>Coordinacion de Operaciones</div>
-  </div>
-</div>
+  const filledVal = (val, x, w) => {
+    fs(9.5, "bold"); tc(DARK);
+    const lines = doc.splitTextToSize(String(val || "—"), w - 2);
+    doc.text(lines, x, y + 4);
+    dc(BORDER); lw(0.2); doc.line(x, y + 6, x + w, y + 6);
+    return lines.length;
+  };
 
-<div class="footer">
-  Grupo Geotecnica — Ficha de Recibido de Materiales &nbsp;·&nbsp; Generada: ${today} &nbsp;·&nbsp; Proyecto: ${purchase.projectCode} &nbsp;·&nbsp; Proveedor: ${purchase.provider} &nbsp;·&nbsp; ID: ${purchase.id}
-</div>
-</body></html>`;
-  const w = window.open("", "_blank");
-  if (!w) { alert("⚠️ Permite ventanas emergentes en el navegador para generar la ficha."); return; }
-  w.document.write(html);
-  w.document.close();
-  setTimeout(() => { w.focus(); w.print(); }, 350);
+  const blankLine = (x, w) => { dc(BLACK); lw(0.45); doc.line(x, y + 7, x + w, y + 7); };
+
+  const box = (x, bx, by, bw, bh) => { fc(GRAY_LT); dc(BORDER); lw(0.2); doc.rect(bx, by, bw, bh, "FD"); };
+
+  const checkbox = (cx, cy) => { dc(BLACK); lw(0.35); doc.rect(cx, cy, 3.8, 3.8, "S"); };
+
+  // ════════════════════════════════════════
+  // HEADER
+  // ════════════════════════════════════════
+  fc(BLUE); doc.rect(M, y, 13, 20, "F");
+  fs(14, "bold"); tc(WHITE); doc.text("GT", M + 2.8, y + 12);
+
+  fs(17, "bold"); tc(BLUE); doc.text("GRUPO GEOTECNICA", M + 17, y + 8);
+  fs(9, "normal"); tc(GRAY); doc.text(companyName || "Compras y Operaciones", M + 17, y + 14);
+
+  fc(BLUE); doc.rect(W - M - 70, y, 70, 20, "F");
+  fs(10, "bold"); tc(WHITE);
+  doc.text("FICHA DE RECIBIDO", W - M - 35, y + 8.5, { align: "center" });
+  doc.text("DE MATERIALES", W - M - 35, y + 14.5, { align: "center" });
+  y += 24;
+
+  fs(8.5, "normal"); tc(GRAY);
+  doc.text("Folio N°: _______________", M, y);
+  doc.text(`Generada: ${today}`, W - M, y, { align: "right" });
+  y += 4;
+
+  dc(BLUE); lw(0.8); doc.line(M, y, W - M, y);
+  y += 7;
+
+  // ════════════════════════════════════════
+  // DATOS DE LA COMPRA
+  // ════════════════════════════════════════
+  secHeader("DATOS DE LA COMPRA");
+
+  const H2 = (CW - 4) / 2, H3 = (CW - 8) / 3;
+
+  // Proyecto | N° Solicitud
+  label("Proyecto", M); label("N° Solicitud (ID)", M + H2 + 4);
+  y += 4;
+  filledVal(projFull, M, H2); filledVal((purchase.id || "—").slice(-14), M + H2 + 4, H2);
+  y += 8;
+
+  // Empresa | N° Cotizacion | Aprobado por
+  label("Empresa", M); label("N° Cotizacion", M + H3 + 4); label("Aprobado por Operaciones", M + 2 * (H3 + 4));
+  y += 4;
+  filledVal(companyName || "—", M, H3); filledVal(purchase.quoteNumber || "—", M + H3 + 4, H3); filledVal(purchase.opsResponsible || "—", M + 2 * (H3 + 4), H3);
+  y += 8;
+
+  // Proveedor
+  label("Proveedor", M); y += 4;
+  filledVal(purchase.provider || "—", M, CW); y += 8;
+
+  // Descripcion
+  label("Descripcion de materiales / servicio adquirido", M); y += 4;
+  const descLines = doc.splitTextToSize(purchase.description || "—", CW - 4);
+  const descH = Math.max(descLines.length * 4.5 + 5, 12);
+  fc(GRAY_LT); dc(BORDER); lw(0.2); doc.rect(M, y, CW, descH, "FD");
+  fs(9.5, "bold"); tc(DARK); doc.text(descLines, M + 3, y + 4.5);
+  y += descH + 5;
+
+  // Monto | Metodo | Fecha pago
+  label("Monto total pagado", M); label("Metodo de pago", M + H3 + 4); label("Fecha de pago", M + 2 * (H3 + 4));
+  y += 5;
+  fs(13, "bold"); tc(GREEN); doc.text(fmtL(purchase.amount), M, y);
+  fs(9.5, "normal"); tc(DARK); doc.text(purchase.paymentMethod || "—", M + H3 + 4, y); doc.text(fmt(purchase.paymentDate), M + 2 * (H3 + 4), y);
+  y += 9;
+
+  // ════════════════════════════════════════
+  // DATOS DE RECEPCION (a llenar en campo)
+  // ════════════════════════════════════════
+  fc(ORANGE_LT); doc.rect(M, y, CW, 7, "F");
+  fc(ORANGE);    doc.rect(M, y, 3,  7, "F");
+  fs(8, "bold");   tc(ORANGE);  doc.text("DATOS DE RECEPCION", M + 6, y + 4.8);
+  fs(7.5, "italic"); tc([146, 64, 14]); doc.text("(completar en campo al momento de recibir)", M + 58, y + 4.8);
+  y += 10;
+
+  // Fecha esperada | Fecha real | Hora
+  label("Fecha esperada de entrega", M); label("Fecha real de entrega", M + H3 + 4); label("Hora de recepcion", M + 2 * (H3 + 4));
+  y += 4; blankLine(M, H3); blankLine(M + H3 + 4, H3); blankLine(M + 2 * (H3 + 4), H3); y += 7;
+
+  // Nombre | Cargo
+  label("Nombre completo de quien recibe", M); label("Cargo / Departamento", M + H2 + 4);
+  y += 4; blankLine(M, H2); blankLine(M + H2 + 4, H2); y += 7;
+
+  // Lugar
+  label("Lugar de entrega / Bodega / Proyecto en sitio", M);
+  y += 4; blankLine(M, CW); y += 7;
+
+  // N° Factura | Guia transporte
+  label("N° de factura del proveedor", M); label("Guia de transporte / Remision (si aplica)", M + H2 + 4);
+  y += 4; blankLine(M, H2); blankLine(M + H2 + 4, H2); y += 9;
+
+  // ════════════════════════════════════════
+  // VERIFICACION
+  // ════════════════════════════════════════
+  secHeader("VERIFICACION DE LO RECIBIDO");
+
+  fc(ORANGE_LT); dc([245, 158, 11]); lw(0.25); doc.rect(M, y, CW, 8, "FD");
+  fs(8.5, "bold"); tc([146, 64, 14]);
+  doc.text("  Verificar que los materiales correspondan exactamente a la cotizacion aprobada. Anotar discrepancias en observaciones.", M + 3, y + 5);
+  y += 12;
+
+  const checks = [
+    "Los materiales recibidos corresponden a la descripcion de la solicitud",
+    "Las cantidades recibidas son correctas y completas",
+    "Los materiales estan en buen estado (sin danos ni faltantes visibles)",
+    "Se recibio factura o documento de entrega del proveedor",
+    "Entrega parcial — pendiente: _____________________________________________________",
+  ];
+  checks.forEach(text => {
+    checkbox(M, y - 3);
+    fs(9.5, "normal"); tc(DARK); doc.text(text, M + 6, y);
+    y += 6;
+  });
+  y += 3;
+
+  // ════════════════════════════════════════
+  // OBSERVACIONES
+  // ════════════════════════════════════════
+  secHeader("OBSERVACIONES DE RECEPCION");
+  fc(GRAY_LT); dc(BORDER); lw(0.2); doc.rect(M, y, CW, 22, "FD");
+  y += 26;
+
+  // ════════════════════════════════════════
+  // FIRMAS (3 columnas)
+  // ════════════════════════════════════════
+  const sigW = (CW - 8) / 3;
+  const sigData = [
+    { top: purchase.opsResponsible || "Responsable de Operaciones", bot: "Recibido por / Operaciones" },
+    { top: "Representante del Proveedor", bot: "Nombre: _____________________" },
+    { top: "Visto Bueno", bot: "Coordinacion de Operaciones" },
+  ];
+  y += 2;
+  sigData.forEach((s, i) => {
+    const sx = M + i * (sigW + 4);
+    dc(BLACK); lw(0.4); doc.line(sx, y + 18, sx + sigW, y + 18);
+    fs(8, "bold"); tc(DARK); doc.text(s.top, sx + sigW / 2, y + 22.5, { align: "center", maxWidth: sigW });
+    fs(7.5, "normal"); tc(GRAY); doc.text(s.bot, sx + sigW / 2, y + 27, { align: "center", maxWidth: sigW });
+  });
+  y += 32;
+
+  // ════════════════════════════════════════
+  // FOOTER
+  // ════════════════════════════════════════
+  dc(BORDER); lw(0.3); doc.line(M, y, W - M, y); y += 4;
+  fs(7, "normal"); tc([148, 163, 184]);
+  doc.text(
+    `Grupo Geotecnica · Ficha de Recibido de Materiales · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id}`,
+    W / 2, y, { align: "center" }
+  );
+
+  doc.save(fileName);
 };
 
 // ── MODULO ──
@@ -787,7 +864,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
               {p.deliveryStatus === "pendiente_entrega" && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 8, padding: "6px 12px", fontSize: 12, color: "#92400E", fontWeight: 600 }}>
                 ⚠️ Compra pagada — pendiente registrar recepcion de materiales
               </div>}
-              <Btn small variant="ghost" onClick={() => generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name)}>🖨️ Generar ficha para imprimir</Btn>
+              <Btn small variant="info" onClick={async () => { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); }}>📥 Descargar Ficha PDF</Btn>
               {canEditDlv && !dlvEdit && <Btn small variant="info" onClick={() => setDlvEdit(true)}>✏️ Editar recepcion</Btn>}
             </div>
           </div>
