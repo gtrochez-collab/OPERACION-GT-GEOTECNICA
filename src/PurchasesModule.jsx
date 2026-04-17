@@ -33,6 +33,14 @@ const TREASURY_STATUSES = {
   pagada:    { label: "Pagada",                  color: "#047857", bg: "#D1FAE5" },
 };
 
+// Estados de Recepcion de Materiales (logistica, post-pago)
+const DELIVERY_STATUSES = {
+  pendiente_entrega: { label: "Pendiente de entrega",      color: "#7C3AED", bg: "#F3E8FF", icon: "📦" },
+  recibido:          { label: "Materiales recibidos",       color: "#0891B2", bg: "#ECFEFF", icon: "✅" },
+  ficha_adjunta:     { label: "Ficha de recibido adjunta",  color: "#D97706", bg: "#FEF3C7", icon: "📋" },
+  cerrado:           { label: "Compra cerrada",             color: "#059669", bg: "#DCFCE7", icon: "🔒" },
+};
+
 // ── Utils ──
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = d => d ? new Date(d).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -174,12 +182,148 @@ const TreasuryBadge = ({ status }) => {
   return <span style={{ background: s.bg, color: s.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", border: `1px solid ${s.color}30` }}>💼 {s.label}</span>;
 };
 
+// Delivery badge (estado de recepcion de materiales)
+const DeliveryBadge = ({ status }) => {
+  if (!status) return null;
+  const s = DELIVERY_STATUSES[status];
+  if (!s) return null;
+  return <span style={{ background: s.bg, color: s.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", border: `1px solid ${s.color}30` }}>{s.icon} {s.label}</span>;
+};
+
 // Deriva el treasuryStatus para registros legacy que no lo tengan
 const deriveTreasury = (p) => {
   if (p.treasuryStatus) return p.treasuryStatus;
   if (p.status === "pagado" || p.status === "finalizado") return "pagada";
   if (p.status === "validado") return "pendiente";
   return null;
+};
+
+// Deriva el deliveryStatus para registros legacy que no lo tengan
+const deriveDelivery = (p) => {
+  if (p.deliveryStatus) return p.deliveryStatus;
+  if (p.status === "pagado" || p.status === "finalizado") return "pendiente_entrega";
+  return null;
+};
+
+// ── Generador de Ficha de Recibido (imprimible) ──
+const generateFichaPDF = (purchase, projectObj, companyName) => {
+  const today = new Date().toLocaleDateString("es-HN", { day: "2-digit", month: "long", year: "numeric" });
+  const projFull = projectObj ? `${projectObj.short} — ${projectObj.name}` : (purchase.projectCode || "—");
+  const html = `<!DOCTYPE html><html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Ficha de Recibido — ${purchase.projectCode} — ${purchase.provider}</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:Arial,sans-serif; padding:36px 40px; color:#111; font-size:12.5px; }
+.hdr { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #0F4C75; padding-bottom:14px; margin-bottom:18px; }
+.co-name { font-size:19px; font-weight:900; color:#0F4C75; }
+.co-sub { font-size:11px; color:#475569; margin-top:3px; }
+.doc-title { font-size:15px; font-weight:800; background:#0F4C75; color:#fff; padding:10px 22px; border-radius:6px; text-align:center; }
+.folio { text-align:right; font-size:11px; color:#475569; line-height:1.8; }
+.sec { font-size:10.5px; font-weight:700; color:#0F4C75; text-transform:uppercase; letter-spacing:.5px; background:#EFF6FF; padding:5px 10px; border-left:3px solid #0F4C75; margin:16px 0 10px; }
+.g2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.g3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+.f { display:flex; flex-direction:column; gap:3px; }
+.f label { font-size:9.5px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:.3px; }
+.v { border-bottom:1.5px solid #CBD5E1; min-height:22px; padding:2px 4px; font-size:12.5px; font-weight:600; color:#1E293B; }
+.blank { border-bottom:1.5px solid #1a1a1a; min-height:26px; padding:2px 4px; font-size:12.5px; }
+.amount { font-size:22px; font-weight:900; color:#059669; }
+.warn { background:#FEF3C7; border:1px solid #F59E0B; border-radius:6px; padding:10px; color:#92400E; font-size:12px; font-weight:600; margin:8px 0; }
+.checks { display:flex; flex-direction:column; gap:7px; margin:6px 0; }
+.ci { display:flex; align-items:center; gap:10px; font-size:12.5px; }
+.cb { width:15px; height:15px; border:2px solid #1a1a1a; display:inline-block; flex-shrink:0; border-radius:2px; }
+.obs { border:1px solid #CBD5E1; border-radius:6px; min-height:72px; padding:8px; font-size:12px; margin-top:4px; }
+.sigs { display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px; margin-top:38px; }
+.sig { display:flex; flex-direction:column; align-items:center; gap:6px; }
+.sig-space { min-height:56px; border-bottom:1.5px solid #1a1a1a; width:100%; }
+.sig-label { text-align:center; font-size:10.5px; color:#475569; padding-top:5px; line-height:1.6; }
+.footer { margin-top:26px; border-top:1px solid #E2E8F0; padding-top:8px; font-size:10px; color:#94A3B8; text-align:center; }
+@media print { body{padding:20px 24px;} @page{margin:1.5cm;} }
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div>
+    <div class="co-name">GRUPO GEOTECNICA</div>
+    <div class="co-sub">${companyName || "Compras y Operaciones"}</div>
+  </div>
+  <div class="doc-title">FICHA DE RECIBIDO DE MATERIALES</div>
+  <div class="folio">
+    <div>Folio N°: _______________</div>
+    <div>Generada: ${today}</div>
+  </div>
+</div>
+
+<div class="sec">Datos de la Compra</div>
+<div class="g2">
+  <div class="f"><label>Proyecto</label><div class="v">${projFull}</div></div>
+  <div class="f"><label>N° Solicitud (ID interno)</label><div class="v" style="font-size:10px">${purchase.id || "—"}</div></div>
+  <div class="f"><label>Empresa</label><div class="v">${companyName || "—"}</div></div>
+  <div class="f"><label>N° Cotizacion</label><div class="v">${purchase.quoteNumber || "—"}</div></div>
+</div>
+<div class="f" style="margin-top:10px"><label>Proveedor</label><div class="v">${purchase.provider}</div></div>
+<div class="f" style="margin-top:8px"><label>Descripcion de materiales / servicio adquirido</label><div class="v" style="min-height:36px;white-space:pre-wrap">${purchase.description}</div></div>
+<div style="margin-top:12px;display:flex;align-items:baseline;gap:20px;flex-wrap:wrap">
+  <div><span style="font-size:10.5px;font-weight:700;color:#475569;text-transform:uppercase">Monto pagado:</span> <span class="amount">${fmtL(purchase.amount)}</span></div>
+  <div style="font-size:11px;color:#475569">Metodo: <b>${purchase.paymentMethod || "—"}</b></div>
+  <div style="font-size:11px;color:#475569">Fecha de pago: <b>${fmt(purchase.paymentDate)}</b></div>
+  <div style="font-size:11px;color:#475569">Aprobado por: <b>${purchase.opsResponsible || "—"}</b></div>
+</div>
+
+<div class="sec">Datos de Recepcion <span style="color:#D97706;font-style:italic">(completar en campo al momento de recibir)</span></div>
+<div class="g3">
+  <div class="f"><label>Fecha esperada de entrega</label><div class="blank"></div></div>
+  <div class="f"><label>Fecha real de entrega</label><div class="blank"></div></div>
+  <div class="f"><label>Hora de recepcion</label><div class="blank"></div></div>
+</div>
+<div class="g2" style="margin-top:10px">
+  <div class="f"><label>Nombre completo de quien recibe</label><div class="blank"></div></div>
+  <div class="f"><label>Cargo / Departamento</label><div class="blank"></div></div>
+</div>
+<div class="f" style="margin-top:10px"><label>Lugar de entrega / Bodega / Nombre del proyecto en sitio</label><div class="blank"></div></div>
+<div class="g2" style="margin-top:10px">
+  <div class="f"><label>N° de factura del proveedor</label><div class="blank"></div></div>
+  <div class="f"><label>Guia de transporte / Remision (si aplica)</label><div class="blank"></div></div>
+</div>
+
+<div class="sec">Verificacion de lo Recibido</div>
+<div class="warn">⚠️ Verificar que los materiales correspondan exactamente a la descripcion y cotizacion aprobada. Cualquier discrepancia debe anotarse en observaciones.</div>
+<div class="checks">
+  <div class="ci"><div class="cb"></div><span>Los materiales recibidos corresponden a la descripcion de la solicitud</span></div>
+  <div class="ci"><div class="cb"></div><span>Las cantidades recibidas son correctas y completas</span></div>
+  <div class="ci"><div class="cb"></div><span>Los materiales estan en buen estado (sin danos ni faltantes visibles)</span></div>
+  <div class="ci"><div class="cb"></div><span>Se recibio factura o documento de entrega del proveedor</span></div>
+  <div class="ci"><div class="cb"></div><span>Entrega parcial — pendiente: ________________________________________________</span></div>
+</div>
+
+<div class="sec">Observaciones de Recepcion</div>
+<div class="obs"></div>
+
+<div class="sigs">
+  <div class="sig">
+    <div class="sig-space"></div>
+    <div class="sig-label"><b>${purchase.opsResponsible || "Responsable de Operaciones"}</b><br>Recibido por / Operaciones</div>
+  </div>
+  <div class="sig">
+    <div class="sig-space"></div>
+    <div class="sig-label">Representante del Proveedor / Transporte<br>Nombre: _______________________</div>
+  </div>
+  <div class="sig">
+    <div class="sig-space"></div>
+    <div class="sig-label">Visto Bueno<br>Coordinacion de Operaciones</div>
+  </div>
+</div>
+
+<div class="footer">
+  Grupo Geotecnica — Ficha de Recibido de Materiales &nbsp;·&nbsp; Generada: ${today} &nbsp;·&nbsp; Proyecto: ${purchase.projectCode} &nbsp;·&nbsp; Proveedor: ${purchase.provider} &nbsp;·&nbsp; ID: ${purchase.id}
+</div>
+</body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) { alert("⚠️ Permite ventanas emergentes en el navegador para generar la ficha."); return; }
+  w.document.write(html);
+  w.document.close();
+  setTimeout(() => { w.focus(); w.print(); }, 350);
 };
 
 // ── MODULO ──
@@ -211,8 +355,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     (async () => {
       const [p, cps] = await Promise.all([store.get("cp-purchases"), store.get("cp-projects")]);
       if (p) {
-        // Migracion: asegurar que todos los registros tengan treasuryStatus
-        const migrated = p.map(x => ({ ...x, treasuryStatus: deriveTreasury(x) }));
+        // Migracion: asegurar que todos los registros tengan treasuryStatus y deliveryStatus
+        const migrated = p.map(x => ({
+          ...x,
+          treasuryStatus: deriveTreasury(x),
+          deliveryStatus: deriveDelivery(x),
+          delivery: x.delivery || {},
+        }));
         setPurchases(migrated);
       }
       if (cps) setCustomProjects(cps);
@@ -282,6 +431,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     finalizado: cp.filter(p => p.status === "finalizado").length,
     montoPendiente: cp.filter(p => p.status === "validado").reduce((s, p) => s + (Number(p.amount) || 0), 0),
     montoPagadoMes: cp.filter(p => (p.status === "pagado" || p.status === "finalizado") && p.paidAt && new Date(p.paidAt).getMonth() === new Date().getMonth() && new Date(p.paidAt).getFullYear() === new Date().getFullYear()).reduce((s, p) => s + (Number(p.amount) || 0), 0),
+    sinRecibido: cp.filter(p => (p.status === "pagado" || p.status === "finalizado") && p.deliveryStatus !== "cerrado").length,
   };
 
   if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "'Segoe UI', sans-serif", color: "#64748b" }}>Cargando Compras-Operaciones...</div>;
@@ -420,6 +570,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             ...purchase, ...f,
             status: hasReceipt ? "finalizado" : "pagado",
             treasuryStatus: "pagada",
+            deliveryStatus: purchase.deliveryStatus || "pendiente_entrega",
+            delivery: purchase.delivery || {},
             paidAt: new Date(f.paymentDate).toISOString(),
             finalizedAt: hasReceipt ? new Date().toISOString() : purchase.finalizedAt || null,
           };
@@ -442,6 +594,52 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const DetailView = ({ purchase }) => {
     const [p, setP] = useState(purchase);
     const s = STATUSES[p.status] || STATUSES.borrador;
+
+    // Estado de Recepcion de Materiales
+    const [dlvEdit, setDlvEdit] = useState(false);
+    const [df, setDf] = useState({
+      expectedDate: p.delivery?.expectedDate || "",
+      actualDate: p.delivery?.actualDate || "",
+      receivedBy: p.delivery?.receivedBy || "",
+      receivedByRole: p.delivery?.receivedByRole || "",
+      observations: p.delivery?.observations || "",
+      fichaGenerated: p.delivery?.fichaGenerated || false,
+      fichaSigned: p.delivery?.fichaSigned || false,
+      fichaScanned: p.delivery?.fichaScanned || false,
+      fichaFile: p.delivery?.fichaFile || null,
+      closingNotes: p.delivery?.closingNotes || "",
+    });
+    const ud = (k, v) => setDf(d => ({ ...d, [k]: v }));
+
+    const saveDelivery = (newDf, newStatus) => {
+      const rec = {
+        ...p,
+        deliveryStatus: newStatus || p.deliveryStatus || "pendiente_entrega",
+        delivery: { ...newDf, updatedAt: new Date().toISOString() },
+      };
+      const labels = {
+        recibido: "Materiales marcados como recibidos",
+        ficha_adjunta: "Ficha de recibido adjuntada",
+        cerrado: "Compra cerrada por Operaciones",
+        pendiente_entrega: "Seguimiento de entrega actualizado",
+      };
+      const saved = addAudit(rec, "delivery_updated", labels[newStatus] || "Datos de recepcion actualizados");
+      setP(saved); updatePurchase(saved);
+      setDlvEdit(false);
+    };
+
+    const setFichaFile = (fd) => {
+      const newDf = { ...df, fichaFile: fd, fichaScanned: true, fichaUploadedAt: new Date().toISOString() };
+      setDf(newDf);
+      saveDelivery(newDf, "ficha_adjunta");
+    };
+    const removeFichaFile = () => {
+      if (!confirm("¿Eliminar la ficha adjunta?")) return;
+      const newDf = { ...df, fichaFile: null, fichaScanned: false };
+      setDf(newDf);
+      const prev = p.deliveryStatus === "ficha_adjunta" ? "recibido" : (p.deliveryStatus || "recibido");
+      saveDelivery(newDf, prev);
+    };
 
     const setQuoteFile = (fd) => {
       const rec = { ...p, quoteFile: fd };
@@ -567,6 +765,110 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           onRemove={removeReceiptFile}
         />
       </div>
+
+      {/* ═══ Recepcion de Materiales ═══ */}
+      {(p.status === "pagado" || p.status === "finalizado") && (() => {
+        const ds = DELIVERY_STATUSES[p.deliveryStatus] || DELIVERY_STATUSES.pendiente_entrega;
+        const isClosed = p.deliveryStatus === "cerrado";
+        const canEditDlv = canCreate && !isClosed;
+
+        return <div style={{ border: `2px solid ${ds.color}`, borderRadius: 12, overflow: "hidden" }}>
+          {/* Header de recepcion */}
+          <div style={{ background: ds.bg, padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 22 }}>{ds.icon}</span>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: ds.color, textTransform: "uppercase", letterSpacing: 0.4 }}>Recepcion de Materiales</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: ds.color }}>{ds.label}</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {/* Alerta si pendiente */}
+              {p.deliveryStatus === "pendiente_entrega" && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 8, padding: "6px 12px", fontSize: 12, color: "#92400E", fontWeight: 600 }}>
+                ⚠️ Compra pagada — pendiente registrar recepcion de materiales
+              </div>}
+              <Btn small variant="ghost" onClick={() => generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name)}>🖨️ Generar ficha para imprimir</Btn>
+              {canEditDlv && !dlvEdit && <Btn small variant="info" onClick={() => setDlvEdit(true)}>✏️ Editar recepcion</Btn>}
+            </div>
+          </div>
+
+          <div style={{ background: "#fff", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+            {dlvEdit && canEditDlv ? (
+              /* Formulario de edicion */
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+                  <Input label="Fecha esperada de entrega" type="date" value={df.expectedDate} onChange={e => ud("expectedDate", e.target.value)} />
+                  <Input label="Fecha real de entrega" type="date" value={df.actualDate} onChange={e => ud("actualDate", e.target.value)} />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                  <Input label="Nombre de quien recibio" value={df.receivedBy} onChange={e => ud("receivedBy", e.target.value)} placeholder="Nombre completo" />
+                  <Input label="Cargo de quien recibio" value={df.receivedByRole} onChange={e => ud("receivedByRole", e.target.value)} placeholder="Cargo en el proyecto" />
+                </div>
+                <Textarea label="Observaciones de recepcion" value={df.observations} onChange={e => ud("observations", e.target.value)} placeholder="Estado de los materiales, faltantes, incidencias, etc." />
+                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                  {[["fichaGenerated","Ficha de recibido generada"],["fichaSigned","Ficha firmada"],["fichaScanned","Ficha escaneada"]].map(([k, label]) => (
+                    <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!df[k]} onChange={e => ud(k, e.target.checked)} style={{ width: 16, height: 16 }} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <Textarea label="Notas de cierre (Operaciones)" value={df.closingNotes} onChange={e => ud("closingNotes", e.target.value)} placeholder="Notas finales, conformidad, observaciones para el expediente..." />
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                  <Btn variant="ghost" onClick={() => setDlvEdit(false)}>Cancelar</Btn>
+                  <Btn variant="warn" onClick={() => saveDelivery(df, df.actualDate ? "recibido" : "pendiente_entrega")}>
+                    💾 Guardar
+                  </Btn>
+                  {df.actualDate && df.receivedBy && <Btn variant="success" onClick={() => saveDelivery(df, "recibido")}>
+                    ✅ Marcar materiales recibidos
+                  </Btn>}
+                  {p.deliveryStatus === "ficha_adjunta" || (df.fichaFile && df.fichaSigned) ? <Btn variant="primary" onClick={() => saveDelivery(df, "cerrado")}>
+                    🔒 Cerrar compra
+                  </Btn> : null}
+                </div>
+              </div>
+            ) : (
+              /* Vista de datos de recepcion */
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, fontSize: 13 }}>
+                  <div><div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase" }}>Fecha esperada</div><div style={{ fontWeight: 600 }}>{fmt(p.delivery?.expectedDate) || "—"}</div></div>
+                  <div><div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase" }}>Fecha real de entrega</div><div style={{ fontWeight: 600 }}>{fmt(p.delivery?.actualDate) || "—"}</div></div>
+                  <div><div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase" }}>Recibido por</div><div style={{ fontWeight: 600 }}>{p.delivery?.receivedBy || "—"}</div></div>
+                  <div><div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase" }}>Cargo</div><div style={{ fontWeight: 600 }}>{p.delivery?.receivedByRole || "—"}</div></div>
+                </div>
+                {p.delivery?.observations && <div style={{ background: "#F8FAFC", borderRadius: 8, padding: 10, fontSize: 13, color: "#334155" }}>
+                  <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Observaciones</div>
+                  {p.delivery.observations}
+                </div>}
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12 }}>
+                  {[["fichaGenerated","Ficha generada"],["fichaSigned","Ficha firmada"],["fichaScanned","Ficha escaneada"]].map(([k, label]) => (
+                    <div key={k} style={{ display: "flex", alignItems: "center", gap: 4, color: p.delivery?.[k] ? "#059669" : "#94A3B8", fontWeight: 600 }}>
+                      {p.delivery?.[k] ? "✅" : "⬜"} {label}
+                    </div>
+                  ))}
+                </div>
+                {p.delivery?.closingNotes && <div style={{ background: "#F0FDF4", borderRadius: 8, padding: 10, fontSize: 13, color: "#065F46", border: "1px solid #BBF7D0" }}>
+                  <div style={{ fontSize: 10, color: "#047857", fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Notas de cierre</div>
+                  {p.delivery.closingNotes}
+                </div>}
+                {isClosed && <div style={{ background: "#DCFCE7", border: "2px solid #059669", borderRadius: 10, padding: "10px 16px", display: "flex", alignItems: "center", gap: 8, fontWeight: 700, color: "#065F46", fontSize: 14 }}>
+                  🔒 Compra cerrada — ciclo completo completado
+                </div>}
+              </div>
+            )}
+
+            {/* Ficha adjunta (PDF/imagen) */}
+            <FileSlot
+              label="📋 Ficha de recibido (PDF firmado)"
+              file={df.fichaFile}
+              canUpload={canCreate && !isClosed}
+              accent="#7C3AED"
+              onUpload={setFichaFile}
+              onRemove={removeFichaFile}
+            />
+          </div>
+        </div>;
+      })()}
 
       {/* Historial / Auditoria */}
       {p.audit && p.audit.length > 0 && <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 18 }}>
@@ -792,6 +1094,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <StatCard icon="✅" label="Finalizadas" value={stats.finalizado} color="#059669" />
         <StatCard icon="💰" label="Monto por pagar" value={fmtL(stats.montoPendiente)} color="#DC2626" />
         <StatCard icon="📅" label="Pagado este mes" value={fmtL(stats.montoPagadoMes)} color="#059669" />
+        {stats.sinRecibido > 0 && <StatCard icon="📦" label="Pagadas sin recibido" value={stats.sinRecibido} color="#7C3AED" />}
       </div>
 
       {/* Carolina destacado si es tesoreria */}
@@ -841,6 +1144,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
                   <StatusBadge status={p.status} />
                   <TreasuryBadge status={p.treasuryStatus} />
+                  <DeliveryBadge status={p.deliveryStatus} />
                 </div>
               </td>
               <td style={TD}><Badge color={cc.color}>{p.projectCode}</Badge></td>
