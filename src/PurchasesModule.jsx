@@ -3,7 +3,6 @@ import { store } from "./supabase.js";
 
 // ── Constantes ──
 const COMPANIES = {
-  subterra: { name: "Subterra Honduras", color: "#0F4C75", accent: "#3282B8" },
   geotecnica: { name: "Geotecnica Soluciones", color: "#1B4332", accent: "#2D6A4F" },
 };
 const PROJECTS = [
@@ -205,200 +204,202 @@ const deriveDelivery = (p) => {
   return null;
 };
 
-// ── Generador de Ficha de Recibido — PDF descargable (jsPDF carga bajo demanda) ──
+// ── Ficha de Recibido — PDF horizontal (A4 landscape), simple, para campo ──
 const generateFichaPDF = async (purchase, projectObj, companyName) => {
   const { jsPDF } = await import("jspdf");
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const W = 210, M = 18, CW = W - 2 * M;
-  let y = 15;
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const PW = 297, PH = 210, M = 14, CW = PW - 2 * M; // util: 269mm ancho
 
   const today = new Date().toLocaleDateString("es-HN", { day: "2-digit", month: "long", year: "numeric" });
   const projFull = projectObj ? `${projectObj.short} — ${projectObj.name}` : (purchase.projectCode || "—");
   const fileName = `Ficha-Recibido-${purchase.projectCode}-${(purchase.provider || "").replace(/[^a-zA-Z0-9]/g, "_")}.pdf`;
+  const hasQuoteImg = purchase.quoteFile?.dataUrl && purchase.quoteFile.type?.startsWith("image/");
 
-  // ── paleta ──
-  const BLUE = [15, 76, 117], BLUE_LT = [239, 246, 255];
-  const ORANGE = [217, 119, 6], ORANGE_LT = [254, 243, 199];
-  const GREEN = [5, 150, 105];
-  const GRAY = [71, 85, 105], GRAY_LT = [241, 245, 249];
-  const DARK = [30, 41, 59], BORDER = [203, 213, 225];
-  const WHITE = [255, 255, 255], BLACK = [26, 26, 26];
+  // Paleta
+  const B  = [15, 76, 117], BL = [239, 246, 255];   // azul
+  const G  = [5, 150, 105],  GL = [220, 252, 231];   // verde
+  const GR = [71, 85, 105],  GL2 = [248, 250, 252];  // gris
+  const DK = [30, 41, 59],  BD = [203, 213, 225];     // dark / borde
+  const W  = [255, 255, 255], BK = [26, 26, 26];
 
-  const tc = (c) => doc.setTextColor(...c);
-  const fc = (c) => doc.setFillColor(...c);
-  const dc = (c) => doc.setDrawColor(...c);
-  const lw = (n) => doc.setLineWidth(n);
-  const fs = (n, w = "normal") => { doc.setFontSize(n); doc.setFont("helvetica", w); };
+  const tc = c => doc.setTextColor(...c);
+  const fc = c => doc.setFillColor(...c);
+  const dc = c => doc.setDrawColor(...c);
+  const lw = n => doc.setLineWidth(n);
+  const f  = (n, s = "normal") => { doc.setFontSize(n); doc.setFont("helvetica", s); };
+  const ln = (x1, y1, x2, y2) => doc.line(x1, y1, x2, y2);
+  const rc = (x, y, w, h, s = "S") => doc.rect(x, y, w, h, s);
 
-  // ── helpers ──
-  const secHeader = (title, color = BLUE, bgColor = BLUE_LT, accent = BLUE) => {
-    fc(bgColor); doc.rect(M, y, CW, 7, "F");
-    fc(accent);  doc.rect(M, y, 3,  7, "F");
-    fs(8, "bold"); tc(accent);
-    doc.text(title, M + 6, y + 4.8);
-    y += 10;
+  // Etiqueta de campo (gris pequeño)
+  const lbl = (t, x, y) => { f(7, "bold"); tc(GR); doc.text(t.toUpperCase(), x, y); };
+  // Valor relleno (bold oscuro)
+  const val = (v, x, y, mw) => {
+    f(9.5, "bold"); tc(DK);
+    if (mw) { doc.text(doc.splitTextToSize(String(v || "—"), mw)[0], x, y); }
+    else     { doc.text(String(v || "—"), x, y); }
   };
+  // Linea en blanco para firma
+  const blk = (x, y, w) => { dc(BK); lw(0.4); ln(x, y, x + w, y); };
+  // Casilla de verificacion
+  const cbx = (x, y) => { dc(BK); lw(0.35); rc(x, y, 3.8, 3.8, "S"); };
 
-  const label = (text, x) => { fs(7, "bold"); tc(GRAY); doc.text(text.toUpperCase(), x, y); };
+  // ════════════════════════════════════════════════════════
+  // 1. HEADER  (y: 14 → 38)
+  // ════════════════════════════════════════════════════════
+  let y = M;
 
-  const filledVal = (val, x, w) => {
-    fs(9.5, "bold"); tc(DARK);
-    const lines = doc.splitTextToSize(String(val || "—"), w - 2);
-    doc.text(lines, x, y + 4);
-    dc(BORDER); lw(0.2); doc.line(x, y + 6, x + w, y + 6);
-    return lines.length;
-  };
+  fc(B); rc(M, y, 11, 22, "F");
+  f(11, "bold"); tc(W); doc.text("GT", M + 2, y + 13);
 
-  const blankLine = (x, w) => { dc(BLACK); lw(0.45); doc.line(x, y + 7, x + w, y + 7); };
+  f(15, "bold"); tc(B); doc.text("GRUPO GEOTECNICA", M + 14, y + 8);
+  f(9, "normal"); tc(GR); doc.text(companyName || "Geotecnica Soluciones", M + 14, y + 14);
 
-  const box = (x, bx, by, bw, bh) => { fc(GRAY_LT); dc(BORDER); lw(0.2); doc.rect(bx, by, bw, bh, "FD"); };
+  fc(B); rc(PW / 2 - 44, y, 88, 22, "F");
+  f(10.5, "bold"); tc(W); doc.text("FICHA DE RECIBIDO DE MATERIALES", PW / 2, y + 13, { align: "center" });
 
-  const checkbox = (cx, cy) => { dc(BLACK); lw(0.35); doc.rect(cx, cy, 3.8, 3.8, "S"); };
+  f(9, "normal"); tc(GR);
+  doc.text("Folio N°: _______________", PW - M, y + 7, { align: "right" });
+  doc.text(`Generada: ${today}`, PW - M, y + 14, { align: "right" });
+  if (hasQuoteImg) { f(7.5, "italic"); tc(B); doc.text("* Cotizacion adjunta en pag. 2", PW - M, y + 20, { align: "right" }); }
 
-  // ════════════════════════════════════════
-  // HEADER
-  // ════════════════════════════════════════
-  fc(BLUE); doc.rect(M, y, 13, 20, "F");
-  fs(14, "bold"); tc(WHITE); doc.text("GT", M + 2.8, y + 12);
+  y += 25; dc(B); lw(0.6); ln(M, y, PW - M, y); y += 4;
 
-  fs(17, "bold"); tc(BLUE); doc.text("GRUPO GEOTECNICA", M + 17, y + 8);
-  fs(9, "normal"); tc(GRAY); doc.text(companyName || "Compras y Operaciones", M + 17, y + 14);
+  // ════════════════════════════════════════════════════════
+  // 2. REFERENCIA DE LA COMPRA — pre-llenado  (y: 43 → 79)
+  // ════════════════════════════════════════════════════════
+  const refY = y, refH = 35;
+  fc(BL); rc(M, y, CW, refH, "F");
+  fc(B);  rc(M, y, 3, refH, "F");
+  f(7.5, "bold"); tc(B); doc.text("REFERENCIA DE LA COMPRA", M + 5, y + 5);
 
-  fc(BLUE); doc.rect(W - M - 70, y, 70, 20, "F");
-  fs(10, "bold"); tc(WHITE);
-  doc.text("FICHA DE RECIBIDO", W - M - 35, y + 8.5, { align: "center" });
-  doc.text("DE MATERIALES", W - M - 35, y + 14.5, { align: "center" });
-  y += 24;
+  // Columna izquierda (120mm): 3 filas de datos
+  const Lx = M + 5, Lw = 115, halfL = (Lw - 4) / 2;
+  const r1 = y + 10, r2 = y + 19, r3 = y + 28;
 
-  fs(8.5, "normal"); tc(GRAY);
-  doc.text("Folio N°: _______________", M, y);
-  doc.text(`Generada: ${today}`, W - M, y, { align: "right" });
-  y += 4;
+  lbl("Proyecto", Lx, r1); lbl("N° Cotizacion", Lx + halfL + 4, r1);
+  val(projFull, Lx, r1 + 4, halfL); val(purchase.quoteNumber || "—", Lx + halfL + 4, r1 + 4, halfL);
 
-  dc(BLUE); lw(0.8); doc.line(M, y, W - M, y);
-  y += 7;
+  lbl("Proveedor", Lx, r2); lbl("Aprobado por Operaciones", Lx + halfL + 4, r2);
+  val(purchase.provider || "—", Lx, r2 + 4, halfL); val(purchase.opsResponsible || "—", Lx + halfL + 4, r2 + 4, halfL);
 
-  // ════════════════════════════════════════
-  // DATOS DE LA COMPRA
-  // ════════════════════════════════════════
-  secHeader("DATOS DE LA COMPRA");
+  lbl("Metodo de pago", Lx, r3); lbl("Fecha de pago", Lx + halfL + 4, r3);
+  val(purchase.paymentMethod || "—", Lx, r3 + 4, halfL); val(fmt(purchase.paymentDate), Lx + halfL + 4, r3 + 4, halfL);
 
-  const H2 = (CW - 4) / 2, H3 = (CW - 8) / 3;
+  // Divisor vertical suave
+  dc(B); lw(0.15); ln(M + 121, refY + 7, M + 121, refY + refH - 3);
 
-  // Proyecto | N° Solicitud
-  label("Proyecto", M); label("N° Solicitud (ID)", M + H2 + 4);
-  y += 4;
-  filledVal(projFull, M, H2); filledVal((purchase.id || "—").slice(-14), M + H2 + 4, H2);
-  y += 8;
+  // Columna derecha: Descripcion + Monto
+  const Rx = M + 126, Rw = CW - 126 - 3;
+  lbl("Descripcion de materiales / servicio", Rx, r1);
+  f(9.5, "bold"); tc(DK);
+  doc.text(doc.splitTextToSize(purchase.description || "—", Rw).slice(0, 2), Rx, r1 + 4);
 
-  // Empresa | N° Cotizacion | Aprobado por
-  label("Empresa", M); label("N° Cotizacion", M + H3 + 4); label("Aprobado por Operaciones", M + 2 * (H3 + 4));
-  y += 4;
-  filledVal(companyName || "—", M, H3); filledVal(purchase.quoteNumber || "—", M + H3 + 4, H3); filledVal(purchase.opsResponsible || "—", M + 2 * (H3 + 4), H3);
-  y += 8;
+  lbl("Monto total pagado", Rx, r3);
+  f(15, "bold"); tc(G); doc.text(fmtL(purchase.amount), Rx, r3 + 5);
 
-  // Proveedor
-  label("Proveedor", M); y += 4;
-  filledVal(purchase.provider || "—", M, CW); y += 8;
+  y = refY + refH + 4;
 
-  // Descripcion
-  label("Descripcion de materiales / servicio adquirido", M); y += 4;
-  const descLines = doc.splitTextToSize(purchase.description || "—", CW - 4);
-  const descH = Math.max(descLines.length * 4.5 + 5, 12);
-  fc(GRAY_LT); dc(BORDER); lw(0.2); doc.rect(M, y, CW, descH, "FD");
-  fs(9.5, "bold"); tc(DARK); doc.text(descLines, M + 3, y + 4.5);
-  y += descH + 5;
+  // ════════════════════════════════════════════════════════
+  // 3. DOS COLUMNAS: A llenar en campo | Verificacion  (y: 83 → 153)
+  // ════════════════════════════════════════════════════════
+  const fillY = y, fillH = 66, divX = M + 168;
 
-  // Monto | Metodo | Fecha pago
-  label("Monto total pagado", M); label("Metodo de pago", M + H3 + 4); label("Fecha de pago", M + 2 * (H3 + 4));
-  y += 5;
-  fs(13, "bold"); tc(GREEN); doc.text(fmtL(purchase.amount), M, y);
-  fs(9.5, "normal"); tc(DARK); doc.text(purchase.paymentMethod || "—", M + H3 + 4, y); doc.text(fmt(purchase.paymentDate), M + 2 * (H3 + 4), y);
-  y += 9;
+  // Fondos
+  fc(GL2); rc(M, y, divX - M, fillH, "F");
+  fc([240, 253, 244]); rc(divX, y, M + CW - divX, fillH, "F");
 
-  // ════════════════════════════════════════
-  // DATOS DE RECEPCION (a llenar en campo)
-  // ════════════════════════════════════════
-  fc(ORANGE_LT); doc.rect(M, y, CW, 7, "F");
-  fc(ORANGE);    doc.rect(M, y, 3,  7, "F");
-  fs(8, "bold");   tc(ORANGE);  doc.text("DATOS DE RECEPCION", M + 6, y + 4.8);
-  fs(7.5, "italic"); tc([146, 64, 14]); doc.text("(completar en campo al momento de recibir)", M + 58, y + 4.8);
-  y += 10;
+  // Barras de titulo de columna
+  fc(B); rc(M, y, 3, fillH, "F");
+  fc(G); rc(divX, y, 3, fillH, "F");
+  f(7.5, "bold"); tc(B); doc.text("A COMPLETAR EN CAMPO", M + 5, y + 5.5);
+  tc(G); doc.text("VERIFICACION", divX + 6, y + 5.5);
 
-  // Fecha esperada | Fecha real | Hora
-  label("Fecha esperada de entrega", M); label("Fecha real de entrega", M + H3 + 4); label("Hora de recepcion", M + 2 * (H3 + 4));
-  y += 4; blankLine(M, H3); blankLine(M + H3 + 4, H3); blankLine(M + 2 * (H3 + 4), H3); y += 7;
+  // Linea divisora entre columnas
+  dc(BD); lw(0.25); ln(divX, y, divX, y + fillH);
 
-  // Nombre | Cargo
-  label("Nombre completo de quien recibe", M); label("Cargo / Departamento", M + H2 + 4);
-  y += 4; blankLine(M, H2); blankLine(M + H2 + 4, H2); y += 7;
+  // ── Columna izquierda: campos a llenar ──
+  const Fx = M + 6, Fw = divX - M - 10;
+  const FH = (Fw - 5) / 2;
+  let fy = y + 12;
+
+  // Fecha | Hora (en la misma fila)
+  lbl("Fecha de recibido", Fx, fy); lbl("Hora", Fx + FH * 0.7 + 5, fy);
+  fy += 3; blk(Fx, fy + 3, FH * 0.65); blk(Fx + FH * 0.7 + 5, fy + 3, FH * 0.28); fy += 9;
+
+  // Nombre
+  lbl("Nombre completo de quien recibe", Fx, fy);
+  fy += 3; blk(Fx, fy + 3, Fw); fy += 9;
+
+  // Cargo
+  lbl("Cargo", Fx, fy);
+  fy += 3; blk(Fx, fy + 3, Fw); fy += 9;
 
   // Lugar
-  label("Lugar de entrega / Bodega / Proyecto en sitio", M);
-  y += 4; blankLine(M, CW); y += 7;
+  lbl("Lugar de entrega / Bodega / Proyecto", Fx, fy);
+  fy += 3; blk(Fx, fy + 3, Fw); fy += 9;
 
-  // N° Factura | Guia transporte
-  label("N° de factura del proveedor", M); label("Guia de transporte / Remision (si aplica)", M + H2 + 4);
-  y += 4; blankLine(M, H2); blankLine(M + H2 + 4, H2); y += 9;
+  // N° Factura
+  lbl("N° de factura del proveedor", Fx, fy);
+  fy += 3; blk(Fx, fy + 3, Fw * 0.6); fy += 9;
 
-  // ════════════════════════════════════════
-  // VERIFICACION
-  // ════════════════════════════════════════
-  secHeader("VERIFICACION DE LO RECIBIDO");
+  // Observaciones
+  lbl("Observaciones", Fx, fy);
+  fy += 2; dc(BD); lw(0.2); rc(Fx, fy, Fw, 10, "S");
 
-  fc(ORANGE_LT); dc([245, 158, 11]); lw(0.25); doc.rect(M, y, CW, 8, "FD");
-  fs(8.5, "bold"); tc([146, 64, 14]);
-  doc.text("  Verificar que los materiales correspondan exactamente a la cotizacion aprobada. Anotar discrepancias en observaciones.", M + 3, y + 5);
-  y += 12;
-
-  const checks = [
-    "Los materiales recibidos corresponden a la descripcion de la solicitud",
-    "Las cantidades recibidas son correctas y completas",
-    "Los materiales estan en buen estado (sin danos ni faltantes visibles)",
-    "Se recibio factura o documento de entrega del proveedor",
-    "Entrega parcial — pendiente: _____________________________________________________",
+  // ── Columna derecha: verificacion ──
+  const Vx = divX + 7;
+  const chks = [
+    "Materiales completos y en buen estado",
+    "Cantidades correctas segun cotizacion",
+    "Conforme con la descripcion aprobada",
+    "Factura del proveedor recibida",
+    "Entrega parcial — pendiente: ___________",
   ];
-  checks.forEach(text => {
-    checkbox(M, y - 3);
-    fs(9.5, "normal"); tc(DARK); doc.text(text, M + 6, y);
-    y += 6;
+  let cy = fillY + 13;
+  chks.forEach(t => {
+    cbx(Vx, cy - 3);
+    f(9.5, "normal"); tc(DK); doc.text(t, Vx + 6, cy);
+    cy += 11;
   });
-  y += 3;
 
-  // ════════════════════════════════════════
-  // OBSERVACIONES
-  // ════════════════════════════════════════
-  secHeader("OBSERVACIONES DE RECEPCION");
-  fc(GRAY_LT); dc(BORDER); lw(0.2); doc.rect(M, y, CW, 22, "FD");
-  y += 26;
+  y = fillY + fillH + 5;
 
-  // ════════════════════════════════════════
-  // FIRMAS (3 columnas)
-  // ════════════════════════════════════════
-  const sigW = (CW - 8) / 3;
-  const sigData = [
-    { top: purchase.opsResponsible || "Responsable de Operaciones", bot: "Recibido por / Operaciones" },
-    { top: "Representante del Proveedor", bot: "Nombre: _____________________" },
-    { top: "Visto Bueno", bot: "Coordinacion de Operaciones" },
-  ];
-  y += 2;
-  sigData.forEach((s, i) => {
-    const sx = M + i * (sigW + 4);
-    dc(BLACK); lw(0.4); doc.line(sx, y + 18, sx + sigW, y + 18);
-    fs(8, "bold"); tc(DARK); doc.text(s.top, sx + sigW / 2, y + 22.5, { align: "center", maxWidth: sigW });
-    fs(7.5, "normal"); tc(GRAY); doc.text(s.bot, sx + sigW / 2, y + 27, { align: "center", maxWidth: sigW });
+  // ════════════════════════════════════════════════════════
+  // 4. FIRMAS (2 bloques)  (y: ~154 → 188)
+  // ════════════════════════════════════════════════════════
+  const sigW = (CW - 8) / 2;
+  [
+    [purchase.opsResponsible || "Responsable de Operaciones", "Nombre y Firma — Quien Recibe"],
+    ["Visto Bueno — Coordinacion Operaciones", "Firma y Sello"],
+  ].forEach(([top, bot], i) => {
+    const sx = M + i * (sigW + 8);
+    dc(BK); lw(0.4); ln(sx, y + 20, sx + sigW, y + 20);
+    f(9, "bold"); tc(DK); doc.text(top, sx + sigW / 2, y + 25, { align: "center", maxWidth: sigW });
+    f(8, "normal"); tc(GR); doc.text(bot, sx + sigW / 2, y + 30, { align: "center", maxWidth: sigW });
   });
-  y += 32;
+  y += 35;
 
-  // ════════════════════════════════════════
-  // FOOTER
-  // ════════════════════════════════════════
-  dc(BORDER); lw(0.3); doc.line(M, y, W - M, y); y += 4;
-  fs(7, "normal"); tc([148, 163, 184]);
-  doc.text(
-    `Grupo Geotecnica · Ficha de Recibido de Materiales · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id}`,
-    W / 2, y, { align: "center" }
-  );
+  // Footer
+  dc(BD); lw(0.25); ln(M, y, PW - M, y); y += 4;
+  f(7, "normal"); tc([148, 163, 184]);
+  doc.text(`Grupo Geotecnica · Ficha de Recibido · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id}`, PW / 2, y, { align: "center" });
+
+  // ════════════════════════════════════════════════════════
+  // PAG. 2: cotizacion adjunta si es imagen
+  // ════════════════════════════════════════════════════════
+  if (hasQuoteImg) {
+    doc.addPage();
+    f(11, "bold"); tc(B); doc.text("COTIZACION DE REFERENCIA", PW / 2, 14, { align: "center" });
+    f(8.5, "normal"); tc(GR);
+    doc.text(`${purchase.provider} · N° ${purchase.quoteNumber || "—"} · ${projFull}`, PW / 2, 20, { align: "center" });
+    dc(B); lw(0.5); ln(M, 23, PW - M, 23);
+    try {
+      const imgType = purchase.quoteFile.type.includes("png") ? "PNG" : "JPEG";
+      doc.addImage(purchase.quoteFile.dataUrl, imgType, M, 26, CW, PH - 36);
+    } catch {
+      f(10, "normal"); tc(GR); doc.text("(imagen no compatible — adjuntar manualmente)", PW / 2, PH / 2, { align: "center" });
+    }
+  }
 
   doc.save(fileName);
 };
@@ -419,7 +420,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const canPay = isTesoreria;                      // SOLO Carolina registra pago y cambia estado financiero
   const canViewOnly = isGerencia;
 
-  const [co, setCo] = useState("subterra");
+  const [co, setCo] = useState("geotecnica");
   const [purchases, setPurchases] = useState([]);
   const [customProjects, setCustomProjects] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -1266,7 +1267,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <button onClick={() => setSb(!sb)} style={{ background: "none", border: "none", color: "#94A3B8", fontSize: 20, cursor: "pointer", flexShrink: 0 }}>☰</button>
         {sb && <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap" }}>Compras-Operaciones</div>}
       </div>
-      {sb && <div style={{ padding: "14px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+      {sb && Object.keys(COMPANIES).length > 1 && <div style={{ padding: "14px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Empresa</div>
         {Object.entries(COMPANIES).map(([k, v]) => <button key={k} onClick={() => setCo(k)} style={{ background: co === k ? v.accent : "transparent", color: co === k ? "#fff" : "#94A3B8", border: co === k ? "none" : "1px solid #334155", borderRadius: 8, padding: "8px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600, textAlign: "left" }}>{v.name}</button>)}
       </div>}
