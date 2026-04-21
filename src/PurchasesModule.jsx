@@ -213,6 +213,7 @@ const generateFichaPDF = async (purchase, projectObj, companyName) => {
   const today = new Date().toLocaleDateString("es-HN", { day: "2-digit", month: "long", year: "numeric" });
   const projFull = projectObj ? `${projectObj.short} — ${projectObj.name}` : (purchase.projectCode || "—");
   const fileName = `Ficha-Recibido-${purchase.projectCode}-${(purchase.provider || "").replace(/[^a-zA-Z0-9]/g, "_")}.pdf`;
+  const hasQuotePDF = purchase.quoteFile?.dataUrl && purchase.quoteFile.type === "application/pdf";
   const hasQuoteImg = purchase.quoteFile?.dataUrl && purchase.quoteFile.type?.startsWith("image/");
 
   // Paleta
@@ -260,7 +261,7 @@ const generateFichaPDF = async (purchase, projectObj, companyName) => {
   f(9, "normal"); tc(GR);
   doc.text("Folio N°: _______________", PW - M, y + 7, { align: "right" });
   doc.text(`Generada: ${today}`, PW - M, y + 14, { align: "right" });
-  if (hasQuoteImg) { f(7.5, "italic"); tc(B); doc.text("* Cotizacion adjunta en pag. 2", PW - M, y + 20, { align: "right" }); }
+  if (hasQuotePDF || hasQuoteImg) { f(7.5, "italic"); tc(B); doc.text("* Cotizacion incluida en pag. 2+", PW - M, y + 20, { align: "right" }); }
 
   y += 25; dc(B); lw(0.6); ln(M, y, PW - M, y); y += 4;
 
@@ -369,13 +370,13 @@ const generateFichaPDF = async (purchase, projectObj, companyName) => {
   // ════════════════════════════════════════════════════════
   const sigW = (CW - 8) / 2;
   [
-    [purchase.opsResponsible || "Responsable de Operaciones", "Nombre y Firma — Quien Recibe"],
-    ["Visto Bueno — Coordinacion Operaciones", "Firma y Sello"],
+    ["", "Nombre y Firma — Quien Recibe el Material"],
+    ["Visto Bueno", "Coordinacion de Operaciones"],
   ].forEach(([top, bot], i) => {
     const sx = M + i * (sigW + 8);
     dc(BK); lw(0.4); ln(sx, y + 20, sx + sigW, y + 20);
-    f(9, "bold"); tc(DK); doc.text(top, sx + sigW / 2, y + 25, { align: "center", maxWidth: sigW });
-    f(8, "normal"); tc(GR); doc.text(bot, sx + sigW / 2, y + 30, { align: "center", maxWidth: sigW });
+    if (top) { f(9, "bold"); tc(DK); doc.text(top, sx + sigW / 2, y + 25, { align: "center", maxWidth: sigW }); }
+    f(8, "normal"); tc(GR); doc.text(bot, sx + sigW / 2, y + (top ? 30 : 25), { align: "center", maxWidth: sigW });
   });
   y += 35;
 
@@ -385,23 +386,57 @@ const generateFichaPDF = async (purchase, projectObj, companyName) => {
   doc.text(`Grupo Geotecnica · Ficha de Recibido · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id}`, PW / 2, y, { align: "center" });
 
   // ════════════════════════════════════════════════════════
-  // PAG. 2: cotizacion adjunta si es imagen
+  // PAG. 2+: Cotizacion adjunta (PDF merge o imagen)
   // ════════════════════════════════════════════════════════
-  if (hasQuoteImg) {
+  if (hasQuotePDF) {
+    // Fusionar PDF cotizacion con pdf-lib → un solo archivo descargable
+    const fichaBytes = doc.output("arraybuffer");
+    const { PDFDocument } = await import("pdf-lib");
+
+    const pdfFicha = await PDFDocument.load(fichaBytes);
+
+    // Convertir dataUrl → Uint8Array
+    const base64 = purchase.quoteFile.dataUrl.split(",")[1];
+    const bin = atob(base64);
+    const cotizBytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) cotizBytes[i] = bin.charCodeAt(i);
+
+    try {
+      const pdfCotiz = await PDFDocument.load(cotizBytes, { ignoreEncryption: true });
+      const indices = pdfCotiz.getPageIndices();
+      const pages = await pdfFicha.copyPages(pdfCotiz, indices);
+      pages.forEach(p => pdfFicha.addPage(p));
+    } catch (e) {
+      console.warn("pdf-lib: no se pudo incrustar la cotizacion —", e);
+    }
+
+    const merged = await pdfFicha.save();
+    const blob = new Blob([merged], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+  } else if (hasQuoteImg) {
+    // Imagen (JPG/PNG) → agregar en pagina 2 directamente con jsPDF
     doc.addPage();
     f(11, "bold"); tc(B); doc.text("COTIZACION DE REFERENCIA", PW / 2, 14, { align: "center" });
     f(8.5, "normal"); tc(GR);
     doc.text(`${purchase.provider} · N° ${purchase.quoteNumber || "—"} · ${projFull}`, PW / 2, 20, { align: "center" });
     dc(B); lw(0.5); ln(M, 23, PW - M, 23);
     try {
-      const imgType = purchase.quoteFile.type.includes("png") ? "PNG" : "JPEG";
-      doc.addImage(purchase.quoteFile.dataUrl, imgType, M, 26, CW, PH - 36);
+      doc.addImage(purchase.quoteFile.dataUrl, purchase.quoteFile.type.includes("png") ? "PNG" : "JPEG", M, 26, CW, PH - 36);
     } catch {
-      f(10, "normal"); tc(GR); doc.text("(imagen no compatible — adjuntar manualmente)", PW / 2, PH / 2, { align: "center" });
+      f(10, "normal"); tc(GR); doc.text("(imagen no incrustable)", PW / 2, PH / 2, { align: "center" });
     }
-  }
+    doc.save(fileName);
 
-  doc.save(fileName);
+  } else {
+    // Sin cotizacion adjunta
+    doc.save(fileName);
+  }
 };
 
 // ── MODULO ──
