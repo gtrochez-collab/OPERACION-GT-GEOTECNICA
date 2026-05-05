@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
+import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 
 // Marca Geotecnica
 const ORANGE = "#E8762D";
@@ -16,15 +17,8 @@ const BORDER = "#DBD4C8";
 const COMPANIES = {
   geotecnica: { name: "Geotecnica Soluciones", color: ORANGE, accent: ORANGE_DARK },
 };
-const PROJECTS = [
-  { code: "HF-12-4-17-2025", name: "Cimentacion Apolo", short: "APOLO" },
-  { code: "HR-20-1-18-2025", name: "Muros Contencion Miramesi", short: "MIRAMESI" },
-  { code: "HF-15-1-4-2026", name: "Micropilotes Villa Roy", short: "VILLA ROY" },
-  { code: "HF-12-1-3-2026", name: "Cimentacion Ebenezer SPS", short: "EBENEZER" },
-  { code: "HR-22-1-7-2026", name: "Colindancia Real de Minas", short: "REAL DE MINAS" },
-  { code: "UE-102-5101", name: "PLANT-Instalaciones Plantel", short: "PLAN-TALLER" },
-  { code: "OFICINA", name: "Oficina Administrativa", short: "OFICINA" },
-];
+// Lista canonica unificada con RRHH y Operations CC (src/projects.js).
+const PROJECTS = CANONICAL_PROJECTS;
 const UNITS = ["Unidad", "Bolsa", "Caja", "Rollo", "Galon", "Litro", "Kg", "Quintal", "Metro", "m2", "m3", "Par", "Set", "Servicio", "Global", "Viaje", "Hora"];
 const PAYMENT_METHODS = ["Transferencia BAC", "Transferencia Banco Atlantida", "Transferencia Ficohsa", "Cheque", "Efectivo", "Tarjeta corporativa", "Otro"];
 

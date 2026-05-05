@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
+import { PROJECTS as CANONICAL_PROJECTS, findProject, resolveShort, projectName, projectCode } from "./projects.js";
+import { esFeriadoQuincena, nombreFeriado } from "./holidays.js";
 
 // Marca Geotecnica — colores corporativos
 const ORANGE = "#E8762D";
@@ -21,18 +23,16 @@ const COMPANIES = {
 };
 const DEPARTMENTS = ["Administracion", "Ingenieria", "Operaciones", "Logistica", "RRHH", "Contabilidad", "Campo", "Mecanica"];
 const LEAVE_TYPES = ["Personal", "Medico", "Duelo", "Maternidad", "Paternidad", "Sin goce de sueldo", "Otro"];
-const PROJECTS = [
-  { code: "HF-12-4-17-2025", name: "Cimentacion Apolo", short: "APOLO" },
-  { code: "HR-20-1-18-2025", name: "Muros Contencion Miramesi", short: "MIRAMESI" },
-  { code: "HF-15-1-4-2026", name: "Micropilotes Villa Roy", short: "VILLA ROY" },
-  { code: "HF-12-1-3-2026", name: "Cimentacion Ebenezer SPS", short: "EBENEZER" },
-  { code: "HR-22-1-7-2026", name: "Colindancia Real de Minas", short: "REAL DE MINAS" },
-  { code: "UE-102-5101", name: "PLANT-Instalaciones Plantel", short: "PLAN-TALLER" },
-  { code: "OFICINA", name: "Oficina Administrativa", short: "OFICINA" },
-];
-const PROJ_SHORTS = PROJECTS.map(p => p.short);
-const projLabel = (short) => { const p = PROJECTS.find(x => x.short === short); return p ? `[${p.code}] ${p.name}` : short; };
-const projShort = (short) => { const p = PROJECTS.find(x => x.short === short); return p ? p.short : short; };
+// Lista canonica unificada con Operations CC y Compras (src/projects.js).
+// Mantiene aliases para retrocompatibilidad con cuadrillas/asistencias
+// guardadas con shorts viejos (ej: "VILLA ROY" → "VILLAROY").
+const PROJECTS = CANONICAL_PROJECTS;
+const PROJ_SHORTS = PROJECTS.map((p) => p.short);
+const projLabel = (short) => {
+  const p = findProject(short);
+  return p ? `[${p.code}] ${p.name}` : short;
+};
+const projShort = (short) => resolveShort(short);
 const DAYS_ES = ["D", "L", "M", "M", "J", "V", "S"];
 
 // ── Grupos para reportes de altas/bajas ──
@@ -304,7 +304,24 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       const end = q === "1Q" ? 15 : lastDay;
       const totalDays = end - start + 1;
 
-      setLines(ae.map(emp => {
+      const cuad = cq.find(x => x.periodo === per && x.quincena === q);
+
+      // Empleados a incluir en planilla: todos los de la empresa que tuvieron
+      // ALGUN dia dentro de la quincena (incluye gente activa, ALTAS de mitad
+      // de quincena, BAJAS de mitad de quincena).
+      const periodStart = `${per}-${String(start).padStart(2, "0")}`;
+      const periodEnd = `${per}-${String(end).padStart(2, "0")}`;
+      const payrollEmps = ce.filter((e) => {
+        // Si nunca empezo (sin startDate) lo incluimos solo si esta activo
+        if (!e.startDate) return e.status === "active";
+        // Si su startDate es DESPUES del fin de quincena → no aplica
+        if (e.startDate > periodEnd) return false;
+        // Si tiene endDate y es ANTES del inicio de quincena → no aplica
+        if (e.endDate && e.endDate < periodStart) return false;
+        return true;
+      });
+
+      setLines(payrollEmps.map(emp => {
         const sb = Number(emp.salary) || 0;
         const bn = Number(emp.bonificacion) || 0;
         const cp = Number(emp.cooperativa) || 0;
@@ -314,19 +331,56 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         const isPerm = emp.contractType === "permanent";
         const isGeo = emp.company === "geotecnica";
 
-        let diasPresente = 0, diasNSP = 0, diasIncap = 0, domTrab = 0;
+        // Proyecto base de la cuadrilla (para empleados sin overrides)
+        const baseProjRaw = cuad?.assignments?.[emp.id] || emp.project || "";
+        const baseProj = resolveShort(baseProjRaw);
+
+        // Recorrer dias de la quincena respetando alta/baja
+        let diasPresente = 0, diasNSP = 0, diasIncap = 0, domTrab = 0, ferTrab = 0;
+        let diasFueraRango = 0;
+        const projDays = {}; // { proj_short: dias_trabajados }
         for (let d = start; d <= end; d++) {
+          const dStr = `${per}-${String(d).padStart(2, "0")}`;
+          // Bloqueo por fechas de alta / baja
+          if ((emp.startDate && dStr < emp.startDate) || (emp.endDate && dStr > emp.endDate)) {
+            diasFueraRango++;
+            continue;
+          }
           const v = grid[`${emp.id}-${d}`] || "";
           const dt = new Date(y, m - 1, d);
           const esDomingo = dt.getDay() === 0;
-          if (v === "1") { diasPresente++; if (esDomingo) domTrab++; }
-          else if (v === "0") diasNSP++;
-          else if (v === "INC") diasIncap++;
+          const esFeriado = esFeriadoQuincena(per, d);
+          if (v === "1") {
+            diasPresente++;
+            if (esDomingo && !esFeriado) domTrab++;
+            if (esFeriado) ferTrab++;
+            // Asignar al proyecto del dia (override o base)
+            const ovr = projOvr[`${emp.id}-${d}`];
+            const projForDay = ovr ? resolveShort(ovr) : baseProj;
+            if (projForDay) projDays[projForDay] = (projDays[projForDay] || 0) + 1;
+          } else if (v === "0") {
+            diasNSP++;
+          } else if (v === "INC") {
+            diasIncap++;
+          }
         }
+
+        // Dias efectivos de la quincena (excluyendo dias fuera de rango por alta/baja)
+        const diasEfectivos = totalDays - diasFueraRango;
+
+        // Salario bruto prorrateado: solo paga los dias en rango
+        const sbProrated = +(sd * diasEfectivos).toFixed(2);
         const descuentoNSP = +(diasNSP * sd).toFixed(2);
         const bonoDomingo = +(domTrab * sd).toFixed(2);
+        // Politica Geotecnica: feriado trabajado = +2 dias adicionales sobre el salario base
+        const bonoFeriado = +(ferTrab * sd * 2).toFixed(2);
 
-        const so = +(sb / 2 - descuentoNSP).toFixed(2);
+        // Salario ordinario: bruto prorrateado menos descuento por NSP
+        const so = +(sbProrated - descuentoNSP).toFixed(2);
+
+        // Bonificacion quincenal: SIEMPRE bono_mensual / 2.
+        // Politica Geotecnica: las faltas (NSP) se descuentan del salario, no
+        // del bono. El bono no se prorratea por dias de asistencia.
         const bq = +(bn / 2).toFixed(2);
 
         let ihss = 0, rap = 0, isr = 0;
@@ -339,10 +393,42 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           ihss = 0;
         }
 
-        const cuad = cq.find(x => x.periodo === per && x.quincena === q);
-        const proj = cuad?.assignments?.[emp.id] || emp.project || "";
-
-        return { id: uid(), eid: emp.id, name: emp.fullName, pos: emp.position, ct: emp.contractType, proj, sb, bn, sd, so, bq, diasPresente, diasNSP, diasIncap, descuentoNSP, domTrab, bonoDomingo, o1: 0, o2: 0, isr, amdc: 0, ihss, rap, coop: is2Q ? cp : 0, aus: 0, otros: 0, gm, nota: "" };
+        return {
+          id: uid(),
+          eid: emp.id,
+          name: emp.fullName,
+          pos: emp.position,
+          ct: emp.contractType,
+          proj: baseProj,
+          projDays,            // Distribucion de dias por proyecto (overrides aplicados)
+          diasFueraRango,
+          diasEfectivos,
+          sb,
+          bn,
+          sd,
+          so,
+          bq,
+          diasPresente,
+          diasNSP,
+          diasIncap,
+          descuentoNSP,
+          domTrab,
+          bonoDomingo,
+          ferTrab,
+          bonoFeriado,
+          o1: 0,
+          o2: 0,
+          isr,
+          amdc: 0,
+          ihss,
+          rap,
+          coop: is2Q ? cp : 0,
+          aus: 0,
+          otros: 0,
+          gm,
+          nota: "",
+          payrollVersion: 2,
+        };
       }));
       setGen(true);
     };
@@ -350,21 +436,38 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const ul = (id, k, v) => setLines(ls => ls.map(l => l.id === id ? { ...l, [k]: v } : l));
     const calc = l => {
       const bd = +(l.bonoDomingo || 0);
-      const tOtros = +l.bq + +l.o1 + +l.o2 + bd;
+      const bf = +(l.bonoFeriado || 0);
+      const tOtros = +l.bq + +l.o1 + +l.o2 + bd + bf;
       const tDed = +l.isr + +l.amdc + +l.ihss + +l.rap + +l.coop + +l.aus + +l.otros;
-      return { tOtros: +tOtros.toFixed(2), tDed: +tDed.toFixed(2), neto: +(l.so + tOtros - tDed).toFixed(2), bonoDomingo: bd };
+      return { tOtros: +tOtros.toFixed(2), tDed: +tDed.toFixed(2), neto: +(l.so + tOtros - tDed).toFixed(2), bonoDomingo: bd, bonoFeriado: bf };
     };
     const totalNeto = lines.reduce((s, l) => s + calc(l).neto, 0);
     const permLines = lines.filter(l => l.ct === "permanent");
     const tempLines = lines.filter(l => l.ct === "temporary");
     const honLines = lines.filter(l => l.ct === "honorarios");
 
+    // Distribucion de costos por proyecto — usa projDays (dias trabajados por
+    // proyecto, considerando overrides). Si la linea no tiene projDays
+    // (planillas viejas pre-versionado), cae al proyecto base.
     const projCosts = {};
     lines.forEach(l => {
-      const p = l.proj || "SIN ASIGNAR";
-      if (!projCosts[p]) projCosts[p] = { neto: 0, count: 0 };
-      projCosts[p].neto += calc(l).neto;
-      projCosts[p].count++;
+      const c = calc(l);
+      const projDays = l.projDays || {};
+      const totalDaysWorked = Object.values(projDays).reduce((s, d) => s + d, 0);
+      if (totalDaysWorked > 0) {
+        Object.entries(projDays).forEach(([p, days]) => {
+          const share = (c.neto * days) / totalDaysWorked;
+          if (!projCosts[p]) projCosts[p] = { neto: 0, count: 0 };
+          projCosts[p].neto += share;
+          projCosts[p].count++;
+        });
+      } else {
+        // Fallback: si no hay distribucion por dia (planilla vieja o sin asistencia)
+        const p = l.proj || "SIN ASIGNAR";
+        if (!projCosts[p]) projCosts[p] = { neto: 0, count: 0 };
+        projCosts[p].neto += c.neto;
+        projCosts[p].count++;
+      }
     });
 
     const hasAttendance = ca.some(a => a.periodo === per && a.quincena === q);
@@ -372,8 +475,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const renderTable = (rows, label, color) => {
       if (rows.length === 0) return null;
       const subtotal = rows.reduce((s, l) => s + calc(l).neto, 0);
-      const sums = { sb: 0, sd: 0, dias: 0, nsp: 0, dNSP: 0, so: 0, dom: 0, bdom: 0, bq: 0, oi: 0, isr: 0, ihss: 0, rap: 0, coop: 0, otros: 0, tDed: 0, neto: 0 };
-      rows.forEach(l => { const c = calc(l); sums.sb += l.sb; sums.so += l.so; sums.dom += (l.domTrab || 0); sums.bdom += (l.bonoDomingo || 0); sums.bq += l.bq; sums.oi += l.o1 + l.o2; sums.dias += l.diasPresente; sums.nsp += l.diasNSP; sums.dNSP += l.descuentoNSP; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
+      const sums = { sb: 0, sd: 0, dias: 0, nsp: 0, dNSP: 0, so: 0, dom: 0, bdom: 0, fer: 0, bfer: 0, bq: 0, oi: 0, isr: 0, ihss: 0, rap: 0, coop: 0, otros: 0, tDed: 0, neto: 0 };
+      rows.forEach(l => { const c = calc(l); sums.sb += l.sb; sums.so += l.so; sums.dom += (l.domTrab || 0); sums.bdom += (l.bonoDomingo || 0); sums.fer += (l.ferTrab || 0); sums.bfer += (l.bonoFeriado || 0); sums.bq += l.bq; sums.oi += l.o1 + l.o2; sums.dias += l.diasPresente; sums.nsp += l.diasNSP; sums.dNSP += l.descuentoNSP; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
       return <div style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden" }}>
         <div style={{ background: color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between" }}>
           <span>{label} ({rows.length})</span><span>Subtotal: {fmtL(subtotal)}</span>
@@ -384,7 +487,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <th style={TH}>#</th><th style={{ ...TH, minWidth: 150 }}>Nombre</th><th style={TH}>Proy.</th>
               <th style={TH}>Sal.Bruto</th><th style={TH}>Sal.Diario</th>
               <th style={TH}>Dias</th><th style={{ ...TH, color: "#DC2626" }}>NSP</th><th style={TH}>Desc.NSP</th>
-              <th style={TH}>Sal.Ord.</th><th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>DOM</th><th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>Bono Dom.</th>
+              <th style={TH}>Sal.Ord.</th>
+              <th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>DOM</th><th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>Bono Dom.</th>
+              <th style={{ ...TH, color: "#9A3412", background: "#FED7AA" }}>FER</th><th style={{ ...TH, color: "#9A3412", background: "#FED7AA" }}>Bono Fer.</th>
               <th style={TH}>Bonif.Q</th><th style={TH}>Otros Ing.</th>
               {is2Q && <><th style={TH}>ISR</th><th style={TH}>IHSS</th><th style={TH}>RAP</th><th style={TH}>Coop.</th></>}
               <th style={TH}>Otros Ded.</th><th style={TH}>Tot.Ded</th><th style={{ ...TH, background: "#ECFDF5" }}>Neto</th><th style={TH}>Notas</th>
@@ -401,6 +506,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <td style={TD}>{fmtL(l.so)}</td>
               <td style={{ ...TD, color: "#7C3AED", fontWeight: 700, background: (l.domTrab || 0) > 0 ? "#F3E8FF" : "transparent" }}>{l.domTrab || ""}</td>
               <td style={{ ...TD, color: "#7C3AED", fontWeight: 600 }}>{(l.bonoDomingo || 0) > 0 ? fmtL(l.bonoDomingo) : ""}</td>
+              <td style={{ ...TD, color: "#9A3412", fontWeight: 700, background: (l.ferTrab || 0) > 0 ? "#FED7AA" : "transparent" }}>{l.ferTrab || ""}</td>
+              <td style={{ ...TD, color: "#9A3412", fontWeight: 600 }}>{(l.bonoFeriado || 0) > 0 ? fmtL(l.bonoFeriado) : ""}</td>
               <td style={TD}><input type="number" value={l.bq} onChange={e => ul(l.id, "bq", +e.target.value)} style={INP} /></td>
               <td style={TD}><input type="number" value={l.o1} onChange={e => ul(l.id, "o1", +e.target.value)} style={INP} /></td>
               {is2Q && <>
@@ -423,6 +530,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.so)}</td>
               <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.dom || ""}</td>
               <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.bdom > 0 ? fmtL(sums.bdom) : ""}</td>
+              <td style={{ padding: "8px 10px", color: "#9A3412" }}>{sums.fer || ""}</td>
+              <td style={{ padding: "8px 10px", color: "#9A3412" }}>{sums.bfer > 0 ? fmtL(sums.bfer) : ""}</td>
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.bq)}</td>
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.oi)}</td>
               {is2Q && <>
@@ -575,18 +684,40 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       const days = [];
       for (let d = start; d <= end; d++) {
         const dt = new Date(y, m - 1, d);
-        days.push({ day: d, dow: DAYS_ES[dt.getDay()], isSun: dt.getDay() === 0, isSat: dt.getDay() === 6 });
+        const isHoliday = esFeriadoQuincena(sheet.periodo, d);
+        days.push({
+          day: d,
+          dow: DAYS_ES[dt.getDay()],
+          isSun: dt.getDay() === 0,
+          isSat: dt.getDay() === 6,
+          isHoliday,
+          holidayName: isHoliday ? nombreFeriado(y, m - 1, d) : null,
+          dt,
+        });
       }
       return days;
     };
     const days = getDays();
     const assignments = sheet.assignments || {};
-    const projGroups = PROJECTS.filter(p => ae.some(e => assignments[e.id] === p.short));
+    const projGroups = PROJECTS.filter(p => ae.some(e => (assignments[e.id] === p.short) || resolveShort(assignments[e.id]) === p.short));
+
+    // Determina si un dia esta bloqueado para un empleado segun su fecha de
+    // alta (startDate) o baja (endDate). Devuelve la razon si esta bloqueado.
+    const dayLockReason = (e, dayObj) => {
+      const dStr = `${sheet.periodo}-${String(dayObj.day).padStart(2, "0")}`;
+      if (e.startDate && dStr < e.startDate) return "Antes del alta";
+      if (e.endDate && dStr > e.endDate) return "Después de la baja";
+      return null;
+    };
 
     const cellKey = (eid, day) => `${eid}-${day}`;
     const getVal = (eid, day) => data[cellKey(eid, day)] || "";
     const getProj = (eid, day) => overrides[cellKey(eid, day)] || null;
     const cycle = (eid, day) => {
+      // No permitir editar dias bloqueados por alta/baja
+      const emp = ae.find((x) => x.id === eid);
+      const dayObj = days.find((d) => d.day === day);
+      if (emp && dayObj && dayLockReason(emp, dayObj)) return;
       const k = cellKey(eid, day);
       const cur = data[k] || "";
       const next = cur === "" ? "1" : cur === "1" ? "0" : cur === "0" ? "INC" : "";
@@ -607,21 +738,63 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const cellFontColor = v => v === "1" ? "#166534" : v === "0" ? "#991B1B" : v === "INC" ? "#92400E" : "#CBD5E1";
 
     const empStats = (eid) => {
-      let present = 0, absent = 0, incap = 0, domTrab = 0;
-      days.forEach(d => { const v = getVal(eid, d.day); if (v === "1") { present++; if (d.isSun) domTrab++; } else if (v === "0") absent++; else if (v === "INC") incap++; });
-      return { present, absent, incap, domTrab };
+      let present = 0, absent = 0, incap = 0, domTrab = 0, ferTrab = 0;
+      days.forEach(d => {
+        const v = getVal(eid, d.day);
+        if (v === "1") {
+          present++;
+          if (d.isSun && !d.isHoliday) domTrab++;
+          if (d.isHoliday) ferTrab++;
+        } else if (v === "0") absent++;
+        else if (v === "INC") incap++;
+      });
+      return { present, absent, incap, domTrab, ferTrab };
     };
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 12, fontSize: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
         <span style={{ color: "#1E40AF", fontWeight: 600, fontSize: 14 }}>Asistencia {sheet.quincena} {sheet.periodo} — {cc.name}</span>
-        <span>
-          <span style={{ background: "#DCFCE7", padding: "2px 8px", borderRadius: 4, marginRight: 4 }}>1 = Presente</span>
-          <span style={{ background: "#FEE2E2", padding: "2px 8px", borderRadius: 4, marginRight: 4 }}>0 = NSP</span>
-          <span style={{ background: "#FEF9C3", padding: "2px 8px", borderRadius: 4, marginRight: 4 }}>I = Incapacidad</span>
-          <span style={{ background: "#DBEAFE", padding: "2px 8px", borderRadius: 4, marginRight: 4 }}>1* = Otro proyecto</span>
-          <span style={{ background: "#F3E8FF", padding: "2px 8px", borderRadius: 4, color: "#7C3AED" }}>D = Domingo (+dia)</span>
+        <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          <span style={{ background: "#DCFCE7", padding: "2px 8px", borderRadius: 4 }}>1 = Presente</span>
+          <span style={{ background: "#FEE2E2", padding: "2px 8px", borderRadius: 4 }}>0 = NSP</span>
+          <span style={{ background: "#FEF9C3", padding: "2px 8px", borderRadius: 4 }}>I = Incapacidad</span>
+          <span style={{ background: "#DBEAFE", padding: "2px 8px", borderRadius: 4 }}>1* = Otro proyecto</span>
+          <span style={{ background: "#F3E8FF", padding: "2px 8px", borderRadius: 4, color: "#7C3AED" }}>D = Domingo (+día)</span>
+          <span style={{ background: "#FED7AA", padding: "2px 8px", borderRadius: 4, color: "#9A3412" }}>F = Feriado (+2 días)</span>
+          <span style={{ background: "#E5E7EB", padding: "2px 8px", borderRadius: 4, color: "#6B7280" }}>—  = Bloqueado (alta/baja)</span>
         </span>
+      </div>
+
+      {/* Resumen por proyecto — sin valores monetarios */}
+      <div style={{ background: "#FFFBF5", border: "1px solid #DBD4C8", borderRadius: 10, padding: "14px 16px" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#8B847C", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 8 }}>Resumen de la quincena</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+          {projGroups.map((proj) => {
+            const pEmps = ae.filter((e) => resolveShort(assignments[e.id]) === proj.short);
+            // Calcular dias trabajados totales en el proyecto (considerando overrides)
+            let totalDias = 0;
+            ae.forEach((e) => {
+              days.forEach((d) => {
+                const v = getVal(e.id, d.day);
+                if (v === "1") {
+                  const ovr = getProj(e.id, d.day);
+                  const projForDay = ovr || resolveShort(assignments[e.id]);
+                  if (projForDay === proj.short) totalDias++;
+                }
+              });
+            });
+            return (
+              <div key={proj.short} style={{ background: "#F8F2E6", padding: "10px 14px", borderRadius: 8, borderLeft: "3px solid #E8762D" }}>
+                <div style={{ fontWeight: 700, color: "#2C2A28", fontSize: 13 }}>{proj.short}</div>
+                <div style={{ fontSize: 11, color: "#5C5853", marginTop: 2 }}>{proj.name}</div>
+                <div style={{ marginTop: 8, display: "flex", gap: 16, fontSize: 12 }}>
+                  <span><strong style={{ color: "#E8762D" }}>{pEmps.length}</strong> personas</span>
+                  <span><strong style={{ color: "#2C5F5D" }}>{totalDias}</strong> días trabajados</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
       {projGroups.map(proj => {
         const pEmps = ae.filter(e => assignments[e.id] === proj.short);
@@ -642,11 +815,25 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead><tr style={{ background: "#F1F5F9" }}>
                 <th style={{ ...TH, position: "sticky", left: 0, background: "#F1F5F9", zIndex: 2, minWidth: 170 }}>Nombre</th>
-                {days.map(d => <th key={d.day} style={{ ...TH, textAlign: "center", minWidth: 32, background: d.isSun ? "#F3E8FF" : d.isSat ? "#FEF3C7" : "#F1F5F9" }}>
-                  <div style={{ fontSize: 10, color: "#94A3B8" }}>{d.dow}</div>{d.day}
-                </th>)}
+                {days.map(d => {
+                  const bg = d.isHoliday ? "#FED7AA" : d.isSun ? "#F3E8FF" : d.isSat ? "#FEF3C7" : "#F1F5F9";
+                  const labelColor = d.isHoliday ? "#9A3412" : "#94A3B8";
+                  return (
+                    <th
+                      key={d.day}
+                      title={d.isHoliday ? `Feriado: ${d.holidayName}` : ""}
+                      style={{ ...TH, textAlign: "center", minWidth: 32, background: bg }}
+                    >
+                      <div style={{ fontSize: 10, color: labelColor, fontWeight: d.isHoliday ? 700 : 600 }}>
+                        {d.isHoliday ? "F" : d.dow}
+                      </div>
+                      {d.day}
+                    </th>
+                  );
+                })}
                 <th style={{ ...TH, textAlign: "center", background: "#ECFDF5" }}>Dias</th>
                 <th style={{ ...TH, textAlign: "center", background: "#F3E8FF", color: "#7C3AED" }}>DOM</th>
+                <th style={{ ...TH, textAlign: "center", background: "#FED7AA", color: "#9A3412" }}>FER</th>
                 <th style={{ ...TH, textAlign: "center", background: "#FEE2E2" }}>NSP</th>
                 <th style={{ ...TH, textAlign: "center", background: "#FEF9C3" }}>INC</th>
               </tr></thead>
@@ -659,10 +846,22 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                     const val = getVal(e.id, d.day);
                     const ovr = getProj(e.id, d.day);
                     const isEditing = editingCell === k;
-                    return <td key={d.day} style={{ ...TD, textAlign: "center", cursor: "pointer", background: cellColor(val, ovr), color: cellFontColor(val), fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid #F1F5F9", position: "relative", fontSize: 11 }}
+                    const lockReason = dayLockReason(e, d);
+                    if (lockReason) {
+                      return (
+                        <td
+                          key={d.day}
+                          title={lockReason}
+                          style={{ ...TD, textAlign: "center", background: "#E5E7EB", color: "#9CA3AF", fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid #F1F5F9", fontSize: 11, cursor: "not-allowed" }}
+                        >
+                          —
+                        </td>
+                      );
+                    }
+                    return <td key={d.day} style={{ ...TD, textAlign: "center", cursor: "pointer", background: d.isHoliday && val === "1" ? "#FED7AA" : cellColor(val, ovr), color: d.isHoliday && val === "1" ? "#9A3412" : cellFontColor(val), fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid #F1F5F9", position: "relative", fontSize: 11 }}
                       onClick={() => cycle(e.id, d.day)}
                       onContextMenu={(ev) => { ev.preventDefault(); setEditingCell(isEditing ? null : k); }}
-                      title={ovr ? `Reasignado a ${ovr}. Click derecho para cambiar.` : "Click derecho para reasignar proyecto"}>
+                      title={d.isHoliday ? `${d.holidayName}${val === "1" ? " · trabajado +2 días" : ""}` : ovr ? `Reasignado a ${ovr}. Click derecho para cambiar.` : "Click derecho para reasignar proyecto"}>
                       {cellText(val, ovr) || <span style={{ color: "#E2E8F0" }}>·</span>}
                       {ovr && <div style={{ fontSize: 7, color: "#2563EB", lineHeight: 1 }}>{ovr}</div>}
                       {isEditing && <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 6, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 140 }} onClick={ev => ev.stopPropagation()}>
@@ -676,6 +875,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                   })}
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: "#ECFDF5", color: "#059669" }}>{st.present}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.domTrab > 0 ? "#F3E8FF" : "transparent", color: "#7C3AED" }}>{st.domTrab || ""}</td>
+                  <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.ferTrab > 0 ? "#FED7AA" : "transparent", color: "#9A3412" }}>{st.ferTrab || ""}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.absent > 0 ? "#FEE2E2" : "transparent", color: "#DC2626" }}>{st.absent || ""}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.incap > 0 ? "#FEF9C3" : "transparent", color: "#92400E" }}>{st.incap || ""}</td>
                 </tr>;
@@ -833,6 +1033,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.so)}</td>
               <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.dom || ""}</td>
               <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.bdom > 0 ? fmtL(sums.bdom) : ""}</td>
+              <td style={{ padding: "8px 10px", color: "#9A3412" }}>{sums.fer || ""}</td>
+              <td style={{ padding: "8px 10px", color: "#9A3412" }}>{sums.bfer > 0 ? fmtL(sums.bfer) : ""}</td>
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.bq)}</td>
               <td style={{ padding: "8px 10px" }}>{fmtL(sums.oi)}</td>
               {is2Q && <><td style={{ padding: "8px 10px" }}>{fmtL(sums.isr)}</td><td style={{ padding: "8px 10px" }}>{fmtL(sums.ihss)}</td><td style={{ padding: "8px 10px" }}>{fmtL(sums.rap)}</td><td style={{ padding: "8px 10px" }}>{fmtL(sums.coop)}</td></>}
