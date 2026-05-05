@@ -334,25 +334,28 @@ function LoginScreen({ onLogin }) {
         </div>
 
         {/* Center — tagline */}
-        <div style={{ position: "relative", zIndex: 1, maxWidth: 440 }}>
+        <div style={{ position: "relative", zIndex: 1, maxWidth: 460 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.orange, letterSpacing: 3, marginBottom: 18, textTransform: "uppercase" }}>
-            Sistema de Operaciones
+            Sistema interno de operaciones
           </div>
           <h1
             style={{
               fontFamily: FONT.display,
-              fontSize: 44,
+              fontSize: 36,
               fontWeight: 800,
               color: BRAND.charcoal,
-              lineHeight: 1.1,
-              letterSpacing: -1,
-              marginBottom: 18,
+              lineHeight: 1.15,
+              letterSpacing: -0.6,
+              marginBottom: 20,
             }}
           >
-            Pilotamos lo que <span style={{ color: BRAND.orange }}>sostiene</span>.
+            Plataforma de operaciones de <span style={{ color: BRAND.orange }}>Geotecnica Soluciones</span>.
           </h1>
-          <p style={{ fontSize: 16, color: BRAND.graphite, lineHeight: 1.6, fontWeight: 400 }}>
-            Plataforma operativa unificada para la gestión de proyectos, recursos humanos, compras y capacidad de Geotecnica Soluciones.
+          <p style={{ fontSize: 15.5, color: BRAND.graphite, lineHeight: 1.65, fontWeight: 400, marginBottom: 14 }}>
+            Sostiene los proyectos con la cadena de suministro, los recursos humanos y las compras de la empresa.
+          </p>
+          <p style={{ fontSize: 16, color: BRAND.charcoal, lineHeight: 1.5, fontWeight: 700, fontFamily: FONT.display, letterSpacing: -0.2 }}>
+            Hacemos que los proyectos sean ejecutables.
           </p>
         </div>
 
