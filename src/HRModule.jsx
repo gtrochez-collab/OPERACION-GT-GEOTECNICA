@@ -237,16 +237,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [movs, setMovs] = useState([]);
   const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
   const [contracts, setContracts] = useState([]);
+  const [bonifs, setBonifs] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
   const [sb, setSb] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const [e, v, l, a, c, p, cq2, mv, ct] = await Promise.all([
+      const [e, v, l, a, c, p, cq2, mv, ct, bn] = await Promise.all([
         store.get("hr-emps5"), store.get("hr-vacs"), store.get("hr-lvs"),
         store.get("hr-atts2"), store.get("hr-cons"), store.get("hr-pays"), store.get("hr-cuad"),
-        store.get("hr-movs"), store.get("hr-contracts"),
+        store.get("hr-movs"), store.get("hr-contracts"), store.get("hr-bonuses"),
       ]);
       if (!e || e.length === 0) {
         const s = [];
@@ -254,7 +255,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         SEED_GEO.forEach(x => s.push({ id: uid(), company: "geotecnica", fullName: x.n, dni: x.d, position: x.p, department: "Operaciones", contractType: x.ct, startDate: x.sd, endDate: x.ed || "", salary: x.s, bonificacion: x.b, cooperativa: x.coop || 0, gastosMedicos: x.gm || 40000, status: "active", phone: "", email: "" }));
         setEmps(s); store.set("hr-emps5", s);
       } else setEmps(e);
-      if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2); if (mv) setMovs(mv); if (ct) setContracts(ct);
+      if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2); if (mv) setMovs(mv); if (ct) setContracts(ct); if (bn) setBonifs(bn);
       setLoaded(true);
     })();
   }, []);
@@ -268,6 +269,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const sCq = d => { setCuadrillas(d); store.set("hr-cuad", d); };
   const sM = d => { setMovs(d); store.set("hr-movs", d); };
   const sCt = d => { setContracts(d); store.set("hr-contracts", d); };
+  const sBn = d => { setBonifs(d); store.set("hr-bonuses", d); };
 
   const ce = emps.filter(e => e.company === co);
   const ae = ce.filter(e => e.status === "active");
@@ -279,6 +281,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const cp = pays.filter(p => p.company === co);
   const cmov = movs.filter(m => m.company === co);
   const cct = contracts.filter(x => x.company === co);
+  const cbn = bonifs.filter(b => ce.some(e => e.id === b.employeeId));
   const en = id => emps.find(e => e.id === id)?.fullName || "—";
   const cc = COMPANIES[co];
 
@@ -286,6 +289,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     { id: "dashboard", icon: "📊", label: "Dashboard" },
     { id: "employees", icon: "👥", label: "Empleados" },
     { id: "contracts", icon: "📝", label: "Contratos" },
+    { id: "bonuses", icon: "🎁", label: "Bonificaciones" },
     { id: "payroll", icon: "💰", label: "Planilla" },
     { id: "vacations", icon: "🏖️", label: "Vacaciones" },
     { id: "leaves", icon: "📋", label: "Permisos" },
@@ -436,10 +440,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         // Salario ordinario: bruto prorrateado menos descuento por NSP
         const so = +(sbProrated - descuentoNSP).toFixed(2);
 
-        // Bonificacion quincenal: SIEMPRE bono_mensual / 2.
-        // Politica Geotecnica: las faltas (NSP) se descuentan del salario, no
-        // del bono. El bono no se prorratea por dias de asistencia.
-        const bq = +(bn / 2).toFixed(2);
+        // Bonificacion quincenal: SIEMPRE bono_mensual_total / 2.
+        // El bono mensual total = bono base del empleado + bonos extra activos
+        // en el periodo (modulo Bonificaciones). Politica Geotecnica: las faltas
+        // (NSP) se descuentan del salario, no del bono.
+        const bonosExtraMensual = monthlyBonusFor(emp.id, periodStart, periodEnd);
+        const bonoMensualTotal = bn + bonosExtraMensual;
+        const bq = +(bonoMensualTotal / 2).toFixed(2);
 
         let ihss = 0, rap = 0, isr = 0;
         if (is2Q && !isHon) {
@@ -1778,6 +1785,24 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
+  // ── Bonificaciones: helpers ──
+  // Devuelve el monto MENSUAL total de bonos activos para un empleado en
+  // un periodo dado. Politica Geotecnica: si el bono esta activo al menos
+  // un dia dentro de la quincena, se paga completo (no se prorratea).
+  // El monto retornado es MENSUAL, la planilla lo divide /2 igual que el
+  // bono base del empleado.
+  const monthlyBonusFor = (employeeId, periodStart, periodEnd) => {
+    return bonifs
+      .filter((b) => b.employeeId === employeeId && b.status === "active")
+      .filter((b) => {
+        // Activo al menos un dia en el rango del periodo
+        if (b.startDate && b.startDate > periodEnd) return false;
+        if (b.endDate && b.endDate < periodStart) return false;
+        return true;
+      })
+      .reduce((sum, b) => sum + (Number(b.amount) || 0), 0);
+  };
+
   // ── Aplicar Snapshot Subterra Mayo 2026 (idempotente) ──
   const applySubterraSnapshot = () => {
     const cleanDni = (s) => String(s || "").replace(/[^\d-]/g, "");
@@ -2090,7 +2115,188 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
-  const renderSec = () => { switch (sec) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); default: return renderDashboard(); } };
+  // ── BONIFICACIONES ──
+  const BonusForm = ({ bonus, presetEmpId }) => {
+    const [f, setF] = useState(bonus || {
+      employeeId: presetEmpId || "",
+      description: "",
+      amount: "",
+      startDate: new Date().toISOString().slice(0, 10),
+      hasEndDate: false,
+      endDate: "",
+    });
+    const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const emp = ce.find(x => x.id === f.employeeId);
+    return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ gridColumn: "1/-1", background: "#FFFBF5", border: "1px solid #DBD4C8", borderRadius: 10, padding: 12, fontSize: 13, color: "#5C5853" }}>
+        <strong>Política Geotecnica:</strong> los bonos son <b>mensuales</b>. Se paga <b>la mitad cada quincena</b> mientras esté activo. Si dejás vacía la fecha de fin, el bono es <b>indefinido</b> hasta que lo bajes.
+      </div>
+      <div style={{ gridColumn: "1/-1" }}>
+        <Select label="Empleado" options={ce.map(e => ({ value: e.id, label: `${e.fullName} — ${e.position}` }))} value={f.employeeId} onChange={e => u("employeeId", e.target.value)} />
+      </div>
+      <div style={{ gridColumn: "1/-1" }}>
+        <Input label="Descripción del bono" value={f.description} onChange={e => u("description", e.target.value)} placeholder="ej: Bono por productividad, Bono antigüedad, Bono mes de mayo..." />
+      </div>
+      <Input label="Monto mensual (L)" type="number" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="ej: 1500" />
+      <Input label="Fecha de inicio" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
+      <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8, padding: "10px 12px", background: "#F8F2E6", borderRadius: 10, border: "1px solid #DBD4C8" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#2C2A28" }}>
+          <input type="checkbox" checked={f.hasEndDate} onChange={e => u("hasEndDate", e.target.checked)} style={{ width: 16, height: 16, accentColor: "#E8762D", cursor: "pointer" }} />
+          Bono con fecha de fin (finito)
+        </label>
+        {f.hasEndDate ? (
+          <Input label="Fecha de fin (último día que aplica)" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />
+        ) : (
+          <div style={{ fontSize: 12, color: "#8B847C", fontStyle: "italic" }}>
+            Bono <b style={{ color: "#10B981" }}>indefinido</b> — se paga cada mes hasta que lo termines manualmente.
+          </div>
+        )}
+      </div>
+      {emp && f.amount && (
+        <div style={{ gridColumn: "1/-1", background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 10, padding: 10, fontSize: 13, color: "#065F46" }}>
+          Resumen: <b>{emp.fullName}</b> recibirá <b>{fmtL(Number(f.amount))}</b>/mes ({fmtL(Number(f.amount) / 2)} por quincena) {f.hasEndDate && f.endDate ? <>desde <b>{fmt(f.startDate)}</b> hasta <b>{fmt(f.endDate)}</b></> : <>desde <b>{fmt(f.startDate)}</b> · <b>indefinido</b></>}.
+        </div>
+      )}
+      <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+        <Btn variant="success" onClick={() => {
+          if (!f.employeeId || !f.description || !f.amount || !f.startDate) return alert("Complete empleado, descripción, monto y fecha de inicio");
+          if (f.hasEndDate && !f.endDate) return alert("Indique la fecha de fin del bono o desmarque la opción");
+          if (f.hasEndDate && f.endDate < f.startDate) return alert("La fecha de fin debe ser posterior a la fecha de inicio");
+          const newB = {
+            id: bonus?.id || uid(),
+            employeeId: f.employeeId,
+            description: f.description,
+            amount: Number(f.amount),
+            startDate: f.startDate,
+            endDate: f.hasEndDate ? f.endDate : null,
+            status: "active",
+            createdAt: bonus?.createdAt || new Date().toISOString(),
+          };
+          if (bonus) sBn(bonifs.map(x => x.id === bonus.id ? newB : x));
+          else sBn([...bonifs, newB]);
+          setModal(null);
+        }}>{bonus ? "Guardar" : "Crear bono"}</Btn>
+      </div>
+    </div>;
+  };
+
+  const renderBonuses = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const activos = cbn.filter(b => b.status === "active");
+    const indefinidos = activos.filter(b => !b.endDate);
+    const finitos = activos.filter(b => b.endDate);
+    const venceEn30 = finitos.filter(b => b.endDate && daysUntil(b.endDate) !== null && daysUntil(b.endDate) <= 30 && daysUntil(b.endDate) >= 0);
+    const terminados = cbn.filter(b => b.status === "ended");
+
+    // Agrupar por empleado
+    const porEmp = {};
+    cbn.forEach(b => {
+      if (!porEmp[b.employeeId]) porEmp[b.employeeId] = [];
+      porEmp[b.employeeId].push(b);
+    });
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <span style={{ color: "#5C5853", fontSize: 13 }}>
+          {activos.length} bonos activos · {indefinidos.length} indefinidos · {finitos.length} finitos · {terminados.length} terminados
+        </span>
+        <Btn onClick={() => setModal({ t: "bnn" })}>+ Nueva bonificación</Btn>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+        <AlertCard color="#10B981" icon="♾️" label="Bonos indefinidos" value={indefinidos.length} />
+        <AlertCard color="#F59E0B" icon="⏳" label="Vencen este mes" value={venceEn30.length} />
+        <AlertCard color="#7C3AED" icon="📅" label="Bonos finitos activos" value={finitos.length} />
+        <AlertCard color="#94A3B8" icon="📦" label="Terminados (histórico)" value={terminados.length} />
+      </div>
+
+      <div style={{ background: "#FFFBF5", border: "1px solid #DBD4C8", borderRadius: 10, padding: "12px 16px", fontSize: 12.5, color: "#5C5853" }}>
+        <strong>💡 Cómo funciona:</strong> los bonos extra que agregues acá <b>se suman</b> a la bonificación base que cada empleado tiene en su ficha. La planilla los integra automáticamente — la mitad en 1Q y la otra mitad en 2Q. Los bonos viejos (que ya están en la ficha de cada empleado) siguen funcionando igual; este módulo es para agregar <b>bonos nuevos</b>.
+      </div>
+
+      {Object.keys(porEmp).length === 0 && (
+        <div style={{ background: "#fff", border: "1px dashed #DBD4C8", borderRadius: 12, padding: 32, textAlign: "center", color: "#8B847C" }}>
+          <div style={{ fontSize: 36, marginBottom: 10 }}>🎁</div>
+          <div style={{ fontWeight: 600, color: "#2C2A28", marginBottom: 6 }}>Sin bonos extra registrados</div>
+          <div style={{ fontSize: 13 }}>Las bonificaciones base ya configuradas en cada empleado siguen funcionando. Acá agregás bonos nuevos.</div>
+        </div>
+      )}
+
+      {Object.entries(porEmp)
+        .sort(([a], [b]) => (en(a) || "").localeCompare(en(b) || ""))
+        .map(([empId, lista]) => {
+          const emp = ce.find(x => x.id === empId);
+          if (!emp) return null;
+          const code = genEmpCode(emp.fullName, emp.dni);
+          const baseEmp = Number(emp.bonificacion) || 0;
+          const extraActivo = lista.filter(b => b.status === "active").reduce((s, b) => s + (Number(b.amount) || 0), 0);
+          const totalMensual = baseEmp + extraActivo;
+          return (
+            <div key={empId} style={{ background: "#fff", border: "1px solid #DBD4C8", borderRadius: 12, padding: "14px 18px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#2C2A28" }}>
+                    {emp.fullName} <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 10, fontWeight: 700, color: "#E8762D", marginLeft: 6 }}>{code}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#8B847C", marginTop: 2 }}>
+                    Bono base ficha: <b>{fmtL(baseEmp)}</b>/mes · Bonos extra: <b>{fmtL(extraActivo)}</b>/mes ·
+                    <span style={{ color: "#E8762D", fontWeight: 700 }}> Total: {fmtL(totalMensual)}/mes</span> ({fmtL(totalMensual / 2)}/quincena)
+                  </div>
+                </div>
+                <Btn small onClick={() => setModal({ t: "bnn", presetEmpId: empId })}>+ Agregar bono</Btn>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {lista
+                  .sort((a, b) => (a.startDate || "").localeCompare(b.startDate || ""))
+                  .map(b => {
+                    const isActive = b.status === "active";
+                    const diasParaFin = b.endDate ? daysUntil(b.endDate) : null;
+                    const finVencido = diasParaFin !== null && diasParaFin < 0;
+                    return (
+                      <div key={b.id} style={{ background: isActive ? (finVencido ? "#FEF3C7" : "#F8F2E6") : "#F1F5F9", borderLeft: `3px solid ${!isActive ? "#94A3B8" : finVencido ? "#F59E0B" : b.endDate ? "#7C3AED" : "#10B981"}`, borderRadius: 8, padding: "10px 14px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 700, color: "#2C2A28", fontSize: 13 }}>{b.description}</div>
+                            <div style={{ fontSize: 11, color: "#5C5853", marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                              <span><strong>{fmtL(b.amount)}</strong>/mes ({fmtL(b.amount / 2)}/quincena)</span>
+                              <span><strong>Inicio:</strong> {fmt(b.startDate)}</span>
+                              {b.endDate ? (
+                                <span><strong>Fin:</strong> {fmt(b.endDate)}</span>
+                              ) : (
+                                <Badge color="#10B981">♾️ Indefinido</Badge>
+                              )}
+                              {!isActive && <Badge color="#94A3B8">Terminado {b.endedDate ? fmt(b.endedDate) : ""}</Badge>}
+                              {isActive && b.endDate && diasParaFin !== null && (
+                                <Badge color={diasParaFin < 0 ? "#DC2626" : diasParaFin <= 7 ? "#DC2626" : diasParaFin <= 30 ? "#F59E0B" : "#10B981"}>
+                                  {diasParaFin < 0 ? `Venció hace ${-diasParaFin}d` : diasParaFin === 0 ? "Vence hoy" : `Vence en ${diasParaFin}d`}
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          {isActive && (
+                            <div style={{ display: "flex", gap: 4 }}>
+                              <Btn small variant="ghost" onClick={() => setModal({ t: "bne", d: b })}>Editar</Btn>
+                              <Btn small variant="danger" onClick={() => {
+                                const reason = prompt(`Terminar bono "${b.description}"?\nMotivo (opcional):`, "");
+                                if (reason === null) return;
+                                sBn(bonifs.map(x => x.id === b.id ? { ...x, status: "ended", endedDate: today, endedReason: reason } : x));
+                              }}>Terminar</Btn>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          );
+        })}
+    </div>;
+  };
+
+  const renderSec = () => { switch (sec) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); default: return renderDashboard(); } };
 
   const renderModal = () => { if (!modal) return null; const m = modal; switch (m.t) {
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;
@@ -2111,6 +2317,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     case "cte": return <Modal title="Editar contrato" onClose={() => setModal(null)} wide><ContractForm contract={m.d} onSave={() => {}} /></Modal>;
     case "ctr": return <Modal title="Renovar contrato" onClose={() => setModal(null)} wide><ContractForm parent={m.d} onSave={() => {}} /></Modal>;
     case "ctl": return <Modal title="Liquidar contrato" onClose={() => setModal(null)} wide><LiquidarForm contract={m.d} /></Modal>;
+    case "bnn": return <Modal title="Nueva bonificación" onClose={() => setModal(null)} wide><BonusForm presetEmpId={m.presetEmpId} /></Modal>;
+    case "bne": return <Modal title="Editar bonificación" onClose={() => setModal(null)} wide><BonusForm bonus={m.d} /></Modal>;
     default: return null;
   }};
 
