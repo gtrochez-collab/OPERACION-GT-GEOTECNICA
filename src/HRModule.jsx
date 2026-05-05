@@ -57,6 +57,28 @@ const getQuincena = (dateStr) => {
   return { periodo, quincena };
 };
 
+// ── Codigo de empleado ──
+// Genera codigo: [1ra letra del nombre][1ra letra del 1er apellido][ultimos 5 digitos del DNI]
+// Ej: David Hazar Mavet Cruz Valladares · 0801-2003-00715 → DC00715
+//     Marlen Liliana Ramos · 0816-1990-00288 → MR00288
+//     Daniel Alexander Lopez Servellon · 0801-1995-12345 → DL12345
+const genEmpCode = (fullName, dni) => {
+  if (!fullName || !dni) return "";
+  const parts = String(fullName).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "";
+  const firstInitial = (parts[0][0] || "").toUpperCase();
+  // Heuristica para identificar el primer apellido en nombres hispanos:
+  //   1 palabra: usa la misma letra
+  //   2 palabras: la 2da palabra es el apellido
+  //   3 palabras: la 3ra palabra (asume "nombre nombre apellido")
+  //   4+ palabras: la antepenultima (asume "nombre [nombre] apellido apellido")
+  const surnameIdx = parts.length <= 3 ? parts.length - 1 : parts.length - 2;
+  const surnameInitial = (parts[surnameIdx][0] || "").toUpperCase();
+  const cleanDni = String(dni).replace(/[^\d]/g, "");
+  const last5 = cleanDni.slice(-5).padStart(5, "0");
+  return `${firstInitial}${surnameInitial}${last5}`;
+};
+
 // ── Deduction Calculators ──
 const calcRAP = (salarioBruto) => Math.max(0, +(((salarioBruto - 11903.13) * 0.015).toFixed(2)));
 const calcISR = (salarioBrutoMensual, bonifMensual, rapMensual, gastosMedicos = 40000) => {
@@ -496,7 +518,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             </tr></thead>
             <tbody>{rows.map((l, i) => { const c = calc(l); return <tr key={l.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
               <td style={TD}>{i + 1}</td>
-              <td style={{ ...TD, fontWeight: 600 }}>{l.name}</td>
+              <td style={{ ...TD, fontWeight: 600 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span>{l.name}</span>
+                  {(() => { const emp = ae.find(x => x.id === l.eid) || ce.find(x => x.id === l.eid); return emp ? <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 9, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5 }}>{genEmpCode(emp.fullName, emp.dni)}</span> : null; })()}
+                </div>
+              </td>
               <td style={TD}><Badge color={cc.color}>{l.proj || "—"}</Badge></td>
               <td style={TD}>{fmtL(l.sb)}</td>
               <td style={TD}>{fmtL(l.sd)}</td>
@@ -840,7 +867,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <tbody>{pEmps.map(e => {
                 const st = empStats(e.id);
                 return <tr key={e.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
-                  <td style={{ ...TD, position: "sticky", left: 0, background: "#fff", zIndex: 1, fontWeight: 600, fontSize: 11 }}>{e.fullName}</td>
+                  <td style={{ ...TD, position: "sticky", left: 0, background: "#fff", zIndex: 1, fontWeight: 600, fontSize: 11 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <span>{e.fullName}</span>
+                      <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 9, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5 }}>{genEmpCode(e.fullName, e.dni)}</span>
+                    </div>
+                  </td>
                   {days.map(d => {
                     const k = cellKey(e.id, d.day);
                     const val = getVal(e.id, d.day);
@@ -886,6 +918,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       })}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
         <Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>
+        <Btn variant="info" onClick={() => exportAttendancePDF()}>📄 Exportar PDF</Btn>
         <Btn variant="success" onClick={() => {
           const record = { ...sheet, grid: data, projOverrides: overrides, lastSaved: new Date().toISOString() };
           const existing = atts.findIndex(a => a.id === sheet.id);
@@ -895,6 +928,153 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         }}>Guardar asistencia</Btn>
       </div>
     </div>;
+
+    function exportAttendancePDF() {
+      const w = window.open("", "_blank");
+      if (!w) { alert("Permite popups para imprimir"); return; }
+
+      // Construir resumen por proyecto
+      const summary = projGroups.map((proj) => {
+        const pEmps = ae.filter((e) => resolveShort(assignments[e.id]) === proj.short);
+        let totalDias = 0;
+        let totalDom = 0, totalFer = 0, totalNSP = 0, totalINC = 0;
+        ae.forEach((e) => {
+          days.forEach((d) => {
+            const v = getVal(e.id, d.day);
+            if (v === "1") {
+              const ovr = getProj(e.id, d.day);
+              const projForDay = ovr || resolveShort(assignments[e.id]);
+              if (projForDay === proj.short) {
+                totalDias++;
+                if (resolveShort(assignments[e.id]) === proj.short) {
+                  if (d.isSun && !d.isHoliday) totalDom++;
+                  if (d.isHoliday) totalFer++;
+                }
+              }
+            } else if (v === "0" && resolveShort(assignments[e.id]) === proj.short) totalNSP++;
+            else if (v === "INC" && resolveShort(assignments[e.id]) === proj.short) totalINC++;
+          });
+        });
+        return { proj, pEmps, totalDias, totalDom, totalFer, totalNSP, totalINC };
+      });
+
+      const dayHeaderHtml = days
+        .map((d) => {
+          const bg = d.isHoliday ? "#FED7AA" : d.isSun ? "#F3E8FF" : d.isSat ? "#FEF3C7" : "#F1F5F9";
+          const labelColor = d.isHoliday ? "#9A3412" : "#64748b";
+          return `<th style="background:${bg};text-align:center;font-size:8px;padding:3px 2px;border:1px solid #E2E8F0">
+            <div style="color:${labelColor};font-weight:${d.isHoliday ? 700 : 600};font-size:7px">${d.isHoliday ? "F" : d.dow}</div>
+            <div>${d.day}</div>
+          </th>`;
+        })
+        .join("");
+
+      const projTablesHtml = projGroups
+        .map((proj) => {
+          const pEmps = ae.filter((e) => resolveShort(assignments[e.id]) === proj.short);
+          if (pEmps.length === 0) return "";
+          const rows = pEmps
+            .map((e) => {
+              const st = empStats(e.id);
+              const code = genEmpCode(e.fullName, e.dni);
+              const cells = days
+                .map((d) => {
+                  const lockReason = dayLockReason(e, d);
+                  if (lockReason) {
+                    return `<td style="background:#E5E7EB;color:#9CA3AF;text-align:center;font-size:9px;padding:3px 2px;border:1px solid #E2E8F0;font-weight:700">—</td>`;
+                  }
+                  const v = getVal(e.id, d.day);
+                  const ovr = getProj(e.id, d.day);
+                  let bg = "transparent";
+                  let color = "#CBD5E1";
+                  if (d.isHoliday && v === "1") { bg = "#FED7AA"; color = "#9A3412"; }
+                  else if (ovr) { bg = v === "1" ? "#DBEAFE" : v === "0" ? "#FEE2E2" : v === "INC" ? "#FEF9C3" : "#EFF6FF"; color = v === "1" ? "#1E40AF" : v === "0" ? "#991B1B" : "#92400E"; }
+                  else if (v === "1") { bg = "#DCFCE7"; color = "#166534"; }
+                  else if (v === "0") { bg = "#FEE2E2"; color = "#991B1B"; }
+                  else if (v === "INC") { bg = "#FEF9C3"; color = "#92400E"; }
+                  const txt = v === "1" ? (ovr ? "1*" : "1") : v === "0" ? "0" : v === "INC" ? "I" : "·";
+                  return `<td style="background:${bg};color:${color};text-align:center;font-size:9px;padding:3px 2px;border:1px solid #E2E8F0;font-weight:700">${txt}</td>`;
+                })
+                .join("");
+              return `<tr>
+                <td style="padding:5px 8px;border:1px solid #E2E8F0;font-size:10px;font-weight:600">
+                  ${e.fullName}<br><span style="font-family:monospace;color:#E8762D;font-size:8px">${code}</span>
+                </td>
+                ${cells}
+                <td style="text-align:center;background:#ECFDF5;color:#059669;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.present}</td>
+                <td style="text-align:center;background:${st.domTrab > 0 ? "#F3E8FF" : "#fff"};color:#7C3AED;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.domTrab || ""}</td>
+                <td style="text-align:center;background:${st.ferTrab > 0 ? "#FED7AA" : "#fff"};color:#9A3412;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.ferTrab || ""}</td>
+                <td style="text-align:center;background:${st.absent > 0 ? "#FEE2E2" : "#fff"};color:#DC2626;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.absent || ""}</td>
+                <td style="text-align:center;background:${st.incap > 0 ? "#FEF9C3" : "#fff"};color:#92400E;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.incap || ""}</td>
+              </tr>`;
+            })
+            .join("");
+          return `
+            <div style="margin-top:18px;page-break-inside:avoid">
+              <h3 style="background:${cc.color};color:#fff;padding:6px 10px;font-size:12px;margin:0">${proj.short} — ${proj.name} <span style="font-weight:400;font-size:10px;opacity:.7">[${proj.code}] · ${pEmps.length} personas</span></h3>
+              <table style="border-collapse:collapse;width:100%;margin-top:0">
+                <thead><tr>
+                  <th style="background:#F1F5F9;text-align:left;font-size:9px;padding:4px 8px;border:1px solid #E2E8F0">Empleado</th>
+                  ${dayHeaderHtml}
+                  <th style="background:#ECFDF5;font-size:9px;padding:4px 6px;border:1px solid #E2E8F0">Días</th>
+                  <th style="background:#F3E8FF;color:#7C3AED;font-size:9px;padding:4px 6px;border:1px solid #E2E8F0">DOM</th>
+                  <th style="background:#FED7AA;color:#9A3412;font-size:9px;padding:4px 6px;border:1px solid #E2E8F0">FER</th>
+                  <th style="background:#FEE2E2;font-size:9px;padding:4px 6px;border:1px solid #E2E8F0">NSP</th>
+                  <th style="background:#FEF9C3;font-size:9px;padding:4px 6px;border:1px solid #E2E8F0">INC</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>`;
+        })
+        .join("");
+
+      const summaryHtml = summary
+        .map((s) => `
+          <div style="background:#F8F2E6;border-left:3px solid #E8762D;padding:10px 14px;border-radius:8px">
+            <div style="font-weight:700;color:#2C2A28;font-size:13px">${s.proj.short}</div>
+            <div style="font-size:11px;color:#5C5853;margin-top:2px">${s.proj.name}</div>
+            <div style="margin-top:8px;font-size:11px;display:flex;gap:14px;flex-wrap:wrap">
+              <span><strong style="color:#E8762D">${s.pEmps.length}</strong> personas</span>
+              <span><strong style="color:#2C5F5D">${s.totalDias}</strong> días</span>
+              ${s.totalDom > 0 ? `<span><strong style="color:#7C3AED">${s.totalDom}</strong> dom.</span>` : ""}
+              ${s.totalFer > 0 ? `<span><strong style="color:#9A3412">${s.totalFer}</strong> fer.</span>` : ""}
+              ${s.totalNSP > 0 ? `<span><strong style="color:#DC2626">${s.totalNSP}</strong> NSP</span>` : ""}
+            </div>
+          </div>
+        `)
+        .join("");
+
+      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Asistencia ${sheet.quincena} ${sheet.periodo}</title>
+        <style>
+          *{margin:0;padding:0;box-sizing:border-box}
+          body{font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;padding:24px;color:#2C2A28}
+          h1{font-size:22px;margin-bottom:4px;color:#2C2A28;letter-spacing:-0.3px}
+          h2{font-size:13px;color:#5C5853;font-weight:500;margin-bottom:14px}
+          @media print {.np{display:none}}
+        </style>
+      </head><body>
+        <div style="border-left:4px solid #E8762D;padding-left:14px;margin-bottom:18px">
+          <div style="font-size:9px;color:#E8762D;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">Geotecnica Soluciones · RRHH</div>
+          <h1>Asistencia ${sheet.quincena} ${sheet.periodo}</h1>
+          <h2>${cc.name} · Generado ${new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" })}</h2>
+        </div>
+        <div style="font-size:11px;font-weight:700;color:#8B847C;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Resumen por proyecto</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:18px">
+          ${summaryHtml}
+        </div>
+        ${projTablesHtml}
+        <div style="margin-top:24px;padding-top:14px;border-top:1px solid #DBD4C8;font-size:10px;color:#8B847C;display:flex;gap:12px;flex-wrap:wrap">
+          <span><strong>1</strong> = Presente</span>
+          <span><strong>0</strong> = NSP (No se presentó)</span>
+          <span><strong>I</strong> = Incapacidad</span>
+          <span><strong>1*</strong> = Otro proyecto</span>
+          <span><strong>F</strong> = Feriado (+2 días si trabajado)</span>
+          <span><strong>—</strong> = Bloqueado por alta/baja</span>
+        </div>
+        <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:white;border:none;border-radius:8px;font-weight:600">Imprimir / Guardar como PDF</button>
+      </body></html>`);
+      w.document.close();
+    };
   };
 
   const ConForm = () => { const [eid, setEid] = useState(""); const [tp, setTp] = useState("laboral"); const emp = emps.find(e => e.id === eid); const today = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" }); const txt = emp ? (tp === "laboral" ? `CONSTANCIA LABORAL\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, desde ${fmt(emp.startDate)} a la fecha.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos` : `CONSTANCIA DE INGRESOS\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, salario mensual: ${fmtL(emp.salary)}.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos`) : ""; return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}><Select label="Empleado" options={ae.map(e => ({ value: e.id, label: e.fullName }))} value={eid} onChange={e => setEid(e.target.value)} /><Select label="Tipo" options={[{ value: "laboral", label: "Laboral" }, { value: "ingresos", label: "Ingresos" }]} value={tp} onChange={e => setTp(e.target.value)} /></div>{txt && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: 18 }}><pre style={{ whiteSpace: "pre-wrap", fontFamily: "'Segoe UI'", fontSize: 13, lineHeight: 1.7, margin: 0 }}>{txt}</pre></div>}<div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>{txt && <Btn variant="success" onClick={() => { sC([...cons, { id: uid(), employeeId: eid, type: tp, date: new Date().toISOString(), text: txt }]); navigator.clipboard?.writeText(txt); alert("Copiado"); setModal(null); }}>Copiar y guardar</Btn>}</div></div>; };
@@ -919,7 +1099,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
   const renderEmps = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
     <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{ce.length} empleados</span><Btn onClick={() => setModal({ t: "en" })}>+ Nuevo</Btn></div>
-    <Table columns={[{ key: "fullName", label: "Nombre" }, { key: "dni", label: "DNI" }, { key: "position", label: "Cargo" }, { key: "contractType", label: "Contrato", render: r => <Badge color={r.contractType === "temporary" ? "#D97706" : r.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{r.contractType === "temporary" ? "Temporal" : r.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge> }, { key: "salary", label: "Sal.Bruto", render: r => fmtL(r.salary) }, { key: "bonificacion", label: "Bonif.", render: r => fmtL(r.bonificacion) }, { key: "startDate", label: "Inicio", render: r => fmt(r.startDate) }, { key: "status", label: "Estado", render: r => <Badge color={r.status === "active" ? "#059669" : "#DC2626"}>{r.status === "active" ? "Activo" : "Inactivo"}</Badge> }]} data={ce} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "ee", d: r })}>Editar</Btn><Btn small variant="danger" onClick={() => { if (confirm(`Eliminar a ${r.fullName}?`)) sE(emps.filter(e => e.id !== r.id)); }}>×</Btn></div>} />
+    <Table columns={[
+      { key: "code", label: "Código", render: r => <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5 }}>{genEmpCode(r.fullName, r.dni)}</span> },
+      { key: "fullName", label: "Nombre" },
+      { key: "dni", label: "DNI" },
+      { key: "position", label: "Cargo" },
+      { key: "contractType", label: "Contrato", render: r => <Badge color={r.contractType === "temporary" ? "#D97706" : r.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{r.contractType === "temporary" ? "Temporal" : r.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge> },
+      { key: "salary", label: "Sal.Bruto", render: r => fmtL(r.salary) },
+      { key: "bonificacion", label: "Bonif.", render: r => fmtL(r.bonificacion) },
+      { key: "startDate", label: "Inicio", render: r => fmt(r.startDate) },
+      { key: "status", label: "Estado", render: r => <Badge color={r.status === "active" ? "#059669" : "#DC2626"}>{r.status === "active" ? "Activo" : "Inactivo"}</Badge> },
+    ]} data={ce} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "ee", d: r })}>Editar</Btn><Btn small variant="danger" onClick={() => { if (confirm(`Eliminar a ${r.fullName}?`)) sE(emps.filter(e => e.id !== r.id)); }}>×</Btn></div>} />
   </div>;
 
   const renderPayroll = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1002,7 +1192,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             </tr></thead>
             <tbody>{rows.map((l, i) => { const c = calc2(l); return <tr key={l.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
               <td style={TD}>{i + 1}</td>
-              <td style={{ ...TD, fontWeight: 600 }}>{l.name}</td>
+              <td style={{ ...TD, fontWeight: 600 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span>{l.name}</span>
+                  {(() => { const emp = ae.find(x => x.id === l.eid) || ce.find(x => x.id === l.eid); return emp ? <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 9, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5 }}>{genEmpCode(emp.fullName, emp.dni)}</span> : null; })()}
+                </div>
+              </td>
               <td style={TD}><Badge color={cc.color}>{l.proj || "—"}</Badge></td>
               <td style={TD}>{fmtL(l.sb)}</td>
               <td style={{ ...TD, color: "#059669", fontWeight: 600 }}>{l.diasPresente || 0}</td>
