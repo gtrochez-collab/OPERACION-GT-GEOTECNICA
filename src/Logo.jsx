@@ -1,85 +1,62 @@
 // =====================================================================
 // LOGO GEOTECNICA SOLUCIONES
 // =====================================================================
-// SVG inline que aproxima el logo corporativo (G con franjas horizontales).
-// Estilo: G estriada en naranja + texto "GEOTECNICA / SOLUCIONES" gris.
-// Para reemplazar con el logo oficial, dejar un PNG/SVG en
-//   public/brand/geotecnica-logo.png
-// y cambiar este componente para que use <img>.
+// Usa los archivos oficiales en public/brand/
+//   - logo-color.png  (logo a color para fondos claros)
+//   - logo-gris.png   (logo en gris/charcoal para uso monocromatico)
 // =====================================================================
-import { BRAND, FONT } from "./theme.js";
 
-export default function Logo({ size = 56, color = "orange", showText = true, layout = "horizontal" }) {
-  const stripeColor = color === "white" ? "#FFFFFF" : color === "gray" ? BRAND.charcoal : BRAND.orange;
-  const textColor = color === "white" ? "#FFFFFF" : BRAND.charcoal;
-  const subColor = color === "white" ? "rgba(255,255,255,0.7)" : BRAND.stone;
+const BASE = import.meta.env.BASE_URL || "/";
 
-  const isVertical = layout === "vertical";
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: isVertical ? "center" : "center",
-        flexDirection: isVertical ? "column" : "row",
-        gap: isVertical ? 12 : Math.round(size * 0.28),
-      }}
-    >
-      <GLogoMark size={size} color={stripeColor} />
-      {showText && (
-        <div style={{ textAlign: isVertical ? "center" : "left", lineHeight: 1 }}>
-          <div
-            style={{
-              fontFamily: FONT.display,
-              fontSize: Math.round(size * 0.36),
-              fontWeight: 800,
-              color: textColor,
-              letterSpacing: 1.2,
-              lineHeight: 1,
-            }}
-          >
-            GEOTECNICA
-          </div>
-          <div
-            style={{
-              fontFamily: FONT.display,
-              fontSize: Math.round(size * 0.22),
-              fontWeight: 500,
-              color: subColor,
-              letterSpacing: Math.max(2, Math.round(size * 0.06)),
-              marginTop: Math.round(size * 0.08),
-            }}
-          >
-            SOLUCIONES
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// G estriada — version SVG inline
-function GLogoMark({ size, color }) {
-  const id = "stripes-" + color.replace("#", "");
-  return (
-    <svg width={size} height={size} viewBox="0 0 100 100" aria-label="Geotecnica">
-      <defs>
-        <pattern id={id} patternUnits="userSpaceOnUse" width="100" height="7">
-          <rect x="0" y="0" width="100" height="3.2" fill={color} />
-        </pattern>
-      </defs>
-      <text
-        x="50"
-        y="82"
-        fontSize="118"
-        fontFamily='"Manrope", "Inter", "Arial Black", sans-serif'
-        fontWeight="900"
-        fill={`url(#${id})`}
-        textAnchor="middle"
-        letterSpacing="-4"
+export default function Logo({ size = 56, color = "color", showText = true }) {
+  const src = color === "gris" || color === "gray" ? `${BASE}brand/logo-gris.png` : `${BASE}brand/logo-color.png`;
+  // El logo oficial ya incluye el texto "GEOTECNICA / SOLUCIONES" al lado
+  // de la G estriada. Si solo se pide la marca G (showText=false), recortamos
+  // visualmente con object-fit / clip-path simulando solo la G.
+  if (!showText) {
+    // Renderiza solo la G (recortando el texto a la derecha) usando object-position
+    return (
+      <div
+        style={{
+          width: size,
+          height: size,
+          overflow: "hidden",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        aria-label="Geotecnica"
       >
-        G
-      </text>
-    </svg>
+        <img
+          src={src}
+          alt=""
+          style={{
+            // El logo oficial es 1462x540 aprox. La G ocupa los primeros ~520px.
+            // Mostramos solo la G (recortamos a la izquierda).
+            height: size,
+            width: "auto",
+            objectFit: "contain",
+            objectPosition: "left center",
+            // Recortar para mostrar solo la G:
+            clipPath: "inset(0 65% 0 0)",
+            transform: "translateX(0)",
+          }}
+        />
+      </div>
+    );
+  }
+
+  // Logo completo (G + texto)
+  // Mantengo proporcion 1462x540 ~ 2.7:1, asi que ancho = size * 2.7
+  return (
+    <img
+      src={src}
+      alt="Geotecnica Soluciones"
+      style={{
+        height: size,
+        width: "auto",
+        display: "block",
+      }}
+    />
   );
 }

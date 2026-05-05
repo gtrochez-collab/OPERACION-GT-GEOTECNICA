@@ -148,11 +148,25 @@ export default function App() {
       </header>
 
       {/* Hero strip */}
-      <div style={{ background: `linear-gradient(135deg, ${BRAND.beige} 0%, ${BRAND.parchment} 100%)`, padding: "56px 40px 32px 40px", borderBottom: `1px solid ${BRAND.borderSoft}`, position: "relative", overflow: "hidden" }}>
-        {/* Decorative G watermark */}
-        <div style={{ position: "absolute", right: -80, top: -40, opacity: 0.06, pointerEvents: "none" }}>
-          <Logo size={420} showText={false} color="orange" />
-        </div>
+      <div style={{ background: `linear-gradient(135deg, ${BRAND.beige} 0%, ${BRAND.parchment} 100%)`, padding: "56px 40px 40px 40px", borderBottom: `1px solid ${BRAND.borderSoft}`, position: "relative", overflow: "hidden" }}>
+        {/* Decorative Bauer BG-11 silhouette */}
+        <div
+          style={{
+            position: "absolute",
+            right: -40,
+            bottom: -20,
+            width: 280,
+            height: 280,
+            opacity: 0.14,
+            pointerEvents: "none",
+            backgroundImage: `url(${import.meta.env.BASE_URL}machines/bauer-bg11.jpg)`,
+            backgroundSize: "contain",
+            backgroundRepeat: "no-repeat",
+            backgroundPosition: "right bottom",
+            filter: "grayscale(1) contrast(1.1) brightness(0.55)",
+            mixBlendMode: "multiply",
+          }}
+        />
         <div style={{ maxWidth: 1200, margin: "0 auto", position: "relative" }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.orange, letterSpacing: 3, marginBottom: 12, textTransform: "uppercase" }}>Sistema de Operaciones</div>
           <h1 style={{ fontFamily: FONT.display, fontSize: 36, fontWeight: 800, color: BRAND.charcoal, marginBottom: 8, letterSpacing: -0.5 }}>Panel de Control</h1>
@@ -295,10 +309,24 @@ function LoginScreen({ onLogin }) {
           borderRight: `1px solid ${BRAND.borderSoft}`,
         }}
       >
-        {/* Decorative giant G watermark */}
-        <div style={{ position: "absolute", right: -120, bottom: -80, opacity: 0.10, pointerEvents: "none" }}>
-          <Logo size={620} showText={false} color="orange" />
-        </div>
+        {/* Bauer BG-11 silhouette — pieza visual industrial */}
+        <div
+          style={{
+            position: "absolute",
+            right: -60,
+            bottom: -40,
+            width: 540,
+            height: 720,
+            opacity: 0.18,
+            pointerEvents: "none",
+            backgroundImage: `url(${import.meta.env.BASE_URL}machines/bauer-bg11.jpg)`,
+            backgroundSize: "contain",
+            backgroundRepeat: "no-repeat",
+            backgroundPosition: "right bottom",
+            filter: "grayscale(1) contrast(1.15) brightness(0.5)",
+            mixBlendMode: "multiply",
+          }}
+        />
 
         {/* Top — logo */}
         <div style={{ position: "relative", zIndex: 1 }}>
