@@ -57,6 +57,37 @@ const getQuincena = (dateStr) => {
   return { periodo, quincena };
 };
 
+// =====================================================================
+// SNAPSHOT CONTRACTUAL SUBTERRA — 2026-05-05
+// =====================================================================
+// Estado contractual vigente al 5 mayo 2026, aprobado por Dr. Raúl Flores.
+// Aplicado via boton "📥 Aplicar Snapshot Subterra Mayo 2026" en Contratos.
+// Idempotente: si ya existe contrato activo para el empleado, lo preserva.
+// =====================================================================
+const SUBTERRA_SNAPSHOT_DATE = "2026-05-05";
+const SUBTERRA_SNAPSHOT = [
+  // Grupo A — Permanentes (tiempo_indefinido)
+  { name: "Fernando Jesús Díaz Fernández", dni: "0801-2002-20394", position: "Planner/Gestor-Máquinas", contractType: "permanent", startDate: "2026-05-01", endDate: null, grupo: "A" },
+  { name: "Said Antonio Ortiz Alvarado", dni: "0801-2004-03223", position: "Tornero", contractType: "permanent", startDate: "2026-05-01", endDate: null, grupo: "A" },
+  // Grupo B — Obra Determinada 1 mes (2026-05-01 → 2026-05-31)
+  { name: "Ena Sofía Oliva Medina", dni: "1502-1999-00563", position: "Ingeniero Encargado", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-05-31", grupo: "B" },
+  { name: "Ever Alberto Corea Mejía", dni: "0801-2001-12831", position: "Operador de Fiori", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-05-31", grupo: "B" },
+  { name: "Exequiel Antonio Sierra Amador", dni: "0816-2002-00083", position: "Técnico C", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-05-31", grupo: "B" },
+  { name: "José Miguel Rodríguez Medina", dni: "0801-1989-13061", position: "Técnico C", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-05-31", grupo: "B" },
+  { name: "José David Tinoco Flores", dni: "0801-2003-08328", position: "Técnico C", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-05-31", grupo: "B" },
+  { name: "Ricardo David Benavides García", dni: "0801-1964-00775", position: "Mecánico", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-05-31", grupo: "B" },
+  { name: "Yeferson Javier Castillo Hernández", dni: "0801-2007-01751", position: "Técnico C", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-05-31", grupo: "B" },
+  { name: "Rolando Josué Mendoza Sánchez", dni: "0801-2003-08130", position: "Técnico C", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-05-31", grupo: "B" },
+  { name: "Daniel Alexander López Servellón", dni: "0801-1998-23225", position: "Técnico C", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-05-31", grupo: "B" },
+  { name: "Alejandro Miguel Fonseca Lagos", dni: "0801-2002-11647", position: "Asistente Administrativo", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-05-31", grupo: "B" },
+  { name: "Ivonne Alejandra Cruz Coello", dni: "0801-1989-09104", position: "Ingeniera Asistente de Oficina Técnica", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-05-31", grupo: "B" },
+  // Grupo B — Obra Determinada 2 meses (alta 2026-04-21)
+  { name: "Henry Armando Rodríguez Vallecillo", dni: "0801-2006-11434", position: "Técnico C", contractType: "temporary", startDate: "2026-04-21", endDate: "2026-06-21", grupo: "B" },
+  { name: "Junior Josué Zambrano Zambrano", dni: "0801-2001-15434", position: "Motorista / Técnico C", contractType: "temporary", startDate: "2026-04-21", endDate: "2026-06-21", grupo: "B" },
+  // Grupo B — Obra Determinada 2 meses (alta 2026-05-01) — NUEVO INGRESO
+  { name: "Yony Leonel Sandoval Hernández", dni: "0801-2002-05225", position: "Técnico C", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-07-01", grupo: "B", isNew: true },
+];
+
 // ── Codigo de empleado ──
 // Genera codigo: [1ra letra del nombre][1ra letra del 1er apellido][ultimos 5 digitos del DNI]
 // Ej: David Hazar Mavet Cruz Valladares · 0801-2003-00715 → DC00715
@@ -1747,6 +1778,130 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
+  // ── Aplicar Snapshot Subterra Mayo 2026 (idempotente) ──
+  const applySubterraSnapshot = () => {
+    const cleanDni = (s) => String(s || "").replace(/[^\d-]/g, "");
+    if (!confirm(`Aplicar snapshot Subterra Honduras del ${SUBTERRA_SNAPSHOT_DATE}?\n\n` +
+      `${SUBTERRA_SNAPSHOT.length} empleados serán procesados:\n` +
+      `• Match por DNI: empleados existentes se actualizan, no se duplican\n` +
+      `• Empleados nuevos (Yony) se crean automáticamente\n` +
+      `• Contratos activos existentes se PRESERVAN (Henry y Junior no se sobrescriben)\n` +
+      `• Es idempotente: podés correrlo 2 veces sin riesgo`
+    )) return;
+
+    let updatedEmps = [...emps];
+    let newContracts = [...contracts];
+    let newMovs = [...movs];
+    let createdEmps = 0, updatedEmpsCount = 0, createdContracts = 0, preservedContracts = 0;
+    const today = new Date().toISOString();
+
+    SUBTERRA_SNAPSHOT.forEach((entry) => {
+      const targetDni = cleanDni(entry.dni);
+      let emp = updatedEmps.find((e) => cleanDni(e.dni) === targetDni && e.company === "subterra");
+
+      if (!emp) {
+        // Crear empleado nuevo
+        emp = {
+          id: uid(),
+          company: "subterra",
+          fullName: entry.name,
+          dni: entry.dni,
+          position: entry.position,
+          department: "Operaciones",
+          contractType: entry.contractType,
+          startDate: entry.startDate,
+          endDate: entry.endDate || "",
+          salary: 0,             // El usuario debe completar despues
+          bonificacion: 0,
+          cooperativa: 0,
+          gastosMedicos: 40000,
+          status: "active",
+          phone: "",
+          email: "",
+        };
+        updatedEmps.push(emp);
+        createdEmps++;
+        // Generar movimiento de alta
+        newMovs.push({
+          id: uid(),
+          tipo: "alta",
+          company: "subterra",
+          employeeId: emp.id,
+          fullName: emp.fullName,
+          dni: emp.dni,
+          position: emp.position,
+          contractType: emp.contractType,
+          grupo: getGrupo("subterra", emp.contractType),
+          salary: 0,
+          endDate: emp.endDate,
+          date: emp.startDate,
+          motivo: "Contratacion nueva",
+          notas: `Alta automática desde Snapshot ${SUBTERRA_SNAPSHOT_DATE}. ⚠️ Configurar salario.`,
+          createdAt: today,
+        });
+      } else {
+        // Actualizar campos del empleado (preserva salario, bonif, cooperativa)
+        const idx = updatedEmps.findIndex((x) => x.id === emp.id);
+        const prev = updatedEmps[idx];
+        const changed =
+          prev.fullName !== entry.name ||
+          prev.position !== entry.position ||
+          prev.contractType !== entry.contractType ||
+          prev.startDate !== entry.startDate ||
+          (prev.endDate || "") !== (entry.endDate || "") ||
+          prev.status !== "active";
+        if (changed) {
+          updatedEmps[idx] = {
+            ...prev,
+            fullName: entry.name,
+            position: entry.position,
+            contractType: entry.contractType,
+            startDate: entry.startDate,
+            endDate: entry.endDate || "",
+            status: "active",
+          };
+          emp = updatedEmps[idx];
+          updatedEmpsCount++;
+        }
+      }
+
+      // Manejar contrato: si ya hay activo para este empleado, NO sobreescribir
+      const existingActive = newContracts.find((c) => c.employeeId === emp.id && c.status === "active");
+      if (existingActive) {
+        preservedContracts++;
+      } else {
+        newContracts.push({
+          id: uid(),
+          employeeId: emp.id,
+          company: "subterra",
+          contractType: entry.contractType,
+          startDate: entry.startDate,
+          endDate: entry.endDate || "",
+          salary: emp.salary || 0,
+          bonificacion: emp.bonificacion || 0,
+          status: "active",
+          parentContractId: null,
+          notes: `Aplicado desde Snapshot Subterra ${SUBTERRA_SNAPSHOT_DATE} · Grupo ${entry.grupo}`,
+          createdAt: today,
+        });
+        createdContracts++;
+      }
+    });
+
+    sE(updatedEmps);
+    sCt(newContracts);
+    sM(newMovs);
+
+    alert(
+      `✅ Snapshot Subterra ${SUBTERRA_SNAPSHOT_DATE} aplicado:\n\n` +
+      `• ${createdEmps} empleado(s) nuevo(s) creado(s)\n` +
+      `• ${updatedEmpsCount} empleado(s) actualizado(s)\n` +
+      `• ${createdContracts} contrato(s) nuevo(s) creado(s)\n` +
+      `• ${preservedContracts} contrato(s) activo(s) preservado(s) (Henry, Junior, etc)\n\n` +
+      (createdEmps > 0 ? `⚠️ Recordá completar el SALARIO de los empleados nuevos en el módulo de Empleados.` : ``)
+    );
+  };
+
   const renderContracts = () => {
     const today = new Date().toISOString().slice(0, 10);
     // Agrupar contratos activos por empleado
@@ -1774,7 +1929,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <span style={{ color: "#5C5853", fontSize: 13 }}>
           {empleadosConContratos.filter(x => x.active).length} con contrato activo · {sinContrato.length} sin contrato · {liquidados.length} liquidados históricos
         </span>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {sinContrato.length > 0 && (
             <Btn variant="info" onClick={() => {
               if (!confirm(`Generar contratos automáticos para ${sinContrato.length} empleado(s) sin contrato? Se creará un contrato activo usando los datos actuales del empleado (fecha inicio, tipo, salario).`)) return;
@@ -1799,6 +1954,20 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <Btn onClick={() => setModal({ t: "ctn" })}>+ Nuevo contrato</Btn>
         </div>
       </div>
+
+      {/* Snapshot Subterra Mayo 2026 — Setup inicial */}
+      {co === "subterra" && (
+        <div style={{ background: "linear-gradient(135deg, #FFFBF5 0%, #F8F2E6 100%)", border: "1px solid #DBD4C8", borderRadius: 12, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#E8762D", letterSpacing: 1.5, textTransform: "uppercase" }}>📥 Setup inicial</div>
+            <div style={{ fontWeight: 700, color: "#2C2A28", marginTop: 4 }}>Snapshot Subterra Honduras · {SUBTERRA_SNAPSHOT_DATE}</div>
+            <div style={{ fontSize: 12, color: "#5C5853", marginTop: 4 }}>
+              {SUBTERRA_SNAPSHOT.length} empleados aprobados por Dr. Raúl Flores (Grupo A: 2 permanentes · Grupo B: 14 obra determinada). Idempotente — preserva contratos activos existentes.
+            </div>
+          </div>
+          <Btn variant="info" onClick={applySubterraSnapshot}>📥 Aplicar Snapshot</Btn>
+        </div>
+      )}
 
       {/* Alertas dashboard */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
