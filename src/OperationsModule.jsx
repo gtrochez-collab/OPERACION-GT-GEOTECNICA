@@ -1,25 +1,27 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { store } from "./supabase.js";
+import Logo from "./Logo.jsx";
 
 const STORE_KEY = "gt-operations-state";
 
 // ============ PALETA / ESTILOS ============
+// Tema oscuro calido alineado con la marca Geotecnica.
 const C = {
-  bg: "#0F172A",
-  card: "#1E293B",
-  cardHover: "#263449",
-  border: "#334155",
-  borderSoft: "#263449",
-  textHi: "#F1F5F9",
-  text: "#E2E8F0",
-  textMid: "#CBD5E1",
-  textLo: "#94A3B8",
-  textDim: "#64748B",
-  accent: "#D97706",
-  accentDark: "#B45309",
-  accentLight: "#FBBF24",
-  accentBg: "rgba(217,119,6,0.15)",
-  accentBgHover: "rgba(217,119,6,0.25)",
+  bg: "#1F1B17",            // dark warm (era slate)
+  card: "#2A2520",          // dark surface
+  cardHover: "#352F28",
+  border: "#3D3530",
+  borderSoft: "#332D27",
+  textHi: "#F0EBE3",        // texto principal calido
+  text: "#E0D8CC",
+  textMid: "#C4BBAA",
+  textLo: "#A8A096",
+  textDim: "#7A7268",
+  accent: "#E8762D",        // naranja Geotecnica (era #D97706)
+  accentDark: "#C75F1F",
+  accentLight: "#F18A3F",
+  accentBg: "rgba(232,118,45,0.15)",
+  accentBgHover: "rgba(232,118,45,0.25)",
   red: "#DC2626",
   redLight: "#F87171",
   yellow: "#F59E0B",
@@ -439,7 +441,7 @@ const NIVEL_RIESGO_MAP = {
 
 // ============ COMPONENTE PRINCIPAL ============
 export default function OperationsModule({ userRole, userName, onBack, onLogout }) {
-  const isReadOnly = userRole === "gerencia" || userRole === "costos";
+  const isReadOnly = userRole === "gerencia" || userRole === "costos" || userRole === "tesoreria";
   const [data, setData] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("inicio");
@@ -617,12 +619,18 @@ export default function OperationsModule({ userRole, userName, onBack, onLogout 
       <div style={{ maxWidth: 1500, margin: "0 auto" }}>
         {/* Header */}
         <div style={{ background: `linear-gradient(135deg, ${C.card} 0%, ${C.bg} 100%)`, borderLeft: `5px solid ${C.accent}`, padding: "20px 26px", borderRadius: 12, marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
-          <div>
-            <h1 style={{ fontSize: 22, color: C.textHi, marginBottom: 4 }}>Command Center — Dirección de Operaciones</h1>
-            <div style={{ fontSize: 12, color: C.textLo }}>Geotecnica Soluciones · Vista operativa en tiempo real</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+            <div style={{ flexShrink: 0 }}>
+              <Logo size={42} showText={false} />
+            </div>
+            <div style={{ borderLeft: `1px solid ${C.border}`, paddingLeft: 18 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.accent, letterSpacing: 2, textTransform: "uppercase", marginBottom: 4 }}>Command Center</div>
+              <h1 style={{ fontSize: 22, color: C.textHi, marginBottom: 2, fontWeight: 800, letterSpacing: -0.3 }}>Dirección de Operaciones</h1>
+              <div style={{ fontSize: 12, color: C.textLo }}>Geotecnica Soluciones · Vista operativa en tiempo real</div>
+            </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ background: C.accent, color: "white", padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: 600 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ background: C.accent, color: "white", padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: 600, boxShadow: "0 2px 8px rgba(232,118,45,0.25)" }}>
               {userName || "Lic. Gerson Trochez"}
             </div>
             <button onClick={onBack} style={btn(C.card, C.text, C.border)}>← Volver al panel</button>

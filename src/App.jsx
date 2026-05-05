@@ -53,7 +53,7 @@ const MODULES = [
     desc: "Cuartel general operativo · proyectos, recursos, capacidad y Mi día",
     accent: BRAND.orange,
     accentSoft: BRAND.orangeBg,
-    roles: ["admin", "coordinador", "gerencia", "costos"],
+    roles: ["admin", "coordinador", "gerencia", "costos", "tesoreria"],
     hero: true,
   },
   {

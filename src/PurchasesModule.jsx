@@ -1,9 +1,20 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
+import Logo from "./Logo.jsx";
+
+// Marca Geotecnica
+const ORANGE = "#E8762D";
+const ORANGE_DARK = "#C75F1F";
+const BEIGE = "#F5F0E8";
+const CREAM = "#FFFBF5";
+const DARK_BG = "#1F1B17";
+const DARK_BORDER = "#3D3530";
+const CHARCOAL = "#2C2A28";
+const BORDER = "#DBD4C8";
 
 // ── Constantes ──
 const COMPANIES = {
-  geotecnica: { name: "Geotecnica Soluciones", color: "#1B4332", accent: "#2D6A4F" },
+  geotecnica: { name: "Geotecnica Soluciones", color: ORANGE, accent: ORANGE_DARK },
 };
 const PROJECTS = [
   { code: "HF-12-4-17-2025", name: "Cimentacion Apolo", short: "APOLO" },
@@ -59,14 +70,14 @@ const readFileAsDataUrl = file => new Promise((resolve, reject) => {
 const Badge = ({ children, color = "#64748b" }) => <span style={{ background: color + "18", color, padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>{children}</span>;
 
 const Btn = ({ children, onClick, variant = "primary", small, style: sx, disabled, type }) => {
-  const b = { border: "none", borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer", fontWeight: 600, fontSize: small ? 12 : 14, padding: small ? "5px 12px" : "9px 20px", opacity: disabled ? 0.5 : 1 };
+  const b = { border: "none", borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer", fontWeight: 600, fontSize: small ? 12 : 14, padding: small ? "5px 12px" : "9px 20px", opacity: disabled ? 0.5 : 1, fontFamily: "inherit", letterSpacing: 0.2 };
   const v = {
-    primary: { ...b, background: "#BE185D", color: "#fff" },
-    success: { ...b, background: "#2D6A4F", color: "#fff" },
-    info: { ...b, background: "#2563EB", color: "#fff" },
-    warn: { ...b, background: "#D97706", color: "#fff" },
+    primary: { ...b, background: ORANGE, color: "#fff", boxShadow: "0 2px 6px rgba(232,118,45,0.20)" },
+    success: { ...b, background: "#5A8A4F", color: "#fff" },
+    info: { ...b, background: "#2C5F5D", color: "#fff" },
+    warn: { ...b, background: "#D4A017", color: "#fff" },
     danger: { ...b, background: "#C0392B", color: "#fff" },
-    ghost: { ...b, background: "transparent", color: "#475569", border: "1px solid #CBD5E1" },
+    ghost: { ...b, background: "transparent", color: "#5C5853", border: "1px solid #DBD4C8" },
   };
   return <button type={type || "button"} style={{ ...(v[variant] || v.primary), ...sx }} onClick={onClick} disabled={disabled}>{children}</button>;
 };
@@ -1297,31 +1308,33 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   };
 
   // ── LAYOUT ──
-  return <div style={{ display: "flex", height: "100vh", fontFamily: "'Segoe UI', -apple-system, sans-serif", background: "#F1F5F9", color: "#1E293B" }}>
+  return <div style={{ display: "flex", height: "100vh", fontFamily: "inherit", background: BEIGE, color: CHARCOAL }}>
     {/* Sidebar */}
-    <div style={{ width: sb ? 240 : 60, background: "#0F172A", color: "#fff", transition: "width .2s", overflow: "hidden", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-      <div style={{ padding: "20px 16px", borderBottom: "1px solid #1E293B", display: "flex", alignItems: "center", gap: 10 }}>
-        <button onClick={() => setSb(!sb)} style={{ background: "none", border: "none", color: "#94A3B8", fontSize: 20, cursor: "pointer", flexShrink: 0 }}>☰</button>
-        {sb && <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap" }}>Compras-Operaciones</div>}
+    <div style={{ width: sb ? 240 : 60, background: DARK_BG, color: "#F0EBE3", transition: "width .2s", overflow: "hidden", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+      <div style={{ padding: sb ? "20px 16px" : "20px 12px", borderBottom: `1px solid ${DARK_BORDER}`, display: "flex", alignItems: "center", gap: 10 }}>
+        <button onClick={() => setSb(!sb)} style={{ background: "none", border: "none", color: "#A8A096", fontSize: 20, cursor: "pointer", flexShrink: 0 }}>☰</button>
+        {sb && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <Logo size={28} showText={false} />
+            <div style={{ fontWeight: 800, fontSize: 12, letterSpacing: 1.5, color: "#F0EBE3", marginTop: 4 }}>GEOTECNICA</div>
+            <div style={{ fontSize: 9, letterSpacing: 2, color: "#A8A096", fontWeight: 600 }}>SOLUCIONES · COMPRAS</div>
+          </div>
+        )}
       </div>
-      {sb && Object.keys(COMPANIES).length > 1 && <div style={{ padding: "14px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
-        <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Empresa</div>
-        {Object.entries(COMPANIES).map(([k, v]) => <button key={k} onClick={() => setCo(k)} style={{ background: co === k ? v.accent : "transparent", color: co === k ? "#fff" : "#94A3B8", border: co === k ? "none" : "1px solid #334155", borderRadius: 8, padding: "8px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600, textAlign: "left" }}>{v.name}</button>)}
-      </div>}
-      <div style={{ padding: "8px 0", flex: 1 }}>
+      <div style={{ padding: "8px 0", flex: 1, marginTop: 8 }}>
         {[
           { id: "list", icon: "📋", label: "Solicitudes" },
           { id: "projects", icon: "🏗️", label: "Proyectos" },
-        ].map(n => <button key={n.id} onClick={() => setSec(n.id)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: sb ? "10px 20px" : "10px 18px", background: sec === n.id ? "#BE185D40" : "transparent", border: "none", color: sec === n.id ? "#fff" : "#94A3B8", cursor: "pointer", fontSize: 14, textAlign: "left", borderLeft: sec === n.id ? "3px solid #EC4899" : "3px solid transparent" }}>
+        ].map(n => <button key={n.id} onClick={() => setSec(n.id)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: sb ? "11px 20px" : "11px 18px", background: sec === n.id ? "rgba(232,118,45,0.18)" : "transparent", border: "none", color: sec === n.id ? "#fff" : "#A8A096", cursor: "pointer", fontSize: 14, textAlign: "left", borderLeft: sec === n.id ? `3px solid ${ORANGE}` : "3px solid transparent", fontFamily: "inherit", fontWeight: sec === n.id ? 600 : 500, transition: "all .15s" }}>
           <span style={{ fontSize: 18 }}>{n.icon}</span>{sb && <span>{n.label}</span>}
         </button>)}
       </div>
-      {sb && <div style={{ padding: "12px", borderTop: "1px solid #1E293B", display: "flex", flexDirection: "column", gap: 6 }}>
-        {onBack && <button onClick={onBack} style={{ background: "rgba(255,255,255,0.08)", border: "1px solid #334155", borderRadius: 8, color: "#94A3B8", padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left" }}>← Volver al panel</button>}
-        {onLogout && <button onClick={onLogout} style={{ background: "rgba(220,38,38,0.15)", border: "1px solid #7F1D1D", borderRadius: 8, color: "#FCA5A5", padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left" }}>Cerrar sesion</button>}
-        <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>
+      {sb && <div style={{ padding: "12px", borderTop: `1px solid ${DARK_BORDER}`, display: "flex", flexDirection: "column", gap: 6 }}>
+        {onBack && <button onClick={onBack} style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${DARK_BORDER}`, borderRadius: 8, color: "#A8A096", padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit" }}>← Volver al panel</button>}
+        {onLogout && <button onClick={onLogout} style={{ background: "rgba(192,57,43,0.15)", border: "1px solid rgba(192,57,43,0.4)", borderRadius: 8, color: "#F0AAA0", padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit" }}>Cerrar sesion</button>}
+        <div style={{ fontSize: 11, color: "#7A7268", marginTop: 4, fontWeight: 500, lineHeight: 1.4 }}>
           {userName || "Usuario"}<br />
-          <span style={{ color: isTesoreria ? "#FBBF24" : (isGerencia || isCostos) ? "#60A5FA" : "#34D399" }}>
+          <span style={{ color: isTesoreria ? "#D4A017" : (isGerencia || isCostos) ? "#A8B5C4" : ORANGE, fontWeight: 600 }}>
             {isAdmin ? "Operaciones + Tesoreria" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : isCostos ? "Costos (solo lectura)" : userRole}
           </span>
         </div>
@@ -1330,16 +1343,16 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
     {/* Main */}
     <div style={{ flex: 1, overflow: "auto" }}>
-      <div style={{ padding: "20px 28px", borderBottom: "1px solid #E2E8F0", background: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+      <div style={{ padding: "22px 32px", borderBottom: `1px solid ${BORDER}`, background: CREAM, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 20 }}>{sec === "projects" ? "Proyectos" : "Solicitudes de compra validadas"}</h2>
-          <span style={{ fontSize: 13, color: cc.accent, fontWeight: 600 }}>{cc.name}</span>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>{sec === "projects" ? "Proyectos" : "Solicitudes de compra validadas"}</h2>
+          <span style={{ fontSize: 13, color: cc.accent, fontWeight: 600, letterSpacing: 0.3 }}>{cc.name}</span>
         </div>
         <Badge color={cc.color}>{cp.length} solicitudes</Badge>
       </div>
       <div style={{ padding: 28 }}>{sec === "projects" ? renderProjects() : renderList()}</div>
     </div>
-    {renderModal()}
+    {!canViewOnly && renderModal()}
   </div>;
 }
 
