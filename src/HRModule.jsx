@@ -85,7 +85,7 @@ const SUBTERRA_SNAPSHOT = [
   { name: "Henry Armando Rodríguez Vallecillo", dni: "0801-2006-11434", position: "Técnico C", contractType: "temporary", startDate: "2026-04-21", endDate: "2026-06-21", grupo: "B" },
   { name: "Junior Josué Zambrano Zambrano", dni: "0801-2001-15434", position: "Motorista / Técnico C", contractType: "temporary", startDate: "2026-04-21", endDate: "2026-06-21", grupo: "B" },
   // Grupo B — Obra Determinada 2 meses (alta 2026-05-01) — NUEVO INGRESO
-  { name: "Yony Leonel Sandoval Hernández", dni: "0801-2002-05225", position: "Técnico C", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-07-01", grupo: "B", isNew: true },
+  { name: "Yony Leonel Sandoval Hernández", dni: "0801-2002-05225", position: "Técnico C", contractType: "temporary", startDate: "2026-05-01", endDate: "2026-07-01", grupo: "B", isNew: true, salary: 13000 },
 ];
 
 // ── Codigo de empleado ──
@@ -1801,6 +1801,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
       if (!emp) {
         // Crear empleado nuevo
+        const snapshotSalary = Number(entry.salary) || 0;
         emp = {
           id: uid(),
           company: "subterra",
@@ -1811,7 +1812,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           contractType: entry.contractType,
           startDate: entry.startDate,
           endDate: entry.endDate || "",
-          salary: 0,             // El usuario debe completar despues
+          salary: snapshotSalary,
           bonificacion: 0,
           cooperativa: 0,
           gastosMedicos: 40000,
@@ -1832,24 +1833,29 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           position: emp.position,
           contractType: emp.contractType,
           grupo: getGrupo("subterra", emp.contractType),
-          salary: 0,
+          salary: snapshotSalary,
           endDate: emp.endDate,
           date: emp.startDate,
           motivo: "Contratacion nueva",
-          notas: `Alta automática desde Snapshot ${SUBTERRA_SNAPSHOT_DATE}. ⚠️ Configurar salario.`,
+          notas: `Alta automática desde Snapshot ${SUBTERRA_SNAPSHOT_DATE}.${snapshotSalary === 0 ? " ⚠️ Configurar salario." : ""}`,
           createdAt: today,
         });
       } else {
-        // Actualizar campos del empleado (preserva salario, bonif, cooperativa)
+        // Actualizar campos del empleado (preserva bonif, cooperativa).
+        // El salario se actualiza solo si esta en 0 (placeholder) y el snapshot
+        // tiene un valor — asi se preserva el salario real ya configurado.
         const idx = updatedEmps.findIndex((x) => x.id === emp.id);
         const prev = updatedEmps[idx];
+        const snapshotSalary = Number(entry.salary) || 0;
+        const updateSalary = (Number(prev.salary) || 0) === 0 && snapshotSalary > 0;
         const changed =
           prev.fullName !== entry.name ||
           prev.position !== entry.position ||
           prev.contractType !== entry.contractType ||
           prev.startDate !== entry.startDate ||
           (prev.endDate || "") !== (entry.endDate || "") ||
-          prev.status !== "active";
+          prev.status !== "active" ||
+          updateSalary;
         if (changed) {
           updatedEmps[idx] = {
             ...prev,
@@ -1859,6 +1865,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             startDate: entry.startDate,
             endDate: entry.endDate || "",
             status: "active",
+            salary: updateSalary ? snapshotSalary : prev.salary,
           };
           emp = updatedEmps[idx];
           updatedEmpsCount++;
@@ -1866,8 +1873,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       }
 
       // Manejar contrato: si ya hay activo para este empleado, NO sobreescribir
+      // — excepto si el contrato activo tiene salario 0 y el snapshot trae salario:
+      // ahi sincronizamos el salario para que la planilla calcule bien.
       const existingActive = newContracts.find((c) => c.employeeId === emp.id && c.status === "active");
       if (existingActive) {
+        const snapshotSalary = Number(entry.salary) || 0;
+        if ((Number(existingActive.salary) || 0) === 0 && snapshotSalary > 0) {
+          const cIdx = newContracts.findIndex((c) => c.id === existingActive.id);
+          newContracts[cIdx] = { ...existingActive, salary: snapshotSalary };
+        }
         preservedContracts++;
       } else {
         newContracts.push({
