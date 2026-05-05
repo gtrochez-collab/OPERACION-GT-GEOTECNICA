@@ -11,14 +11,15 @@ const USERS = [
   { username: "carolina", password: "carolina1234", role: "tesoreria", label: "Lic. Carolina Flores-Hernandez" },
   { username: "gerencia", password: "gerencia1234", role: "gerencia", label: "Gerencia" },
   { username: "gerson", password: "gerson1234", role: "coordinador", label: "Lic. Gerson Trochez" },
+  { username: "christian", password: "christian1234", role: "costos", label: "Lic. Christian Gallo" },
 ];
 
-const ROLE_LABEL = { admin: "Administrador", asistente: "Asistente", tesoreria: "Tesoreria", gerencia: "Gerencia (solo lectura)", coordinador: "Coordinador de Operaciones" };
+const ROLE_LABEL = { admin: "Administrador", asistente: "Asistente", tesoreria: "Tesoreria", gerencia: "Gerencia (solo lectura)", coordinador: "Coordinador de Operaciones", costos: "Costos" };
 
 // ── Modulos del sistema ──
 const MODULES = [
   { id: "rrhh", name: "Recursos Humanos", icon: "👥", desc: "Empleados, planilla, asistencia, vacaciones, permisos", color: "#0F4C75", roles: ["admin", "asistente"] },
-  { id: "compras-operaciones", name: "Compras-Operaciones", icon: "🧾", desc: "Solicitudes validadas, pagos y comprobantes de tesoreria", color: "#BE185D", roles: ["admin", "tesoreria", "gerencia"] },
+  { id: "compras-operaciones", name: "Compras-Operaciones", icon: "🧾", desc: "Solicitudes validadas, pagos y comprobantes de tesoreria", color: "#BE185D", roles: ["admin", "tesoreria", "gerencia", "costos"] },
   { id: "operations-cc", name: "Operations Command Center", icon: "🎯", desc: "Cuartel general operativo · proyectos, recursos, capacidad y Mi día", color: "#D97706", roles: ["admin", "coordinador", "gerencia"] },
   { id: "almacen", name: "Almacen", icon: "📦", desc: "Inventario, entradas, salidas, requisiciones", color: "#7C3AED", roles: ["admin"], soon: true },
   { id: "logistica", name: "Logistica", icon: "🚛", desc: "Transporte, rutas, despachos, vehiculos", color: "#059669", roles: ["admin"], soon: true },
