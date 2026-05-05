@@ -184,6 +184,7 @@ const Select = ({ label, options, ...p }) => <div style={{ display: "flex", flex
 const Modal = ({ title, onClose, children, wide }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onClose}><div style={{ background: "#fff", borderRadius: 16, padding: 28, width: wide ? "95vw" : 520, maxWidth: "98vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,.2)" }} onClick={e => e.stopPropagation()}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}><h3 style={{ margin: 0, fontSize: 18 }}>{title}</h3><button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94A3B8" }}>✕</button></div>{children}</div></div>;
 const Table = ({ columns, data, actions }) => <div style={{ overflowX: "auto", borderRadius: 12, border: "1px solid #E2E8F0" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#F1F5F9" }}>{columns.map(c => <th key={c.key} style={{ padding: "10px 14px", textAlign: "left", color: "#475569", fontWeight: 600, borderBottom: "2px solid #E2E8F0", whiteSpace: "nowrap" }}>{c.label}</th>)}{actions && <th style={{ padding: "10px 14px", textAlign: "right", borderBottom: "2px solid #E2E8F0" }}>Acciones</th>}</tr></thead><tbody>{data.length === 0 && <tr><td colSpan={columns.length + (actions ? 1 : 0)} style={{ padding: 30, textAlign: "center", color: "#94A3B8" }}>Sin registros</td></tr>}{data.map((r, i) => <tr key={r.id || i} style={{ borderBottom: "1px solid #F1F5F9" }}>{columns.map(c => <td key={c.key} style={{ padding: "10px 14px", color: "#334155" }}>{c.render ? c.render(r) : r[c.key]}</td>)}{actions && <td style={{ padding: "10px 14px", textAlign: "right" }}>{actions(r)}</td>}</tr>)}</tbody></table></div>;
 const StatCard = ({ label, value, icon, color = "#0F4C75" }) => <div style={{ background: "#fff", borderRadius: 14, padding: "18px 22px", border: "1px solid #E2E8F0", flex: 1, minWidth: 150 }}><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ background: color + "15", color, width: 40, height: 40, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>{icon}</div><div><div style={{ fontSize: 20, fontWeight: 700 }}>{value}</div><div style={{ fontSize: 12, color: "#64748b" }}>{label}</div></div></div></div>;
+const AlertCard = ({ label, value, icon, color }) => <div style={{ background: "#fff", borderRadius: 12, padding: "14px 18px", border: `1px solid ${color}30`, borderLeft: `4px solid ${color}` }}><div style={{ display: "flex", alignItems: "center", gap: 12 }}><div style={{ fontSize: 24 }}>{icon}</div><div><div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1.1 }}>{value}</div><div style={{ fontSize: 11, color: "#5C5853", marginTop: 2, fontWeight: 600 }}>{label}</div></div></div></div>;
 
 const TH = { padding: "8px 10px", textAlign: "left", color: "#475569", fontWeight: 600, borderBottom: "2px solid #E2E8F0", whiteSpace: "nowrap", fontSize: 11 };
 const TD = { padding: "6px 10px", color: "#334155", whiteSpace: "nowrap" };
@@ -204,16 +205,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [cuadrillas, setCuadrillas] = useState([]);
   const [movs, setMovs] = useState([]);
   const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
+  const [contracts, setContracts] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
   const [sb, setSb] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const [e, v, l, a, c, p, cq2, mv] = await Promise.all([
+      const [e, v, l, a, c, p, cq2, mv, ct] = await Promise.all([
         store.get("hr-emps5"), store.get("hr-vacs"), store.get("hr-lvs"),
         store.get("hr-atts2"), store.get("hr-cons"), store.get("hr-pays"), store.get("hr-cuad"),
-        store.get("hr-movs"),
+        store.get("hr-movs"), store.get("hr-contracts"),
       ]);
       if (!e || e.length === 0) {
         const s = [];
@@ -221,7 +223,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         SEED_GEO.forEach(x => s.push({ id: uid(), company: "geotecnica", fullName: x.n, dni: x.d, position: x.p, department: "Operaciones", contractType: x.ct, startDate: x.sd, endDate: x.ed || "", salary: x.s, bonificacion: x.b, cooperativa: x.coop || 0, gastosMedicos: x.gm || 40000, status: "active", phone: "", email: "" }));
         setEmps(s); store.set("hr-emps5", s);
       } else setEmps(e);
-      if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2); if (mv) setMovs(mv);
+      if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2); if (mv) setMovs(mv); if (ct) setContracts(ct);
       setLoaded(true);
     })();
   }, []);
@@ -234,6 +236,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const sP = d => { setPays(d); store.set("hr-pays", d); };
   const sCq = d => { setCuadrillas(d); store.set("hr-cuad", d); };
   const sM = d => { setMovs(d); store.set("hr-movs", d); };
+  const sCt = d => { setContracts(d); store.set("hr-contracts", d); };
 
   const ce = emps.filter(e => e.company === co);
   const ae = ce.filter(e => e.status === "active");
@@ -244,12 +247,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const cc2 = cons.filter(c => ce.some(e => e.id === c.employeeId));
   const cp = pays.filter(p => p.company === co);
   const cmov = movs.filter(m => m.company === co);
+  const cct = contracts.filter(x => x.company === co);
   const en = id => emps.find(e => e.id === id)?.fullName || "—";
   const cc = COMPANIES[co];
 
   const allNav = [
     { id: "dashboard", icon: "📊", label: "Dashboard" },
     { id: "employees", icon: "👥", label: "Empleados" },
+    { id: "contracts", icon: "📝", label: "Contratos" },
     { id: "payroll", icon: "💰", label: "Planilla" },
     { id: "vacations", icon: "🏖️", label: "Vacaciones" },
     { id: "leaves", icon: "📋", label: "Permisos" },
@@ -1344,6 +1349,22 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             date: f.startDate, motivo: f.motivo, notas: f.notas, createdAt: new Date().toISOString(),
           };
           sM([...movs, mov]);
+          // Crear contrato automaticamente vinculado al alta
+          const newContract = {
+            id: uid(),
+            employeeId: empId,
+            company: f.company,
+            contractType: f.contractType,
+            startDate: f.startDate,
+            endDate: f.contractType === "temporary" ? (f.endDate || "") : "",
+            salary: Number(f.salary),
+            bonificacion: Number(f.bonificacion) || 0,
+            status: "active",
+            parentContractId: null,
+            notes: `Generado automaticamente desde alta. Motivo: ${f.motivo}`,
+            createdAt: new Date().toISOString(),
+          };
+          sCt([...contracts, newContract]);
           setModal(null);
         }}>Registrar alta</Btn>
       </div>
@@ -1388,6 +1409,24 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             date: f.date, motivo: f.motivo, notas: f.notas, createdAt: new Date().toISOString(),
           };
           sM([...movs, mov]);
+          // Cerrar contrato activo del empleado: status liquidated, endDate = baja
+          const motivoMap = {
+            "Renuncia voluntaria": "renuncia",
+            "Despido": "despido",
+            "Fin de contrato temporal": "fin-contrato",
+            "Mutuo acuerdo": "mutuo-acuerdo",
+            "Jubilacion": "otro",
+            "Fallecimiento": "otro",
+            "Otro": "otro",
+          };
+          sCt(contracts.map(c => (c.employeeId === emp.id && c.status === "active") ? {
+            ...c,
+            status: "liquidated",
+            endDate: c.endDate || f.date,
+            liquidationDate: f.date,
+            liquidationReason: motivoMap[f.motivo] || "otro",
+            liquidationNotes: `Liquidado desde baja de empleado. ${f.notas}`,
+          } : c));
           setModal(null);
         }}>Registrar baja</Btn>
       </div>
@@ -1544,7 +1583,331 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
-  const renderSec = () => { switch (sec) { case "employees": return renderEmps(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); default: return renderDashboard(); } };
+  // ── CONTRATOS ──
+  // Helpers para calculos de contratos
+  const daysBetweenDates = (start, end) => {
+    if (!start || !end) return 0;
+    const s = new Date(start), e = new Date(end);
+    return Math.max(0, Math.round((e - s) / 86400000) + 1);
+  };
+  const daysUntil = (date) => {
+    if (!date) return null;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const t = new Date(date); t.setHours(0, 0, 0, 0);
+    return Math.round((t - today) / 86400000);
+  };
+  // Dias totales acumulados desde el inicio de la cadena (para tracking de 180 dias)
+  const cumulativeDaysOf = (contract) => {
+    if (!contract) return 0;
+    // Encontrar el contrato raiz
+    let root = contract;
+    const visited = new Set();
+    while (root.parentContractId && !visited.has(root.id)) {
+      visited.add(root.id);
+      const parent = contracts.find(c => c.id === root.parentContractId);
+      if (!parent) break;
+      root = parent;
+    }
+    // Sumar todos los contratos descendientes desde la raiz
+    const today = new Date().toISOString().slice(0, 10);
+    let total = 0;
+    const stack = [root];
+    while (stack.length) {
+      const cur = stack.pop();
+      const endRef = cur.endDate || today;
+      total += daysBetweenDates(cur.startDate, endRef);
+      contracts.filter(c => c.parentContractId === cur.id).forEach(c => stack.push(c));
+    }
+    return total;
+  };
+
+  const ContractForm = ({ contract, parent, presetEmpId, onSave }) => {
+    const inheritFromParent = !!parent;
+    const presetEmp = presetEmpId ? ce.find(x => x.id === presetEmpId) : null;
+    const [f, setF] = useState(contract || {
+      employeeId: parent?.employeeId || presetEmpId || "",
+      company: parent?.company || presetEmp?.company || co,
+      contractType: parent?.contractType || presetEmp?.contractType || (co === "geotecnica" ? "permanent" : "temporary"),
+      startDate: parent ? (parent.endDate ? new Date(new Date(parent.endDate).getTime() + 86400000).toISOString().slice(0, 10) : "") : (presetEmp?.startDate || new Date().toISOString().slice(0, 10)),
+      endDate: presetEmp?.endDate || "",
+      salary: parent?.salary || presetEmp?.salary || "",
+      bonificacion: parent?.bonificacion || presetEmp?.bonificacion || 0,
+      notes: "",
+      parentContractId: parent?.id || null,
+    });
+    const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const emp = ce.find(x => x.id === f.employeeId);
+    const isPermOrHon = f.contractType === "permanent" || f.contractType === "honorarios";
+    const days = !isPermOrHon && f.startDate && f.endDate ? daysBetweenDates(f.startDate, f.endDate) : 0;
+
+    // Tipos de contrato disponibles segun empresa
+    const typeOpts = f.company === "geotecnica"
+      ? [{ value: "permanent", label: "Permanente" }, { value: "honorarios", label: "Honorarios" }]
+      : [{ value: "permanent", label: "Permanente" }, { value: "temporary", label: "Obra / Tiempo determinado" }];
+
+    return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      {inheritFromParent && (
+        <div style={{ gridColumn: "1/-1", background: "#FEF3C7", border: "1px solid #FBBF24", borderRadius: 10, padding: 12, fontSize: 13, color: "#92400E" }}>
+          <strong>Renovación de contrato</strong> de <b>{en(parent.employeeId)}</b>. Días acumulados al iniciar esta renovación: <b>{cumulativeDaysOf(parent)}</b>.
+        </div>
+      )}
+      <Select label="Empleado" options={ce.map(e => ({ value: e.id, label: `${e.fullName} — ${e.position}` }))} value={f.employeeId} onChange={e => u("employeeId", e.target.value)} />
+      <Select label="Tipo de contrato" options={typeOpts} value={f.contractType} onChange={e => u("contractType", e.target.value)} />
+      <Input label="Fecha inicio" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
+      {!isPermOrHon && <Input label="Fecha fin" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />}
+      <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
+      <Input label="Bonificacion (L)" type="number" value={f.bonificacion} onChange={e => u("bonificacion", e.target.value)} />
+      {!isPermOrHon && days > 0 && (
+        <div style={{ gridColumn: "1/-1", background: "#EFF6FF", padding: 10, borderRadius: 8, fontSize: 13, color: "#1E40AF" }}>
+          Duración: <b>{days} días</b>{inheritFromParent && <> · Acumulado total proyectado: <b>{cumulativeDaysOf(parent) + days} días</b></>}
+        </div>
+      )}
+      <div style={{ gridColumn: "1/-1" }}>
+        <Input label="Notas" value={f.notes} onChange={e => u("notes", e.target.value)} />
+      </div>
+      <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+        <Btn variant="success" onClick={() => {
+          if (!f.employeeId || !f.startDate || !f.salary) return alert("Complete empleado, fecha de inicio y salario");
+          if (!isPermOrHon && !f.endDate) return alert("Indique fecha de fin del contrato");
+          if (!isPermOrHon && f.endDate < f.startDate) return alert("La fecha de fin debe ser posterior a la fecha de inicio");
+          const newC = {
+            id: contract?.id || uid(),
+            employeeId: f.employeeId,
+            company: f.company,
+            contractType: f.contractType,
+            startDate: f.startDate,
+            endDate: isPermOrHon ? "" : f.endDate,
+            salary: Number(f.salary),
+            bonificacion: Number(f.bonificacion) || 0,
+            status: "active",
+            parentContractId: f.parentContractId || null,
+            notes: f.notes || "",
+            createdAt: contract?.createdAt || new Date().toISOString(),
+          };
+          if (contract) {
+            sCt(contracts.map(x => x.id === contract.id ? newC : x));
+          } else {
+            // Si es renovacion, marcar el padre como "renewed"
+            let updated = [...contracts];
+            if (parent) updated = updated.map(x => x.id === parent.id ? { ...x, status: "renewed" } : x);
+            updated.push(newC);
+            sCt(updated);
+          }
+          setModal(null);
+        }}>{contract ? "Guardar" : (inheritFromParent ? "Renovar contrato" : "Crear contrato")}</Btn>
+      </div>
+    </div>;
+  };
+
+  const LiquidarForm = ({ contract }) => {
+    const [f, setF] = useState({
+      liquidationDate: new Date().toISOString().slice(0, 10),
+      liquidationReason: "180-dias",
+      liquidationAmount: "",
+      liquidationNotes: "",
+    });
+    const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const acumDias = cumulativeDaysOf(contract);
+    return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ gridColumn: "1/-1", background: "#FEE2E2", border: "1px solid #F87171", borderRadius: 10, padding: 14, fontSize: 13, color: "#7F1D1D" }}>
+        <strong>Liquidación de contrato</strong> de <b>{en(contract.employeeId)}</b>.<br />
+        Días acumulados a la fecha: <b>{acumDias} días</b>.
+        {acumDias >= 180 && <span style={{ color: "#DC2626", fontWeight: 700 }}> · Cumple los 180 días — derechos adquiridos.</span>}
+      </div>
+      <Input label="Fecha de liquidación" type="date" value={f.liquidationDate} onChange={e => u("liquidationDate", e.target.value)} />
+      <Select label="Motivo" options={[
+        { value: "180-dias", label: "Cumple 180 días — liquidación con derechos" },
+        { value: "mutuo-acuerdo", label: "Mutuo acuerdo" },
+        { value: "renuncia", label: "Renuncia voluntaria" },
+        { value: "despido", label: "Despido" },
+        { value: "fin-contrato", label: "Fin del contrato sin renovación" },
+        { value: "otro", label: "Otro" },
+      ]} value={f.liquidationReason} onChange={e => u("liquidationReason", e.target.value)} />
+      <Input label="Monto de liquidación (L)" type="number" value={f.liquidationAmount} onChange={e => u("liquidationAmount", e.target.value)} />
+      <div style={{ gridColumn: "1/-1" }}>
+        <Input label="Notas / Observaciones" value={f.liquidationNotes} onChange={e => u("liquidationNotes", e.target.value)} />
+      </div>
+      <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+        <Btn variant="danger" onClick={() => {
+          if (!f.liquidationDate) return alert("Indique fecha de liquidación");
+          sCt(contracts.map(x => x.id === contract.id ? {
+            ...x,
+            status: "liquidated",
+            endDate: x.endDate || f.liquidationDate,
+            liquidationDate: f.liquidationDate,
+            liquidationReason: f.liquidationReason,
+            liquidationAmount: Number(f.liquidationAmount) || 0,
+            liquidationNotes: f.liquidationNotes,
+          } : x));
+          setModal(null);
+        }}>Confirmar liquidación</Btn>
+      </div>
+    </div>;
+  };
+
+  const renderContracts = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    // Agrupar contratos activos por empleado
+    const empleadosConContratos = ce.map(e => {
+      const empContracts = cct.filter(c => c.employeeId === e.id).sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+      const active = empContracts.find(c => c.status === "active") || null;
+      return { emp: e, active, all: empContracts };
+    });
+
+    // Alertas
+    const venceEn7 = empleadosConContratos.filter(x => x.active && x.active.endDate && daysUntil(x.active.endDate) !== null && daysUntil(x.active.endDate) <= 7 && daysUntil(x.active.endDate) >= 0);
+    const venceEn30 = empleadosConContratos.filter(x => x.active && x.active.endDate && daysUntil(x.active.endDate) > 7 && daysUntil(x.active.endDate) <= 30);
+    const cerca180 = empleadosConContratos.filter(x => {
+      if (!x.active || x.active.contractType !== "temporary") return false;
+      const acum = cumulativeDaysOf(x.active);
+      const proyectado = x.active.endDate ? daysBetweenDates(x.active.startDate, x.active.endDate) + (cumulativeDaysOf(x.active) - daysBetweenDates(x.active.startDate, x.active.endDate)) : acum;
+      return acum >= 150 || (x.active.endDate && proyectado >= 180);
+    });
+    const sinContrato = empleadosConContratos.filter(x => !x.active && x.emp.status === "active");
+    const liquidados = cct.filter(c => c.status === "liquidated");
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <span style={{ color: "#5C5853", fontSize: 13 }}>
+          {empleadosConContratos.filter(x => x.active).length} con contrato activo · {sinContrato.length} sin contrato · {liquidados.length} liquidados históricos
+        </span>
+        <div style={{ display: "flex", gap: 8 }}>
+          {sinContrato.length > 0 && (
+            <Btn variant="info" onClick={() => {
+              if (!confirm(`Generar contratos automáticos para ${sinContrato.length} empleado(s) sin contrato? Se creará un contrato activo usando los datos actuales del empleado (fecha inicio, tipo, salario).`)) return;
+              const nuevos = sinContrato.map(({ emp }) => ({
+                id: uid(),
+                employeeId: emp.id,
+                company: emp.company,
+                contractType: emp.contractType,
+                startDate: emp.startDate || new Date().toISOString().slice(0, 10),
+                endDate: emp.contractType === "temporary" ? (emp.endDate || "") : "",
+                salary: Number(emp.salary) || 0,
+                bonificacion: Number(emp.bonificacion) || 0,
+                status: "active",
+                parentContractId: null,
+                notes: "Migración automática desde empleado existente",
+                createdAt: new Date().toISOString(),
+              }));
+              sCt([...contracts, ...nuevos]);
+              alert(`${nuevos.length} contrato(s) generados.`);
+            }}>🔁 Generar contratos faltantes ({sinContrato.length})</Btn>
+          )}
+          <Btn onClick={() => setModal({ t: "ctn" })}>+ Nuevo contrato</Btn>
+        </div>
+      </div>
+
+      {/* Alertas dashboard */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+        <AlertCard color="#DC2626" icon="🔴" label="Vencen en 7 días" value={venceEn7.length} />
+        <AlertCard color="#F59E0B" icon="🟡" label="Vencen este mes" value={venceEn30.length} />
+        <AlertCard color="#7C3AED" icon="⚠️" label="Cerca de 180 días" value={cerca180.length} />
+        <AlertCard color="#94A3B8" icon="📭" label="Sin contrato activo" value={sinContrato.length} />
+      </div>
+
+      {/* Lista de empleados con sus contratos */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {empleadosConContratos
+          .sort((a, b) => {
+            // Ordenar: temporales con fecha de fin proxima primero, luego permanentes
+            if (a.active && !b.active) return -1;
+            if (!a.active && b.active) return 1;
+            if (a.active?.endDate && b.active?.endDate) return (a.active.endDate || "").localeCompare(b.active.endDate || "");
+            return (a.emp.fullName || "").localeCompare(b.emp.fullName || "");
+          })
+          .map(({ emp, active, all }) => {
+            const code = genEmpCode(emp.fullName, emp.dni);
+            const grupo = getGrupo(emp.company, emp.contractType);
+            const acumDias = active ? cumulativeDaysOf(active) : 0;
+            const diasHasta = active && active.endDate ? daysUntil(active.endDate) : null;
+            const tipoActivo = active?.contractType;
+            const isTemp = tipoActivo === "temporary";
+
+            return (
+              <div key={emp.id} style={{ background: "#fff", border: "1px solid #DBD4C8", borderRadius: 12, padding: "14px 18px" }}>
+                {/* Cabecera del empleado */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: "#2C2A28" }}>{emp.fullName} <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 10, fontWeight: 700, color: "#E8762D", marginLeft: 6 }}>{code}</span></div>
+                    <div style={{ fontSize: 11, color: "#8B847C", marginTop: 2 }}>{emp.position} · DNI {emp.dni} · <Badge color={GRUPO_COLOR[grupo]}>{grupo} {GRUPO_DESC[grupo]}</Badge></div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+                    {!active && <Btn small onClick={() => setModal({ t: "ctn", presetEmpId: emp.id })}>+ Crear contrato</Btn>}
+                    {active && isTemp && <Btn small variant="info" onClick={() => setModal({ t: "ctr", d: active })}>🔄 Renovar</Btn>}
+                    {active && <Btn small variant="danger" onClick={() => setModal({ t: "ctl", d: active })}>💰 Liquidar</Btn>}
+                  </div>
+                </div>
+
+                {/* Contrato activo */}
+                {active ? (
+                  <div style={{ background: isTemp && acumDias >= 150 ? "#FEF3C7" : "#F8F2E6", border: `1px solid ${isTemp && acumDias >= 150 ? "#F59E0B" : "#DBD4C8"}`, borderRadius: 10, padding: "10px 14px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                      <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+                        <Badge color={tipoActivo === "permanent" ? "#2563EB" : tipoActivo === "honorarios" ? "#7C3AED" : "#D97706"}>
+                          {tipoActivo === "permanent" ? "Permanente" : tipoActivo === "honorarios" ? "Honorarios" : "Obra/Tiempo determinado"}
+                        </Badge>
+                        <span style={{ fontSize: 12, color: "#5C5853" }}>
+                          <strong>Inicio:</strong> {fmt(active.startDate)}
+                          {active.endDate && <> · <strong>Fin:</strong> {fmt(active.endDate)}</>}
+                        </span>
+                        {isTemp && diasHasta !== null && (
+                          <Badge color={diasHasta < 0 ? "#DC2626" : diasHasta <= 7 ? "#DC2626" : diasHasta <= 30 ? "#F59E0B" : "#10B981"}>
+                            {diasHasta < 0 ? `Venció hace ${-diasHasta} días` : diasHasta === 0 ? "Vence hoy" : `Vence en ${diasHasta} días`}
+                          </Badge>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#5C5853", textAlign: "right" }}>
+                        <strong>Salario:</strong> {fmtL(active.salary)}
+                      </div>
+                    </div>
+                    {/* Barra de progreso hacia 180 dias para temporales */}
+                    {isTemp && (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#8B847C", marginBottom: 4 }}>
+                          <span><strong>Acumulado:</strong> {acumDias} días</span>
+                          <span style={{ color: acumDias >= 180 ? "#DC2626" : acumDias >= 150 ? "#F59E0B" : "#5C5853", fontWeight: 600 }}>
+                            {acumDias >= 180 ? "⚠️ Liquidación obligatoria" : `${180 - acumDias} días para los 180`}
+                          </span>
+                        </div>
+                        <div style={{ height: 6, background: "#E8E1D3", borderRadius: 3, overflow: "hidden" }}>
+                          <div style={{ width: `${Math.min(100, (acumDias / 180) * 100)}%`, height: "100%", background: acumDias >= 180 ? "#DC2626" : acumDias >= 150 ? "#F59E0B" : "#10B981", transition: "width .3s" }} />
+                        </div>
+                      </div>
+                    )}
+                    {active.notes && <div style={{ fontSize: 11, color: "#5C5853", marginTop: 8, fontStyle: "italic" }}>{active.notes}</div>}
+                  </div>
+                ) : (
+                  <div style={{ background: "#F1F5F9", border: "1px dashed #CBD5E1", borderRadius: 10, padding: "10px 14px", color: "#64748B", fontSize: 13, fontStyle: "italic" }}>
+                    Sin contrato activo registrado.
+                  </div>
+                )}
+
+                {/* Historial */}
+                {all.length > 1 && (
+                  <details style={{ marginTop: 10 }}>
+                    <summary style={{ cursor: "pointer", fontSize: 11, color: "#8B847C", fontWeight: 600 }}>Historial ({all.length} contratos)</summary>
+                    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                      {all.map(c => (
+                        <div key={c.id} style={{ fontSize: 11, color: "#5C5853", padding: "4px 10px", background: c.status === "active" ? "#ECFDF5" : c.status === "liquidated" ? "#FEE2E2" : "#F1F5F9", borderRadius: 6 }}>
+                          <Badge color={c.status === "active" ? "#10B981" : c.status === "liquidated" ? "#DC2626" : c.status === "renewed" ? "#3B82F6" : "#8B847C"}>
+                            {c.status === "active" ? "Activo" : c.status === "liquidated" ? "Liquidado" : c.status === "renewed" ? "Renovado" : "Cerrado"}
+                          </Badge> {fmt(c.startDate)} → {c.endDate ? fmt(c.endDate) : "indefinido"} · {fmtL(c.salary)}{c.liquidationReason && ` · ${c.liquidationReason}`}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            );
+          })}
+      </div>
+    </div>;
+  };
+
+  const renderSec = () => { switch (sec) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); default: return renderDashboard(); } };
 
   const renderModal = () => { if (!modal) return null; const m = modal; switch (m.t) {
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;
@@ -1561,6 +1924,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     case "mn": return <Modal title="Registrar ALTA de empleado" onClose={() => setModal(null)} wide><AltaForm /></Modal>;
     case "mb": return <Modal title="Registrar BAJA de empleado" onClose={() => setModal(null)} wide><BajaForm /></Modal>;
     case "cn": return <Modal title="Constancia" onClose={() => setModal(null)} wide><ConForm /></Modal>;
+    case "ctn": return <Modal title="Nuevo contrato" onClose={() => setModal(null)} wide><ContractForm presetEmpId={m.presetEmpId} onSave={() => {}} /></Modal>;
+    case "cte": return <Modal title="Editar contrato" onClose={() => setModal(null)} wide><ContractForm contract={m.d} onSave={() => {}} /></Modal>;
+    case "ctr": return <Modal title="Renovar contrato" onClose={() => setModal(null)} wide><ContractForm parent={m.d} onSave={() => {}} /></Modal>;
+    case "ctl": return <Modal title="Liquidar contrato" onClose={() => setModal(null)} wide><LiquidarForm contract={m.d} /></Modal>;
     default: return null;
   }};
 
