@@ -439,6 +439,7 @@ const NIVEL_RIESGO_MAP = {
 
 // ============ COMPONENTE PRINCIPAL ============
 export default function OperationsModule({ userRole, userName, onBack, onLogout }) {
+  const isReadOnly = userRole === "gerencia" || userRole === "costos";
   const [data, setData] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("inicio");
@@ -654,58 +655,67 @@ export default function OperationsModule({ userRole, userName, onBack, onLogout 
           ))}
         </div>
 
-        {/* Contenido */}
-        {tab === "inicio" && (
-          <InicioView
-            data={data}
-            totalCriticos={totalCriticos}
-            totalPendientes={totalPendientes}
-            totalUrgentes={totalUrgentes}
-            pendsGenerales={pendsGenerales}
-            goTo={setTab}
-          />
-        )}
-        {tab === "mi-dia" && (
-          <MiDiaView data={data} toggleItem={toggleMiDiaItem} quitar={quitarDeMiDia} />
-        )}
-        {tab === "consolidado" && (
-          <ConsolidadoView data={data} goTo={setTab} />
-        )}
-        {tab === "pendientes-generales" && (
-          <PendientesGeneralesView
-            data={data}
-            esFavorito={(idx) => estaEnMiDia("general", null, idx)}
-            toggle={togglePendienteGeneral}
-            toggleEstrella={toggleEstrellaGeneral}
-            del={deleteGeneral}
-            openModal={openModal}
-          />
-        )}
-        {tab === "capacidad" && (
-          <CapacidadView
-            data={data}
-            capTab={capTab}
-            setCapTab={setCapTab}
-            del={deleteCapItem}
-            openModal={openModal}
-          />
-        )}
-        {proyectoActual && (
-          <ProyectoView
-            p={proyectoActual}
-            data={data}
-            esFavorito={(idx) => estaEnMiDia("proyecto", proyectoActual.id, idx)}
-            toggleEstrella={(idx) => toggleEstrellaProyecto(proyectoActual.id, idx)}
-            togglePendiente={(idx) => togglePendiente(proyectoActual.id, idx)}
-            del={(tipo, idx) => deleteFromProject(proyectoActual.id, tipo, idx)}
-            openModal={openModal}
-            setNotas={(v) => setNotasProyecto(proyectoActual.id, v)}
-            goTo={setTab}
-          />
+        {/* Banner solo lectura */}
+        {isReadOnly && (
+          <div style={{ background: "rgba(59,130,246,0.15)", border: "1px solid rgba(96,165,250,0.4)", color: "#60A5FA", padding: "10px 16px", borderRadius: 8, marginBottom: 14, fontSize: 13, fontWeight: 600 }}>
+            👁️ Modo solo lectura — podés ver toda la información pero no editar ni guardar cambios.
+          </div>
         )}
 
+        {/* Contenido */}
+        <fieldset disabled={isReadOnly} style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
+          {tab === "inicio" && (
+            <InicioView
+              data={data}
+              totalCriticos={totalCriticos}
+              totalPendientes={totalPendientes}
+              totalUrgentes={totalUrgentes}
+              pendsGenerales={pendsGenerales}
+              goTo={setTab}
+            />
+          )}
+          {tab === "mi-dia" && (
+            <MiDiaView data={data} toggleItem={toggleMiDiaItem} quitar={quitarDeMiDia} />
+          )}
+          {tab === "consolidado" && (
+            <ConsolidadoView data={data} goTo={setTab} />
+          )}
+          {tab === "pendientes-generales" && (
+            <PendientesGeneralesView
+              data={data}
+              esFavorito={(idx) => estaEnMiDia("general", null, idx)}
+              toggle={togglePendienteGeneral}
+              toggleEstrella={toggleEstrellaGeneral}
+              del={deleteGeneral}
+              openModal={openModal}
+            />
+          )}
+          {tab === "capacidad" && (
+            <CapacidadView
+              data={data}
+              capTab={capTab}
+              setCapTab={setCapTab}
+              del={deleteCapItem}
+              openModal={openModal}
+            />
+          )}
+          {proyectoActual && (
+            <ProyectoView
+              p={proyectoActual}
+              data={data}
+              esFavorito={(idx) => estaEnMiDia("proyecto", proyectoActual.id, idx)}
+              toggleEstrella={(idx) => toggleEstrellaProyecto(proyectoActual.id, idx)}
+              togglePendiente={(idx) => togglePendiente(proyectoActual.id, idx)}
+              del={(tipo, idx) => deleteFromProject(proyectoActual.id, tipo, idx)}
+              openModal={openModal}
+              setNotas={(v) => setNotasProyecto(proyectoActual.id, v)}
+              goTo={setTab}
+            />
+          )}
+        </fieldset>
+
         {/* Modal */}
-        {modal && (
+        {modal && !isReadOnly && (
           <ModalShell onClose={closeModal}>
             <ModalForm modal={modal} updateDraft={updateDraft} data={data} onSave={saveModal} onClose={closeModal} />
           </ModalShell>

@@ -444,6 +444,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const isAdmin = userRole === "admin";
   const isTesoreria = userRole === "tesoreria";
   const isGerencia = userRole === "gerencia";
+  const isCostos = userRole === "costos";
 
   // Permisos (segregacion de funciones):
   // admin → SOLO Operaciones: crea, edita borradores, valida y envia a Tesoreria.
@@ -451,9 +452,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // tesoreria (Lic. Carolina) → UNICA que registra pago, sube comprobante,
   //         y cambia estado a pagado/finalizado.
   // gerencia → solo lectura.
+  // costos → solo lectura (Lic. Christian Gallo · departamento de Costos).
   const canCreate = isAdmin;                       // crear/editar/validar solicitudes
   const canPay = isTesoreria;                      // SOLO Carolina registra pago y cambia estado financiero
-  const canViewOnly = isGerencia;
+  const canViewOnly = isGerencia || isCostos;
 
   const [co, setCo] = useState("geotecnica");
   const [purchases, setPurchases] = useState([]);
@@ -1319,8 +1321,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         {onLogout && <button onClick={onLogout} style={{ background: "rgba(220,38,38,0.15)", border: "1px solid #7F1D1D", borderRadius: 8, color: "#FCA5A5", padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left" }}>Cerrar sesion</button>}
         <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>
           {userName || "Usuario"}<br />
-          <span style={{ color: isTesoreria ? "#FBBF24" : isGerencia ? "#60A5FA" : "#34D399" }}>
-            {isAdmin ? "Operaciones + Tesoreria" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : userRole}
+          <span style={{ color: isTesoreria ? "#FBBF24" : (isGerencia || isCostos) ? "#60A5FA" : "#34D399" }}>
+            {isAdmin ? "Operaciones + Tesoreria" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : isCostos ? "Costos (solo lectura)" : userRole}
           </span>
         </div>
       </div>}

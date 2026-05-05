@@ -150,6 +150,7 @@ const INP = { width: 75, padding: "4px 6px", border: "1px solid #E2E8F0", border
 // ── APP ──
 export default function HRModule({ userRole = "admin", userName, onBack, onLogout }) {
   const isAsistente = userRole === "asistente";
+  const isReadOnly = userRole === "gerencia" || userRole === "costos";
   const [co, setCo] = useState("subterra");
   const [sec, setSec] = useState(isAsistente ? "attendance" : "dashboard");
   const [emps, setEmps] = useState([]);
@@ -1169,8 +1170,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div><h2 style={{ margin: 0, fontSize: 20 }}>{nav.find(n => n.id === sec)?.label}</h2><span style={{ fontSize: 13, color: cc.accent, fontWeight: 600 }}>{cc.name}</span></div>
         <Badge color={cc.color}>{ae.length} activos</Badge>
       </div>
-      <div style={{ padding: 28 }}>{renderSec()}</div>
+      <div style={{ padding: 28 }}>
+        {isReadOnly && (
+          <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", color: "#1E40AF", padding: "10px 16px", borderRadius: 8, marginBottom: 16, fontSize: 13, fontWeight: 600 }}>
+            👁️ Modo solo lectura — podés ver toda la información pero no editar ni guardar cambios.
+          </div>
+        )}
+        <fieldset disabled={isReadOnly} style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
+          {renderSec()}
+        </fieldset>
+      </div>
     </div>
-    {renderModal()}
+    {!isReadOnly && renderModal()}
   </div>;
 }

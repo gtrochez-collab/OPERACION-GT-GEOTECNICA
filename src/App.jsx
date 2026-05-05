@@ -18,9 +18,9 @@ const ROLE_LABEL = { admin: "Administrador", asistente: "Asistente", tesoreria: 
 
 // ── Modulos del sistema ──
 const MODULES = [
-  { id: "rrhh", name: "Recursos Humanos", icon: "👥", desc: "Empleados, planilla, asistencia, vacaciones, permisos", color: "#0F4C75", roles: ["admin", "asistente"] },
+  { id: "rrhh", name: "Recursos Humanos", icon: "👥", desc: "Empleados, planilla, asistencia, vacaciones, permisos", color: "#0F4C75", roles: ["admin", "asistente", "costos"] },
   { id: "compras-operaciones", name: "Compras-Operaciones", icon: "🧾", desc: "Solicitudes validadas, pagos y comprobantes de tesoreria", color: "#BE185D", roles: ["admin", "tesoreria", "gerencia", "costos"] },
-  { id: "operations-cc", name: "Operations Command Center", icon: "🎯", desc: "Cuartel general operativo · proyectos, recursos, capacidad y Mi día", color: "#D97706", roles: ["admin", "coordinador", "gerencia"] },
+  { id: "operations-cc", name: "Operations Command Center", icon: "🎯", desc: "Cuartel general operativo · proyectos, recursos, capacidad y Mi día", color: "#D97706", roles: ["admin", "coordinador", "gerencia", "costos"] },
   { id: "almacen", name: "Almacen", icon: "📦", desc: "Inventario, entradas, salidas, requisiciones", color: "#7C3AED", roles: ["admin"], soon: true },
   { id: "logistica", name: "Logistica", icon: "🚛", desc: "Transporte, rutas, despachos, vehiculos", color: "#059669", roles: ["admin"], soon: true },
 ];
