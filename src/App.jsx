@@ -460,6 +460,24 @@ function LoginScreen({ onLogin }) {
           <div style={{ marginTop: 32, paddingTop: 24, borderTop: `1px solid ${BRAND.borderSoft}`, fontSize: 11, color: BRAND.stone, lineHeight: 1.6, textAlign: "center" }}>
             ¿Olvidaste tu clave? Contactá al administrador del sistema.
           </div>
+
+          {/* Versículo · firma espiritual de la plataforma */}
+          <div style={{ marginTop: 28, paddingTop: 22, borderTop: `1px solid ${BRAND.borderSoft}`, textAlign: "center" }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, color: BRAND.orange, letterSpacing: 3.5, textTransform: "uppercase", marginBottom: 12 }}>
+              Job 22:28
+            </div>
+            <p style={{ fontFamily: FONT.display, fontSize: 13.5, color: BRAND.graphite, lineHeight: 1.75, fontStyle: "italic", fontWeight: 400 }}>
+              «
+              <span style={{ background: BRAND.orangeSoft, padding: "2px 6px", borderRadius: 3, fontWeight: 700, color: BRAND.charcoal, fontStyle: "normal", boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" }}>
+                Tendrás éxito
+              </span>
+              {" en todo lo que emprendas, y la luz brillará sobre "}
+              <span style={{ background: BRAND.orangeSoft, padding: "2px 6px", borderRadius: 3, fontWeight: 700, color: BRAND.charcoal, fontStyle: "normal", boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" }}>
+                el camino delante de ti
+              </span>
+              ».
+            </p>
+          </div>
         </div>
       </div>
     </div>
