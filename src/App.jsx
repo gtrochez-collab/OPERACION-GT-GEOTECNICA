@@ -173,6 +173,14 @@ export default function App() {
           <p style={{ fontSize: 15, color: BRAND.graphite, maxWidth: 560, lineHeight: 1.55 }}>
             Bienvenido, <strong style={{ color: BRAND.charcoal }}>{user.label.split(" ").slice(-2).join(" ")}</strong>. Seleccioná el módulo con el que vas a trabajar.
           </p>
+          <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: BRAND.stone }}>
+            <span style={{ width: 28, height: 1, background: BRAND.orange, opacity: 0.6 }} />
+            <span style={{ fontWeight: 600, letterSpacing: 0.4, color: BRAND.graphite }}>
+              Lic. Gerson Trochez
+            </span>
+            <span style={{ color: BRAND.ash }}>·</span>
+            <span style={{ fontStyle: "italic" }}>Coordinador de Operaciones</span>
+          </div>
         </div>
       </div>
 
