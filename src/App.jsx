@@ -467,15 +467,15 @@ function LoginScreen({ onLogin }) {
               Job 22:28
             </div>
             <p style={{ fontFamily: FONT.display, fontSize: 13.5, color: BRAND.graphite, lineHeight: 1.75, fontStyle: "italic", fontWeight: 400 }}>
-              «
+              "
               <span style={{ background: BRAND.orangeSoft, padding: "2px 6px", borderRadius: 3, fontWeight: 700, color: BRAND.charcoal, fontStyle: "normal", boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" }}>
-                Tendrás éxito
+                You will succeed
               </span>
-              {" en todo lo que emprendas, y la luz brillará sobre "}
+              {" in whatever you choose to do, and light will shine on "}
               <span style={{ background: BRAND.orangeSoft, padding: "2px 6px", borderRadius: 3, fontWeight: 700, color: BRAND.charcoal, fontStyle: "normal", boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" }}>
-                el camino delante de ti
+                the road ahead of you
               </span>
-              ».
+              ."
             </p>
           </div>
         </div>
