@@ -272,7 +272,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const sBn = d => { setBonifs(d); store.set("hr-bonuses", d); };
 
   const ce = emps.filter(e => e.company === co);
-  const ae = ce.filter(e => e.status === "active");
+  // Politica: todo empleado en la base de datos de la empresa se considera activo.
+  // No filtramos por status — si esta en `ce`, debe aparecer en cuadrilla, asistencia,
+  // planilla y demas vistas operativas.
+  const ae = ce;
   const cv = vacs.filter(v => ce.some(e => e.id === v.employeeId));
   const cl = lvs.filter(l => ce.some(e => e.id === l.employeeId));
   const ca = atts.filter(a => a.company === co);
@@ -683,8 +686,19 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       setAssignments(a); setStep(2);
     };
 
-    const projEmps = (proj) => ae.filter(e => assignments[e.id] === proj);
-    const unassigned = ae.filter(e => !assignments[e.id]);
+    // projEmps: empleados asignados a un proyecto. Usa resolveShort para reconocer
+    // aliases (ej: "VILLA ROY" → "VILLAROY", "PLAN-TALLER" → "PLANTEL-OFICINA")
+    // y no perder empleados cuyo nombre de proyecto cambio.
+    const projEmps = (proj) => ae.filter(e => resolveShort(assignments[e.id]) === proj);
+    // unassigned: empleados sin asignacion valida. Incluye:
+    //   - sin valor (vacio, null, undefined)
+    //   - con valor pero apuntando a un proyecto que ya no existe (data stale)
+    // De esta forma ningun empleado queda invisible en la pantalla.
+    const unassigned = ae.filter(e => {
+      const a = assignments[e.id];
+      if (!a) return true;
+      return !findProject(a);
+    });
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {step === 1 && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 14, alignItems: "end" }}>
@@ -773,10 +787,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
     // Determina si un dia esta bloqueado para un empleado segun su fecha de
     // alta (startDate) o baja (endDate). Devuelve la razon si esta bloqueado.
+    // Esto mantiene la integridad: no se puede marcar asistencia antes de que
+    // el empleado entrara o despues de su baja.
     const dayLockReason = (e, dayObj) => {
       const dStr = `${sheet.periodo}-${String(dayObj.day).padStart(2, "0")}`;
-      if (e.startDate && dStr < e.startDate) return "Antes del alta";
-      if (e.endDate && dStr > e.endDate) return "Después de la baja";
+      if (e.startDate && dStr < e.startDate) return `Antes del alta (${e.startDate})`;
+      if (e.endDate && dStr > e.endDate) return `Despues de la baja (${e.endDate})`;
       return null;
     };
 
