@@ -1562,27 +1562,32 @@ function ModalShell({ children, onClose }) {
   );
 }
 
+// ── Helpers de ModalForm — definidos a nivel de modulo ──
+// IMPORTANTE: NO mover dentro de ModalForm. Hacerlo causa que React los trate como un
+// nuevo tipo de componente en cada re-render de ModalForm (que ocurre con cada keystroke
+// via updateDraft), desmontando los <input>/<textarea> hijos y perdiendo el foco.
+// Sintoma: el usuario tipea una letra y la caja se "bloquea". Bug clasico de React.
+const Field = ({ label, children }) => (
+  <div style={{ marginBottom: 12 }}>
+    <label style={{ display: "block", fontSize: 11, color: C.textLo, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4, fontWeight: 600 }}>{label}</label>
+    {children}
+  </div>
+);
+
+const Title = ({ children }) => (
+  <h3 style={{ color: C.accent, fontSize: 16, marginBottom: 16, textTransform: "uppercase", letterSpacing: 1 }}>{children}</h3>
+);
+
+const Actions = ({ saveLabel = "Guardar", onClose, onSave }) => (
+  <div style={{ display: "flex", gap: 8, marginTop: 18, justifyContent: "flex-end" }}>
+    <button onClick={onClose} style={{ ...modalBtn, background: C.border, color: C.textMid }}>Cancelar</button>
+    <button onClick={onSave} style={{ ...modalBtn, background: C.accent, color: "white" }}>{saveLabel}</button>
+  </div>
+);
+
 function ModalForm({ modal, updateDraft, data, onSave, onClose }) {
   const { kind, params, draft } = modal;
   const findP = (id) => data.proyectos.find((x) => x.id === id);
-
-  const Field = ({ label, children }) => (
-    <div style={{ marginBottom: 12 }}>
-      <label style={{ display: "block", fontSize: 11, color: C.textLo, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4, fontWeight: 600 }}>{label}</label>
-      {children}
-    </div>
-  );
-
-  const Title = ({ children }) => (
-    <h3 style={{ color: C.accent, fontSize: 16, marginBottom: 16, textTransform: "uppercase", letterSpacing: 1 }}>{children}</h3>
-  );
-
-  const Actions = ({ saveLabel = "Guardar" }) => (
-    <div style={{ display: "flex", gap: 8, marginTop: 18, justifyContent: "flex-end" }}>
-      <button onClick={onClose} style={{ ...modalBtn, background: C.border, color: C.textMid }}>Cancelar</button>
-      <button onClick={onSave} style={{ ...modalBtn, background: C.accent, color: "white" }}>{saveLabel}</button>
-    </div>
-  );
 
   const renderAmarresChecklist = () => {
     const p = findP(params.proyectoId);
@@ -1643,7 +1648,7 @@ function ModalForm({ modal, updateDraft, data, onSave, onClose }) {
           </select>
         </Field>
         <Field label="Objetivo de la semana"><textarea style={ta} value={draft.objetivo} onChange={(e) => updateDraft({ objetivo: e.target.value })} /></Field>
-        <Actions />
+        <Actions onClose={onClose} onSave={onSave} />
       </>
     );
   }
@@ -1677,7 +1682,7 @@ function ModalForm({ modal, updateDraft, data, onSave, onClose }) {
             Marcar como CRÍTICO
           </label>
         </Field>
-        <Actions saveLabel={kind === "add-requerimiento" ? "Agregar" : "Guardar"} />
+        <Actions saveLabel={kind === "add-requerimiento" ? "Agregar" : "Guardar"}  onClose={onClose} onSave={onSave} />
       </>
     );
   }
@@ -1702,7 +1707,7 @@ function ModalForm({ modal, updateDraft, data, onSave, onClose }) {
             </select>
           </Field>
         )}
-        <Actions saveLabel={kind === "add-recurso" ? "Agregar" : "Guardar"} />
+        <Actions saveLabel={kind === "add-recurso" ? "Agregar" : "Guardar"}  onClose={onClose} onSave={onSave} />
       </>
     );
   }
@@ -1723,7 +1728,7 @@ function ModalForm({ modal, updateDraft, data, onSave, onClose }) {
           </select>
         </Field>
         {renderAmarresChecklist()}
-        <Actions saveLabel={kind === "add-pendiente" ? "Agregar" : "Guardar"} />
+        <Actions saveLabel={kind === "add-pendiente" ? "Agregar" : "Guardar"}  onClose={onClose} onSave={onSave} />
       </>
     );
   }
@@ -1741,7 +1746,7 @@ function ModalForm({ modal, updateDraft, data, onSave, onClose }) {
           </select>
         </Field>
         <Field label="Plan de mitigación"><textarea style={ta} value={draft.mitigacion || ""} onChange={(e) => updateDraft({ mitigacion: e.target.value })} placeholder="¿Qué hacés si pasa? Plan B" /></Field>
-        <Actions saveLabel={kind === "add-riesgo" ? "Agregar" : "Guardar"} />
+        <Actions saveLabel={kind === "add-riesgo" ? "Agregar" : "Guardar"}  onClose={onClose} onSave={onSave} />
       </>
     );
   }
@@ -1754,7 +1759,7 @@ function ModalForm({ modal, updateDraft, data, onSave, onClose }) {
         <Field label="Rol"><input style={inp} value={draft.rol || ""} onChange={(e) => updateDraft({ rol: e.target.value })} placeholder="ej: Cliente, Residente, Proveedor" /></Field>
         <Field label="Teléfono"><input style={inp} value={draft.telefono || ""} onChange={(e) => updateDraft({ telefono: e.target.value })} placeholder="ej: +504 9999-9999" /></Field>
         <Field label="Notas"><textarea style={ta} value={draft.notas || ""} onChange={(e) => updateDraft({ notas: e.target.value })} /></Field>
-        <Actions saveLabel={kind === "add-contacto" ? "Agregar" : "Guardar"} />
+        <Actions saveLabel={kind === "add-contacto" ? "Agregar" : "Guardar"}  onClose={onClose} onSave={onSave} />
       </>
     );
   }
@@ -1765,7 +1770,7 @@ function ModalForm({ modal, updateDraft, data, onSave, onClose }) {
         <Title>{kind === "add-escenario" ? "+ Agregar escenario" : "✏️ Editar escenario"}</Title>
         <Field label="Título"><input style={inp} value={draft.titulo} onChange={(e) => updateDraft({ titulo: e.target.value })} placeholder="ej: Escenario C — usar X equipo" /></Field>
         <Field label="Descripción"><textarea style={ta} value={draft.desc} onChange={(e) => updateDraft({ desc: e.target.value })} placeholder="Describí qué implica este escenario..." /></Field>
-        <Actions saveLabel={kind === "add-escenario" ? "Agregar" : "Guardar"} />
+        <Actions saveLabel={kind === "add-escenario" ? "Agregar" : "Guardar"}  onClose={onClose} onSave={onSave} />
       </>
     );
   }
@@ -1785,7 +1790,7 @@ function ModalForm({ modal, updateDraft, data, onSave, onClose }) {
             <option value="red">🔴 Urgente</option>
           </select>
         </Field>
-        <Actions saveLabel={kind === "add-general" ? "Agregar" : "Guardar"} />
+        <Actions saveLabel={kind === "add-general" ? "Agregar" : "Guardar"}  onClose={onClose} onSave={onSave} />
       </>
     );
   }
@@ -1800,7 +1805,7 @@ function ModalForm({ modal, updateDraft, data, onSave, onClose }) {
         <Field label="Estado"><input style={inp} value={draft.estado || ""} onChange={(e) => updateDraft({ estado: e.target.value })} placeholder="ej: En obra, Plantel" /></Field>
         {!esPersonal && <Field label="Asignación"><input style={inp} value={draft.asignacion || ""} onChange={(e) => updateDraft({ asignacion: e.target.value })} placeholder="ej: Amicci" /></Field>}
         <Field label="Notas"><textarea style={ta} value={draft.notas || ""} onChange={(e) => updateDraft({ notas: e.target.value })} /></Field>
-        <Actions saveLabel={kind === "add-cap-item" ? "Agregar" : "Guardar"} />
+        <Actions saveLabel={kind === "add-cap-item" ? "Agregar" : "Guardar"}  onClose={onClose} onSave={onSave} />
       </>
     );
   }
@@ -1810,7 +1815,7 @@ function ModalForm({ modal, updateDraft, data, onSave, onClose }) {
       <>
         <Title>+ Agregar nueva categoría</Title>
         <Field label="Nombre de la categoría"><input style={inp} value={draft.nombre} onChange={(e) => updateDraft({ nombre: e.target.value })} placeholder="ej: Pilotadoras grandes" /></Field>
-        <Actions saveLabel="Agregar" />
+        <Actions saveLabel="Agregar"  onClose={onClose} onSave={onSave} />
       </>
     );
   }
