@@ -785,14 +785,28 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const assignments = sheet.assignments || {};
     const projGroups = PROJECTS.filter(p => ae.some(e => (assignments[e.id] === p.short) || resolveShort(assignments[e.id]) === p.short));
 
-    // Determina si un dia esta bloqueado para un empleado segun su fecha de
-    // alta (startDate) o baja (endDate). Devuelve la razon si esta bloqueado.
-    // Esto mantiene la integridad: no se puede marcar asistencia antes de que
-    // el empleado entrara o despues de su baja.
+    // Determina si un dia esta bloqueado para un empleado.
+    //
+    // Reglas (alineadas con el flujo real de altas/bajas):
+    //   1. Siempre: dias ANTES del startDate del empleado quedan bloqueados.
+    //      Esto cubre altas a mitad de quincena (ej: alta el 8 → dias 1-7 grises).
+    //
+    //   2. Solo cuando el empleado tiene status "inactive" (baja registrada):
+    //      dias DESPUES del endDate quedan bloqueados (ej: baja el 8 → dias
+    //      9-15 grises). El status "inactive" lo setea BajaForm junto con el
+    //      endDate, asi que es la fuente de verdad.
+    //
+    // Por que no chequeamos endDate cuando status === "active":
+    //   Los contratos temporales tienen endDate inicial al darlos de alta.
+    //   Si el contrato se renueva (modulo Contratos), el empleado sigue
+    //   activo pero el endDate del empleado queda viejo. Antes esto bloqueaba
+    //   indebidamente la asistencia de gente activa. Ahora respetamos status.
     const dayLockReason = (e, dayObj) => {
       const dStr = `${sheet.periodo}-${String(dayObj.day).padStart(2, "0")}`;
       if (e.startDate && dStr < e.startDate) return `Antes del alta (${e.startDate})`;
-      if (e.endDate && dStr > e.endDate) return `Despues de la baja (${e.endDate})`;
+      if (e.status === "inactive" && e.endDate && dStr > e.endDate) {
+        return `Despues de la baja (${e.endDate})`;
+      }
       return null;
     };
 
