@@ -1095,9 +1095,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                   <button onClick={() => {
                     const newData = { ...data };
                     if (allFilled) {
-                      // Toggle off: limpiar todas las celdas editables de este proyecto.
+                      // Toggle off: limpiar celdas editables de dias regulares.
+                      // Domingos y feriados se mantienen en "1" porque son pagados
+                      // por ley (descanso semanal / dia feriado nacional). El usuario
+                      // podra cambiarlos a DT/DT2/TF si efectivamente trabajaron.
                       pEmps.forEach(e => days.forEach(d => {
-                        if (!dayLockReason(e, d)) delete newData[cellKey(e.id, d.day)];
+                        if (dayLockReason(e, d)) return;
+                        if (d.isSun || d.isHoliday) {
+                          newData[cellKey(e.id, d.day)] = "1";
+                        } else {
+                          delete newData[cellKey(e.id, d.day)];
+                        }
                       }));
                     } else {
                       // Toggle on: rellenar las celdas vacias con "1".
