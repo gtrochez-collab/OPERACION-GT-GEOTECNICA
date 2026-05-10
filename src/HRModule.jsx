@@ -418,13 +418,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         //   "INC" = incapacidad (1x, dia pagado)
         //   "0"   = NSP. Solo descuenta en dia regular. En domingo/feriado no
         //           descuenta porque la ley paga el dia.
-        let diasPresente = 0, diasNSP = 0, diasIncap = 0;
+        let diasPresente = 0, diasPresenteEfectivo = 0, diasNSP = 0, diasIncap = 0;
         let domTrab = 0, domTrabTriple = 0, ferTrab = 0;
         let diasFueraRango = 0;
         // Descuento por hora de entrada tardia (solo aplica si emp.payByHour).
         // Modelo: jornada de 8h empezando a las 7am. Si el empleado entra
         // tarde, se le descuenta proporcionalmente por las horas perdidas.
         // Ejemplo: 8:30 = 1.5h tarde → descuenta 1.5/8 del salario diario.
+        // Tambien acumulamos diasPresenteEfectivo: la suma proporcional de
+        // dias trabajados (ej: 13 dias marcados a las 8:30 = 10.56 efectivos).
         let descuentoHoras = 0;
         const sheetArrivalTimes = sheet?.arrivalTimes || {};
         const projDays = {}; // { proj_short: dias_trabajados }
@@ -453,17 +455,21 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             const ovr = projOvr[`${emp.id}-${d}`];
             const projForDay = ovr ? resolveShort(ovr) : baseProj;
             if (projForDay) projDays[projForDay] = (projDays[projForDay] || 0) + 1;
-            // Descuento proporcional por entrada tardia (solo si payByHour y
-            // efectivamente trabajo — no aplica a INC porque esta incapacitado).
+            // Calcular fraccion del dia trabajado (1.0 = dia completo).
+            // INC siempre cuenta como dia completo (incapacidad pagada).
+            // Para empleados payByHour, aplicar proporcion segun hora de entrada.
+            let dayFraction = 1;
             if (emp.payByHour && v !== "INC") {
               const arrival = sheetArrivalTimes[`${emp.id}-${d}`];
               if (arrival) {
                 const [h, mm] = arrival.split(":").map(Number);
                 const arrivalH = h + mm / 60;
-                const horasTarde = Math.max(0, arrivalH - 7); // jornada 7am-3pm = 8h
+                const horasTarde = Math.max(0, arrivalH - 7);
+                dayFraction = Math.max(0, (8 - horasTarde) / 8);
                 descuentoHoras += (horasTarde / 8) * sd;
               }
             }
+            diasPresenteEfectivo += dayFraction;
           } else if (v === "0") {
             // Solo descuenta en dia laboral normal. Domingo/feriado paga la ley.
             if (!esDomingo && !esFeriado) diasNSP++;
@@ -521,6 +527,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           so,
           bq,
           diasPresente,
+          diasPresenteEfectivo: +diasPresenteEfectivo.toFixed(2),
           diasNSP,
           diasIncap,
           descuentoNSP,
@@ -529,6 +536,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           bonoDomingo,
           ferTrab,
           descuentoHoras: descuentoHorasFinal,
+          payByHour: !!emp.payByHour,
           bonoFeriado,
           o1: 0,
           o2: 0,
@@ -619,7 +627,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <td style={TD}><Badge color={cc.color}>{l.proj || "—"}</Badge></td>
               <td style={TD}>{fmtL(l.sb)}</td>
               <td style={TD}>{fmtL(l.sd)}</td>
-              <td style={{ ...TD, color: "#059669", fontWeight: 600 }}>{l.diasPresente}</td>
+              <td title={l.payByHour ? `${l.diasPresente} dias marcados · ${(l.diasPresenteEfectivo || l.diasPresente).toFixed(2)} efectivos (proporcional)` : ""} style={{ ...TD, color: "#059669", fontWeight: 600 }}>{l.payByHour ? (l.diasPresenteEfectivo || l.diasPresente).toFixed(2) : l.diasPresente}</td>
               <td style={{ ...TD, color: l.diasNSP > 0 ? "#DC2626" : "#94A3B8", fontWeight: l.diasNSP > 0 ? 700 : 400 }}>{l.diasNSP}</td>
               <td style={{ ...TD, color: "#DC2626" }}>{l.descuentoNSP > 0 ? fmtL(l.descuentoNSP) : ""}</td>
               <td style={TD}>{fmtL(l.so)}</td>
@@ -933,12 +941,24 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     };
     const ARRIVAL_OPTIONS = ["7:00", "7:30", "8:00", "8:30", "9:00", "9:30"];
 
-    const cellColor = (v, hasOvr) => {
+    // Color de fondo de la celda. Distingue visualmente el "1" segun el tipo
+    // de dia para que el calendario se lea como un calendario de Excel pintado:
+    //   - "1" en feriado  → naranja claro (pagado por ley, no trabajo)
+    //   - "1" en domingo  → azul claro (descanso pagado, no trabajo)
+    //   - "1" en regular  → verde (presente trabajando)
+    const cellColor = (v, hasOvr, dayObj) => {
       if (hasOvr) return v === "1" ? "#DBEAFE" : v === "0" ? "#FEE2E2" : v === "INC" ? "#FEF9C3" : "#EFF6FF";
-      if (v === "TF") return "#FED7AA";   // naranja - feriado trabajado (triple)
+      if (v === "TF") return "#FED7AA";   // naranja fuerte - feriado trabajado (triple)
       if (v === "DT") return "#E9D5FF";   // morado claro - domingo trabajado (doble)
       if (v === "DT2") return "#A855F7";  // morado oscuro - domingo trabajado triple
-      return v === "1" ? "#DCFCE7" : v === "0" ? "#FEE2E2" : v === "INC" ? "#FEF9C3" : "transparent";
+      if (v === "1") {
+        if (dayObj?.isHoliday) return "#FFEDD5"; // naranja muy claro - feriado pagado por ley
+        if (dayObj?.isSun) return "#DBEAFE";     // azul claro - domingo de descanso pagado
+        return "#DCFCE7";                         // verde - presente regular
+      }
+      if (v === "0") return "#FEE2E2";
+      if (v === "INC") return "#FEF9C3";
+      return "transparent";
     };
     const cellText = (v, ovr) => {
       const t = v === "1" ? "1"
@@ -950,32 +970,61 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         : "";
       return ovr ? `${t}*` : t;
     };
-    const cellFontColor = v => {
-      if (v === "TF") return "#9A3412";   // naranja oscuro
-      if (v === "DT") return "#6B21A8";   // morado oscuro
-      if (v === "DT2") return "#FFFFFF";  // blanco sobre morado oscuro
-      return v === "1" ? "#166534" : v === "0" ? "#991B1B" : v === "INC" ? "#92400E" : "#CBD5E1";
+    const cellFontColor = (v, dayObj) => {
+      if (v === "TF") return "#9A3412";
+      if (v === "DT") return "#6B21A8";
+      if (v === "DT2") return "#FFFFFF";
+      if (v === "1") {
+        if (dayObj?.isHoliday) return "#9A3412";
+        if (dayObj?.isSun) return "#1E40AF";
+        return "#166534";
+      }
+      return v === "0" ? "#991B1B" : v === "INC" ? "#92400E" : "#CBD5E1";
     };
     const cellFontSize = v => (v === "TF" || v === "DT" || v === "DT2") ? 9 : 11;
 
+    // Calcula la fraccion del dia trabajado (1.0 = dia completo) para un
+    // empleado segun su estado y la hora de entrada si es payByHour.
+    //   - INC siempre cuenta como 1 (incapacidad pagada completa)
+    //   - Para empleados normales, cualquier dia pagado vale 1
+    //   - Para empleados payByHour con hora de entrada marcada, vale
+    //     (8 - horasTarde)/8. Jornada base 8h desde 7am.
+    const dayValueFor = (emp, day, val) => {
+      if (val !== "1" && val !== "TF" && val !== "DT" && val !== "DT2") return val === "INC" ? 1 : 0;
+      if (!emp?.payByHour) return 1;
+      const arr = arrivalTimes[`${emp.id}-${day}`];
+      if (!arr) return 1;
+      const [h, mm] = arr.split(":").map(Number);
+      const arrivalH = h + mm / 60;
+      const lateHours = Math.max(0, arrivalH - 7);
+      return Math.max(0, (8 - lateHours) / 8);
+    };
+
     // Cuenta dias por categoria. Reglas:
-    //   - present: cualquier estado pagado (1, TF, DT, DT2, INC)
+    //   - present: cuenta entera de dias pagados (1, TF, DT, DT2, INC)
+    //   - presentEffective: suma proporcional. Para empleados normales es igual
+    //     a present (entero). Para payByHour aplica la fraccion por hora tardia.
     //   - absent: solo "0" en dia regular. En domingo/feriado el dia se paga
     //     por ley aunque marquen 0, asi que NO se cuenta como ausencia que descuente.
     //   - domTrab / domTrabTriple: domingos efectivamente trabajados (DT, DT2)
     //   - ferTrab: feriados efectivamente trabajados (TF)
     const empStats = (eid) => {
-      let present = 0, absent = 0, incap = 0, domTrab = 0, domTrabTriple = 0, ferTrab = 0;
+      const emp = ae.find(x => x.id === eid);
+      let present = 0, presentEffective = 0;
+      let absent = 0, incap = 0, domTrab = 0, domTrabTriple = 0, ferTrab = 0;
       days.forEach(d => {
         const v = getVal(eid, d.day);
-        if (v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC") present++;
+        if (v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC") {
+          present++;
+          presentEffective += dayValueFor(emp, d.day, v);
+        }
         if (v === "TF") ferTrab++;
         if (v === "DT") domTrab++;
         if (v === "DT2") domTrabTriple++;
         if (v === "INC") incap++;
         if (v === "0" && !d.isSun && !d.isHoliday) absent++;
       });
-      return { present, absent, incap, domTrab, domTrabTriple, ferTrab };
+      return { present, presentEffective, absent, incap, domTrab, domTrabTriple, ferTrab };
     };
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1002,6 +1051,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             // Calcular dias pagados totales en el proyecto. Cuenta cualquier estado
             // que represente un dia pagado: 1 (presente), TF (feriado trabajado),
             // DT/DT2 (domingo trabajado), INC (incapacidad). No cuenta "0" ni vacios.
+            // Para empleados payByHour, cada dia se cuenta en su fraccion proporcional
+            // segun la hora de entrada. Asi el total refleja dias reales trabajados.
             let totalDias = 0;
             ae.forEach((e) => {
               days.forEach((d) => {
@@ -1009,7 +1060,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 if (v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC") {
                   const ovr = getProj(e.id, d.day);
                   const projForDay = ovr || resolveShort(assignments[e.id]);
-                  if (projForDay === proj.short) totalDias++;
+                  if (projForDay === proj.short) totalDias += dayValueFor(e, d.day, v);
                 }
               });
             });
@@ -1019,7 +1070,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 <div style={{ fontSize: 11, color: "#5C5853", marginTop: 2 }}>{proj.name}</div>
                 <div style={{ marginTop: 8, display: "flex", gap: 16, fontSize: 12 }}>
                   <span><strong style={{ color: "#E8762D" }}>{pEmps.length}</strong> personas</span>
-                  <span><strong style={{ color: "#2C5F5D" }}>{totalDias}</strong> días trabajados</span>
+                  <span><strong style={{ color: "#2C5F5D" }}>{Number.isInteger(totalDias) ? totalDias : totalDias.toFixed(2)}</strong> días trabajados</span>
                 </div>
               </div>
             );
@@ -1100,7 +1151,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                       : ovr
                       ? `Reasignado a ${ovr}. Click derecho para cambiar.`
                       : "Click derecho para reasignar proyecto";
-                    return <td key={d.day} style={{ ...TD, textAlign: "center", cursor: "pointer", background: cellColor(val, ovr), color: cellFontColor(val), fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid #F1F5F9", position: "relative", fontSize: cellFontSize(val) }}
+                    return <td key={d.day} style={{ ...TD, textAlign: "center", cursor: "pointer", background: cellColor(val, ovr, d), color: cellFontColor(val, d), fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid #F1F5F9", position: "relative", fontSize: cellFontSize(val) }}
                       onClick={() => cycle(e.id, d.day)}
                       onContextMenu={(ev) => { ev.preventDefault(); setEditingCell(isEditing ? null : k); }}
                       title={cellTitle}>
@@ -1123,7 +1174,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                       </div>}
                     </td>;
                   })}
-                  <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: "#ECFDF5", color: "#059669" }}>{st.present}</td>
+                  <td title={e.payByHour ? `${st.present} dias marcados · ${st.presentEffective.toFixed(2)} dias efectivos (proporcional por hora de entrada)` : `${st.present} dias`} style={{ ...TD, textAlign: "center", fontWeight: 700, background: "#ECFDF5", color: "#059669" }}>{e.payByHour ? st.presentEffective.toFixed(2) : st.present}</td>
                   <td title={st.domTrabTriple > 0 ? `${st.domTrab} DT + ${st.domTrabTriple} DT2 (triple)` : `${st.domTrab} DT`} style={{ ...TD, textAlign: "center", fontWeight: 700, background: (st.domTrab + st.domTrabTriple) > 0 ? "#F3E8FF" : "transparent", color: "#7C3AED" }}>{(st.domTrab + st.domTrabTriple) || ""}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.ferTrab > 0 ? "#FED7AA" : "transparent", color: "#9A3412" }}>{st.ferTrab || ""}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.absent > 0 ? "#FEE2E2" : "transparent", color: "#DC2626" }}>{st.absent || ""}</td>
@@ -1152,7 +1203,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       if (!w) { alert("Permite popups para imprimir"); return; }
 
       // Construir resumen por proyecto. Cuenta cada estado:
-      //   - totalDias: dias pagados (1, TF, DT, DT2, INC)
+      //   - totalDias: dias pagados (1, TF, DT, DT2, INC). Para empleados
+      //     payByHour cuenta proporcional por hora de entrada.
       //   - totalDom: domingos efectivamente trabajados (DT + DT2)
       //   - totalFer: feriados efectivamente trabajados (TF)
       //   - totalNSP: "0" en dia regular (en domingo/feriado no descuenta)
@@ -1169,7 +1221,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             const isPaid = v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC";
             if (isPaid) {
               const projForDay = ovr || baseProj;
-              if (projForDay === proj.short) totalDias++;
+              if (projForDay === proj.short) totalDias += dayValueFor(e, d.day, v);
             }
             if (baseProj !== proj.short) return;
             if (v === "TF") totalFer++;
@@ -1208,7 +1260,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                   }
                   const v = getVal(e.id, d.day);
                   const ovr = getProj(e.id, d.day);
-                  // Determinar background, color y texto segun el estado
+                  // Determinar background, color y texto segun el estado.
+                  // Distincion de "1" segun tipo de dia (calendario tipo Excel):
+                  //   1 en feriado  → naranja claro (pagado por ley)
+                  //   1 en domingo  → azul claro  (descanso pagado)
+                  //   1 regular     → verde       (presente trabajando)
                   let bg = "transparent", color = "#CBD5E1", txt = "·", fontSize = 9;
                   if (v === "TF") {
                     bg = "#FED7AA"; color = "#9A3412"; txt = ovr ? "TF*" : "TF"; fontSize = 8;
@@ -1218,6 +1274,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                     bg = "#A855F7"; color = "#FFFFFF"; txt = ovr ? "DT2*" : "DT2"; fontSize = 7;
                   } else if (v === "1") {
                     if (ovr) { bg = "#DBEAFE"; color = "#1E40AF"; txt = "1*"; }
+                    else if (d.isHoliday) { bg = "#FFEDD5"; color = "#9A3412"; txt = "1"; }
+                    else if (d.isSun) { bg = "#DBEAFE"; color = "#1E40AF"; txt = "1"; }
                     else { bg = "#DCFCE7"; color = "#166534"; txt = "1"; }
                   } else if (v === "0") {
                     bg = "#FEE2E2"; color = "#991B1B"; txt = "0";
@@ -1234,7 +1292,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                   ${e.fullName}<br><span style="font-family:monospace;color:#E8762D;font-size:8px">${code}</span>
                 </td>
                 ${cells}
-                <td style="text-align:center;background:#ECFDF5;color:#059669;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.present}</td>
+                <td style="text-align:center;background:#ECFDF5;color:#059669;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0" title="${e.payByHour ? `${st.present} marcados · ${st.presentEffective.toFixed(2)} efectivos` : ""}">${e.payByHour ? st.presentEffective.toFixed(2) : st.present}</td>
                 <td style="text-align:center;background:${(st.domTrab + st.domTrabTriple) > 0 ? "#F3E8FF" : "#fff"};color:#7C3AED;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${(st.domTrab + st.domTrabTriple) || ""}</td>
                 <td style="text-align:center;background:${st.ferTrab > 0 ? "#FED7AA" : "#fff"};color:#9A3412;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.ferTrab || ""}</td>
                 <td style="text-align:center;background:${st.absent > 0 ? "#FEE2E2" : "#fff"};color:#DC2626;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.absent || ""}</td>
@@ -1268,7 +1326,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <div style="font-size:11px;color:#5C5853;margin-top:2px">${s.proj.name}</div>
             <div style="margin-top:8px;font-size:11px;display:flex;gap:14px;flex-wrap:wrap">
               <span><strong style="color:#E8762D">${s.pEmps.length}</strong> personas</span>
-              <span><strong style="color:#2C5F5D">${s.totalDias}</strong> días</span>
+              <span><strong style="color:#2C5F5D">${Number.isInteger(s.totalDias) ? s.totalDias : s.totalDias.toFixed(2)}</strong> días</span>
               ${s.totalDom > 0 ? `<span><strong style="color:#7C3AED">${s.totalDom}</strong> dom.</span>` : ""}
               ${s.totalFer > 0 ? `<span><strong style="color:#9A3412">${s.totalFer}</strong> fer.</span>` : ""}
               ${s.totalNSP > 0 ? `<span><strong style="color:#DC2626">${s.totalNSP}</strong> NSP</span>` : ""}
@@ -1443,7 +1501,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               </td>
               <td style={TD}><Badge color={cc.color}>{l.proj || "—"}</Badge></td>
               <td style={TD}>{fmtL(l.sb)}</td>
-              <td style={{ ...TD, color: "#059669", fontWeight: 600 }}>{l.diasPresente || 0}</td>
+              <td title={l.payByHour ? `${l.diasPresente || 0} dias marcados · ${(l.diasPresenteEfectivo || l.diasPresente || 0).toFixed(2)} efectivos (proporcional)` : ""} style={{ ...TD, color: "#059669", fontWeight: 600 }}>{l.payByHour ? (l.diasPresenteEfectivo || l.diasPresente || 0).toFixed(2) : (l.diasPresente || 0)}</td>
               <td style={{ ...TD, color: (l.diasNSP || 0) > 0 ? "#DC2626" : "#94A3B8" }}>{l.diasNSP || 0}</td>
               <td style={{ ...TD, color: "#DC2626" }}>{(l.descuentoNSP || 0) > 0 ? fmtL(l.descuentoNSP) : ""}</td>
               <td style={TD}>{fmtL(l.so)}</td>
