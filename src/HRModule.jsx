@@ -1085,11 +1085,33 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <span>{proj.short} ({pEmps.length})</span>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <span style={{ fontWeight: 400, fontSize: 10, opacity: 0.7 }}>[{proj.code}]</span>
-              <button onClick={() => {
-                const newData = { ...data };
-                pEmps.forEach(e => { days.forEach(d => { const k = cellKey(e.id, d.day); if (!newData[k]) newData[k] = "1"; }); });
-                setData(newData);
-              }} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 6, color: "#fff", padding: "3px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>✓ Asistencia completa</button>
+              {(() => {
+                // Detecta si todas las celdas editables de este proyecto ya tienen valor.
+                // Si si → boton en modo "Limpiar". Si no → boton en modo "Marcar completa".
+                const allFilled = pEmps.every(e =>
+                  days.every(d => dayLockReason(e, d) || !!data[cellKey(e.id, d.day)])
+                );
+                return (
+                  <button onClick={() => {
+                    const newData = { ...data };
+                    if (allFilled) {
+                      // Toggle off: limpiar todas las celdas editables de este proyecto.
+                      pEmps.forEach(e => days.forEach(d => {
+                        if (!dayLockReason(e, d)) delete newData[cellKey(e.id, d.day)];
+                      }));
+                    } else {
+                      // Toggle on: rellenar las celdas vacias con "1".
+                      pEmps.forEach(e => days.forEach(d => {
+                        const k = cellKey(e.id, d.day);
+                        if (!newData[k] && !dayLockReason(e, d)) newData[k] = "1";
+                      }));
+                    }
+                    setData(newData);
+                  }} style={{ background: allFilled ? "rgba(220,38,38,0.25)" : "rgba(255,255,255,0.2)", border: `1px solid ${allFilled ? "rgba(248,113,113,0.6)" : "rgba(255,255,255,0.4)"}`, borderRadius: 6, color: "#fff", padding: "3px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                    {allFilled ? "✗ Limpiar asistencia" : "✓ Asistencia completa"}
+                  </button>
+                );
+              })()}
             </div>
           </div>
           <div style={{ overflowX: "auto" }}>
