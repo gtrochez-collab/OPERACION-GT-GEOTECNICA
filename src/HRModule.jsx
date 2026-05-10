@@ -319,6 +319,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       {f.contractType === "temporary" && <Input label="Fecha fin" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />}
       <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
       <Input label="Bonificacion (L)" type="number" value={f.bonificacion || 0} onChange={e => u("bonificacion", e.target.value)} />
+      <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#92400E", cursor: "pointer" }}>
+        <input type="checkbox" checked={!!f.payByHour} onChange={e => u("payByHour", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
+        <span>
+          <b>Pago proporcional por hora de entrada</b>
+          <div style={{ fontSize: 11, color: "#78350F", marginTop: 2 }}>
+            Activá esto solo para empleados que cobran segun la hora a la que llegan (ej: trabajadores con horario flexible). Vas a poder marcar la hora 7:00, 7:30, 8:00, 8:30, 9:00 o 9:30 en cada celda de asistencia con click derecho.
+          </div>
+        </span>
+      </label>
       <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
         <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
         <Btn variant="success" onClick={() => { if (!f.fullName) return alert("Nombre requerido"); onSave({ ...f, id: f.id || uid(), company: f.company || co }); setModal(null); }}>{emp ? "Guardar" : "Agregar"}</Btn>
@@ -412,6 +421,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         let diasPresente = 0, diasNSP = 0, diasIncap = 0;
         let domTrab = 0, domTrabTriple = 0, ferTrab = 0;
         let diasFueraRango = 0;
+        // Descuento por hora de entrada tardia (solo aplica si emp.payByHour).
+        // Modelo: jornada de 8h empezando a las 7am. Si el empleado entra
+        // tarde, se le descuenta proporcionalmente por las horas perdidas.
+        // Ejemplo: 8:30 = 1.5h tarde → descuenta 1.5/8 del salario diario.
+        let descuentoHoras = 0;
+        const sheetArrivalTimes = sheet?.arrivalTimes || {};
         const projDays = {}; // { proj_short: dias_trabajados }
         for (let d = start; d <= end; d++) {
           const dStr = `${per}-${String(d).padStart(2, "0")}`;
@@ -438,6 +453,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             const ovr = projOvr[`${emp.id}-${d}`];
             const projForDay = ovr ? resolveShort(ovr) : baseProj;
             if (projForDay) projDays[projForDay] = (projDays[projForDay] || 0) + 1;
+            // Descuento proporcional por entrada tardia (solo si payByHour y
+            // efectivamente trabajo — no aplica a INC porque esta incapacitado).
+            if (emp.payByHour && v !== "INC") {
+              const arrival = sheetArrivalTimes[`${emp.id}-${d}`];
+              if (arrival) {
+                const [h, mm] = arrival.split(":").map(Number);
+                const arrivalH = h + mm / 60;
+                const horasTarde = Math.max(0, arrivalH - 7); // jornada 7am-3pm = 8h
+                descuentoHoras += (horasTarde / 8) * sd;
+              }
+            }
           } else if (v === "0") {
             // Solo descuenta en dia laboral normal. Domingo/feriado paga la ley.
             if (!esDomingo && !esFeriado) diasNSP++;
@@ -450,6 +476,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         // Salario bruto prorrateado: solo paga los dias en rango
         const sbProrated = +(sd * diasEfectivos).toFixed(2);
         const descuentoNSP = +(diasNSP * sd).toFixed(2);
+        const descuentoHorasFinal = +descuentoHoras.toFixed(2);
         // Bonos por trabajar dias de descanso/feriado:
         //   DT  → +1 dia base por cada domingo trabajado (doble total)
         //   DT2 → +2 dias base por cada domingo trabajado triple (negociado)
@@ -457,8 +484,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         const bonoDomingo = +((domTrab * sd) + (domTrabTriple * sd * 2)).toFixed(2);
         const bonoFeriado = +(ferTrab * sd * 2).toFixed(2);
 
-        // Salario ordinario: bruto prorrateado menos descuento por NSP
-        const so = +(sbProrated - descuentoNSP).toFixed(2);
+        // Salario ordinario: bruto prorrateado menos descuentos (NSP + horas tardias)
+        const so = +(sbProrated - descuentoNSP - descuentoHorasFinal).toFixed(2);
 
         // Bonificacion quincenal: SIEMPRE bono_mensual_total / 2.
         // El bono mensual total = bono base del empleado + bonos extra activos
@@ -501,6 +528,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           domTrabTriple,
           bonoDomingo,
           ferTrab,
+          descuentoHoras: descuentoHorasFinal,
           bonoFeriado,
           o1: 0,
           o2: 0,
@@ -805,6 +833,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     })();
     const [data, setData] = useState(initialData);
     const [overrides, setOverrides] = useState(sheet?.projOverrides || {});
+    const [arrivalTimes, setArrivalTimes] = useState(sheet?.arrivalTimes || {});
     const [editingCell, setEditingCell] = useState(null);
 
     const getDays = () => {
@@ -889,6 +918,20 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       else { setOverrides(o => ({ ...o, [k]: proj })); }
       setEditingCell(null);
     };
+
+    // Setea hora de entrada para empleados con pago proporcional (e.g. José Miguel
+    // que llega tarde y cobra segun la hora). Las opciones validas son 7:00 a
+    // 9:30 en intervalos de 30 min. Pasar "" limpia la hora del dia.
+    const setArrivalTime = (eid, day, time) => {
+      const k = cellKey(eid, day);
+      if (!time) {
+        setArrivalTimes(at => { const n = { ...at }; delete n[k]; return n; });
+      } else {
+        setArrivalTimes(at => ({ ...at, [k]: time }));
+      }
+      setEditingCell(null);
+    };
+    const ARRIVAL_OPTIONS = ["7:00", "7:30", "8:00", "8:30", "9:00", "9:30"];
 
     const cellColor = (v, hasOvr) => {
       if (hasOvr) return v === "1" ? "#DBEAFE" : v === "0" ? "#FEE2E2" : v === "INC" ? "#FEF9C3" : "#EFF6FF";
@@ -1063,12 +1106,20 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                       title={cellTitle}>
                       {cellText(val, ovr) || <span style={{ color: "#E2E8F0" }}>·</span>}
                       {ovr && <div style={{ fontSize: 7, color: "#2563EB", lineHeight: 1 }}>{ovr}</div>}
-                      {isEditing && <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 6, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 140 }} onClick={ev => ev.stopPropagation()}>
+                      {arrivalTimes[k] && <div style={{ fontSize: 7, color: "#92400E", lineHeight: 1, fontWeight: 700, background: "#FEF3C7", borderRadius: 2, marginTop: 1, padding: "0 2px" }}>{arrivalTimes[k]}</div>}
+                      {isEditing && <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 6, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 160 }} onClick={ev => ev.stopPropagation()}>
                         <div style={{ padding: "4px 8px", fontSize: 10, color: "#64748b", borderBottom: "1px solid #F1F5F9" }}>Proyecto para este dia:</div>
                         <div style={{ padding: "4px 8px", fontSize: 11, cursor: "pointer", background: !ovr ? "#EFF6FF" : "transparent" }} onClick={() => setOverride(e.id, d.day, null)}>✓ {assignments[e.id]} (base)</div>
                         {PROJECTS.filter(p => p.short !== assignments[e.id]).map(p => (
                           <div key={p.short} style={{ padding: "4px 8px", fontSize: 11, cursor: "pointer", background: ovr === p.short ? "#DBEAFE" : "transparent" }} onClick={() => setOverride(e.id, d.day, p.short)}>{ovr === p.short ? "✓ " : ""}{p.short}</div>
                         ))}
+                        {e.payByHour && <>
+                          <div style={{ padding: "4px 8px", fontSize: 10, color: "#92400E", borderTop: "1px solid #F1F5F9", borderBottom: "1px solid #F1F5F9", marginTop: 4, background: "#FEF3C7", fontWeight: 700 }}>Hora de entrada (pago proporcional):</div>
+                          <div style={{ padding: "4px 8px", fontSize: 11, cursor: "pointer", background: !arrivalTimes[k] ? "#FEF3C7" : "transparent" }} onClick={() => setArrivalTime(e.id, d.day, "")}>{!arrivalTimes[k] ? "✓ " : ""}Sin marcar (paga normal)</div>
+                          {ARRIVAL_OPTIONS.map(t => (
+                            <div key={t} style={{ padding: "4px 8px", fontSize: 11, cursor: "pointer", background: arrivalTimes[k] === t ? "#FEF3C7" : "transparent" }} onClick={() => setArrivalTime(e.id, d.day, t)}>{arrivalTimes[k] === t ? "✓ " : ""}{t}</div>
+                          ))}
+                        </>}
                       </div>}
                     </td>;
                   })}
@@ -1087,7 +1138,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>
         <Btn variant="info" onClick={() => exportAttendancePDF()}>📄 Exportar PDF</Btn>
         <Btn variant="success" onClick={() => {
-          const record = { ...sheet, grid: data, projOverrides: overrides, lastSaved: new Date().toISOString() };
+          const record = { ...sheet, grid: data, projOverrides: overrides, arrivalTimes, lastSaved: new Date().toISOString() };
           const existing = atts.findIndex(a => a.id === sheet.id);
           if (existing >= 0) { const u = [...atts]; u[existing] = record; sA(u); }
           else sA([...atts, record]);
@@ -1100,7 +1151,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       const w = window.open("", "_blank");
       if (!w) { alert("Permite popups para imprimir"); return; }
 
-      // Construir resumen por proyecto
+      // Construir resumen por proyecto. Cuenta cada estado:
+      //   - totalDias: dias pagados (1, TF, DT, DT2, INC)
+      //   - totalDom: domingos efectivamente trabajados (DT + DT2)
+      //   - totalFer: feriados efectivamente trabajados (TF)
+      //   - totalNSP: "0" en dia regular (en domingo/feriado no descuenta)
+      //   - totalINC: incapacidades
       const summary = projGroups.map((proj) => {
         const pEmps = ae.filter((e) => resolveShort(assignments[e.id]) === proj.short);
         let totalDias = 0;
@@ -1108,18 +1164,18 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         ae.forEach((e) => {
           days.forEach((d) => {
             const v = getVal(e.id, d.day);
-            if (v === "1") {
-              const ovr = getProj(e.id, d.day);
-              const projForDay = ovr || resolveShort(assignments[e.id]);
-              if (projForDay === proj.short) {
-                totalDias++;
-                if (resolveShort(assignments[e.id]) === proj.short) {
-                  if (d.isSun && !d.isHoliday) totalDom++;
-                  if (d.isHoliday) totalFer++;
-                }
-              }
-            } else if (v === "0" && resolveShort(assignments[e.id]) === proj.short) totalNSP++;
-            else if (v === "INC" && resolveShort(assignments[e.id]) === proj.short) totalINC++;
+            const ovr = getProj(e.id, d.day);
+            const baseProj = resolveShort(assignments[e.id]);
+            const isPaid = v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC";
+            if (isPaid) {
+              const projForDay = ovr || baseProj;
+              if (projForDay === proj.short) totalDias++;
+            }
+            if (baseProj !== proj.short) return;
+            if (v === "TF") totalFer++;
+            if (v === "DT" || v === "DT2") totalDom++;
+            if (v === "INC") totalINC++;
+            if (v === "0" && !d.isSun && !d.isHoliday) totalNSP++;
           });
         });
         return { proj, pEmps, totalDias, totalDom, totalFer, totalNSP, totalINC };
@@ -1152,15 +1208,25 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                   }
                   const v = getVal(e.id, d.day);
                   const ovr = getProj(e.id, d.day);
-                  let bg = "transparent";
-                  let color = "#CBD5E1";
-                  if (d.isHoliday && v === "1") { bg = "#FED7AA"; color = "#9A3412"; }
-                  else if (ovr) { bg = v === "1" ? "#DBEAFE" : v === "0" ? "#FEE2E2" : v === "INC" ? "#FEF9C3" : "#EFF6FF"; color = v === "1" ? "#1E40AF" : v === "0" ? "#991B1B" : "#92400E"; }
-                  else if (v === "1") { bg = "#DCFCE7"; color = "#166534"; }
-                  else if (v === "0") { bg = "#FEE2E2"; color = "#991B1B"; }
-                  else if (v === "INC") { bg = "#FEF9C3"; color = "#92400E"; }
-                  const txt = v === "1" ? (ovr ? "1*" : "1") : v === "0" ? "0" : v === "INC" ? "I" : "·";
-                  return `<td style="background:${bg};color:${color};text-align:center;font-size:9px;padding:3px 2px;border:1px solid #E2E8F0;font-weight:700">${txt}</td>`;
+                  // Determinar background, color y texto segun el estado
+                  let bg = "transparent", color = "#CBD5E1", txt = "·", fontSize = 9;
+                  if (v === "TF") {
+                    bg = "#FED7AA"; color = "#9A3412"; txt = ovr ? "TF*" : "TF"; fontSize = 8;
+                  } else if (v === "DT") {
+                    bg = "#E9D5FF"; color = "#6B21A8"; txt = ovr ? "DT*" : "DT"; fontSize = 8;
+                  } else if (v === "DT2") {
+                    bg = "#A855F7"; color = "#FFFFFF"; txt = ovr ? "DT2*" : "DT2"; fontSize = 7;
+                  } else if (v === "1") {
+                    if (ovr) { bg = "#DBEAFE"; color = "#1E40AF"; txt = "1*"; }
+                    else { bg = "#DCFCE7"; color = "#166534"; txt = "1"; }
+                  } else if (v === "0") {
+                    bg = "#FEE2E2"; color = "#991B1B"; txt = "0";
+                  } else if (v === "INC") {
+                    bg = "#FEF9C3"; color = "#92400E"; txt = ovr ? "I*" : "I";
+                  }
+                  const arr = arrivalTimes[`${e.id}-${d.day}`];
+                  const arrivalHtml = arr ? `<div style="font-size:6px;color:#92400E;font-weight:700;background:#FEF3C7;line-height:1;margin-top:1px">${arr}</div>` : "";
+                  return `<td style="background:${bg};color:${color};text-align:center;font-size:${fontSize}px;padding:3px 2px;border:1px solid #E2E8F0;font-weight:700">${txt}${arrivalHtml}</td>`;
                 })
                 .join("");
               return `<tr>
@@ -1169,7 +1235,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 </td>
                 ${cells}
                 <td style="text-align:center;background:#ECFDF5;color:#059669;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.present}</td>
-                <td style="text-align:center;background:${st.domTrab > 0 ? "#F3E8FF" : "#fff"};color:#7C3AED;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.domTrab || ""}</td>
+                <td style="text-align:center;background:${(st.domTrab + st.domTrabTriple) > 0 ? "#F3E8FF" : "#fff"};color:#7C3AED;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${(st.domTrab + st.domTrabTriple) || ""}</td>
                 <td style="text-align:center;background:${st.ferTrab > 0 ? "#FED7AA" : "#fff"};color:#9A3412;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.ferTrab || ""}</td>
                 <td style="text-align:center;background:${st.absent > 0 ? "#FEE2E2" : "#fff"};color:#DC2626;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.absent || ""}</td>
                 <td style="text-align:center;background:${st.incap > 0 ? "#FEF9C3" : "#fff"};color:#92400E;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.incap || ""}</td>
@@ -1231,11 +1297,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         </div>
         ${projTablesHtml}
         <div style="margin-top:24px;padding-top:14px;border-top:1px solid #DBD4C8;font-size:10px;color:#8B847C;display:flex;gap:12px;flex-wrap:wrap">
-          <span><strong>1</strong> = Presente</span>
+          <span><strong>1</strong> = Presente (pago normal)</span>
           <span><strong>0</strong> = NSP (No se presentó)</span>
           <span><strong>I</strong> = Incapacidad</span>
-          <span><strong>1*</strong> = Otro proyecto</span>
-          <span><strong>F</strong> = Feriado (+2 días si trabajado)</span>
+          <span style="background:#FED7AA;color:#9A3412;padding:2px 6px;border-radius:3px"><strong>TF</strong> = Trabajó feriado (×3 = triple)</span>
+          <span style="background:#E9D5FF;color:#6B21A8;padding:2px 6px;border-radius:3px"><strong>DT</strong> = Domingo trabajado (×2 = doble)</span>
+          <span style="background:#A855F7;color:#fff;padding:2px 6px;border-radius:3px"><strong>DT2</strong> = Domingo triple (×3)</span>
+          <span><strong>1*</strong> = Otro proyecto (override)</span>
           <span><strong>—</strong> = Bloqueado por alta/baja</span>
         </div>
         <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:white;border:none;border-radius:8px;font-weight:600">Imprimir / Guardar como PDF</button>
