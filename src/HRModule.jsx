@@ -401,32 +401,46 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         const baseProj = resolveShort(baseProjRaw);
 
         // Recorrer dias de la quincena respetando alta/baja
-        let diasPresente = 0, diasNSP = 0, diasIncap = 0, domTrab = 0, ferTrab = 0;
+        // Estados de asistencia:
+        //   "1"   = presente normal (1x)
+        //   "TF"  = trabajo en feriado → +2 dias bonus (triple total)
+        //   "DT"  = trabajo en domingo → +1 dia bonus (doble total)
+        //   "DT2" = trabajo en domingo triple → +2 dias bonus (triple total)
+        //   "INC" = incapacidad (1x, dia pagado)
+        //   "0"   = NSP. Solo descuenta en dia regular. En domingo/feriado no
+        //           descuenta porque la ley paga el dia.
+        let diasPresente = 0, diasNSP = 0, diasIncap = 0;
+        let domTrab = 0, domTrabTriple = 0, ferTrab = 0;
         let diasFueraRango = 0;
         const projDays = {}; // { proj_short: dias_trabajados }
         for (let d = start; d <= end; d++) {
           const dStr = `${per}-${String(d).padStart(2, "0")}`;
-          // Bloqueo por fechas de alta / baja
-          if ((emp.startDate && dStr < emp.startDate) || (emp.endDate && dStr > emp.endDate)) {
-            diasFueraRango++;
-            continue;
-          }
+          // Bloqueo por fechas de alta / baja. Alineado con AttendanceGrid:
+          //   - Siempre bloqueamos antes del startDate (alta).
+          //   - Solo bloqueamos despues del endDate si status === "inactive"
+          //     (baja efectivamente registrada). Asi no penalizamos a temporales
+          //     activos cuyo endDate quedo viejo por renovacion de contrato.
+          if (emp.startDate && dStr < emp.startDate) { diasFueraRango++; continue; }
+          if (emp.status === "inactive" && emp.endDate && dStr > emp.endDate) { diasFueraRango++; continue; }
+
           const v = grid[`${emp.id}-${d}`] || "";
           const dt = new Date(y, m - 1, d);
           const esDomingo = dt.getDay() === 0;
           const esFeriado = esFeriadoQuincena(per, d);
-          if (v === "1") {
+
+          // Estados pagados (cuentan como presente y se asignan al proyecto del dia)
+          if (v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC") {
             diasPresente++;
-            if (esDomingo && !esFeriado) domTrab++;
-            if (esFeriado) ferTrab++;
-            // Asignar al proyecto del dia (override o base)
+            if (v === "TF") ferTrab++;
+            if (v === "DT") domTrab++;
+            if (v === "DT2") domTrabTriple++;
+            if (v === "INC") diasIncap++;
             const ovr = projOvr[`${emp.id}-${d}`];
             const projForDay = ovr ? resolveShort(ovr) : baseProj;
             if (projForDay) projDays[projForDay] = (projDays[projForDay] || 0) + 1;
           } else if (v === "0") {
-            diasNSP++;
-          } else if (v === "INC") {
-            diasIncap++;
+            // Solo descuenta en dia laboral normal. Domingo/feriado paga la ley.
+            if (!esDomingo && !esFeriado) diasNSP++;
           }
         }
 
@@ -436,8 +450,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         // Salario bruto prorrateado: solo paga los dias en rango
         const sbProrated = +(sd * diasEfectivos).toFixed(2);
         const descuentoNSP = +(diasNSP * sd).toFixed(2);
-        const bonoDomingo = +(domTrab * sd).toFixed(2);
-        // Politica Geotecnica: feriado trabajado = +2 dias adicionales sobre el salario base
+        // Bonos por trabajar dias de descanso/feriado:
+        //   DT  → +1 dia base por cada domingo trabajado (doble total)
+        //   DT2 → +2 dias base por cada domingo trabajado triple (negociado)
+        //   TF  → +2 dias base por cada feriado trabajado (triple)
+        const bonoDomingo = +((domTrab * sd) + (domTrabTriple * sd * 2)).toFixed(2);
         const bonoFeriado = +(ferTrab * sd * 2).toFixed(2);
 
         // Salario ordinario: bruto prorrateado menos descuento por NSP
@@ -481,6 +498,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           diasIncap,
           descuentoNSP,
           domTrab,
+          domTrabTriple,
           bonoDomingo,
           ferTrab,
           bonoFeriado,
@@ -544,7 +562,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       if (rows.length === 0) return null;
       const subtotal = rows.reduce((s, l) => s + calc(l).neto, 0);
       const sums = { sb: 0, sd: 0, dias: 0, nsp: 0, dNSP: 0, so: 0, dom: 0, bdom: 0, fer: 0, bfer: 0, bq: 0, oi: 0, isr: 0, ihss: 0, rap: 0, coop: 0, otros: 0, tDed: 0, neto: 0 };
-      rows.forEach(l => { const c = calc(l); sums.sb += l.sb; sums.so += l.so; sums.dom += (l.domTrab || 0); sums.bdom += (l.bonoDomingo || 0); sums.fer += (l.ferTrab || 0); sums.bfer += (l.bonoFeriado || 0); sums.bq += l.bq; sums.oi += l.o1 + l.o2; sums.dias += l.diasPresente; sums.nsp += l.diasNSP; sums.dNSP += l.descuentoNSP; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
+      rows.forEach(l => { const c = calc(l); sums.sb += l.sb; sums.so += l.so; sums.dom += (l.domTrab || 0) + (l.domTrabTriple || 0); sums.bdom += (l.bonoDomingo || 0); sums.fer += (l.ferTrab || 0); sums.bfer += (l.bonoFeriado || 0); sums.bq += l.bq; sums.oi += l.o1 + l.o2; sums.dias += l.diasPresente; sums.nsp += l.diasNSP; sums.dNSP += l.descuentoNSP; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
       return <div style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden" }}>
         <div style={{ background: color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between" }}>
           <span>{label} ({rows.length})</span><span>Subtotal: {fmtL(subtotal)}</span>
@@ -577,7 +595,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <td style={{ ...TD, color: l.diasNSP > 0 ? "#DC2626" : "#94A3B8", fontWeight: l.diasNSP > 0 ? 700 : 400 }}>{l.diasNSP}</td>
               <td style={{ ...TD, color: "#DC2626" }}>{l.descuentoNSP > 0 ? fmtL(l.descuentoNSP) : ""}</td>
               <td style={TD}>{fmtL(l.so)}</td>
-              <td style={{ ...TD, color: "#7C3AED", fontWeight: 700, background: (l.domTrab || 0) > 0 ? "#F3E8FF" : "transparent" }}>{l.domTrab || ""}</td>
+              <td title={(l.domTrabTriple || 0) > 0 ? `${l.domTrab || 0} DT + ${l.domTrabTriple} DT2 (triple)` : `${l.domTrab || 0} DT`} style={{ ...TD, color: "#7C3AED", fontWeight: 700, background: ((l.domTrab || 0) + (l.domTrabTriple || 0)) > 0 ? "#F3E8FF" : "transparent" }}>{((l.domTrab || 0) + (l.domTrabTriple || 0)) || ""}</td>
               <td style={{ ...TD, color: "#7C3AED", fontWeight: 600 }}>{(l.bonoDomingo || 0) > 0 ? fmtL(l.bonoDomingo) : ""}</td>
               <td style={{ ...TD, color: "#9A3412", fontWeight: 700, background: (l.ferTrab || 0) > 0 ? "#FED7AA" : "transparent" }}>{l.ferTrab || ""}</td>
               <td style={{ ...TD, color: "#9A3412", fontWeight: 600 }}>{(l.bonoFeriado || 0) > 0 ? fmtL(l.bonoFeriado) : ""}</td>
@@ -756,7 +774,36 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
   // ── ATTENDANCE GRID ──
   const AttendanceGrid = ({ sheet }) => {
-    const [data, setData] = useState(sheet?.grid || {});
+    // Auto-rellena domingos y feriados con "1" como valor por defecto.
+    // Razon: la ley hondurena paga el domingo (dia de descanso) y los feriados
+    // como dia normal aun si el empleado no trabaja. El usuario solo cambia a
+    // DT/DT2 (domingo trabajado) o TF (feriado trabajado) si efectivamente
+    // trabajaron. Respeta el bloqueo por alta/baja (no rellena dias fuera de
+    // rango). Solo rellena celdas que esten vacias — no sobrescribe valores
+    // existentes (ya marcados, o explicitamente puestos por el usuario).
+    const initialData = (() => {
+      const initial = { ...(sheet?.grid || {}) };
+      const [y, m] = sheet.periodo.split("-").map(Number);
+      const start = sheet.quincena === "1Q" ? 1 : 16;
+      const lastDay = new Date(y, m, 0).getDate();
+      const end = sheet.quincena === "1Q" ? 15 : lastDay;
+      for (let d = start; d <= end; d++) {
+        const dt = new Date(y, m - 1, d);
+        const isSun = dt.getDay() === 0;
+        const isHoliday = esFeriadoQuincena(sheet.periodo, d);
+        if (!isSun && !isHoliday) continue;
+        const dStr = `${sheet.periodo}-${String(d).padStart(2, "0")}`;
+        ae.forEach(e => {
+          const k = `${e.id}-${d}`;
+          if (initial[k]) return;
+          if (e.startDate && dStr < e.startDate) return;
+          if (e.status === "inactive" && e.endDate && dStr > e.endDate) return;
+          initial[k] = "1";
+        });
+      }
+      return initial;
+    })();
+    const [data, setData] = useState(initialData);
     const [overrides, setOverrides] = useState(sheet?.projOverrides || {});
     const [editingCell, setEditingCell] = useState(null);
 
@@ -813,14 +860,27 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const cellKey = (eid, day) => `${eid}-${day}`;
     const getVal = (eid, day) => data[cellKey(eid, day)] || "";
     const getProj = (eid, day) => overrides[cellKey(eid, day)] || null;
+
+    // Cycle de la celda al hacer click. Cambia segun el tipo de dia:
+    //   - Dia regular (Lun-Sab no feriado): "" -> 1 -> 0 -> INC -> ""
+    //   - Domingo (no feriado): 1 -> DT -> DT2 -> 0 -> INC -> 1
+    //       (1 = descanso pagado por ley, DT = trabajado +1 dia, DT2 = triple +2 dias)
+    //   - Feriado (cualquier dia de la semana): 1 -> TF -> 0 -> INC -> 1
+    //       (1 = pagado por ley, TF = trabajado +2 dias = triple)
     const cycle = (eid, day) => {
-      // No permitir editar dias bloqueados por alta/baja
       const emp = ae.find((x) => x.id === eid);
       const dayObj = days.find((d) => d.day === day);
       if (emp && dayObj && dayLockReason(emp, dayObj)) return;
       const k = cellKey(eid, day);
       const cur = data[k] || "";
-      const next = cur === "" ? "1" : cur === "1" ? "0" : cur === "0" ? "INC" : "";
+      let next;
+      if (dayObj?.isHoliday) {
+        next = cur === "1" ? "TF" : cur === "TF" ? "0" : cur === "0" ? "INC" : "1";
+      } else if (dayObj?.isSun) {
+        next = cur === "1" ? "DT" : cur === "DT" ? "DT2" : cur === "DT2" ? "0" : cur === "0" ? "INC" : "1";
+      } else {
+        next = cur === "" ? "1" : cur === "1" ? "0" : cur === "0" ? "INC" : "";
+      }
       setData(d => ({ ...d, [k]: next }));
     };
     const setOverride = (eid, day, proj) => {
@@ -832,23 +892,47 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
     const cellColor = (v, hasOvr) => {
       if (hasOvr) return v === "1" ? "#DBEAFE" : v === "0" ? "#FEE2E2" : v === "INC" ? "#FEF9C3" : "#EFF6FF";
+      if (v === "TF") return "#FED7AA";   // naranja - feriado trabajado (triple)
+      if (v === "DT") return "#E9D5FF";   // morado claro - domingo trabajado (doble)
+      if (v === "DT2") return "#A855F7";  // morado oscuro - domingo trabajado triple
       return v === "1" ? "#DCFCE7" : v === "0" ? "#FEE2E2" : v === "INC" ? "#FEF9C3" : "transparent";
     };
-    const cellText = (v, ovr) => { const t = v === "1" ? "1" : v === "0" ? "0" : v === "INC" ? "I" : ""; return ovr ? `${t}*` : t; };
-    const cellFontColor = v => v === "1" ? "#166534" : v === "0" ? "#991B1B" : v === "INC" ? "#92400E" : "#CBD5E1";
+    const cellText = (v, ovr) => {
+      const t = v === "1" ? "1"
+        : v === "0" ? "0"
+        : v === "INC" ? "I"
+        : v === "TF" ? "TF"
+        : v === "DT" ? "DT"
+        : v === "DT2" ? "DT2"
+        : "";
+      return ovr ? `${t}*` : t;
+    };
+    const cellFontColor = v => {
+      if (v === "TF") return "#9A3412";   // naranja oscuro
+      if (v === "DT") return "#6B21A8";   // morado oscuro
+      if (v === "DT2") return "#FFFFFF";  // blanco sobre morado oscuro
+      return v === "1" ? "#166534" : v === "0" ? "#991B1B" : v === "INC" ? "#92400E" : "#CBD5E1";
+    };
+    const cellFontSize = v => (v === "TF" || v === "DT" || v === "DT2") ? 9 : 11;
 
+    // Cuenta dias por categoria. Reglas:
+    //   - present: cualquier estado pagado (1, TF, DT, DT2, INC)
+    //   - absent: solo "0" en dia regular. En domingo/feriado el dia se paga
+    //     por ley aunque marquen 0, asi que NO se cuenta como ausencia que descuente.
+    //   - domTrab / domTrabTriple: domingos efectivamente trabajados (DT, DT2)
+    //   - ferTrab: feriados efectivamente trabajados (TF)
     const empStats = (eid) => {
-      let present = 0, absent = 0, incap = 0, domTrab = 0, ferTrab = 0;
+      let present = 0, absent = 0, incap = 0, domTrab = 0, domTrabTriple = 0, ferTrab = 0;
       days.forEach(d => {
         const v = getVal(eid, d.day);
-        if (v === "1") {
-          present++;
-          if (d.isSun && !d.isHoliday) domTrab++;
-          if (d.isHoliday) ferTrab++;
-        } else if (v === "0") absent++;
-        else if (v === "INC") incap++;
+        if (v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC") present++;
+        if (v === "TF") ferTrab++;
+        if (v === "DT") domTrab++;
+        if (v === "DT2") domTrabTriple++;
+        if (v === "INC") incap++;
+        if (v === "0" && !d.isSun && !d.isHoliday) absent++;
       });
-      return { present, absent, incap, domTrab, ferTrab };
+      return { present, absent, incap, domTrab, domTrabTriple, ferTrab };
     };
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -858,9 +942,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <span style={{ background: "#DCFCE7", padding: "2px 8px", borderRadius: 4 }}>1 = Presente</span>
           <span style={{ background: "#FEE2E2", padding: "2px 8px", borderRadius: 4 }}>0 = NSP</span>
           <span style={{ background: "#FEF9C3", padding: "2px 8px", borderRadius: 4 }}>I = Incapacidad</span>
+          <span style={{ background: "#FED7AA", padding: "2px 8px", borderRadius: 4, color: "#9A3412" }}>TF = Trabajó feriado (×3)</span>
+          <span style={{ background: "#E9D5FF", padding: "2px 8px", borderRadius: 4, color: "#6B21A8" }}>DT = Domingo trabajado (×2)</span>
+          <span style={{ background: "#A855F7", padding: "2px 8px", borderRadius: 4, color: "#fff" }}>DT2 = Domingo triple (×3)</span>
           <span style={{ background: "#DBEAFE", padding: "2px 8px", borderRadius: 4 }}>1* = Otro proyecto</span>
-          <span style={{ background: "#F3E8FF", padding: "2px 8px", borderRadius: 4, color: "#7C3AED" }}>D = Domingo (+día)</span>
-          <span style={{ background: "#FED7AA", padding: "2px 8px", borderRadius: 4, color: "#9A3412" }}>F = Feriado (+2 días)</span>
           <span style={{ background: "#E5E7EB", padding: "2px 8px", borderRadius: 4, color: "#6B7280" }}>—  = Bloqueado (alta/baja)</span>
         </span>
       </div>
@@ -871,12 +956,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
           {projGroups.map((proj) => {
             const pEmps = ae.filter((e) => resolveShort(assignments[e.id]) === proj.short);
-            // Calcular dias trabajados totales en el proyecto (considerando overrides)
+            // Calcular dias pagados totales en el proyecto. Cuenta cualquier estado
+            // que represente un dia pagado: 1 (presente), TF (feriado trabajado),
+            // DT/DT2 (domingo trabajado), INC (incapacidad). No cuenta "0" ni vacios.
             let totalDias = 0;
             ae.forEach((e) => {
               days.forEach((d) => {
                 const v = getVal(e.id, d.day);
-                if (v === "1") {
+                if (v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC") {
                   const ovr = getProj(e.id, d.day);
                   const projForDay = ovr || resolveShort(assignments[e.id]);
                   if (projForDay === proj.short) totalDias++;
@@ -963,10 +1050,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                         </td>
                       );
                     }
-                    return <td key={d.day} style={{ ...TD, textAlign: "center", cursor: "pointer", background: d.isHoliday && val === "1" ? "#FED7AA" : cellColor(val, ovr), color: d.isHoliday && val === "1" ? "#9A3412" : cellFontColor(val), fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid #F1F5F9", position: "relative", fontSize: 11 }}
+                    const cellTitle = d.isHoliday
+                      ? `${d.holidayName}${val === "TF" ? " · TRABAJADO (+2 dias = triple)" : val === "1" ? " · pagado por ley" : ""}`
+                      : d.isSun
+                      ? `Domingo${val === "DT" ? " · TRABAJADO (+1 dia = doble)" : val === "DT2" ? " · TRABAJADO TRIPLE (+2 dias)" : val === "1" ? " · descanso pagado" : ""}`
+                      : ovr
+                      ? `Reasignado a ${ovr}. Click derecho para cambiar.`
+                      : "Click derecho para reasignar proyecto";
+                    return <td key={d.day} style={{ ...TD, textAlign: "center", cursor: "pointer", background: cellColor(val, ovr), color: cellFontColor(val), fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid #F1F5F9", position: "relative", fontSize: cellFontSize(val) }}
                       onClick={() => cycle(e.id, d.day)}
                       onContextMenu={(ev) => { ev.preventDefault(); setEditingCell(isEditing ? null : k); }}
-                      title={d.isHoliday ? `${d.holidayName}${val === "1" ? " · trabajado +2 días" : ""}` : ovr ? `Reasignado a ${ovr}. Click derecho para cambiar.` : "Click derecho para reasignar proyecto"}>
+                      title={cellTitle}>
                       {cellText(val, ovr) || <span style={{ color: "#E2E8F0" }}>·</span>}
                       {ovr && <div style={{ fontSize: 7, color: "#2563EB", lineHeight: 1 }}>{ovr}</div>}
                       {isEditing && <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 6, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 140 }} onClick={ev => ev.stopPropagation()}>
@@ -979,7 +1073,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                     </td>;
                   })}
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: "#ECFDF5", color: "#059669" }}>{st.present}</td>
-                  <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.domTrab > 0 ? "#F3E8FF" : "transparent", color: "#7C3AED" }}>{st.domTrab || ""}</td>
+                  <td title={st.domTrabTriple > 0 ? `${st.domTrab} DT + ${st.domTrabTriple} DT2 (triple)` : `${st.domTrab} DT`} style={{ ...TD, textAlign: "center", fontWeight: 700, background: (st.domTrab + st.domTrabTriple) > 0 ? "#F3E8FF" : "transparent", color: "#7C3AED" }}>{(st.domTrab + st.domTrabTriple) || ""}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.ferTrab > 0 ? "#FED7AA" : "transparent", color: "#9A3412" }}>{st.ferTrab || ""}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.absent > 0 ? "#FEE2E2" : "transparent", color: "#DC2626" }}>{st.absent || ""}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.incap > 0 ? "#FEF9C3" : "transparent", color: "#92400E" }}>{st.incap || ""}</td>
@@ -1256,7 +1350,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       if (rows.length === 0) return null;
       const sub = rows.reduce((s, l) => s + calc2(l).neto, 0);
       const sums = { sb: 0, so: 0, bq: 0, oi: 0, dias: 0, nsp: 0, dNSP: 0, dom: 0, bdom: 0, isr: 0, ihss: 0, rap: 0, coop: 0, otros: 0, tDed: 0, neto: 0 };
-      rows.forEach(l => { const c = calc2(l); sums.sb += l.sb; sums.so += l.so; sums.dom += (l.domTrab || 0); sums.bdom += (l.bonoDomingo || 0); sums.bq += l.bq; sums.oi += l.o1; sums.dias += l.diasPresente || 0; sums.nsp += l.diasNSP || 0; sums.dNSP += l.descuentoNSP || 0; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
+      rows.forEach(l => { const c = calc2(l); sums.sb += l.sb; sums.so += l.so; sums.dom += (l.domTrab || 0) + (l.domTrabTriple || 0); sums.bdom += (l.bonoDomingo || 0); sums.bq += l.bq; sums.oi += l.o1; sums.dias += l.diasPresente || 0; sums.nsp += l.diasNSP || 0; sums.dNSP += l.descuentoNSP || 0; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
       return <div style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden" }}>
         <div style={{ background: color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between" }}>
           <span>{label} ({rows.length})</span><span>Subtotal: {fmtL(sub)}</span>
@@ -1285,7 +1379,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <td style={{ ...TD, color: (l.diasNSP || 0) > 0 ? "#DC2626" : "#94A3B8" }}>{l.diasNSP || 0}</td>
               <td style={{ ...TD, color: "#DC2626" }}>{(l.descuentoNSP || 0) > 0 ? fmtL(l.descuentoNSP) : ""}</td>
               <td style={TD}>{fmtL(l.so)}</td>
-              <td style={{ ...TD, color: "#7C3AED", fontWeight: 700, background: (l.domTrab || 0) > 0 ? "#F3E8FF" : "transparent" }}>{l.domTrab || ""}</td>
+              <td title={(l.domTrabTriple || 0) > 0 ? `${l.domTrab || 0} DT + ${l.domTrabTriple} DT2 (triple)` : `${l.domTrab || 0} DT`} style={{ ...TD, color: "#7C3AED", fontWeight: 700, background: ((l.domTrab || 0) + (l.domTrabTriple || 0)) > 0 ? "#F3E8FF" : "transparent" }}>{((l.domTrab || 0) + (l.domTrabTriple || 0)) || ""}</td>
               <td style={{ ...TD, color: "#7C3AED", fontWeight: 600 }}>{(l.bonoDomingo || 0) > 0 ? fmtL(l.bonoDomingo) : ""}</td>
               <td style={TD}><input type="number" value={l.bq} onChange={e => ul2(l.id, "bq", +e.target.value)} style={INP} /></td>
               <td style={TD}><input type="number" value={l.o1} onChange={e => ul2(l.id, "o1", +e.target.value)} style={INP} /></td>
