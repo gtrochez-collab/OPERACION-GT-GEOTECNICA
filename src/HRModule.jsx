@@ -1183,8 +1183,16 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const renderAtts = () => {
     const openGrid = (cuad) => {
       const existing = ca.find(a => a.periodo === cuad.periodo && a.quincena === cuad.quincena);
-      if (existing) { setModal({ t: "ag", d: existing }); }
-      else { setModal({ t: "ag", d: { id: uid(), company: co, periodo: cuad.periodo, quincena: cuad.quincena, assignments: cuad.assignments, grid: {}, date: new Date().toISOString() } }); }
+      // La cuadrilla es la fuente de verdad de las asignaciones empleado→proyecto.
+      // Si la asistencia ya existe, refrescamos sus assignments con los de la cuadrilla
+      // actual para que cualquier cambio posterior (mover empleados, agregar nuevos)
+      // se vea reflejado al abrir la grilla. La data de asistencia (grid, overrides)
+      // se conserva intacta.
+      if (existing) {
+        setModal({ t: "ag", d: { ...existing, assignments: cuad.assignments } });
+      } else {
+        setModal({ t: "ag", d: { id: uid(), company: co, periodo: cuad.periodo, quincena: cuad.quincena, assignments: cuad.assignments, grid: {}, date: new Date().toISOString() } });
+      }
     };
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
