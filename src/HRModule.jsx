@@ -843,6 +843,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const [overrides, setOverrides] = useState(sheet?.projOverrides || {});
     const [arrivalTimes, setArrivalTimes] = useState(sheet?.arrivalTimes || {});
     const [editingCell, setEditingCell] = useState(null);
+    // Track de cambios sin guardar para advertir al cerrar.
+    // Empieza limpio al abrir; cada edicion marca dirty=true.
+    const [dirty, setDirty] = useState(false);
 
     const getDays = () => {
       const [y, m] = sheet.periodo.split("-").map(Number);
@@ -919,12 +922,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         next = cur === "" ? "1" : cur === "1" ? "0" : cur === "0" ? "INC" : "";
       }
       setData(d => ({ ...d, [k]: next }));
+      setDirty(true);
     };
     const setOverride = (eid, day, proj) => {
       const k = cellKey(eid, day);
       if (proj === assignments[eid] || !proj) { setOverrides(o => { const n = { ...o }; delete n[k]; return n; }); }
       else { setOverrides(o => ({ ...o, [k]: proj })); }
       setEditingCell(null);
+      setDirty(true);
     };
 
     // Setea hora de entrada para empleados con pago proporcional (e.g. José Miguel
@@ -938,6 +943,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         setArrivalTimes(at => ({ ...at, [k]: time }));
       }
       setEditingCell(null);
+      setDirty(true);
     };
     const ARRIVAL_OPTIONS = ["7:00", "7:30", "8:00", "8:30", "9:00", "9:30"];
 
@@ -1115,6 +1121,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                       }));
                     }
                     setData(newData);
+                    setDirty(true);
                   }} style={{ background: allFilled ? "rgba(220,38,38,0.25)" : "rgba(255,255,255,0.2)", border: `1px solid ${allFilled ? "rgba(248,113,113,0.6)" : "rgba(255,255,255,0.4)"}`, borderRadius: 6, color: "#fff", padding: "3px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
                     {allFilled ? "✗ Limpiar asistencia" : "✓ Asistencia completa"}
                   </button>
@@ -1215,15 +1222,47 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           </div>
         </div>;
       })}
+      {dirty && <div style={{ background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#92400E", marginTop: 4 }}>
+        <span style={{ fontSize: 16 }}>⚠️</span>
+        <span><b>Tenés cambios sin guardar.</b> Hacé click en <b>Guardar asistencia</b> antes de cerrar o se van a perder.</span>
+      </div>}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-        <Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>
+        <Btn variant="ghost" onClick={() => {
+          if (dirty) {
+            const ok = confirm(
+              "Tenés cambios SIN GUARDAR.\n\n" +
+              "Si cerrás sin guardar, los cambios se van a perder.\n\n" +
+              "¿Estás seguro de que querés cerrar sin guardar?"
+            );
+            if (!ok) return;
+          }
+          setModal(null);
+        }}>Cerrar</Btn>
         <Btn variant="info" onClick={() => exportAttendancePDF()}>📄 Exportar PDF</Btn>
-        <Btn variant="success" onClick={() => {
+        <Btn variant="success" onClick={async () => {
           const record = { ...sheet, grid: data, projOverrides: overrides, arrivalTimes, lastSaved: new Date().toISOString() };
           const existing = atts.findIndex(a => a.id === sheet.id);
-          if (existing >= 0) { const u = [...atts]; u[existing] = record; sA(u); }
-          else sA([...atts, record]);
-          setModal(null);
+          const updated = existing >= 0
+            ? atts.map((a, i) => i === existing ? record : a)
+            : [...atts, record];
+          setAtts(updated);
+          // Esperamos a que termine el guardado en Supabase para detectar
+          // errores de red. localStorage se guarda primero (siempre) dentro
+          // de store.set, asi la red de seguridad local nunca se pierde.
+          const ok = await store.set("hr-atts2", updated);
+          if (ok) {
+            setDirty(false);
+            setModal(null);
+          } else {
+            alert(
+              "⚠️ Atencion: la asistencia se guardo en este dispositivo pero NO se sincronizo a la nube.\n\n" +
+              "Esto significa que si abris el sistema en otra Mac (o si limpian el cache de este navegador), los cambios se pueden perder.\n\n" +
+              "Posibles causas:\n" +
+              "• Sin conexion a internet\n" +
+              "• Problema temporal con Supabase\n\n" +
+              "El modal queda abierto. Reintenta guardar en un momento."
+            );
+          }
         }}>Guardar asistencia</Btn>
       </div>
     </div>;
