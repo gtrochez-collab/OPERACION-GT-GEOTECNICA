@@ -48,12 +48,20 @@ const GRUPO_COLOR = { A: "#0F4C75", B: "#D97706", C: "#1B4332", D: "#7C3AED" };
 const MOTIVOS_ALTA = ["Contratacion nueva", "Reingreso", "Cambio de empresa", "Conversion temporal a permanente", "Otro"];
 const MOTIVOS_BAJA = ["Renuncia voluntaria", "Despido", "Fin de contrato temporal", "Mutuo acuerdo", "Jubilacion", "Fallecimiento", "Otro"];
 
-// Devuelve la quincena (1Q/2Q) y periodo (YYYY-MM) de una fecha
+// Devuelve la quincena (1Q/2Q) y periodo (YYYY-MM) de una fecha.
+//
+// CRITICO: parseamos el string YYYY-MM-DD manualmente en lugar de pasar
+// por `new Date(dateStr)`. JavaScript interpreta "2026-05-01" como
+// medianoche UTC, y al llamar getDate() en Honduras (UTC-6) devuelve el
+// dia anterior (30 de abril), poniendo erroneamente la quincena como 2Q.
+// Parseando directo el string evitamos el desfase de timezone.
 const getQuincena = (dateStr) => {
   if (!dateStr) return { periodo: "", quincena: "" };
-  const d = new Date(dateStr);
-  const periodo = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  const quincena = d.getDate() <= 15 ? "1Q" : "2Q";
+  const ymd = String(dateStr).slice(0, 10);
+  const [y, m, day] = ymd.split("-").map(Number);
+  if (!y || !m || !day) return { periodo: "", quincena: "" };
+  const periodo = `${y}-${String(m).padStart(2, "0")}`;
+  const quincena = day <= 15 ? "1Q" : "2Q";
   return { periodo, quincena };
 };
 
@@ -130,7 +138,16 @@ const IHSS_AMOUNT = 595.16;
 // store is now imported from ./supabase.js (shared Supabase DB)
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-const fmt = d => d ? new Date(d).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+// Formatea una fecha "YYYY-MM-DD" (o ISO con timestamp) a "15 may 2026".
+// Parseamos los componentes manualmente para evitar el desfase de timezone
+// que hace que new Date("2026-05-01") devuelva "30 abr" en zonas UTC negativas.
+const fmt = (d) => {
+  if (!d) return "—";
+  const ymd = String(d).slice(0, 10);
+  const [y, mo, day] = ymd.split("-").map(Number);
+  if (!y || !mo || !day) return d;
+  return new Date(y, mo - 1, day).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" });
+};
 const fmtL = n => n != null && n !== "" && n !== 0 ? `L ${Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2 })}` : "L 0.00";
 const daysBetween = (a, b) => Math.ceil((new Date(b) - new Date(a)) / 86400000) + 1;
 
@@ -1625,7 +1642,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: cc.color }}>{p.quincena === "1Q" ? "Primera" : "Segunda"} Quincena</div>
-            <div style={{ fontSize: 14, color: "#64748b" }}>{new Date(p.periodo + "-01").toLocaleDateString("es-HN", { month: "long", year: "numeric" }).replace(/^\w/, c => c.toUpperCase())}</div>
+            <div style={{ fontSize: 14, color: "#64748b" }}>{(() => {
+              // Parseamos manual para evitar el bug de timezone que hace que
+              // "2026-05" se vea como "abril 2026" en zonas UTC negativas.
+              const [py, pm] = (p.periodo || "").split("-").map(Number);
+              if (!py || !pm) return p.periodo || "";
+              return new Date(py, pm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }).replace(/^\w/, c => c.toUpperCase());
+            })()}</div>
           </div>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "2px solid #E2E8F0", paddingTop: 12 }}>
