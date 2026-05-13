@@ -47,6 +47,91 @@ const DELIVERY_STATUSES = {
 
 // ── Utils ──
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+// ── File externalization (workaround del limite de tamaño de Supabase) ──
+//
+// Supabase tiene un limite practico de payload (~8MB en plan Pro, 1MB en
+// free). Los archivos adjuntos (cotizaciones, recibos, fichas) embebidos
+// como dataUrl base64 dentro de cada solicitud hacen que el array
+// "cp-purchases" crezca muy rapido — en abril 2026 llego a 11.5MB y
+// dejo de poder guardarse, bloqueando completamente el modulo.
+//
+// Solucion: cada archivo se guarda en su propia row de Supabase con key
+// `cp-file-{fileId}`. En "cp-purchases" solo queda una referencia liviana
+// con nombre, tamaño, tipo y fileId. En memoria reconstituimos los
+// dataUrl al cargar, asi el resto del codigo (visor, PDF generator,
+// descargas) sigue funcionando sin cambios.
+//
+// Compatibilidad: si la data vieja tiene dataUrl directo (sin fileId),
+// la primera vez que se guarde se extraera automaticamente.
+const FILE_FIELD_PATHS = [
+  ["quoteFile"],
+  ["receiptFile"],
+  ["delivery", "fichaFile"],
+];
+const fileKey = (fileId) => `cp-file-${fileId}`;
+
+const getAtPath = (obj, path) => path.reduce((cur, k) => cur?.[k], obj);
+const setAtPath = (obj, path, value) => {
+  // Devuelve una nueva copia del objeto con el path actualizado (immutable).
+  if (path.length === 0) return value;
+  const [head, ...rest] = path;
+  return { ...obj, [head]: setAtPath(obj?.[head] || {}, rest, value) };
+};
+
+// Extrae los archivos pesados de un array de purchases. Devuelve la version
+// "light" (sin dataUrl) y la lista de archivos a guardar por separado.
+const extractFiles = (purchases) => {
+  const filesToSave = [];
+  const light = purchases.map((p) => {
+    let cleaned = p;
+    for (const path of FILE_FIELD_PATHS) {
+      const file = getAtPath(cleaned, path);
+      if (!file || !file.dataUrl) continue;
+      const fileId = file.fileId || uid();
+      filesToSave.push({ fileId, content: { name: file.name, type: file.type, size: file.size, dataUrl: file.dataUrl } });
+      cleaned = setAtPath(cleaned, path, { fileId, name: file.name, type: file.type, size: file.size });
+    }
+    return cleaned;
+  });
+  return { light, filesToSave };
+};
+
+// Toma purchases con refs y carga los archivos correspondientes en memoria.
+// Devuelve los purchases con dataUrl reconstituido.
+const restoreFiles = async (lightPurchases) => {
+  // Recolectar todos los fileIds que necesitan ser cargados (los que tienen
+  // fileId pero no tienen dataUrl ya cargado).
+  const ids = new Set();
+  for (const p of lightPurchases) {
+    for (const path of FILE_FIELD_PATHS) {
+      const f = getAtPath(p, path);
+      if (f?.fileId && !f.dataUrl) ids.add(f.fileId);
+    }
+  }
+  if (ids.size === 0) return lightPurchases;
+  const fileMap = {};
+  await Promise.all(
+    [...ids].map(async (id) => {
+      try {
+        const f = await store.get(fileKey(id));
+        if (f) fileMap[id] = f;
+      } catch {}
+    })
+  );
+  return lightPurchases.map((p) => {
+    let restored = p;
+    for (const path of FILE_FIELD_PATHS) {
+      const ref = getAtPath(restored, path);
+      if (!ref?.fileId || ref.dataUrl) continue;
+      const full = fileMap[ref.fileId];
+      if (full) {
+        restored = setAtPath(restored, path, { ...full, fileId: ref.fileId });
+      }
+    }
+    return restored;
+  });
+};
 const fmt = d => d ? new Date(d).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const fmtDT = d => d ? new Date(d).toLocaleString("es-HN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtL = n => (n != null && n !== "") ? `L ${Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2 })}` : "L 0.00";
@@ -475,21 +560,51 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     (async () => {
       const [p, cps] = await Promise.all([store.get("cp-purchases"), store.get("cp-projects")]);
       if (p) {
-        // Migracion: asegurar que todos los registros tengan treasuryStatus y deliveryStatus
+        // Migracion 1: asegurar treasuryStatus y deliveryStatus
         const migrated = p.map(x => ({
           ...x,
           treasuryStatus: deriveTreasury(x),
           deliveryStatus: deriveDelivery(x),
           delivery: x.delivery || {},
         }));
-        setPurchases(migrated);
+        // Migracion 2: si hay archivos referenciados (fileId sin dataUrl),
+        // cargarlos desde sus rows individuales para tener todo en memoria.
+        const withFiles = await restoreFiles(migrated);
+        setPurchases(withFiles);
       }
       if (cps) setCustomProjects(cps);
       setLoaded(true);
     })();
   }, []);
 
-  const sP = d => { setPurchases(d); store.set("cp-purchases", d); };
+  // Guarda los purchases extrayendo los archivos pesados a rows separadas
+  // para no exceder el limite de tamaño de Supabase. Devuelve true si todo
+  // se guardo en la nube, false si fallo (el cache local siempre se hace).
+  const sP = async (d) => {
+    setPurchases(d);
+    const { light, filesToSave } = extractFiles(d);
+    // Guardar primero cada archivo (en paralelo). Cada uno es < 3MB
+    // tipicamente, asi que no choca con el limite.
+    const fileResults = await Promise.all(
+      filesToSave.map((f) => store.set(fileKey(f.fileId), f.content))
+    );
+    const someFileFailed = fileResults.some((ok) => !ok);
+    // Despues guardar el array de purchases ya liviano (solo refs).
+    const purchasesOk = await store.set("cp-purchases", light);
+    if (!purchasesOk || someFileFailed) {
+      alert(
+        "⚠️ Atencion: la solicitud se guardo en este dispositivo pero NO se sincronizo a la nube.\n\n" +
+        "Si abris el sistema en otra Mac, los cambios pueden no aparecer.\n\n" +
+        "Posibles causas:\n" +
+        "• Sin conexion a internet\n" +
+        "• Algun archivo adjunto es muy pesado (limite ~3MB por archivo)\n" +
+        "• Problema temporal con Supabase\n\n" +
+        "Intenta nuevamente en un momento."
+      );
+      return false;
+    }
+    return true;
+  };
   const sCP = d => { setCustomProjects(d); store.set("cp-projects", d); };
   const cp = purchases.filter(p => p.company === co);
 
@@ -529,6 +644,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
   const updatePurchase = (updated) => sP(purchases.map(p => p.id === updated.id ? updated : p));
   const removePurchase = (id) => sP(purchases.filter(p => p.id !== id));
+  // Helper: guarda y retorna true/false segun exito. Para los botones que
+  // quieren cerrar el modal solo si el guardado fue exitoso.
+  const saveOrAlert = async (newPurchases) => {
+    const ok = await sP(newPurchases);
+    return ok;
+  };
 
   const cc = COMPANIES[co];
 
@@ -621,21 +742,29 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-          <Btn variant="warn" onClick={() => {
+          <Btn variant="warn" onClick={async () => {
             if (!f.projectCode || !f.provider || !f.description || !f.amount) return alert("Complete proyecto, proveedor, descripcion y monto");
             const rec = { ...f, id: f.id || uid(), status: "borrador", treasuryStatus: null };
             const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
-            if (purchase) updatePurchase(saved); else sP([...purchases, saved]);
-            setModal(null);
+            const next = purchase
+              ? purchases.map(p => p.id === saved.id ? saved : p)
+              : [...purchases, saved];
+            const ok = await saveOrAlert(next);
+            if (ok) setModal(null);
           }}>💾 Guardar borrador</Btn>
-          <Btn variant="success" onClick={() => {
+          <Btn variant="success" onClick={async () => {
             if (!f.projectCode || !f.provider || !f.description || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert("Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
             if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
             const rec = { ...f, id: f.id || uid(), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
             const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
-            if (purchase) updatePurchase(saved); else sP([...purchases, saved]);
-            setModal(null);
-            alert("✓ Solicitud aprobada. Paso a Tesoreria como 'Pendiente Lic. Carolina'.");
+            const next = purchase
+              ? purchases.map(p => p.id === saved.id ? saved : p)
+              : [...purchases, saved];
+            const ok = await saveOrAlert(next);
+            if (ok) {
+              setModal(null);
+              alert("✓ Solicitud aprobada. Paso a Tesoreria como 'Pendiente Lic. Carolina'.");
+            }
           }}>✓ Aprobar y enviar a Tesoreria</Btn>
         </div>
       </div>
