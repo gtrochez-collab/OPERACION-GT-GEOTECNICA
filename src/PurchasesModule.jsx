@@ -580,26 +580,44 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // Guarda los purchases extrayendo los archivos pesados a rows separadas
   // para no exceder el limite de tamaño de Supabase. Devuelve true si todo
   // se guardo en la nube, false si fallo (el cache local siempre se hace).
+  //
+  // IMPORTANTE: guardamos los archivos SERIALMENTE (uno por uno, no en
+  // paralelo). En paralelo, Supabase rate-limita y devuelve errores
+  // intermitentes que disparaban este mismo alerta. Serial es un poco mas
+  // lento pero 100% confiable. Cada store.set ya tiene su propio retry
+  // con backoff (3 intentos) para absorber glitches puntuales.
   const sP = async (d) => {
     setPurchases(d);
     const { light, filesToSave } = extractFiles(d);
-    // Guardar primero cada archivo (en paralelo). Cada uno es < 3MB
-    // tipicamente, asi que no choca con el limite.
-    const fileResults = await Promise.all(
-      filesToSave.map((f) => store.set(fileKey(f.fileId), f.content))
-    );
-    const someFileFailed = fileResults.some((ok) => !ok);
+
+    const failedFiles = [];
+    for (const f of filesToSave) {
+      const ok = await store.set(fileKey(f.fileId), f.content);
+      if (!ok) failedFiles.push(f);
+    }
+
     // Despues guardar el array de purchases ya liviano (solo refs).
     const purchasesOk = await store.set("cp-purchases", light);
-    if (!purchasesOk || someFileFailed) {
+
+    if (!purchasesOk || failedFiles.length > 0) {
+      // Obtener el error especifico (lo grabamos al fallar arriba)
+      const lastErr = store.getLastError?.();
+      const detalleError = lastErr
+        ? `\n\nError tecnico: ${lastErr.message}`
+        : "";
+      const archivosProblema = failedFiles.length > 0
+        ? `\n\nArchivos que NO subieron (${failedFiles.length}):\n${failedFiles.map(f => `• ${f.content?.name || f.fileId} (${(f.content?.size / 1024 / 1024).toFixed(2)} MB)`).join("\n")}`
+        : "";
       alert(
-        "⚠️ Atencion: la solicitud se guardo en este dispositivo pero NO se sincronizo a la nube.\n\n" +
+        "⚠️ Atencion: los cambios se guardaron en este dispositivo pero NO se sincronizaron a la nube.\n\n" +
         "Si abris el sistema en otra Mac, los cambios pueden no aparecer.\n\n" +
         "Posibles causas:\n" +
-        "• Sin conexion a internet\n" +
-        "• Algun archivo adjunto es muy pesado (limite ~3MB por archivo)\n" +
-        "• Problema temporal con Supabase\n\n" +
-        "Intenta nuevamente en un momento."
+        "• Sin conexion a internet (revisa tu WiFi)\n" +
+        "• Algun archivo adjunto excede el limite de Supabase (~1MB free / ~8MB pro)\n" +
+        "• Problema temporal con Supabase (ya reintentamos 3 veces)" +
+        archivosProblema +
+        detalleError +
+        "\n\nPodes seguir trabajando — el cambio quedo en este navegador. Cuando recuperes conexion, simplemente volve a guardar la solicitud."
       );
       return false;
     }

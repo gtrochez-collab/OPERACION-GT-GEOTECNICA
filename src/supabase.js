@@ -68,18 +68,33 @@ export const store = {
       console.error(`[store] no se pudo guardar en cache local: ${k}`, e);
     }
 
-    // 2) Intentar Supabase
-    try {
-      const { error } = await supabase
-        .from('app_data')
-        .upsert({ key: k, value: v, updated_at: new Date().toISOString() }, { onConflict: 'key' });
-      if (error) throw error;
-      notifySync({ ok: true, error: null, lastKey: k });
-      return true;
-    } catch (e) {
-      console.error(`[store] NO se sincronizo a la nube: ${k}`, e);
-      notifySync({ ok: false, error: { key: k, message: e.message || String(e) }, lastKey: k });
-      return false;
+    // 2) Intentar Supabase con retry-with-backoff (3 intentos: 0ms, 600ms, 1800ms)
+    // Esto absorbe glitches de red intermitentes (WiFi inestable, throttling, etc.)
+    // sin tener que mostrarle un error feo al usuario.
+    const delays = [0, 600, 1800];
+    let lastError = null;
+    for (let attempt = 0; attempt < delays.length; attempt++) {
+      if (delays[attempt] > 0) await new Promise(r => setTimeout(r, delays[attempt]));
+      try {
+        const { error } = await supabase
+          .from('app_data')
+          .upsert({ key: k, value: v, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        if (error) throw error;
+        if (attempt > 0) console.info(`[store] sincronizado tras ${attempt + 1} intentos: ${k}`);
+        notifySync({ ok: true, error: null, lastKey: k });
+        return true;
+      } catch (e) {
+        lastError = e;
+        console.warn(`[store] intento ${attempt + 1}/3 fallo para ${k}:`, e.message || e);
+      }
     }
+    // Todos los retries fallaron
+    const errMsg = lastError?.message || String(lastError);
+    console.error(`[store] NO se sincronizo a la nube tras 3 intentos: ${k}`, lastError);
+    notifySync({ ok: false, error: { key: k, message: errMsg }, lastKey: k });
+    return false;
   },
+
+  // Exponer el ultimo error para que la UI pueda mostrarlo
+  getLastError: () => lastSyncState.error,
 };
