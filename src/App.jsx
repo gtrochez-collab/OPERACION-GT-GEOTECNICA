@@ -22,7 +22,7 @@ const ROLE_LABEL = {
   tesoreria: "Tesoreria",
   gerencia: "Gerencia (solo lectura)",
   coordinador: "Coordinador de Operaciones",
-  costos: "Costos (solo lectura)",
+  costos: "Costos / Operaciones",
 };
 
 // ── Modulos del sistema ──

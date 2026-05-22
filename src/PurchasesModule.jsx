@@ -305,6 +305,9 @@ const generateFichaPDF = async (purchase, projectObj, companyName) => {
   const fileName = `Ficha-Recibido-${purchase.projectCode}-${(purchase.provider || "").replace(/[^a-zA-Z0-9]/g, "_")}.pdf`;
   const hasQuotePDF = purchase.quoteFile?.dataUrl && purchase.quoteFile.type === "application/pdf";
   const hasQuoteImg = purchase.quoteFile?.dataUrl && purchase.quoteFile.type?.startsWith("image/");
+  const hasReceiptPDF = purchase.receiptFile?.dataUrl && purchase.receiptFile.type === "application/pdf";
+  const hasReceiptImg = purchase.receiptFile?.dataUrl && purchase.receiptFile.type?.startsWith("image/");
+  const hasAnyPDFAttachment = hasQuotePDF || hasReceiptPDF;
 
   // Paleta
   const B  = [15, 76, 117], BL = [239, 246, 255];   // azul
@@ -351,7 +354,13 @@ const generateFichaPDF = async (purchase, projectObj, companyName) => {
   f(9, "normal"); tc(GR);
   doc.text("Folio N°: _______________", PW - M, y + 7, { align: "right" });
   doc.text(`Generada: ${today}`, PW - M, y + 14, { align: "right" });
-  if (hasQuotePDF || hasQuoteImg) { f(7.5, "italic"); tc(B); doc.text("* Cotizacion incluida en pag. 2+", PW - M, y + 20, { align: "right" }); }
+  if (hasQuotePDF || hasQuoteImg || hasReceiptPDF || hasReceiptImg) {
+    f(7.5, "italic"); tc(B);
+    const partes = [];
+    if (hasQuotePDF || hasQuoteImg) partes.push("Cotizacion");
+    if (hasReceiptPDF || hasReceiptImg) partes.push("Transferencia");
+    doc.text(`* ${partes.join(" + ")} incluida${partes.length > 1 ? "s" : ""} en pag. 2+`, PW - M, y + 20, { align: "right" });
+  }
 
   y += 25; dc(B); lw(0.6); ln(M, y, PW - M, y); y += 4;
 
@@ -476,57 +485,83 @@ const generateFichaPDF = async (purchase, projectObj, companyName) => {
   doc.text(`Grupo Geotecnica · Ficha de Recibido · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id}`, PW / 2, y, { align: "center" });
 
   // ════════════════════════════════════════════════════════
-  // PAG. 2+: Cotizacion adjunta (PDF merge o imagen)
+  // PAG. 2+: Adjuntos en orden — Cotizacion + Transferencia de pago
   // ════════════════════════════════════════════════════════
-  if (hasQuotePDF) {
-    // Fusionar PDF cotizacion con pdf-lib → un solo archivo descargable
-    const fichaBytes = doc.output("arraybuffer");
-    const { PDFDocument } = await import("pdf-lib");
+  // Lista ordenada de anexos a incluir. Cada item tiene titulo, subtitulo y archivo.
+  const anexos = [];
+  if (purchase.quoteFile?.dataUrl) {
+    anexos.push({
+      titulo: "COTIZACION DE REFERENCIA",
+      subtitulo: `${purchase.provider || "—"} · N° ${purchase.quoteNumber || "—"} · ${projFull}`,
+      file: purchase.quoteFile,
+    });
+  }
+  if (purchase.receiptFile?.dataUrl) {
+    anexos.push({
+      titulo: "COMPROBANTE DE TRANSFERENCIA / PAGO",
+      subtitulo: `${purchase.provider || "—"} · ${fmtL(purchase.amount)} · ${fmt(purchase.paymentDate)} · ${purchase.paymentMethod || "—"}`,
+      file: purchase.receiptFile,
+    });
+  }
 
-    const pdfFicha = await PDFDocument.load(fichaBytes);
+  // Si no hay nada que adjuntar, guardar y salir
+  if (anexos.length === 0) {
+    doc.save(fileName);
+    return;
+  }
 
-    // Convertir dataUrl → Uint8Array
-    const base64 = purchase.quoteFile.dataUrl.split(",")[1];
-    const bin = atob(base64);
-    const cotizBytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) cotizBytes[i] = bin.charCodeAt(i);
+  // Agregar imagenes (JPG/PNG) como paginas nuevas con jsPDF — antes del merge PDF
+  const imgAnexos = anexos.filter(a => a.file.type?.startsWith("image/"));
+  const pdfAnexos = anexos.filter(a => a.file.type === "application/pdf");
 
-    try {
-      const pdfCotiz = await PDFDocument.load(cotizBytes, { ignoreEncryption: true });
-      const indices = pdfCotiz.getPageIndices();
-      const pages = await pdfFicha.copyPages(pdfCotiz, indices);
-      pages.forEach(p => pdfFicha.addPage(p));
-    } catch (e) {
-      console.warn("pdf-lib: no se pudo incrustar la cotizacion —", e);
-    }
-
-    const merged = await pdfFicha.save();
-    const blob = new Blob([merged], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = fileName;
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-  } else if (hasQuoteImg) {
-    // Imagen (JPG/PNG) → agregar en pagina 2 directamente con jsPDF
+  imgAnexos.forEach(({ titulo, subtitulo, file }) => {
     doc.addPage();
-    f(11, "bold"); tc(B); doc.text("COTIZACION DE REFERENCIA", PW / 2, 14, { align: "center" });
-    f(8.5, "normal"); tc(GR);
-    doc.text(`${purchase.provider} · N° ${purchase.quoteNumber || "—"} · ${projFull}`, PW / 2, 20, { align: "center" });
+    f(11, "bold"); tc(B); doc.text(titulo, PW / 2, 14, { align: "center" });
+    f(8.5, "normal"); tc(GR); doc.text(subtitulo, PW / 2, 20, { align: "center" });
     dc(B); lw(0.5); ln(M, 23, PW - M, 23);
     try {
-      doc.addImage(purchase.quoteFile.dataUrl, purchase.quoteFile.type.includes("png") ? "PNG" : "JPEG", M, 26, CW, PH - 36);
+      doc.addImage(file.dataUrl, file.type.includes("png") ? "PNG" : "JPEG", M, 26, CW, PH - 36);
     } catch {
       f(10, "normal"); tc(GR); doc.text("(imagen no incrustable)", PW / 2, PH / 2, { align: "center" });
     }
-    doc.save(fileName);
+  });
 
-  } else {
-    // Sin cotizacion adjunta
+  // Si no hay PDFs que mergear → guardar directo
+  if (pdfAnexos.length === 0) {
     doc.save(fileName);
+    return;
   }
+
+  // Hay PDFs externos → mergear con pdf-lib
+  const fichaBytes = doc.output("arraybuffer");
+  const { PDFDocument } = await import("pdf-lib");
+  const pdfOut = await PDFDocument.load(fichaBytes);
+
+  for (const { titulo, file } of pdfAnexos) {
+    try {
+      // dataUrl → Uint8Array
+      const base64 = file.dataUrl.split(",")[1];
+      const bin = atob(base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+      const pdfIn = await PDFDocument.load(bytes, { ignoreEncryption: true });
+      const indices = pdfIn.getPageIndices();
+      const pages = await pdfOut.copyPages(pdfIn, indices);
+      pages.forEach(p => pdfOut.addPage(p));
+    } catch (e) {
+      console.warn(`pdf-lib: no se pudo incrustar "${titulo}" —`, e);
+    }
+  }
+
+  const merged = await pdfOut.save();
+  const blob = new Blob([merged], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = fileName;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 };
 
 // ── MODULO ──
@@ -537,15 +572,16 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const isCostos = userRole === "costos";
 
   // Permisos (segregacion de funciones):
-  // admin → SOLO Operaciones: crea, edita borradores, valida y envia a Tesoreria.
+  // admin → Operaciones: crea, edita borradores, valida, envia a Tesoreria, edita proyectos.
   //         NO puede pagar ni cambiar estado a pagado/finalizado.
+  // costos (Lic. Christian Gallo) → MISMOS permisos que admin en Compras (puede crear
+  //         solicitudes y editar proyectos). Cambio solicitado 22-may-2026.
   // tesoreria (Lic. Carolina) → UNICA que registra pago, sube comprobante,
   //         y cambia estado a pagado/finalizado.
   // gerencia → solo lectura.
-  // costos → solo lectura (Lic. Christian Gallo · departamento de Costos).
-  const canCreate = isAdmin;                       // crear/editar/validar solicitudes
+  const canCreate = isAdmin || isCostos;           // crear/editar/validar solicitudes + editar proyectos
   const canPay = isTesoreria;                      // SOLO Carolina registra pago y cambia estado financiero
-  const canViewOnly = isGerencia || isCostos;
+  const canViewOnly = isGerencia;                  // solo gerencia es read-only ahora
 
   const [co, setCo] = useState("geotecnica");
   const [purchases, setPurchases] = useState([]);
@@ -1475,8 +1511,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         {onLogout && <button onClick={onLogout} style={{ background: "rgba(192,57,43,0.15)", border: "1px solid rgba(192,57,43,0.4)", borderRadius: 8, color: "#F0AAA0", padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit" }}>Cerrar sesion</button>}
         <div style={{ fontSize: 11, color: "#7A7268", marginTop: 4, fontWeight: 500, lineHeight: 1.4 }}>
           {userName || "Usuario"}<br />
-          <span style={{ color: isTesoreria ? "#D4A017" : (isGerencia || isCostos) ? "#A8B5C4" : ORANGE, fontWeight: 600 }}>
-            {isAdmin ? "Operaciones + Tesoreria" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : isCostos ? "Costos (solo lectura)" : userRole}
+          <span style={{ color: isTesoreria ? "#D4A017" : isGerencia ? "#A8B5C4" : ORANGE, fontWeight: 600 }}>
+            {isAdmin ? "Operaciones" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : isCostos ? "Costos / Operaciones" : userRole}
           </span>
         </div>
       </div>}
