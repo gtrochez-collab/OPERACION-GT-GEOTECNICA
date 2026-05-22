@@ -567,16 +567,20 @@ const generateFichaPDF = async (purchase, projectObj, companyName) => {
 // ── ProjectFormImpl: nivel de modulo para estabilidad de identidad ──
 // IMPORTANTE: vive aqui (fuera de PurchasesModule) para que React no lo desmonte
 // en cada render del padre. Recibe sus dependencias como props.
-function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, setModal }) {
+function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, renameProjectAlias, setModal }) {
   const [f, setF] = useState(project || { short: "", name: "", code: "" });
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const isEdit = !!project;
+  const aliasCambio = isEdit && f.short !== project.short;
   return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
     <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 12, fontSize: 12, color: "#1E40AF" }}>
       💡 El <b>codigo contable</b> es opcional. Podes dejarlo vacio ahora y agregarlo luego cuando lo tengas.
     </div>
+    {aliasCambio && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: 12, fontSize: 12, color: "#92400E" }}>
+      ⚠️ Vas a cambiar el alias de <b>"{project.short}"</b> a <b>"{f.short}"</b>. Al guardar, todas las solicitudes existentes que usaban el alias viejo se van a actualizar automaticamente al nuevo. Vas a tener que confirmar.
+    </div>}
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-      <Input label="Alias / Identificador corto *" value={f.short} onChange={e => u("short", e.target.value.toUpperCase())} placeholder="Ej: ICON" disabled={isEdit} />
+      <Input label="Alias / Identificador corto *" value={f.short} onChange={e => u("short", e.target.value.toUpperCase())} placeholder="Ej: ICON" />
       <Input label="Codigo contable (opcional)" value={f.code} onChange={e => u("code", e.target.value)} placeholder="Ej: HF-12-4-17-2026" />
       <div style={{ gridColumn: "1/-1" }}>
         <Input label="Nombre completo del proyecto *" value={f.name} onChange={e => u("name", e.target.value)} placeholder="Ej: Cimentacion Torre ICON" />
@@ -584,14 +588,35 @@ function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, set
     </div>
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
       <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-      <Btn variant="success" onClick={() => {
-        if (!f.short || !f.name) return alert("Alias y nombre son obligatorios");
-        if (!isEdit && allProjects.some(p => p.short === f.short)) return alert("Ya existe un proyecto con ese alias. Usa otro.");
-        upsertProjectMeta(f.short, { short: f.short, name: f.name, code: f.code });
-        if (onSaved) onSaved(f.short);
-        setModal(null);
-        alert(isEdit ? "Proyecto actualizado" : `Proyecto "${f.short}" creado. Ya podes usarlo al crear solicitudes.`);
-      }}>{isEdit ? "Guardar cambios" : "Crear proyecto"}</Btn>
+      <Btn variant="success" onClick={async () => {
+        const cleanShort = (f.short || "").trim().toUpperCase();
+        const cleanName = (f.name || "").trim();
+        if (!cleanShort || !cleanName) return alert("Alias y nombre son obligatorios");
+        if (!isEdit) {
+          // CREAR nuevo proyecto
+          if (allProjects.some(p => p.short === cleanShort)) return alert("Ya existe un proyecto con ese alias. Usa otro.");
+          upsertProjectMeta(cleanShort, { short: cleanShort, name: cleanName, code: f.code });
+          if (onSaved) onSaved(cleanShort);
+          setModal(null);
+          alert(`Proyecto "${cleanShort}" creado. Ya podes usarlo al crear solicitudes.`);
+          return;
+        }
+        // EDITAR existente
+        if (cleanShort !== project.short) {
+          // Renombre con cascade
+          const ok = await renameProjectAlias(project.short, cleanShort, { name: cleanName, code: f.code });
+          if (ok) {
+            if (onSaved) onSaved(cleanShort);
+            setModal(null);
+          }
+        } else {
+          // Solo cambios de nombre/codigo
+          upsertProjectMeta(cleanShort, { short: cleanShort, name: cleanName, code: f.code });
+          if (onSaved) onSaved(cleanShort);
+          setModal(null);
+          alert("Proyecto actualizado");
+        }
+      }}>{isEdit ? (aliasCambio ? "Renombrar y actualizar solicitudes" : "Guardar cambios") : "Crear proyecto"}</Btn>
     </div>
   </div>;
 }
@@ -885,6 +910,57 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       const seed = base ? { short: base.short, name: base.name, code: base.code } : { short };
       sCP([...customProjects, { ...seed, ...patch, createdAt: new Date().toISOString() }]);
     }
+  };
+
+  // Renombrar el alias de un proyecto en cascada:
+  // - Actualiza customProjects (cambia el short)
+  // - Actualiza TODAS las solicitudes de compra que usaban el alias viejo → al nuevo
+  // - Si el alias viejo era de un proyecto base de PROJECTS, crea una entrada
+  //   custom con el nuevo short para "ocultar" el base con el nombre/code editado.
+  // Devuelve true si tuvo exito, false si fue cancelado o hubo error.
+  const renameProjectAlias = async (oldShort, newShort, patch) => {
+    if (!oldShort || !newShort || oldShort === newShort) return false;
+    // Validar conflicto: si newShort ya existe en otro proyecto (custom o base)
+    if (allProjects.some(p => p.short === newShort)) {
+      alert(`❌ Ya existe un proyecto con el alias "${newShort}". Elegi otro.`);
+      return false;
+    }
+    // Contar solicitudes afectadas
+    const afectadas = purchases.filter(p => p.projectCode === oldShort);
+    const baseProj = PROJECTS.find(p => p.short === oldShort);
+    const advertenciaBase = baseProj ? `\n\nNota: "${oldShort}" es un proyecto base del sistema. El alias viejo seguira existiendo en el codigo, pero quedara oculto bajo el nuevo nombre.` : "";
+    const mensaje = `¿Renombrar alias "${oldShort}" → "${newShort}"?\n\n` +
+      `Esto va a actualizar ${afectadas.length} solicitud(es) existente(s) ` +
+      `que apuntaban a "${oldShort}". Despues van a aparecer correctamente bajo "${newShort}".` +
+      advertenciaBase + `\n\n¿Continuar?`;
+    if (!confirm(mensaje)) return false;
+
+    // 1) Actualizar customProjects: el item con oldShort pasa a newShort
+    let nextCP;
+    const existingCustom = customProjects.find(cp => cp.short === oldShort);
+    if (existingCustom) {
+      nextCP = customProjects.map(cp => cp.short === oldShort ? { ...cp, ...patch, short: newShort, renamedFrom: oldShort, renamedAt: new Date().toISOString() } : cp);
+    } else {
+      // Era proyecto base sin custom → crear entrada custom con el nuevo short
+      const seed = baseProj ? { name: baseProj.name, code: baseProj.code } : {};
+      nextCP = [...customProjects, { ...seed, ...patch, short: newShort, renamedFrom: oldShort, createdAt: new Date().toISOString() }];
+    }
+
+    // 2) Actualizar todas las solicitudes que usaban el alias viejo
+    const nextPurchases = purchases.map(p => p.projectCode === oldShort ? { ...p, projectCode: newShort } : p);
+
+    // 3) Persistir AMBOS atomicamente. Primero customProjects (rapido) y despues
+    // purchases (que puede tener archivos pesados).
+    setCustomProjects(nextCP);
+    store.set("cp-projects", nextCP);
+    const ok = await sP(nextPurchases);
+
+    if (ok) {
+      alert(`✓ Renombrado: "${oldShort}" → "${newShort}".\n${afectadas.length} solicitud(es) actualizada(s).`);
+    } else {
+      alert(`⚠️ El renombre se guardo en este dispositivo pero hubo un problema sincronizando con la nube. Revisa el mensaje anterior y reintenta si es necesario.`);
+    }
+    return ok;
   };
 
   const addAudit = (p, action, note) => ({
@@ -1491,8 +1567,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} addAudit={addAudit} saveOrAlert={saveOrAlert} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
-      case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
-      case "edit-project": return <Modal title={`Editar proyecto — ${m.d.short}`} onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} setModal={setModal} project={m.d} /></Modal>;
+      case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
+      case "edit-project": return <Modal title={`Editar proyecto — ${m.d.short}`} onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} project={m.d} /></Modal>;
       default: return null;
     }
   };
