@@ -564,6 +564,202 @@ const generateFichaPDF = async (purchase, projectObj, companyName) => {
   URL.revokeObjectURL(url);
 };
 
+// ── ProjectFormImpl: nivel de modulo para estabilidad de identidad ──
+// IMPORTANTE: vive aqui (fuera de PurchasesModule) para que React no lo desmonte
+// en cada render del padre. Recibe sus dependencias como props.
+function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, setModal }) {
+  const [f, setF] = useState(project || { short: "", name: "", code: "" });
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const isEdit = !!project;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 12, fontSize: 12, color: "#1E40AF" }}>
+      💡 El <b>codigo contable</b> es opcional. Podes dejarlo vacio ahora y agregarlo luego cuando lo tengas.
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <Input label="Alias / Identificador corto *" value={f.short} onChange={e => u("short", e.target.value.toUpperCase())} placeholder="Ej: ICON" disabled={isEdit} />
+      <Input label="Codigo contable (opcional)" value={f.code} onChange={e => u("code", e.target.value)} placeholder="Ej: HF-12-4-17-2026" />
+      <div style={{ gridColumn: "1/-1" }}>
+        <Input label="Nombre completo del proyecto *" value={f.name} onChange={e => u("name", e.target.value)} placeholder="Ej: Cimentacion Torre ICON" />
+      </div>
+    </div>
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+      <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+      <Btn variant="success" onClick={() => {
+        if (!f.short || !f.name) return alert("Alias y nombre son obligatorios");
+        if (!isEdit && allProjects.some(p => p.short === f.short)) return alert("Ya existe un proyecto con ese alias. Usa otro.");
+        upsertProjectMeta(f.short, { short: f.short, name: f.name, code: f.code });
+        if (onSaved) onSaved(f.short);
+        setModal(null);
+        alert(isEdit ? "Proyecto actualizado" : `Proyecto "${f.short}" creado. Ya podes usarlo al crear solicitudes.`);
+      }}>{isEdit ? "Guardar cambios" : "Crear proyecto"}</Btn>
+    </div>
+  </div>;
+}
+
+// ── PurchaseFormImpl: nivel de modulo ──
+// Mismo razonamiento que ProjectFormImpl: vive aqui para que React mantenga la
+// identidad del componente estable entre renders del padre. Recibe deps por props.
+function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, addAudit, saveOrAlert }) {
+  const [f, setF] = useState(purchase || {
+    company: co, projectCode: "", provider: "", description: "",
+    amount: "", quoteNumber: "", opsNotes: "", opsResponsible: userName || "",
+    bacAccount: "", quoteFile: null, receiptFile: null,
+    status: "borrador", createdAt: new Date().toISOString(), audit: [],
+    paymentMethod: "Transferencia BAC", paymentReference: "", paymentDate: "", treasuryNotes: "",
+  });
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const linkedProject = getProject(f.projectCode);
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <Select label="Empresa" options={[{ value: "subterra", label: "Subterra Honduras" }, { value: "geotecnica", label: "Geotecnica Soluciones" }]} value={f.company} onChange={e => u("company", e.target.value)} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "flex", justifyContent: "space-between" }}>
+          <span>Proyecto</span>
+          <button type="button" onClick={() => setModal({ t: "new-project", returnTo: purchase ? { t: "edit", d: purchase } : { t: "new" } })} style={{ background: "none", border: "none", color: "#BE185D", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>+ Nuevo proyecto</button>
+        </label>
+        <select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} value={f.projectCode} onChange={e => u("projectCode", e.target.value)}>
+          <option value="">—</option>
+          {allProjects.map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}{p.isCustom ? " (nuevo)" : ""}{p.code ? "" : " · sin codigo"}</option>)}
+        </select>
+      </div>
+      <Input label="Proveedor" value={f.provider} onChange={e => u("provider", e.target.value)} placeholder="Nombre del proveedor" />
+      <Input label="N° de Cotizacion" value={f.quoteNumber} onChange={e => u("quoteNumber", e.target.value)} placeholder="Ej: COT-2026-0123" />
+      <div style={{ gridColumn: "1/-1" }}>
+        <Textarea label="Descripcion de la compra" value={f.description} onChange={e => u("description", e.target.value)} placeholder="Detalle del bien o servicio a adquirir" />
+      </div>
+      <Input label="Monto total (Lempiras)" type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
+      <Input label="Responsable de Operaciones" value={f.opsResponsible} onChange={e => u("opsResponsible", e.target.value)} placeholder="Quien valida por Operaciones" />
+      <Input label="Cuenta BAC del proveedor (opcional)" value={f.bacAccount} onChange={e => u("bacAccount", e.target.value)} placeholder="Ej: 10-251-000123" />
+      <div />
+      <div style={{ gridColumn: "1/-1" }}>
+        <Textarea label="Notas de Operaciones para Tesoreria" value={f.opsNotes} onChange={e => u("opsNotes", e.target.value)} placeholder="Urgencia, condiciones de pago, referencias al proyecto, etc." />
+      </div>
+    </div>
+
+    {linkedProject && !linkedProject.costsRequestFile && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: 12, fontSize: 12, color: "#92400E" }}>
+      ⚠️ El proyecto <b>{linkedProject.short}</b> aun no tiene cargada la solicitud original validada por Costos. Podes subirla en la pestaña <b>Proyectos</b>.
+    </div>}
+    {linkedProject && linkedProject.costsRequestFile && <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 10, padding: 12, fontSize: 12, color: "#065F46" }}>
+      ✓ Proyecto <b>{linkedProject.short}</b> ya tiene solicitud validada por Costos adjunta: <b>{linkedProject.costsRequestFile.name}</b>
+    </div>}
+
+    <FileSlot
+      label="Cotizacion aprobada del proveedor"
+      file={f.quoteFile}
+      canUpload
+      accent="#2563EB"
+      onUpload={fd => u("quoteFile", fd)}
+      onRemove={() => u("quoteFile", null)}
+    />
+
+    <div style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 12, fontSize: 12, color: "#64748b" }}>
+      💡 Al <b>Aprobar</b> la solicitud pasa a Tesoreria con estado <b>Pendiente Lic. Carolina</b>. Antes de aprobar podes guardar como <b>Borrador</b> y completar luego.
+    </div>
+
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+      <div style={{ fontSize: 12, color: "#64748b" }}>
+        {purchase ? `Creada: ${fmtDT(purchase.createdAt)}` : "Nueva solicitud"}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+        <Btn variant="warn" onClick={async () => {
+          if (!f.projectCode || !f.provider || !f.description || !f.amount) return alert("Complete proyecto, proveedor, descripcion y monto");
+          const rec = { ...f, id: f.id || uid(), status: "borrador", treasuryStatus: null };
+          const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
+          const next = purchase
+            ? purchases.map(p => p.id === saved.id ? saved : p)
+            : [...purchases, saved];
+          const ok = await saveOrAlert(next);
+          if (ok) setModal(null);
+        }}>💾 Guardar borrador</Btn>
+        <Btn variant="success" onClick={async () => {
+          if (!f.projectCode || !f.provider || !f.description || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert("Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
+          if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
+          const rec = { ...f, id: f.id || uid(), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
+          const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
+          const next = purchase
+            ? purchases.map(p => p.id === saved.id ? saved : p)
+            : [...purchases, saved];
+          const ok = await saveOrAlert(next);
+          if (ok) {
+            setModal(null);
+            alert("✓ Solicitud aprobada. Paso a Tesoreria como 'Pendiente Lic. Carolina'.");
+          }
+        }}>✓ Aprobar y enviar a Tesoreria</Btn>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── PaymentFormImpl: nivel de modulo (mismo motivo que los anteriores) ──
+function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
+  const [f, setF] = useState({
+    paymentMethod: purchase.paymentMethod || "Transferencia BAC",
+    paymentDate: purchase.paymentDate || new Date().toISOString().slice(0, 10),
+    treasuryNotes: purchase.treasuryNotes || "",
+    receiptFile: purchase.receiptFile || null,
+  });
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: 14 }}>
+      <div style={{ fontSize: 12, color: "#92400E", fontWeight: 700, marginBottom: 4 }}>DETALLE DE LA SOLICITUD</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
+        <div><b>Proveedor:</b> {purchase.provider}</div>
+        <div><b>Proyecto:</b> {projLabel(purchase.projectCode)}</div>
+        <div><b>Descripcion:</b> {purchase.description}</div>
+        <div><b>Monto:</b> <span style={{ color: "#059669", fontWeight: 700, fontSize: 15 }}>{fmtL(purchase.amount)}</span></div>
+        <div><b>N° Cotizacion:</b> {purchase.quoteNumber || "—"}</div>
+        <div><b>Aprobado por:</b> {purchase.opsResponsible || "—"}</div>
+      </div>
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <Select label="Metodo de pago" options={PAYMENT_METHODS} value={f.paymentMethod} onChange={e => u("paymentMethod", e.target.value)} />
+      <Input label="Fecha del pago" type="date" value={f.paymentDate} onChange={e => u("paymentDate", e.target.value)} />
+    </div>
+
+    <FileSlot
+      label="🧾 Adjuntar transferencia (foto, PDF o Excel)"
+      file={f.receiptFile}
+      canUpload
+      accent="#059669"
+      onUpload={fd => u("receiptFile", fd)}
+      onRemove={() => u("receiptFile", null)}
+    />
+
+    <Textarea label="Notas de Tesoreria" value={f.treasuryNotes} onChange={e => u("treasuryNotes", e.target.value)} placeholder="Observaciones, descuentos aplicados, retenciones, etc." />
+
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+      <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+      <Btn variant="success" onClick={() => {
+        if (!f.paymentMethod || !f.paymentDate) return alert("Seleccione metodo y fecha de pago");
+        const hasReceipt = !!f.receiptFile;
+        const rec = {
+          ...purchase, ...f,
+          status: hasReceipt ? "finalizado" : "pagado",
+          treasuryStatus: "pagada",
+          deliveryStatus: purchase.deliveryStatus || "pendiente_entrega",
+          delivery: purchase.delivery || {},
+          paidAt: new Date(f.paymentDate).toISOString(),
+          finalizedAt: hasReceipt ? new Date().toISOString() : purchase.finalizedAt || null,
+        };
+        const note = hasReceipt
+          ? `Pago ${f.paymentMethod} registrado con comprobante — FINALIZADA`
+          : `Pago ${f.paymentMethod} registrado sin comprobante`;
+        const saved = addAudit(rec, "paid", note);
+        updatePurchase(saved);
+        setModal({ t: "detail", d: saved });
+        setTimeout(() => alert(hasReceipt
+          ? "✓ Pago registrado y comprobante adjuntado. Solicitud FINALIZADA."
+          : "✓ Pago registrado. Podes adjuntar el comprobante mas tarde desde el detalle."
+        ), 100);
+      }}>💰 Registrar pago</Btn>
+    </div>
+  </div>;
+}
+
 // ── MODULO ──
 export default function PurchasesModule({ userRole, userName, onBack, onLogout }) {
   const isAdmin = userRole === "admin";
@@ -731,167 +927,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
   if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "'Segoe UI', sans-serif", color: "#64748b" }}>Cargando Compras-Operaciones...</div>;
 
-  // ── FORMULARIO: Nueva / Editar solicitud (Operaciones) ──
-  const PurchaseForm = ({ purchase }) => {
-    const [f, setF] = useState(purchase || {
-      company: co, projectCode: "", provider: "", description: "",
-      amount: "", quoteNumber: "", opsNotes: "", opsResponsible: userName || "",
-      bacAccount: "", quoteFile: null, receiptFile: null,
-      status: "borrador", createdAt: new Date().toISOString(), audit: [],
-      paymentMethod: "Transferencia BAC", paymentReference: "", paymentDate: "", treasuryNotes: "",
-    });
-    const u = (k, v) => setF(p => ({ ...p, [k]: v }));
-    const linkedProject = getProject(f.projectCode);
-
-    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <Select label="Empresa" options={[{ value: "subterra", label: "Subterra Honduras" }, { value: "geotecnica", label: "Geotecnica Soluciones" }]} value={f.company} onChange={e => u("company", e.target.value)} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "flex", justifyContent: "space-between" }}>
-            <span>Proyecto</span>
-            <button type="button" onClick={() => setModal({ t: "new-project", returnTo: purchase ? { t: "edit", d: purchase } : { t: "new" } })} style={{ background: "none", border: "none", color: "#BE185D", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>+ Nuevo proyecto</button>
-          </label>
-          <select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} value={f.projectCode} onChange={e => u("projectCode", e.target.value)}>
-            <option value="">—</option>
-            {allProjects.map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}{p.isCustom ? " (nuevo)" : ""}{p.code ? "" : " · sin codigo"}</option>)}
-          </select>
-        </div>
-        <Input label="Proveedor" value={f.provider} onChange={e => u("provider", e.target.value)} placeholder="Nombre del proveedor" />
-        <Input label="N° de Cotizacion" value={f.quoteNumber} onChange={e => u("quoteNumber", e.target.value)} placeholder="Ej: COT-2026-0123" />
-        <div style={{ gridColumn: "1/-1" }}>
-          <Textarea label="Descripcion de la compra" value={f.description} onChange={e => u("description", e.target.value)} placeholder="Detalle del bien o servicio a adquirir" />
-        </div>
-        <Input label="Monto total (Lempiras)" type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
-        <Input label="Responsable de Operaciones" value={f.opsResponsible} onChange={e => u("opsResponsible", e.target.value)} placeholder="Quien valida por Operaciones" />
-        <Input label="Cuenta BAC del proveedor (opcional)" value={f.bacAccount} onChange={e => u("bacAccount", e.target.value)} placeholder="Ej: 10-251-000123" />
-        <div />
-        <div style={{ gridColumn: "1/-1" }}>
-          <Textarea label="Notas de Operaciones para Tesoreria" value={f.opsNotes} onChange={e => u("opsNotes", e.target.value)} placeholder="Urgencia, condiciones de pago, referencias al proyecto, etc." />
-        </div>
-      </div>
-
-      {linkedProject && !linkedProject.costsRequestFile && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: 12, fontSize: 12, color: "#92400E" }}>
-        ⚠️ El proyecto <b>{linkedProject.short}</b> aun no tiene cargada la solicitud original validada por Costos. Podes subirla en la pestaña <b>Proyectos</b>.
-      </div>}
-      {linkedProject && linkedProject.costsRequestFile && <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 10, padding: 12, fontSize: 12, color: "#065F46" }}>
-        ✓ Proyecto <b>{linkedProject.short}</b> ya tiene solicitud validada por Costos adjunta: <b>{linkedProject.costsRequestFile.name}</b>
-      </div>}
-
-      <FileSlot
-        label="Cotizacion aprobada del proveedor"
-        file={f.quoteFile}
-        canUpload
-        accent="#2563EB"
-        onUpload={fd => u("quoteFile", fd)}
-        onRemove={() => u("quoteFile", null)}
-      />
-
-      <div style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 12, fontSize: 12, color: "#64748b" }}>
-        💡 Al <b>Aprobar</b> la solicitud pasa a Tesoreria con estado <b>Pendiente Lic. Carolina</b>. Antes de aprobar podes guardar como <b>Borrador</b> y completar luego.
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-        <div style={{ fontSize: 12, color: "#64748b" }}>
-          {purchase ? `Creada: ${fmtDT(purchase.createdAt)}` : "Nueva solicitud"}
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-          <Btn variant="warn" onClick={async () => {
-            if (!f.projectCode || !f.provider || !f.description || !f.amount) return alert("Complete proyecto, proveedor, descripcion y monto");
-            const rec = { ...f, id: f.id || uid(), status: "borrador", treasuryStatus: null };
-            const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
-            const next = purchase
-              ? purchases.map(p => p.id === saved.id ? saved : p)
-              : [...purchases, saved];
-            const ok = await saveOrAlert(next);
-            if (ok) setModal(null);
-          }}>💾 Guardar borrador</Btn>
-          <Btn variant="success" onClick={async () => {
-            if (!f.projectCode || !f.provider || !f.description || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert("Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
-            if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
-            const rec = { ...f, id: f.id || uid(), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
-            const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
-            const next = purchase
-              ? purchases.map(p => p.id === saved.id ? saved : p)
-              : [...purchases, saved];
-            const ok = await saveOrAlert(next);
-            if (ok) {
-              setModal(null);
-              alert("✓ Solicitud aprobada. Paso a Tesoreria como 'Pendiente Lic. Carolina'.");
-            }
-          }}>✓ Aprobar y enviar a Tesoreria</Btn>
-        </div>
-      </div>
-    </div>;
-  };
-
-  // ── FORMULARIO: Registrar pago (Tesoreria) ──
-  const PaymentForm = ({ purchase }) => {
-    const [f, setF] = useState({
-      paymentMethod: purchase.paymentMethod || "Transferencia BAC",
-      paymentDate: purchase.paymentDate || new Date().toISOString().slice(0, 10),
-      treasuryNotes: purchase.treasuryNotes || "",
-      receiptFile: purchase.receiptFile || null,
-    });
-    const u = (k, v) => setF(p => ({ ...p, [k]: v }));
-
-    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: 14 }}>
-        <div style={{ fontSize: 12, color: "#92400E", fontWeight: 700, marginBottom: 4 }}>DETALLE DE LA SOLICITUD</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
-          <div><b>Proveedor:</b> {purchase.provider}</div>
-          <div><b>Proyecto:</b> {projLabel(purchase.projectCode)}</div>
-          <div><b>Descripcion:</b> {purchase.description}</div>
-          <div><b>Monto:</b> <span style={{ color: "#059669", fontWeight: 700, fontSize: 15 }}>{fmtL(purchase.amount)}</span></div>
-          <div><b>N° Cotizacion:</b> {purchase.quoteNumber || "—"}</div>
-          <div><b>Aprobado por:</b> {purchase.opsResponsible || "—"}</div>
-        </div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <Select label="Metodo de pago" options={PAYMENT_METHODS} value={f.paymentMethod} onChange={e => u("paymentMethod", e.target.value)} />
-        <Input label="Fecha del pago" type="date" value={f.paymentDate} onChange={e => u("paymentDate", e.target.value)} />
-      </div>
-
-      <FileSlot
-        label="🧾 Adjuntar transferencia (foto, PDF o Excel)"
-        file={f.receiptFile}
-        canUpload
-        accent="#059669"
-        onUpload={fd => u("receiptFile", fd)}
-        onRemove={() => u("receiptFile", null)}
-      />
-
-      <Textarea label="Notas de Tesoreria" value={f.treasuryNotes} onChange={e => u("treasuryNotes", e.target.value)} placeholder="Observaciones, descuentos aplicados, retenciones, etc." />
-
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-        <Btn variant="success" onClick={() => {
-          if (!f.paymentMethod || !f.paymentDate) return alert("Seleccione metodo y fecha de pago");
-          const hasReceipt = !!f.receiptFile;
-          const rec = {
-            ...purchase, ...f,
-            status: hasReceipt ? "finalizado" : "pagado",
-            treasuryStatus: "pagada",
-            deliveryStatus: purchase.deliveryStatus || "pendiente_entrega",
-            delivery: purchase.delivery || {},
-            paidAt: new Date(f.paymentDate).toISOString(),
-            finalizedAt: hasReceipt ? new Date().toISOString() : purchase.finalizedAt || null,
-          };
-          const note = hasReceipt
-            ? `Pago ${f.paymentMethod} registrado con comprobante — FINALIZADA`
-            : `Pago ${f.paymentMethod} registrado sin comprobante`;
-          const saved = addAudit(rec, "paid", note);
-          updatePurchase(saved);
-          setModal({ t: "detail", d: saved });
-          setTimeout(() => alert(hasReceipt
-            ? "✓ Pago registrado y comprobante adjuntado. Solicitud FINALIZADA."
-            : "✓ Pago registrado. Podes adjuntar el comprobante mas tarde desde el detalle."
-          ), 100);
-        }}>💰 Registrar pago</Btn>
-      </div>
-    </div>;
-  };
+  // PurchaseFormImpl y PaymentFormImpl viven a nivel de modulo (final del archivo).
+  // NO definir aqui — la identidad del componente cambiaria en cada render del padre
+  // y React desmontaria los inputs, perdiendo el focus al tipear.
 
   // ── VISTA DETALLE ──
   const DetailView = ({ purchase }) => {
@@ -1202,35 +1240,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   };
 
   // ── FORMULARIO: Crear / Editar proyecto ──
-  const ProjectForm = ({ project, onSaved }) => {
-    const [f, setF] = useState(project || { short: "", name: "", code: "" });
-    const u = (k, v) => setF(p => ({ ...p, [k]: v }));
-    const isEdit = !!project;
-    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 12, fontSize: 12, color: "#1E40AF" }}>
-        💡 El <b>codigo contable</b> es opcional. Podes dejarlo vacio ahora y agregarlo luego cuando lo tengas.
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <Input label="Alias / Identificador corto *" value={f.short} onChange={e => u("short", e.target.value.toUpperCase())} placeholder="Ej: ICON" disabled={isEdit} />
-        <Input label="Codigo contable (opcional)" value={f.code} onChange={e => u("code", e.target.value)} placeholder="Ej: HF-12-4-17-2026" />
-        <div style={{ gridColumn: "1/-1" }}>
-          <Input label="Nombre completo del proyecto *" value={f.name} onChange={e => u("name", e.target.value)} placeholder="Ej: Cimentacion Torre ICON" />
-        </div>
-      </div>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-        <Btn variant="success" onClick={() => {
-          if (!f.short || !f.name) return alert("Alias y nombre son obligatorios");
-          const all = getAllProjects();
-          if (!isEdit && all.some(p => p.short === f.short)) return alert("Ya existe un proyecto con ese alias. Usa otro.");
-          upsertProjectMeta(f.short, { short: f.short, name: f.name, code: f.code });
-          if (onSaved) onSaved(f.short);
-          setModal(null);
-          alert(isEdit ? "Proyecto actualizado" : `Proyecto "${f.short}" creado. Ya podes usarlo al crear solicitudes.`);
-        }}>{isEdit ? "Guardar cambios" : "Crear proyecto"}</Btn>
-      </div>
-    </div>;
-  };
+  // ProjectForm vive a nivel de modulo (ProjectFormImpl). Lo invocamos directamente
+  // desde el switch de modales pasando deps del closure como props. NO definir
+  // wrappers aqui adentro — la identidad del componente cambia en cada render del
+  // padre y React desmonta los inputs perdiendo foco/typing.
 
   // ── SECCIONES ──
   const renderProjects = () => {
@@ -1474,12 +1487,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     if (!modal) return null;
     const m = modal;
     switch (m.t) {
-      case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseForm /></Modal>;
-      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseForm purchase={m.d} /></Modal>;
+      case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} addAudit={addAudit} saveOrAlert={saveOrAlert} /></Modal>;
+      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} addAudit={addAudit} saveOrAlert={saveOrAlert} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
-      case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentForm purchase={m.d} /></Modal>;
-      case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectForm onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
-      case "edit-project": return <Modal title={`Editar proyecto — ${m.d.short}`} onClose={() => setModal(null)}><ProjectForm project={m.d} /></Modal>;
+      case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
+      case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
+      case "edit-project": return <Modal title={`Editar proyecto — ${m.d.short}`} onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} setModal={setModal} project={m.d} /></Modal>;
       default: return null;
     }
   };
