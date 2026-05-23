@@ -883,17 +883,29 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const sCP = d => { setCustomProjects(d); store.set("cp-projects", d); };
   const cp = purchases.filter(p => p.company === co);
 
-  // Lista unificada de proyectos (base + custom con metadata adicional)
+  // Lista unificada de proyectos (base + custom con metadata adicional).
+  // Reglas:
+  // - Para cada proyecto BASE: si hay una entrada custom con mismo short, sus campos
+  //   sobreescriben los del base (name, code, costsRequestFile, etc.). Esto permite
+  //   editar proyectos base sin tocar el codigo hardcoded.
+  // - Si la entrada custom tiene `hidden: true`, el proyecto base NO se muestra
+  //   (usado al renombrar un base — el alias viejo queda oculto).
+  // - Si la entrada custom tiene `deleted: true`, tampoco se muestra (soft-delete).
+  // - Proyectos custom puros (sin base) aparecen si no estan deleted/hidden.
   const getAllProjects = () => {
     const baseShorts = new Set(PROJECTS.map(p => p.short));
-    const result = PROJECTS.map(p => {
+    const result = [];
+    PROJECTS.forEach(p => {
       const extra = customProjects.find(cp => cp.short === p.short);
-      return { ...p, costsRequestFile: extra?.costsRequestFile || null, isCustom: false };
+      if (extra?.hidden || extra?.deleted) return; // base oculto/borrado por override
+      // Merge: base + extra (extra gana). Mantenemos isCustom: false porque sigue siendo base.
+      const merged = { ...p, ...(extra || {}), isCustom: false };
+      result.push(merged);
     });
     customProjects.forEach(cp => {
-      if (!baseShorts.has(cp.short)) {
-        result.push({ ...cp, isCustom: true });
-      }
+      if (baseShorts.has(cp.short)) return; // ya manejado arriba
+      if (cp.hidden || cp.deleted) return;
+      result.push({ ...cp, isCustom: true });
     });
     return result;
   };
@@ -910,6 +922,49 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       const seed = base ? { short: base.short, name: base.name, code: base.code } : { short };
       sCP([...customProjects, { ...seed, ...patch, createdAt: new Date().toISOString() }]);
     }
+  };
+
+  // Eliminar un proyecto (custom puro o base, vía soft-delete).
+  // - Si el proyecto tiene solicitudes asociadas, NO se permite borrar (hay que migrarlas
+  //   o renombrar primero). Se le indica al usuario que use el rename con cascade.
+  // - Para customProjects puros: se quita del array.
+  // - Para proyectos BASE: se agrega una entrada custom con { deleted: true } para
+  //   ocultarlo (soft-delete; revertible editando customProjects manualmente).
+  const deleteProject = async (short) => {
+    const asociadas = purchases.filter(p => p.projectCode === short);
+    if (asociadas.length > 0) {
+      alert(
+        `❌ No se puede eliminar el proyecto "${short}" porque tiene ${asociadas.length} solicitud(es) asociada(s).\n\n` +
+        `Para eliminarlo:\n` +
+        `1) Renombra el alias (renombra con cascade — las solicitudes se transfieren al nuevo proyecto),\n  o\n` +
+        `2) Elimina manualmente las solicitudes asociadas primero.`
+      );
+      return false;
+    }
+    const baseProj = PROJECTS.find(p => p.short === short);
+    if (!confirm(`¿Eliminar el proyecto "${short}"?${baseProj ? "\n\n(Es un proyecto base del sistema. Se va a ocultar — podes restaurarlo si lo necesitas.)" : ""}\n\nEsta accion solo se puede deshacer manualmente.`)) return false;
+
+    let nextCP;
+    const existingCustom = customProjects.find(cp => cp.short === short);
+    if (baseProj) {
+      // Soft-delete del base: agregar override con deleted: true
+      if (existingCustom) {
+        nextCP = customProjects.map(cp => cp.short === short ? { ...cp, deleted: true, deletedAt: new Date().toISOString() } : cp);
+      } else {
+        nextCP = [...customProjects, { short, deleted: true, deletedAt: new Date().toISOString() }];
+      }
+    } else {
+      // Custom puro: lo eliminamos directamente del array
+      nextCP = customProjects.filter(cp => cp.short !== short);
+    }
+    setCustomProjects(nextCP);
+    const ok = await store.set("cp-projects", nextCP);
+    if (ok) {
+      alert(`✓ Proyecto "${short}" eliminado.`);
+    } else {
+      alert(`⚠️ El cambio se guardo en este dispositivo pero hubo un problema sincronizando con la nube.`);
+    }
+    return ok;
   };
 
   // Renombrar el alias de un proyecto en cascada:
@@ -939,11 +994,18 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     let nextCP;
     const existingCustom = customProjects.find(cp => cp.short === oldShort);
     if (existingCustom) {
+      // El proyecto vive en customProjects → simplemente actualizo el short
       nextCP = customProjects.map(cp => cp.short === oldShort ? { ...cp, ...patch, short: newShort, renamedFrom: oldShort, renamedAt: new Date().toISOString() } : cp);
     } else {
-      // Era proyecto base sin custom → crear entrada custom con el nuevo short
+      // Era proyecto BASE sin override custom previo. Necesito:
+      //   a) Ocultar el base viejo agregando una entrada con { short: oldShort, hidden: true }
+      //   b) Crear la nueva entrada custom con el nuevo short y los datos editados
       const seed = baseProj ? { name: baseProj.name, code: baseProj.code } : {};
-      nextCP = [...customProjects, { ...seed, ...patch, short: newShort, renamedFrom: oldShort, createdAt: new Date().toISOString() }];
+      nextCP = [
+        ...customProjects,
+        { short: oldShort, hidden: true, renamedTo: newShort, hiddenAt: new Date().toISOString() },
+        { ...seed, ...patch, short: newShort, renamedFrom: oldShort, createdAt: new Date().toISOString() },
+      ];
     }
 
     // 2) Actualizar todas las solicitudes que usaban el alias viejo
@@ -1390,7 +1452,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                 <div style={{ fontSize: 13, color: "#334155", marginTop: 2 }}>{project.name}</div>
                 <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 2, fontFamily: "monospace" }}>{project.code || "codigo contable pendiente"}</div>
               </div>
-              {canCreate && <button onClick={() => setModal({ t: "edit-project", d: project })} style={{ background: "none", border: "1px solid #E2E8F0", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", color: "#64748b" }}>✏️</button>}
+              {canCreate && <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => setModal({ t: "edit-project", d: project })} title="Editar proyecto" style={{ background: "none", border: "1px solid #E2E8F0", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", color: "#64748b" }}>✏️</button>
+                <button onClick={() => deleteProject(project.short)} title={count > 0 ? `No se puede borrar: tiene ${count} solicitud(es)` : "Eliminar proyecto"} disabled={count > 0} style={{ background: "none", border: "1px solid #FECACA", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: count > 0 ? "not-allowed" : "pointer", color: count > 0 ? "#CBD5E1" : "#DC2626", opacity: count > 0 ? 0.5 : 1 }}>🗑</button>
+              </div>}
             </div>
 
             {/* Stats del proyecto */}
