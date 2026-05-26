@@ -1536,7 +1536,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
       {/* Permanentes */}
       <div>
-        {sectionHeader("👔 PERMANENTES", permanentes.length, "#2563EB", "Contratos indefinidos · IHSS, RAP aplicables en 2Q")}
+        {sectionHeader(
+          "👔 PERMANENTES",
+          permanentes.length,
+          "#2563EB",
+          co === "geotecnica"
+            ? "Contratos indefinidos · IHSS + RAP aplicables en 2Q (grupo C)"
+            : "Contratos indefinidos · IHSS aplicable en 2Q (grupo A · sin RAP)"
+        )}
         {permanentes.length > 0
           ? <Table columns={cols(false)} data={permanentes} actions={actions} />
           : <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: "0 0 8px 8px", padding: 24, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>Sin empleados permanentes en {cc.name}</div>}
@@ -1544,7 +1551,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
       {/* Temporales */}
       <div>
-        {sectionHeader("⏱️ TEMPORALES", temporales.length, "#D97706", "Contratos por obra determinada · con fecha de fin")}
+        {sectionHeader("⏱️ TEMPORALES", temporales.length, "#D97706", "Contratos por obra determinada · con fecha de fin · IHSS aplicable en 2Q (sin RAP)")}
         {temporales.length > 0
           ? <Table columns={cols(true)} data={temporales} actions={actions} />
           : <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: "0 0 8px 8px", padding: 24, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>Sin empleados temporales en {cc.name}</div>}
