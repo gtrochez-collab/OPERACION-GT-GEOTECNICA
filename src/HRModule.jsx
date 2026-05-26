@@ -1476,20 +1476,87 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
-  const renderEmps = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-    <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{ce.length} empleados</span><Btn onClick={() => setModal({ t: "en" })}>+ Nuevo</Btn></div>
-    <Table columns={[
-      { key: "code", label: "Código", render: r => <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5 }}>{genEmpCode(r.fullName, r.dni)}</span> },
-      { key: "fullName", label: "Nombre" },
-      { key: "dni", label: "DNI" },
-      { key: "position", label: "Cargo" },
-      { key: "contractType", label: "Contrato", render: r => <Badge color={r.contractType === "temporary" ? "#D97706" : r.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{r.contractType === "temporary" ? "Temporal" : r.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge> },
-      { key: "salary", label: "Sal.Bruto", render: r => fmtL(r.salary) },
-      { key: "bonificacion", label: "Bonif.", render: r => fmtL(r.bonificacion) },
-      { key: "startDate", label: "Inicio", render: r => fmt(r.startDate) },
-      { key: "status", label: "Estado", render: r => <Badge color={r.status === "active" ? "#059669" : "#DC2626"}>{r.status === "active" ? "Activo" : "Inactivo"}</Badge> },
-    ]} data={ce} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "ee", d: r })}>Editar</Btn><Btn small variant="danger" onClick={() => { if (confirm(`Eliminar a ${r.fullName}?`)) sE(emps.filter(e => e.id !== r.id)); }}>×</Btn></div>} />
-  </div>;
+  const renderEmps = () => {
+    // Agrupacion por tipo de contrato: Permanentes / Temporales / Honorarios.
+    // Render columnas compartidas para todas las secciones — la columna "Fin contrato"
+    // solo aparece en temporales (que es donde tiene sentido).
+    const permanentes = ce.filter(e => e.contractType === "permanent");
+    const temporales = ce.filter(e => e.contractType === "temporary");
+    const honorarios = ce.filter(e => e.contractType === "honorarios");
+
+    const cols = (incluirFin) => {
+      const base = [
+        { key: "code", label: "Código", render: r => <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5 }}>{genEmpCode(r.fullName, r.dni)}</span> },
+        { key: "fullName", label: "Nombre" },
+        { key: "dni", label: "DNI" },
+        { key: "position", label: "Cargo" },
+        { key: "salary", label: "Sal.Bruto", render: r => fmtL(r.salary) },
+        { key: "bonificacion", label: "Bonif.", render: r => fmtL(r.bonificacion) },
+        { key: "startDate", label: "Inicio", render: r => fmt(r.startDate) },
+      ];
+      if (incluirFin) {
+        base.push({ key: "endDate", label: "Fin contrato", render: r => {
+          if (!r.endDate) return <span style={{ color: "#94A3B8", fontSize: 12 }}>—</span>;
+          const hoy = new Date(); hoy.setHours(0,0,0,0);
+          const fin = new Date(r.endDate); fin.setHours(0,0,0,0);
+          const diasRest = Math.ceil((fin - hoy) / 86400000);
+          const color = diasRest < 0 ? "#991B1B" : diasRest <= 7 ? "#DC2626" : diasRest <= 30 ? "#D97706" : "#059669";
+          return <span style={{ color, fontWeight: 600, fontSize: 12 }}>{fmt(r.endDate)}{r.status === "active" && <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.8 }}>({diasRest < 0 ? `vencido ${Math.abs(diasRest)}d` : `${diasRest}d`})</span>}</span>;
+        }});
+      }
+      base.push({ key: "status", label: "Estado", render: r => <Badge color={r.status === "active" ? "#059669" : "#DC2626"}>{r.status === "active" ? "Activo" : "Inactivo"}</Badge> });
+      return base;
+    };
+
+    const actions = r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+      <Btn small variant="ghost" onClick={() => setModal({ t: "ee", d: r })}>Editar</Btn>
+      <Btn small variant="danger" onClick={() => { if (confirm(`Eliminar a ${r.fullName}?`)) sE(emps.filter(e => e.id !== r.id)); }}>×</Btn>
+    </div>;
+
+    const sectionHeader = (label, count, color, descripcion) => (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: color + "18", borderLeft: `4px solid ${color}`, borderRadius: "8px 8px 0 0", marginBottom: -1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ color, fontWeight: 800, fontSize: 14, letterSpacing: 0.3 }}>{label}</span>
+          <Badge color={color}>{count}</Badge>
+        </div>
+        {descripcion && <span style={{ color: "#64748b", fontSize: 11, fontStyle: "italic" }}>{descripcion}</span>}
+      </div>
+    );
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ color: "#64748b", fontSize: 13 }}>
+          <b style={{ color: "#1E293B" }}>{ce.length}</b> empleados &nbsp;·&nbsp;
+          <span style={{ color: "#2563EB" }}>{permanentes.length} permanente{permanentes.length !== 1 ? "s" : ""}</span> &nbsp;·&nbsp;
+          <span style={{ color: "#D97706" }}>{temporales.length} temporal{temporales.length !== 1 ? "es" : ""}</span>
+          {honorarios.length > 0 && <> &nbsp;·&nbsp; <span style={{ color: "#7C3AED" }}>{honorarios.length} honorarios</span></>}
+        </div>
+        <Btn onClick={() => setModal({ t: "en" })}>+ Nuevo</Btn>
+      </div>
+
+      {/* Permanentes */}
+      <div>
+        {sectionHeader("👔 PERMANENTES", permanentes.length, "#2563EB", "Contratos indefinidos · IHSS, RAP aplicables en 2Q")}
+        {permanentes.length > 0
+          ? <Table columns={cols(false)} data={permanentes} actions={actions} />
+          : <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: "0 0 8px 8px", padding: 24, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>Sin empleados permanentes en {cc.name}</div>}
+      </div>
+
+      {/* Temporales */}
+      <div>
+        {sectionHeader("⏱️ TEMPORALES", temporales.length, "#D97706", "Contratos por obra determinada · con fecha de fin")}
+        {temporales.length > 0
+          ? <Table columns={cols(true)} data={temporales} actions={actions} />
+          : <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: "0 0 8px 8px", padding: 24, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>Sin empleados temporales en {cc.name}</div>}
+      </div>
+
+      {/* Honorarios (solo si hay) */}
+      {honorarios.length > 0 && <div>
+        {sectionHeader("📑 HONORARIOS", honorarios.length, "#7C3AED", "ISR fijo 12.5% · sin IHSS ni RAP")}
+        <Table columns={cols(true)} data={honorarios} actions={actions} />
+      </div>}
+    </div>;
+  };
 
   const renderPayroll = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
     <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cp.length} planillas</span><Btn onClick={() => setModal({ t: "pn" })}>+ Nueva planilla</Btn></div>
@@ -1696,6 +1763,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     });
     const u = (k, v) => setF(p => ({ ...p, [k]: v }));
     const grupo = getGrupo(f.company, f.contractType);
+    const esTemporal = f.contractType === "temporary";
+
+    // Calculo de duracion para mostrar al usuario
+    const duracionDias = (f.startDate && f.endDate) ? Math.max(0, Math.round((new Date(f.endDate) - new Date(f.startDate)) / 86400000) + 1) : 0;
+    const duracionStr = duracionDias > 0
+      ? `${duracionDias} día${duracionDias !== 1 ? "s" : ""}` +
+        (duracionDias >= 7 ? ` · ~${Math.round(duracionDias / 7)} sem.` : "") +
+        (duracionDias >= 30 ? ` · ~${(duracionDias / 30).toFixed(1)} meses` : "")
+      : "";
+    const fechasInvalidas = f.startDate && f.endDate && new Date(f.endDate) < new Date(f.startDate);
+
     return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
       <Select label="Empresa" options={[{ value: "subterra", label: "Subterra Honduras" }, { value: "geotecnica", label: "Geotecnica Soluciones" }]} value={f.company} onChange={e => u("company", e.target.value)} />
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -1708,9 +1786,32 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       <Input label="DNI / Identidad" value={f.dni} onChange={e => u("dni", e.target.value)} />
       <Input label="Posicion / Cargo" value={f.position} onChange={e => u("position", e.target.value)} />
       <Select label="Departamento" options={DEPARTMENTS} value={f.department} onChange={e => u("department", e.target.value)} />
-      <Select label="Tipo de contrato" options={[{ value: "permanent", label: "Permanente" }, { value: "temporary", label: "Temporal" }, { value: "honorarios", label: "Honorarios" }]} value={f.contractType} onChange={e => u("contractType", e.target.value)} />
-      <Input label="Fecha de ingreso" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
-      {f.contractType === "temporary" && <Input label="Duracion / Fecha fin" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />}
+      <Select label="Tipo de contrato" options={[{ value: "permanent", label: "Permanente" }, { value: "temporary", label: "Temporal (por obra)" }, { value: "honorarios", label: "Honorarios" }]} value={f.contractType} onChange={e => u("contractType", e.target.value)} />
+
+      {/* Fecha de ingreso — siempre visible */}
+      {!esTemporal && <Input label="Fecha de ingreso" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />}
+
+      {/* Bloque destacado de duracion para temporales (por obra determinada) */}
+      {esTemporal && <div style={{ gridColumn: "1/-1", background: "#FFFBEB", border: "2px solid #F59E0B", borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: "#92400E", letterSpacing: 0.3 }}>📅 DURACIÓN DEL CONTRATO POR OBRA</span>
+          <span style={{ fontSize: 11, color: "#B45309", fontStyle: "italic" }}>(obligatorio en contratos temporales)</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, alignItems: "end" }}>
+          <Input label="Fecha desde *" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
+          <Input label="Fecha hasta (vence) *" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Duración calculada</label>
+            <div style={{ padding: "8px 12px", border: "1px solid #FCD34D", borderRadius: 8, background: "#fff", color: duracionDias > 0 ? "#92400E" : "#94A3B8", fontWeight: 700, fontSize: 13, minHeight: 38, display: "flex", alignItems: "center" }}>
+              {duracionStr || "— completa las fechas —"}
+            </div>
+          </div>
+        </div>
+        {fechasInvalidas && <div style={{ background: "#FEE2E2", color: "#991B1B", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}>
+          ⚠️ La fecha de fin no puede ser anterior a la fecha de inicio.
+        </div>}
+      </div>}
+
       <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
       <Input label="Bonificacion (L)" type="number" value={f.bonificacion} onChange={e => u("bonificacion", e.target.value)} />
       <Select label="Motivo de alta" options={MOTIVOS_ALTA} value={f.motivo} onChange={e => u("motivo", e.target.value)} />
@@ -1721,7 +1822,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
         <Btn variant="success" onClick={() => {
           if (!f.fullName || !f.dni || !f.startDate || !f.salary) return alert("Complete nombre, DNI, fecha de ingreso y salario");
-          if (f.contractType === "temporary" && !f.endDate) return alert("Indique fecha de fin del contrato temporal");
+          if (f.contractType === "temporary" && !f.endDate) return alert("⚠️ El contrato por obra (temporal) requiere fecha de fin del contrato.");
+          if (f.contractType === "temporary" && new Date(f.endDate) < new Date(f.startDate)) return alert("⚠️ La fecha de fin no puede ser anterior a la fecha de inicio.");
           const empId = uid();
           const newEmp = {
             id: empId, company: f.company, fullName: f.fullName, dni: f.dni, position: f.position,
@@ -1778,6 +1880,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div><span style={{ color: "#64748b" }}>Contrato:</span> <Badge color={emp.contractType === "temporary" ? "#D97706" : emp.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{emp.contractType === "temporary" ? "Temporal" : emp.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge></div>
         <div><span style={{ color: "#64748b" }}>Salario:</span> <b>{fmtL(emp.salary)}</b></div>
         <div><span style={{ color: "#64748b" }}>Grupo:</span> <Badge color={GRUPO_COLOR[grupo]}>{grupo} — {GRUPO_DESC[grupo]}</Badge></div>
+        {emp.startDate && <div><span style={{ color: "#64748b" }}>Ingreso:</span> <b>{fmt(emp.startDate)}</b></div>}
+        {emp.contractType === "temporary" && emp.endDate && (() => {
+          const hoy = new Date(); hoy.setHours(0,0,0,0);
+          const fin = new Date(emp.endDate); fin.setHours(0,0,0,0);
+          const dias = Math.ceil((fin - hoy) / 86400000);
+          const color = dias < 0 ? "#991B1B" : dias <= 7 ? "#DC2626" : dias <= 30 ? "#D97706" : "#059669";
+          return <div style={{ gridColumn: "1 / -1", background: color + "15", border: `1px solid ${color}40`, borderRadius: 8, padding: "8px 12px", marginTop: 4 }}>
+            <span style={{ color: "#64748b" }}>📅 Contrato vence:</span> <b style={{ color }}>{fmt(emp.endDate)}</b>
+            <span style={{ color, fontWeight: 600, marginLeft: 8, fontSize: 12 }}>{dias < 0 ? `(vencido hace ${Math.abs(dias)}d)` : dias === 0 ? "(vence hoy)" : `(${dias}d restantes)`}</span>
+          </div>;
+        })()}
       </div>}
       <Input label="Fecha de baja" type="date" value={f.date} onChange={e => u("date", e.target.value)} />
       <Select label="Motivo de baja" options={MOTIVOS_BAJA} value={f.motivo} onChange={e => u("motivo", e.target.value)} />
