@@ -1780,6 +1780,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         (duracionDias >= 30 ? ` · ~${(duracionDias / 30).toFixed(1)} meses` : "")
       : "";
     const fechasInvalidas = f.startDate && f.endDate && new Date(f.endDate) < new Date(f.startDate);
+    const esHonorarios = f.contractType === "honorarios";
+    const NOTA_HONORARIOS = "📌 Recordatorio: deducir 12.5% de retencion por honorarios profesionales (se aplica al pagar planilla — el salario registrado es el base).";
+
+    // Pre-llenar nota cuando se cambia a Honorarios, si esta vacia.
+    // Si el usuario cambia el tipo otra vez, mantenemos lo que tenia.
+    useEffect(() => {
+      if (esHonorarios && !f.notas) u("notas", NOTA_HONORARIOS);
+      // si pasa de honorarios a otra cosa y la nota es exactamente la del recordatorio, limpiar
+      if (!esHonorarios && f.notas === NOTA_HONORARIOS) u("notas", "");
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [esHonorarios]);
 
     return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
       <Select label="Empresa" options={[{ value: "subterra", label: "Subterra Honduras" }, { value: "geotecnica", label: "Geotecnica Soluciones" }]} value={f.company} onChange={e => u("company", e.target.value)} />
@@ -1819,8 +1830,21 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         </div>}
       </div>}
 
-      <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
+      <Input label={`Salario bruto (L)${esHonorarios ? " — base, sin retencion" : ""}`} type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
       <Input label="Bonificacion (L)" type="number" value={f.bonificacion} onChange={e => u("bonificacion", e.target.value)} />
+
+      {/* Recordatorio visible cuando el tipo de contrato es Honorarios (Grupo D) */}
+      {esHonorarios && <div style={{ gridColumn: "1/-1", background: "#F5F3FF", border: "2px solid #C4B5FD", borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: "#5B21B6", letterSpacing: 0.3 }}>📌 ATENCIÓN — HONORARIOS PROFESIONALES (GRUPO D)</span>
+        </div>
+        <div style={{ fontSize: 12, color: "#5B21B6", lineHeight: 1.6 }}>
+          Registrá el <b>salario base</b> tal como se acordó con el profesional (sin descontar nada).
+          La <b>retención del 12.5% por honorarios profesionales</b> se aplica automáticamente al generar la planilla
+          (no afecta el monto que ves arriba). El neto a pagar al profesional sale ya con la retención descontada.
+        </div>
+      </div>}
+
       <Select label="Motivo de alta" options={MOTIVOS_ALTA} value={f.motivo} onChange={e => u("motivo", e.target.value)} />
       <div style={{ gridColumn: "1/-1" }}>
         <Input label="Notas" value={f.notas} onChange={e => u("notas", e.target.value)} />
