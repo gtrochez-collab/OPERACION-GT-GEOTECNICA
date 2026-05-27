@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import HRModule from "./HRModule.jsx";
 import PurchasesModule from "./PurchasesModule.jsx";
 import OperationsModule from "./OperationsModule.jsx";
+import LogisticsModule from "./LogisticsModule.jsx";
 import { onSyncStateChange } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { BRAND, FONT, R, SP } from "./theme.js";
@@ -14,6 +15,7 @@ const USERS = [
   { username: "gerencia", password: "gerencia1234", role: "gerencia", label: "Gerencia" },
   { username: "gerson", password: "gerson1234", role: "coordinador", label: "Lic. Gerson Trochez" },
   { username: "christian", password: "christian1234", role: "costos", label: "Lic. Christian Gallo" },
+  { username: "oscar", password: "oscar1234", role: "logistica", label: "Oscar — Logistica" },
 ];
 
 const ROLE_LABEL = {
@@ -23,6 +25,7 @@ const ROLE_LABEL = {
   gerencia: "Gerencia (solo lectura)",
   coordinador: "Coordinador de Operaciones",
   costos: "Costos / Operaciones",
+  logistica: "Logistica / Flota",
 };
 
 // ── Modulos del sistema ──
@@ -70,11 +73,10 @@ const MODULES = [
     id: "logistica",
     name: "Logistica",
     icon: "🚛",
-    desc: "Transporte, rutas, despachos, vehiculos",
+    desc: "Flota, mantenimientos, rutas y despachos",
     accent: "#2D4A6B",
     accentSoft: "rgba(45,74,107,0.10)",
-    roles: ["admin"],
-    soon: true,
+    roles: ["admin", "logistica"],
   },
 ];
 
@@ -121,6 +123,7 @@ export default function App() {
   if (activeModule === "rrhh") return <>{syncBanner}<HRModule {...moduleProps} /></>;
   if (activeModule === "compras-operaciones") return <>{syncBanner}<PurchasesModule {...moduleProps} /></>;
   if (activeModule === "operations-cc") return <>{syncBanner}<OperationsModule {...moduleProps} /></>;
+  if (activeModule === "logistica") return <>{syncBanner}<LogisticsModule {...moduleProps} /></>;
 
   // ── Panel de Control ──
   const availableModules = MODULES.filter((m) => m.roles.includes(user.role));
