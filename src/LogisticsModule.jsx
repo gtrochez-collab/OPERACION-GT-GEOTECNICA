@@ -23,16 +23,9 @@ import Logo from "./Logo.jsx";
 
 // ── Constantes ──
 const TIPOS_VEHICULO = [
-  "Pickup",
-  "Camion 3.5T",
-  "Camion 5T",
-  "Camion 8T",
-  "Cabezal / Trailer",
-  "Volqueta",
-  "Bobcat / Equipo",
-  "Microbus",
+  "Pickup / Camioneta",
+  "Camion / Cabezal",
   "Motocicleta",
-  "Otro",
 ];
 
 const ESTADOS_VEHICULO = [
@@ -131,7 +124,7 @@ const Modal = ({ title, children, onClose, wide }) => (
 function VehicleFormImpl({ vehicle, allProjects, setModal, saveVehicle }) {
   const [f, setF] = useState(vehicle || {
     plate: "",
-    type: "Pickup",
+    type: "Pickup / Camioneta",
     brand: "",
     model: "",
     year: "",
@@ -141,7 +134,6 @@ function VehicleFormImpl({ vehicle, allProjects, setModal, saveVehicle }) {
     estado: "operativo",
     projectCode: "",
     motorista: "",
-    fechaIngreso: "",
     proxMantenimientoKm: "",
     proxMantenimientoFecha: "",
     pendientesReparacion: "",
@@ -167,7 +159,6 @@ function VehicleFormImpl({ vehicle, allProjects, setModal, saveVehicle }) {
         <Input label="Año" type="number" value={f.year} onChange={e => u("year", e.target.value)} placeholder="Ej: 2020" />
         <Input label="Color" value={f.color} onChange={e => u("color", e.target.value)} placeholder="Ej: Blanco" />
         <Input label="Kilometraje actual" type="number" value={f.kmActual} onChange={e => u("kmActual", e.target.value)} placeholder="Km" />
-        <Input label="Fecha de ingreso a la flota" type="date" value={f.fechaIngreso} onChange={e => u("fechaIngreso", e.target.value)} />
       </div>
     </div>
 
