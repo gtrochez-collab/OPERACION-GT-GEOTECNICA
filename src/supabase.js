@@ -25,48 +25,91 @@ export const onSyncStateChange = (fn) => {
 };
 export const getSyncState = () => lastSyncState;
 
+// Helpers internos para timestamp local. Guardamos el ts en una key paralela
+// ${k}__ts para mantener backwards compat: el valor del item sigue siendo el
+// JSON puro (sin wrappers). Codigo que lee localStorage directo no se rompe.
+const TS_SUFFIX = '__ts';
+const readLocalWithTs = (k) => {
+  let value = undefined, ts = null;
+  try {
+    const raw = localStorage.getItem(k);
+    if (raw !== null) value = JSON.parse(raw);
+  } catch (e) {
+    console.warn(`[store] localStorage corrupto para ${k}, ignorando`, e);
+  }
+  try {
+    ts = localStorage.getItem(k + TS_SUFFIX);
+  } catch {}
+  return { value, ts };
+};
+const writeLocalWithTs = (k, v, ts) => {
+  try {
+    localStorage.setItem(k, JSON.stringify(v));
+    localStorage.setItem(k + TS_SUFFIX, ts);
+  } catch (e) {
+    console.error(`[store] no se pudo guardar en cache local: ${k}`, e);
+  }
+};
+
 export const store = {
   async get(k) {
-    // 1) Intentar Supabase primero
+    // 1) Leer ambos: cloud (con su updated_at) y local (con su ts).
     let cloudValue = undefined;
+    let cloudTs = null;
     try {
       const { data, error } = await supabase
         .from('app_data')
-        .select('value')
+        .select('value, updated_at')
         .eq('key', k)
         .maybeSingle();
       if (!error && data) {
         cloudValue = data.value;
-        // Refrescar cache local
-        try { localStorage.setItem(k, JSON.stringify(cloudValue)); } catch {}
+        cloudTs = data.updated_at || null;
       } else if (error && error.code !== 'PGRST116') {
         console.warn('Supabase get warning for', k, error);
       }
     } catch (e) {
       console.warn('Supabase get network error for', k, e);
     }
-    if (cloudValue !== undefined && cloudValue !== null) return cloudValue;
+    const { value: localValue, ts: localTs } = readLocalWithTs(k);
 
-    // 2) Fallback a localStorage si la nube no tiene nada
-    try {
-      const v = localStorage.getItem(k);
-      if (v) {
-        const parsed = JSON.parse(v);
-        // Si tenemos datos locales pero nube vacia, reportar que hay datos sin sincronizar
-        if (parsed) console.info(`[store] usando cache local para ${k} (nube sin datos)`);
-        return parsed;
+    // 2) Resolucion de cual usar:
+    //    - Si tenemos cloud Y local con ambos timestamps, comparar y usar el mas reciente.
+    //      Esto es CRITICO: si un set local fallo en sincronizar a la nube, el local quedo
+    //      mas nuevo. Sin esta comparacion, sobrescribiriamos el local con el cloud viejo y
+    //      perderiamos los cambios. Bug clasico reportado por el usuario: "no se guardan las
+    //      solicitudes despues de refrescar".
+    //    - Si solo hay cloud, usar cloud (y refrescar cache local).
+    //    - Si solo hay local, usar local.
+    if (cloudValue !== undefined && cloudValue !== null) {
+      if (localValue !== undefined && localValue !== null && localTs && cloudTs) {
+        const localDate = new Date(localTs);
+        const cloudDate = new Date(cloudTs);
+        if (!isNaN(localDate) && !isNaN(cloudDate) && localDate > cloudDate) {
+          console.warn(`[store] cache local mas reciente que nube para "${k}" (local=${localTs} vs nube=${cloudTs}). Usando local. Probable sync fallido previamente — intentando re-sincronizar en background.`);
+          // Disparar un re-sync en background (sin bloquear el get). Si la nube esta otra vez
+          // disponible, se pondra al dia. No esperamos el resultado.
+          this.set(k, localValue).catch(() => {});
+          return localValue;
+        }
       }
-    } catch {}
+      // Cloud gana — refrescar cache local con el cloud value Y su ts.
+      writeLocalWithTs(k, cloudValue, cloudTs || new Date().toISOString());
+      return cloudValue;
+    }
+
+    // Solo local disponible
+    if (localValue !== undefined && localValue !== null) {
+      console.info(`[store] usando cache local para ${k} (nube sin datos)`);
+      return localValue;
+    }
     return null;
   },
 
   async set(k, v) {
-    // 1) Guardar SIEMPRE en localStorage primero (red de seguridad)
-    try {
-      localStorage.setItem(k, JSON.stringify(v));
-    } catch (e) {
-      console.error(`[store] no se pudo guardar en cache local: ${k}`, e);
-    }
+    const ts = new Date().toISOString();
+    // 1) Guardar SIEMPRE en localStorage primero (red de seguridad), con timestamp.
+    writeLocalWithTs(k, v, ts);
 
     // 2) Intentar Supabase con retry-with-backoff (3 intentos: 0ms, 600ms, 1800ms)
     // Esto absorbe glitches de red intermitentes (WiFi inestable, throttling, etc.)
@@ -78,7 +121,7 @@ export const store = {
       try {
         const { error } = await supabase
           .from('app_data')
-          .upsert({ key: k, value: v, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+          .upsert({ key: k, value: v, updated_at: ts }, { onConflict: 'key' });
         if (error) throw error;
         if (attempt > 0) console.info(`[store] sincronizado tras ${attempt + 1} intentos: ${k}`);
         notifySync({ ok: true, error: null, lastKey: k });
@@ -88,7 +131,9 @@ export const store = {
         console.warn(`[store] intento ${attempt + 1}/3 fallo para ${k}:`, e.message || e);
       }
     }
-    // Todos los retries fallaron
+    // Todos los retries fallaron. El local ya quedo guardado con su ts, asi que
+    // store.get() lo va a preferir sobre el cloud viejo. Cuando recupere conexion,
+    // el proximo get(k) va a disparar un re-sync automatico en background.
     const errMsg = lastError?.message || String(lastError);
     console.error(`[store] NO se sincronizo a la nube tras 3 intentos: ${k}`, lastError);
     notifySync({ ok: false, error: { key: k, message: errMsg }, lastKey: k });
