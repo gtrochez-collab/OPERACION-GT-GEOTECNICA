@@ -15,7 +15,7 @@ const USERS = [
   { username: "gerencia", password: "gerencia1234", role: "gerencia", label: "Gerencia" },
   { username: "gerson", password: "gerson1234", role: "coordinador", label: "Lic. Gerson Trochez" },
   { username: "christian", password: "christian1234", role: "costos", label: "Lic. Christian Gallo" },
-  { username: "oscar", password: "oscar1234", role: "logistica", label: "Oscar — Logistica" },
+  { username: "oscarpaz", password: "oscarpaz1234", role: "logistica", label: "Oscar Paz" },
 ];
 
 const ROLE_LABEL = {
