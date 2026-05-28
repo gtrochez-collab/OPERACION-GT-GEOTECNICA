@@ -335,6 +335,146 @@ function VehicleDetailImpl({ vehicle, allProjects, setModal, deleteVehicle }) {
   </div>;
 }
 
+// ── Helpers de parseo de pendientes desde el textarea de cada vehiculo ──
+// Cada linea no vacia del textarea pendientesReparacion se trata como un pendiente
+// separado. Quitamos los bullets/numeros del inicio para mostrarlos limpios.
+const parsePendientes = (text) => {
+  if (!text || typeof text !== "string") return [];
+  return text.split("\n")
+    .map((line, raw_idx) => ({ raw: line, idx: raw_idx, trimmed: line.trim() }))
+    .filter(x => x.trimmed.length > 0)
+    .map((x, visIdx) => ({
+      ...x,
+      visIdx,
+      clean: x.trimmed.replace(/^[•\-\*]+\s*/, "").replace(/^\d+[.\)]\s*/, "").trim(),
+    }));
+};
+
+// Remueve una linea especifica del textarea por su texto exacto
+const removeLine = (text, exactLine) => {
+  if (!text) return "";
+  return text.split("\n").filter(l => l !== exactLine).join("\n");
+};
+
+// ── TIPOS DE MANTENIMIENTO ──
+const TIPOS_MANTENIMIENTO = [
+  { value: "preventivo", label: "🛡 Preventivo", color: BRAND.green },
+  { value: "correctivo", label: "🔧 Correctivo", color: BRAND.yellow },
+  { value: "emergencia", label: "🚨 Emergencia", color: BRAND.red },
+];
+const tipoMantCfg = (v) => TIPOS_MANTENIMIENTO.find(t => t.value === v) || TIPOS_MANTENIMIENTO[1];
+
+// ── FORM DE MANTENIMIENTO (nivel de modulo) ──
+function MaintenanceFormImpl({ vehicle, vehicles, prefilledDescription, prefilledRawLine, setModal, saveMaintenance }) {
+  const [f, setF] = useState({
+    vehicleId: vehicle?.id || "",
+    type: "correctivo",
+    fecha: new Date().toISOString().slice(0, 10),
+    kmAlRealizar: vehicle?.kmActual || "",
+    description: prefilledDescription || "",
+    workshop: "",
+    cost: "",
+    proxKm: "",
+    proxFecha: "",
+    notas: "",
+    rawLineToRemove: prefilledRawLine || null, // si vino de un pendiente, lo borramos al guardar
+  });
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const selectedVehicle = vehicles.find(x => x.id === f.vehicleId);
+  const tipoCfg = tipoMantCfg(f.type);
+
+  // Sugerencia automatica: si seleccionan vehiculo y no hay km, llenar con el actual
+  const onVehicleChange = (id) => {
+    const v = vehicles.find(x => x.id === id);
+    setF(p => ({ ...p, vehicleId: id, kmAlRealizar: v?.kmActual || p.kmAlRealizar }));
+  };
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    {/* Vehiculo */}
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.orange, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🚛 Vehiculo</div>
+      <Select
+        label="Vehiculo *"
+        options={vehicles.map(v => ({ value: v.id, label: `${v.plate} — ${v.brand || ""} ${v.model || ""}` }))}
+        value={f.vehicleId}
+        onChange={e => onVehicleChange(e.target.value)}
+        emptyLabel="— Seleccionar —"
+      />
+    </div>
+
+    {/* Tipo + fecha + km */}
+    <div style={{ background: tipoCfg.color + "15", border: `1px solid ${tipoCfg.color}40`, borderRadius: R.md, padding: 14 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: tipoCfg.color, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📋 Detalle</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <Select label="Tipo *" options={TIPOS_MANTENIMIENTO} value={f.type} onChange={e => u("type", e.target.value)} emptyLabel="—" />
+        <Input label="Fecha realizada *" type="date" value={f.fecha} onChange={e => u("fecha", e.target.value)} />
+        <Input label="Km al realizar" type="number" value={f.kmAlRealizar} onChange={e => u("kmAlRealizar", e.target.value)} hint={selectedVehicle ? `Actual: ${(selectedVehicle.kmActual || 0).toLocaleString("es-HN")} km` : ""} />
+      </div>
+    </div>
+
+    {/* Descripcion */}
+    <Textarea label="Que se le hizo *" value={f.description} onChange={e => u("description", e.target.value)} placeholder={"Detalle del mantenimiento. Ej:\n• Cambio de pastillas de freno\n• Cambio de aceite y filtros"} />
+
+    {/* Costos */}
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.blue, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>💰 Costo y taller</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Input label="Taller / Mecanico" value={f.workshop} onChange={e => u("workshop", e.target.value)} placeholder="Ej: Taller propio, Mecanico Roberto" />
+        <Input label="Costo (L)" type="number" step="0.01" value={f.cost} onChange={e => u("cost", e.target.value)} placeholder="0.00" />
+      </div>
+    </div>
+
+    {/* Programar el siguiente */}
+    <div style={{ background: BRAND.yellowSoft, border: `1px solid ${BRAND.yellow}40`, borderRadius: R.md, padding: 14 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.yellow, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🔧 Programar el proximo mantenimiento (opcional)</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" }}>
+        <Input label="Proximo a los (km)" type="number" value={f.proxKm} onChange={e => u("proxKm", e.target.value)} hint="Ej: 5000 km despues del actual" />
+        <Input label="O en fecha" type="date" value={f.proxFecha} onChange={e => u("proxFecha", e.target.value)} />
+        <Btn small variant="ghost" onClick={() => {
+          // Quick add 5000 km al km del vehiculo
+          const baseKm = Number(f.kmAlRealizar) || selectedVehicle?.kmActual || 0;
+          u("proxKm", baseKm + 5000);
+        }}>+ 5,000 km</Btn>
+      </div>
+      <div style={{ fontSize: 11, color: BRAND.stone, fontStyle: "italic", marginTop: 6 }}>Esto actualiza los campos "Proximo mantenimiento" del vehiculo automaticamente.</div>
+    </div>
+
+    {/* Notas */}
+    <Textarea label="Notas" value={f.notas} onChange={e => u("notas", e.target.value)} placeholder="Observaciones, garantia, repuestos cambiados, etc." />
+
+    {/* Aviso de pendiente que se va a borrar */}
+    {f.rawLineToRemove && <div style={{ background: BRAND.greenSoft, border: `1px solid ${BRAND.green}40`, borderRadius: R.sm, padding: "8px 12px", fontSize: 12, color: BRAND.green }}>
+      ✓ Al guardar, este pendiente se va a quitar del vehiculo: <b>{f.rawLineToRemove.trim()}</b>
+    </div>}
+
+    {/* Botones */}
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8, paddingTop: 12, borderTop: `1px solid ${BRAND.borderSoft}` }}>
+      <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+      <Btn variant="success" onClick={async () => {
+        if (!f.vehicleId) return alert("Selecciona un vehiculo");
+        if (!f.description.trim()) return alert("Describe que se le hizo al vehiculo");
+        if (!f.fecha) return alert("Indica la fecha en que se realizo");
+        const rec = {
+          id: uid(),
+          vehicleId: f.vehicleId,
+          type: f.type,
+          fecha: f.fecha,
+          kmAlRealizar: Number(f.kmAlRealizar) || 0,
+          description: f.description.trim(),
+          workshop: f.workshop.trim(),
+          cost: Number(f.cost) || 0,
+          proxKm: Number(f.proxKm) || null,
+          proxFecha: f.proxFecha || null,
+          notas: f.notas.trim(),
+          createdAt: new Date().toISOString(),
+        };
+        const ok = await saveMaintenance(rec, f.rawLineToRemove);
+        if (ok) setModal(null);
+      }}>💾 Registrar mantenimiento</Btn>
+    </div>
+  </div>;
+}
+
 // =====================================================================
 // MODULO PRINCIPAL
 // =====================================================================
@@ -344,18 +484,26 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const canEdit = isAdmin || isLogistica;
 
   const [vehicles, setVehicles] = useState([]);
+  const [maintenances, setMaintenances] = useState([]);
   const [customProjects, setCustomProjects] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
   const [sb, setSb] = useState(true);
   const [sec, setSec] = useState("flota");
   const [filter, setFilter] = useState({ estado: "", projectCode: "", type: "", q: "" });
+  const [mantSubSec, setMantSubSec] = useState("pendientes"); // pendientes | programados | historial
+  const [mantFilter, setMantFilter] = useState({ vehicleId: "", type: "", from: "", to: "" });
 
   // ── Carga inicial ──
   useEffect(() => {
     (async () => {
-      const [v, cps] = await Promise.all([store.get("lg-vehicles"), store.get("cp-projects")]);
+      const [v, m, cps] = await Promise.all([
+        store.get("lg-vehicles"),
+        store.get("lg-maintenances"),
+        store.get("cp-projects"),
+      ]);
       if (Array.isArray(v)) setVehicles(v);
+      if (Array.isArray(m)) setMaintenances(m);
       if (Array.isArray(cps)) setCustomProjects(cps);
       setLoaded(true);
     })();
@@ -386,6 +534,50 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     const next = vehicles.filter(v => v.id !== id);
     setVehicles(next);
     await store.set("lg-vehicles", next);
+  };
+
+  // Registra un mantenimiento y actualiza el vehiculo correspondiente:
+  // - Actualiza kmActual del vehiculo al maximo entre actual y kmAlRealizar.
+  // - Actualiza proxMantenimientoKm/Fecha si se programo un siguiente.
+  // - Si vino de un pendiente especifico (rawLineToRemove), lo quita del textarea.
+  const saveMaintenance = async (rec, rawLineToRemove) => {
+    const vehicle = vehicles.find(v => v.id === rec.vehicleId);
+    if (!vehicle) {
+      alert("No se encontro el vehiculo. Refresca la pagina e intenta de nuevo.");
+      return false;
+    }
+
+    // 1) Guardar el mantenimiento
+    const nextMaintenances = [...maintenances, rec];
+    setMaintenances(nextMaintenances);
+    await store.set("lg-maintenances", nextMaintenances);
+
+    // 2) Actualizar el vehiculo
+    const nuevoKm = Math.max(Number(vehicle.kmActual) || 0, Number(rec.kmAlRealizar) || 0);
+    let pendientesActualizados = vehicle.pendientesReparacion || "";
+    if (rawLineToRemove) {
+      pendientesActualizados = removeLine(pendientesActualizados, rawLineToRemove);
+    }
+    const vehiculoActualizado = {
+      ...vehicle,
+      kmActual: nuevoKm,
+      pendientesReparacion: pendientesActualizados,
+      // Solo sobreescribir si se programo uno nuevo
+      proxMantenimientoKm: rec.proxKm != null ? rec.proxKm : vehicle.proxMantenimientoKm,
+      proxMantenimientoFecha: rec.proxFecha || vehicle.proxMantenimientoFecha,
+      updatedAt: new Date().toISOString(),
+    };
+    const nextVehicles = vehicles.map(v => v.id === vehicle.id ? vehiculoActualizado : v);
+    setVehicles(nextVehicles);
+    await store.set("lg-vehicles", nextVehicles);
+
+    return true;
+  };
+
+  const deleteMaintenance = async (id) => {
+    const next = maintenances.filter(m => m.id !== id);
+    setMaintenances(next);
+    await store.set("lg-maintenances", next);
   };
 
   // ── Filtros ──
@@ -423,7 +615,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   // ── NAV ──
   const nav = [
     { id: "flota", label: "Flota", icon: "🚛" },
-    { id: "mantenimientos", label: "Mantenimientos", icon: "🔧", soon: true },
+    { id: "mantenimientos", label: "Mantenimientos", icon: "🔧" },
     { id: "rutas", label: "Rutas / Despachos", icon: "🛣️", soon: true },
     { id: "motoristas", label: "Motoristas", icon: "👤", soon: true },
   ];
@@ -521,6 +713,246 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         </div>}
   </div>;
 
+  // ── RENDER MANTENIMIENTOS ──
+  const renderMantenimientos = () => {
+    // 1) PENDIENTES: agregar todos los pendientes de todos los vehiculos en una sola lista
+    const pendientesGlobal = [];
+    vehicles.forEach(v => {
+      const items = parsePendientes(v.pendientesReparacion);
+      items.forEach(p => pendientesGlobal.push({ vehicle: v, pendiente: p }));
+    });
+
+    // 2) PROGRAMADOS / VENCIDOS: vehiculos con proxMantenimiento por km o fecha
+    const programados = vehicles
+      .map(v => {
+        const kmFalta = (v.proxMantenimientoKm && v.kmActual) ? (v.proxMantenimientoKm - v.kmActual) : null;
+        const diasFalta = v.proxMantenimientoFecha ? diasParaFecha(v.proxMantenimientoFecha) : null;
+        // Hay algo programado si tiene km o fecha
+        if (kmFalta === null && diasFalta === null) return null;
+        // Calcular urgencia: el peor de los dos
+        let urgencia = "ok";
+        if (kmFalta !== null) {
+          if (kmFalta < 0) urgencia = "vencido";
+          else if (kmFalta < 500) urgencia = "critico";
+          else if (kmFalta < 2000) urgencia = "advertencia";
+        }
+        if (diasFalta !== null) {
+          if (diasFalta < 0) urgencia = "vencido";
+          else if (diasFalta < 7 && urgencia === "ok") urgencia = "critico";
+          else if (diasFalta < 30 && urgencia === "ok") urgencia = "advertencia";
+        }
+        return { vehicle: v, kmFalta, diasFalta, urgencia };
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const order = { vencido: 0, critico: 1, advertencia: 2, ok: 3 };
+        return order[a.urgencia] - order[b.urgencia];
+      });
+
+    // 3) HISTORIAL: con filtros
+    let historial = [...maintenances];
+    if (mantFilter.vehicleId) historial = historial.filter(m => m.vehicleId === mantFilter.vehicleId);
+    if (mantFilter.type) historial = historial.filter(m => m.type === mantFilter.type);
+    if (mantFilter.from) historial = historial.filter(m => m.fecha >= mantFilter.from);
+    if (mantFilter.to) historial = historial.filter(m => m.fecha <= mantFilter.to);
+    historial.sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+    // Stats
+    const ahora = new Date(); ahora.setHours(0, 0, 0, 0);
+    const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
+    const costoMes = maintenances
+      .filter(m => new Date(m.fecha + "T00:00") >= inicioMes)
+      .reduce((s, m) => s + (Number(m.cost) || 0), 0);
+    const costoTotal = maintenances.reduce((s, m) => s + (Number(m.cost) || 0), 0);
+    const vencidos = programados.filter(p => p.urgencia === "vencido").length;
+    const criticos = programados.filter(p => p.urgencia === "critico").length;
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {/* Stats */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <StatCard icon="🔨" label="Pendientes" value={pendientesGlobal.length} color={pendientesGlobal.length > 0 ? BRAND.orange : BRAND.stone} />
+        <StatCard icon="❌" label="Mant. vencidos" value={vencidos} color={vencidos > 0 ? BRAND.red : BRAND.stone} />
+        <StatCard icon="🔥" label="Mant. criticos" value={criticos} color={criticos > 0 ? BRAND.orange : BRAND.stone} />
+        <StatCard icon="📜" label="Total historial" value={maintenances.length} color={BRAND.blue} />
+        <StatCard icon="💰" label="Costo este mes" value={"L " + costoMes.toLocaleString("es-HN", { minimumFractionDigits: 2 })} color={BRAND.green} />
+        <StatCard icon="📊" label="Costo total" value={"L " + costoTotal.toLocaleString("es-HN", { minimumFractionDigits: 2 })} color={BRAND.charcoal} />
+      </div>
+
+      {/* Sub-tabs + boton */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, background: BRAND.parchment, padding: 4, borderRadius: R.md, border: `1px solid ${BRAND.borderSoft}` }}>
+          {[
+            { id: "pendientes", label: `🔨 Pendientes (${pendientesGlobal.length})` },
+            { id: "programados", label: `🔧 Programados (${programados.length})` },
+            { id: "historial", label: `📜 Historial (${maintenances.length})` },
+          ].map(t => (
+            <button
+              key={t.id}
+              onClick={() => setMantSubSec(t.id)}
+              style={{
+                background: mantSubSec === t.id ? BRAND.orange : "transparent",
+                color: mantSubSec === t.id ? "#fff" : BRAND.graphite,
+                border: "none",
+                padding: "6px 14px",
+                borderRadius: R.sm,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >{t.label}</button>
+          ))}
+        </div>
+        {canEdit && <Btn variant="primary" onClick={() => setModal({ t: "maint-new" })}>+ Registrar mantenimiento</Btn>}
+      </div>
+
+      {/* PENDIENTES */}
+      {mantSubSec === "pendientes" && (
+        pendientesGlobal.length === 0
+          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
+              {vehicles.length === 0
+                ? "Aun no hay vehiculos cargados. Anda a la pestaña Flota para empezar."
+                : "✓ No hay pendientes de reparacion registrados en ningun vehiculo. Agregalos desde la ficha de cada vehiculo en la pestaña Flota."}
+            </div>
+          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr style={{ background: BRAND.beigeDeep, borderBottom: `1px solid ${BRAND.border}` }}>
+                    <th style={th}>Vehiculo</th>
+                    <th style={th}>Pendiente</th>
+                    <th style={th}>Estado vehiculo</th>
+                    {canEdit && <th style={th}>Accion</th>}
+                  </tr></thead>
+                  <tbody>
+                    {pendientesGlobal.map((item, i) => {
+                      const v = item.vehicle;
+                      const ec = estadoCfg(v.estado);
+                      return <tr key={`${v.id}-${i}`} style={{ borderBottom: `1px solid ${BRAND.borderSoft}` }}>
+                        <td style={{ ...td, fontFamily: FONT.mono, fontWeight: 800, color: BRAND.charcoal }}>
+                          {v.plate}
+                          <div style={{ fontFamily: FONT.body, fontSize: 11, color: BRAND.stone, fontWeight: 400 }}>{v.brand} {v.model}</div>
+                        </td>
+                        <td style={{ ...td, color: BRAND.ink }}>{item.pendiente.clean}</td>
+                        <td style={td}><Badge color={ec.color} bg={ec.bgSoft}>{ec.label}</Badge></td>
+                        {canEdit && <td style={{ ...td, textAlign: "right" }}>
+                          <Btn small variant="success" onClick={() => setModal({ t: "maint-new", vehicleId: v.id, prefilledDesc: item.pendiente.clean, rawLine: item.pendiente.raw })}>✓ Marcar hecho</Btn>
+                        </td>}
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+      )}
+
+      {/* PROGRAMADOS */}
+      {mantSubSec === "programados" && (
+        programados.length === 0
+          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
+              Aun no hay mantenimientos programados. Desde la ficha de cada vehiculo podes definir cuando toca el proximo (por km o fecha).
+            </div>
+          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr style={{ background: BRAND.beigeDeep, borderBottom: `1px solid ${BRAND.border}` }}>
+                    <th style={th}>Vehiculo</th>
+                    <th style={th}>Km actual</th>
+                    <th style={th}>Prox. mant. (km)</th>
+                    <th style={th}>Faltan km</th>
+                    <th style={th}>Prox. mant. (fecha)</th>
+                    <th style={th}>Faltan dias</th>
+                    <th style={th}>Urgencia</th>
+                    {canEdit && <th style={th}>Accion</th>}
+                  </tr></thead>
+                  <tbody>
+                    {programados.map(item => {
+                      const v = item.vehicle;
+                      const colorByUrg = { vencido: BRAND.red, critico: BRAND.red, advertencia: BRAND.yellow, ok: BRAND.green };
+                      const labelByUrg = { vencido: "❌ VENCIDO", critico: "🔥 CRITICO", advertencia: "⏰ Pronto", ok: "✓ OK" };
+                      const c = colorByUrg[item.urgencia];
+                      return <tr key={v.id} style={{ borderBottom: `1px solid ${BRAND.borderSoft}`, background: item.urgencia === "vencido" ? BRAND.redSoft : item.urgencia === "critico" ? BRAND.orangeBg : "transparent" }}>
+                        <td style={{ ...td, fontFamily: FONT.mono, fontWeight: 800 }}>
+                          {v.plate}
+                          <div style={{ fontFamily: FONT.body, fontSize: 11, color: BRAND.stone, fontWeight: 400 }}>{v.brand} {v.model}</div>
+                        </td>
+                        <td style={{ ...td, textAlign: "right", fontFamily: FONT.mono }}>{(v.kmActual || 0).toLocaleString("es-HN")}</td>
+                        <td style={{ ...td, textAlign: "right", fontFamily: FONT.mono }}>{v.proxMantenimientoKm ? Number(v.proxMantenimientoKm).toLocaleString("es-HN") : "—"}</td>
+                        <td style={{ ...td, textAlign: "right", color: c, fontWeight: 700 }}>{item.kmFalta !== null ? (item.kmFalta < 0 ? `Atrasado ${Math.abs(item.kmFalta).toLocaleString("es-HN")}` : item.kmFalta.toLocaleString("es-HN")) : "—"}</td>
+                        <td style={td}>{v.proxMantenimientoFecha ? fmtFecha(v.proxMantenimientoFecha) : "—"}</td>
+                        <td style={{ ...td, color: c, fontWeight: 700 }}>{item.diasFalta !== null ? (item.diasFalta < 0 ? `Vencido ${Math.abs(item.diasFalta)}d` : `${item.diasFalta}d`) : "—"}</td>
+                        <td style={td}><Badge color={c}>{labelByUrg[item.urgencia]}</Badge></td>
+                        {canEdit && <td style={{ ...td, textAlign: "right" }}>
+                          <Btn small variant="success" onClick={() => setModal({ t: "maint-new", vehicleId: v.id })}>✓ Realizar</Btn>
+                        </td>}
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+      )}
+
+      {/* HISTORIAL */}
+      {mantSubSec === "historial" && <>
+        <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap", padding: 12, background: BRAND.parchment, borderRadius: R.md }}>
+          <Select label="Vehiculo" options={vehicles.map(v => ({ value: v.id, label: v.plate }))} value={mantFilter.vehicleId} onChange={e => setMantFilter(s => ({ ...s, vehicleId: e.target.value }))} emptyLabel="Todos" />
+          <Select label="Tipo" options={TIPOS_MANTENIMIENTO} value={mantFilter.type} onChange={e => setMantFilter(s => ({ ...s, type: e.target.value }))} emptyLabel="Todos" />
+          <Input label="Desde" type="date" value={mantFilter.from} onChange={e => setMantFilter(s => ({ ...s, from: e.target.value }))} />
+          <Input label="Hasta" type="date" value={mantFilter.to} onChange={e => setMantFilter(s => ({ ...s, to: e.target.value }))} />
+          {(mantFilter.vehicleId || mantFilter.type || mantFilter.from || mantFilter.to) && <Btn small variant="ghost" onClick={() => setMantFilter({ vehicleId: "", type: "", from: "", to: "" })}>Limpiar</Btn>}
+        </div>
+
+        {historial.length === 0
+          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
+              {maintenances.length === 0
+                ? "Aun no hay mantenimientos registrados. Cuando registres uno desde Pendientes o Programados, va a aparecer aqui."
+                : "No hay mantenimientos que cumplan los filtros."}
+            </div>
+          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr style={{ background: BRAND.beigeDeep, borderBottom: `1px solid ${BRAND.border}` }}>
+                    <th style={th}>Fecha</th>
+                    <th style={th}>Vehiculo</th>
+                    <th style={th}>Tipo</th>
+                    <th style={th}>Descripcion</th>
+                    <th style={th}>Km</th>
+                    <th style={th}>Taller</th>
+                    <th style={th}>Costo</th>
+                    {canEdit && <th style={th}>Accion</th>}
+                  </tr></thead>
+                  <tbody>
+                    {historial.map(m => {
+                      const v = vehicles.find(x => x.id === m.vehicleId);
+                      const t = tipoMantCfg(m.type);
+                      return <tr key={m.id} style={{ borderBottom: `1px solid ${BRAND.borderSoft}` }}>
+                        <td style={td}>{fmtFecha(m.fecha)}</td>
+                        <td style={{ ...td, fontFamily: FONT.mono, fontWeight: 700 }}>{v?.plate || "—"}</td>
+                        <td style={td}><Badge color={t.color}>{t.label}</Badge></td>
+                        <td style={{ ...td, maxWidth: 360 }}>{m.description}</td>
+                        <td style={{ ...td, textAlign: "right", fontFamily: FONT.mono }}>{(m.kmAlRealizar || 0).toLocaleString("es-HN")}</td>
+                        <td style={td}>{m.workshop || "—"}</td>
+                        <td style={{ ...td, textAlign: "right", color: BRAND.green, fontWeight: 700 }}>{m.cost > 0 ? "L " + Number(m.cost).toLocaleString("es-HN", { minimumFractionDigits: 2 }) : "—"}</td>
+                        {canEdit && <td style={{ ...td, textAlign: "right" }}>
+                          <Btn small variant="ghost" onClick={() => { if (confirm("¿Eliminar este registro de mantenimiento?")) deleteMaintenance(m.id); }}>🗑</Btn>
+                        </td>}
+                      </tr>;
+                    })}
+                  </tbody>
+                  {historial.length > 0 && <tfoot>
+                    <tr style={{ background: BRAND.beigeDeep, fontWeight: 700 }}>
+                      <td colSpan={6} style={{ ...td, textAlign: "right" }}>Total filtrado:</td>
+                      <td style={{ ...td, textAlign: "right", color: BRAND.green }}>L {historial.reduce((s, m) => s + (Number(m.cost) || 0), 0).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</td>
+                      {canEdit && <td></td>}
+                    </tr>
+                  </tfoot>}
+                </table>
+              </div>
+            </div>}
+      </>}
+    </div>;
+  };
+
   // ── RENDER PLACEHOLDER ──
   const renderPlaceholder = (label, desc) => <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 60, textAlign: "center" }}>
     <div style={{ fontSize: 48, marginBottom: 14 }}>🚧</div>
@@ -530,7 +962,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
 
   const renderSec = () => {
     if (sec === "flota") return renderFlota();
-    if (sec === "mantenimientos") return renderPlaceholder("Mantenimientos", "Programacion y registro de mantenimientos preventivos/correctivos. Se va a alimentar de los vehiculos con pendientes y de los proximos mantenimientos programados que cargues en cada ficha.");
+    if (sec === "mantenimientos") return renderMantenimientos();
     if (sec === "rutas") return renderPlaceholder("Rutas y Despachos", "Coordinacion de viajes vinculados a las compras aprobadas por Operaciones. Cuando se apruebe una solicitud en Compras, se va a poder generar aqui un despacho asignando vehiculo + motorista + ruta.");
     if (sec === "motoristas") return renderPlaceholder("Motoristas", "Registro del personal de manejo con disponibilidad, licencia y vehiculos asignados.");
     return null;
@@ -542,6 +974,19 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     if (modal.t === "new") return <Modal title="Nuevo vehiculo" onClose={() => setModal(null)} wide><VehicleFormImpl allProjects={allProjects} setModal={setModal} saveVehicle={saveVehicle} /></Modal>;
     if (modal.t === "edit") return <Modal title={`Editar vehiculo — ${modal.d.plate}`} onClose={() => setModal(null)} wide><VehicleFormImpl vehicle={modal.d} allProjects={allProjects} setModal={setModal} saveVehicle={saveVehicle} /></Modal>;
     if (modal.t === "detail") return <Modal title={`Vehiculo — ${modal.d.plate}`} onClose={() => setModal(null)} wide><VehicleDetailImpl vehicle={modal.d} allProjects={allProjects} setModal={setModal} deleteVehicle={deleteVehicle} /></Modal>;
+    if (modal.t === "maint-new") {
+      const v = modal.vehicleId ? vehicles.find(x => x.id === modal.vehicleId) : null;
+      return <Modal title="Registrar mantenimiento" onClose={() => setModal(null)} wide>
+        <MaintenanceFormImpl
+          vehicle={v}
+          vehicles={vehicles}
+          prefilledDescription={modal.prefilledDesc || ""}
+          prefilledRawLine={modal.rawLine || null}
+          setModal={setModal}
+          saveMaintenance={saveMaintenance}
+        />
+      </Modal>;
+    }
     return null;
   };
 
