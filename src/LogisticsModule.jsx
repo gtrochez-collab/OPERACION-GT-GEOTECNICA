@@ -476,6 +476,154 @@ function MaintenanceFormImpl({ vehicle, vehicles, prefilledDescription, prefille
 }
 
 // =====================================================================
+// DESPACHOS / RUTAS — constantes + form
+// =====================================================================
+
+const TIPOS_DESPACHO = [
+  { value: "material_compra", label: "🛒 Material de compra", color: BRAND.blue, defaultOrigen: "", defaultDestino: "Proyecto" },
+  { value: "material_plantel_proyecto", label: "📦 Material: Plantel → Proyecto", color: BRAND.orange, defaultOrigen: "Plantel", defaultDestino: "Proyecto" },
+  { value: "material_proyecto_plantel", label: "📦 Material: Proyecto → Plantel", color: BRAND.purple, defaultOrigen: "Proyecto", defaultDestino: "Plantel" },
+  { value: "material_proyecto_proyecto", label: "📦 Material: Proyecto → Proyecto", color: BRAND.yellow, defaultOrigen: "", defaultDestino: "" },
+  { value: "personal", label: "👥 Personal", color: BRAND.green, defaultOrigen: "", defaultDestino: "" },
+  { value: "equipo_maquinaria", label: "🏗️ Equipo / Maquinaria", color: BRAND.red, defaultOrigen: "", defaultDestino: "" },
+  { value: "otro", label: "🚛 Otro", color: BRAND.stone, defaultOrigen: "", defaultDestino: "" },
+];
+const tipoDespCfg = (v) => TIPOS_DESPACHO.find(t => t.value === v) || TIPOS_DESPACHO[6];
+
+const ESTADOS_DESPACHO = [
+  { value: "pendiente", label: "📌 Por hacer", color: BRAND.orange, bgSoft: BRAND.orangeBg },
+  { value: "programado", label: "📅 Programado", color: BRAND.blue, bgSoft: BRAND.blueSoft },
+  { value: "en_ruta", label: "🚛 En ruta", color: BRAND.yellow, bgSoft: BRAND.yellowSoft },
+  { value: "entregado", label: "✓ Entregado", color: BRAND.green, bgSoft: BRAND.greenSoft },
+  { value: "cerrado", label: "🔒 Cerrado", color: BRAND.stone, bgSoft: BRAND.beigeDeep },
+  { value: "cancelado", label: "✗ Cancelado", color: BRAND.red, bgSoft: BRAND.redSoft },
+];
+const estadoDespCfg = (v) => ESTADOS_DESPACHO.find(s => s.value === v) || ESTADOS_DESPACHO[0];
+
+// ── FORM DE DESPACHO (nivel de modulo) ──
+function DespachoFormImpl({ despacho, vehicles, allProjects, sourcePurchase, setModal, saveDespacho }) {
+  const [f, setF] = useState(despacho || (() => {
+    const initialTipo = sourcePurchase ? "material_compra" : "material_plantel_proyecto";
+    const initialProj = sourcePurchase?.projectCode || "";
+    const projObj = allProjects.find(p => p.short === initialProj);
+    const tipoCfg = TIPOS_DESPACHO.find(t => t.value === initialTipo);
+    return {
+      source: sourcePurchase ? "compra" : "manual",
+      sourcePurchaseId: sourcePurchase?.id || null,
+      tipo: initialTipo,
+      descripcion: sourcePurchase?.description || "",
+      origen: sourcePurchase?.provider || tipoCfg?.defaultOrigen || "",
+      destino: projObj ? `Proyecto ${projObj.short}` : (tipoCfg?.defaultDestino || ""),
+      projectCode: initialProj,
+      vehicleId: "",
+      motorista: "",
+      fechaProgramada: "",
+      estado: "pendiente",
+      notas: "",
+    };
+  }));
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const tipoCfg = tipoDespCfg(f.tipo);
+  const isEdit = !!despacho;
+
+  // Cuando cambia el tipo, sugerir origen/destino segun preset
+  const onTipoChange = (nuevoTipo) => {
+    const cfg = TIPOS_DESPACHO.find(t => t.value === nuevoTipo);
+    setF(p => ({
+      ...p,
+      tipo: nuevoTipo,
+      // Solo pisamos si el origen/destino actuales estan vacios o coinciden con un preset
+      origen: (!p.origen || TIPOS_DESPACHO.some(t => t.defaultOrigen === p.origen)) ? (cfg?.defaultOrigen || p.origen) : p.origen,
+      destino: (!p.destino || TIPOS_DESPACHO.some(t => t.defaultDestino === p.destino)) ? (cfg?.defaultDestino || p.destino) : p.destino,
+    }));
+  };
+
+  const selectedVehicle = vehicles.find(v => v.id === f.vehicleId);
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    {/* Banner si viene de Compras */}
+    {sourcePurchase && !isEdit && <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}40`, borderRadius: R.md, padding: 12, fontSize: 12, color: BRAND.blue }}>
+      🛒 Despacho generado desde la compra: <b>{sourcePurchase.provider}</b> — {sourcePurchase.description}
+    </div>}
+
+    {/* Tipo */}
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: tipoCfg.color, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📋 Tipo de movimiento</div>
+      <Select label="Tipo *" options={TIPOS_DESPACHO} value={f.tipo} onChange={e => onTipoChange(e.target.value)} emptyLabel="—" />
+    </div>
+
+    {/* Que se mueve + proyecto */}
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.orange, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📦 Que se mueve y a qué proyecto</div>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+        <Textarea label="Descripcion *" value={f.descripcion} onChange={e => u("descripcion", e.target.value)} placeholder={"Ej:\n• 50 sacos de cemento\n• 4 obreros para movilizar a obra Apolo\n• Pilotadora Bauer + accesorios"} />
+        <Select label="Proyecto vinculado" options={allProjects.map(p => ({ value: p.short, label: `${p.short} — ${p.name}` }))} value={f.projectCode} onChange={e => u("projectCode", e.target.value)} emptyLabel="— Sin proyecto —" />
+      </div>
+    </div>
+
+    {/* Origen → Destino */}
+    <div style={{ background: tipoCfg.color + "12", border: `1px solid ${tipoCfg.color}30`, borderRadius: R.md, padding: 14 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: tipoCfg.color, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📍 Ruta</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 12, alignItems: "end" }}>
+        <Input label="Origen *" value={f.origen} onChange={e => u("origen", e.target.value)} placeholder="De donde sale" />
+        <div style={{ paddingBottom: 8, fontSize: 22, color: tipoCfg.color }}>→</div>
+        <Input label="Destino *" value={f.destino} onChange={e => u("destino", e.target.value)} placeholder="A donde va" />
+      </div>
+    </div>
+
+    {/* Vehiculo + motorista + fecha */}
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.blue, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🚛 Asignacion</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <Select
+          label="Vehiculo asignado"
+          options={vehicles.filter(v => v.estado !== "fuera_servicio").map(v => ({ value: v.id, label: `${v.plate} — ${v.brand || ""} ${v.model || ""}` }))}
+          value={f.vehicleId}
+          onChange={e => u("vehicleId", e.target.value)}
+          emptyLabel="— Sin asignar —"
+        />
+        <Input label="Motorista" value={f.motorista} onChange={e => u("motorista", e.target.value)} placeholder={selectedVehicle?.motorista || "Nombre del motorista"} />
+        <Input label="Fecha programada" type="date" value={f.fechaProgramada} onChange={e => u("fechaProgramada", e.target.value)} />
+      </div>
+    </div>
+
+    {/* Estado (solo en edit) */}
+    {isEdit && <div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.charcoal, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🚦 Estado actual</div>
+      <Select label="Estado" options={ESTADOS_DESPACHO} value={f.estado} onChange={e => u("estado", e.target.value)} emptyLabel="—" />
+    </div>}
+
+    {/* Notas */}
+    <Textarea label="Notas / Instrucciones" value={f.notas} onChange={e => u("notas", e.target.value)} placeholder="Cualquier detalle: hora, contacto en sitio, cuidados, etc." />
+
+    {/* Botones */}
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8, paddingTop: 12, borderTop: `1px solid ${BRAND.borderSoft}` }}>
+      <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+      <Btn variant="success" onClick={async () => {
+        if (!f.tipo || !f.descripcion.trim() || !f.origen.trim() || !f.destino.trim()) {
+          return alert("Tipo, descripcion, origen y destino son obligatorios.");
+        }
+        const rec = {
+          ...f,
+          id: f.id || uid(),
+          descripcion: f.descripcion.trim(),
+          origen: f.origen.trim(),
+          destino: f.destino.trim(),
+          motorista: f.motorista.trim(),
+          notas: f.notas.trim(),
+          // Si tiene vehiculo + fecha programada, pasar de pendiente a programado automaticamente
+          estado: f.estado === "pendiente" && f.vehicleId && f.fechaProgramada ? "programado" : f.estado,
+          updatedAt: new Date().toISOString(),
+          createdAt: f.createdAt || new Date().toISOString(),
+        };
+        const ok = await saveDespacho(rec, isEdit);
+        if (ok) setModal(null);
+      }}>{isEdit ? "💾 Guardar cambios" : "+ Crear despacho"}</Btn>
+    </div>
+  </div>;
+}
+
+// =====================================================================
 // MODULO PRINCIPAL
 // =====================================================================
 export default function LogisticsModule({ userRole, userName, onBack, onLogout }) {
@@ -485,6 +633,8 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
 
   const [vehicles, setVehicles] = useState([]);
   const [maintenances, setMaintenances] = useState([]);
+  const [despachos, setDespachos] = useState([]);
+  const [purchases, setPurchases] = useState([]); // shared con Compras
   const [customProjects, setCustomProjects] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
@@ -493,17 +643,23 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const [filter, setFilter] = useState({ estado: "", projectCode: "", type: "", q: "" });
   const [mantSubSec, setMantSubSec] = useState("pendientes"); // pendientes | programados | historial
   const [mantFilter, setMantFilter] = useState({ vehicleId: "", type: "", from: "", to: "" });
+  const [despSubSec, setDespSubSec] = useState("por_hacer"); // por_hacer | programados | historial
+  const [despFilter, setDespFilter] = useState({ projectCode: "", tipo: "", vehicleId: "", q: "" });
 
   // ── Carga inicial ──
   useEffect(() => {
     (async () => {
-      const [v, m, cps] = await Promise.all([
+      const [v, m, d, p, cps] = await Promise.all([
         store.get("lg-vehicles"),
         store.get("lg-maintenances"),
+        store.get("lg-despachos"),
+        store.get("cp-purchases"),
         store.get("cp-projects"),
       ]);
       if (Array.isArray(v)) setVehicles(v);
       if (Array.isArray(m)) setMaintenances(m);
+      if (Array.isArray(d)) setDespachos(d);
+      if (Array.isArray(p)) setPurchases(p);
       if (Array.isArray(cps)) setCustomProjects(cps);
       setLoaded(true);
     })();
@@ -580,6 +736,35 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     await store.set("lg-maintenances", next);
   };
 
+  // ── Despachos ──
+  const saveDespacho = async (rec, isEdit) => {
+    const next = isEdit
+      ? despachos.map(d => d.id === rec.id ? rec : d)
+      : [...despachos, rec];
+    setDespachos(next);
+    const ok = await store.set("lg-despachos", next);
+    if (!ok) alert("⚠️ Despacho guardado localmente pero no se sincronizo a la nube. Cuando recuperes conexion, volve a guardar.");
+    return true;
+  };
+
+  const updateDespachoEstado = async (id, nuevoEstado) => {
+    const next = despachos.map(d => d.id === id ? {
+      ...d,
+      estado: nuevoEstado,
+      // Si pasa a entregado, marcamos fecha de ejecucion
+      fechaEjecutada: (nuevoEstado === "entregado" || nuevoEstado === "cerrado") ? (d.fechaEjecutada || new Date().toISOString().slice(0, 10)) : d.fechaEjecutada,
+      updatedAt: new Date().toISOString(),
+    } : d);
+    setDespachos(next);
+    await store.set("lg-despachos", next);
+  };
+
+  const deleteDespacho = async (id) => {
+    const next = despachos.filter(d => d.id !== id);
+    setDespachos(next);
+    await store.set("lg-despachos", next);
+  };
+
   // ── Filtros ──
   const filtered = vehicles.filter(v => {
     if (filter.estado && v.estado !== filter.estado) return false;
@@ -616,7 +801,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const nav = [
     { id: "flota", label: "Flota", icon: "🚛" },
     { id: "mantenimientos", label: "Mantenimientos", icon: "🔧" },
-    { id: "rutas", label: "Rutas / Despachos", icon: "🛣️", soon: true },
+    { id: "rutas", label: "Rutas / Despachos", icon: "🛣️" },
     { id: "motoristas", label: "Motoristas", icon: "👤", soon: true },
   ];
 
@@ -953,6 +1138,200 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     </div>;
   };
 
+  // ── RENDER RUTAS / DESPACHOS ──
+  const renderRutas = () => {
+    // Compras que estan pagadas/finalizadas y aun no tienen despacho ni fueron recibidas
+    const comprasPendientes = purchases.filter(p => {
+      if (p.status !== "pagado" && p.status !== "finalizado") return false;
+      // Si ya esta cerrado (recibido), no necesita despacho nuevo
+      if (p.deliveryStatus === "cerrado") return false;
+      // Si ya tiene un despacho asociado, no la mostramos otra vez
+      if (despachos.some(d => d.sourcePurchaseId === p.id)) return false;
+      return true;
+    });
+
+    // Filtrar despachos
+    let despFiltered = despachos.filter(d => {
+      if (despFilter.projectCode && d.projectCode !== despFilter.projectCode) return false;
+      if (despFilter.tipo && d.tipo !== despFilter.tipo) return false;
+      if (despFilter.vehicleId && d.vehicleId !== despFilter.vehicleId) return false;
+      if (despFilter.q) {
+        const q = despFilter.q.toLowerCase();
+        const hay = [d.descripcion, d.origen, d.destino, d.motorista, d.notas].filter(Boolean).join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+    // Agrupar despachos por sub-tab
+    const enPorHacer = despFiltered.filter(d => d.estado === "pendiente");
+    const enProgramados = despFiltered.filter(d => d.estado === "programado" || d.estado === "en_ruta");
+    const enHistorial = despFiltered.filter(d => d.estado === "entregado" || d.estado === "cerrado" || d.estado === "cancelado");
+
+    // Stats
+    const totalPorHacer = despachos.filter(d => d.estado === "pendiente").length + comprasPendientes.length;
+    const totalProgramados = despachos.filter(d => d.estado === "programado").length;
+    const totalEnRuta = despachos.filter(d => d.estado === "en_ruta").length;
+    const hoy = new Date().toISOString().slice(0, 10);
+    const entregadosHoy = despachos.filter(d => d.estado === "entregado" && d.fechaEjecutada === hoy).length;
+
+    // Despacho row (tabla compartida entre sub-tabs)
+    const renderDespachoRow = (d) => {
+      const v = vehicles.find(x => x.id === d.vehicleId);
+      const proj = allProjects.find(p => p.short === d.projectCode);
+      const tCfg = tipoDespCfg(d.tipo);
+      const eCfg = estadoDespCfg(d.estado);
+      return <tr key={d.id} onClick={() => setModal({ t: "desp-edit", d })} style={{ borderBottom: `1px solid ${BRAND.borderSoft}`, cursor: "pointer", background: d.source === "compra" ? BRAND.blueSoft + "40" : "transparent" }}>
+        <td style={td}><Badge color={tCfg.color}>{tCfg.label}</Badge></td>
+        <td style={{ ...td, maxWidth: 280 }}>
+          <div style={{ fontSize: 13, color: BRAND.ink }}>{d.descripcion}</div>
+          {d.source === "compra" && <div style={{ fontSize: 10, color: BRAND.blue, fontStyle: "italic", marginTop: 2 }}>🛒 Desde Compras</div>}
+        </td>
+        <td style={td}><b>{d.origen}</b> → <b>{d.destino}</b></td>
+        <td style={td}>{proj ? <Badge color={BRAND.blue}>{proj.short}</Badge> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
+        <td style={td}>{v ? <div><div style={{ fontFamily: FONT.mono, fontWeight: 700, fontSize: 12 }}>{v.plate}</div><div style={{ fontSize: 10, color: BRAND.stone }}>{d.motorista || "—"}</div></div> : <span style={{ color: BRAND.stone, fontSize: 11 }}>Sin asignar</span>}</td>
+        <td style={td}>{d.fechaProgramada ? fmtFecha(d.fechaProgramada) : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
+        <td style={td}><Badge color={eCfg.color} bg={eCfg.bgSoft}>{eCfg.label}</Badge></td>
+        {canEdit && <td style={{ ...td, textAlign: "right" }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+            {/* Quick estado transitions */}
+            {d.estado === "pendiente" && d.vehicleId && d.fechaProgramada && <Btn small variant="primary" onClick={() => updateDespachoEstado(d.id, "programado")}>📅 Programar</Btn>}
+            {d.estado === "programado" && <Btn small variant="warn" onClick={() => updateDespachoEstado(d.id, "en_ruta")}>🚛 En ruta</Btn>}
+            {d.estado === "en_ruta" && <Btn small variant="success" onClick={() => updateDespachoEstado(d.id, "entregado")}>✓ Entregado</Btn>}
+            {d.estado === "entregado" && <Btn small variant="dark" onClick={() => updateDespachoEstado(d.id, "cerrado")}>🔒 Cerrar</Btn>}
+            <Btn small variant="ghost" onClick={() => setModal({ t: "desp-edit", d })}>✏️</Btn>
+          </div>
+        </td>}
+      </tr>;
+    };
+
+    const tableHeaders = <thead><tr style={{ background: BRAND.beigeDeep, borderBottom: `1px solid ${BRAND.border}` }}>
+      <th style={th}>Tipo</th>
+      <th style={th}>Descripcion</th>
+      <th style={th}>Ruta</th>
+      <th style={th}>Proyecto</th>
+      <th style={th}>Vehiculo / Motorista</th>
+      <th style={th}>Fecha prog.</th>
+      <th style={th}>Estado</th>
+      {canEdit && <th style={th}>Acciones</th>}
+    </tr></thead>;
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {/* Stats */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <StatCard icon="📌" label="Por hacer" value={totalPorHacer} color={totalPorHacer > 0 ? BRAND.orange : BRAND.stone} />
+        <StatCard icon="📅" label="Programados" value={totalProgramados} color={BRAND.blue} />
+        <StatCard icon="🚛" label="En ruta" value={totalEnRuta} color={BRAND.yellow} />
+        <StatCard icon="✓" label="Entregados hoy" value={entregadosHoy} color={BRAND.green} />
+      </div>
+
+      {/* Compras esperando transporte (banner expandible) */}
+      {comprasPendientes.length > 0 && <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}40`, borderLeft: `4px solid ${BRAND.blue}`, borderRadius: R.md, padding: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.blue, marginBottom: 10 }}>
+          🛒 {comprasPendientes.length} compra(s) pagada(s) esperando transporte
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {comprasPendientes.map(p => (
+            <div key={p.id} style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.sm, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, flex: 1, minWidth: 200 }}>
+                <b>{p.provider}</b> → <Badge color={BRAND.blue}>{p.projectCode || "Sin proyecto"}</Badge>
+                <div style={{ color: BRAND.stone, fontSize: 11, marginTop: 2 }}>{p.description}</div>
+              </div>
+              {canEdit && <Btn small variant="primary" onClick={() => setModal({ t: "desp-new", sourcePurchase: p })}>+ Crear despacho</Btn>}
+            </div>
+          ))}
+        </div>
+      </div>}
+
+      {/* Sub-tabs + boton */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, background: BRAND.parchment, padding: 4, borderRadius: R.md, border: `1px solid ${BRAND.borderSoft}` }}>
+          {[
+            { id: "por_hacer", label: `📌 Por hacer (${enPorHacer.length})` },
+            { id: "programados", label: `🚛 Programados / En ruta (${enProgramados.length})` },
+            { id: "historial", label: `📜 Historial (${enHistorial.length})` },
+          ].map(t => (
+            <button
+              key={t.id}
+              onClick={() => setDespSubSec(t.id)}
+              style={{
+                background: despSubSec === t.id ? BRAND.orange : "transparent",
+                color: despSubSec === t.id ? "#fff" : BRAND.graphite,
+                border: "none",
+                padding: "6px 14px",
+                borderRadius: R.sm,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >{t.label}</button>
+          ))}
+        </div>
+        {canEdit && <Btn variant="primary" onClick={() => setModal({ t: "desp-new" })}>+ Nuevo movimiento</Btn>}
+      </div>
+
+      {/* Filtros */}
+      <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap", padding: 12, background: BRAND.parchment, borderRadius: R.md }}>
+        <Input label="Buscar" value={despFilter.q} onChange={e => setDespFilter(s => ({ ...s, q: e.target.value }))} placeholder="descripcion, origen, destino..." />
+        <Select label="Proyecto" options={allProjects.map(p => ({ value: p.short, label: p.short }))} value={despFilter.projectCode} onChange={e => setDespFilter(s => ({ ...s, projectCode: e.target.value }))} emptyLabel="Todos" />
+        <Select label="Tipo" options={TIPOS_DESPACHO} value={despFilter.tipo} onChange={e => setDespFilter(s => ({ ...s, tipo: e.target.value }))} emptyLabel="Todos" />
+        <Select label="Vehiculo" options={vehicles.map(v => ({ value: v.id, label: v.plate }))} value={despFilter.vehicleId} onChange={e => setDespFilter(s => ({ ...s, vehicleId: e.target.value }))} emptyLabel="Todos" />
+        {(despFilter.q || despFilter.projectCode || despFilter.tipo || despFilter.vehicleId) && <Btn small variant="ghost" onClick={() => setDespFilter({ projectCode: "", tipo: "", vehicleId: "", q: "" })}>Limpiar</Btn>}
+      </div>
+
+      {/* Tabla de despachos segun sub-tab */}
+      {despSubSec === "por_hacer" && (
+        enPorHacer.length === 0
+          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
+              {despachos.length === 0
+                ? "Aun no hay movimientos cargados. Click en + Nuevo movimiento para registrar el primero."
+                : "✓ No hay movimientos pendientes que cumplan los filtros."}
+            </div>
+          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  {tableHeaders}
+                  <tbody>{enPorHacer.sort((a, b) => (a.fechaProgramada || "9999").localeCompare(b.fechaProgramada || "9999")).map(renderDespachoRow)}</tbody>
+                </table>
+              </div>
+            </div>
+      )}
+
+      {despSubSec === "programados" && (
+        enProgramados.length === 0
+          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
+              No hay despachos programados ni en ruta que cumplan los filtros.
+            </div>
+          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  {tableHeaders}
+                  <tbody>{enProgramados.sort((a, b) => (a.fechaProgramada || "9999").localeCompare(b.fechaProgramada || "9999")).map(renderDespachoRow)}</tbody>
+                </table>
+              </div>
+            </div>
+      )}
+
+      {despSubSec === "historial" && (
+        enHistorial.length === 0
+          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
+              {despachos.length === 0
+                ? "Aun no hay despachos en historial. Cuando se entreguen o cierren los despachos, van a aparecer aqui."
+                : "No hay registros en el historial que cumplan los filtros."}
+            </div>
+          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  {tableHeaders}
+                  <tbody>{enHistorial.sort((a, b) => (b.fechaEjecutada || b.updatedAt || "").localeCompare(a.fechaEjecutada || a.updatedAt || "")).map(renderDespachoRow)}</tbody>
+                </table>
+              </div>
+            </div>
+      )}
+    </div>;
+  };
+
   // ── RENDER PLACEHOLDER ──
   const renderPlaceholder = (label, desc) => <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 60, textAlign: "center" }}>
     <div style={{ fontSize: 48, marginBottom: 14 }}>🚧</div>
@@ -963,7 +1342,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const renderSec = () => {
     if (sec === "flota") return renderFlota();
     if (sec === "mantenimientos") return renderMantenimientos();
-    if (sec === "rutas") return renderPlaceholder("Rutas y Despachos", "Coordinacion de viajes vinculados a las compras aprobadas por Operaciones. Cuando se apruebe una solicitud en Compras, se va a poder generar aqui un despacho asignando vehiculo + motorista + ruta.");
+    if (sec === "rutas") return renderRutas();
     if (sec === "motoristas") return renderPlaceholder("Motoristas", "Registro del personal de manejo con disponibilidad, licencia y vehiculos asignados.");
     return null;
   };
@@ -987,6 +1366,27 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         />
       </Modal>;
     }
+    if (modal.t === "desp-new") return <Modal title="Nuevo movimiento / despacho" onClose={() => setModal(null)} wide>
+      <DespachoFormImpl
+        vehicles={vehicles}
+        allProjects={allProjects}
+        sourcePurchase={modal.sourcePurchase || null}
+        setModal={setModal}
+        saveDespacho={saveDespacho}
+      />
+    </Modal>;
+    if (modal.t === "desp-edit") return <Modal title={`Editar despacho — ${modal.d.descripcion?.slice(0, 50) || ""}`} onClose={() => setModal(null)} wide>
+      <DespachoFormImpl
+        despacho={modal.d}
+        vehicles={vehicles}
+        allProjects={allProjects}
+        setModal={setModal}
+        saveDespacho={saveDespacho}
+      />
+      <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${BRAND.borderSoft}`, textAlign: "right" }}>
+        {canEdit && <Btn small variant="danger" onClick={() => { if (confirm("¿Eliminar este despacho?")) { deleteDespacho(modal.d.id); setModal(null); } }}>🗑 Eliminar despacho</Btn>}
+      </div>
+    </Modal>;
     return null;
   };
 
