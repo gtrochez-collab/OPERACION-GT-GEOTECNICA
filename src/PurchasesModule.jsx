@@ -99,7 +99,9 @@ const extractFiles = (purchases) => {
 
 // Toma purchases con refs y carga los archivos correspondientes en memoria.
 // Devuelve los purchases con dataUrl reconstituido.
-const restoreFiles = async (lightPurchases) => {
+// EXPORTADA para que otros modulos (Logistica) puedan hidratar archivos antes
+// de generar fichas / pdfs que requieran los archivos completos.
+export const restoreFiles = async (lightPurchases) => {
   // Recolectar todos los fileIds que necesitan ser cargados (los que tienen
   // fileId pero no tienen dataUrl ya cargado).
   const ids = new Set();

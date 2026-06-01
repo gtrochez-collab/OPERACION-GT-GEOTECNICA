@@ -20,11 +20,18 @@ import { useState, useEffect } from "react";
 import { store } from "./supabase.js";
 import { BRAND, FONT, R } from "./theme.js";
 import Logo from "./Logo.jsx";
-import { generateFichaPDF } from "./PurchasesModule.jsx";
+import { generateFichaPDF, restoreFiles } from "./PurchasesModule.jsx";
 
 // Helper interno: dado un purchase (con projectCode), buscar el proyecto y
 // la empresa para llamar a generateFichaPDF correctamente. Usado por los
 // cards "De compra" del Kanban para descargar la misma ficha que en Compras.
+//
+// IMPORTANTE: los archivos (cotizacion + comprobante de transferencia) viven
+// en rows separadas del store (cp-file-<fileId>) para no exceder el limite
+// de tamaño de Supabase. Las purchases que cargamos en LogisticsModule estan
+// "light" (solo refs por fileId). Antes de generar el PDF tenemos que hidratar
+// esos archivos llamando a restoreFiles, sino la ficha sale sin cotizacion ni
+// comprobante.
 const COMPANIES_MAP = {
   subterra: { name: "Subterra Honduras" },
   geotecnica: { name: "Geotecnica Soluciones" },
@@ -32,7 +39,10 @@ const COMPANIES_MAP = {
 const descargarFichaCompra = async (purchase, allProjects) => {
   const proj = allProjects.find(p => p.short === purchase.projectCode) || null;
   const companyName = COMPANIES_MAP[purchase.company]?.name || "";
-  await generateFichaPDF(purchase, proj, companyName);
+  // Hidratar quoteFile / receiptFile / fichaFile cargando los dataUrl desde sus
+  // rows separadas en el store. Funciona sobre un array y devuelve un array nuevo.
+  const [hydrated] = await restoreFiles([purchase]);
+  await generateFichaPDF(hydrated || purchase, proj, companyName);
 };
 
 // ── Constantes ──
@@ -740,6 +750,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const [mantFilter, setMantFilter] = useState({ vehicleId: "", type: "", from: "", to: "" });
   const [despSubSec, setDespSubSec] = useState("por_hacer"); // por_hacer | programados | historial
   const [despFilter, setDespFilter] = useState({ projectCode: "", tipo: "", vehicleId: "", q: "" });
+  const [expandedHistKanban, setExpandedHistKanban] = useState({}); // { projectKey: true } para mostrar historial de esa col
 
   // ── Carga inicial ──
   useEffect(() => {
@@ -1398,17 +1409,27 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
           return true;
         });
 
-        // Agrupar todo por proyecto
+        // Agrupar todo por proyecto: pendientes (compras + despachos) +
+        // entregados historicos (para mostrar colapsado al final de cada columna).
         const grupos = {};
+        const ensure = (key) => { if (!grupos[key]) grupos[key] = { compras: [], despachos: [], entregados: [] }; };
         comprasFiltered.forEach(p => {
           const key = p.projectCode || "__sin__";
-          if (!grupos[key]) grupos[key] = { compras: [], despachos: [] };
+          ensure(key);
           grupos[key].compras.push(p);
         });
         enPorHacer.forEach(d => {
           const key = d.projectCode || "__sin__";
-          if (!grupos[key]) grupos[key] = { compras: [], despachos: [] };
+          ensure(key);
           grupos[key].despachos.push(d);
+        });
+        // Entregados historicos por proyecto (los que ya se entregaron, para visibilidad
+        // del historial de cada proyecto sin tener que ir a la tab "Historial").
+        enHistorial.forEach(d => {
+          if (d.estado !== "entregado" && d.estado !== "cerrado") return; // cancelados no
+          const key = d.projectCode || "__sin__";
+          ensure(key);
+          grupos[key].entregados.push(d);
         });
 
         // Si hay un filtro de proyecto activo, mostrar solo ese (y "Sin proyecto" si tambien matchea)
@@ -1423,7 +1444,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
           });
         }
 
-        // Ordenar: proyectos con items primero, despues los vacios, "Sin proyecto" al final
+        // Ordenar: proyectos con items pendientes primero, despues los vacios, "Sin proyecto" al final
         const projKeys = projKeysFiltered.sort((a, b) => {
           if (a === "__sin__") return 1;
           if (b === "__sin__") return -1;
@@ -1432,6 +1453,8 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
           if (aHas !== bHas) return bHas - aHas;
           return a.localeCompare(b);
         });
+        // Si una columna no tiene pendientes pero SI tiene entregados, igual la mostramos
+        // (para que se vea el historial del proyecto). Ya estaba incluida arriba via allProjects.
 
         if (projKeys.length === 0) {
           return <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
@@ -1511,20 +1534,38 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
               </div>
             </div>
 
-            {canEdit && <div onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 4, marginTop: 8 }}>
-              <button
-                onClick={() => setModal({ t: "desp-program", source: { kind: "compra", purchase: p } })}
-                style={chipBtn(BRAND.blue, "#fff")}
-                title="Programar para una fecha"
-              >📅 Programar</button>
-              <button
-                onClick={async () => {
-                  if (!confirm(`Marcar como YA ENTREGADO la compra de ${p.provider}?\n\nSe va a crear un despacho cerrado para que no vuelva a aparecer aqui.`)) return;
-                  await quickCreateFromCompra(p, "entregado", "", new Date().toISOString().slice(0, 10));
+            {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8 }}>
+              <label style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Cambiar estado</label>
+              <select
+                value="pendiente"
+                onChange={async (e) => {
+                  const val = e.target.value;
+                  if (val === "programado") {
+                    setModal({ t: "desp-program", source: { kind: "compra", purchase: p } });
+                  } else if (val === "entregado") {
+                    if (!confirm(`Marcar como YA ENTREGADO la compra de ${p.provider}?`)) return;
+                    await quickCreateFromCompra(p, "entregado", "", new Date().toISOString().slice(0, 10));
+                  }
+                  // si vuelven a "pendiente" no se hace nada (ya esta pendiente)
                 }}
-                style={chipBtn(BRAND.green, "#fff")}
-                title="Esta compra ya se hizo — marcar finalizada"
-              >✓ Ya hecho</button>
+                style={{
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "6px 10px",
+                  border: `1px solid ${BRAND.borderHard}`,
+                  borderRadius: R.sm,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  background: BRAND.cream,
+                  color: BRAND.charcoal,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                <option value="pendiente">📌 Pendiente</option>
+                <option value="programado">📅 Programar...</option>
+                <option value="entregado">✓ Marcar entregado</option>
+              </select>
             </div>}
           </div>
         );
@@ -1560,28 +1601,76 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
               {(v || d.motorista) && <div style={{ fontSize: 10, color: BRAND.graphite, marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
                 🚛 {v?.plate || "Sin vehiculo"} · {d.motorista || "Sin motorista"}
               </div>}
-              {canEdit && <div onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 4, marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
-                <button
-                  onClick={() => setModal({ t: "desp-program", source: { kind: "despacho", despacho: d } })}
-                  style={chipBtn(BRAND.blue, "#fff")}
-                  title="Programar fecha de despacho"
-                >📅 Programar</button>
-                <button
-                  onClick={async () => {
-                    if (!confirm("¿Marcar este movimiento como YA ENTREGADO?")) return;
-                    await updateDespachoEstado(d.id, "entregado");
+              {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
+                <label style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Estado</label>
+                <select
+                  value={d.estado}
+                  onChange={async (e) => {
+                    const val = e.target.value;
+                    if (val === d.estado) return;
+                    if (val === "programado") {
+                      setModal({ t: "desp-program", source: { kind: "despacho", despacho: d } });
+                    } else if (val === "entregado") {
+                      if (!confirm("¿Marcar este movimiento como YA ENTREGADO?")) return;
+                      await updateDespachoEstado(d.id, "entregado");
+                    } else if (val === "cancelado") {
+                      if (!confirm("¿Cancelar este movimiento?")) return;
+                      await updateDespachoEstado(d.id, "cancelado");
+                    } else {
+                      // pendiente / en_ruta / cerrado — cambio directo
+                      await updateDespachoEstado(d.id, val);
+                    }
                   }}
-                  style={chipBtn(BRAND.green, "#fff")}
-                  title="Marcar como ya entregado"
-                >✓ Hecho</button>
-                <button
-                  onClick={async () => {
-                    if (!confirm("¿Cancelar este movimiento?")) return;
-                    await updateDespachoEstado(d.id, "cancelado");
+                  style={{
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "6px 10px",
+                    border: `1px solid ${BRAND.borderHard}`,
+                    borderRadius: R.sm,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    background: BRAND.cream,
+                    color: BRAND.charcoal,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
                   }}
-                  style={chipBtn(BRAND.red, "#fff")}
-                  title="Cancelar movimiento"
-                >✗</button>
+                >
+                  <option value="pendiente">📌 Pendiente</option>
+                  <option value="programado">📅 Programado</option>
+                  <option value="en_ruta">🚛 En ruta</option>
+                  <option value="entregado">✓ Entregado</option>
+                  <option value="cancelado">✗ Cancelado</option>
+                </select>
+              </div>}
+            </div>
+          );
+        };
+
+        // Card de DESPACHO entregado/cerrado (vista compacta de historial dentro de la columna)
+        const renderCardEntregado = (d) => {
+          const tCfg = tipoDespCfg(d.tipo);
+          const v = vehicles.find(x => x.id === d.vehicleId);
+          return (
+            <div
+              key={`e-${d.id}`}
+              onClick={() => canEdit && setModal({ t: "desp-edit", d })}
+              style={{
+                background: BRAND.greenSoft,
+                border: `1px solid ${BRAND.green}40`,
+                borderLeft: `3px solid ${BRAND.green}`,
+                borderRadius: R.sm,
+                padding: "8px 10px",
+                cursor: canEdit ? "pointer" : "default",
+                opacity: 0.85,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                <Badge color={BRAND.green}>✓ {d.estado === "cerrado" ? "Cerrado" : "Entregado"}</Badge>
+                {d.fechaEjecutada && <span style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700 }}>{fmtFecha(d.fechaEjecutada)}</span>}
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: BRAND.charcoal, marginTop: 2, lineHeight: 1.3 }}>{d.descripcion}</div>
+              {(v || d.motorista) && <div style={{ fontSize: 9, color: BRAND.stone, marginTop: 3 }}>
+                🚛 {v?.plate || "—"} · {d.motorista || "—"}
               </div>}
             </div>
           );
@@ -1589,10 +1678,12 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
 
         return <div style={{ display: "flex", gap: 14, overflowX: "auto", padding: "4px 4px 12px 4px" }}>
           {projKeys.map(key => {
-            const items = grupos[key] || { compras: [], despachos: [] };
+            const items = grupos[key] || { compras: [], despachos: [], entregados: [] };
             const proj = allProjects.find(p => p.short === key);
             const total = items.compras.length + items.despachos.length;
+            const totalHist = items.entregados.length;
             const isEmpty = total === 0;
+            const isExpanded = expandedHistKanban[key] === true;
             const headerColor = key === "__sin__" ? BRAND.stone : BRAND.blue;
             return (
               <div key={key} style={{
@@ -1606,7 +1697,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                 flexDirection: "column",
                 gap: 10,
                 border: `1px solid ${BRAND.borderSoft}`,
-                opacity: isEmpty ? 0.7 : 1,
+                opacity: isEmpty && totalHist === 0 ? 0.7 : 1,
               }}>
                 <div style={{ borderBottom: `2px solid ${headerColor}`, paddingBottom: 8 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1623,9 +1714,39 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 560, overflowY: "auto" }}>
                   {items.compras.map(renderCardCompra)}
                   {items.despachos.sort((a, b) => (a.fechaProgramada || "9999").localeCompare(b.fechaProgramada || "9999")).map(renderCardDespacho)}
-                  {isEmpty && <div style={{ fontSize: 11, color: BRAND.stone, fontStyle: "italic", textAlign: "center", padding: "20px 4px" }}>
+                  {isEmpty && totalHist === 0 && <div style={{ fontSize: 11, color: BRAND.stone, fontStyle: "italic", textAlign: "center", padding: "20px 4px" }}>
                     Sin movimientos pendientes
                   </div>}
+
+                  {/* Seccion colapsable de Entregados (historial del proyecto) */}
+                  {totalHist > 0 && <>
+                    <button
+                      onClick={() => setExpandedHistKanban(s => ({ ...s, [key]: !s[key] }))}
+                      style={{
+                        marginTop: total > 0 ? 12 : 0,
+                        padding: "8px 10px",
+                        background: BRAND.greenSoft,
+                        border: `1px solid ${BRAND.green}40`,
+                        borderRadius: R.sm,
+                        color: BRAND.green,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
+                      <span>📜 Entregados ({totalHist})</span>
+                      <span style={{ fontSize: 10 }}>{isExpanded ? "▾ ocultar" : "▸ mostrar"}</span>
+                    </button>
+                    {isExpanded && <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingLeft: 4 }}>
+                      {items.entregados
+                        .sort((a, b) => (b.fechaEjecutada || b.updatedAt || "").localeCompare(a.fechaEjecutada || a.updatedAt || ""))
+                        .map(renderCardEntregado)}
+                    </div>}
+                  </>}
                 </div>
               </div>
             );
