@@ -623,6 +623,86 @@ function DespachoFormImpl({ despacho, vehicles, allProjects, sourcePurchase, pre
   </div>;
 }
 
+// ── MINI-FORM PARA PROGRAMAR UN DESPACHO (date picker + vehiculo opcional) ──
+// Sirve para 2 fuentes:
+// 1) source.kind === "compra" — crea un despacho nuevo desde una compra, programado
+// 2) source.kind === "despacho" — toma un despacho pendiente y lo programa con fecha
+function ProgramDespachoForm({ source, vehicles, setModal, saveDespacho, quickCreateFromCompra }) {
+  // Default: mañana
+  const mañana = new Date();
+  mañana.setDate(mañana.getDate() + 1);
+  const defaultDate = mañana.toISOString().slice(0, 10);
+
+  const [fecha, setFecha] = useState(defaultDate);
+  const [vehicleId, setVehicleId] = useState(source?.kind === "despacho" ? (source.despacho.vehicleId || "") : "");
+  const [motorista, setMotorista] = useState(source?.kind === "despacho" ? (source.despacho.motorista || "") : "");
+
+  const titulo = source?.kind === "compra"
+    ? `Compra: ${source.purchase.provider} → ${source.purchase.projectCode || "Proyecto"}`
+    : `Despacho: ${source.despacho.descripcion?.slice(0, 60)}`;
+
+  const selectedVeh = vehicles.find(v => v.id === vehicleId);
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}40`, borderRadius: R.md, padding: 12, fontSize: 12, color: BRAND.blue }}>
+      {titulo}
+    </div>
+
+    <Input
+      label="Fecha programada *"
+      type="date"
+      value={fecha}
+      onChange={e => setFecha(e.target.value)}
+      hint="Default: mañana. Cambia si va para otro dia."
+    />
+
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <Select
+        label="Vehiculo (opcional)"
+        options={vehicles.filter(v => v.estado !== "fuera_servicio").map(v => ({ value: v.id, label: `${v.plate} — ${v.brand || ""} ${v.model || ""}` }))}
+        value={vehicleId}
+        onChange={e => setVehicleId(e.target.value)}
+        emptyLabel="— Asignar despues —"
+      />
+      <Input
+        label="Motorista (opcional)"
+        value={motorista}
+        onChange={e => setMotorista(e.target.value)}
+        placeholder={selectedVeh?.motorista || "Nombre del motorista"}
+      />
+    </div>
+
+    <div style={{ background: BRAND.parchment, borderRadius: R.sm, padding: "8px 12px", fontSize: 11, color: BRAND.stone, fontStyle: "italic" }}>
+      💡 Vehiculo y motorista son opcionales — podes asignarlos despues desde la tab "Programados".
+    </div>
+
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 12, borderTop: `1px solid ${BRAND.borderSoft}` }}>
+      <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+      <Btn variant="success" onClick={async () => {
+        if (!fecha) return alert("La fecha es obligatoria");
+        if (source.kind === "compra") {
+          // Crear despacho nuevo desde la compra, estado=programado
+          // con vehiculo y motorista en una sola operacion (extras)
+          await quickCreateFromCompra(source.purchase, "programado", fecha, "", { vehicleId, motorista });
+        } else {
+          // Despacho existente → actualizar con fecha + vehiculo + motorista, estado=programado
+          const d = source.despacho;
+          const updated = {
+            ...d,
+            fechaProgramada: fecha,
+            vehicleId: vehicleId || d.vehicleId,
+            motorista: motorista || d.motorista,
+            estado: "programado",
+            updatedAt: new Date().toISOString(),
+          };
+          await saveDespacho(updated, true);
+        }
+        setModal(null);
+      }}>📅 Programar</Btn>
+    </div>
+  </div>;
+}
+
 // =====================================================================
 // MODULO PRINCIPAL
 // =====================================================================
@@ -761,6 +841,34 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
 
   const deleteDespacho = async (id) => {
     const next = despachos.filter(d => d.id !== id);
+    setDespachos(next);
+    await store.set("lg-despachos", next);
+  };
+
+  // Quick action: crear un despacho desde una compra con un estado especifico
+  // (ej: "entregado" para marcar como ya hecho sin pasar por el form completo)
+  // Opciones adicionales: vehicleId, motorista (utiles al programar)
+  const quickCreateFromCompra = async (purchase, estado, fechaProg = "", fechaEjec = "", extras = {}) => {
+    const proj = allProjects.find(p => p.short === purchase.projectCode);
+    const rec = {
+      id: uid(),
+      source: "compra",
+      sourcePurchaseId: purchase.id,
+      tipo: "material_compra",
+      descripcion: purchase.description || "",
+      origen: purchase.provider || "",
+      destino: proj ? `Proyecto ${proj.short}` : (purchase.projectCode || "Proyecto"),
+      projectCode: purchase.projectCode || "",
+      vehicleId: extras.vehicleId || "",
+      motorista: extras.motorista || "",
+      fechaProgramada: fechaProg || "",
+      fechaEjecutada: fechaEjec || (estado === "entregado" || estado === "cerrado" ? new Date().toISOString().slice(0, 10) : ""),
+      estado,
+      notas: extras.notas || "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const next = [...despachos, rec];
     setDespachos(next);
     await store.set("lg-despachos", next);
   };
@@ -1316,6 +1424,24 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
           </div>;
         }
 
+        // Estilo de boton chip para quick actions en cards
+        const chipBtn = (bg, color) => ({
+          background: bg,
+          color,
+          border: "none",
+          padding: "4px 8px",
+          borderRadius: R.sm,
+          fontSize: 10,
+          fontWeight: 700,
+          cursor: "pointer",
+          fontFamily: "inherit",
+          flex: 1,
+          minWidth: 0,
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        });
+
         // Card de COMPRA esperando transporte
         const renderCardCompra = (p) => (
           <div
@@ -1339,7 +1465,21 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
             </div>
             <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4 }}>{p.provider}</div>
             <div style={{ fontSize: 11, color: BRAND.graphite, marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
-            {canEdit && <div style={{ marginTop: 8, fontSize: 11, color: BRAND.blue, fontWeight: 700 }}>+ Crear despacho →</div>}
+            {canEdit && <div onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 4, marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
+              <button
+                onClick={() => setModal({ t: "desp-program", source: { kind: "compra", purchase: p } })}
+                style={chipBtn(BRAND.blue, "#fff")}
+                title="Programar para una fecha"
+              >📅 Programar</button>
+              <button
+                onClick={async () => {
+                  if (!confirm(`Marcar como YA ENTREGADO la compra de ${p.provider}?\n\nSe va a crear un despacho cerrado para que no vuelva a aparecer aqui.`)) return;
+                  await quickCreateFromCompra(p, "entregado", "", new Date().toISOString().slice(0, 10));
+                }}
+                style={chipBtn(BRAND.green, "#fff")}
+                title="Esta compra ya se hizo — marcar finalizada"
+              >✓ Ya hecho</button>
+            </div>}
           </div>
         );
 
@@ -1373,6 +1513,29 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
               </div>
               {(v || d.motorista) && <div style={{ fontSize: 10, color: BRAND.graphite, marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
                 🚛 {v?.plate || "Sin vehiculo"} · {d.motorista || "Sin motorista"}
+              </div>}
+              {canEdit && <div onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 4, marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
+                <button
+                  onClick={() => setModal({ t: "desp-program", source: { kind: "despacho", despacho: d } })}
+                  style={chipBtn(BRAND.blue, "#fff")}
+                  title="Programar fecha de despacho"
+                >📅 Programar</button>
+                <button
+                  onClick={async () => {
+                    if (!confirm("¿Marcar este movimiento como YA ENTREGADO?")) return;
+                    await updateDespachoEstado(d.id, "entregado");
+                  }}
+                  style={chipBtn(BRAND.green, "#fff")}
+                  title="Marcar como ya entregado"
+                >✓ Hecho</button>
+                <button
+                  onClick={async () => {
+                    if (!confirm("¿Cancelar este movimiento?")) return;
+                    await updateDespachoEstado(d.id, "cancelado");
+                  }}
+                  style={chipBtn(BRAND.red, "#fff")}
+                  title="Cancelar movimiento"
+                >✗</button>
               </div>}
             </div>
           );
@@ -1513,6 +1676,15 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${BRAND.borderSoft}`, textAlign: "right" }}>
         {canEdit && <Btn small variant="danger" onClick={() => { if (confirm("¿Eliminar este despacho?")) { deleteDespacho(modal.d.id); setModal(null); } }}>🗑 Eliminar despacho</Btn>}
       </div>
+    </Modal>;
+    if (modal.t === "desp-program") return <Modal title="📅 Programar despacho" onClose={() => setModal(null)}>
+      <ProgramDespachoForm
+        source={modal.source}
+        vehicles={vehicles}
+        setModal={setModal}
+        saveDespacho={saveDespacho}
+        quickCreateFromCompra={quickCreateFromCompra}
+      />
     </Modal>;
     return null;
   };
