@@ -1347,7 +1347,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             <FileSlot
               label="📋 Ficha de recibido (PDF firmado)"
               file={df.fichaFile}
-              canUpload={canCreate && !isClosed}
+              canUpload={canEditDelivery && !isClosed}
               accent="#7C3AED"
               onUpload={setFichaFile}
               onRemove={removeFichaFile}
