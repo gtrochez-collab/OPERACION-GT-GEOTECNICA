@@ -16,6 +16,7 @@ const USERS = [
   { username: "gerson", password: "gerson1234", role: "coordinador", label: "Lic. Gerson Trochez" },
   { username: "christian", password: "christian1234", role: "costos", label: "Lic. Christian Gallo" },
   { username: "oscarpaz", password: "oscarpaz1234", role: "logistica", label: "Oscar Paz" },
+  { username: "jorge", password: "jorge1234", role: "recepcion", label: "Jorge Castellanos" },
 ];
 
 const ROLE_LABEL = {
@@ -26,6 +27,7 @@ const ROLE_LABEL = {
   coordinador: "Coordinador de Operaciones",
   costos: "Costos / Operaciones",
   logistica: "Logistica / Flota",
+  recepcion: "Recepcion / Logistica",
 };
 
 // ── Modulos del sistema ──
@@ -47,7 +49,7 @@ const MODULES = [
     desc: "Solicitudes validadas, pagos y comprobantes de tesoreria",
     accent: "#8B3A3A", // borgona profesional
     accentSoft: "rgba(139,58,58,0.10)",
-    roles: ["admin", "tesoreria", "gerencia", "costos"],
+    roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion"],
   },
   {
     id: "operations-cc",
@@ -76,7 +78,7 @@ const MODULES = [
     desc: "Flota, mantenimientos, rutas y despachos",
     accent: "#2D4A6B",
     accentSoft: "rgba(45,74,107,0.10)",
-    roles: ["admin", "logistica"],
+    roles: ["admin", "logistica", "recepcion"],
   },
 ];
 

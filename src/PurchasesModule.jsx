@@ -791,6 +791,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const isTesoreria = userRole === "tesoreria";
   const isGerencia = userRole === "gerencia";
   const isCostos = userRole === "costos";
+  const isRecepcion = userRole === "recepcion";
 
   // Permisos (segregacion de funciones):
   // admin → Operaciones: crea, edita borradores, valida, envia a Tesoreria, edita proyectos.
@@ -800,9 +801,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // tesoreria (Lic. Carolina) → UNICA que registra pago, sube comprobante,
   //         y cambia estado a pagado/finalizado.
   // gerencia → solo lectura.
-  const canCreate = isAdmin || isCostos;           // crear/editar/validar solicitudes + editar proyectos
-  const canPay = isTesoreria;                      // SOLO Carolina registra pago y cambia estado financiero
-  const canViewOnly = isGerencia;                  // solo gerencia es read-only ahora
+  // recepcion (Jorge Castellanos) → SOLO subir/editar fichas de recibido de compras
+  //         ya pagadas. No puede crear solicitudes, ni proyectos, ni registrar pagos.
+  //         Cambio solicitado 01-jun-2026.
+  const canCreate = isAdmin || isCostos;                       // crear/editar/validar solicitudes + editar proyectos
+  const canPay = isTesoreria;                                  // SOLO Carolina registra pago y cambia estado financiero
+  const canViewOnly = isGerencia;                              // solo gerencia es read-only
+  const canEditDelivery = isAdmin || isCostos || isRecepcion;  // subir/editar fichas de recibido
 
   const [co, setCo] = useState("geotecnica");
   const [purchases, setPurchases] = useState([]);
@@ -1249,7 +1254,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       {(p.status === "pagado" || p.status === "finalizado") && (() => {
         const ds = DELIVERY_STATUSES[p.deliveryStatus] || DELIVERY_STATUSES.pendiente_entrega;
         const isClosed = p.deliveryStatus === "cerrado";
-        const canEditDlv = canCreate && !isClosed;
+        const canEditDlv = canEditDelivery && !isClosed;
 
         return <div style={{ border: `2px solid ${ds.color}`, borderRadius: 12, overflow: "hidden" }}>
           {/* Header de recepcion */}

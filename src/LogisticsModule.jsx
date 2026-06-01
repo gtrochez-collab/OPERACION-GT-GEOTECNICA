@@ -709,7 +709,8 @@ function ProgramDespachoForm({ source, vehicles, setModal, saveDespacho, quickCr
 export default function LogisticsModule({ userRole, userName, onBack, onLogout }) {
   const isAdmin = userRole === "admin";
   const isLogistica = userRole === "logistica";
-  const canEdit = isAdmin || isLogistica;
+  const isRecepcion = userRole === "recepcion";
+  const canEdit = isAdmin || isLogistica || isRecepcion;
 
   const [vehicles, setVehicles] = useState([]);
   const [maintenances, setMaintenances] = useState([]);
