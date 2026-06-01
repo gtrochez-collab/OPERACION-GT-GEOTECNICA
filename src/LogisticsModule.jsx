@@ -501,10 +501,10 @@ const ESTADOS_DESPACHO = [
 const estadoDespCfg = (v) => ESTADOS_DESPACHO.find(s => s.value === v) || ESTADOS_DESPACHO[0];
 
 // ── FORM DE DESPACHO (nivel de modulo) ──
-function DespachoFormImpl({ despacho, vehicles, allProjects, sourcePurchase, setModal, saveDespacho }) {
+function DespachoFormImpl({ despacho, vehicles, allProjects, sourcePurchase, presetProjectCode, setModal, saveDespacho }) {
   const [f, setF] = useState(despacho || (() => {
     const initialTipo = sourcePurchase ? "material_compra" : "material_plantel_proyecto";
-    const initialProj = sourcePurchase?.projectCode || "";
+    const initialProj = sourcePurchase?.projectCode || presetProjectCode || "";
     const projObj = allProjects.find(p => p.short === initialProj);
     const tipoCfg = TIPOS_DESPACHO.find(t => t.value === initialTipo);
     return {
@@ -1225,24 +1225,6 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         <StatCard icon="✓" label="Entregados hoy" value={entregadosHoy} color={BRAND.green} />
       </div>
 
-      {/* Compras esperando transporte (banner expandible) */}
-      {comprasPendientes.length > 0 && <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}40`, borderLeft: `4px solid ${BRAND.blue}`, borderRadius: R.md, padding: 14 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.blue, marginBottom: 10 }}>
-          🛒 {comprasPendientes.length} compra(s) pagada(s) esperando transporte
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {comprasPendientes.map(p => (
-            <div key={p.id} style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.sm, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 12, flex: 1, minWidth: 200 }}>
-                <b>{p.provider}</b> → <Badge color={BRAND.blue}>{p.projectCode || "Sin proyecto"}</Badge>
-                <div style={{ color: BRAND.stone, fontSize: 11, marginTop: 2 }}>{p.description}</div>
-              </div>
-              {canEdit && <Btn small variant="primary" onClick={() => setModal({ t: "desp-new", sourcePurchase: p })}>+ Crear despacho</Btn>}
-            </div>
-          ))}
-        </div>
-      </div>}
-
       {/* Sub-tabs + boton */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 6, background: BRAND.parchment, padding: 4, borderRadius: R.md, border: `1px solid ${BRAND.borderSoft}` }}>
@@ -1280,23 +1262,167 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         {(despFilter.q || despFilter.projectCode || despFilter.tipo || despFilter.vehicleId) && <Btn small variant="ghost" onClick={() => setDespFilter({ projectCode: "", tipo: "", vehicleId: "", q: "" })}>Limpiar</Btn>}
       </div>
 
-      {/* Tabla de despachos segun sub-tab */}
-      {despSubSec === "por_hacer" && (
-        enPorHacer.length === 0
-          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
-              {despachos.length === 0
-                ? "Aun no hay movimientos cargados. Click en + Nuevo movimiento para registrar el primero."
-                : "✓ No hay movimientos pendientes que cumplan los filtros."}
+      {/* KANBAN por proyecto — Por hacer */}
+      {despSubSec === "por_hacer" && (() => {
+        // Aplicar filtros tambien a las compras pendientes (q + projectCode)
+        const comprasFiltered = comprasPendientes.filter(p => {
+          if (despFilter.projectCode && p.projectCode !== despFilter.projectCode) return false;
+          if (despFilter.q) {
+            const q = despFilter.q.toLowerCase();
+            const hay = [p.provider, p.description].filter(Boolean).join(" ").toLowerCase();
+            if (!hay.includes(q)) return false;
+          }
+          return true;
+        });
+
+        // Agrupar todo por proyecto
+        const grupos = {};
+        comprasFiltered.forEach(p => {
+          const key = p.projectCode || "__sin__";
+          if (!grupos[key]) grupos[key] = { compras: [], despachos: [] };
+          grupos[key].compras.push(p);
+        });
+        enPorHacer.forEach(d => {
+          const key = d.projectCode || "__sin__";
+          if (!grupos[key]) grupos[key] = { compras: [], despachos: [] };
+          grupos[key].despachos.push(d);
+        });
+
+        // Si hay un filtro de proyecto activo, mostrar solo ese (y "Sin proyecto" si tambien matchea)
+        // Si no, mostrar TODOS los proyectos con items + un boton para agregar columna vacia
+        let projKeysFiltered = Object.keys(grupos);
+        // Si NO hay filtro de proyecto, ademas mostrar todos los proyectos activos aunque no tengan items
+        // (asi siempre tiene una columna para empezar una orden nueva en cualquier proyecto)
+        if (!despFilter.projectCode) {
+          allProjects.forEach(p => {
+            if (!grupos[p.short]) grupos[p.short] = { compras: [], despachos: [] };
+            if (!projKeysFiltered.includes(p.short)) projKeysFiltered.push(p.short);
+          });
+        }
+
+        // Ordenar: proyectos con items primero, despues los vacios, "Sin proyecto" al final
+        const projKeys = projKeysFiltered.sort((a, b) => {
+          if (a === "__sin__") return 1;
+          if (b === "__sin__") return -1;
+          const aHas = (grupos[a]?.compras.length || 0) + (grupos[a]?.despachos.length || 0);
+          const bHas = (grupos[b]?.compras.length || 0) + (grupos[b]?.despachos.length || 0);
+          if (aHas !== bHas) return bHas - aHas;
+          return a.localeCompare(b);
+        });
+
+        if (projKeys.length === 0) {
+          return <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
+            No hay proyectos. Agrega proyectos desde el modulo de Compras → Proyectos.
+          </div>;
+        }
+
+        // Card de COMPRA esperando transporte
+        const renderCardCompra = (p) => (
+          <div
+            key={`c-${p.id}`}
+            onClick={() => canEdit && setModal({ t: "desp-new", sourcePurchase: p })}
+            style={{
+              background: BRAND.cream,
+              border: `1px solid ${BRAND.blue}40`,
+              borderLeft: `3px solid ${BRAND.blue}`,
+              borderRadius: R.sm,
+              padding: "10px 12px",
+              cursor: canEdit ? "pointer" : "default",
+              transition: "all 0.15s",
+            }}
+            onMouseEnter={e => canEdit && (e.currentTarget.style.boxShadow = BRAND.shadowSm)}
+            onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <Badge color={BRAND.blue}>🛒 De compra</Badge>
+              <span style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700 }}>{p.status === "finalizado" ? "✓ Pagado" : "💰 Pagado"}</span>
             </div>
-          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  {tableHeaders}
-                  <tbody>{enPorHacer.sort((a, b) => (a.fechaProgramada || "9999").localeCompare(b.fechaProgramada || "9999")).map(renderDespachoRow)}</tbody>
-                </table>
+            <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4 }}>{p.provider}</div>
+            <div style={{ fontSize: 11, color: BRAND.graphite, marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
+            {canEdit && <div style={{ marginTop: 8, fontSize: 11, color: BRAND.blue, fontWeight: 700 }}>+ Crear despacho →</div>}
+          </div>
+        );
+
+        // Card de DESPACHO pendiente
+        const renderCardDespacho = (d) => {
+          const tCfg = tipoDespCfg(d.tipo);
+          const v = vehicles.find(x => x.id === d.vehicleId);
+          return (
+            <div
+              key={`d-${d.id}`}
+              onClick={() => canEdit && setModal({ t: "desp-edit", d })}
+              style={{
+                background: BRAND.cream,
+                border: `1px solid ${tCfg.color}40`,
+                borderLeft: `3px solid ${tCfg.color}`,
+                borderRadius: R.sm,
+                padding: "10px 12px",
+                cursor: canEdit ? "pointer" : "default",
+                transition: "all 0.15s",
+              }}
+              onMouseEnter={e => canEdit && (e.currentTarget.style.boxShadow = BRAND.shadowSm)}
+              onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <Badge color={tCfg.color}>{tCfg.label}</Badge>
+                {d.fechaProgramada && <span style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700 }}>📅 {fmtFecha(d.fechaProgramada)}</span>}
               </div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4, lineHeight: 1.3 }}>{d.descripcion}</div>
+              <div style={{ fontSize: 10, color: BRAND.stone, marginTop: 4 }}>
+                <b>{d.origen}</b> → <b>{d.destino}</b>
+              </div>
+              {(v || d.motorista) && <div style={{ fontSize: 10, color: BRAND.graphite, marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
+                🚛 {v?.plate || "Sin vehiculo"} · {d.motorista || "Sin motorista"}
+              </div>}
             </div>
-      )}
+          );
+        };
+
+        return <div style={{ display: "flex", gap: 14, overflowX: "auto", padding: "4px 4px 12px 4px" }}>
+          {projKeys.map(key => {
+            const items = grupos[key] || { compras: [], despachos: [] };
+            const proj = allProjects.find(p => p.short === key);
+            const total = items.compras.length + items.despachos.length;
+            const isEmpty = total === 0;
+            const headerColor = key === "__sin__" ? BRAND.stone : BRAND.blue;
+            return (
+              <div key={key} style={{
+                minWidth: 280,
+                maxWidth: 320,
+                flex: "0 0 auto",
+                background: isEmpty ? BRAND.beigeLight : BRAND.parchment,
+                borderRadius: R.md,
+                padding: 12,
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                border: `1px solid ${BRAND.borderSoft}`,
+                opacity: isEmpty ? 0.7 : 1,
+              }}>
+                <div style={{ borderBottom: `2px solid ${headerColor}`, paddingBottom: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontWeight: 800, fontSize: 13, color: BRAND.charcoal, fontFamily: FONT.mono, letterSpacing: 0.5 }}>
+                      {key === "__sin__" ? "SIN PROYECTO" : key}
+                    </div>
+                    <Badge color={total > 0 ? BRAND.orange : BRAND.stone}>{total}</Badge>
+                  </div>
+                  {proj && <div style={{ fontSize: 10, color: BRAND.stone, marginTop: 3, lineHeight: 1.3 }}>{proj.name}</div>}
+                  {canEdit && <Btn small variant={total > 0 ? "primary" : "ghost"} onClick={() => setModal({ t: "desp-new", presetProjectCode: key === "__sin__" ? "" : key })} style={{ marginTop: 8, width: "100%", padding: "6px 10px" }}>
+                    + Nueva orden
+                  </Btn>}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 560, overflowY: "auto" }}>
+                  {items.compras.map(renderCardCompra)}
+                  {items.despachos.sort((a, b) => (a.fechaProgramada || "9999").localeCompare(b.fechaProgramada || "9999")).map(renderCardDespacho)}
+                  {isEmpty && <div style={{ fontSize: 11, color: BRAND.stone, fontStyle: "italic", textAlign: "center", padding: "20px 4px" }}>
+                    Sin movimientos pendientes
+                  </div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>;
+      })()}
 
       {despSubSec === "programados" && (
         enProgramados.length === 0
@@ -1371,6 +1497,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         vehicles={vehicles}
         allProjects={allProjects}
         sourcePurchase={modal.sourcePurchase || null}
+        presetProjectCode={modal.presetProjectCode || null}
         setModal={setModal}
         saveDespacho={saveDespacho}
       />
