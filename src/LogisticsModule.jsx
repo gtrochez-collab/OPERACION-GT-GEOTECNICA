@@ -1439,7 +1439,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         // (asi siempre tiene una columna para empezar una orden nueva en cualquier proyecto)
         if (!despFilter.projectCode) {
           allProjects.forEach(p => {
-            if (!grupos[p.short]) grupos[p.short] = { compras: [], despachos: [] };
+            ensure(p.short); // <— usar ensure() para incluir entregados:[] (sin esto crashea)
             if (!projKeysFiltered.includes(p.short)) projKeysFiltered.push(p.short);
           });
         }
@@ -1678,7 +1678,12 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
 
         return <div style={{ display: "flex", gap: 14, overflowX: "auto", padding: "4px 4px 12px 4px" }}>
           {projKeys.map(key => {
-            const items = grupos[key] || { compras: [], despachos: [], entregados: [] };
+            const raw = grupos[key] || {};
+            const items = {
+              compras: raw.compras || [],
+              despachos: raw.despachos || [],
+              entregados: raw.entregados || [],
+            };
             const proj = allProjects.find(p => p.short === key);
             const total = items.compras.length + items.despachos.length;
             const totalHist = items.entregados.length;
