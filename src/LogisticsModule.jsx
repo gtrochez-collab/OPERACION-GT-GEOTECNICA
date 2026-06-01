@@ -541,6 +541,7 @@ function DespachoFormImpl({ despacho, vehicles, allProjects, sourcePurchase, pre
       projectCode: initialProj,
       vehicleId: "",
       motorista: "",
+      fechaNecesaria: "",  // deadline en proyecto (cuando se necesita ahi)
       fechaProgramada: "",
       estado: "pendiente",
       notas: "",
@@ -595,9 +596,21 @@ function DespachoFormImpl({ despacho, vehicles, allProjects, sourcePurchase, pre
       </div>
     </div>
 
-    {/* Vehiculo + motorista + fecha */}
+    {/* Deadline en proyecto */}
+    <div style={{ background: BRAND.redSoft, border: `2px solid ${BRAND.red}40`, borderRadius: R.md, padding: 14 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.red, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📅 Deadline — cuando se necesita en proyecto</div>
+      <Input
+        label="Fecha que se necesita en proyecto"
+        type="date"
+        value={f.fechaNecesaria}
+        onChange={e => u("fechaNecesaria", e.target.value)}
+        hint="Esta fecha sirve para que logistica priorize: las mas urgentes salen primero en el kanban"
+      />
+    </div>
+
+    {/* Vehiculo + motorista + fecha programada */}
     <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.blue, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🚛 Asignacion</div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.blue, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🚛 Asignacion (cuando se va a hacer)</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
         <Select
           label="Vehiculo asignado"
@@ -607,7 +620,7 @@ function DespachoFormImpl({ despacho, vehicles, allProjects, sourcePurchase, pre
           emptyLabel="— Sin asignar —"
         />
         <Input label="Motorista" value={f.motorista} onChange={e => u("motorista", e.target.value)} placeholder={selectedVehicle?.motorista || "Nombre del motorista"} />
-        <Input label="Fecha programada" type="date" value={f.fechaProgramada} onChange={e => u("fechaProgramada", e.target.value)} />
+        <Input label="Fecha programada (cuando sale el vehiculo)" type="date" value={f.fechaProgramada} onChange={e => u("fechaProgramada", e.target.value)} />
       </div>
     </div>
 
@@ -635,6 +648,7 @@ function DespachoFormImpl({ despacho, vehicles, allProjects, sourcePurchase, pre
           destino: f.destino.trim(),
           motorista: f.motorista.trim(),
           notas: f.notas.trim(),
+          fechaNecesaria: f.fechaNecesaria || "",
           // Si tiene vehiculo + fecha programada, pasar de pendiente a programado automaticamente
           estado: f.estado === "pendiente" && f.vehicleId && f.fechaProgramada ? "programado" : f.estado,
           updatedAt: new Date().toISOString(),
@@ -873,7 +887,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
 
   // Quick action: crear un despacho desde una compra con un estado especifico
   // (ej: "entregado" para marcar como ya hecho sin pasar por el form completo)
-  // Opciones adicionales: vehicleId, motorista (utiles al programar)
+  // Opciones adicionales: vehicleId, motorista, fechaNecesaria (utiles al programar)
   const quickCreateFromCompra = async (purchase, estado, fechaProg = "", fechaEjec = "", extras = {}) => {
     const proj = allProjects.find(p => p.short === purchase.projectCode);
     const rec = {
@@ -887,6 +901,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       projectCode: purchase.projectCode || "",
       vehicleId: extras.vehicleId || "",
       motorista: extras.motorista || "",
+      fechaNecesaria: extras.fechaNecesaria || "",
       fechaProgramada: fechaProg || "",
       fechaEjecutada: fechaEjec || (estado === "entregado" || estado === "cerrado" ? new Date().toISOString().slice(0, 10) : ""),
       estado,
@@ -897,6 +912,23 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     const next = [...despachos, rec];
     setDespachos(next);
     await store.set("lg-despachos", next);
+    return rec;
+  };
+
+  // Actualizar un campo puntual de un despacho (ej: fechaNecesaria inline desde el card)
+  const updateDespachoField = async (id, field, value) => {
+    const next = despachos.map(d => d.id === id ? { ...d, [field]: value, updatedAt: new Date().toISOString() } : d);
+    setDespachos(next);
+    await store.set("lg-despachos", next);
+  };
+
+  // Set fechaNecesaria en una compra (sin despacho aun) — crea un despacho hidden
+  // con estado=pendiente para que la deadline persista. La compra ya no aparece en
+  // la lista de comprasPendientes (porque ya tiene sourcePurchaseId), y el despacho
+  // aparece en su lugar como card pendiente con la fechaNecesaria visible.
+  const setFechaNecesariaCompra = async (purchase, fechaNecesaria) => {
+    if (!fechaNecesaria) return;
+    await quickCreateFromCompra(purchase, "pendiente", "", "", { fechaNecesaria });
   };
 
   // ── Filtros ──
@@ -1504,6 +1536,30 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
             <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4 }}>{p.provider}</div>
             <div style={{ fontSize: 11, color: BRAND.graphite, marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
 
+            {/* Deadline en proyecto — editable inline. Crea un despacho hidden al asignar fecha */}
+            {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
+              <label style={{ fontSize: 9, color: BRAND.red, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>📅 Necesaria en proyecto</label>
+              <input
+                type="date"
+                value=""
+                onChange={async (e) => {
+                  if (!e.target.value) return;
+                  await setFechaNecesariaCompra(p, e.target.value);
+                }}
+                style={{
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "5px 8px",
+                  border: `1px solid ${BRAND.red}50`,
+                  borderRadius: R.sm,
+                  fontSize: 11,
+                  fontFamily: "inherit",
+                  background: BRAND.cream,
+                  color: BRAND.charcoal,
+                }}
+              />
+            </div>}
+
             {/* Boton de descarga de ficha — para llevar al proveedor con el comprobante de transferencia */}
             <div onClick={e => e.stopPropagation()} style={{ marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
               <button
@@ -1592,8 +1648,17 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                 <Badge color={tCfg.color}>{tCfg.label}</Badge>
-                {d.fechaProgramada && <span style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700 }}>📅 {fmtFecha(d.fechaProgramada)}</span>}
+                {d.fechaProgramada && <span style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700 }}>🚛 {fmtFecha(d.fechaProgramada)}</span>}
               </div>
+              {d.fechaNecesaria && (() => {
+                const dias = diasParaFecha(d.fechaNecesaria);
+                const cBg = dias < 0 ? BRAND.red : dias <= 1 ? BRAND.red : dias <= 3 ? BRAND.orange : dias <= 7 ? BRAND.yellow : BRAND.green;
+                const txt = dias < 0 ? `ATRASADO ${Math.abs(dias)}d` : dias === 0 ? "HOY" : dias === 1 ? "MAÑANA" : `en ${dias}d`;
+                return <div style={{ background: cBg + "20", border: `1px solid ${cBg}50`, borderRadius: R.sm, padding: "3px 8px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 10, color: cBg, fontWeight: 800 }}>📅 Necesaria: {fmtFecha(d.fechaNecesaria)}</span>
+                  <span style={{ fontSize: 9, color: cBg, fontWeight: 800 }}>{txt}</span>
+                </div>;
+              })()}
               <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4, lineHeight: 1.3 }}>{d.descripcion}</div>
               <div style={{ fontSize: 10, color: BRAND.stone, marginTop: 4 }}>
                 <b>{d.origen}</b> → <b>{d.destino}</b>
@@ -1601,7 +1666,29 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
               {(v || d.motorista) && <div style={{ fontSize: 10, color: BRAND.graphite, marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
                 🚛 {v?.plate || "Sin vehiculo"} · {d.motorista || "Sin motorista"}
               </div>}
-              {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
+
+              {/* Fecha necesaria — editable inline. Para que vos pongas el deadline o lo cambies. */}
+              {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
+                <label style={{ fontSize: 9, color: BRAND.red, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>📅 Necesaria en proyecto</label>
+                <input
+                  type="date"
+                  value={d.fechaNecesaria || ""}
+                  onChange={(e) => updateDespachoField(d.id, "fechaNecesaria", e.target.value)}
+                  style={{
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "5px 8px",
+                    border: `1px solid ${d.fechaNecesaria ? BRAND.red : BRAND.borderHard}`,
+                    borderRadius: R.sm,
+                    fontSize: 11,
+                    fontFamily: "inherit",
+                    background: d.fechaNecesaria ? BRAND.redSoft : BRAND.cream,
+                    color: BRAND.charcoal,
+                  }}
+                />
+              </div>}
+
+              {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
                 <label style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Estado</label>
                 <select
                   value={d.estado}
@@ -1646,31 +1733,100 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
           );
         };
 
-        // Card de DESPACHO entregado/cerrado (vista compacta de historial dentro de la columna)
+        // Card de DESPACHO entregado/cerrado — MISMA estructura que pendiente pero
+        // con strikethrough en texto + fondo verde soft + ficha descargable si viene de compra.
         const renderCardEntregado = (d) => {
           const tCfg = tipoDespCfg(d.tipo);
           const v = vehicles.find(x => x.id === d.vehicleId);
+          const sourcePurchase = d.sourcePurchaseId ? purchases.find(p => p.id === d.sourcePurchaseId) : null;
+          const strikeStyle = { textDecoration: "line-through", textDecorationColor: BRAND.green, textDecorationThickness: "2px" };
           return (
             <div
               key={`e-${d.id}`}
               onClick={() => canEdit && setModal({ t: "desp-edit", d })}
               style={{
                 background: BRAND.greenSoft,
-                border: `1px solid ${BRAND.green}40`,
+                border: `1px solid ${BRAND.green}50`,
                 borderLeft: `3px solid ${BRAND.green}`,
                 borderRadius: R.sm,
-                padding: "8px 10px",
+                padding: "10px 12px",
                 cursor: canEdit ? "pointer" : "default",
-                opacity: 0.85,
+                transition: "all 0.15s",
               }}
+              onMouseEnter={e => canEdit && (e.currentTarget.style.boxShadow = BRAND.shadowSm)}
+              onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                 <Badge color={BRAND.green}>✓ {d.estado === "cerrado" ? "Cerrado" : "Entregado"}</Badge>
-                {d.fechaEjecutada && <span style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700 }}>{fmtFecha(d.fechaEjecutada)}</span>}
+                {d.fechaEjecutada && <span style={{ fontSize: 9, color: BRAND.green, fontWeight: 700 }}>📅 {fmtFecha(d.fechaEjecutada)}</span>}
               </div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: BRAND.charcoal, marginTop: 2, lineHeight: 1.3 }}>{d.descripcion}</div>
-              {(v || d.motorista) && <div style={{ fontSize: 9, color: BRAND.stone, marginTop: 3 }}>
-                🚛 {v?.plate || "—"} · {d.motorista || "—"}
+              {sourcePurchase && <div style={{ fontSize: 10, color: BRAND.blue, marginBottom: 4 }}>🛒 De compra · {sourcePurchase.provider}</div>}
+              <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4, lineHeight: 1.3, ...strikeStyle }}>{d.descripcion}</div>
+              <div style={{ fontSize: 10, color: BRAND.stone, marginTop: 4, ...strikeStyle }}>
+                <b>{d.origen}</b> → <b>{d.destino}</b>
+              </div>
+              {(v || d.motorista) && <div style={{ fontSize: 10, color: BRAND.graphite, marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${BRAND.green}30` }}>
+                🚛 {v?.plate || "Sin vehiculo"} · {d.motorista || "Sin motorista"}
+              </div>}
+
+              {/* Boton descargar ficha si viene de compra — aun en entregados es util tener acceso */}
+              {sourcePurchase && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.green}30` }}>
+                <button
+                  onClick={async () => {
+                    try {
+                      await descargarFichaCompra(sourcePurchase, allProjects);
+                    } catch (err) {
+                      alert("No se pudo generar la ficha: " + (err?.message || err));
+                    }
+                  }}
+                  style={{
+                    width: "100%",
+                    background: BRAND.charcoal,
+                    color: BRAND.beige,
+                    border: "none",
+                    padding: "6px 10px",
+                    borderRadius: R.sm,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                  title="Re-descargar la Ficha de Entrega original"
+                >📄 Descargar Ficha de Entrega</button>
+              </div>}
+
+              {/* Dropdown para revertir si fue un error marcar entregado */}
+              {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.green}30` }}>
+                <label style={{ fontSize: 9, color: BRAND.green, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Cambiar estado</label>
+                <select
+                  value={d.estado}
+                  onChange={async (e) => {
+                    const val = e.target.value;
+                    if (val === d.estado) return;
+                    if (val === "pendiente" || val === "programado") {
+                      if (!confirm("¿Revertir a " + (val === "pendiente" ? "pendiente" : "programado") + "?")) return;
+                    }
+                    await updateDespachoEstado(d.id, val);
+                  }}
+                  style={{
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "5px 8px",
+                    border: `1px solid ${BRAND.green}50`,
+                    borderRadius: R.sm,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: BRAND.cream,
+                    color: BRAND.charcoal,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <option value="entregado">✓ Entregado</option>
+                  <option value="cerrado">🔒 Cerrado</option>
+                  <option value="pendiente">📌 Revertir a pendiente</option>
+                  <option value="programado">📅 Revertir a programado</option>
+                </select>
               </div>}
             </div>
           );
@@ -1717,8 +1873,18 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                   </Btn>}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 560, overflowY: "auto" }}>
-                  {items.compras.map(renderCardCompra)}
-                  {items.despachos.sort((a, b) => (a.fechaProgramada || "9999").localeCompare(b.fechaProgramada || "9999")).map(renderCardDespacho)}
+                  {/* Cards mezcladas y ordenadas: las con fechaNecesaria mas urgente arriba.
+                      Compras sin despacho (sin fechaNecesaria) van al final. */}
+                  {(() => {
+                    const mezclado = [
+                      ...items.compras.map(p => ({ kind: "compra", data: p, sortKey: "9999-12-30" })), // sin fecha → al final
+                      ...items.despachos.map(d => ({ kind: "despacho", data: d, sortKey: d.fechaNecesaria || d.fechaProgramada || "9999-12-31" })),
+                    ];
+                    mezclado.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+                    return mezclado.map(item =>
+                      item.kind === "compra" ? renderCardCompra(item.data) : renderCardDespacho(item.data)
+                    );
+                  })()}
                   {isEmpty && totalHist === 0 && <div style={{ fontSize: 11, color: BRAND.stone, fontStyle: "italic", textAlign: "center", padding: "20px 4px" }}>
                     Sin movimientos pendientes
                   </div>}
