@@ -20,6 +20,20 @@ import { useState, useEffect } from "react";
 import { store } from "./supabase.js";
 import { BRAND, FONT, R } from "./theme.js";
 import Logo from "./Logo.jsx";
+import { generateFichaPDF } from "./PurchasesModule.jsx";
+
+// Helper interno: dado un purchase (con projectCode), buscar el proyecto y
+// la empresa para llamar a generateFichaPDF correctamente. Usado por los
+// cards "De compra" del Kanban para descargar la misma ficha que en Compras.
+const COMPANIES_MAP = {
+  subterra: { name: "Subterra Honduras" },
+  geotecnica: { name: "Geotecnica Soluciones" },
+};
+const descargarFichaCompra = async (purchase, allProjects) => {
+  const proj = allProjects.find(p => p.short === purchase.projectCode) || null;
+  const companyName = COMPANIES_MAP[purchase.company]?.name || "";
+  await generateFichaPDF(purchase, proj, companyName);
+};
 
 // ── Constantes ──
 const TIPOS_VEHICULO = [
@@ -1466,7 +1480,38 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
             </div>
             <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4 }}>{p.provider}</div>
             <div style={{ fontSize: 11, color: BRAND.graphite, marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
-            {canEdit && <div onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 4, marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
+
+            {/* Boton de descarga de ficha — para llevar al proveedor con el comprobante de transferencia */}
+            <div onClick={e => e.stopPropagation()} style={{ marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
+              <button
+                onClick={async () => {
+                  try {
+                    await descargarFichaCompra(p, allProjects);
+                  } catch (err) {
+                    alert("No se pudo generar la ficha: " + (err?.message || err));
+                  }
+                }}
+                style={{
+                  width: "100%",
+                  background: BRAND.charcoal,
+                  color: BRAND.beige,
+                  border: "none",
+                  padding: "8px 10px",
+                  borderRadius: R.sm,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  letterSpacing: 0.3,
+                }}
+                title="Descarga la Ficha de Entrega con cotizacion + comprobante de transferencia para llevar al proveedor"
+              >📄 Descargar Ficha de Entrega</button>
+              <div style={{ fontSize: 9, color: BRAND.stone, fontStyle: "italic", marginTop: 4, textAlign: "center", lineHeight: 1.3 }}>
+                Incluye la cotizacion + comprobante de transferencia para retirar con el proveedor
+              </div>
+            </div>
+
+            {canEdit && <div onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 4, marginTop: 8 }}>
               <button
                 onClick={() => setModal({ t: "desp-program", source: { kind: "compra", purchase: p } })}
                 style={chipBtn(BRAND.blue, "#fff")}

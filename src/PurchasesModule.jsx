@@ -295,7 +295,9 @@ const deriveDelivery = (p) => {
 };
 
 // ── Ficha de Recibido — PDF horizontal (A4 landscape), simple, para campo ──
-const generateFichaPDF = async (purchase, projectObj, companyName) => {
+// EXPORTADA para que otros modulos (Logistica) puedan generar la misma ficha
+// y los motoristas/recepcion la lleven al proveedor al ir a recoger.
+export const generateFichaPDF = async (purchase, projectObj, companyName) => {
   const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const PW = 297, PH = 210, M = 14, CW = PW - 2 * M; // util: 269mm ancho
