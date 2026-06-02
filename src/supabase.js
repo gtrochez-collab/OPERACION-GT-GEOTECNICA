@@ -29,6 +29,47 @@ export const getSyncState = () => lastSyncState;
 // ${k}__ts para mantener backwards compat: el valor del item sigue siendo el
 // JSON puro (sin wrappers). Codigo que lee localStorage directo no se rompe.
 const TS_SUFFIX = '__ts';
+
+// Limite por item: si un value es > este tamaño, NO se guarda en localStorage
+// (vive solo en cloud). Esto evita que dataUrls de PDFs/fotos llenen el cache
+// local hasta romperlo. Cloud (Supabase) los maneja sin problema.
+const MAX_LOCAL_VALUE_BYTES = 500 * 1024; // 500 KB
+
+// Orden de evicción cuando localStorage se llena. Items con estos prefijos se
+// borran primero porque son "regenerables" desde cloud o de bajo valor.
+// Items que no matchean ningun prefijo (cp-purchases, hr-emps, lg-vehicles, etc)
+// son CRITICOS y nunca se evictan automaticamente.
+const EVICTION_PRIORITY_PREFIXES = [
+  'cp-file-',       // archivos PDF/foto de compras (cloud es source of truth)
+  'chat-channel-',  // mensajes de canales (cloud es source of truth)
+  'chat-dm-',       // mensajes directos (cloud es source of truth)
+  'chat-read-',     // estado de lectura del chat (no critico)
+];
+
+// Liberar espacio borrando items por prefijo en orden de prioridad.
+// Retorna bytes liberados.
+const freeUpLocalSpace = (neededBytes) => {
+  let freed = 0;
+  try {
+    const keys = Object.keys(localStorage);
+    for (const prefix of EVICTION_PRIORITY_PREFIXES) {
+      const matching = keys.filter(k => k.startsWith(prefix) && !k.endsWith(TS_SUFFIX));
+      for (const k of matching) {
+        try {
+          const size = (localStorage.getItem(k) || '').length;
+          localStorage.removeItem(k);
+          try { localStorage.removeItem(k + TS_SUFFIX); } catch {}
+          freed += size;
+          if (freed >= neededBytes) return freed;
+        } catch {}
+      }
+    }
+  } catch (e) {
+    console.warn('[store] error liberando espacio local', e);
+  }
+  return freed;
+};
+
 const readLocalWithTs = (k) => {
   let value = undefined, ts = null;
   try {
@@ -42,14 +83,79 @@ const readLocalWithTs = (k) => {
   } catch {}
   return { value, ts };
 };
+
 const writeLocalWithTs = (k, v, ts) => {
+  let json;
   try {
-    localStorage.setItem(k, JSON.stringify(v));
-    localStorage.setItem(k + TS_SUFFIX, ts);
+    json = JSON.stringify(v);
   } catch (e) {
-    console.error(`[store] no se pudo guardar en cache local: ${k}`, e);
+    console.error(`[store] no se pudo serializar ${k}`, e);
+    return;
+  }
+
+  // Item demasiado grande: NO guardar en local. Vive solo en cloud.
+  // Esto cubre principalmente cp-file-* (PDFs/fotos en base64), que pueden
+  // pesar varios MB cada uno y llenan el cache muy rapido.
+  if (json.length > MAX_LOCAL_VALUE_BYTES) {
+    // Si habia version vieja del item, limpiarla
+    try {
+      localStorage.removeItem(k);
+      localStorage.removeItem(k + TS_SUFFIX);
+    } catch {}
+    return;
+  }
+
+  // Intento 1: write normal
+  try {
+    localStorage.setItem(k, json);
+    localStorage.setItem(k + TS_SUFFIX, ts);
+    return;
+  } catch (e) {
+    const isQuota = e?.name === 'QuotaExceededError' || e?.code === 22 || e?.code === 1014;
+    if (!isQuota) {
+      console.error(`[store] error inesperado guardando ${k}`, e);
+      return;
+    }
+    // Quota lleno: liberar espacio y reintentar
+    const freed = freeUpLocalSpace(json.length * 2);
+    console.warn(`[store] localStorage lleno, liberados ${(freed/1024/1024).toFixed(2)}MB. Reintentando ${k}...`);
+    try {
+      localStorage.setItem(k, json);
+      localStorage.setItem(k + TS_SUFFIX, ts);
+      return;
+    } catch (e2) {
+      console.error(`[store] cache local saltado para ${k} tras liberar espacio — la nube tiene los datos.`, e2);
+    }
   }
 };
+
+// ── Migracion automatica al cargar el modulo ──
+// Limpia cualquier cp-file-* y chat-channel-/chat-dm- viejos que esten ocupando
+// espacio en localStorage. Estos items son regenerables desde cloud, asi que
+// no se pierde nada — solo se libera espacio para data critica.
+// Se ejecuta UNA vez por sesion (cuando se importa el modulo).
+try {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    let cleaned = 0;
+    let freed = 0;
+    const keys = Object.keys(localStorage);
+    for (const k of keys) {
+      // Solo limpiar archivos. Mensajes de chat los dejamos para fast load
+      // (solo se evictan si hace falta espacio via freeUpLocalSpace).
+      if (k.startsWith('cp-file-') && !k.endsWith(TS_SUFFIX)) {
+        try {
+          freed += (localStorage.getItem(k) || '').length;
+          localStorage.removeItem(k);
+          try { localStorage.removeItem(k + TS_SUFFIX); } catch {}
+          cleaned++;
+        } catch {}
+      }
+    }
+    if (cleaned > 0) {
+      console.info(`[store] migracion: limpiados ${cleaned} archivos del cache local (${(freed/1024/1024).toFixed(2)}MB liberados). Los archivos viven en cloud.`);
+    }
+  }
+} catch {}
 
 export const store = {
   async get(k) {
