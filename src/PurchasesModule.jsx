@@ -81,16 +81,33 @@ const setAtPath = (obj, path, value) => {
 
 // Extrae los archivos pesados de un array de purchases. Devuelve la version
 // "light" (sin dataUrl) y la lista de archivos a guardar por separado.
+//
+// IMPORTANTE: solo sube archivos NUEVOS — los que tienen dataUrl pero NO tienen
+// fileId todavia. Los archivos que ya tienen fileId fueron subidos en alguna
+// sesion previa (o re-hidratados via restoreFiles) y NO necesitan re-subirse.
+// Esto evita que cada save tarde decenas de segundos re-subiendo decenas de PDFs.
+// El campo dataUrl en light siempre se strippea para mantener la nube liviana.
 const extractFiles = (purchases) => {
   const filesToSave = [];
   const light = purchases.map((p) => {
     let cleaned = p;
     for (const path of FILE_FIELD_PATHS) {
       const file = getAtPath(cleaned, path);
-      if (!file || !file.dataUrl) continue;
-      const fileId = file.fileId || uid();
-      filesToSave.push({ fileId, content: { name: file.name, type: file.type, size: file.size, dataUrl: file.dataUrl } });
-      cleaned = setAtPath(cleaned, path, { fileId, name: file.name, type: file.type, size: file.size });
+      if (!file) continue;
+      const hasDataUrl = !!file.dataUrl;
+      const hasFileId = !!file.fileId;
+
+      if (hasDataUrl && !hasFileId) {
+        // Archivo NUEVO (fresh upload): subir y reemplazar con ref.
+        const fileId = uid();
+        filesToSave.push({ fileId, content: { name: file.name, type: file.type, size: file.size, dataUrl: file.dataUrl } });
+        cleaned = setAtPath(cleaned, path, { fileId, name: file.name, type: file.type, size: file.size });
+      } else if (hasDataUrl && hasFileId) {
+        // Archivo YA subido pero hidratado en memoria — solo strippeamos dataUrl para light.
+        // NO re-subimos (ya esta en cloud bajo fileId).
+        cleaned = setAtPath(cleaned, path, { fileId: file.fileId, name: file.name, type: file.type, size: file.size });
+      }
+      // Si no tiene dataUrl, ya es un ref puro — no tocar.
     }
     return cleaned;
   });
@@ -629,10 +646,11 @@ function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, ren
 // Mismo razonamiento que ProjectFormImpl: vive aqui para que React mantenga la
 // identidad del componente estable entre renders del padre. Recibe deps por props.
 function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, addAudit, saveOrAlert }) {
+  const [saving, setSaving] = useState(false);
   const [f, setF] = useState(purchase || {
     company: co, projectCode: "", provider: "", description: "",
-    amount: "", quoteNumber: "", opsNotes: "", opsResponsible: userName || "",
-    bacAccount: "", quoteFile: null, receiptFile: null,
+    amount: "", quoteNumber: "", opsResponsible: userName || "",
+    opsNotes: "", bacAccount: "", quoteFile: null, receiptFile: null,
     status: "borrador", createdAt: new Date().toISOString(), audit: [],
     paymentMethod: "Transferencia BAC", paymentReference: "", paymentDate: "", treasuryNotes: "",
   });
@@ -690,32 +708,46 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       <div style={{ fontSize: 12, color: "#64748b" }}>
         {purchase ? `Creada: ${fmtDT(purchase.createdAt)}` : "Nueva solicitud"}
       </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-        <Btn variant="warn" onClick={async () => {
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {saving && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 8, fontSize: 12, color: "#92400E", fontWeight: 700 }}>
+          <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #F59E0B", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+          Guardando — NO cierres ni refresques
+        </div>}
+        <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cancelar</Btn>
+        <Btn variant="warn" disabled={saving} onClick={async () => {
           if (!f.projectCode || !f.provider || !f.description || !f.amount) return alert("Complete proyecto, proveedor, descripcion y monto");
-          const rec = { ...f, id: f.id || uid(), status: "borrador", treasuryStatus: null };
-          const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
-          const next = purchase
-            ? purchases.map(p => p.id === saved.id ? saved : p)
-            : [...purchases, saved];
-          const ok = await saveOrAlert(next);
-          if (ok) setModal(null);
-        }}>💾 Guardar borrador</Btn>
-        <Btn variant="success" onClick={async () => {
+          setSaving(true);
+          try {
+            const rec = { ...f, id: f.id || uid(), status: "borrador", treasuryStatus: null };
+            const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
+            const next = purchase
+              ? purchases.map(p => p.id === saved.id ? saved : p)
+              : [...purchases, saved];
+            const ok = await saveOrAlert(next);
+            if (ok) setModal(null);
+          } finally {
+            setSaving(false);
+          }
+        }}>{saving ? "..." : "💾 Guardar borrador"}</Btn>
+        <Btn variant="success" disabled={saving} onClick={async () => {
           if (!f.projectCode || !f.provider || !f.description || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert("Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
           if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
-          const rec = { ...f, id: f.id || uid(), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
-          const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
-          const next = purchase
-            ? purchases.map(p => p.id === saved.id ? saved : p)
-            : [...purchases, saved];
-          const ok = await saveOrAlert(next);
-          if (ok) {
-            setModal(null);
-            alert("✓ Solicitud aprobada. Paso a Tesoreria como 'Pendiente Lic. Carolina'.");
+          setSaving(true);
+          try {
+            const rec = { ...f, id: f.id || uid(), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
+            const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
+            const next = purchase
+              ? purchases.map(p => p.id === saved.id ? saved : p)
+              : [...purchases, saved];
+            const ok = await saveOrAlert(next);
+            if (ok) {
+              setModal(null);
+              alert("✓ Solicitud aprobada. Paso a Tesoreria como 'Pendiente Lic. Carolina'.");
+            }
+          } finally {
+            setSaving(false);
           }
-        }}>✓ Aprobar y enviar a Tesoreria</Btn>
+        }}>{saving ? "..." : "✓ Aprobar y enviar a Tesoreria"}</Btn>
       </div>
     </div>
   </div>;
