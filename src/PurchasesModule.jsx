@@ -852,42 +852,103 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // intermitentes que disparaban este mismo alerta. Serial es un poco mas
   // lento pero 100% confiable. Cada store.set ya tiene su propio retry
   // con backoff (3 intentos) para absorber glitches puntuales.
+  // Guarda purchases con verificacion post-save robusta:
+  // 1. Pre-fetch del cloud para mergear con cambios concurrentes (otro usuario / otra Mac)
+  // 2. Save archivos serial
+  // 3. Save cp-purchases con array MERGED
+  // 4. Verificacion: re-fetch desde cloud y comparar count
+  // 5. Si no coincide → alerta roja explicita con detalles
   const sP = async (d) => {
-    setPurchases(d);
-    const { light, filesToSave } = extractFiles(d);
+    const tStart = Date.now();
+    const groupLabel = `[sP] save ${new Date().toISOString()}`;
+    console.group(groupLabel);
+    try {
+      setPurchases(d);
+      console.log("📦 Local state actualizado:", d.length, "purchases");
 
-    const failedFiles = [];
-    for (const f of filesToSave) {
-      const ok = await store.set(fileKey(f.fileId), f.content);
-      if (!ok) failedFiles.push(f);
+      // 1) PRE-FETCH cloud: si otro usuario/tab agrego solicitudes mientras estabamos
+      // editando, las traemos para no pisarlas.
+      const cloudPrevia = await store.get("cp-purchases");
+      const cloudPreviaArr = Array.isArray(cloudPrevia) ? cloudPrevia : [];
+      console.log("☁️ Cloud actual:", cloudPreviaArr.length, "purchases");
+
+      // 2) MERGE: tomar todo lo de cloud + agregar lo nuestro que no este en cloud
+      // (basado en id). Si nuestro tiene una version mas reciente del mismo id, la nuestra gana.
+      const ourIds = new Set(d.map(p => p.id));
+      const cloudExtras = cloudPreviaArr.filter(p => !ourIds.has(p.id));
+      const merged = [...d, ...cloudExtras];
+      if (cloudExtras.length > 0) {
+        console.warn(`⚠️ Encontradas ${cloudExtras.length} solicitudes en cloud que no estaban en local — mergeadas.`);
+        setPurchases(merged); // actualizar UI con merge
+      }
+
+      // 3) Extraer archivos
+      const { light, filesToSave } = extractFiles(merged);
+      console.log("🗂 Archivos a subir:", filesToSave.length, "| light array:", light.length, "purchases");
+
+      // 4) Save archivos serial
+      const failedFiles = [];
+      for (const f of filesToSave) {
+        const ok = await store.set(fileKey(f.fileId), f.content);
+        if (!ok) failedFiles.push(f);
+      }
+
+      // 5) Save cp-purchases (con merge)
+      const purchasesOk = await store.set("cp-purchases", light);
+      console.log("☁️ Save cp-purchases →", purchasesOk ? "OK" : "FAIL");
+
+      // 6) VERIFICACION: re-fetch desde cloud y comparar
+      let verifiedOk = true;
+      let verifiedCount = null;
+      if (purchasesOk) {
+        try {
+          const verify = await store.get("cp-purchases");
+          verifiedCount = Array.isArray(verify) ? verify.length : null;
+          if (verifiedCount !== light.length) {
+            verifiedOk = false;
+            console.error("❌ VERIFICACION FALLO. Enviado:", light.length, "Cloud devolvio:", verifiedCount);
+          } else {
+            // Tambien verificar que los IDs coinciden
+            const verifyIds = new Set(verify.map(p => p.id));
+            const missing = light.filter(p => !verifyIds.has(p.id));
+            if (missing.length > 0) {
+              verifiedOk = false;
+              console.error("❌ Cloud devolvio el count correcto pero le faltan IDs:", missing.map(p => p.id));
+            }
+          }
+        } catch (e) {
+          console.warn("No se pudo verificar post-save:", e);
+        }
+      }
+
+      const tEnd = Date.now();
+      console.log(`⏱ Save completado en ${tEnd - tStart}ms. OK: ${purchasesOk && verifiedOk}`);
+
+      // 7) Errores → alerta
+      if (!purchasesOk || failedFiles.length > 0 || !verifiedOk) {
+        const lastErr = store.getLastError?.();
+        const detalleError = lastErr ? `\n\nError tecnico: ${lastErr.message}` : "";
+        const archivosProblema = failedFiles.length > 0
+          ? `\n\nArchivos que NO subieron (${failedFiles.length}):\n${failedFiles.map(f => `• ${f.content?.name || f.fileId} (${(f.content?.size / 1024 / 1024).toFixed(2)} MB)`).join("\n")}`
+          : "";
+        const verifProblem = !verifiedOk
+          ? `\n\n⚠️ VERIFICACION POST-SAVE FALLO:\nEnviadas: ${light.length} | Cloud devolvio: ${verifiedCount}\nEsto significa que Supabase acepto el save pero no lo persistio correctamente. Es un problema del backend.`
+          : "";
+        alert(
+          "⚠️ Atencion: el guardado tuvo problemas.\n\n" +
+          "Estado: " + (purchasesOk ? "Supabase dijo OK" : "Supabase fallo") +
+          (verifiedOk ? "" : " · Verificacion fallo") +
+          archivosProblema +
+          verifProblem +
+          detalleError +
+          "\n\nLos datos quedan en este navegador. Si refrescas y desaparece, hay un problema con la sincronizacion."
+        );
+        return false;
+      }
+      return true;
+    } finally {
+      console.groupEnd();
     }
-
-    // Despues guardar el array de purchases ya liviano (solo refs).
-    const purchasesOk = await store.set("cp-purchases", light);
-
-    if (!purchasesOk || failedFiles.length > 0) {
-      // Obtener el error especifico (lo grabamos al fallar arriba)
-      const lastErr = store.getLastError?.();
-      const detalleError = lastErr
-        ? `\n\nError tecnico: ${lastErr.message}`
-        : "";
-      const archivosProblema = failedFiles.length > 0
-        ? `\n\nArchivos que NO subieron (${failedFiles.length}):\n${failedFiles.map(f => `• ${f.content?.name || f.fileId} (${(f.content?.size / 1024 / 1024).toFixed(2)} MB)`).join("\n")}`
-        : "";
-      alert(
-        "⚠️ Atencion: los cambios se guardaron en este dispositivo pero NO se sincronizaron a la nube.\n\n" +
-        "Si abris el sistema en otra Mac, los cambios pueden no aparecer.\n\n" +
-        "Posibles causas:\n" +
-        "• Sin conexion a internet (revisa tu WiFi)\n" +
-        "• Algun archivo adjunto excede el limite de Supabase (~1MB free / ~8MB pro)\n" +
-        "• Problema temporal con Supabase (ya reintentamos 3 veces)" +
-        archivosProblema +
-        detalleError +
-        "\n\nPodes seguir trabajando — el cambio quedo en este navegador. Cuando recuperes conexion, simplemente volve a guardar la solicitud."
-      );
-      return false;
-    }
-    return true;
   };
   const sCP = d => { setCustomProjects(d); store.set("cp-projects", d); };
   const cp = purchases.filter(p => p.company === co);
