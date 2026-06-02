@@ -1,9 +1,12 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import HRModule from "./HRModule.jsx";
 import PurchasesModule from "./PurchasesModule.jsx";
 import OperationsModule from "./OperationsModule.jsx";
 import LogisticsModule from "./LogisticsModule.jsx";
-import ChatModule, { fetchUnreadSummary, playBeep } from "./ChatModule.jsx";
+// GeoChat: desactivado temporalmente (jun 2026). El polling y los mensajes
+// en localStorage estaban presionando el cache. Cuando lo retomemos, sera
+// con Supabase Realtime + bypass de localStorage (ya esta listo).
+// import ChatModule, { fetchUnreadSummary, playBeep } from "./ChatModule.jsx";
 import { onSyncStateChange } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { BRAND, FONT, R, SP } from "./theme.js";
@@ -11,16 +14,8 @@ import { USERS, ROLE_LABEL } from "./users.js";
 
 // ── Modulos del sistema ──
 // Cada modulo tiene un acento de color distinto (complementarios al naranja de marca).
+// NOTA: GeoChat (id "geochat") esta temporalmente desactivado — ver import comentado arriba.
 const MODULES = [
-  {
-    id: "geochat",
-    name: "GeoChat",
-    icon: "💬",
-    desc: "Mensajeria interna del equipo — canales y mensajes directos",
-    accent: "#1A4A4A", // verde azulado oscuro, distinto al resto
-    accentSoft: "rgba(26,74,74,0.10)",
-    roles: ["admin", "asistente", "tesoreria", "gerencia", "coordinador", "costos", "logistica", "recepcion"], // todos
-  },
   {
     id: "rrhh",
     name: "Recursos Humanos",
@@ -74,8 +69,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [activeModule, setActiveModule] = useState(null);
   const [syncState, setSyncState] = useState({ ok: true, error: null });
-  const [chatUnread, setChatUnread] = useState(0); // badge global de mensajes no leidos
-  const lastChatTotalRef = useRef(0); // para detectar mensajes NUEVOS (no solo unread total)
+  // chatUnread: desactivado junto con GeoChat (jun 2026).
+  const chatUnread = 0;
 
   useEffect(() => {
     try {
@@ -85,32 +80,6 @@ export default function App() {
   }, []);
 
   useEffect(() => onSyncStateChange((s) => setSyncState(s)), []);
-
-  // ── Watcher global de mensajes nuevos de GeoChat ──
-  // Polls cada 10s mientras este logueado. Si detecta mensajes nuevos de
-  // OTROS usuarios mientras NO esta en el modulo de chat, reproduce sonido.
-  // El modulo de chat tiene su propio polling mas agresivo (5s) que toma
-  // precedencia cuando esta abierto — este watcher es para alertar fuera del
-  // modulo.
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const { total } = await fetchUnreadSummary(user.username);
-        if (cancelled) return;
-        // Si subio el total Y no estoy en chat, suena
-        if (total > lastChatTotalRef.current && activeModule !== "geochat" && !document.hidden) {
-          playBeep();
-        }
-        lastChatTotalRef.current = total;
-        setChatUnread(total);
-      } catch {}
-    };
-    tick(); // primera carga inmediata
-    const t = setInterval(tick, 10000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, [user, activeModule]);
 
   const login = (username, password) => {
     const found = USERS.find((u) => u.username === username && u.password === password);
@@ -142,7 +111,8 @@ export default function App() {
   if (activeModule === "compras-operaciones") return <>{syncBanner}<PurchasesModule {...moduleProps} /></>;
   if (activeModule === "operations-cc") return <>{syncBanner}<OperationsModule {...moduleProps} /></>;
   if (activeModule === "logistica") return <>{syncBanner}<LogisticsModule {...moduleProps} /></>;
-  if (activeModule === "geochat") return <>{syncBanner}<ChatModule {...moduleProps} /></>;
+  // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
+  // if (activeModule === "geochat") return <>{syncBanner}<ChatModule {...moduleProps} /></>;
 
   // ── Panel de Control ──
   const availableModules = MODULES.filter((m) => m.roles.includes(user.role));

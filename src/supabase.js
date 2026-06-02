@@ -33,7 +33,16 @@ const TS_SUFFIX = '__ts';
 // Limite por item: si un value es > este tamaño, NO se guarda en localStorage
 // (vive solo en cloud). Esto evita que dataUrls de PDFs/fotos llenen el cache
 // local hasta romperlo. Cloud (Supabase) los maneja sin problema.
-const MAX_LOCAL_VALUE_BYTES = 500 * 1024; // 500 KB
+const MAX_LOCAL_VALUE_BYTES = 200 * 1024; // 200 KB — bajamos para ser mas estrictos
+
+// Prefijos que NUNCA se guardan en localStorage, sin importar tamaño.
+// Estos viven SOLO en cloud (Supabase) — el cache local seria contraproducente
+// porque se acumulan rapido (muchos archivos, muchos mensajes) y rompen quota.
+const SKIP_LOCAL_PREFIXES = [
+  'cp-file-',       // archivos PDF/foto de compras (cloud es source of truth)
+  'chat-channel-',  // mensajes de canales (cloud es source of truth)
+  'chat-dm-',       // mensajes directos (cloud es source of truth)
+];
 
 // Orden de evicción cuando localStorage se llena. Items con estos prefijos se
 // borran primero porque son "regenerables" desde cloud o de bajo valor.
@@ -85,6 +94,17 @@ const readLocalWithTs = (k) => {
 };
 
 const writeLocalWithTs = (k, v, ts) => {
+  // Skip total por prefijo: archivos y chat NUNCA tocan localStorage.
+  // Viven solo en cloud sin importar el tamaño individual.
+  if (SKIP_LOCAL_PREFIXES.some(p => k.startsWith(p))) {
+    // Si habia version vieja del item por whatever razon, limpiarla
+    try {
+      localStorage.removeItem(k);
+      localStorage.removeItem(k + TS_SUFFIX);
+    } catch {}
+    return;
+  }
+
   let json;
   try {
     json = JSON.stringify(v);
@@ -94,10 +114,9 @@ const writeLocalWithTs = (k, v, ts) => {
   }
 
   // Item demasiado grande: NO guardar en local. Vive solo en cloud.
-  // Esto cubre principalmente cp-file-* (PDFs/fotos en base64), que pueden
-  // pesar varios MB cada uno y llenan el cache muy rapido.
+  // Backup adicional al skip por prefijo arriba — si algun key nuevo grande
+  // aparece, no llenamos el cache.
   if (json.length > MAX_LOCAL_VALUE_BYTES) {
-    // Si habia version vieja del item, limpiarla
     try {
       localStorage.removeItem(k);
       localStorage.removeItem(k + TS_SUFFIX);
@@ -130,19 +149,19 @@ const writeLocalWithTs = (k, v, ts) => {
 };
 
 // ── Migracion automatica al cargar el modulo ──
-// Limpia cualquier cp-file-* y chat-channel-/chat-dm- viejos que esten ocupando
-// espacio en localStorage. Estos items son regenerables desde cloud, asi que
-// no se pierde nada — solo se libera espacio para data critica.
+// Limpia TODO item con prefijo en SKIP_LOCAL_PREFIXES + chat-read-* del
+// localStorage. Estos items son regenerables desde cloud, asi que no se pierde
+// nada — solo se libera espacio para data critica como cp-purchases.
 // Se ejecuta UNA vez por sesion (cuando se importa el modulo).
 try {
   if (typeof window !== 'undefined' && window.localStorage) {
     let cleaned = 0;
     let freed = 0;
+    const cleanupPrefixes = [...SKIP_LOCAL_PREFIXES, 'chat-read-'];
     const keys = Object.keys(localStorage);
     for (const k of keys) {
-      // Solo limpiar archivos. Mensajes de chat los dejamos para fast load
-      // (solo se evictan si hace falta espacio via freeUpLocalSpace).
-      if (k.startsWith('cp-file-') && !k.endsWith(TS_SUFFIX)) {
+      if (k.endsWith(TS_SUFFIX)) continue; // los ts los borramos con su key principal
+      if (cleanupPrefixes.some(p => k.startsWith(p))) {
         try {
           freed += (localStorage.getItem(k) || '').length;
           localStorage.removeItem(k);
@@ -152,7 +171,7 @@ try {
       }
     }
     if (cleaned > 0) {
-      console.info(`[store] migracion: limpiados ${cleaned} archivos del cache local (${(freed/1024/1024).toFixed(2)}MB liberados). Los archivos viven en cloud.`);
+      console.info(`[store] migracion: limpiados ${cleaned} items del cache local (${(freed/1024/1024).toFixed(2)}MB liberados). Esos items viven en cloud.`);
     }
   }
 } catch {}
