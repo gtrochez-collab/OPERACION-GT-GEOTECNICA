@@ -764,7 +764,8 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const [mantFilter, setMantFilter] = useState({ vehicleId: "", type: "", from: "", to: "" });
   const [despSubSec, setDespSubSec] = useState("por_hacer"); // por_hacer | programados | historial
   const [despFilter, setDespFilter] = useState({ projectCode: "", tipo: "", vehicleId: "", q: "" });
-  const [expandedHistKanban, setExpandedHistKanban] = useState({}); // { projectKey: true } para mostrar historial de esa col
+  const [expandedHistKanban, setExpandedHistKanban] = useState({}); // { projectKey: true } para mostrar entregados de esa col
+  const [expandedProgKanban, setExpandedProgKanban] = useState({}); // { projectKey: true } para mostrar programados/en ruta de esa col
 
   // ── Carga inicial ──
   useEffect(() => {
@@ -1442,9 +1443,10 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         });
 
         // Agrupar todo por proyecto: pendientes (compras + despachos) +
-        // entregados historicos (para mostrar colapsado al final de cada columna).
+        // programados/en ruta + entregados historicos. Todo dentro de la misma
+        // columna del kanban con secciones colapsables.
         const grupos = {};
-        const ensure = (key) => { if (!grupos[key]) grupos[key] = { compras: [], despachos: [], entregados: [] }; };
+        const ensure = (key) => { if (!grupos[key]) grupos[key] = { compras: [], despachos: [], programados: [], entregados: [] }; };
         comprasFiltered.forEach(p => {
           const key = p.projectCode || "__sin__";
           ensure(key);
@@ -1454,6 +1456,13 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
           const key = d.projectCode || "__sin__";
           ensure(key);
           grupos[key].despachos.push(d);
+        });
+        // Programados / En ruta por proyecto — en la misma columna, no en otra tab.
+        // Pedido por el usuario: que vea todo el flujo del proyecto en un solo vistazo.
+        enProgramados.forEach(d => {
+          const key = d.projectCode || "__sin__";
+          ensure(key);
+          grupos[key].programados.push(d);
         });
         // Entregados historicos por proyecto (los que ya se entregaron, para visibilidad
         // del historial de cada proyecto sin tener que ir a la tab "Historial").
@@ -1689,13 +1698,16 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
               </div>}
 
               {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
-                <label style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Estado</label>
+                <label style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Cambiar estado</label>
                 <select
-                  value={d.estado}
+                  // en_ruta lo mostramos como "programado" en el dropdown (estados unificados a pedido del usuario).
+                  value={d.estado === "en_ruta" ? "programado" : d.estado}
                   onChange={async (e) => {
                     const val = e.target.value;
                     if (val === d.estado) return;
                     if (val === "programado") {
+                      // Si ya estaba en programado/en_ruta y se eligio "Programar" otra vez, no hacer nada
+                      if (d.estado === "programado" || d.estado === "en_ruta") return;
                       setModal({ t: "desp-program", source: { kind: "despacho", despacho: d } });
                     } else if (val === "entregado") {
                       if (!confirm("¿Marcar este movimiento como YA ENTREGADO?")) return;
@@ -1704,7 +1716,6 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                       if (!confirm("¿Cancelar este movimiento?")) return;
                       await updateDespachoEstado(d.id, "cancelado");
                     } else {
-                      // pendiente / en_ruta / cerrado — cambio directo
                       await updateDespachoEstado(d.id, val);
                     }
                   }}
@@ -1723,10 +1734,9 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                   }}
                 >
                   <option value="pendiente">📌 Pendiente</option>
-                  <option value="programado">📅 Programado</option>
-                  <option value="en_ruta">🚛 En ruta</option>
-                  <option value="entregado">✓ Entregado</option>
-                  <option value="cancelado">✗ Cancelado</option>
+                  <option value="programado">📅 Programar / En ruta</option>
+                  <option value="entregado">✓ Marcar entregado</option>
+                  <option value="cancelado">✗ Cancelar</option>
                 </select>
               </div>}
             </div>
@@ -1838,11 +1848,14 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
             const items = {
               compras: raw.compras || [],
               despachos: raw.despachos || [],
+              programados: raw.programados || [],
               entregados: raw.entregados || [],
             };
             const proj = allProjects.find(p => p.short === key);
             const total = items.compras.length + items.despachos.length;
+            const totalProg = items.programados.length;
             const totalHist = items.entregados.length;
+            const progExpanded = expandedProgKanban[key] !== false; // default expandido (queremos que se vea)
             const isEmpty = total === 0;
             const isExpanded = expandedHistKanban[key] === true;
             const headerColor = key === "__sin__" ? BRAND.stone : BRAND.blue;
@@ -1858,7 +1871,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                 flexDirection: "column",
                 gap: 10,
                 border: `1px solid ${BRAND.borderSoft}`,
-                opacity: isEmpty && totalHist === 0 ? 0.7 : 1,
+                opacity: isEmpty && totalProg === 0 && totalHist === 0 ? 0.7 : 1,
               }}>
                 <div style={{ borderBottom: `2px solid ${headerColor}`, paddingBottom: 8 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1885,9 +1898,39 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                       item.kind === "compra" ? renderCardCompra(item.data) : renderCardDespacho(item.data)
                     );
                   })()}
-                  {isEmpty && totalHist === 0 && <div style={{ fontSize: 11, color: BRAND.stone, fontStyle: "italic", textAlign: "center", padding: "20px 4px" }}>
+                  {isEmpty && totalProg === 0 && totalHist === 0 && <div style={{ fontSize: 11, color: BRAND.stone, fontStyle: "italic", textAlign: "center", padding: "20px 4px" }}>
                     Sin movimientos pendientes
                   </div>}
+
+                  {/* Seccion colapsable de Programados / En ruta — entre pendientes y entregados */}
+                  {totalProg > 0 && <>
+                    <button
+                      onClick={() => setExpandedProgKanban(s => ({ ...s, [key]: !(s[key] !== false) }))}
+                      style={{
+                        marginTop: total > 0 ? 12 : 0,
+                        padding: "8px 10px",
+                        background: BRAND.blueSoft,
+                        border: `1px solid ${BRAND.blue}40`,
+                        borderRadius: R.sm,
+                        color: BRAND.blue,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
+                      <span>📅 Programados / En ruta ({totalProg})</span>
+                      <span style={{ fontSize: 10 }}>{progExpanded ? "▾ ocultar" : "▸ mostrar"}</span>
+                    </button>
+                    {progExpanded && <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
+                      {items.programados
+                        .sort((a, b) => (a.fechaProgramada || "9999").localeCompare(b.fechaProgramada || "9999"))
+                        .map(renderCardDespacho)}
+                    </div>}
+                  </>}
 
                   {/* Seccion colapsable de Entregados (historial del proyecto) */}
                   {totalHist > 0 && <>
