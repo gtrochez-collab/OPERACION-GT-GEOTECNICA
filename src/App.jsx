@@ -1,38 +1,26 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import HRModule from "./HRModule.jsx";
 import PurchasesModule from "./PurchasesModule.jsx";
 import OperationsModule from "./OperationsModule.jsx";
 import LogisticsModule from "./LogisticsModule.jsx";
+import ChatModule, { fetchUnreadSummary, playBeep } from "./ChatModule.jsx";
 import { onSyncStateChange } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { BRAND, FONT, R, SP } from "./theme.js";
-
-// ── Credenciales y roles ──
-const USERS = [
-  { username: "administrador", password: "1234geo", role: "admin", label: "Administrador" },
-  { username: "asistente", password: "asistente1234", role: "asistente", label: "Asistente" },
-  { username: "carolina", password: "carolina1234", role: "tesoreria", label: "Lic. Carolina Flores-Hernandez" },
-  { username: "gerencia", password: "gerencia1234", role: "gerencia", label: "Gerencia" },
-  { username: "gerson", password: "gerson1234", role: "coordinador", label: "Lic. Gerson Trochez" },
-  { username: "christian", password: "christian1234", role: "costos", label: "Lic. Christian Gallo" },
-  { username: "oscarpaz", password: "oscarpaz1234", role: "logistica", label: "Oscar Paz" },
-  { username: "jorge", password: "jorge1234", role: "recepcion", label: "Jorge Castellanos" },
-];
-
-const ROLE_LABEL = {
-  admin: "Administrador",
-  asistente: "Asistente",
-  tesoreria: "Tesoreria",
-  gerencia: "Gerencia (solo lectura)",
-  coordinador: "Coordinador de Operaciones",
-  costos: "Costos / Operaciones",
-  logistica: "Logistica / Flota",
-  recepcion: "Recepcion / Logistica",
-};
+import { USERS, ROLE_LABEL } from "./users.js";
 
 // ── Modulos del sistema ──
 // Cada modulo tiene un acento de color distinto (complementarios al naranja de marca).
 const MODULES = [
+  {
+    id: "geochat",
+    name: "GeoChat",
+    icon: "💬",
+    desc: "Mensajeria interna del equipo — canales y mensajes directos",
+    accent: "#1A4A4A", // verde azulado oscuro, distinto al resto
+    accentSoft: "rgba(26,74,74,0.10)",
+    roles: ["admin", "asistente", "tesoreria", "gerencia", "coordinador", "costos", "logistica", "recepcion"], // todos
+  },
   {
     id: "rrhh",
     name: "Recursos Humanos",
@@ -86,6 +74,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [activeModule, setActiveModule] = useState(null);
   const [syncState, setSyncState] = useState({ ok: true, error: null });
+  const [chatUnread, setChatUnread] = useState(0); // badge global de mensajes no leidos
+  const lastChatTotalRef = useRef(0); // para detectar mensajes NUEVOS (no solo unread total)
 
   useEffect(() => {
     try {
@@ -95,6 +85,32 @@ export default function App() {
   }, []);
 
   useEffect(() => onSyncStateChange((s) => setSyncState(s)), []);
+
+  // ── Watcher global de mensajes nuevos de GeoChat ──
+  // Polls cada 10s mientras este logueado. Si detecta mensajes nuevos de
+  // OTROS usuarios mientras NO esta en el modulo de chat, reproduce sonido.
+  // El modulo de chat tiene su propio polling mas agresivo (5s) que toma
+  // precedencia cuando esta abierto — este watcher es para alertar fuera del
+  // modulo.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const { total } = await fetchUnreadSummary(user.username);
+        if (cancelled) return;
+        // Si subio el total Y no estoy en chat, suena
+        if (total > lastChatTotalRef.current && activeModule !== "geochat" && !document.hidden) {
+          playBeep();
+        }
+        lastChatTotalRef.current = total;
+        setChatUnread(total);
+      } catch {}
+    };
+    tick(); // primera carga inmediata
+    const t = setInterval(tick, 10000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [user, activeModule]);
 
   const login = (username, password) => {
     const found = USERS.find((u) => u.username === username && u.password === password);
@@ -126,6 +142,7 @@ export default function App() {
   if (activeModule === "compras-operaciones") return <>{syncBanner}<PurchasesModule {...moduleProps} /></>;
   if (activeModule === "operations-cc") return <>{syncBanner}<OperationsModule {...moduleProps} /></>;
   if (activeModule === "logistica") return <>{syncBanner}<LogisticsModule {...moduleProps} /></>;
+  if (activeModule === "geochat") return <>{syncBanner}<ChatModule {...moduleProps} /></>;
 
   // ── Panel de Control ──
   const availableModules = MODULES.filter((m) => m.roles.includes(user.role));
@@ -193,7 +210,12 @@ export default function App() {
       <main style={{ maxWidth: 1200, margin: "0 auto", padding: "40px 40px 64px 40px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 20 }}>
           {availableModules.map((m) => (
-            <ModuleCard key={m.id} m={m} onOpen={() => !m.soon && setActiveModule(m.id)} />
+            <ModuleCard
+              key={m.id}
+              m={m}
+              badge={m.id === "geochat" && chatUnread > 0 ? chatUnread : 0}
+              onOpen={() => !m.soon && setActiveModule(m.id)}
+            />
           ))}
         </div>
       </main>
@@ -214,7 +236,7 @@ export default function App() {
 }
 
 // ── Tarjeta de modulo ──
-function ModuleCard({ m, onOpen }) {
+function ModuleCard({ m, onOpen, badge = 0 }) {
   const [hover, setHover] = useState(false);
   const isHero = m.hero && !m.soon;
   return (
@@ -248,6 +270,21 @@ function ModuleCard({ m, onOpen }) {
       {isHero && (
         <div style={{ position: "absolute", top: 14, right: 14, background: BRAND.orange, color: "#fff", fontSize: 9, fontWeight: 700, padding: "4px 10px", borderRadius: R.full, letterSpacing: 1.2, textTransform: "uppercase" }}>
           Destacado
+        </div>
+      )}
+
+      {badge > 0 && (
+        <div style={{
+          position: "absolute", top: 14, right: 14,
+          background: BRAND.red, color: "#fff",
+          fontSize: 11, fontWeight: 800,
+          padding: "4px 10px",
+          borderRadius: R.full,
+          minWidth: 24, textAlign: "center",
+          boxShadow: "0 2px 8px rgba(192,57,43,0.4)",
+          animation: "pulse 1.5s ease-in-out infinite",
+        }}>
+          {badge > 99 ? "99+" : badge}
         </div>
       )}
 
