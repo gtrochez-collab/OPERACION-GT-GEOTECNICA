@@ -1639,6 +1639,9 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         const renderCardDespacho = (d) => {
           const tCfg = tipoDespCfg(d.tipo);
           const v = vehicles.find(x => x.id === d.vehicleId);
+          // Si el despacho vino de una compra, buscar el purchase original
+          // para poder descargar la Ficha de Entrega (cotizacion + comprobante).
+          const sourcePurchase = d.sourcePurchaseId ? purchases.find(p => p.id === d.sourcePurchaseId) : null;
           return (
             <div
               key={`d-${d.id}`}
@@ -1674,6 +1677,34 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
               </div>
               {(v || d.motorista) && <div style={{ fontSize: 10, color: BRAND.graphite, marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
                 🚛 {v?.plate || "Sin vehiculo"} · {d.motorista || "Sin motorista"}
+              </div>}
+
+              {/* Ficha de Entrega — disponible para CUALQUIER despacho que vino de una compra
+                  (pendiente o programado), no solo cards "🛒 De compra" sin despacho. */}
+              {sourcePurchase && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
+                <button
+                  onClick={async () => {
+                    try {
+                      await descargarFichaCompra(sourcePurchase, allProjects);
+                    } catch (err) {
+                      alert("No se pudo generar la ficha: " + (err?.message || err));
+                    }
+                  }}
+                  style={{
+                    width: "100%",
+                    background: BRAND.charcoal,
+                    color: BRAND.beige,
+                    border: "none",
+                    padding: "7px 10px",
+                    borderRadius: R.sm,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    letterSpacing: 0.3,
+                  }}
+                  title={`Ficha de Entrega original — ${sourcePurchase.provider}`}
+                >📄 Descargar Ficha de Entrega</button>
               </div>}
 
               {/* Fecha necesaria — editable inline. Para que vos pongas el deadline o lo cambies. */}
