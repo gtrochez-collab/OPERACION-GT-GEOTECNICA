@@ -2123,7 +2123,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           </div>}
         </div>
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-          <button onClick={async () => { try { await descargarFichaCompra(p, allProjects); } catch (err) { alert("No se pudo generar la ficha: " + (err?.message || err)); } }} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Descargar Ficha de Entrega</button>
+          <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (err) { alert("No se pudo generar la ficha: " + (err?.message || err)); } }} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Descargar Ficha de Entrega</button>
           {canSendToLogistics && <button onClick={() => setModal({ t: "send-pickup", d: p })} style={{ background: "#E8762D", color: "#fff", border: "none", padding: "9px 10px", borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", letterSpacing: 0.3 }}>🚛 Enviar a Logistica</button>}
         </div>
       </div>;
@@ -2234,7 +2234,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                             dateRight: d?.fechaProgramada ? `📅 ${new Date(d.fechaProgramada + "T00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "",
                             subline: d?.motorista ? `🚛 ${d.motorista}` : null,
                             actions: <div style={{ marginTop: 6 }}>
-                              <button onClick={async () => { try { await descargarFichaCompra(p, allProjects); } catch (e) { alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: CHARCOAL, border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>📄 Ficha</button>
+                              <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: CHARCOAL, border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>📄 Ficha</button>
                             </div>,
                           });
                         })}
