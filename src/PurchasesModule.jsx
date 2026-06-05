@@ -41,7 +41,7 @@ const TREASURY_STATUSES = {
 const DELIVERY_STATUSES = {
   pendiente_entrega: { label: "Pendiente de entrega",      color: "#7C3AED", bg: "#F3E8FF", icon: "📦" },
   recibido:          { label: "Materiales recibidos",       color: "#0891B2", bg: "#ECFEFF", icon: "✅" },
-  ficha_adjunta:     { label: "Ficha de recibido adjunta",  color: "#D97706", bg: "#FEF3C7", icon: "📋" },
+  ficha_adjunta:     { label: "Ficha de recibido adjunta",  color: "#059669", bg: "#DCFCE7", icon: "📋" },
   cerrado:           { label: "Compra cerrada",             color: "#059669", bg: "#DCFCE7", icon: "🔒" },
 };
 
@@ -2038,6 +2038,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       return d.estado === "pendiente" || d.estado === "programado" || d.estado === "en_ruta";
     });
 
+    // COMPRAS LISTAS PARA CIERRE CONTABLE — ya tienen ficha de recibido adjunta
+    // (Jorge subio el PDF firmado) pero todavia no estan cerradas contablemente.
+    // Ana imprime ficha + factura del proveedor y cierra con contabilidad.
+    const paraCierreContable = cp.filter(p =>
+      p.deliveryStatus === "ficha_adjunta" && (p.status === "pagado" || p.status === "finalizado")
+    );
+
     // Agrupar pendientesCoordinar por proyecto
     const grupos = {};
     pendientesCoordinar.forEach(p => {
@@ -2064,11 +2071,76 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           <div style={{ fontSize: 26, fontWeight: 800, color: "#0891B2", marginTop: 4 }}>{enviadasALogistica.length}</div>
           <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Enviadas a Logistica</div>
         </div>
+        <div style={{ background: "#fff", border: paraCierreContable.length > 0 ? "1px solid #6EE7B7" : "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 180 }}>
+          <div style={{ fontSize: 22 }}>📋</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#059669", marginTop: 4 }}>{paraCierreContable.length}</div>
+          <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Para cierre contable</div>
+        </div>
       </div>
 
       <div style={{ background: "#FFFBEB", border: "1px solid #F59E0B", borderRadius: 12, padding: 14, fontSize: 13, color: "#78350F" }}>
         💼 <b>Flujo:</b> Lic. Carolina paga → aparece aca → vos coordinas con el proveedor cuando pueden recoger → click <b>"Enviar a Logistica"</b> → la orden cae automaticamente en el modulo de Logistica con vehiculo + motorista por asignar.
       </div>
+
+      {/* Seccion: Listas para cierre contable — compras con ficha de recibido ya adjunta */}
+      {paraCierreContable.length > 0 && <div style={{ background: "#ECFDF5", border: "2px solid #059669", borderRadius: 12, padding: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "#065F46", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            📋 Listas para cierre contable ({paraCierreContable.length})
+          </div>
+          <Badge color="#059669">✓ Ficha adjunta</Badge>
+        </div>
+        <div style={{ fontSize: 12, color: "#065F46", marginBottom: 12, lineHeight: 1.5 }}>
+          Jorge ya subio la ficha de recibido firmada en estas compras. <b>Imprimi la ficha + la factura del proveedor</b> y llevalas a contabilidad. Una vez cerrada con contabilidad, marcala como cerrada para que ya no aparezca aca.
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {paraCierreContable.map(p => {
+            const proj = (customProjects || []).find(x => x.short === p.projectCode);
+            return <div key={p.id} style={{ background: "#fff", border: "1px solid #6EE7B7", borderRadius: 8, padding: 12, display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}>
+              <div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                  <Badge color={cc.color}>{p.projectCode}</Badge>
+                  <span style={{ fontWeight: 800, fontSize: 14, color: CHARCOAL }}>{p.provider}</span>
+                  {p.amount && <span style={{ fontSize: 13, color: "#059669", fontWeight: 700, marginLeft: 8 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</span>}
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.4 }}>{p.description}</div>
+                {p.delivery?.actualDate && <div style={{ fontSize: 11, color: "#65A30D", marginTop: 4 }}>
+                  ✓ Recibido el {new Date(p.delivery.actualDate + "T00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "long", year: "numeric" })}
+                  {p.delivery.receivedBy && ` por ${p.delivery.receivedBy}`}
+                </div>}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexDirection: "column" }}>
+                <button
+                  onClick={async () => {
+                    try {
+                      await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name);
+                    } catch (err) {
+                      alert("No se pudo generar la ficha: " + (err?.message || err));
+                    }
+                  }}
+                  style={{
+                    background: CHARCOAL, color: "#F0EBE3", border: "none",
+                    padding: "8px 14px", borderRadius: 6,
+                    fontSize: 11, fontWeight: 700, cursor: "pointer",
+                    fontFamily: "inherit", whiteSpace: "nowrap",
+                  }}
+                  title="Descargar ficha de recibido firmada + cotizacion + comprobante de pago"
+                >📄 Imprimir ficha</button>
+                <button
+                  onClick={() => setModal({ t: "detail", d: p })}
+                  style={{
+                    background: "#059669", color: "#fff", border: "none",
+                    padding: "8px 14px", borderRadius: 6,
+                    fontSize: 11, fontWeight: 700, cursor: "pointer",
+                    fontFamily: "inherit", whiteSpace: "nowrap",
+                  }}
+                  title="Abrir detalle para marcar como cerrada con contabilidad"
+                >🔒 Cerrar contable</button>
+              </div>
+            </div>;
+          })}
+        </div>
+      </div>}
 
       {/* Kanban por proyecto */}
       {projKeys.length === 0
