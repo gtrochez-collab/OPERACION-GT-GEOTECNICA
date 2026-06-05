@@ -1307,15 +1307,12 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
 
   // ── RENDER RUTAS / DESPACHOS ──
   const renderRutas = () => {
-    // Compras que estan pagadas/finalizadas y aun no tienen despacho ni fueron recibidas
-    const comprasPendientes = purchases.filter(p => {
-      if (p.status !== "pagado" && p.status !== "finalizado") return false;
-      // Si ya esta cerrado (recibido), no necesita despacho nuevo
-      if (p.deliveryStatus === "cerrado") return false;
-      // Si ya tiene un despacho asociado, no la mostramos otra vez
-      if (despachos.some(d => d.sourcePurchaseId === p.id)) return false;
-      return true;
-    });
+    // CAMBIO jun-2026: Logistica ya NO muestra automaticamente las compras pagadas.
+    // Ahora Ana Vasquez (asistente de compras) coordina con el proveedor y CREA la
+    // orden de recogida desde el modulo de Compras. La orden cae aca como un
+    // despacho normal con sourcePurchaseId. Esto evita que Oscar reciba ordenes
+    // sin coordinar y sin saber cuando puede ir a retirar.
+    const comprasPendientes = []; // ya no se muestran auto — Ana las libera manualmente
 
     // Filtrar despachos
     let despFiltered = despachos.filter(d => {

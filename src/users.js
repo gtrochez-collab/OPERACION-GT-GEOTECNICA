@@ -7,25 +7,27 @@
 // =====================================================================
 
 export const USERS = [
-  { username: "administrador", password: "1234geo",        role: "admin",       label: "Administrador" },
-  { username: "asistente",     password: "asistente1234",  role: "asistente",   label: "Asistente" },
-  { username: "carolina",      password: "carolina1234",   role: "tesoreria",   label: "Lic. Carolina Flores-Hernandez" },
-  { username: "gerencia",      password: "gerencia1234",   role: "gerencia",    label: "Gerencia" },
-  { username: "gerson",        password: "gerson1234",     role: "coordinador", label: "Lic. Gerson Trochez" },
-  { username: "christian",     password: "christian1234",  role: "costos",      label: "Lic. Christian Gallo" },
-  { username: "oscarpaz",      password: "oscarpaz1234",   role: "logistica",   label: "Oscar Paz" },
-  { username: "jorge",         password: "jorge1234",      role: "recepcion",   label: "Jorge Castellanos" },
+  { username: "administrador", password: "1234geo",        role: "admin",              label: "Lic. Gerson Trochez" },
+  { username: "asistente",     password: "asistente1234",  role: "asistente",          label: "Asistente" },
+  { username: "carolina",      password: "carolina1234",   role: "tesoreria",          label: "Lic. Carolina Flores-Hernandez" },
+  { username: "gerencia",      password: "gerencia1234",   role: "gerencia",           label: "Gerencia" },
+  { username: "gerson",        password: "gerson1234",     role: "coordinador",        label: "Lic. Gerson Trochez" },
+  { username: "christian",     password: "christian1234",  role: "costos",             label: "Lic. Christian Gallo" },
+  { username: "oscarpaz",      password: "oscarpaz1234",   role: "logistica",          label: "Oscar Paz" },
+  { username: "jorge",         password: "jorge1234",      role: "recepcion",          label: "Jorge Castellanos" },
+  { username: "ana",           password: "ana1234",        role: "asistente_compras",  label: "Ana Vasquez" },
 ];
 
 export const ROLE_LABEL = {
-  admin:       "Administrador",
-  asistente:   "Asistente",
-  tesoreria:   "Tesoreria",
-  gerencia:    "Gerencia (solo lectura)",
-  coordinador: "Coordinador de Operaciones",
-  costos:      "Costos / Operaciones",
-  logistica:   "Logistica / Flota",
-  recepcion:   "Recepcion / Logistica",
+  admin:              "Administrador",
+  asistente:          "Asistente",
+  tesoreria:          "Tesoreria",
+  gerencia:           "Gerencia (solo lectura)",
+  coordinador:        "Coordinador de Operaciones",
+  costos:             "Costos / Operaciones",
+  logistica:          "Logistica / Flota",
+  recepcion:          "Recepcion / Logistica",
+  asistente_compras:  "Asistente de Compras / Coordinacion",
 };
 
 // Color para el avatar de cada usuario (rotativo segun el username)

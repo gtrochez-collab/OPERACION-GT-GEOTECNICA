@@ -645,7 +645,7 @@ function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, ren
 // ── PurchaseFormImpl: nivel de modulo ──
 // Mismo razonamiento que ProjectFormImpl: vive aqui para que React mantenga la
 // identidad del componente estable entre renders del padre. Recibe deps por props.
-function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, addAudit, saveOrAlert }) {
+function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, providers, addAudit, saveOrAlert }) {
   const [saving, setSaving] = useState(false);
   const [f, setF] = useState(purchase || {
     company: co, projectCode: "", provider: "", description: "",
@@ -670,7 +670,31 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           {allProjects.map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}{p.isCustom ? " (nuevo)" : ""}{p.code ? "" : " · sin codigo"}</option>)}
         </select>
       </div>
-      <Input label="Proveedor" value={f.provider} onChange={e => u("provider", e.target.value)} placeholder="Nombre del proveedor" />
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Proveedor</span>
+          {(providers || []).length > 0 && <span style={{ fontSize: 10, color: "#94A3B8", fontStyle: "italic" }}>{(providers || []).length} conocidos</span>}
+        </label>
+        <input
+          list="providers-datalist"
+          style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, outline: "none", background: "#F8FAFC" }}
+          value={f.provider}
+          onChange={e => {
+            const newName = e.target.value;
+            u("provider", newName);
+            // Si matchea exactamente un proveedor conocido, auto-fill su primera cuenta BAC
+            const match = (providers || []).find(p => (p.name || "").trim().toLowerCase() === newName.trim().toLowerCase());
+            if (match && match.bankAccounts?.length > 0 && !f.bacAccount) {
+              const bac = match.bankAccounts.find(b => /bac/i.test(b.bank || "")) || match.bankAccounts[0];
+              if (bac?.number) u("bacAccount", bac.number);
+            }
+          }}
+          placeholder="Escribe o elige de la lista"
+        />
+        <datalist id="providers-datalist">
+          {(providers || []).map(p => <option key={p.id} value={p.name} />)}
+        </datalist>
+      </div>
       <Input label="N° de Cotizacion" value={f.quoteNumber} onChange={e => u("quoteNumber", e.target.value)} placeholder="Ej: COT-2026-0123" />
       <div style={{ gridColumn: "1/-1" }}>
         <Textarea label="Descripcion de la compra" value={f.description} onChange={e => u("description", e.target.value)} placeholder="Detalle del bien o servicio a adquirir" />
@@ -821,6 +845,191 @@ function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
   </div>;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// ProviderFormImpl: form de proveedor (CRUD)
+// ─────────────────────────────────────────────────────────────────────────
+function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider }) {
+  const [f, setF] = useState(provider || {
+    id: "",
+    name: "",
+    phones: [""],
+    bankAccounts: [{ bank: "", type: "", number: "", holder: "" }],
+    contactName: "",
+    contactEmail: "",
+    notes: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const isEdit = !!provider;
+
+  const setPhone = (idx, v) => setF(p => ({ ...p, phones: p.phones.map((x, i) => i === idx ? v : x) }));
+  const addPhone = () => setF(p => ({ ...p, phones: [...(p.phones || []), ""] }));
+  const removePhone = (idx) => setF(p => ({ ...p, phones: p.phones.filter((_, i) => i !== idx) }));
+
+  const setBank = (idx, k, v) => setF(p => ({ ...p, bankAccounts: p.bankAccounts.map((b, i) => i === idx ? { ...b, [k]: v } : b) }));
+  const addBank = () => setF(p => ({ ...p, bankAccounts: [...(p.bankAccounts || []), { bank: "", type: "", number: "", holder: "" }] }));
+  const removeBank = (idx) => setF(p => ({ ...p, bankAccounts: p.bankAccounts.filter((_, i) => i !== idx) }));
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 12, fontSize: 12, color: "#1E40AF" }}>
+      💡 Esta info se usa para que el equipo de coordinacion (Ana) llame al proveedor, sepa donde retirar y haga ordenes de pago a la cuenta correcta.
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <Input label="Nombre del proveedor *" value={f.name} onChange={e => u("name", e.target.value)} placeholder="Razon social o nombre comercial" />
+      <Input label="Persona de contacto" value={f.contactName} onChange={e => u("contactName", e.target.value)} placeholder="Ej: Ing. Juan Perez" />
+      <Input label="Email" value={f.contactEmail} onChange={e => u("contactEmail", e.target.value)} placeholder="contacto@proveedor.com" />
+    </div>
+
+    {/* Telefonos */}
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📞 Telefonos</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {(f.phones || []).map((ph, i) => (
+          <div key={i} style={{ display: "flex", gap: 8 }}>
+            <input style={{ flex: 1, padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} value={ph} onChange={e => setPhone(i, e.target.value)} placeholder={`Telefono ${i + 1}`} />
+            {(f.phones.length > 1) && <Btn small variant="danger" onClick={() => removePhone(i)}>×</Btn>}
+          </div>
+        ))}
+        <Btn small variant="ghost" onClick={addPhone}>+ Agregar telefono</Btn>
+      </div>
+    </div>
+
+    {/* Cuentas bancarias */}
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🏦 Cuentas bancarias</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {(f.bankAccounts || []).map((b, i) => (
+          <div key={i} style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 10, display: "grid", gridTemplateColumns: "1fr 1fr 2fr 1fr auto", gap: 8 }}>
+            <Input label={i === 0 ? "Banco" : ""} value={b.bank} onChange={e => setBank(i, "bank", e.target.value)} placeholder="Ej: BAC, Ficohsa" />
+            <Input label={i === 0 ? "Tipo" : ""} value={b.type} onChange={e => setBank(i, "type", e.target.value)} placeholder="Ahorros/Corriente" />
+            <Input label={i === 0 ? "Numero de cuenta" : ""} value={b.number} onChange={e => setBank(i, "number", e.target.value)} placeholder="Ej: 10-251-000123" />
+            <Input label={i === 0 ? "Titular" : ""} value={b.holder} onChange={e => setBank(i, "holder", e.target.value)} placeholder="Nombre del titular" />
+            <div style={{ display: "flex", alignItems: "flex-end" }}>
+              {(f.bankAccounts.length > 1) && <Btn small variant="danger" onClick={() => removeBank(i)}>×</Btn>}
+            </div>
+          </div>
+        ))}
+        <Btn small variant="ghost" onClick={addBank}>+ Agregar cuenta bancaria</Btn>
+      </div>
+    </div>
+
+    <Textarea label="Notas internas" value={f.notes} onChange={e => u("notes", e.target.value)} placeholder="Cualquier observacion: horarios, persona de planta, condiciones especiales..." />
+
+    {/* Botones */}
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, paddingTop: 12, borderTop: "1px solid #E2E8F0", alignItems: "center" }}>
+      <div>
+        {isEdit && deleteProvider && <Btn small variant="danger" onClick={async () => {
+          if (!confirm(`¿Eliminar proveedor "${f.name}"? Esta accion no se puede deshacer.`)) return;
+          await deleteProvider(f.id);
+          setModal(null);
+        }}>🗑 Eliminar proveedor</Btn>}
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cancelar</Btn>
+        <Btn variant="success" disabled={saving} onClick={async () => {
+          if (!f.name?.trim()) return alert("El nombre del proveedor es obligatorio");
+          setSaving(true);
+          try {
+            // Limpiar phones y bankAccounts vacios
+            const cleanPhones = (f.phones || []).map(s => s.trim()).filter(Boolean);
+            const cleanBanks = (f.bankAccounts || []).filter(b => b.bank?.trim() || b.number?.trim());
+            await upsertProvider({ ...f, name: f.name.trim(), phones: cleanPhones, bankAccounts: cleanBanks, autoImported: false });
+            setModal(null);
+          } finally {
+            setSaving(false);
+          }
+        }}>{saving ? "..." : (isEdit ? "💾 Guardar" : "+ Crear proveedor")}</Btn>
+      </div>
+    </div>
+  </div>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// SendPickupFormImpl: form para enviar una compra a Logistica como orden
+// de recogida. Ana lo usa despues de hablar con el proveedor.
+// ─────────────────────────────────────────────────────────────────────────
+function SendPickupFormImpl({ purchase, provider, setModal, enviarAOrdenRecogida }) {
+  const mañana = new Date();
+  mañana.setDate(mañana.getDate() + 1);
+  const defaultDate = mañana.toISOString().slice(0, 10);
+
+  const [fechaConfirmada, setFechaConfirmada] = useState(defaultDate);
+  const [contactoProveedor, setContactoProveedor] = useState(provider?.contactName || "");
+  const [telefono, setTelefono] = useState(provider?.phones?.[0] || "");
+  const [notas, setNotas] = useState("");
+  const [sending, setSending] = useState(false);
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: 12, fontSize: 12, color: "#78350F" }}>
+      <b>Compra:</b> {purchase.provider} — {purchase.description}<br />
+      <b>Proyecto destino:</b> {purchase.projectCode}
+    </div>
+
+    <Input
+      label="Fecha confirmada de retiro *"
+      type="date"
+      value={fechaConfirmada}
+      onChange={e => setFechaConfirmada(e.target.value)}
+      hint="Cuando el proveedor te dijo que puedes ir a retirar"
+    />
+
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <Input
+        label="Persona de contacto en proveedor"
+        value={contactoProveedor}
+        onChange={e => setContactoProveedor(e.target.value)}
+        placeholder="Ej: Ing. Juan Perez"
+      />
+      <Input
+        label="Telefono del contacto"
+        value={telefono}
+        onChange={e => setTelefono(e.target.value)}
+        placeholder="Ej: +504 9999-9999"
+      />
+    </div>
+
+    <Textarea
+      label="Notas / instrucciones para el motorista"
+      value={notas}
+      onChange={e => setNotas(e.target.value)}
+      placeholder={"Ej:\n• Direccion exacta del proveedor\n• Cargar por puerta lateral\n• Llevar transporte cerrado\n• Pedir facturas A y B"}
+    />
+
+    <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 10, padding: 12, fontSize: 12, color: "#065F46" }}>
+      ✓ Al enviar, esta orden cae automaticamente en el modulo de Logistica. Oscar/Jorge le asignan vehiculo + motorista y la marcan en ruta cuando salgan.
+    </div>
+
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 12, borderTop: "1px solid #E2E8F0" }}>
+      <Btn variant="ghost" onClick={() => setModal(null)} disabled={sending}>Cancelar</Btn>
+      <Btn variant="success" disabled={sending} onClick={async () => {
+        if (!fechaConfirmada) return alert("La fecha confirmada es obligatoria");
+        setSending(true);
+        try {
+          const { ok } = await enviarAOrdenRecogida(purchase, {
+            fechaConfirmada,
+            contactoProveedor: contactoProveedor.trim(),
+            notas: [
+              contactoProveedor.trim() ? `Contacto: ${contactoProveedor.trim()}` : "",
+              telefono.trim() ? `Telefono: ${telefono.trim()}` : "",
+              notas.trim(),
+            ].filter(Boolean).join("\n"),
+          });
+          if (ok) {
+            setModal(null);
+            alert("✓ Orden de recogida enviada a Logistica. Aparece automaticamente en el Kanban de Oscar/Jorge.");
+          } else {
+            alert("⚠️ Se guardo localmente pero hubo un problema sincronizando con la nube. Reintenta si es necesario.");
+            setModal(null);
+          }
+        } finally {
+          setSending(false);
+        }
+      }}>{sending ? "Enviando..." : "🚛 Enviar a Logistica"}</Btn>
+    </div>
+  </div>;
+}
+
 // ── MODULO ──
 export default function PurchasesModule({ userRole, userName, onBack, onLogout }) {
   const isAdmin = userRole === "admin";
@@ -828,6 +1037,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const isGerencia = userRole === "gerencia";
   const isCostos = userRole === "costos";
   const isRecepcion = userRole === "recepcion";
+  const isAsistenteCompras = userRole === "asistente_compras";
 
   // Permisos (segregacion de funciones):
   // admin → Operaciones: crea, edita borradores, valida, envia a Tesoreria, edita proyectos.
@@ -839,24 +1049,42 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // gerencia → solo lectura.
   // recepcion (Jorge Castellanos) → SOLO subir/editar fichas de recibido de compras
   //         ya pagadas. No puede crear solicitudes, ni proyectos, ni registrar pagos.
-  //         Cambio solicitado 01-jun-2026.
-  const canCreate = isAdmin || isCostos;                       // crear/editar/validar solicitudes + editar proyectos
-  const canPay = isTesoreria;                                  // SOLO Carolina registra pago y cambia estado financiero
-  const canViewOnly = isGerencia;                              // solo gerencia es read-only
-  const canEditDelivery = isAdmin || isCostos || isRecepcion;  // subir/editar fichas de recibido
+  // asistente_compras (Ana Vasquez) → SOLO la vista "Por coordinar" (kanban de compras
+  //         pagadas) + Proveedores (CRUD). NO crea solicitudes, NO aprueba, NO paga.
+  //         Su funcion: coordinar con proveedores la fecha de retiro y enviar la orden
+  //         a Logistica cuando este confirmada. Cambio solicitado jun-2026.
+  const canCreate = isAdmin || isCostos;                                          // crear/editar/validar solicitudes + editar proyectos
+  const canPay = isTesoreria;                                                     // SOLO Carolina registra pago y cambia estado financiero
+  const canViewOnly = isGerencia;                                                 // solo gerencia es read-only
+  const canEditDelivery = isAdmin || isCostos || isRecepcion;                     // subir/editar fichas de recibido
+  const canManageProviders = isAdmin || isCostos || isAsistenteCompras;           // CRUD de proveedores
+  const canSendToLogistics = isAdmin || isCostos || isAsistenteCompras;           // crear orden de recogida desde compra pagada
 
   const [co, setCo] = useState("geotecnica");
   const [purchases, setPurchases] = useState([]);
   const [customProjects, setCustomProjects] = useState([]);
+  const [providers, setProviders] = useState([]);
+  const [despachos, setDespachos] = useState([]); // shared con LogisticsModule — para saber si una compra ya tiene orden de recogida
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
   const [sb, setSb] = useState(true);
-  const [sec, setSec] = useState("list");
+  // Default section depende del rol:
+  // - Ana (asistente_compras) → su vista "ana" (Por coordinar)
+  // - Jorge (recepcion) → "list" (para subir fichas)
+  // - Resto → "list" (solicitudes normales)
+  const defaultSec = isAsistenteCompras ? "ana" : "list";
+  const [sec, setSec] = useState(defaultSec);
   const [filter, setFilter] = useState({ status: "", project: "", provider: "", from: "", to: "" });
 
   useEffect(() => {
     (async () => {
-      const [p, cps] = await Promise.all([store.get("cp-purchases"), store.get("cp-projects")]);
+      const [p, cps, prov, desp] = await Promise.all([
+        store.get("cp-purchases"),
+        store.get("cp-projects"),
+        store.get("cp-providers"),
+        store.get("lg-despachos"),
+      ]);
+      let purchasesArr = [];
       if (p) {
         // Migracion 1: asegurar treasuryStatus y deliveryStatus
         const migrated = p.map(x => ({
@@ -869,8 +1097,45 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         // cargarlos desde sus rows individuales para tener todo en memoria.
         const withFiles = await restoreFiles(migrated);
         setPurchases(withFiles);
+        purchasesArr = withFiles;
       }
       if (cps) setCustomProjects(cps);
+      if (Array.isArray(desp)) setDespachos(desp);
+
+      // Cargar proveedores existentes + auto-importar nombres de proveedores de las
+      // compras ya creadas (para que Ana pueda completar sus datos sin tener que
+      // re-tipearlos). Si un provider name ya esta en la lista, no se duplica.
+      const existingProviders = Array.isArray(prov) ? prov : [];
+      const knownNames = new Set(existingProviders.map(p => (p.name || "").trim().toLowerCase()));
+      const importedFromPurchases = [];
+      const seenInThisImport = new Set();
+      for (const pp of purchasesArr) {
+        const name = (pp.provider || "").trim();
+        if (!name) continue;
+        const lk = name.toLowerCase();
+        if (knownNames.has(lk) || seenInThisImport.has(lk)) continue;
+        seenInThisImport.add(lk);
+        importedFromPurchases.push({
+          id: uid(),
+          name,
+          phones: [],
+          bankAccounts: pp.bacAccount ? [{ bank: "BAC", type: "", number: pp.bacAccount, holder: name }] : [],
+          contactName: "",
+          contactEmail: "",
+          notes: "Importado automaticamente de solicitudes existentes — completar datos.",
+          autoImported: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      const finalProviders = [...existingProviders, ...importedFromPurchases];
+      setProviders(finalProviders);
+      if (importedFromPurchases.length > 0) {
+        // Solo guardar si hubo imports nuevos (no escribir si no hay cambios)
+        store.set("cp-providers", finalProviders);
+        console.info(`[Compras] Auto-importados ${importedFromPurchases.length} proveedores nuevos desde compras existentes.`);
+      }
+
       setLoaded(true);
     })();
   }, []);
@@ -983,6 +1248,67 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     }
   };
   const sCP = d => { setCustomProjects(d); store.set("cp-projects", d); };
+
+  // ── CRUD de Proveedores ──
+  const saveProviders = async (next) => {
+    setProviders(next);
+    return await store.set("cp-providers", next);
+  };
+  const upsertProvider = async (p) => {
+    const exists = providers.find(x => x.id === p.id);
+    const updated = { ...p, updatedAt: new Date().toISOString() };
+    const next = exists ? providers.map(x => x.id === p.id ? updated : x) : [...providers, { ...updated, id: p.id || uid(), createdAt: new Date().toISOString() }];
+    return await saveProviders(next);
+  };
+  const deleteProvider = async (id) => {
+    return await saveProviders(providers.filter(x => x.id !== id));
+  };
+  // Buscar proveedor por nombre (case-insensitive). Devuelve el objeto provider o null.
+  const findProviderByName = (name) => {
+    if (!name) return null;
+    const lk = name.trim().toLowerCase();
+    return providers.find(p => (p.name || "").trim().toLowerCase() === lk) || null;
+  };
+
+  // ── Enviar compra a Logistica como orden de recogida ──
+  // Crea un despacho en lg-despachos con la info necesaria para que Logistica
+  // coordine el retiro. Ana usa esto cuando ya hablo con el proveedor y
+  // confirmo la fecha de retiro.
+  const enviarAOrdenRecogida = async (purchase, opts = {}) => {
+    const proj = (customProjects || []).find(p => p.short === purchase.projectCode);
+    const projectName = proj?.name || purchase.projectCode || "Proyecto";
+    const rec = {
+      id: uid(),
+      source: "compra",
+      sourcePurchaseId: purchase.id,
+      tipo: "material_compra",
+      descripcion: purchase.description || "",
+      origen: purchase.provider || "Proveedor",
+      destino: `Proyecto ${purchase.projectCode || ""}`.trim(),
+      projectCode: purchase.projectCode || "",
+      vehicleId: "",
+      motorista: "",
+      fechaNecesaria: opts.fechaConfirmada || "",
+      fechaProgramada: opts.fechaConfirmada || "",
+      fechaEjecutada: "",
+      estado: "pendiente",
+      // Info adicional de la coordinacion (lo que Ana coordino con el proveedor)
+      pickupInfo: {
+        coordinadoPor: userName || userRole,
+        coordinadoAt: new Date().toISOString(),
+        fechaConfirmada: opts.fechaConfirmada || "",
+        contactoProveedor: opts.contactoProveedor || "",
+        notas: opts.notas || "",
+      },
+      notas: opts.notas ? `[Coord. con proveedor]\n${opts.notas}` : "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const next = [...despachos, rec];
+    setDespachos(next);
+    const ok = await store.set("lg-despachos", next);
+    return { ok, despachoId: rec.id };
+  };
   const cp = purchases.filter(p => p.company === co);
 
   // Lista unificada de proyectos (base + custom con metadata adicional).
@@ -1633,6 +1959,235 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     </div>;
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // PROVEEDORES — CRUD compartido entre admin/costos/Ana
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderProviders = () => {
+    const sorted = providers.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 14, fontSize: 13, color: "#1E40AF" }}>
+        🏢 <b>{providers.length} proveedores registrados.</b> Cada compra que se crea con un proveedor nuevo se agrega aqui automaticamente para que <b>{isAsistenteCompras ? "vos completes" : "Ana complete"}</b> los datos (telefonos, cuentas bancarias, contacto). En la nueva solicitud aparecen como dropdown.
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 13, color: "#64748b" }}>
+          {providers.filter(p => p.autoImported && !p.phones?.length && !p.bankAccounts?.length).length} sin datos completos
+        </span>
+        {canManageProviders && <Btn variant="primary" onClick={() => setModal({ t: "provider-new" })}>+ Agregar proveedor</Btn>}
+      </div>
+      {sorted.length === 0
+        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 40, textAlign: "center", color: "#94A3B8" }}>
+            Aun no hay proveedores. Click en + Agregar proveedor.
+          </div>
+        : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 14 }}>
+            {sorted.map(p => {
+              const incompleto = !p.phones?.length || !p.bankAccounts?.length;
+              return <div
+                key={p.id}
+                onClick={() => canManageProviders && setModal({ t: "provider-edit", d: p })}
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${incompleto ? "#F59E0B" : "#E2E8F0"}`,
+                  borderLeft: `4px solid ${incompleto ? "#F59E0B" : cc.color}`,
+                  borderRadius: 12,
+                  padding: 16,
+                  cursor: canManageProviders ? "pointer" : "default",
+                  transition: "all 0.15s",
+                }}
+                onMouseEnter={e => canManageProviders && (e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)")}
+                onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: CHARCOAL, lineHeight: 1.3, flex: 1 }}>{p.name}</div>
+                  {incompleto && <Badge color="#F59E0B">⚠️ Sin datos</Badge>}
+                  {p.autoImported && !incompleto && <Badge color="#64748b">Auto</Badge>}
+                </div>
+                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#475569" }}>
+                  {p.contactName && <div>👤 {p.contactName}</div>}
+                  {p.phones?.length > 0 && <div>📞 {p.phones.join(" · ")}</div>}
+                  {p.contactEmail && <div>✉️ {p.contactEmail}</div>}
+                  {p.bankAccounts?.length > 0 && <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px dashed #E2E8F0" }}>
+                    🏦 {p.bankAccounts.map(b => `${b.bank}: ${b.number}`).join(" · ")}
+                  </div>}
+                  {(!p.phones?.length && !p.bankAccounts?.length) && <div style={{ fontStyle: "italic", color: "#94A3B8" }}>Sin telefono ni cuenta bancaria — click para completar</div>}
+                </div>
+              </div>;
+            })}
+          </div>}
+    </div>;
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ANA KANBAN — Compras pagadas pendientes de coordinar retiro con proveedor
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderAnaKanban = () => {
+    // Compras que YA fueron pagadas pero NO tienen orden de recogida (despacho) creada
+    const yaTieneDespacho = (purchaseId) => despachos.some(d => d.sourcePurchaseId === purchaseId);
+    const pendientesCoordinar = cp.filter(p => {
+      if (p.status !== "pagado" && p.status !== "finalizado") return false;
+      if (p.deliveryStatus === "cerrado") return false;
+      if (yaTieneDespacho(p.id)) return false;
+      return true;
+    });
+
+    // Tambien mostrar las ya enviadas a Logistica (pero solo despachos pendientes/programados)
+    // como una seccion separada para visibilidad de Ana
+    const enviadasALogistica = despachos.filter(d => {
+      if (!d.sourcePurchaseId) return false;
+      const p = cp.find(x => x.id === d.sourcePurchaseId);
+      if (!p) return false;
+      return d.estado === "pendiente" || d.estado === "programado" || d.estado === "en_ruta";
+    });
+
+    // Agrupar pendientesCoordinar por proyecto
+    const grupos = {};
+    pendientesCoordinar.forEach(p => {
+      const key = p.projectCode || "__sin__";
+      if (!grupos[key]) grupos[key] = [];
+      grupos[key].push(p);
+    });
+    const projKeys = Object.keys(grupos).sort((a, b) => {
+      if (a === "__sin__") return 1;
+      if (b === "__sin__") return -1;
+      return a.localeCompare(b);
+    });
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {/* Stats */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 180 }}>
+          <div style={{ fontSize: 22 }}>📦</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#E8762D", marginTop: 4 }}>{pendientesCoordinar.length}</div>
+          <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Por coordinar</div>
+        </div>
+        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 180 }}>
+          <div style={{ fontSize: 22 }}>🚛</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#0891B2", marginTop: 4 }}>{enviadasALogistica.length}</div>
+          <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Enviadas a Logistica</div>
+        </div>
+      </div>
+
+      <div style={{ background: "#FFFBEB", border: "1px solid #F59E0B", borderRadius: 12, padding: 14, fontSize: 13, color: "#78350F" }}>
+        💼 <b>Flujo:</b> Lic. Carolina paga → aparece aca → vos coordinas con el proveedor cuando pueden recoger → click <b>"Enviar a Logistica"</b> → la orden cae automaticamente en el modulo de Logistica con vehiculo + motorista por asignar.
+      </div>
+
+      {/* Kanban por proyecto */}
+      {projKeys.length === 0
+        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 60, textAlign: "center", color: "#94A3B8" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>✨</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: CHARCOAL, marginBottom: 4 }}>Todo coordinado</div>
+            <div style={{ fontSize: 13 }}>No hay compras pagadas pendientes de coordinar con proveedores.</div>
+          </div>
+        : <div style={{ display: "flex", gap: 14, overflowX: "auto", padding: "4px 4px 12px 4px" }}>
+            {projKeys.map(key => {
+              const items = grupos[key];
+              const proj = (customProjects || []).find(p => p.short === key);
+              const projDisplay = proj ? `${key}` : (key === "__sin__" ? "SIN PROYECTO" : key);
+              const projName = proj?.name || "";
+              return <div key={key} style={{
+                minWidth: 300,
+                maxWidth: 340,
+                flex: "0 0 auto",
+                background: "#F8F2E6",
+                borderRadius: 12,
+                padding: 14,
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                border: "1px solid #E8E1D3",
+              }}>
+                <div style={{ borderBottom: `3px solid ${cc.color}`, paddingBottom: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontWeight: 800, fontSize: 14, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.5 }}>
+                      {projDisplay}
+                    </div>
+                    <Badge color="#E8762D">{items.length}</Badge>
+                  </div>
+                  {projName && <div style={{ fontSize: 11, color: "#5C5853", marginTop: 4, lineHeight: 1.3 }}>{projName}</div>}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 700, overflowY: "auto" }}>
+                  {items.sort((a, b) => (a.paidAt || "").localeCompare(b.paidAt || "")).map(p => {
+                    const provider = findProviderByName(p.provider);
+                    return <div key={p.id} style={{
+                      background: "#fff",
+                      border: "1px solid #E2E8F0",
+                      borderLeft: "3px solid #059669",
+                      borderRadius: 8,
+                      padding: 12,
+                      transition: "all 0.15s",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <Badge color="#059669">💰 {p.status === "finalizado" ? "Pagado + comprobante" : "Pagado"}</Badge>
+                        {p.paidAt && <span style={{ fontSize: 9, color: "#64748b", fontWeight: 700 }}>{new Date(p.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}</span>}
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 4 }}>{p.provider}</div>
+                      <div style={{ fontSize: 12, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
+                      {p.amount && <div style={{ fontSize: 11, color: "#059669", fontWeight: 700, marginTop: 4 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</div>}
+
+                      {/* Info de contacto del proveedor */}
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #E2E8F0", fontSize: 11, color: "#475569" }}>
+                        {provider?.phones?.length > 0 || provider?.contactName ? <>
+                          {provider.contactName && <div>👤 {provider.contactName}</div>}
+                          {provider.phones?.length > 0 && <div>📞 <a href={`tel:${provider.phones[0]}`} style={{ color: "#0891B2", textDecoration: "none", fontWeight: 700 }}>{provider.phones[0]}</a>{provider.phones.length > 1 && ` · +${provider.phones.length - 1}`}</div>}
+                        </> : <div style={{ fontStyle: "italic", color: "#F59E0B", fontSize: 10 }}>
+                          ⚠️ Sin info de contacto. <button onClick={() => { setSec("providers"); }} style={{ background: "none", border: "none", color: "#0891B2", textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 10 }}>Agregar</button>
+                        </div>}
+                      </div>
+
+                      {/* Acciones */}
+                      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await descargarFichaCompra(p, allProjects);
+                            } catch (err) {
+                              alert("No se pudo generar la ficha: " + (err?.message || err));
+                            }
+                          }}
+                          style={{
+                            background: CHARCOAL, color: "#F0EBE3", border: "none",
+                            padding: "7px 10px", borderRadius: 6,
+                            fontSize: 11, fontWeight: 700, cursor: "pointer",
+                            fontFamily: "inherit",
+                          }}
+                        >📄 Descargar Ficha de Entrega</button>
+                        {canSendToLogistics && <button
+                          onClick={() => setModal({ t: "send-pickup", d: p })}
+                          style={{
+                            background: "#E8762D", color: "#fff", border: "none",
+                            padding: "9px 10px", borderRadius: 6,
+                            fontSize: 12, fontWeight: 800, cursor: "pointer",
+                            fontFamily: "inherit", letterSpacing: 0.3,
+                          }}
+                        >🚛 Enviar a Logistica</button>}
+                      </div>
+                    </div>;
+                  })}
+                </div>
+              </div>;
+            })}
+          </div>}
+
+      {/* Seccion enviadas a Logistica (para visibilidad) */}
+      {enviadasALogistica.length > 0 && <div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#0891B2", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>🚛 Ya enviadas a Logistica ({enviadasALogistica.length})</div>
+        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8, maxHeight: 300, overflowY: "auto" }}>
+          {enviadasALogistica.map(d => {
+            const p = cp.find(x => x.id === d.sourcePurchaseId);
+            if (!p) return null;
+            const estCfg = { pendiente: { c: "#E8762D", l: "📌 Pendiente en Logistica" }, programado: { c: "#3E6A99", l: "📅 Programado" }, en_ruta: { c: "#D4A017", l: "🚛 En ruta" } }[d.estado] || { c: "#64748b", l: d.estado };
+            return <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#F8FAFC", borderRadius: 6, fontSize: 12 }}>
+              <div>
+                <b>{p.provider}</b> · {p.description?.slice(0, 60)}
+                <span style={{ marginLeft: 8, color: "#94A3B8" }}>· {p.projectCode}</span>
+              </div>
+              <Badge color={estCfg.c}>{estCfg.l}</Badge>
+            </div>;
+          })}
+        </div>
+      </div>}
+    </div>;
+  };
+
   const renderList = () => {
     const dataSorted = filtered.slice().sort((a, b) => {
       // Orden: primero validados (pendientes de pago), luego pagados sin comprobante, luego borradores, al final finalizados
@@ -1730,12 +2285,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     if (!modal) return null;
     const m = modal;
     switch (m.t) {
-      case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} addAudit={addAudit} saveOrAlert={saveOrAlert} /></Modal>;
-      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} addAudit={addAudit} saveOrAlert={saveOrAlert} /></Modal>;
+      case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} /></Modal>;
+      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
       case "edit-project": return <Modal title={`Editar proyecto — ${m.d.short}`} onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} project={m.d} /></Modal>;
+      case "provider-new":  return <Modal title="Nuevo proveedor" onClose={() => setModal(null)} wide><ProviderFormImpl setModal={setModal} upsertProvider={upsertProvider} /></Modal>;
+      case "provider-edit": return <Modal title={`Editar proveedor — ${m.d.name}`} onClose={() => setModal(null)} wide><ProviderFormImpl provider={m.d} setModal={setModal} upsertProvider={upsertProvider} deleteProvider={deleteProvider} /></Modal>;
+      case "send-pickup":   return <Modal title={`🚛 Enviar a Logistica — ${m.d.provider}`} onClose={() => setModal(null)}><SendPickupFormImpl purchase={m.d} provider={findProviderByName(m.d.provider)} setModal={setModal} enviarAOrdenRecogida={enviarAOrdenRecogida} /></Modal>;
       default: return null;
     }
   };
@@ -1755,12 +2313,23 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         )}
       </div>
       <div style={{ padding: "8px 0", flex: 1, marginTop: 8 }}>
-        {[
-          { id: "list", icon: "📋", label: "Solicitudes" },
-          { id: "projects", icon: "🏗️", label: "Proyectos" },
-        ].map(n => <button key={n.id} onClick={() => setSec(n.id)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: sb ? "11px 20px" : "11px 18px", background: sec === n.id ? "rgba(232,118,45,0.18)" : "transparent", border: "none", color: sec === n.id ? "#fff" : "#A8A096", cursor: "pointer", fontSize: 14, textAlign: "left", borderLeft: sec === n.id ? `3px solid ${ORANGE}` : "3px solid transparent", fontFamily: "inherit", fontWeight: sec === n.id ? 600 : 500, transition: "all .15s" }}>
-          <span style={{ fontSize: 18 }}>{n.icon}</span>{sb && <span>{n.label}</span>}
-        </button>)}
+        {(() => {
+          // Nav segun rol:
+          // - Ana (asistente_compras): SOLO "Por coordinar" y "Proveedores"
+          // - Todos los demas: ven todo (solicitudes, proyectos, por coordinar, proveedores)
+          const allNav = [
+            { id: "list", icon: "📋", label: "Solicitudes" },
+            { id: "projects", icon: "🏗️", label: "Proyectos" },
+            { id: "ana", icon: "📦", label: "Por coordinar" },
+            { id: "providers", icon: "🏢", label: "Proveedores" },
+          ];
+          const visibleNav = isAsistenteCompras
+            ? allNav.filter(n => n.id === "ana" || n.id === "providers")
+            : allNav;
+          return visibleNav.map(n => <button key={n.id} onClick={() => setSec(n.id)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: sb ? "11px 20px" : "11px 18px", background: sec === n.id ? "rgba(232,118,45,0.18)" : "transparent", border: "none", color: sec === n.id ? "#fff" : "#A8A096", cursor: "pointer", fontSize: 14, textAlign: "left", borderLeft: sec === n.id ? `3px solid ${ORANGE}` : "3px solid transparent", fontFamily: "inherit", fontWeight: sec === n.id ? 600 : 500, transition: "all .15s" }}>
+            <span style={{ fontSize: 18 }}>{n.icon}</span>{sb && <span>{n.label}</span>}
+          </button>);
+        })()}
       </div>
       {sb && <div style={{ padding: "12px", borderTop: `1px solid ${DARK_BORDER}`, display: "flex", flexDirection: "column", gap: 6 }}>
         {onBack && <button onClick={onBack} style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${DARK_BORDER}`, borderRadius: 8, color: "#A8A096", padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit" }}>← Volver al panel</button>}
@@ -1778,12 +2347,22 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     <div style={{ flex: 1, overflow: "auto" }}>
       <div style={{ padding: "22px 32px", borderBottom: `1px solid ${BORDER}`, background: CREAM, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>{sec === "projects" ? "Proyectos" : "Solicitudes de compra validadas"}</h2>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
+            {sec === "projects" ? "Proyectos"
+              : sec === "providers" ? "Proveedores"
+              : sec === "ana" ? "Por coordinar con proveedores"
+              : "Solicitudes de compra validadas"}
+          </h2>
           <span style={{ fontSize: 13, color: cc.accent, fontWeight: 600, letterSpacing: 0.3 }}>{cc.name}</span>
         </div>
         <Badge color={cc.color}>{cp.length} solicitudes</Badge>
       </div>
-      <div style={{ padding: 28 }}>{sec === "projects" ? renderProjects() : renderList()}</div>
+      <div style={{ padding: 28 }}>{
+        sec === "projects" ? renderProjects()
+          : sec === "providers" ? renderProviders()
+          : sec === "ana" ? renderAnaKanban()
+          : renderList()
+      }</div>
     </div>
     {!canViewOnly && renderModal()}
   </div>;

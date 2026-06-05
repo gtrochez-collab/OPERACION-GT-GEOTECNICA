@@ -32,7 +32,7 @@ const MODULES = [
     desc: "Solicitudes validadas, pagos y comprobantes de tesoreria",
     accent: "#8B3A3A", // borgona profesional
     accentSoft: "rgba(139,58,58,0.10)",
-    roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion"],
+    roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion", "asistente_compras"],
   },
   {
     id: "operations-cc",
