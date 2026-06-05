@@ -1075,6 +1075,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const defaultSec = isAsistenteCompras ? "ana" : "list";
   const [sec, setSec] = useState(defaultSec);
   const [filter, setFilter] = useState({ status: "", project: "", provider: "", from: "", to: "" });
+  // Estado de expansion/colapso de sub-secciones en el Kanban de Ana.
+  // Keys: `${projectKey}-enlog`, `${projectKey}-cierre`, `${projectKey}-cerradas`.
+  // Default: enlog y cierre abiertas (undefined → tratado como true), cerradas oculto.
+  const [anaExpand, setAnaExpand] = useState({});
 
   useEffect(() => {
     (async () => {
@@ -2020,144 +2024,166 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // ANA KANBAN — Compras pagadas pendientes de coordinar retiro con proveedor
   // ─────────────────────────────────────────────────────────────────────────
   const renderAnaKanban = () => {
-    // Compras que YA fueron pagadas pero NO tienen orden de recogida (despacho) creada
+    // Clasificacion de cada compra pagada en una de 4 sub-secciones por proyecto.
+    // El mismo ID de compra vive en una sola sub-seccion segun su estado actual.
+    //
+    // FLUJO:
+    //   por_coordinar  → pagada, sin despacho, no cerrada
+    //   en_logistica   → tiene despacho pendiente/programado/en_ruta
+    //   cierre         → deliveryStatus === ficha_adjunta (Jorge subio ficha)
+    //   cerradas       → deliveryStatus === cerrado (historico del proyecto)
     const yaTieneDespacho = (purchaseId) => despachos.some(d => d.sourcePurchaseId === purchaseId);
-    const pendientesCoordinar = cp.filter(p => {
-      if (p.status !== "pagado" && p.status !== "finalizado") return false;
-      if (p.deliveryStatus === "cerrado") return false;
-      if (yaTieneDespacho(p.id)) return false;
-      return true;
-    });
+    const despachoDe = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
 
-    // Tambien mostrar las ya enviadas a Logistica (pero solo despachos pendientes/programados)
-    // como una seccion separada para visibilidad de Ana
-    const enviadasALogistica = despachos.filter(d => {
-      if (!d.sourcePurchaseId) return false;
-      const p = cp.find(x => x.id === d.sourcePurchaseId);
-      if (!p) return false;
-      return d.estado === "pendiente" || d.estado === "programado" || d.estado === "en_ruta";
-    });
+    // Para cada compra pagada, decidir en que sub-seccion va
+    const clasificar = (p) => {
+      if (p.status !== "pagado" && p.status !== "finalizado") return null;
+      if (p.deliveryStatus === "cerrado") return "cerradas";
+      if (p.deliveryStatus === "ficha_adjunta") return "cierre";
+      const d = despachoDe(p.id);
+      if (d && (d.estado === "pendiente" || d.estado === "programado" || d.estado === "en_ruta" || d.estado === "entregado")) {
+        // Entregado pero sin ficha aun: sigue en logistica
+        return "en_logistica";
+      }
+      // No tiene despacho y no esta cerrada — Ana tiene que coordinar
+      return "por_coordinar";
+    };
 
-    // COMPRAS LISTAS PARA CIERRE CONTABLE — ya tienen ficha de recibido adjunta
-    // (Jorge subio el PDF firmado) pero todavia no estan cerradas contablemente.
-    // Ana imprime ficha + factura del proveedor y cierra con contabilidad.
-    const paraCierreContable = cp.filter(p =>
-      p.deliveryStatus === "ficha_adjunta" && (p.status === "pagado" || p.status === "finalizado")
-    );
-
-    // Agrupar pendientesCoordinar por proyecto
+    // Agrupar por proyecto, dentro de cada proyecto por sub-seccion
     const grupos = {};
-    pendientesCoordinar.forEach(p => {
+    const ensure = (key) => { if (!grupos[key]) grupos[key] = { por_coordinar: [], en_logistica: [], cierre: [], cerradas: [] }; };
+    let totales = { por_coordinar: 0, en_logistica: 0, cierre: 0, cerradas: 0 };
+    cp.forEach(p => {
+      const bucket = clasificar(p);
+      if (!bucket) return;
       const key = p.projectCode || "__sin__";
-      if (!grupos[key]) grupos[key] = [];
-      grupos[key].push(p);
+      ensure(key);
+      grupos[key][bucket].push(p);
+      totales[bucket]++;
     });
+
+    // Proyectos a mostrar: los que tienen al menos una compra en cualquiera de las 4 sub-secciones
     const projKeys = Object.keys(grupos).sort((a, b) => {
       if (a === "__sin__") return 1;
       if (b === "__sin__") return -1;
+      // Ordenar primero por cantidad de items activos (por_coordinar + cierre)
+      const aActive = grupos[a].por_coordinar.length + grupos[a].cierre.length;
+      const bActive = grupos[b].por_coordinar.length + grupos[b].cierre.length;
+      if (aActive !== bActive) return bActive - aActive;
       return a.localeCompare(b);
     });
 
+    // Helpers de renderizado para cada sub-seccion (cards mas compactas para historico)
+    const renderCardCompacta = (p, opts = {}) => {
+      const provider = findProviderByName(p.provider);
+      const d = despachoDe(p.id);
+      return <div key={p.id} style={{
+        background: "#fff",
+        border: `1px solid ${opts.borderColor || "#E2E8F0"}`,
+        borderLeft: `3px solid ${opts.accentColor || "#94A3B8"}`,
+        borderRadius: 8,
+        padding: 10,
+        opacity: opts.faded ? 0.85 : 1,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+          {opts.badge && <Badge color={opts.accentColor}>{opts.badge}</Badge>}
+          {opts.dateRight && <span style={{ fontSize: 9, color: "#64748b", fontWeight: 700 }}>{opts.dateRight}</span>}
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 800, color: CHARCOAL, marginTop: 2, textDecoration: opts.strike ? "line-through" : "none", textDecorationColor: opts.accentColor }}>{p.provider}</div>
+        <div style={{ fontSize: 11, color: "#475569", marginTop: 2, lineHeight: 1.4, textDecoration: opts.strike ? "line-through" : "none", textDecorationColor: opts.accentColor }}>{p.description}</div>
+        {p.amount && <div style={{ fontSize: 10, color: opts.accentColor || "#059669", fontWeight: 700, marginTop: 3 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</div>}
+        {opts.subline && <div style={{ fontSize: 10, color: opts.accentColor || "#64748b", marginTop: 4, paddingTop: 4, borderTop: "1px dashed #E2E8F0" }}>{opts.subline}</div>}
+        {opts.actions}
+      </div>;
+    };
+
+    // Card grande para "por coordinar" — incluye contacto provider y botones
+    const renderCardPorCoordinar = (p) => {
+      const provider = findProviderByName(p.provider);
+      return <div key={p.id} style={{
+        background: "#fff",
+        border: "1px solid #FDBA74",
+        borderLeft: "3px solid #E8762D",
+        borderRadius: 8,
+        padding: 12,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+          <Badge color="#E8762D">📦 Por coordinar</Badge>
+          {p.paidAt && <span style={{ fontSize: 9, color: "#64748b", fontWeight: 700 }}>Pagado {new Date(p.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}</span>}
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 4 }}>{p.provider}</div>
+        <div style={{ fontSize: 12, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
+        {p.amount && <div style={{ fontSize: 11, color: "#059669", fontWeight: 700, marginTop: 4 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</div>}
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #E2E8F0", fontSize: 11, color: "#475569" }}>
+          {provider?.phones?.length > 0 || provider?.contactName ? <>
+            {provider.contactName && <div>👤 {provider.contactName}</div>}
+            {provider.phones?.length > 0 && <div>📞 <a href={`tel:${provider.phones[0]}`} style={{ color: "#0891B2", textDecoration: "none", fontWeight: 700 }}>{provider.phones[0]}</a>{provider.phones.length > 1 && ` · +${provider.phones.length - 1}`}</div>}
+          </> : <div style={{ fontStyle: "italic", color: "#F59E0B", fontSize: 10 }}>
+            ⚠️ Sin info de contacto. <button onClick={() => { setSec("providers"); }} style={{ background: "none", border: "none", color: "#0891B2", textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 10 }}>Agregar</button>
+          </div>}
+        </div>
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+          <button onClick={async () => { try { await descargarFichaCompra(p, allProjects); } catch (err) { alert("No se pudo generar la ficha: " + (err?.message || err)); } }} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Descargar Ficha de Entrega</button>
+          {canSendToLogistics && <button onClick={() => setModal({ t: "send-pickup", d: p })} style={{ background: "#E8762D", color: "#fff", border: "none", padding: "9px 10px", borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", letterSpacing: 0.3 }}>🚛 Enviar a Logistica</button>}
+        </div>
+      </div>;
+    };
+
     return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {/* Stats */}
+      {/* Stats globales */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 180 }}>
+        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
           <div style={{ fontSize: 22 }}>📦</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: "#E8762D", marginTop: 4 }}>{pendientesCoordinar.length}</div>
-          <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Por coordinar</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#E8762D", marginTop: 4 }}>{totales.por_coordinar}</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Por coordinar</div>
         </div>
-        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 180 }}>
+        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
           <div style={{ fontSize: 22 }}>🚛</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: "#0891B2", marginTop: 4 }}>{enviadasALogistica.length}</div>
-          <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Enviadas a Logistica</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#0891B2", marginTop: 4 }}>{totales.en_logistica}</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>En Logistica</div>
         </div>
-        <div style={{ background: "#fff", border: paraCierreContable.length > 0 ? "1px solid #6EE7B7" : "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 180 }}>
+        <div style={{ background: "#fff", border: totales.cierre > 0 ? "1px solid #6EE7B7" : "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
           <div style={{ fontSize: 22 }}>📋</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: "#059669", marginTop: 4 }}>{paraCierreContable.length}</div>
-          <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Para cierre contable</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#059669", marginTop: 4 }}>{totales.cierre}</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Para cierre contable</div>
+        </div>
+        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
+          <div style={{ fontSize: 22 }}>🔒</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#64748b", marginTop: 4 }}>{totales.cerradas}</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Cerradas (historial)</div>
         </div>
       </div>
 
       <div style={{ background: "#FFFBEB", border: "1px solid #F59E0B", borderRadius: 12, padding: 14, fontSize: 13, color: "#78350F" }}>
-        💼 <b>Flujo:</b> Lic. Carolina paga → aparece aca → vos coordinas con el proveedor cuando pueden recoger → click <b>"Enviar a Logistica"</b> → la orden cae automaticamente en el modulo de Logistica con vehiculo + motorista por asignar.
+        💼 <b>Flujo dentro de cada columna:</b> 📦 Por coordinar → 🚛 En Logistica → 📋 Listas para cierre (cuando Jorge sube la ficha) → 🔒 Cerradas. Cada compra mantiene su lugar en la columna del proyecto.
       </div>
 
-      {/* Seccion: Listas para cierre contable — compras con ficha de recibido ya adjunta */}
-      {paraCierreContable.length > 0 && <div style={{ background: "#ECFDF5", border: "2px solid #059669", borderRadius: 12, padding: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: "#065F46", textTransform: "uppercase", letterSpacing: 0.5 }}>
-            📋 Listas para cierre contable ({paraCierreContable.length})
-          </div>
-          <Badge color="#059669">✓ Ficha adjunta</Badge>
-        </div>
-        <div style={{ fontSize: 12, color: "#065F46", marginBottom: 12, lineHeight: 1.5 }}>
-          Jorge ya subio la ficha de recibido firmada en estas compras. <b>Imprimi la ficha + la factura del proveedor</b> y llevalas a contabilidad. Una vez cerrada con contabilidad, marcala como cerrada para que ya no aparezca aca.
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {paraCierreContable.map(p => {
-            const proj = (customProjects || []).find(x => x.short === p.projectCode);
-            return <div key={p.id} style={{ background: "#fff", border: "1px solid #6EE7B7", borderRadius: 8, padding: 12, display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}>
-              <div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                  <Badge color={cc.color}>{p.projectCode}</Badge>
-                  <span style={{ fontWeight: 800, fontSize: 14, color: CHARCOAL }}>{p.provider}</span>
-                  {p.amount && <span style={{ fontSize: 13, color: "#059669", fontWeight: 700, marginLeft: 8 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</span>}
-                </div>
-                <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.4 }}>{p.description}</div>
-                {p.delivery?.actualDate && <div style={{ fontSize: 11, color: "#65A30D", marginTop: 4 }}>
-                  ✓ Recibido el {new Date(p.delivery.actualDate + "T00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "long", year: "numeric" })}
-                  {p.delivery.receivedBy && ` por ${p.delivery.receivedBy}`}
-                </div>}
-              </div>
-              <div style={{ display: "flex", gap: 6, flexDirection: "column" }}>
-                <button
-                  onClick={async () => {
-                    try {
-                      await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name);
-                    } catch (err) {
-                      alert("No se pudo generar la ficha: " + (err?.message || err));
-                    }
-                  }}
-                  style={{
-                    background: CHARCOAL, color: "#F0EBE3", border: "none",
-                    padding: "8px 14px", borderRadius: 6,
-                    fontSize: 11, fontWeight: 700, cursor: "pointer",
-                    fontFamily: "inherit", whiteSpace: "nowrap",
-                  }}
-                  title="Descargar ficha de recibido firmada + cotizacion + comprobante de pago"
-                >📄 Imprimir ficha</button>
-                <button
-                  onClick={() => setModal({ t: "detail", d: p })}
-                  style={{
-                    background: "#059669", color: "#fff", border: "none",
-                    padding: "8px 14px", borderRadius: 6,
-                    fontSize: 11, fontWeight: 700, cursor: "pointer",
-                    fontFamily: "inherit", whiteSpace: "nowrap",
-                  }}
-                  title="Abrir detalle para marcar como cerrada con contabilidad"
-                >🔒 Cerrar contable</button>
-              </div>
-            </div>;
-          })}
-        </div>
-      </div>}
-
-      {/* Kanban por proyecto */}
+      {/* Kanban por proyecto — cada columna tiene 4 sub-secciones colapsables */}
       {projKeys.length === 0
         ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 60, textAlign: "center", color: "#94A3B8" }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>✨</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: CHARCOAL, marginBottom: 4 }}>Todo coordinado</div>
-            <div style={{ fontSize: 13 }}>No hay compras pagadas pendientes de coordinar con proveedores.</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: CHARCOAL, marginBottom: 4 }}>Sin compras activas</div>
+            <div style={{ fontSize: 13 }}>Cuando Lic. Carolina pague una solicitud, aparecera aca por proyecto.</div>
           </div>
         : <div style={{ display: "flex", gap: 14, overflowX: "auto", padding: "4px 4px 12px 4px" }}>
             {projKeys.map(key => {
               const items = grupos[key];
               const proj = (customProjects || []).find(p => p.short === key);
-              const projDisplay = proj ? `${key}` : (key === "__sin__" ? "SIN PROYECTO" : key);
+              const projDisplay = key === "__sin__" ? "SIN PROYECTO" : key;
               const projName = proj?.name || "";
+              const colTotal = items.por_coordinar.length + items.en_logistica.length + items.cierre.length + items.cerradas.length;
+              const headerColor = items.cierre.length > 0 ? "#059669" : items.por_coordinar.length > 0 ? "#E8762D" : "#0891B2";
+
+              const expandedEnLog = anaExpand[`${key}-enlog`] !== false; // default visible
+              const expandedCierre = anaExpand[`${key}-cierre`] !== false; // default visible (es urgente!)
+              const expandedCerradas = anaExpand[`${key}-cerradas`] === true; // default oculto
+
+              const toggleSec = (subkey) => setAnaExpand(s => ({ ...s, [subkey]: !(s[subkey] !== false) }));
+              const toggleHistorial = () => setAnaExpand(s => ({ ...s, [`${key}-cerradas`]: !s[`${key}-cerradas`] }));
+
               return <div key={key} style={{
-                minWidth: 300,
-                maxWidth: 340,
+                minWidth: 310,
+                maxWidth: 350,
                 flex: "0 0 auto",
                 background: "#F8F2E6",
                 borderRadius: 12,
@@ -2167,96 +2193,101 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                 gap: 10,
                 border: "1px solid #E8E1D3",
               }}>
-                <div style={{ borderBottom: `3px solid ${cc.color}`, paddingBottom: 8 }}>
+                {/* Header de proyecto */}
+                <div style={{ borderBottom: `3px solid ${headerColor}`, paddingBottom: 8 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ fontWeight: 800, fontSize: 14, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.5 }}>
-                      {projDisplay}
-                    </div>
-                    <Badge color="#E8762D">{items.length}</Badge>
+                    <div style={{ fontWeight: 800, fontSize: 14, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.5 }}>{projDisplay}</div>
+                    <Badge color={headerColor}>{colTotal}</Badge>
                   </div>
                   {projName && <div style={{ fontSize: 11, color: "#5C5853", marginTop: 4, lineHeight: 1.3 }}>{projName}</div>}
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 700, overflowY: "auto" }}>
-                  {items.sort((a, b) => (a.paidAt || "").localeCompare(b.paidAt || "")).map(p => {
-                    const provider = findProviderByName(p.provider);
-                    return <div key={p.id} style={{
-                      background: "#fff",
-                      border: "1px solid #E2E8F0",
-                      borderLeft: "3px solid #059669",
-                      borderRadius: 8,
-                      padding: 12,
-                      transition: "all 0.15s",
-                    }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                        <Badge color="#059669">💰 {p.status === "finalizado" ? "Pagado + comprobante" : "Pagado"}</Badge>
-                        {p.paidAt && <span style={{ fontSize: 9, color: "#64748b", fontWeight: 700 }}>{new Date(p.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}</span>}
-                      </div>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 4 }}>{p.provider}</div>
-                      <div style={{ fontSize: 12, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
-                      {p.amount && <div style={{ fontSize: 11, color: "#059669", fontWeight: 700, marginTop: 4 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</div>}
 
-                      {/* Info de contacto del proveedor */}
-                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #E2E8F0", fontSize: 11, color: "#475569" }}>
-                        {provider?.phones?.length > 0 || provider?.contactName ? <>
-                          {provider.contactName && <div>👤 {provider.contactName}</div>}
-                          {provider.phones?.length > 0 && <div>📞 <a href={`tel:${provider.phones[0]}`} style={{ color: "#0891B2", textDecoration: "none", fontWeight: 700 }}>{provider.phones[0]}</a>{provider.phones.length > 1 && ` · +${provider.phones.length - 1}`}</div>}
-                        </> : <div style={{ fontStyle: "italic", color: "#F59E0B", fontSize: 10 }}>
-                          ⚠️ Sin info de contacto. <button onClick={() => { setSec("providers"); }} style={{ background: "none", border: "none", color: "#0891B2", textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 10 }}>Agregar</button>
-                        </div>}
-                      </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 720, overflowY: "auto" }}>
+                  {/* Sub-seccion: POR COORDINAR (cards grandes activas) */}
+                  {items.por_coordinar.length > 0 && <div>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: "#9A4F1D", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, padding: "4px 8px", background: "#FFEFD9", borderRadius: 4 }}>
+                      📦 Por coordinar ({items.por_coordinar.length})
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {items.por_coordinar
+                        .sort((a, b) => (a.paidAt || "").localeCompare(b.paidAt || ""))
+                        .map(renderCardPorCoordinar)}
+                    </div>
+                  </div>}
 
-                      {/* Acciones */}
-                      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                        <button
-                          onClick={async () => {
-                            try {
-                              await descargarFichaCompra(p, allProjects);
-                            } catch (err) {
-                              alert("No se pudo generar la ficha: " + (err?.message || err));
-                            }
-                          }}
-                          style={{
-                            background: CHARCOAL, color: "#F0EBE3", border: "none",
-                            padding: "7px 10px", borderRadius: 6,
-                            fontSize: 11, fontWeight: 700, cursor: "pointer",
-                            fontFamily: "inherit",
-                          }}
-                        >📄 Descargar Ficha de Entrega</button>
-                        {canSendToLogistics && <button
-                          onClick={() => setModal({ t: "send-pickup", d: p })}
-                          style={{
-                            background: "#E8762D", color: "#fff", border: "none",
-                            padding: "9px 10px", borderRadius: 6,
-                            fontSize: 12, fontWeight: 800, cursor: "pointer",
-                            fontFamily: "inherit", letterSpacing: 0.3,
-                          }}
-                        >🚛 Enviar a Logistica</button>}
-                      </div>
-                    </div>;
-                  })}
+                  {/* Sub-seccion: EN LOGISTICA (colapsable, default abierto) */}
+                  {items.en_logistica.length > 0 && <>
+                    <button onClick={() => toggleSec(`${key}-enlog`)} style={{ background: "#DBEAFE", color: "#1E3A8A", border: "1px solid #93C5FD", padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span>🚛 En Logistica ({items.en_logistica.length})</span>
+                      <span style={{ fontSize: 10 }}>{expandedEnLog ? "▾" : "▸"}</span>
+                    </button>
+                    {expandedEnLog && <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
+                      {items.en_logistica
+                        .sort((a, b) => (a.paidAt || "").localeCompare(b.paidAt || ""))
+                        .map(p => {
+                          const d = despachoDe(p.id);
+                          const estCfg = { pendiente: { c: "#E8762D", l: "📌 Pendiente" }, programado: { c: "#3E6A99", l: "📅 Programado" }, en_ruta: { c: "#D4A017", l: "🚛 En ruta" }, entregado: { c: "#059669", l: "✓ Entregado (esperando ficha)" } }[d?.estado] || { c: "#64748b", l: d?.estado };
+                          return renderCardCompacta(p, {
+                            badge: estCfg.l,
+                            accentColor: estCfg.c,
+                            borderColor: "#BFDBFE",
+                            dateRight: d?.fechaProgramada ? `📅 ${new Date(d.fechaProgramada + "T00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "",
+                            subline: d?.motorista ? `🚛 ${d.motorista}` : null,
+                            actions: <div style={{ marginTop: 6 }}>
+                              <button onClick={async () => { try { await descargarFichaCompra(p, allProjects); } catch (e) { alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: CHARCOAL, border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>📄 Ficha</button>
+                            </div>,
+                          });
+                        })}
+                    </div>}
+                  </>}
+
+                  {/* Sub-seccion: LISTAS PARA CIERRE (verde — urgente) */}
+                  {items.cierre.length > 0 && <>
+                    <button onClick={() => toggleSec(`${key}-cierre`)} style={{ background: "#DCFCE7", color: "#065F46", border: "2px solid #059669", padding: "8px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span>📋 Listas para cierre contable ({items.cierre.length})</span>
+                      <span style={{ fontSize: 10 }}>{expandedCierre ? "▾" : "▸"}</span>
+                    </button>
+                    {expandedCierre && <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
+                      {items.cierre.map(p => renderCardCompacta(p, {
+                        badge: "✓ Ficha adjunta",
+                        accentColor: "#059669",
+                        borderColor: "#6EE7B7",
+                        dateRight: p.delivery?.actualDate ? `Recibido ${new Date(p.delivery.actualDate + "T00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "",
+                        subline: p.delivery?.receivedBy ? `Recibido por ${p.delivery.receivedBy}` : "Ficha subida — imprimir + factura",
+                        actions: <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                          <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { alert("No se pudo: " + e.message); } }} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Imprimir ficha</button>
+                          <button onClick={() => setModal({ t: "detail", d: p })} style={{ background: "#059669", color: "#fff", border: "none", padding: "7px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🔒 Cerrar contable</button>
+                        </div>,
+                      }))}
+                    </div>}
+                  </>}
+
+                  {/* Sub-seccion: CERRADAS (historial, default oculto) */}
+                  {items.cerradas.length > 0 && <>
+                    <button onClick={toggleHistorial} style={{ background: "#F1F5F9", color: "#475569", border: "1px solid #CBD5E1", padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span>🔒 Cerradas — historial ({items.cerradas.length})</span>
+                      <span style={{ fontSize: 10 }}>{expandedCerradas ? "▾" : "▸"}</span>
+                    </button>
+                    {expandedCerradas && <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
+                      {items.cerradas
+                        .sort((a, b) => (b.paidAt || "").localeCompare(a.paidAt || ""))
+                        .map(p => renderCardCompacta(p, {
+                          badge: "🔒 Cerrada",
+                          accentColor: "#64748b",
+                          borderColor: "#CBD5E1",
+                          faded: true,
+                          strike: true,
+                          dateRight: p.paidAt ? new Date(p.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" }) : "",
+                          actions: <div style={{ marginTop: 6 }}>
+                            <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: "#475569", border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>📄 Re-descargar ficha</button>
+                          </div>,
+                        }))}
+                    </div>}
+                  </>}
                 </div>
               </div>;
             })}
           </div>}
-
-      {/* Seccion enviadas a Logistica (para visibilidad) */}
-      {enviadasALogistica.length > 0 && <div>
-        <div style={{ fontSize: 13, fontWeight: 800, color: "#0891B2", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>🚛 Ya enviadas a Logistica ({enviadasALogistica.length})</div>
-        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8, maxHeight: 300, overflowY: "auto" }}>
-          {enviadasALogistica.map(d => {
-            const p = cp.find(x => x.id === d.sourcePurchaseId);
-            if (!p) return null;
-            const estCfg = { pendiente: { c: "#E8762D", l: "📌 Pendiente en Logistica" }, programado: { c: "#3E6A99", l: "📅 Programado" }, en_ruta: { c: "#D4A017", l: "🚛 En ruta" } }[d.estado] || { c: "#64748b", l: d.estado };
-            return <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#F8FAFC", borderRadius: 6, fontSize: 12 }}>
-              <div>
-                <b>{p.provider}</b> · {p.description?.slice(0, 60)}
-                <span style={{ marginLeft: 8, color: "#94A3B8" }}>· {p.projectCode}</span>
-              </div>
-              <Badge color={estCfg.c}>{estCfg.l}</Badge>
-            </div>;
-          })}
-        </div>
-      </div>}
     </div>;
   };
 
