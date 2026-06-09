@@ -1173,14 +1173,29 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       const cloudPreviaArr = Array.isArray(cloudPrevia) ? cloudPrevia : [];
       console.log("☁️ Cloud actual:", cloudPreviaArr.length, "purchases");
 
-      // 2) MERGE: tomar todo lo de cloud + agregar lo nuestro que no este en cloud
-      // (basado en id). Si nuestro tiene una version mas reciente del mismo id, la nuestra gana.
+      // 2) DETECTAR BORRADOS INTENCIONALES: lo que estaba en nuestro state previo
+      // pero ya no esta en `d` fue BORRADO por el usuario. Esos IDs NO deben volver
+      // del cloud aunque cloudPreviaArr aun los tenga (race vs nuestro propio save anterior).
+      const previousIds = new Set(purchases.map(p => p.id));
       const ourIds = new Set(d.map(p => p.id));
-      const cloudExtras = cloudPreviaArr.filter(p => !ourIds.has(p.id));
+      const deletedIds = new Set();
+      previousIds.forEach(id => { if (!ourIds.has(id)) deletedIds.add(id); });
+      if (deletedIds.size > 0) {
+        console.log(`🗑 Borrados intencionales: ${deletedIds.size}`, [...deletedIds]);
+      }
+
+      // 3) MERGE: tomar todo lo de cloud + agregar lo nuestro que no este en cloud
+      // (basado en id), EXCLUYENDO los que acabamos de borrar.
+      const cloudExtras = cloudPreviaArr.filter(p => !ourIds.has(p.id) && !deletedIds.has(p.id));
       const merged = [...d, ...cloudExtras];
       if (cloudExtras.length > 0) {
         console.warn(`⚠️ Encontradas ${cloudExtras.length} solicitudes en cloud que no estaban en local — mergeadas.`);
         setPurchases(merged); // actualizar UI con merge
+      }
+      // Re-log post-filtrado para confirmar que los borrados no vuelven
+      const cloudBorradosResucitados = cloudPreviaArr.filter(p => deletedIds.has(p.id));
+      if (cloudBorradosResucitados.length > 0) {
+        console.log(`✅ Filtrados ${cloudBorradosResucitados.length} items borrados que el cloud todavia tenia (no resucitan).`);
       }
 
       // 3) Extraer archivos
@@ -2248,17 +2263,41 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                       <span style={{ fontSize: 10 }}>{expandedCierre ? "▾" : "▸"}</span>
                     </button>
                     {expandedCierre && <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
-                      {items.cierre.map(p => renderCardCompacta(p, {
-                        badge: "✓ Ficha adjunta",
-                        accentColor: "#059669",
-                        borderColor: "#6EE7B7",
-                        dateRight: p.delivery?.actualDate ? `Recibido ${new Date(p.delivery.actualDate + "T00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "",
-                        subline: p.delivery?.receivedBy ? `Recibido por ${p.delivery.receivedBy}` : "Ficha subida — imprimir + factura",
-                        actions: <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
-                          <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { alert("No se pudo: " + e.message); } }} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Imprimir ficha</button>
-                          <button onClick={() => setModal({ t: "detail", d: p })} style={{ background: "#059669", color: "#fff", border: "none", padding: "7px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🔒 Cerrar contable</button>
-                        </div>,
-                      }))}
+                      {items.cierre.map(p => {
+                        const tieneFichaFirmada = !!p.delivery?.fichaFile?.fileId;
+                        return renderCardCompacta(p, {
+                          badge: tieneFichaFirmada ? "✓ Ficha firmada" : "⚠️ Sin ficha firmada",
+                          accentColor: tieneFichaFirmada ? "#059669" : "#D97706",
+                          borderColor: tieneFichaFirmada ? "#6EE7B7" : "#FCD34D",
+                          dateRight: p.delivery?.fichaUploadedAt ? `Subida ${new Date(p.delivery.fichaUploadedAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "",
+                          subline: p.delivery?.fichaFile?.name || (tieneFichaFirmada ? "Ficha firmada subida" : "Falta ficha firmada — pedir a Jorge"),
+                          actions: <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                            <button onClick={async () => {
+                              // PRIORIDAD: si Jorge subio la ficha firmada, abrirla. Sino, fallback al template.
+                              if (tieneFichaFirmada) {
+                                try {
+                                  const ref = p.delivery.fichaFile;
+                                  const full = await store.get(`cp-file-${ref.fileId}`);
+                                  if (!full?.dataUrl) { alert("No se pudo cargar la ficha firmada desde la nube."); return; }
+                                  const w = window.open();
+                                  if (w) {
+                                    w.document.write(
+                                      full.type === "application/pdf"
+                                        ? `<iframe src='${full.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>`
+                                        : `<img src='${full.dataUrl}' style='max-width:100vw;max-height:100vh'/>`
+                                    );
+                                  }
+                                } catch (e) { alert("Error abriendo ficha firmada: " + e.message); }
+                              } else {
+                                try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { alert("No se pudo: " + e.message); }
+                              }
+                            }} style={{ background: tieneFichaFirmada ? "#059669" : CHARCOAL, color: "#fff", border: "none", padding: "7px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                              {tieneFichaFirmada ? "👁 Ver ficha firmada" : "📄 Template en blanco"}
+                            </button>
+                            <button onClick={() => setModal({ t: "detail", d: p })} style={{ background: tieneFichaFirmada ? "#10B981" : "#94A3B8", color: "#fff", border: "none", padding: "7px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: tieneFichaFirmada ? "pointer" : "not-allowed", fontFamily: "inherit", opacity: tieneFichaFirmada ? 1 : 0.7 }} disabled={!tieneFichaFirmada} title={tieneFichaFirmada ? "Cerrar contablemente" : "Esperando ficha firmada de Jorge"}>🔒 Cerrar contable</button>
+                          </div>,
+                        });
+                      })}
                     </div>}
                   </>}
 

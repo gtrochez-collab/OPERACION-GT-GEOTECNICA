@@ -932,6 +932,105 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     await quickCreateFromCompra(purchase, "pendiente", "", "", { fechaNecesaria });
   };
 
+  // ── Subir Ficha Firmada (Jorge desde Logistica) ──────────────────────────
+  // Jorge sube el PDF/imagen de la ficha firmada por el residente en obra.
+  // Esto:
+  //   1) Sube el archivo a cp-file-<uuid> (mismo formato que Compras)
+  //   2) Actualiza la compra original: delivery.fichaFile + deliveryStatus = "ficha_adjunta"
+  //   3) Guarda cp-purchases para que Ana vea la ficha firmada en su sub-seccion
+  //      "Listas para cierre contable"
+  // Limite duro: 2 MB (mismo que en Compras).
+  const fileKeyCompra = (fileId) => `cp-file-${fileId}`;
+  const uploadFichaFirmada = async (despacho, fileObj) => {
+    if (!despacho?.sourcePurchaseId) {
+      alert("Este despacho no esta vinculado a una compra. No se puede adjuntar ficha de recibido.");
+      return false;
+    }
+    if (!fileObj) return false;
+    if (fileObj.size > 2 * 1024 * 1024) {
+      alert(`❌ El archivo pesa ${(fileObj.size / 1024 / 1024).toFixed(2)} MB.\n\nLimite maximo: 2 MB.\n\nPara reducir:\n• PDFs: https://smallpdf.com/compress-pdf\n• Fotos: exportar como JPG menor calidad`);
+      return false;
+    }
+
+    try {
+      // 1) Leer archivo como dataUrl
+      const dataUrl = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(fileObj);
+      });
+
+      // 2) Generar fileId y subir a row separada
+      const fileId = uid();
+      const content = { name: fileObj.name, type: fileObj.type, size: fileObj.size, dataUrl };
+      const okFile = await store.set(fileKeyCompra(fileId), content);
+      if (!okFile) {
+        alert("⚠️ No se pudo subir el archivo a la nube. Verifica tu conexion.");
+        return false;
+      }
+
+      // 3) Pre-fetch de cp-purchases para no pisar cambios concurrentes
+      const cloudPurchases = await store.get("cp-purchases");
+      const arr = Array.isArray(cloudPurchases) ? cloudPurchases : purchases;
+      const idx = arr.findIndex(p => p.id === despacho.sourcePurchaseId);
+      if (idx === -1) {
+        alert("⚠️ No se encontro la compra original. Puede haber sido borrada.");
+        return false;
+      }
+
+      // 4) Actualizar la compra: delivery.fichaFile + deliveryStatus = ficha_adjunta
+      const orig = arr[idx];
+      const updated = {
+        ...orig,
+        deliveryStatus: "ficha_adjunta",
+        delivery: {
+          ...(orig.delivery || {}),
+          fichaFile: { fileId, name: fileObj.name, type: fileObj.type, size: fileObj.size },
+          fichaScanned: true,
+          fichaUploadedAt: new Date().toISOString(),
+          uploadedByLogistica: true,
+        },
+        audit: [
+          ...(orig.audit || []),
+          {
+            ts: new Date().toISOString(),
+            action: "ficha_uploaded_from_logistics",
+            note: `Ficha firmada subida desde Logistica: ${fileObj.name}`,
+          },
+        ],
+      };
+      const nextPurchases = [...arr];
+      nextPurchases[idx] = updated;
+
+      // 5) Save cp-purchases
+      const okSave = await store.set("cp-purchases", nextPurchases);
+      if (!okSave) {
+        alert("⚠️ El archivo se subio pero no se pudo enlazar a la compra. Reintenta.");
+        return false;
+      }
+
+      // 6) Actualizar state local para reflejar el cambio inmediato
+      setPurchases(nextPurchases);
+
+      // 7) Marcar el despacho como "ficha_adjunta_subida" para feedback visual
+      const nextDesp = despachos.map(d => d.id === despacho.id ? {
+        ...d,
+        fichaRecibidoFileId: fileId,
+        fichaRecibidoUploadedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } : d);
+      setDespachos(nextDesp);
+      await store.set("lg-despachos", nextDesp);
+
+      return true;
+    } catch (err) {
+      console.error("uploadFichaFirmada error:", err);
+      alert("Error subiendo la ficha: " + (err?.message || err));
+      return false;
+    }
+  };
+
   // ── Filtros ──
   const filtered = vehicles.filter(v => {
     if (filter.estado && v.estado !== filter.estado) return false;
@@ -1829,8 +1928,97 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                     cursor: "pointer",
                     fontFamily: "inherit",
                   }}
-                  title="Re-descargar la Ficha de Entrega original"
-                >📄 Descargar Ficha de Entrega</button>
+                  title="Re-descargar la Ficha de Entrega en blanco (para reimprimir si la perdio el motorista)"
+                >🖨 Imprimir Ficha en Blanco</button>
+              </div>}
+
+              {/* SUBIR FICHA FIRMADA (Jorge) — solo si viene de compra y aun no se subio */}
+              {sourcePurchase && !sourcePurchase.delivery?.fichaFile && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.orange}50` }}>
+                <label style={{ display: "block", fontSize: 9, color: BRAND.orange, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+                  📎 Subir ficha firmada
+                </label>
+                <input
+                  type="file"
+                  accept=".pdf,image/*"
+                  id={`ficha-firmada-${d.id}`}
+                  style={{ display: "none" }}
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    e.target.value = "";
+                    const ok = await uploadFichaFirmada(d, f);
+                    if (ok) {
+                      alert("✓ Ficha firmada subida y enlazada a la compra.\nAna ya puede verla en su sub-seccion 'Listas para cierre contable'.");
+                    }
+                  }}
+                />
+                <label
+                  htmlFor={`ficha-firmada-${d.id}`}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    background: BRAND.orange,
+                    color: "#fff",
+                    border: "none",
+                    padding: "8px 10px",
+                    borderRadius: R.sm,
+                    fontSize: 11,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    textAlign: "center",
+                    boxSizing: "border-box",
+                  }}
+                  title="Sube el PDF/foto de la ficha que el residente firmo en obra"
+                >📎 Subir ficha firmada</label>
+                <div style={{ fontSize: 9, color: BRAND.stone, marginTop: 4, fontStyle: "italic" }}>
+                  Al subir, se enlaza automaticamente a la compra y Ana podra cerrar contable.
+                </div>
+              </div>}
+
+              {/* FICHA YA SUBIDA — mostrar estado verde + boton ver */}
+              {sourcePurchase?.delivery?.fichaFile && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.green}50`, background: BRAND.greenSoft, borderRadius: R.sm, padding: 8 }}>
+                <div style={{ fontSize: 10, color: BRAND.green, fontWeight: 800, marginBottom: 4 }}>
+                  ✓ Ficha firmada adjunta
+                </div>
+                <div style={{ fontSize: 10, color: BRAND.graphite, marginBottom: 6, wordBreak: "break-word" }}>
+                  {sourcePurchase.delivery.fichaFile.name}
+                </div>
+                <button
+                  onClick={async () => {
+                    // Cargar el archivo y abrirlo en nueva pestaña
+                    try {
+                      const ref = sourcePurchase.delivery.fichaFile;
+                      const full = await store.get(`cp-file-${ref.fileId}`);
+                      if (!full?.dataUrl) {
+                        alert("No se pudo cargar el archivo desde la nube.");
+                        return;
+                      }
+                      const w = window.open();
+                      if (w) {
+                        w.document.write(
+                          full.type === "application/pdf"
+                            ? `<iframe src='${full.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>`
+                            : `<img src='${full.dataUrl}' style='max-width:100vw;max-height:100vh'/>`
+                        );
+                      }
+                    } catch (err) {
+                      alert("Error abriendo ficha: " + (err?.message || err));
+                    }
+                  }}
+                  style={{
+                    width: "100%",
+                    background: BRAND.green,
+                    color: "#fff",
+                    border: "none",
+                    padding: "6px 10px",
+                    borderRadius: R.sm,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >👁 Ver ficha firmada</button>
               </div>}
 
               {/* Dropdown para revertir si fue un error marcar entregado */}
