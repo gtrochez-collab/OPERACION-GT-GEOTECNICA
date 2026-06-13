@@ -2016,21 +2016,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const exportMovsPDF = () => {
       const titulo = `Reporte de Movimientos — ${cc.name.toUpperCase()}`;
       const sub = filterPer ? `Periodo: ${filterQ || ""} ${filterPer}` : "Todos los periodos";
-      // Columna "Día 1 del colaborador" = startDate del empleado (no fecha del movimiento).
-      // Columna "Duración contrato" = solo se llena para grupo B (Temporales Subterra).
-      const renderRows = (rows, color, esBaja) => rows.map(m => {
+
+      // ALTAS: muestran "Día 1 del colaborador" (startDate) + Duración contrato (solo grupo B).
+      const renderRowsAltas = (rows, color) => rows.map(m => {
         const q = getQuincena(m.date);
         const dia1 = getDia1(m);
         const dur = getDuracionContrato(m);
         const durColor = dur === "—" ? "#94A3B8" : "#D97706";
-        // Para bajas mostramos tambien la fecha del movimiento (fecha de baja) como info adicional.
-        const fechaMovCell = esBaja
-          ? `<td style='font-size:9px;color:#991B1B'>Baja: ${m.date}</td>`
-          : `<td style='font-size:9px;color:#94A3B8'>—</td>`;
         return `<tr>
           <td style='background:${color};color:#fff;font-weight:bold;text-align:center'>${m.tipo.toUpperCase()}</td>
           <td style='font-weight:600'>${dia1 ? fmt(dia1) : "—"}</td>
-          ${fechaMovCell}
+          <td style='font-size:9px;color:#94A3B8'>—</td>
           <td>${q.quincena}</td>
           <td style='text-align:center;font-weight:bold;background:${GRUPO_COLOR[m.grupo]}22;color:${GRUPO_COLOR[m.grupo]}'>${m.grupo}</td>
           <td>${m.fullName}</td>
@@ -2044,19 +2040,40 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <td>${m.notas || ""}</td>
         </tr>`;
       }).join("");
+
+      // BAJAS: "Último día del colaborador" (= fecha de baja). Sin Duración contrato ni Fecha mov.
+      const renderRowsBajas = (rows, color) => rows.map(m => {
+        const q = getQuincena(m.date);
+        return `<tr>
+          <td style='background:${color};color:#fff;font-weight:bold;text-align:center'>${m.tipo.toUpperCase()}</td>
+          <td style='font-weight:600;color:#991B1B'>${m.date ? fmt(m.date) : "—"}</td>
+          <td>${q.quincena}</td>
+          <td style='text-align:center;font-weight:bold;background:${GRUPO_COLOR[m.grupo]}22;color:${GRUPO_COLOR[m.grupo]}'>${m.grupo}</td>
+          <td>${m.fullName}</td>
+          <td>${m.dni}</td>
+          <td>${m.position || ""}</td>
+          <td>${COMPANIES[m.company]?.name || ""}</td>
+          <td>${m.contractType}</td>
+          <td style='text-align:right'>L ${Number(m.salary || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</td>
+          <td>${m.motivo || ""}</td>
+          <td>${m.notas || ""}</td>
+        </tr>`;
+      }).join("");
+
       const w = window.open("", "_blank");
       if (!w) { alert("Permite popups para imprimir"); return; }
       w.document.write("<!DOCTYPE html><html><head><meta charset='utf-8'><title>" + titulo + "</title><style>@page{size:landscape}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;padding:30px}h1{font-size:18px}h2{font-size:13px;color:#666;margin:6px 0 10px}h3{font-size:14px;margin:18px 0 6px}table{border-collapse:collapse;width:100%;margin-top:8px}th,td{border:1px solid #ccc;padding:5px 8px;font-size:10px;text-align:left}th{background:#eee}.np{margin-top:18px}@media print{.np{display:none}}</style></head><body>");
       w.document.write("<h1>" + titulo + "</h1><h2>" + sub + "</h2>");
       w.document.write(`<p style='font-size:12px'><b>Total altas:</b> ${altas.length} &nbsp;|&nbsp; <b>Total bajas:</b> ${bajas.length}</p>`);
-      const headerHTML = "<tr><th>Tipo</th><th>Día 1 del colaborador</th><th>Fecha mov.</th><th>Q</th><th>Grupo</th><th>Nombre</th><th>DNI</th><th>Posicion</th><th>Empresa</th><th>Contrato</th><th>Duración contrato</th><th>Salario</th><th>Motivo</th><th>Notas</th></tr>";
+      const headerAltas = "<tr><th>Tipo</th><th>Día 1 del colaborador</th><th>Fecha mov.</th><th>Q</th><th>Grupo</th><th>Nombre</th><th>DNI</th><th>Posicion</th><th>Empresa</th><th>Contrato</th><th>Duración contrato</th><th>Salario</th><th>Motivo</th><th>Notas</th></tr>";
+      const headerBajas = "<tr><th>Tipo</th><th>Último día del colaborador</th><th>Q</th><th>Grupo</th><th>Nombre</th><th>DNI</th><th>Posicion</th><th>Empresa</th><th>Contrato</th><th>Salario</th><th>Motivo</th><th>Notas</th></tr>";
       if (altas.length > 0) {
         w.document.write("<h3 style='color:#059669'>ALTAS (" + altas.length + ")</h3>");
-        w.document.write("<table><thead>" + headerHTML + "</thead><tbody>" + renderRows(altas, "#059669", false) + "</tbody></table>");
+        w.document.write("<table><thead>" + headerAltas + "</thead><tbody>" + renderRowsAltas(altas, "#059669") + "</tbody></table>");
       }
       if (bajas.length > 0) {
         w.document.write("<h3 style='color:#DC2626'>BAJAS (" + bajas.length + ")</h3>");
-        w.document.write("<table><thead>" + headerHTML + "</thead><tbody>" + renderRows(bajas, "#DC2626", true) + "</tbody></table>");
+        w.document.write("<table><thead>" + headerBajas + "</thead><tbody>" + renderRowsBajas(bajas, "#DC2626") + "</tbody></table>");
       }
       // Resumen por grupo
       const grupoStats = {};
