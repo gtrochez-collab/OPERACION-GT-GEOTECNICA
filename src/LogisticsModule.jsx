@@ -786,6 +786,32 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     })();
   }, []);
 
+  // Auto-refresh al volver a la pestaña — si Ana envio una orden mientras
+  // Oscar tenia la app abierta en otra tab, al volver Oscar ve el cambio sin
+  // recargar manualmente. Mucho mas barato que polling.
+  useEffect(() => {
+    const refreshFromCloud = async () => {
+      try {
+        const [d, p] = await Promise.all([
+          store.get("lg-despachos"),
+          store.get("cp-purchases"),
+        ]);
+        if (Array.isArray(d)) setDespachos(d);
+        if (Array.isArray(p)) setPurchases(p);
+      } catch (e) {
+        console.warn("Auto-refresh fallo:", e?.message || e);
+      }
+    };
+    const onFocus = () => refreshFromCloud();
+    const onVisChange = () => { if (document.visibilityState === "visible") refreshFromCloud(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisChange);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisChange);
+    };
+  }, []);
+
   // ── Helpers ──
   const allProjects = customProjects.filter(p => !p.hidden && !p.deleted);
 
@@ -858,32 +884,89 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   };
 
   // ── Despachos ──
+  // HELPER de save robusto con merge contra cloud (evita race conditions entre
+  // Oscar/Jorge/Ana editando al mismo tiempo desde Macs distintas).
+  //
+  // mutator: funcion (cloudArr) => newArr — recibe el array MAS RECIENTE del cloud
+  // mergeado con cambios locales pendientes, y devuelve el array final a guardar.
+  //
+  // Aplica:
+  //   1) PRE-FETCH cloud
+  //   2) Detecta deleted-by-local (en previousLocal pero no en next local)
+  //   3) Merge: cloud + localOnly (sin los deleted), luego pasa al mutator
+  //   4) Save lg-despachos
+  //   5) Verifica re-fetch
+  const saveDespachosWithMerge = async (mutator, opts = {}) => {
+    const label = opts.label || "saveDespachosWithMerge";
+    const tStart = Date.now();
+    console.group(`[${label}] ${new Date().toISOString()}`);
+    try {
+      const cloudPrevio = await store.get("lg-despachos");
+      const cloudArr = Array.isArray(cloudPrevio) ? cloudPrevio : [];
+      console.log("☁️ Cloud:", cloudArr.length, "| Local previo:", despachos.length);
+
+      // Detectar lo que se borro intencionalmente respecto al state previo
+      // (para que el merge no lo resucite). Solo aplica cuando opts.deletedIds
+      // viene del caller — para deletes explicitos.
+      const deletedIds = new Set(opts.deletedIds || []);
+      // Base = cloud (autoritativo) + cualquier local-only que NO este borrado
+      const cloudIds = new Set(cloudArr.map(d => d.id));
+      const localOnly = despachos.filter(d => !cloudIds.has(d.id) && !deletedIds.has(d.id));
+      // Filtrar del cloud los IDs borrados intencionalmente
+      const cloudVigente = cloudArr.filter(d => !deletedIds.has(d.id));
+      const baseMerged = [...cloudVigente, ...localOnly];
+
+      // Aplicar mutacion del caller
+      const next = mutator(baseMerged);
+      console.log("🔀 Merged + mutado:", next.length, "despachos");
+
+      setDespachos(next);
+      const ok = await store.set("lg-despachos", next);
+      console.log("☁️ Save →", ok ? "OK" : "FAIL");
+
+      let verifiedOk = ok;
+      if (ok) {
+        try {
+          const verify = await store.get("lg-despachos");
+          const verifyArr = Array.isArray(verify) ? verify : [];
+          if (verifyArr.length !== next.length) {
+            console.warn(`⚠️ Verify length mismatch: enviado ${next.length}, cloud devolvio ${verifyArr.length}`);
+          }
+        } catch (e) {
+          console.warn("⚠️ Verify fallo:", e?.message || e);
+        }
+      }
+      console.log(`⏱ ${label} en ${Date.now() - tStart}ms`);
+      return ok && verifiedOk;
+    } finally {
+      console.groupEnd();
+    }
+  };
+
   const saveDespacho = async (rec, isEdit) => {
-    const next = isEdit
-      ? despachos.map(d => d.id === rec.id ? rec : d)
-      : [...despachos, rec];
-    setDespachos(next);
-    const ok = await store.set("lg-despachos", next);
+    // Upsert por id (replace si existe, append si no) — el flag isEdit es solo informativo.
+    const ok = await saveDespachosWithMerge((base) => {
+      const existe = base.find(d => d.id === rec.id);
+      return existe ? base.map(d => d.id === rec.id ? rec : d) : [...base, rec];
+    }, { label: `saveDespacho ${isEdit ? "edit" : "new"} ${rec.id}` });
     if (!ok) alert("⚠️ Despacho guardado localmente pero no se sincronizo a la nube. Cuando recuperes conexion, volve a guardar.");
     return true;
   };
 
   const updateDespachoEstado = async (id, nuevoEstado) => {
-    const next = despachos.map(d => d.id === id ? {
+    await saveDespachosWithMerge((base) => base.map(d => d.id === id ? {
       ...d,
       estado: nuevoEstado,
-      // Si pasa a entregado, marcamos fecha de ejecucion
       fechaEjecutada: (nuevoEstado === "entregado" || nuevoEstado === "cerrado") ? (d.fechaEjecutada || new Date().toISOString().slice(0, 10)) : d.fechaEjecutada,
       updatedAt: new Date().toISOString(),
-    } : d);
-    setDespachos(next);
-    await store.set("lg-despachos", next);
+    } : d), { label: `updateEstado ${id}->${nuevoEstado}` });
   };
 
   const deleteDespacho = async (id) => {
-    const next = despachos.filter(d => d.id !== id);
-    setDespachos(next);
-    await store.set("lg-despachos", next);
+    await saveDespachosWithMerge((base) => base.filter(d => d.id !== id), {
+      label: `deleteDespacho ${id}`,
+      deletedIds: [id],
+    });
   };
 
   // Quick action: crear un despacho desde una compra con un estado especifico
@@ -910,17 +993,15 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    const next = [...despachos, rec];
-    setDespachos(next);
-    await store.set("lg-despachos", next);
+    await saveDespachosWithMerge((base) => [...base, rec], { label: `quickCreateFromCompra ${rec.id}` });
     return rec;
   };
 
   // Actualizar un campo puntual de un despacho (ej: fechaNecesaria inline desde el card)
   const updateDespachoField = async (id, field, value) => {
-    const next = despachos.map(d => d.id === id ? { ...d, [field]: value, updatedAt: new Date().toISOString() } : d);
-    setDespachos(next);
-    await store.set("lg-despachos", next);
+    await saveDespachosWithMerge((base) => base.map(d => d.id === id ? { ...d, [field]: value, updatedAt: new Date().toISOString() } : d), {
+      label: `updateField ${id}.${field}`,
+    });
   };
 
   // Set fechaNecesaria en una compra (sin despacho aun) — crea un despacho hidden
@@ -1013,15 +1094,14 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       // 6) Actualizar state local para reflejar el cambio inmediato
       setPurchases(nextPurchases);
 
-      // 7) Marcar el despacho como "ficha_adjunta_subida" para feedback visual
-      const nextDesp = despachos.map(d => d.id === despacho.id ? {
+      // 7) Marcar el despacho como "ficha_adjunta_subida" — con merge robusto
+      // para no pisar updates concurrentes de Oscar/Jorge desde otra Mac.
+      await saveDespachosWithMerge((base) => base.map(d => d.id === despacho.id ? {
         ...d,
         fichaRecibidoFileId: fileId,
         fichaRecibidoUploadedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      } : d);
-      setDespachos(nextDesp);
-      await store.set("lg-despachos", nextDesp);
+      } : d), { label: `uploadFichaFirmada-flag ${despacho.id}` });
 
       return true;
     } catch (err) {

@@ -1293,40 +1293,108 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // Crea un despacho en lg-despachos con la info necesaria para que Logistica
   // coordine el retiro. Ana usa esto cuando ya hablo con el proveedor y
   // confirmo la fecha de retiro.
+  //
+  // ROBUSTEZ (mismo patron que sP() para purchases):
+  // 1. PRE-FETCH cloud antes de save → evita pisar despachos que Oscar/Jorge
+  //    agregaron concurrentemente (race condition entre 3 Macs simultaneas).
+  // 2. MERGE por id → si nuestro local tiene una version del mismo id la nuestra
+  //    gana; resto del cloud se preserva.
+  // 3. VERIFICACION post-save → re-fetch cloud y confirmar que nuestro despacho
+  //    quedo persistido. Si no, alerta explicita.
   const enviarAOrdenRecogida = async (purchase, opts = {}) => {
-    const proj = (customProjects || []).find(p => p.short === purchase.projectCode);
-    const projectName = proj?.name || purchase.projectCode || "Proyecto";
-    const rec = {
-      id: uid(),
-      source: "compra",
-      sourcePurchaseId: purchase.id,
-      tipo: "material_compra",
-      descripcion: purchase.description || "",
-      origen: purchase.provider || "Proveedor",
-      destino: `Proyecto ${purchase.projectCode || ""}`.trim(),
-      projectCode: purchase.projectCode || "",
-      vehicleId: "",
-      motorista: "",
-      fechaNecesaria: opts.fechaConfirmada || "",
-      fechaProgramada: opts.fechaConfirmada || "",
-      fechaEjecutada: "",
-      estado: "pendiente",
-      // Info adicional de la coordinacion (lo que Ana coordino con el proveedor)
-      pickupInfo: {
-        coordinadoPor: userName || userRole,
-        coordinadoAt: new Date().toISOString(),
-        fechaConfirmada: opts.fechaConfirmada || "",
-        contactoProveedor: opts.contactoProveedor || "",
-        notas: opts.notas || "",
-      },
-      notas: opts.notas ? `[Coord. con proveedor]\n${opts.notas}` : "",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    const next = [...despachos, rec];
-    setDespachos(next);
-    const ok = await store.set("lg-despachos", next);
-    return { ok, despachoId: rec.id };
+    const tStart = Date.now();
+    console.group(`[enviarAOrdenRecogida] ${new Date().toISOString()}`);
+    try {
+      const rec = {
+        id: uid(),
+        source: "compra",
+        sourcePurchaseId: purchase.id,
+        tipo: "material_compra",
+        descripcion: purchase.description || "",
+        origen: purchase.provider || "Proveedor",
+        destino: `Proyecto ${purchase.projectCode || ""}`.trim(),
+        projectCode: purchase.projectCode || "",
+        vehicleId: "",
+        motorista: "",
+        fechaNecesaria: opts.fechaConfirmada || "",
+        fechaProgramada: opts.fechaConfirmada || "",
+        fechaEjecutada: "",
+        estado: "pendiente",
+        pickupInfo: {
+          coordinadoPor: userName || userRole,
+          coordinadoAt: new Date().toISOString(),
+          fechaConfirmada: opts.fechaConfirmada || "",
+          contactoProveedor: opts.contactoProveedor || "",
+          notas: opts.notas || "",
+        },
+        notas: opts.notas ? `[Coord. con proveedor]\n${opts.notas}` : "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      console.log("📦 Nuevo despacho a crear:", rec.id, "para compra", purchase.id);
+
+      // 1) PRE-FETCH cloud
+      const cloudPrevio = await store.get("lg-despachos");
+      const cloudArr = Array.isArray(cloudPrevio) ? cloudPrevio : [];
+      console.log("☁️ Cloud actual:", cloudArr.length, "despachos | Local:", despachos.length);
+
+      // 2) Verificar idempotencia: si por alguna razon ya hay un despacho con
+      // mismo sourcePurchaseId en cloud (race vs otro Ana en otra tab), abortar
+      // y devolver el existente — evita duplicados.
+      const existenteCloud = cloudArr.find(d => d.sourcePurchaseId === purchase.id);
+      if (existenteCloud) {
+        console.warn("⚠️ Ya existe despacho para esta compra en cloud:", existenteCloud.id, "— no duplico.");
+        // Sincronizar local con cloud
+        setDespachos(cloudArr);
+        return { ok: true, despachoId: existenteCloud.id, alreadyExisted: true };
+      }
+
+      // 3) MERGE: tomar todo de cloud + agregar nuestro nuevo (cloud es source of truth
+      // para no perder lo que Oscar/Jorge agregaron mientras Ana editaba)
+      const localIds = new Set(despachos.map(d => d.id));
+      const cloudIds = new Set(cloudArr.map(d => d.id));
+      // Local-only (despachos que Ana edito/agrego pero aun no estan en cloud)
+      const localOnly = despachos.filter(d => !cloudIds.has(d.id));
+      if (localOnly.length > 0) {
+        console.log(`📤 ${localOnly.length} despachos locales no estan en cloud — incluyendo en merge.`);
+      }
+      const cloudExtras = cloudArr.filter(d => !localIds.has(d.id));
+      if (cloudExtras.length > 0) {
+        console.log(`📥 ${cloudExtras.length} despachos en cloud no estaban en local — preservando.`);
+      }
+      // Merged = cloud (base autoritativa) + local-only + el nuevo rec
+      const merged = [...cloudArr, ...localOnly, rec];
+      console.log("🔀 Merged:", merged.length, "despachos");
+
+      // 4) Save
+      setDespachos(merged);
+      const okSave = await store.set("lg-despachos", merged);
+      console.log("☁️ Save lg-despachos →", okSave ? "OK" : "FAIL");
+
+      // 5) VERIFICACION post-save: re-fetch y confirmar que nuestro despacho esta
+      let verifiedOk = okSave;
+      if (okSave) {
+        try {
+          const verify = await store.get("lg-despachos");
+          const verifyArr = Array.isArray(verify) ? verify : [];
+          const found = verifyArr.find(d => d.id === rec.id);
+          if (!found) {
+            verifiedOk = false;
+            console.error("❌ VERIFICACION FALLO: cloud no devolvio el despacho recien creado");
+          } else {
+            console.log("✅ Verificado en cloud:", verifyArr.length, "despachos totales");
+          }
+        } catch (e) {
+          console.warn("⚠️ No se pudo verificar post-save:", e?.message || e);
+        }
+      }
+
+      const tEnd = Date.now();
+      console.log(`⏱ enviarAOrdenRecogida completo en ${tEnd - tStart}ms. OK: ${verifiedOk}`);
+      return { ok: verifiedOk, despachoId: rec.id };
+    } finally {
+      console.groupEnd();
+    }
   };
   const cp = purchases.filter(p => p.company === co);
 
