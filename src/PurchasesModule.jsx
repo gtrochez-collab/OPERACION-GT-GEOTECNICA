@@ -316,7 +316,15 @@ const deriveDelivery = (p) => {
 // ── Ficha de Recibido — PDF horizontal (A4 landscape), simple, para campo ──
 // EXPORTADA para que otros modulos (Logistica) puedan generar la misma ficha
 // y los motoristas/recepcion la lleven al proveedor al ir a recoger.
-export const generateFichaPDF = async (purchase, projectObj, companyName) => {
+export const generateFichaPDF = async (purchaseLight, projectObj, companyName) => {
+  // Asegurar que tenemos los archivos hidratados (dataUrl). Si el caller pasa
+  // un purchase light (refs por fileId, sin dataUrl), los cargamos aqui antes
+  // de generar el PDF — sino los embeds salen vacios.
+  // Esto permite que el caller no tenga que preocuparse de pre-hidratar.
+  const needsHydration = (purchaseLight.quoteFile?.fileId && !purchaseLight.quoteFile?.dataUrl) ||
+                         (purchaseLight.receiptFile?.fileId && !purchaseLight.receiptFile?.dataUrl);
+  const [purchase] = needsHydration ? await restoreFiles([purchaseLight]) : [purchaseLight];
+
   const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const PW = 297, PH = 210, M = 14, CW = PW - 2 * M; // util: 269mm ancho
@@ -1097,11 +1105,25 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           deliveryStatus: deriveDelivery(x),
           delivery: x.delivery || {},
         }));
-        // Migracion 2: si hay archivos referenciados (fileId sin dataUrl),
-        // cargarlos desde sus rows individuales para tener todo en memoria.
-        const withFiles = await restoreFiles(migrated);
-        setPurchases(withFiles);
-        purchasesArr = withFiles;
+        // Mostrar la UI INMEDIATAMENTE con datos livianos (sin esperar archivos).
+        // Esto evita que la app se quede en "Cargando..." si Supabase tarda en
+        // responder a alguno de los archivos referenciados por fileId.
+        setPurchases(migrated);
+        purchasesArr = migrated;
+
+        // Migracion 2 (BACKGROUND): hidratar archivos de cotizacion/comprobante/ficha
+        // desde sus rows separadas. No bloqueamos el loaded — la UI ya esta usable.
+        // Cada archivo se cargara individualmente al hacer click en "Ver"/"Imprimir".
+        // Este hidratado bulk es solo para optimizar (pre-cargar en memoria).
+        (async () => {
+          try {
+            const withFiles = await restoreFiles(migrated);
+            setPurchases(withFiles);
+            console.info(`[Compras] Hidratacion de archivos completa para ${withFiles.length} compras`);
+          } catch (e) {
+            console.warn("[Compras] Hidratacion en background fallo (no critico, se carga on-demand):", e?.message || e);
+          }
+        })();
       }
       if (cps) setCustomProjects(cps);
       if (Array.isArray(desp)) setDespachos(desp);
