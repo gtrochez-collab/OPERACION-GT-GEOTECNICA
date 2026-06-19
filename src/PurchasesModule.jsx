@@ -247,9 +247,12 @@ const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = "#2563E
     setBusy(true);
     try {
       const fd = await readFileAsDataUrl(f);
-      onUpload(fd);
+      // AWAIT onUpload — si es async (uploads que persisten a cloud), el
+      // spinner "Subiendo..." se mantiene hasta que la persistencia confirme.
+      // Antes esto era fire-and-forget y el spinner se quitaba antes del save real.
+      await onUpload(fd);
     } catch (err) {
-      alert("Error al leer el archivo: " + err);
+      alert("Error al leer/subir el archivo: " + (err?.message || err));
     }
     setBusy(false);
     e.target.value = "";
@@ -658,7 +661,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   const [f, setF] = useState(purchase || {
     company: co, projectCode: "", provider: "", description: "",
     amount: "", quoteNumber: "", opsResponsible: userName || "",
-    opsNotes: "", bacAccount: "", quoteFile: null, receiptFile: null,
+    opsNotes: "", bacAccount: "", providerBank: "", providerAccountType: "", providerAccountHolder: "", providerRTN: "", quoteFile: null, receiptFile: null,
     status: "borrador", createdAt: new Date().toISOString(), audit: [],
     paymentMethod: "Transferencia BAC", paymentReference: "", paymentDate: "", treasuryNotes: "",
   });
@@ -690,11 +693,17 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           onChange={e => {
             const newName = e.target.value;
             u("provider", newName);
-            // Si matchea exactamente un proveedor conocido, auto-fill su primera cuenta BAC
+            // Si matchea exactamente un proveedor conocido, auto-fill su primera cuenta + datos
             const match = (providers || []).find(p => (p.name || "").trim().toLowerCase() === newName.trim().toLowerCase());
-            if (match && match.bankAccounts?.length > 0 && !f.bacAccount) {
+            if (match && match.bankAccounts?.length > 0) {
               const bac = match.bankAccounts.find(b => /bac/i.test(b.bank || "")) || match.bankAccounts[0];
-              if (bac?.number) u("bacAccount", bac.number);
+              if (bac) {
+                if (!f.bacAccount && bac.number) u("bacAccount", bac.number);
+                if (!f.providerBank && bac.bank) u("providerBank", bac.bank);
+                if (!f.providerAccountType && bac.type) u("providerAccountType", bac.type);
+                if (!f.providerAccountHolder && bac.holder) u("providerAccountHolder", bac.holder);
+              }
+              if (!f.providerRTN && match.rtn) u("providerRTN", match.rtn);
             }
           }}
           placeholder="Escribe o elige de la lista"
@@ -709,8 +718,22 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       </div>
       <Input label="Monto total (Lempiras)" type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
       <Input label="Responsable de Operaciones" value={f.opsResponsible} onChange={e => u("opsResponsible", e.target.value)} placeholder="Quien valida por Operaciones" />
-      <Input label="Cuenta BAC del proveedor (opcional)" value={f.bacAccount} onChange={e => u("bacAccount", e.target.value)} placeholder="Ej: 10-251-000123" />
-      <div />
+
+      <div style={{ gridColumn: "1/-1", background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>
+          💳 Datos bancarios del proveedor (opcional)
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Input label="Banco" value={f.providerBank || ""} onChange={e => u("providerBank", e.target.value)} placeholder="Ej: BAC, Banpais, Atlantida" />
+          <Input label="Tipo de cuenta" value={f.providerAccountType || ""} onChange={e => u("providerAccountType", e.target.value)} placeholder="Ahorro / Cheques" />
+          <Input label="Titular de la cuenta" value={f.providerAccountHolder || ""} onChange={e => u("providerAccountHolder", e.target.value)} placeholder="Nombre del titular" />
+          <Input label="RTN" value={f.providerRTN || ""} onChange={e => u("providerRTN", e.target.value)} placeholder="0801-1990-12345" />
+          <div style={{ gridColumn: "1/-1" }}>
+            <Input label="Numero de cuenta" value={f.bacAccount} onChange={e => u("bacAccount", e.target.value)} placeholder="Ej: 10-251-000123" />
+          </div>
+        </div>
+      </div>
+
       <div style={{ gridColumn: "1/-1" }}>
         <Textarea label="Notas de Operaciones para Tesoreria" value={f.opsNotes} onChange={e => u("opsNotes", e.target.value)} placeholder="Urgencia, condiciones de pago, referencias al proyecto, etc." />
       </div>
@@ -1166,6 +1189,41 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     })();
   }, []);
 
+  // Auto-refresh al volver a la pestaña — si Carolina subio un comprobante mientras
+  // admin/Christian/Ana estaban en otra tab, al volver ven el cambio sin recargar.
+  useEffect(() => {
+    const refreshFromCloud = async () => {
+      try {
+        const [p, desp] = await Promise.all([
+          store.get("cp-purchases"),
+          store.get("lg-despachos"),
+        ]);
+        if (Array.isArray(p)) {
+          const migrated = p.map(x => ({
+            ...x,
+            treasuryStatus: deriveTreasury(x),
+            deliveryStatus: deriveDelivery(x),
+            delivery: x.delivery || {},
+          }));
+          setPurchases(migrated);
+          // Hidratar archivos en background (no bloquea)
+          restoreFiles(migrated).then(setPurchases).catch(() => {});
+        }
+        if (Array.isArray(desp)) setDespachos(desp);
+      } catch (e) {
+        console.warn("[Compras] Auto-refresh fallo:", e?.message || e);
+      }
+    };
+    const onFocus = () => refreshFromCloud();
+    const onVisChange = () => { if (document.visibilityState === "visible") refreshFromCloud(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisChange);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisChange);
+    };
+  }, []);
+
   // Guarda los purchases extrayendo los archivos pesados a rows separadas
   // para no exceder el limite de tamaño de Supabase. Devuelve true si todo
   // se guardo en la nube, false si fallo (el cache local siempre se hace).
@@ -1567,6 +1625,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     audit: [...(p.audit || []), { action, by: userName || userRole, role: userRole, at: new Date().toISOString(), note: note || "" }],
   });
 
+  // Devuelve la promise de sP (true=OK, false=fallo) para que los callers que
+  // hacen uploads de archivos puedan AWAIT y dar feedback al usuario en caso
+  // de error. Antes esto retornaba void y los errores quedaban en silencio.
   const updatePurchase = (updated) => sP(purchases.map(p => p.id === updated.id ? updated : p));
   const removePurchase = (id) => sP(purchases.filter(p => p.id !== id));
   // Helper: guarda y retorna true/false segun exito. Para los botones que
@@ -1657,27 +1718,54 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       saveDelivery(newDf, prev);
     };
 
-    const setQuoteFile = (fd) => {
-      const rec = { ...p, quoteFile: fd };
-      const saved = addAudit(rec, "quote_uploaded", `Cotizacion cargada: ${fd.name}`);
-      setP(saved); updatePurchase(saved);
-    };
-    const removeQuoteFile = () => {
-      const rec = { ...p, quoteFile: null };
-      const saved = addAudit(rec, "quote_removed", "Cotizacion eliminada");
-      setP(saved); updatePurchase(saved);
+    // Helper: actualiza state local + persiste + alerta si fallo.
+    // El caller hace AWAIT — asi FileSlot mantiene "Subiendo..." hasta que
+    // el cloud realmente confirma. Antes esto era fire-and-forget y los
+    // fallos quedaban en silencio.
+    const persistConFeedback = async (saved, ctxLabel = "archivo") => {
+      const prev = p;
+      setP(saved);
+      try {
+        const ok = await updatePurchase(saved);
+        if (!ok) {
+          alert(`⚠️ El ${ctxLabel} se ve en pantalla pero NO se sincronizo a la nube.\n\nSi cerrás esta ventana sin reintentarlo, se va a perder. Reintenta el upload o avisame.`);
+          // Revertir modal state para que no de la falsa impresion de que se guardo
+          setP(prev);
+          return false;
+        }
+        return true;
+      } catch (err) {
+        alert(`❌ Error subiendo ${ctxLabel}: ${err?.message || err}`);
+        setP(prev);
+        return false;
+      }
     };
 
-    const setReceiptFile = (fd) => {
+    const setQuoteFile = async (fd) => {
+      const rec = { ...p, quoteFile: fd };
+      const saved = addAudit(rec, "quote_uploaded", `Cotizacion cargada: ${fd.name}`);
+      await persistConFeedback(saved, "cotizacion");
+    };
+    const removeQuoteFile = async () => {
+      const rec = { ...p, quoteFile: null };
+      const saved = addAudit(rec, "quote_removed", "Cotizacion eliminada");
+      await persistConFeedback(saved, "cotizacion");
+    };
+
+    const setReceiptFile = async (fd) => {
       const rec = { ...p, receiptFile: fd, status: "finalizado", treasuryStatus: "pagada", finalizedAt: new Date().toISOString() };
       const saved = addAudit(rec, "receipt_uploaded", `Comprobante cargado — solicitud FINALIZADA`);
-      setP(saved); updatePurchase(saved);
+      const ok = await persistConFeedback(saved, "comprobante de transferencia");
+      if (ok) {
+        // Confirmacion explicita para Carolina — sabe que quedo guardado
+        console.info("✅ Comprobante guardado y verificado en cloud:", fd.name);
+      }
     };
-    const removeReceiptFile = () => {
+    const removeReceiptFile = async () => {
       if (!confirm("¿Eliminar comprobante? La solicitud volvera a estado 'Pagado sin comprobante'.")) return;
       const rec = { ...p, receiptFile: null, status: "pagado", treasuryStatus: "pagada", finalizedAt: null };
       const saved = addAudit(rec, "receipt_removed", "Comprobante eliminado");
-      setP(saved); updatePurchase(saved);
+      await persistConFeedback(saved, "comprobante");
     };
 
     const revertToValidado = () => {
@@ -1695,7 +1783,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
     const canEditOps = canCreate && (p.status === "borrador" || p.status === "validado");
     const canRegisterPay = canPay && p.status === "validado";
-    const canUploadReceipt = canPay && (p.status === "pagado" || p.status === "finalizado");
+    // Comprobantes: ademas de Carolina (canPay), tambien admin (Gerson) y costos (Christian)
+    // pueden subir/quitar comprobantes en CASOS DE EMERGENCIA — Carolina sigue siendo
+    // la responsable primaria. Esta excepcion es para no quedarse trabados si Carolina
+    // no esta disponible al cerrar la solicitud.
+    const canUploadReceiptEmergency = (isAdmin || isCostos) && (p.status === "pagado" || p.status === "finalizado");
+    const canUploadReceipt = (canPay || canUploadReceiptEmergency) && (p.status === "pagado" || p.status === "finalizado");
     const canRevertPay = canPay && (p.status === "pagado" || p.status === "finalizado");
     const canMarkReceived = canPay && p.status === "validado" && p.treasuryStatus === "pendiente";
 
@@ -1727,7 +1820,6 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Fecha de carga</div><div style={{ fontWeight: 600 }}>{fmt(p.createdAt)}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Proveedor</div><div style={{ fontWeight: 600 }}>{p.provider}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>N° Cotizacion</div><div style={{ fontWeight: 600 }}>{p.quoteNumber || "—"}</div></div>
-          <div><div style={{ fontSize: 11, color: "#64748b" }}>Cuenta BAC</div><div style={{ fontWeight: 600 }}>{p.bacAccount || "—"}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Responsable Ops</div><div style={{ fontWeight: 600 }}>{p.opsResponsible || "—"}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Validado</div><div style={{ fontWeight: 600 }}>{fmtDT(p.validatedAt)}</div></div>
           <div style={{ gridColumn: "1/-1" }}>
@@ -1739,6 +1831,20 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             <div style={{ fontStyle: "italic", color: "#334155", background: "#F1F5F9", padding: 10, borderRadius: 8 }}>{p.opsNotes}</div>
           </div>}
         </div>
+
+        {/* Datos bancarios del proveedor — destacados para Carolina */}
+        {(p.providerBank || p.providerAccountType || p.providerAccountHolder || p.providerRTN || p.bacAccount) && (
+          <div style={{ marginTop: 16, padding: 12, background: "#FFFBEB", border: "1px solid #FCD34D", borderRadius: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>💳 Datos bancarios del proveedor</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, fontSize: 13 }}>
+              <div><div style={{ fontSize: 10, color: "#92400E" }}>Banco</div><div style={{ fontWeight: 600 }}>{p.providerBank || "—"}</div></div>
+              <div><div style={{ fontSize: 10, color: "#92400E" }}>Tipo de cuenta</div><div style={{ fontWeight: 600 }}>{p.providerAccountType || "—"}</div></div>
+              <div><div style={{ fontSize: 10, color: "#92400E" }}>Titular</div><div style={{ fontWeight: 600 }}>{p.providerAccountHolder || "—"}</div></div>
+              <div><div style={{ fontSize: 10, color: "#92400E" }}>RTN</div><div style={{ fontWeight: 600 }}>{p.providerRTN || "—"}</div></div>
+              <div style={{ gridColumn: "span 2" }}><div style={{ fontSize: 10, color: "#92400E" }}>Numero de cuenta</div><div style={{ fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace" }}>{p.bacAccount || "—"}</div></div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Pago (si aplica) */}
@@ -1772,14 +1878,21 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           onUpload={setQuoteFile}
           onRemove={removeQuoteFile}
         />
-        <FileSlot
-          label="🧾 Comprobante de transferencia"
-          file={p.receiptFile}
-          canUpload={canUploadReceipt}
-          accent="#059669"
-          onUpload={setReceiptFile}
-          onRemove={removeReceiptFile}
-        />
+        <div>
+          <FileSlot
+            label="🧾 Comprobante de transferencia"
+            file={p.receiptFile}
+            canUpload={canUploadReceipt}
+            accent="#059669"
+            onUpload={setReceiptFile}
+            onRemove={removeReceiptFile}
+          />
+          {canUploadReceiptEmergency && !isTesoreria && (
+            <div style={{ marginTop: 6, fontSize: 10, color: "#92400E", background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 6, padding: "4px 8px", lineHeight: 1.4 }}>
+              ⚠️ Subida de emergencia habilitada para {isAdmin ? "Admin" : "Costos"}. Lo normal es que la suba la Lic. Carolina.
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ═══ Recepcion de Materiales ═══ */}
