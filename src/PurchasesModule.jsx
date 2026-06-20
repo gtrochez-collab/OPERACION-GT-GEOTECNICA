@@ -849,7 +849,7 @@ function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
 
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
       <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-      <Btn variant="success" onClick={() => {
+      <Btn variant="success" onClick={async () => {
         if (!f.paymentMethod || !f.paymentDate) return alert("Seleccione metodo y fecha de pago");
         const hasReceipt = !!f.receiptFile;
         const rec = {
@@ -865,7 +865,14 @@ function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
           ? `Pago ${f.paymentMethod} registrado con comprobante — FINALIZADA`
           : `Pago ${f.paymentMethod} registrado sin comprobante`;
         const saved = addAudit(rec, "paid", note);
-        updatePurchase(saved);
+        // AWAIT el save — si falla, no cerrar el modal y mostrar alerta para que
+        // el usuario reintente. Antes era fire-and-forget y un fallo de cloud
+        // dejaba al usuario creyendo que se guardo cuando no.
+        const ok = await updatePurchase(saved);
+        if (!ok) {
+          alert("⚠️ El pago se guardo localmente pero NO se sincronizo a la nube.\n\nReintenta o avisame. Si refrescas ahora, se va a perder.");
+          return;
+        }
         setModal({ t: "detail", d: saved });
         setTimeout(() => alert(hasReceipt
           ? "✓ Pago registrado y comprobante adjuntado. Solicitud FINALIZADA."
@@ -1782,15 +1789,17 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     };
 
     const canEditOps = canCreate && (p.status === "borrador" || p.status === "validado");
-    const canRegisterPay = canPay && p.status === "validado";
-    // Comprobantes: ademas de Carolina (canPay), tambien admin (Gerson) y costos (Christian)
-    // pueden subir/quitar comprobantes en CASOS DE EMERGENCIA — Carolina sigue siendo
-    // la responsable primaria. Esta excepcion es para no quedarse trabados si Carolina
-    // no esta disponible al cerrar la solicitud.
-    const canUploadReceiptEmergency = (isAdmin || isCostos) && (p.status === "pagado" || p.status === "finalizado");
+    // PAGOS EN EMERGENCIA: admin (Gerson) y costos (Christian) pueden registrar
+    // pago + subir comprobante cuando Carolina no esta disponible. Carolina
+    // sigue siendo la primaria — esto es solo para no quedarse trabados.
+    const isEmergencyPayer = isAdmin || isCostos;
+    const canRegisterPay = (canPay || isEmergencyPayer) && p.status === "validado";
+    const canUploadReceiptEmergency = isEmergencyPayer && (p.status === "pagado" || p.status === "finalizado");
     const canUploadReceipt = (canPay || canUploadReceiptEmergency) && (p.status === "pagado" || p.status === "finalizado");
     const canRevertPay = canPay && (p.status === "pagado" || p.status === "finalizado");
     const canMarkReceived = canPay && p.status === "validado" && p.treasuryStatus === "pendiente";
+    // Flag para mostrar aviso visual cuando admin/costos esta actuando en lugar de Carolina
+    const isActingAsEmergency = isEmergencyPayer && !isTesoreria && (p.status === "validado" || p.status === "pagado" || p.status === "finalizado");
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Header de estado */}
@@ -2014,11 +2023,25 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         </div>
       </div>}
 
+      {/* Aviso de emergencia — visible cuando admin/costos esta actuando como Carolina */}
+      {isActingAsEmergency && (
+        <div style={{ background: "#FEF3C7", border: "2px solid #F59E0B", borderRadius: 10, padding: 12, fontSize: 13, color: "#92400E", display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 20 }}>⚠️</span>
+          <div>
+            <div style={{ fontWeight: 800, marginBottom: 2 }}>Modo emergencia — {isAdmin ? "Administrador" : "Costos"}</div>
+            <div style={{ fontSize: 12, lineHeight: 1.4 }}>
+              Tenes habilitado registrar pago y subir comprobante porque Lic. Carolina no esta disponible.
+              Quedara registrado en el historial que vos lo hiciste, no ella.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Acciones */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, paddingTop: 10, borderTop: "1px solid #E2E8F0" }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {canEditOps && <Btn variant="ghost" onClick={() => setModal({ t: "edit", d: p })}>✏️ Editar (Ops)</Btn>}
-          {canRegisterPay && <Btn variant="success" onClick={() => setModal({ t: "pay", d: p })}>💰 Registrar pago</Btn>}
+          {canRegisterPay && <Btn variant="success" onClick={() => setModal({ t: "pay", d: p })}>💰 Registrar pago{isActingAsEmergency && p.status === "validado" ? " (emergencia)" : ""}</Btn>}
           {canRevertPay && <Btn variant="warn" onClick={revertToValidado}>↺ Revertir pago</Btn>}
           {canCreate && <Btn variant="danger" onClick={() => { if (confirm(`¿Eliminar la solicitud de ${p.provider}?`)) { removePurchase(p.id); setModal(null); } }}>🗑 Eliminar</Btn>}
         </div>
