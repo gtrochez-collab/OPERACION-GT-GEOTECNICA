@@ -1129,6 +1129,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // Keys: `${projectKey}-enlog`, `${projectKey}-cierre`, `${projectKey}-cerradas`.
   // Default: enlog y cierre abiertas (undefined → tratado como true), cerradas oculto.
   const [anaExpand, setAnaExpand] = useState({});
+  // Estado del Command Center (Resumen). showCompleted: incluir cerradas.
+  // projectCode: filtrar a un solo proyecto.
+  const [resumenFilter, setResumenFilter] = useState({ showCompleted: false, projectCode: "" });
 
   useEffect(() => {
     (async () => {
@@ -2268,6 +2271,237 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   };
 
   // ─────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // COMMAND CENTER — Resumen end-to-end por proyecto
+  // ─────────────────────────────────────────────────────────────────────────
+  // Vista para admin/gerencia/costos. Cada compra muestra TODO su lifecycle
+  // (validacion → pago → coordinacion Ana → logistica → ficha Jorge → cerrado)
+  // con la PROXIMA ACCION PENDIENTE destacada. Asi el coordinador ve de un
+  // vistazo donde esta cada cosa sin saltar entre modulos.
+  const computeLifecycle = (p) => {
+    const desp = despachos.find(d => d.sourcePurchaseId === p.id);
+    const isPaid = p.status === "pagado" || p.status === "finalizado";
+    const hasReceipt = !!p.receiptFile;
+    const hasDesp = !!desp;
+    const hasVehicle = !!desp?.vehicleId;
+    const enRuta = desp?.estado === "en_ruta";
+    const entregado = desp?.estado === "entregado" || p.deliveryStatus === "ficha_adjunta" || p.deliveryStatus === "cerrado";
+    const fichaUploaded = !!p.delivery?.fichaFile;
+    const closed = p.deliveryStatus === "cerrado";
+
+    // Estado y "siguiente accion" en lenguaje claro
+    let nextAction = "";
+    let nextOwner = "";
+    if (p.status === "borrador") { nextAction = "Aprobar para enviar a Tesoreria"; nextOwner = "Operaciones"; }
+    else if (p.status === "validado") { nextAction = "Registrar pago"; nextOwner = "Lic. Carolina"; }
+    else if (isPaid && !hasReceipt) { nextAction = "Subir comprobante"; nextOwner = "Lic. Carolina"; }
+    else if (isPaid && hasReceipt && !hasDesp) { nextAction = "Coordinar con proveedor + enviar a logistica"; nextOwner = "Ana Vasquez"; }
+    else if (hasDesp && !hasVehicle && desp?.estado === "pendiente") { nextAction = "Asignar vehiculo + motorista"; nextOwner = "Oscar Paz"; }
+    else if (hasVehicle && !enRuta && !entregado) { nextAction = "Salir en ruta"; nextOwner = "Oscar Paz"; }
+    else if (enRuta) { nextAction = "Entregar en proyecto"; nextOwner = "Motorista"; }
+    else if (entregado && !fichaUploaded) { nextAction = "Subir ficha de recibido firmada"; nextOwner = "Jorge Castellanos"; }
+    else if (fichaUploaded && !closed) { nextAction = "Cerrar contablemente"; nextOwner = "Ana / Operaciones"; }
+    else if (closed) { nextAction = "✓ Cerrada"; nextOwner = ""; }
+
+    return {
+      desp, isPaid, hasReceipt, hasDesp, hasVehicle, enRuta, entregado, fichaUploaded, closed,
+      nextAction, nextOwner,
+    };
+  };
+
+  // Render de la barra de fases (9 hitos) para una compra
+  const renderLifecycleBar = (p, lc) => {
+    const phases = [
+      { key: "solicitud",  emoji: "📝", label: "Solicitud",      done: true },
+      { key: "validado",   emoji: "✅", label: "Validada",       done: ["validado","pagado","finalizado"].includes(p.status) },
+      { key: "pagado",     emoji: "💰", label: "Pagada",         done: lc.isPaid },
+      { key: "compr",      emoji: "🧾", label: "Comprobante",    done: lc.hasReceipt },
+      { key: "coord",      emoji: "📞", label: "Coordinada Ana", done: lc.hasDesp },
+      { key: "logistica",  emoji: "🚛", label: "Logistica",      done: lc.hasVehicle },
+      { key: "entreg",     emoji: "📦", label: "Entregada",      done: lc.entregado },
+      { key: "ficha",      emoji: "📋", label: "Ficha firmada",  done: lc.fichaUploaded },
+      { key: "cerrada",    emoji: "🔒", label: "Cerrada",        done: lc.closed },
+    ];
+    // El "current" es la primera fase NO done
+    const currentIdx = phases.findIndex(ph => !ph.done);
+    return (
+      <div style={{ display: "flex", gap: 3, alignItems: "center", flexWrap: "nowrap" }}>
+        {phases.map((ph, i) => {
+          const isCurrent = i === currentIdx;
+          const bg = ph.done ? "#059669" : isCurrent ? "#F59E0B" : "#E2E8F0";
+          const color = ph.done || isCurrent ? "#fff" : "#94A3B8";
+          return (
+            <div key={ph.key} title={`${ph.label}${ph.done ? " ✓" : isCurrent ? " (siguiente)" : " (pendiente)"}`} style={{
+              background: bg, color, fontSize: 11, fontWeight: 700,
+              width: 24, height: 24, borderRadius: 4,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              border: isCurrent ? "2px solid #D97706" : "none",
+              transition: "all .15s",
+            }}>{ph.emoji}</div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderResumen = () => {
+    // Filtros del Command Center
+    // - showCompleted: incluir cerradas o solo activas
+    const showCompleted = resumenFilter.showCompleted;
+    const projFilter = resumenFilter.projectCode;
+
+    // Agrupar compras por proyecto, filtrando segun company actual
+    const grupos = {};
+    cp.forEach(p => {
+      // Filtro: solo cerradas si showCompleted, sino solo activas
+      const isClosed = p.deliveryStatus === "cerrado";
+      if (!showCompleted && isClosed) return;
+      if (projFilter && p.projectCode !== projFilter) return;
+      const key = p.projectCode || "_sin_proyecto";
+      (grupos[key] = grupos[key] || []).push(p);
+    });
+
+    const proyectosConCompras = Object.keys(grupos).sort();
+
+    if (proyectosConCompras.length === 0) {
+      return (
+        <div style={{ textAlign: "center", padding: 60, color: "#94A3B8" }}>
+          <div style={{ fontSize: 56, marginBottom: 16 }}>📊</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#475569" }}>No hay compras {showCompleted ? "" : "activas"} para mostrar</div>
+          {!showCompleted && <div style={{ marginTop: 8, fontSize: 13 }}>Activa "Mostrar cerradas" para ver el historial.</div>}
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        {/* Filtros */}
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 10, padding: 12 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, color: CHARCOAL }}>
+            <input type="checkbox" checked={showCompleted} onChange={e => setResumenFilter(s => ({ ...s, showCompleted: e.target.checked }))} />
+            Mostrar cerradas
+          </label>
+          <div style={{ height: 20, width: 1, background: "#E2E8F0" }} />
+          <Select
+            label=""
+            options={[{ value: "", label: "Todos los proyectos" }, ...allProjects.map(p => ({ value: p.short, label: p.short }))]}
+            value={projFilter}
+            onChange={e => setResumenFilter(s => ({ ...s, projectCode: e.target.value }))}
+            emptyLabel="Todos los proyectos"
+          />
+          <div style={{ marginLeft: "auto", fontSize: 12, color: "#64748b", fontWeight: 600 }}>
+            {proyectosConCompras.length} proyectos · {Object.values(grupos).reduce((a, l) => a + l.length, 0)} compras
+          </div>
+        </div>
+
+        {/* Leyenda */}
+        <div style={{ background: "#F8FAFC", border: `1px solid ${BORDER}`, borderRadius: 8, padding: "8px 12px", display: "flex", gap: 16, fontSize: 11, color: "#64748b", flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontWeight: 700, color: CHARCOAL }}>Leyenda:</span>
+          <span><span style={{ display: "inline-block", width: 12, height: 12, background: "#059669", borderRadius: 2, verticalAlign: "middle", marginRight: 4 }} />Completado</span>
+          <span><span style={{ display: "inline-block", width: 12, height: 12, background: "#F59E0B", borderRadius: 2, verticalAlign: "middle", marginRight: 4, border: "2px solid #D97706" }} />Siguiente accion</span>
+          <span><span style={{ display: "inline-block", width: 12, height: 12, background: "#E2E8F0", borderRadius: 2, verticalAlign: "middle", marginRight: 4 }} />Pendiente</span>
+          <span style={{ marginLeft: "auto", fontStyle: "italic" }}>Click una compra para abrir el detalle completo</span>
+        </div>
+
+        {/* Proyectos */}
+        {proyectosConCompras.map(key => {
+          const items = grupos[key];
+          const proj = allProjects.find(p => p.short === key);
+          const projName = proj?.name || "";
+          const projColor = proj?.color || "#475569";
+          const totalMonto = items.reduce((a, p) => a + Number(p.amount || 0), 0);
+          // Stats de fases
+          const pendingByOwner = {};
+          items.forEach(p => {
+            const lc = computeLifecycle(p);
+            if (lc.nextOwner && lc.nextOwner !== "" && !lc.closed) {
+              pendingByOwner[lc.nextOwner] = (pendingByOwner[lc.nextOwner] || 0) + 1;
+            }
+          });
+
+          return (
+            <div key={key} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "hidden" }}>
+              {/* Header del proyecto */}
+              <div style={{ padding: "14px 18px", background: projColor + "15", borderBottom: `2px solid ${projColor}40`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: projColor, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.3 }}>{key}</div>
+                  {projName && <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{projName}</div>}
+                </div>
+                <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{fmtL(totalMonto)}</div>
+                    <div style={{ fontSize: 10, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 0.5 }}>{items.length} compras</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Resumen de acciones pendientes por owner */}
+              {Object.keys(pendingByOwner).length > 0 && (
+                <div style={{ padding: "8px 18px", background: "#FFFBEB", borderBottom: `1px solid #FCD34D`, fontSize: 12, color: "#92400E", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ fontWeight: 700 }}>⚠️ Pendiente:</span>
+                  {Object.entries(pendingByOwner).map(([owner, count]) => (
+                    <span key={owner} style={{ background: "#FCD34D40", padding: "3px 10px", borderRadius: 12, fontWeight: 600 }}>{owner}: {count}</span>
+                  ))}
+                </div>
+              )}
+
+              {/* Tabla de compras */}
+              <div>
+                {items.map((p, idx) => {
+                  const lc = computeLifecycle(p);
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => setModal({ t: "detail", d: p })}
+                      style={{
+                        padding: "12px 18px",
+                        borderTop: idx === 0 ? "none" : `1px solid #F1F5F9`,
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1.5fr) 1fr auto minmax(0, 1.3fr)",
+                        gap: 16,
+                        alignItems: "center",
+                        cursor: "pointer",
+                        transition: "background .12s",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#FAFAFB"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      {/* Provider + descripcion */}
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider || "—"}</div>
+                        <div style={{ fontSize: 11, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>{p.description}</div>
+                      </div>
+
+                      {/* Lifecycle bar */}
+                      <div>{renderLifecycleBar(p, lc)}</div>
+
+                      {/* Monto */}
+                      <div style={{ textAlign: "right", minWidth: 100 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#059669" }}>{fmtL(p.amount)}</div>
+                      </div>
+
+                      {/* Siguiente accion */}
+                      <div style={{ minWidth: 0 }}>
+                        {lc.closed ? (
+                          <div style={{ fontSize: 11, color: "#059669", fontWeight: 700 }}>🔒 Cerrada contablemente</div>
+                        ) : (
+                          <>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#9A4F1D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lc.nextAction}</div>
+                            {lc.nextOwner && <div style={{ fontSize: 10, color: "#64748b", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>→ {lc.nextOwner}</div>}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   // ANA KANBAN — Compras pagadas pendientes de coordinar retiro con proveedor
   // ─────────────────────────────────────────────────────────────────────────
   const renderAnaKanban = () => {
@@ -2692,14 +2926,18 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           // - Ana (asistente_compras): SOLO "Por coordinar" y "Proveedores"
           // - Todos los demas: ven todo (solicitudes, proyectos, por coordinar, proveedores)
           const allNav = [
+            { id: "resumen", icon: "📊", label: "Resumen" },
             { id: "list", icon: "📋", label: "Solicitudes" },
             { id: "projects", icon: "🏗️", label: "Proyectos" },
             { id: "ana", icon: "📦", label: "Por coordinar" },
             { id: "providers", icon: "🏢", label: "Proveedores" },
           ];
+          // Resumen (command center) solo para admin/gerencia/costos — quien
+          // necesita dar seguimiento end-to-end. Ana ve su Kanban.
+          const canSeeResumen = isAdmin || isGerencia || isCostos;
           const visibleNav = isAsistenteCompras
             ? allNav.filter(n => n.id === "ana" || n.id === "providers")
-            : allNav;
+            : allNav.filter(n => n.id !== "resumen" || canSeeResumen);
           return visibleNav.map(n => <button key={n.id} onClick={() => setSec(n.id)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: sb ? "11px 20px" : "11px 18px", background: sec === n.id ? "rgba(232,118,45,0.18)" : "transparent", border: "none", color: sec === n.id ? "#fff" : "#A8A096", cursor: "pointer", fontSize: 14, textAlign: "left", borderLeft: sec === n.id ? `3px solid ${ORANGE}` : "3px solid transparent", fontFamily: "inherit", fontWeight: sec === n.id ? 600 : 500, transition: "all .15s" }}>
             <span style={{ fontSize: 18 }}>{n.icon}</span>{sb && <span>{n.label}</span>}
           </button>);
@@ -2722,7 +2960,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       <div style={{ padding: "22px 32px", borderBottom: `1px solid ${BORDER}`, background: CREAM, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
-            {sec === "projects" ? "Proyectos"
+            {sec === "resumen" ? "Command Center — Seguimiento por proyecto"
+              : sec === "projects" ? "Proyectos"
               : sec === "providers" ? "Proveedores"
               : sec === "ana" ? "Por coordinar con proveedores"
               : "Solicitudes de compra validadas"}
@@ -2732,7 +2971,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <Badge color={cc.color}>{cp.length} solicitudes</Badge>
       </div>
       <div style={{ padding: 28 }}>{
-        sec === "projects" ? renderProjects()
+        sec === "resumen" ? renderResumen()
+          : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
           : sec === "ana" ? renderAnaKanban()
           : renderList()
