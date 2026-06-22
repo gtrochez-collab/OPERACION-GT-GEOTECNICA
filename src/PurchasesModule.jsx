@@ -816,6 +816,7 @@ function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
     treasuryNotes: purchase.treasuryNotes || "",
     receiptFile: purchase.receiptFile || null,
   });
+  const [saving, setSaving] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
 
   return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -848,37 +849,48 @@ function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
     <Textarea label="Notas de Tesoreria" value={f.treasuryNotes} onChange={e => u("treasuryNotes", e.target.value)} placeholder="Observaciones, descuentos aplicados, retenciones, etc." />
 
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-      <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-      <Btn variant="success" onClick={async () => {
+      <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cancelar</Btn>
+      <Btn variant="success" disabled={saving} onClick={async () => {
         if (!f.paymentMethod || !f.paymentDate) return alert("Seleccione metodo y fecha de pago");
         const hasReceipt = !!f.receiptFile;
-        const rec = {
-          ...purchase, ...f,
-          status: hasReceipt ? "finalizado" : "pagado",
-          treasuryStatus: "pagada",
-          deliveryStatus: purchase.deliveryStatus || "pendiente_entrega",
-          delivery: purchase.delivery || {},
-          paidAt: new Date(f.paymentDate).toISOString(),
-          finalizedAt: hasReceipt ? new Date().toISOString() : purchase.finalizedAt || null,
-        };
-        const note = hasReceipt
-          ? `Pago ${f.paymentMethod} registrado con comprobante — FINALIZADA`
-          : `Pago ${f.paymentMethod} registrado sin comprobante`;
-        const saved = addAudit(rec, "paid", note);
-        // AWAIT el save — si falla, no cerrar el modal y mostrar alerta para que
-        // el usuario reintente. Antes era fire-and-forget y un fallo de cloud
-        // dejaba al usuario creyendo que se guardo cuando no.
-        const ok = await updatePurchase(saved);
-        if (!ok) {
-          alert("⚠️ El pago se guardo localmente pero NO se sincronizo a la nube.\n\nReintenta o avisame. Si refrescas ahora, se va a perder.");
-          return;
+        console.group(`[PaymentForm] Registrar pago ${purchase.id}`);
+        console.log("Method:", f.paymentMethod, "| Date:", f.paymentDate, "| hasReceipt:", hasReceipt);
+        if (hasReceipt) console.log("Receipt file:", f.receiptFile?.name, "size:", f.receiptFile?.size, "type:", f.receiptFile?.type);
+        setSaving(true);
+        try {
+          const rec = {
+            ...purchase, ...f,
+            status: hasReceipt ? "finalizado" : "pagado",
+            treasuryStatus: "pagada",
+            deliveryStatus: purchase.deliveryStatus || "pendiente_entrega",
+            delivery: purchase.delivery || {},
+            paidAt: new Date(f.paymentDate).toISOString(),
+            finalizedAt: hasReceipt ? new Date().toISOString() : purchase.finalizedAt || null,
+          };
+          const note = hasReceipt
+            ? `Pago ${f.paymentMethod} registrado con comprobante — FINALIZADA`
+            : `Pago ${f.paymentMethod} registrado sin comprobante`;
+          const saved = addAudit(rec, "paid", note);
+          console.log("Llamando updatePurchase...");
+          const ok = await updatePurchase(saved);
+          console.log("updatePurchase devolvio:", ok);
+          if (!ok) {
+            alert("⚠️ El pago NO se sincronizo a la nube.\n\nAbri la consola del navegador (Cmd+Option+I) y revisa que dice. Reintenta el guardado o avisame que pasa.");
+            return;
+          }
+          setModal({ t: "detail", d: saved });
+          setTimeout(() => alert(hasReceipt
+            ? "✓ Pago registrado y comprobante adjuntado. Solicitud FINALIZADA."
+            : "✓ Pago registrado. Podes adjuntar el comprobante mas tarde desde el detalle."
+          ), 100);
+        } catch (err) {
+          console.error("Error en Registrar pago:", err);
+          alert(`❌ Error registrando pago: ${err?.message || err}\n\nMira la consola del navegador para detalles.`);
+        } finally {
+          setSaving(false);
+          console.groupEnd();
         }
-        setModal({ t: "detail", d: saved });
-        setTimeout(() => alert(hasReceipt
-          ? "✓ Pago registrado y comprobante adjuntado. Solicitud FINALIZADA."
-          : "✓ Pago registrado. Podes adjuntar el comprobante mas tarde desde el detalle."
-        ), 100);
-      }}>💰 Registrar pago</Btn>
+      }}>{saving ? "💾 Guardando..." : "💰 Registrar pago"}</Btn>
     </div>
   </div>;
 }
