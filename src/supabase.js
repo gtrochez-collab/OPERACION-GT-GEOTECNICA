@@ -176,17 +176,35 @@ try {
   }
 } catch {}
 
+// Timeout para queries de archivos pesados. Si la query a cloud tarda mas de
+// este tiempo, abortamos para no quedar bloqueados. El caller que necesite el
+// archivo lo reintenta on-demand. Especialmente importante para keys cp-file-*
+// que pueden tener JSONB grande y disparar statement_timeout (57014).
+const getWithTimeout = (promise, ms = 8000) => {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout ${ms}ms`)), ms)),
+  ]);
+};
+
 export const store = {
   async get(k) {
     // 1) Leer ambos: cloud (con su updated_at) y local (con su ts).
     let cloudValue = undefined;
     let cloudTs = null;
     try {
-      const { data, error } = await supabase
+      // Timeout mas corto para cp-file-* (8s) que son los problematicos.
+      // Para el resto (cp-purchases, lg-despachos, etc) el default de Supabase
+      // es razonable porque son arrays livianos.
+      const isFile = k.startsWith('cp-file-');
+      const queryPromise = supabase
         .from('app_data')
         .select('value, updated_at')
         .eq('key', k)
         .maybeSingle();
+      const { data, error } = isFile
+        ? await getWithTimeout(queryPromise, 8000)
+        : await queryPromise;
       if (!error && data) {
         cloudValue = data.value;
         cloudTs = data.updated_at || null;
@@ -194,7 +212,7 @@ export const store = {
         console.warn('Supabase get warning for', k, error);
       }
     } catch (e) {
-      console.warn('Supabase get network error for', k, e);
+      console.warn('Supabase get network/timeout error for', k, e?.message || e);
     }
     const { value: localValue, ts: localTs } = readLocalWithTs(k);
 

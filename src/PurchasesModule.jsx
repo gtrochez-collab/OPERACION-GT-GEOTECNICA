@@ -1147,25 +1147,19 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           deliveryStatus: deriveDelivery(x),
           delivery: x.delivery || {},
         }));
-        // Mostrar la UI INMEDIATAMENTE con datos livianos (sin esperar archivos).
-        // Esto evita que la app se quede en "Cargando..." si Supabase tarda en
-        // responder a alguno de los archivos referenciados por fileId.
+        // Mostrar la UI INMEDIATAMENTE con datos livianos. Los archivos se cargan
+        // ON-DEMAND cuando el usuario los necesita (abrir detalle, generar PDF).
+        //
+        // IMPORTANTE: NO hacemos bulk restoreFiles aqui. Antes lo haciamos en
+        // background, pero con 70+ compras eso disparaba 50+ queries paralelas a
+        // Supabase (cp-file-*), saturando las conexiones y disparando timeouts
+        // (error 57014). Eso causaba que los SAVE de Carolina (pagos/comprobantes)
+        // compitieran con esas queries pendientes y fallaran.
+        //
+        // generateFichaPDF y otros call sites ya hacen restoreFiles para la compra
+        // especifica que necesitan — ese es el patron correcto.
         setPurchases(migrated);
         purchasesArr = migrated;
-
-        // Migracion 2 (BACKGROUND): hidratar archivos de cotizacion/comprobante/ficha
-        // desde sus rows separadas. No bloqueamos el loaded — la UI ya esta usable.
-        // Cada archivo se cargara individualmente al hacer click en "Ver"/"Imprimir".
-        // Este hidratado bulk es solo para optimizar (pre-cargar en memoria).
-        (async () => {
-          try {
-            const withFiles = await restoreFiles(migrated);
-            setPurchases(withFiles);
-            console.info(`[Compras] Hidratacion de archivos completa para ${withFiles.length} compras`);
-          } catch (e) {
-            console.warn("[Compras] Hidratacion en background fallo (no critico, se carga on-demand):", e?.message || e);
-          }
-        })();
       }
       if (cps) setCustomProjects(cps);
       if (Array.isArray(desp)) setDespachos(desp);
@@ -1225,8 +1219,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             delivery: x.delivery || {},
           }));
           setPurchases(migrated);
-          // Hidratar archivos en background (no bloquea)
-          restoreFiles(migrated).then(setPurchases).catch(() => {});
+          // NO bulk-hidratar archivos en focus tampoco — load on-demand evita
+          // saturar Supabase. Archivos se cargan al abrir detalle/generar PDF.
         }
         if (Array.isArray(desp)) setDespachos(desp);
       } catch (e) {
