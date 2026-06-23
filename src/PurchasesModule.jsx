@@ -1969,9 +1969,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                   {df.actualDate && df.receivedBy && <Btn variant="success" onClick={() => saveDelivery(df, "recibido")}>
                     ✅ Marcar materiales recibidos
                   </Btn>}
-                  {p.deliveryStatus === "ficha_adjunta" || (df.fichaFile && df.fichaSigned) ? <Btn variant="primary" onClick={() => saveDelivery(df, "cerrado")}>
-                    🔒 Cerrar compra
-                  </Btn> : null}
+                  {/* Boton "Cerrar compra" removido a pedido del coordinador:
+                      el cierre contable lo maneja Ana directamente con contabilidad
+                      por fuera del sistema. Una vez que Jorge sube la ficha, la
+                      compra queda como "Lista para contabilidad" (informativo). */}
                 </div>
               </div>
             ) : (
@@ -2287,7 +2288,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const enRuta = desp?.estado === "en_ruta";
     const entregado = desp?.estado === "entregado" || p.deliveryStatus === "ficha_adjunta" || p.deliveryStatus === "cerrado";
     const fichaUploaded = !!p.delivery?.fichaFile;
-    const closed = p.deliveryStatus === "cerrado";
+    // Desde el POV del coordinador (admin/gerencia/costos), una compra esta
+    // "lista" cuando Jorge subio la ficha — de ahi en adelante Ana cierra con
+    // contabilidad y NO necesitamos visibilidad. Si conta tiene problema, avisa.
+    const lista = fichaUploaded || p.deliveryStatus === "cerrado";
 
     // Estado y "siguiente accion" en lenguaje claro
     let nextAction = "";
@@ -2300,16 +2304,17 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     else if (hasVehicle && !enRuta && !entregado) { nextAction = "Salir en ruta"; nextOwner = "Oscar Paz"; }
     else if (enRuta) { nextAction = "Entregar en proyecto"; nextOwner = "Motorista"; }
     else if (entregado && !fichaUploaded) { nextAction = "Subir ficha de recibido firmada"; nextOwner = "Jorge Castellanos"; }
-    else if (fichaUploaded && !closed) { nextAction = "Cerrar contablemente"; nextOwner = "Ana / Operaciones"; }
-    else if (closed) { nextAction = "✓ Cerrada"; nextOwner = ""; }
+    else if (fichaUploaded) { nextAction = "✓ Lista — pasar a contabilidad"; nextOwner = ""; }
 
     return {
-      desp, isPaid, hasReceipt, hasDesp, hasVehicle, enRuta, entregado, fichaUploaded, closed,
+      desp, isPaid, hasReceipt, hasDesp, hasVehicle, enRuta, entregado, fichaUploaded, lista,
       nextAction, nextOwner,
     };
   };
 
-  // Render de la barra de fases (9 hitos) para una compra
+  // Render de la barra de fases (8 hitos) para una compra. Sacamos "Cerrada
+  // contablemente" porque eso lo maneja Ana sola con contabilidad — el
+  // coordinador no necesita visibilidad de ese ultimo paso.
   const renderLifecycleBar = (p, lc) => {
     const phases = [
       { key: "solicitud",  emoji: "📝", label: "Solicitud",      done: true },
@@ -2320,7 +2325,6 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       { key: "logistica",  emoji: "🚛", label: "Logistica",      done: lc.hasVehicle },
       { key: "entreg",     emoji: "📦", label: "Entregada",      done: lc.entregado },
       { key: "ficha",      emoji: "📋", label: "Ficha firmada",  done: lc.fichaUploaded },
-      { key: "cerrada",    emoji: "🔒", label: "Cerrada",        done: lc.closed },
     ];
     // El "current" es la primera fase NO done
     const currentIdx = phases.findIndex(ph => !ph.done);
@@ -2346,16 +2350,18 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
   const renderResumen = () => {
     // Filtros del Command Center
-    // - showCompleted: incluir cerradas o solo activas
+    // - showCompleted: incluir las "listas" (ficha subida o cerradas).
+    //   Por default ocultas — el coordinador solo ve lo que tiene accion pendiente.
     const showCompleted = resumenFilter.showCompleted;
     const projFilter = resumenFilter.projectCode;
 
     // Agrupar compras por proyecto, filtrando segun company actual
     const grupos = {};
     cp.forEach(p => {
-      // Filtro: solo cerradas si showCompleted, sino solo activas
-      const isClosed = p.deliveryStatus === "cerrado";
-      if (!showCompleted && isClosed) return;
+      // Una compra esta "lista" cuando Jorge subio la ficha o cuando Ana cerro.
+      // De ahi en adelante no necesita visibilidad del coordinador.
+      const lista = !!p.delivery?.fichaFile || p.deliveryStatus === "cerrado";
+      if (!showCompleted && lista) return;
       if (projFilter && p.projectCode !== projFilter) return;
       const key = p.projectCode || "_sin_proyecto";
       (grupos[key] = grupos[key] || []).push(p);
@@ -2367,8 +2373,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       return (
         <div style={{ textAlign: "center", padding: 60, color: "#94A3B8" }}>
           <div style={{ fontSize: 56, marginBottom: 16 }}>📊</div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "#475569" }}>No hay compras {showCompleted ? "" : "activas"} para mostrar</div>
-          {!showCompleted && <div style={{ marginTop: 8, fontSize: 13 }}>Activa "Mostrar cerradas" para ver el historial.</div>}
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#475569" }}>
+            {showCompleted ? "No hay compras para mostrar" : "✓ Todo al dia — no hay acciones pendientes"}
+          </div>
+          {!showCompleted && <div style={{ marginTop: 8, fontSize: 13 }}>Activa "Mostrar listas" para ver las compras donde Jorge ya subio la ficha.</div>}
         </div>
       );
     }
@@ -2379,7 +2387,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 10, padding: 12 }}>
           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, color: CHARCOAL }}>
             <input type="checkbox" checked={showCompleted} onChange={e => setResumenFilter(s => ({ ...s, showCompleted: e.target.checked }))} />
-            Mostrar cerradas
+            Mostrar listas (ya con ficha)
           </label>
           <div style={{ height: 20, width: 1, background: "#E2E8F0" }} />
           <Select
@@ -2410,11 +2418,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           const projName = proj?.name || "";
           const projColor = proj?.color || "#475569";
           const totalMonto = items.reduce((a, p) => a + Number(p.amount || 0), 0);
-          // Stats de fases
+          // Stats de fases — solo compras que tienen accion pendiente (no listas)
           const pendingByOwner = {};
           items.forEach(p => {
             const lc = computeLifecycle(p);
-            if (lc.nextOwner && lc.nextOwner !== "" && !lc.closed) {
+            if (lc.nextOwner && lc.nextOwner !== "" && !lc.lista) {
               pendingByOwner[lc.nextOwner] = (pendingByOwner[lc.nextOwner] || 0) + 1;
             }
           });
@@ -2482,8 +2490,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
                       {/* Siguiente accion */}
                       <div style={{ minWidth: 0 }}>
-                        {lc.closed ? (
-                          <div style={{ fontSize: 11, color: "#059669", fontWeight: 700 }}>🔒 Cerrada contablemente</div>
+                        {lc.lista ? (
+                          <div style={{ fontSize: 11, color: "#059669", fontWeight: 700 }}>✓ Lista — pasar a contabilidad</div>
                         ) : (
                           <>
                             <div style={{ fontSize: 11, fontWeight: 700, color: "#9A4F1D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lc.nextAction}</div>
@@ -2505,35 +2513,34 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // ANA KANBAN — Compras pagadas pendientes de coordinar retiro con proveedor
   // ─────────────────────────────────────────────────────────────────────────
   const renderAnaKanban = () => {
-    // Clasificacion de cada compra pagada en una de 4 sub-secciones por proyecto.
+    // Clasificacion de cada compra pagada en una de 3 sub-secciones por proyecto.
     // El mismo ID de compra vive en una sola sub-seccion segun su estado actual.
     //
-    // FLUJO:
-    //   por_coordinar  → pagada, sin despacho, no cerrada
-    //   en_logistica   → tiene despacho pendiente/programado/en_ruta
-    //   cierre         → deliveryStatus === ficha_adjunta (Jorge subio ficha)
-    //   cerradas       → deliveryStatus === cerrado (historico del proyecto)
+    // FLUJO (simplificado — el cierre contable lo maneja Ana fuera del sistema):
+    //   por_coordinar  → pagada, sin despacho
+    //   en_logistica   → tiene despacho pendiente/programado/en_ruta/entregado sin ficha
+    //   listas         → Jorge ya subio la ficha de recibido (informativo, sin accion)
     const yaTieneDespacho = (purchaseId) => despachos.some(d => d.sourcePurchaseId === purchaseId);
     const despachoDe = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
 
     // Para cada compra pagada, decidir en que sub-seccion va
     const clasificar = (p) => {
       if (p.status !== "pagado" && p.status !== "finalizado") return null;
-      if (p.deliveryStatus === "cerrado") return "cerradas";
-      if (p.deliveryStatus === "ficha_adjunta") return "cierre";
+      // ficha_adjunta o cerrada legacy → "listas" (informativo, no se actua mas aqui)
+      if (p.deliveryStatus === "ficha_adjunta" || p.deliveryStatus === "cerrado") return "listas";
       const d = despachoDe(p.id);
       if (d && (d.estado === "pendiente" || d.estado === "programado" || d.estado === "en_ruta" || d.estado === "entregado")) {
         // Entregado pero sin ficha aun: sigue en logistica
         return "en_logistica";
       }
-      // No tiene despacho y no esta cerrada — Ana tiene que coordinar
+      // No tiene despacho — Ana tiene que coordinar
       return "por_coordinar";
     };
 
     // Agrupar por proyecto, dentro de cada proyecto por sub-seccion
     const grupos = {};
-    const ensure = (key) => { if (!grupos[key]) grupos[key] = { por_coordinar: [], en_logistica: [], cierre: [], cerradas: [] }; };
-    let totales = { por_coordinar: 0, en_logistica: 0, cierre: 0, cerradas: 0 };
+    const ensure = (key) => { if (!grupos[key]) grupos[key] = { por_coordinar: [], en_logistica: [], listas: [] }; };
+    let totales = { por_coordinar: 0, en_logistica: 0, listas: 0 };
     cp.forEach(p => {
       const bucket = clasificar(p);
       if (!bucket) return;
@@ -2543,13 +2550,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       totales[bucket]++;
     });
 
-    // Proyectos a mostrar: los que tienen al menos una compra en cualquiera de las 4 sub-secciones
+    // Proyectos a mostrar: los que tienen al menos una compra en cualquiera de las 3 sub-secciones
     const projKeys = Object.keys(grupos).sort((a, b) => {
       if (a === "__sin__") return 1;
       if (b === "__sin__") return -1;
-      // Ordenar primero por cantidad de items activos (por_coordinar + cierre)
-      const aActive = grupos[a].por_coordinar.length + grupos[a].cierre.length;
-      const bActive = grupos[b].por_coordinar.length + grupos[b].cierre.length;
+      // Ordenar primero por cantidad de items activos (por_coordinar es donde Ana debe actuar)
+      const aActive = grupos[a].por_coordinar.length;
+      const bActive = grupos[b].por_coordinar.length;
       if (aActive !== bActive) return bActive - aActive;
       return a.localeCompare(b);
     });
@@ -2623,20 +2630,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           <div style={{ fontSize: 26, fontWeight: 800, color: "#0891B2", marginTop: 4 }}>{totales.en_logistica}</div>
           <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>En Logistica</div>
         </div>
-        <div style={{ background: "#fff", border: totales.cierre > 0 ? "1px solid #6EE7B7" : "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
-          <div style={{ fontSize: 22 }}>📋</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: "#059669", marginTop: 4 }}>{totales.cierre}</div>
-          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Para cierre contable</div>
-        </div>
-        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
-          <div style={{ fontSize: 22 }}>🔒</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: "#64748b", marginTop: 4 }}>{totales.cerradas}</div>
-          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Cerradas (historial)</div>
+        <div style={{ background: "#fff", border: totales.listas > 0 ? "1px solid #6EE7B7" : "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
+          <div style={{ fontSize: 22 }}>✓</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#059669", marginTop: 4 }}>{totales.listas}</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Listas — pasar a contabilidad</div>
         </div>
       </div>
 
       <div style={{ background: "#FFFBEB", border: "1px solid #F59E0B", borderRadius: 12, padding: 14, fontSize: 13, color: "#78350F" }}>
-        💼 <b>Flujo dentro de cada columna:</b> 📦 Por coordinar → 🚛 En Logistica → 📋 Listas para cierre (cuando Jorge sube la ficha) → 🔒 Cerradas. Cada compra mantiene su lugar en la columna del proyecto.
+        💼 <b>Flujo:</b> 📦 Por coordinar con proveedor → 🚛 En Logistica → ✓ Lista para contabilidad (cuando Jorge sube la ficha). El cierre contable lo manejas vos directamente con conta.
       </div>
 
       {/* Kanban por proyecto — cada columna tiene 4 sub-secciones colapsables */}
@@ -2652,15 +2654,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
               const proj = (customProjects || []).find(p => p.short === key);
               const projDisplay = key === "__sin__" ? "SIN PROYECTO" : key;
               const projName = proj?.name || "";
-              const colTotal = items.por_coordinar.length + items.en_logistica.length + items.cierre.length + items.cerradas.length;
-              const headerColor = items.cierre.length > 0 ? "#059669" : items.por_coordinar.length > 0 ? "#E8762D" : "#0891B2";
+              const colTotal = items.por_coordinar.length + items.en_logistica.length + items.listas.length;
+              const headerColor = items.listas.length > 0 && items.por_coordinar.length === 0 && items.en_logistica.length === 0 ? "#059669" : items.por_coordinar.length > 0 ? "#E8762D" : "#0891B2";
 
               const expandedEnLog = anaExpand[`${key}-enlog`] !== false; // default visible
-              const expandedCierre = anaExpand[`${key}-cierre`] !== false; // default visible (es urgente!)
-              const expandedCerradas = anaExpand[`${key}-cerradas`] === true; // default oculto
+              const expandedCierre = anaExpand[`${key}-cierre`] !== false; // default visible
 
               const toggleSec = (subkey) => setAnaExpand(s => ({ ...s, [subkey]: !(s[subkey] !== false) }));
-              const toggleHistorial = () => setAnaExpand(s => ({ ...s, [`${key}-cerradas`]: !s[`${key}-cerradas`] }));
 
               return <div key={key} style={{
                 minWidth: 310,
@@ -2722,24 +2722,24 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                     </div>}
                   </>}
 
-                  {/* Sub-seccion: LISTAS PARA CIERRE (verde — urgente) */}
-                  {items.cierre.length > 0 && <>
+                  {/* Sub-seccion: LISTAS PARA CONTABILIDAD (verde — informativo, sin accion) */}
+                  {items.listas.length > 0 && <>
                     <button onClick={() => toggleSec(`${key}-cierre`)} style={{ background: "#DCFCE7", color: "#065F46", border: "2px solid #059669", padding: "8px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span>📋 Listas para cierre contable ({items.cierre.length})</span>
+                      <span>✓ Listas para contabilidad ({items.listas.length})</span>
                       <span style={{ fontSize: 10 }}>{expandedCierre ? "▾" : "▸"}</span>
                     </button>
                     {expandedCierre && <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
-                      {items.cierre.map(p => {
+                      {items.listas.map(p => {
                         const tieneFichaFirmada = !!p.delivery?.fichaFile?.fileId;
                         return renderCardCompacta(p, {
-                          badge: tieneFichaFirmada ? "✓ Ficha firmada" : "⚠️ Sin ficha firmada",
-                          accentColor: tieneFichaFirmada ? "#059669" : "#D97706",
-                          borderColor: tieneFichaFirmada ? "#6EE7B7" : "#FCD34D",
-                          dateRight: p.delivery?.fichaUploadedAt ? `Subida ${new Date(p.delivery.fichaUploadedAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "",
-                          subline: p.delivery?.fichaFile?.name || (tieneFichaFirmada ? "Ficha firmada subida" : "Falta ficha firmada — pedir a Jorge"),
-                          actions: <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                          badge: "✓ Lista — pasar a conta",
+                          accentColor: "#059669",
+                          borderColor: "#6EE7B7",
+                          dateRight: p.delivery?.fichaUploadedAt ? `Ficha ${new Date(p.delivery.fichaUploadedAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "",
+                          subline: p.delivery?.fichaFile?.name || "Ficha de recibido subida por Jorge",
+                          actions: <div style={{ marginTop: 6 }}>
                             <button onClick={async () => {
-                              // PRIORIDAD: si Jorge subio la ficha firmada, abrirla. Sino, fallback al template.
+                              // Si Jorge subio la ficha firmada, abrirla. Sino fallback al template (deberia ser raro).
                               if (tieneFichaFirmada) {
                                 try {
                                   const ref = p.delivery.fichaFile;
@@ -2757,36 +2757,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                               } else {
                                 try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { alert("No se pudo: " + e.message); }
                               }
-                            }} style={{ background: tieneFichaFirmada ? "#059669" : CHARCOAL, color: "#fff", border: "none", padding: "7px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                              {tieneFichaFirmada ? "👁 Ver ficha firmada" : "📄 Template en blanco"}
+                            }} style={{ background: "#059669", color: "#fff", border: "none", padding: "7px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>
+                              👁 Ver ficha firmada
                             </button>
-                            <button onClick={() => setModal({ t: "detail", d: p })} style={{ background: tieneFichaFirmada ? "#10B981" : "#94A3B8", color: "#fff", border: "none", padding: "7px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: tieneFichaFirmada ? "pointer" : "not-allowed", fontFamily: "inherit", opacity: tieneFichaFirmada ? 1 : 0.7 }} disabled={!tieneFichaFirmada} title={tieneFichaFirmada ? "Cerrar contablemente" : "Esperando ficha firmada de Jorge"}>🔒 Cerrar contable</button>
                           </div>,
                         });
                       })}
-                    </div>}
-                  </>}
-
-                  {/* Sub-seccion: CERRADAS (historial, default oculto) */}
-                  {items.cerradas.length > 0 && <>
-                    <button onClick={toggleHistorial} style={{ background: "#F1F5F9", color: "#475569", border: "1px solid #CBD5E1", padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span>🔒 Cerradas — historial ({items.cerradas.length})</span>
-                      <span style={{ fontSize: 10 }}>{expandedCerradas ? "▾" : "▸"}</span>
-                    </button>
-                    {expandedCerradas && <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
-                      {items.cerradas
-                        .sort((a, b) => (b.paidAt || "").localeCompare(a.paidAt || ""))
-                        .map(p => renderCardCompacta(p, {
-                          badge: "🔒 Cerrada",
-                          accentColor: "#64748b",
-                          borderColor: "#CBD5E1",
-                          faded: true,
-                          strike: true,
-                          dateRight: p.paidAt ? new Date(p.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" }) : "",
-                          actions: <div style={{ marginTop: 6 }}>
-                            <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: "#475569", border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>📄 Re-descargar ficha</button>
-                          </div>,
-                        }))}
                     </div>}
                   </>}
                 </div>
