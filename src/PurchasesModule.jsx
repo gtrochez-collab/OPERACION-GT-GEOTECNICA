@@ -902,6 +902,7 @@ function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider }
   const [f, setF] = useState(provider || {
     id: "",
     name: "",
+    rtn: "",
     phones: [""],
     bankAccounts: [{ bank: "", type: "", number: "", holder: "" }],
     contactName: "",
@@ -922,11 +923,13 @@ function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider }
 
   return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
     <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 12, fontSize: 12, color: "#1E40AF" }}>
-      💡 Esta info se usa para que el equipo de coordinacion (Ana) llame al proveedor, sepa donde retirar y haga ordenes de pago a la cuenta correcta.
+      💡 Esta info se usa para que el equipo (Ana) coordine retiros con el proveedor y para que al crear una nueva solicitud se rellenen automaticamente los datos bancarios.
     </div>
 
+    {/* Datos generales */}
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
       <Input label="Nombre del proveedor *" value={f.name} onChange={e => u("name", e.target.value)} placeholder="Razon social o nombre comercial" />
+      <Input label="RTN" value={f.rtn || ""} onChange={e => u("rtn", e.target.value)} placeholder="0801-1990-12345" />
       <Input label="Persona de contacto" value={f.contactName} onChange={e => u("contactName", e.target.value)} placeholder="Ej: Ing. Juan Perez" />
       <Input label="Email" value={f.contactEmail} onChange={e => u("contactEmail", e.target.value)} placeholder="contacto@proveedor.com" />
     </div>
@@ -945,22 +948,30 @@ function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider }
       </div>
     </div>
 
-    {/* Cuentas bancarias */}
+    {/* Cuentas bancarias — 4 campos por cuenta (Banco, Tipo, Titular, Numero) */}
     <div>
       <div style={{ fontSize: 11, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🏦 Cuentas bancarias</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 8, fontStyle: "italic" }}>
+        Estos datos se cargan automaticamente al crear una nueva solicitud con este proveedor.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {(f.bankAccounts || []).map((b, i) => (
-          <div key={i} style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 10, display: "grid", gridTemplateColumns: "1fr 1fr 2fr 1fr auto", gap: 8 }}>
-            <Input label={i === 0 ? "Banco" : ""} value={b.bank} onChange={e => setBank(i, "bank", e.target.value)} placeholder="Ej: BAC, Ficohsa" />
-            <Input label={i === 0 ? "Tipo" : ""} value={b.type} onChange={e => setBank(i, "type", e.target.value)} placeholder="Ahorros/Corriente" />
-            <Input label={i === 0 ? "Numero de cuenta" : ""} value={b.number} onChange={e => setBank(i, "number", e.target.value)} placeholder="Ej: 10-251-000123" />
-            <Input label={i === 0 ? "Titular" : ""} value={b.holder} onChange={e => setBank(i, "holder", e.target.value)} placeholder="Nombre del titular" />
-            <div style={{ display: "flex", alignItems: "flex-end" }}>
-              {(f.bankAccounts.length > 1) && <Btn small variant="danger" onClick={() => removeBank(i)}>×</Btn>}
+          <div key={i} style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                Cuenta {i + 1}{i === 0 ? " (principal)" : ""}
+              </div>
+              {(f.bankAccounts.length > 1) && <Btn small variant="danger" onClick={() => removeBank(i)}>× Eliminar</Btn>}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Input label="Banco" value={b.bank} onChange={e => setBank(i, "bank", e.target.value)} placeholder="Ej: BAC, Ficohsa, Atlantida" />
+              <Input label="Tipo de cuenta" value={b.type} onChange={e => setBank(i, "type", e.target.value)} placeholder="Ahorro / Cheques" />
+              <Input label="Titular de la cuenta" value={b.holder} onChange={e => setBank(i, "holder", e.target.value)} placeholder="Nombre del titular" />
+              <Input label="Numero de cuenta" value={b.number} onChange={e => setBank(i, "number", e.target.value)} placeholder="Ej: 10-251-000123" />
             </div>
           </div>
         ))}
-        <Btn small variant="ghost" onClick={addBank}>+ Agregar cuenta bancaria</Btn>
+        <Btn small variant="ghost" onClick={addBank}>+ Agregar otra cuenta bancaria</Btn>
       </div>
     </div>
 
@@ -1107,7 +1118,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const canPay = isTesoreria;                                                     // SOLO Carolina registra pago y cambia estado financiero
   const canViewOnly = isGerencia;                                                 // solo gerencia es read-only
   const canEditDelivery = isAdmin || isCostos || isRecepcion;                     // subir/editar fichas de recibido
-  const canManageProviders = isAdmin || isCostos || isAsistenteCompras;           // CRUD de proveedores
+  const canManageProviders = isAdmin || isCostos || isAsistenteCompras || isRecepcion;  // CRUD de proveedores (Ana primaria, Jorge tambien para no quedar trabados)
   const canSendToLogistics = isAdmin || isCostos || isAsistenteCompras;           // crear orden de recogida desde compra pagada
 
   const [co, setCo] = useState("geotecnica");
@@ -1180,11 +1191,18 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         const lk = name.toLowerCase();
         if (knownNames.has(lk) || seenInThisImport.has(lk)) continue;
         seenInThisImport.add(lk);
+        // Captura cualquier dato bancario que ya tenga la compra (de campos viejos o nuevos)
+        const accountNumber = pp.bacAccount;
+        const accountBank = pp.providerBank || (accountNumber ? "BAC" : "");
+        const accountType = pp.providerAccountType || "";
+        const accountHolder = pp.providerAccountHolder || name;
+        const hasBank = !!(accountBank || accountNumber || accountType || accountHolder !== name);
         importedFromPurchases.push({
           id: uid(),
           name,
+          rtn: pp.providerRTN || "",
           phones: [],
-          bankAccounts: pp.bacAccount ? [{ bank: "BAC", type: "", number: pp.bacAccount, holder: name }] : [],
+          bankAccounts: hasBank ? [{ bank: accountBank, type: accountType, number: accountNumber || "", holder: accountHolder }] : [],
           contactName: "",
           contactEmail: "",
           notes: "Importado automaticamente de solicitudes existentes — completar datos.",
@@ -2257,11 +2275,17 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                   {p.autoImported && !incompleto && <Badge color="#64748b">Auto</Badge>}
                 </div>
                 <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#475569" }}>
+                  {p.rtn && <div style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, color: "#64748b" }}>RTN: {p.rtn}</div>}
                   {p.contactName && <div>👤 {p.contactName}</div>}
                   {p.phones?.length > 0 && <div>📞 {p.phones.join(" · ")}</div>}
                   {p.contactEmail && <div>✉️ {p.contactEmail}</div>}
-                  {p.bankAccounts?.length > 0 && <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px dashed #E2E8F0" }}>
-                    🏦 {p.bankAccounts.map(b => `${b.bank}: ${b.number}`).join(" · ")}
+                  {p.bankAccounts?.length > 0 && <div style={{ marginTop: 4, paddingTop: 6, borderTop: "1px dashed #E2E8F0", display: "flex", flexDirection: "column", gap: 3 }}>
+                    {p.bankAccounts.map((b, idx) => (
+                      <div key={idx} style={{ fontSize: 11, lineHeight: 1.4 }}>
+                        🏦 <b>{b.bank || "—"}</b> {b.type && `· ${b.type}`} {b.holder && `· ${b.holder}`}
+                        {b.number && <div style={{ fontFamily: "ui-monospace, Menlo, monospace", color: "#475569", marginLeft: 18 }}>{b.number}</div>}
+                      </div>
+                    ))}
                   </div>}
                   {(!p.phones?.length && !p.bankAccounts?.length) && <div style={{ fontStyle: "italic", color: "#94A3B8" }}>Sin telefono ni cuenta bancaria — click para completar</div>}
                 </div>
