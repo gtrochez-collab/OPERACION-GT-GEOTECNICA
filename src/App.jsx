@@ -3,6 +3,7 @@ import HRModule from "./HRModule.jsx";
 import PurchasesModule from "./PurchasesModule.jsx";
 import MachinesModule from "./MachinesModule.jsx";
 import LogisticsModule from "./LogisticsModule.jsx";
+import GeoDrillVault from "./GeoDrillVault.jsx";
 // GeoChat: desactivado temporalmente (jun 2026). El polling y los mensajes
 // en localStorage estaban presionando el cache. Cuando lo retomemos, sera
 // con Supabase Realtime + bypass de localStorage (ya esta listo).
@@ -62,6 +63,15 @@ const MODULES = [
     accentSoft: "rgba(45,74,107,0.10)",
     roles: ["admin", "logistica", "recepcion"],
   },
+  {
+    id: "geodrill-vault",
+    name: "GeoDrill Vault",
+    icon: "🗄️",
+    desc: "Inventario de alto valor: picas, portapicas, muelas y herramientas de perforacion",
+    accent: "#0F4C75",
+    accentSoft: "rgba(15,76,117,0.10)",
+    roles: ["admin", "tesoreria", "almacenista"],
+  },
 ];
 
 export default function App() {
@@ -110,6 +120,7 @@ export default function App() {
   if (activeModule === "compras-operaciones") return <>{syncBanner}<PurchasesModule {...moduleProps} /></>;
   if (activeModule === "maquinas") return <>{syncBanner}<MachinesModule {...moduleProps} /></>;
   if (activeModule === "logistica") return <>{syncBanner}<LogisticsModule {...moduleProps} /></>;
+  if (activeModule === "geodrill-vault") return <>{syncBanner}<GeoDrillVault {...moduleProps} /></>;
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
   // if (activeModule === "geochat") return <>{syncBanner}<ChatModule {...moduleProps} /></>;
 
