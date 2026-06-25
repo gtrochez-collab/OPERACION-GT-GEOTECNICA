@@ -219,21 +219,48 @@ const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = "#2563E
     if (!file) return;
     let fileToOpen = file;
     if (!file.dataUrl && file.fileId) {
+      console.group(`[FileSlot] Cargar archivo on-demand`);
+      console.log("fileId:", file.fileId);
+      console.log("name:", file.name, "| size:", file.size, "| type:", file.type);
       setOpening(true);
+      const tStart = Date.now();
       try {
         const full = await store.get(`cp-file-${file.fileId}`);
-        if (!full?.dataUrl) {
-          alert("❌ No se pudo cargar el archivo desde la nube.\n\nPuede ser un problema temporal de Supabase. Reintenta en unos segundos.");
+        const tEnd = Date.now();
+        console.log(`store.get tardo ${tEnd - tStart}ms`);
+        if (!full) {
+          // El archivo NO existe en la nube. Causa probable: el upload original
+          // fallo (Supabase timeout, sesion expirada, etc) y solo quedo la ref
+          // huerfana en cp-purchases.
+          console.error("Archivo no encontrado en cp-file-" + file.fileId);
+          alert(`❌ El archivo "${file.name}" no se encuentra en la nube.\n\nProbablemente el upload original fallo. Reemplazalo subiendo el archivo de nuevo desde 'Reemplazar archivo'.`);
           setOpening(false);
+          console.groupEnd();
           return;
         }
+        if (!full.dataUrl) {
+          console.error("Cloud devolvio el archivo pero sin dataUrl:", full);
+          alert(`❌ El archivo "${file.name}" esta corrupto en la nube (sin contenido).\n\nReemplazalo subiendo el archivo de nuevo desde 'Reemplazar archivo'.`);
+          setOpening(false);
+          console.groupEnd();
+          return;
+        }
+        console.log("✓ Cargado OK, abriendo...");
         fileToOpen = { ...full, fileId: file.fileId };
       } catch (err) {
-        alert("Error cargando archivo: " + (err?.message || err));
+        console.error("Excepcion cargando archivo:", err);
+        const msg = err?.message || String(err);
+        if (msg.includes("Timeout")) {
+          alert(`⏱ El archivo "${file.name}" tardo mas de 30 segundos en cargar.\n\nPuede ser que Supabase este lento. Reintenta en unos segundos.`);
+        } else {
+          alert(`Error cargando "${file.name}": ${msg}\n\nAbri la consola del navegador (Cmd+Option+I) para mas detalles.`);
+        }
         setOpening(false);
+        console.groupEnd();
         return;
       }
       setOpening(false);
+      console.groupEnd();
     }
     if (fileToOpen.type?.startsWith("image/") || fileToOpen.type === "application/pdf") {
       const w = window.open();
@@ -1339,16 +1366,31 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       const { light, filesToSave } = extractFiles(merged);
       console.log("🗂 Archivos a subir:", filesToSave.length, "| light array:", light.length, "purchases");
 
-      // 4) Save archivos serial
+      // 4) Save archivos serial. Si CUALQUIER archivo falla, NO guardamos
+      // cp-purchases — sino quedariamos con refs huerfanas (fileId en el array
+      // pero el cp-file-<id> no existe en cloud). Asi el usuario reintenta y
+      // cuando funcione el upload, el resto del save procede.
       const failedFiles = [];
       for (const f of filesToSave) {
+        console.log(`📤 Subiendo cp-file-${f.fileId} (${f.content?.name}, ${(f.content?.size / 1024 / 1024).toFixed(2)} MB)...`);
         const ok = await store.set(fileKey(f.fileId), f.content);
-        if (!ok) failedFiles.push(f);
+        if (!ok) {
+          failedFiles.push(f);
+          console.error(`❌ Fallo upload de cp-file-${f.fileId}`);
+        } else {
+          console.log(`✓ cp-file-${f.fileId} subido OK`);
+        }
       }
 
-      // 5) Save cp-purchases (con merge)
-      const purchasesOk = await store.set("cp-purchases", light);
-      console.log("☁️ Save cp-purchases →", purchasesOk ? "OK" : "FAIL");
+      // 5) Save cp-purchases SOLO si todos los archivos subieron OK.
+      // Si algun archivo fallo, abortamos para no dejar refs huerfanas.
+      let purchasesOk = false;
+      if (failedFiles.length > 0) {
+        console.error(`⛔ ${failedFiles.length} archivo(s) fallaron — NO guardo cp-purchases para evitar refs huerfanas. El usuario debe reintentar.`);
+      } else {
+        purchasesOk = await store.set("cp-purchases", light);
+        console.log("☁️ Save cp-purchases →", purchasesOk ? "OK" : "FAIL");
+      }
 
       // 6) VERIFICACION: re-fetch desde cloud y comparar
       let verifiedOk = true;

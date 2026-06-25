@@ -1360,16 +1360,28 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       const { light, filesToSave } = extractFiles(merged);
       console.log("🗂 Archivos a subir:", filesToSave.length, "| light array:", light.length, "purchases");
 
-      // 4) Save archivos serial
+      // 4) Save archivos serial. Si CUALQUIER archivo falla, NO guardamos
+      // mq-purchases — evita refs huerfanas. El usuario reintenta.
       const failedFiles = [];
       for (const f of filesToSave) {
+        console.log(`📤 Subiendo cp-file-${f.fileId} (${f.content?.name}, ${(f.content?.size / 1024 / 1024).toFixed(2)} MB)...`);
         const ok = await store.set(fileKey(f.fileId), f.content);
-        if (!ok) failedFiles.push(f);
+        if (!ok) {
+          failedFiles.push(f);
+          console.error(`❌ Fallo upload de cp-file-${f.fileId}`);
+        } else {
+          console.log(`✓ cp-file-${f.fileId} subido OK`);
+        }
       }
 
-      // 5) Save mq-purchases (con merge)
-      const purchasesOk = await store.set("mq-purchases", light);
-      console.log("☁️ Save mq-purchases →", purchasesOk ? "OK" : "FAIL");
+      // 5) Save mq-purchases SOLO si todos los archivos subieron OK.
+      let purchasesOk = false;
+      if (failedFiles.length > 0) {
+        console.error(`⛔ ${failedFiles.length} archivo(s) fallaron — NO guardo mq-purchases para evitar refs huerfanas.`);
+      } else {
+        purchasesOk = await store.set("mq-purchases", light);
+        console.log("☁️ Save mq-purchases →", purchasesOk ? "OK" : "FAIL");
+      }
 
       // 6) VERIFICACION: re-fetch desde cloud y comparar
       let verifiedOk = true;

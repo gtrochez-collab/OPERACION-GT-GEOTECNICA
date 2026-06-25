@@ -176,14 +176,15 @@ try {
   }
 } catch {}
 
-// Timeout para queries de archivos pesados. Si la query a cloud tarda mas de
-// este tiempo, abortamos para no quedar bloqueados. El caller que necesite el
-// archivo lo reintenta on-demand. Especialmente importante para keys cp-file-*
-// que pueden tener JSONB grande y disparar statement_timeout (57014).
-const getWithTimeout = (promise, ms = 8000) => {
+// Timeout defensivo para queries. Si la query no responde nunca (caso edge
+// raro: conexion colgada sin recibir error de Postgres), abortamos. Cosechamos
+// 30s porque archivos JSONB grandes pueden tardar legit varios segundos en
+// devolver. Si el caller ve timeout, lo reintenta. Para reads on-demand de
+// click "Ver / Descargar" 30s es mas que suficiente.
+const getWithTimeout = (promise, ms = 30000) => {
   return Promise.race([
     promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout ${ms}ms`)), ms)),
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout ${ms}ms — la query a Supabase no respondio`)), ms)),
   ]);
 };
 
@@ -193,23 +194,22 @@ export const store = {
     let cloudValue = undefined;
     let cloudTs = null;
     try {
-      // Timeout mas corto para cp-file-* (8s) que son los problematicos.
-      // Para el resto (cp-purchases, lg-despachos, etc) el default de Supabase
-      // es razonable porque son arrays livianos.
-      const isFile = k.startsWith('cp-file-');
       const queryPromise = supabase
         .from('app_data')
         .select('value, updated_at')
         .eq('key', k)
         .maybeSingle();
-      const { data, error } = isFile
-        ? await getWithTimeout(queryPromise, 8000)
-        : await queryPromise;
+      // Timeout defensivo 30s para todas las keys. Antes era 8s solo para
+      // cp-file-* lo cual mataba clicks interactivos en archivos grandes.
+      const { data, error } = await getWithTimeout(queryPromise, 30000);
       if (!error && data) {
         cloudValue = data.value;
         cloudTs = data.updated_at || null;
       } else if (error && error.code !== 'PGRST116') {
         console.warn('Supabase get warning for', k, error);
+      } else if (!data && !error) {
+        // Sin error pero sin data tampoco — la fila no existe en la tabla.
+        console.info(`[store] key "${k}" no encontrada en cloud (no fila en app_data).`);
       }
     } catch (e) {
       console.warn('Supabase get network/timeout error for', k, e?.message || e);
