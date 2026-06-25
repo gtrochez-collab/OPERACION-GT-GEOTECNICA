@@ -16,6 +16,7 @@ export const USERS = [
   { username: "oscarpaz",      password: "oscarpaz1234",   role: "logistica",          label: "Oscar Paz" },
   { username: "jorge",         password: "jorge1234",      role: "recepcion",          label: "Jorge Castellanos" },
   { username: "ana",           password: "ana1234",        role: "asistente_compras",  label: "Ana Vasquez" },
+  { username: "fernando",      password: "fernando1234",   role: "coordinador_maquinas", label: "Lic. Fernando Diaz" },
 ];
 
 export const ROLE_LABEL = {
@@ -28,6 +29,7 @@ export const ROLE_LABEL = {
   logistica:          "Logistica / Flota",
   recepcion:          "Recepcion / Logistica",
   asistente_compras:  "Asistente de Compras / Coordinacion",
+  coordinador_maquinas: "Coordinador de Maquinas",
 };
 
 // Color para el avatar de cada usuario (rotativo segun el username)

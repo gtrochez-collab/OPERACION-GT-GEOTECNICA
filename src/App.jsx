@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import HRModule from "./HRModule.jsx";
 import PurchasesModule from "./PurchasesModule.jsx";
-import OperationsModule from "./OperationsModule.jsx";
+import MachinesModule from "./MachinesModule.jsx";
 import LogisticsModule from "./LogisticsModule.jsx";
 // GeoChat: desactivado temporalmente (jun 2026). El polling y los mensajes
 // en localStorage estaban presionando el cache. Cuando lo retomemos, sera
@@ -35,14 +35,13 @@ const MODULES = [
     roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion", "asistente_compras"],
   },
   {
-    id: "operations-cc",
-    name: "Operations Command Center",
-    icon: "🎯",
-    desc: "Cuartel general operativo · proyectos, recursos, capacidad y Mi día",
-    accent: BRAND.orange,
-    accentSoft: BRAND.orangeBg,
-    roles: ["admin", "coordinador", "gerencia", "costos", "tesoreria"],
-    hero: true,
+    id: "maquinas",
+    name: "Maquinas",
+    icon: "⚙️",
+    desc: "Solicitudes de pago de repuestos y mantenimiento de maquinaria, por proyecto",
+    accent: "#7C3AED",
+    accentSoft: "rgba(124,58,237,0.10)",
+    roles: ["admin", "coordinador_maquinas", "tesoreria", "gerencia", "costos"],
   },
   {
     id: "almacen",
@@ -109,7 +108,7 @@ export default function App() {
   const moduleProps = { userRole: user.role, userName: user.label, onBack: () => setActiveModule(null), onLogout: logout };
   if (activeModule === "rrhh") return <>{syncBanner}<HRModule {...moduleProps} /></>;
   if (activeModule === "compras-operaciones") return <>{syncBanner}<PurchasesModule {...moduleProps} /></>;
-  if (activeModule === "operations-cc") return <>{syncBanner}<OperationsModule {...moduleProps} /></>;
+  if (activeModule === "maquinas") return <>{syncBanner}<MachinesModule {...moduleProps} /></>;
   if (activeModule === "logistica") return <>{syncBanner}<LogisticsModule {...moduleProps} /></>;
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
   // if (activeModule === "geochat") return <>{syncBanner}<ChatModule {...moduleProps} /></>;
