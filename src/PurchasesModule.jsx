@@ -1152,10 +1152,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const [modal, setModal] = useState(null);
   const [sb, setSb] = useState(true);
   // Default section depende del rol:
-  // - Ana (asistente_compras) → su vista "ana" (Por coordinar)
-  // - Jorge (recepcion) → "list" (para subir fichas)
-  // - Resto → "list" (solicitudes normales)
-  const defaultSec = isAsistenteCompras ? "ana" : "list";
+  // - Ana (asistente_compras) → "ana" (Por coordinar)
+  // - Jorge (recepcion) → "providers" (su tarea principal en Compras: mantener
+  //   datos bancarios de proveedores al dia)
+  // - Resto → "list" (solicitudes)
+  const defaultSec = isAsistenteCompras ? "ana" : isRecepcion ? "providers" : "list";
   const [sec, setSec] = useState(defaultSec);
   const [filter, setFilter] = useState({ status: "", project: "", provider: "", from: "", to: "" });
   // Estado de expansion/colapso de sub-secciones en el Kanban de Ana.
