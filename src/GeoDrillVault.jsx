@@ -60,25 +60,78 @@ const MARCA_PALETTE = {
 // SVGs ilustrativos por tipo. Devuelven JSX que escala con el contenedor.
 // Diseñados para verse claramente sin perder el caracter industrial.
 const TipoSVG = {
-  pica: ({ color, dark }) => (
-    <svg viewBox="0 0 100 140" style={{ width: "100%", height: "100%", maxHeight: "100%", display: "block" }} preserveAspectRatio="xMidYMid meet">
-      {/* Sombra base */}
-      <ellipse cx="50" cy="128" rx="28" ry="4" fill="#000" opacity="0.15" />
-      {/* Punta superior (carburo brillante) */}
-      <polygon points="50,8 62,32 38,32" fill={dark} />
-      <polygon points="50,8 56,24 50,22 44,24" fill="#fff" opacity="0.5" />
-      {/* Cuerpo conico de la pica */}
-      <polygon points="38,32 62,32 66,118 34,118" fill={color} stroke={dark} strokeWidth="1.5" />
-      {/* Reflejo lateral */}
-      <polygon points="40,34 44,34 47,116 43,116" fill="#fff" opacity="0.25" />
-      {/* Banda central reforzada */}
-      <rect x="34" y="58" width="32" height="4" fill={dark} opacity="0.55" />
-      <rect x="34" y="86" width="32" height="4" fill={dark} opacity="0.55" />
-      {/* Base */}
-      <rect x="30" y="118" width="40" height="10" rx="2" fill={dark} />
-      <rect x="32" y="120" width="36" height="3" fill={color} opacity="0.4" />
-    </svg>
-  ),
+  // Pica: forma real de domo/bullet con botones de carburo redondos.
+  // No es piochita puntiaguda — es un cuerpo conico redondeado con multiples
+  // botones de carburo de tungsteno que rompen la roca.
+  pica: ({ color, dark }) => {
+    // Helper para dibujar un boton de carburo 3D (3 capas: sombra, color, brillo)
+    const Btn = ({ cx, cy, r = 5.5 }) => (
+      <g>
+        <circle cx={cx} cy={cy} r={r} fill={dark} />
+        <circle cx={cx} cy={cy - 0.5} r={r - 2} fill={color} opacity="0.55" />
+        <circle cx={cx - r * 0.3} cy={cy - r * 0.4} r={r * 0.3} fill="#fff" opacity="0.55" />
+      </g>
+    );
+    return (
+      <svg viewBox="0 0 100 140" style={{ width: "100%", height: "100%", maxHeight: "100%", display: "block" }} preserveAspectRatio="xMidYMid meet">
+        {/* Sombra base */}
+        <ellipse cx="50" cy="130" rx="32" ry="4" fill="#000" opacity="0.18" />
+
+        {/* Cuerpo bullet/domo — tope redondeado, base ancha */}
+        <path
+          d="M 22 112
+             C 22 75, 28 35, 50 16
+             C 72 35, 78 75, 78 112
+             Z"
+          fill={color}
+          stroke={dark}
+          strokeWidth="1.5"
+        />
+
+        {/* Sombreado del lado derecho (volumen 3D) */}
+        <path
+          d="M 50 16
+             C 72 35, 78 75, 78 112
+             L 62 112
+             C 66 75, 62 42, 50 22
+             Z"
+          fill="#000"
+          opacity="0.13"
+        />
+
+        {/* Highlight izquierdo (brillo metalico) */}
+        <path
+          d="M 32 95 C 28 65, 34 38, 44 22"
+          stroke="#fff"
+          strokeWidth="2.5"
+          opacity="0.35"
+          fill="none"
+          strokeLinecap="round"
+        />
+
+        {/* Botones de carburo — patron real de pica de perforacion */}
+        {/* Apex */}
+        <Btn cx={50} cy={32} r={5} />
+        {/* Anillo 1 (justo bajo el apex) */}
+        <Btn cx={37} cy={48} r={5} />
+        <Btn cx={63} cy={48} r={5} />
+        {/* Anillo 2 (medio) */}
+        <Btn cx={28} cy={68} r={5.5} />
+        <Btn cx={50} cy={64} r={5.5} />
+        <Btn cx={72} cy={68} r={5.5} />
+        {/* Anillo 3 (bajo) */}
+        <Btn cx={27} cy={91} r={5.5} />
+        <Btn cx={50} cy={88} r={5.5} />
+        <Btn cx={73} cy={91} r={5.5} />
+
+        {/* Collar/base con roscas */}
+        <rect x="22" y="110" width="56" height="16" rx="2.5" fill={dark} />
+        <line x1="24" y1="115" x2="76" y2="115" stroke={color} strokeWidth="0.7" opacity="0.5" />
+        <line x1="24" y1="119" x2="76" y2="119" stroke={color} strokeWidth="0.7" opacity="0.5" />
+        <line x1="24" y1="123" x2="76" y2="123" stroke={color} strokeWidth="0.7" opacity="0.5" />
+      </svg>
+    );
+  },
   portapica: ({ color, dark }) => (
     <svg viewBox="0 0 100 140" style={{ width: "100%", height: "100%", maxHeight: "100%", display: "block" }} preserveAspectRatio="xMidYMid meet">
       <ellipse cx="50" cy="128" rx="32" ry="4" fill="#000" opacity="0.15" />
