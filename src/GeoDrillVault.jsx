@@ -21,6 +21,20 @@ import Logo from "./Logo.jsx";
 import { BRAND, FONT, R } from "./theme.js";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 
+// ── Hook responsive ──
+// Devuelve true cuando el viewport es < breakpoint px. Solo se usa en este modulo:
+// el resto de la app es desktop-only, GeoDrill Vault tambien se opera desde celular
+// (almacenista escaneando QRs en la bodega).
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth < breakpoint : false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < breakpoint);
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 // ── Paleta del modulo ──
 const VAULT_BLUE = "#0F4C75";
 const VAULT_BLUE_DARK = "#0B3A5C";
@@ -341,13 +355,17 @@ const Badge = ({ children, color = BRAND.stone, bg }) => (
 );
 
 const Btn = ({ children, onClick, variant = "primary", small, style: sx, disabled, type }) => {
+  const isMobile = useIsMobile();
+  // En mobile: padding mas grueso para alcanzar ~40px de touch target en botones no-small.
+  // Los botones small (acciones secundarias en cards) conservan tamano para no romper layouts.
   const base = {
     border: "none",
     borderRadius: 8,
     cursor: disabled ? "not-allowed" : "pointer",
     fontWeight: 600,
     fontSize: small ? 12 : 14,
-    padding: small ? "5px 12px" : "9px 18px",
+    padding: small ? "5px 12px" : (isMobile ? "11px 18px" : "9px 18px"),
+    minHeight: small ? "auto" : (isMobile ? 40 : "auto"),
     opacity: disabled ? 0.5 : 1,
     fontFamily: "inherit",
     letterSpacing: 0.2,
@@ -422,56 +440,69 @@ const Select = ({ label, options, emptyLabel = "—", ...p }) => (
   </div>
 );
 
-const Modal = ({ title, onClose, children, wide, size }) => (
-  <div style={{
-    position: "fixed", inset: 0, background: "rgba(0,0,0,.5)",
-    display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
-  }} onClick={onClose}>
+const Modal = ({ title, onClose, children, wide, size }) => {
+  const isMobile = useIsMobile();
+  return (
     <div style={{
-      background: "#fff",
-      borderRadius: 16,
-      padding: 28,
-      width: size === "xl" ? "96vw" : wide ? "85vw" : 640,
-      maxWidth: "98vw",
-      maxHeight: "94vh",
-      overflowY: "auto",
-      boxShadow: BRAND.shadowLg,
-    }} onClick={e => e.stopPropagation()}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <h3 style={{ margin: 0, fontSize: 18, color: CHARCOAL }}>{title}</h3>
-        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: BRAND.stone }}>✕</button>
-      </div>
-      {children}
-    </div>
-  </div>
-);
-
-const StatCard = ({ label, value, icon, color = VAULT_BLUE, sub }) => (
-  <div style={{
-    background: CREAM,
-    borderRadius: 14,
-    padding: "18px 22px",
-    border: `1px solid ${BRAND.borderSoft}`,
-    flex: 1,
-    minWidth: 170,
-    boxShadow: BRAND.shadowSm,
-  }}>
-    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      position: "fixed", inset: 0, background: "rgba(0,0,0,.5)",
+      display: "flex",
+      alignItems: isMobile ? "stretch" : "center",
+      justifyContent: isMobile ? "stretch" : "center",
+      zIndex: 1000,
+    }} onClick={onClose}>
       <div style={{
-        background: color + "18",
-        color,
-        width: 44, height: 44, borderRadius: 12,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 22,
-      }}>{icon}</div>
-      <div>
-        <div style={{ fontSize: 22, fontWeight: 700, color: CHARCOAL }}>{value}</div>
-        <div style={{ fontSize: 12, color: BRAND.graphite }}>{label}</div>
-        {sub && <div style={{ fontSize: 11, color: BRAND.stone, marginTop: 2 }}>{sub}</div>}
+        background: "#fff",
+        borderRadius: isMobile ? 0 : 16,
+        padding: isMobile ? 16 : 28,
+        width: isMobile ? "100vw" : (size === "xl" ? "96vw" : wide ? "85vw" : 640),
+        maxWidth: isMobile ? "100vw" : "98vw",
+        height: isMobile ? "100vh" : "auto",
+        maxHeight: isMobile ? "100vh" : "94vh",
+        overflowY: "auto",
+        boxShadow: BRAND.shadowLg,
+      }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: isMobile ? 14 : 20, gap: 8 }}>
+          <h3 style={{ margin: 0, fontSize: isMobile ? 16 : 18, color: CHARCOAL, lineHeight: 1.3 }}>{title}</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: BRAND.stone, padding: 4, lineHeight: 1, flexShrink: 0 }}>✕</button>
+        </div>
+        {children}
       </div>
     </div>
-  </div>
-);
+  );
+};
+
+const StatCard = ({ label, value, icon, color = VAULT_BLUE, sub }) => {
+  const isMobile = useIsMobile();
+  return (
+    <div style={{
+      background: CREAM,
+      borderRadius: 14,
+      padding: isMobile ? "12px 14px" : "18px 22px",
+      border: `1px solid ${BRAND.borderSoft}`,
+      flex: 1,
+      minWidth: isMobile ? 0 : 170,
+      boxShadow: BRAND.shadowSm,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 12 }}>
+        <div style={{
+          background: color + "18",
+          color,
+          width: isMobile ? 36 : 44,
+          height: isMobile ? 36 : 44,
+          borderRadius: 12,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: isMobile ? 18 : 22,
+          flexShrink: 0,
+        }}>{icon}</div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: CHARCOAL }}>{value}</div>
+          <div style={{ fontSize: 12, color: BRAND.graphite }}>{label}</div>
+          {sub && <div style={{ fontSize: 11, color: BRAND.stone, marginTop: 2 }}>{sub}</div>}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // FileSlot — patron similar al de PurchasesModule (load on-demand via fileId).
 const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = VAULT_BLUE }) => {
@@ -600,6 +631,7 @@ const extractFotos = (arr) => {
 
 // CajaForm — registrar/editar una caja de inventario.
 function CajaForm({ caja, items, onSave, onClose, onDelete, canEdit }) {
+  const isMobile = useIsMobile();
   const initial = caja || {
     id: "",
     codigo: "",
@@ -618,6 +650,8 @@ function CajaForm({ caja, items, onSave, onClose, onDelete, canEdit }) {
   const [saving, setSaving] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const isEdit = !!caja;
+  // Columnas responsivas para grids de 2 columnas en desktop.
+  const cols2 = isMobile ? "1fr" : "1fr 1fr";
 
   // Auto-generar codigo cuando cambia marca o tipo (solo si no es edicion y no toco manual).
   useEffect(() => {
@@ -663,7 +697,7 @@ function CajaForm({ caja, items, onSave, onClose, onDelete, canEdit }) {
         📦 Cada caja se inventaria individualmente con su propio codigo y QR escaneable.
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols2, gap: 14 }}>
         <Select
           label="Marca *"
           value={f.marca}
@@ -693,7 +727,7 @@ function CajaForm({ caja, items, onSave, onClose, onDelete, canEdit }) {
         />
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols2, gap: 14 }}>
         <Input
           label={isEdit ? "Cantidad original (referencia)" : "Cantidad inicial en la caja *"}
           type="number"
@@ -746,15 +780,25 @@ function CajaForm({ caja, items, onSave, onClose, onDelete, canEdit }) {
         onRemove={() => u("foto", null)}
       />
 
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
+      <div style={{
+        display: "flex",
+        flexDirection: isMobile ? "column" : "row",
+        justifyContent: "space-between",
+        gap: 8,
+        marginTop: 8,
+      }}>
         {isEdit && canEdit && onDelete ? (
-          <Btn variant="danger" onClick={() => {
+          <Btn variant="danger" style={isMobile ? { width: "100%" } : undefined} onClick={() => {
             if (confirm(`¿Eliminar la caja ${f.codigo}? Esta accion no se puede deshacer.`)) onDelete(f.id);
           }}>Eliminar caja</Btn>
-        ) : <span />}
-        <div style={{ display: "flex", gap: 8 }}>
-          <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
-          {canEdit && <Btn onClick={save} disabled={saving}>{saving ? "Guardando..." : isEdit ? "Guardar cambios" : "Crear caja"}</Btn>}
+        ) : !isMobile ? <span /> : null}
+        <div style={{
+          display: "flex",
+          flexDirection: isMobile ? "column-reverse" : "row",
+          gap: 8,
+        }}>
+          <Btn variant="ghost" style={isMobile ? { width: "100%" } : undefined} onClick={onClose}>Cancelar</Btn>
+          {canEdit && <Btn style={isMobile ? { width: "100%" } : undefined} onClick={save} disabled={saving}>{saving ? "Guardando..." : isEdit ? "Guardar cambios" : "Crear caja"}</Btn>}
         </div>
       </div>
     </div>
@@ -763,6 +807,8 @@ function CajaForm({ caja, items, onSave, onClose, onDelete, canEdit }) {
 
 // HerramientaForm — registrar/editar herramienta (bucket, broca, rompebolon).
 function HerramientaForm({ tool, onSave, onClose, onDelete, canEdit }) {
+  const isMobile = useIsMobile();
+  const cols2 = isMobile ? "1fr" : "1fr 1fr";
   const initial = tool || {
     id: "",
     tipo: "",
@@ -803,7 +849,7 @@ function HerramientaForm({ tool, onSave, onClose, onDelete, canEdit }) {
         🔧 Herramientas de perforacion. Las picas/portapicas se sueldan a estas herramientas.
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols2, gap: 14 }}>
         <Select
           label="Tipo *"
           value={f.tipo}
@@ -821,7 +867,7 @@ function HerramientaForm({ tool, onSave, onClose, onDelete, canEdit }) {
         />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols2, gap: 14 }}>
         <Input
           label="Diametro"
           type="number"
@@ -839,7 +885,7 @@ function HerramientaForm({ tool, onSave, onClose, onDelete, canEdit }) {
         />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols2, gap: 14 }}>
         <Select
           label="Proyecto actual (donde esta la herramienta)"
           value={f.projectCode}
@@ -873,15 +919,25 @@ function HerramientaForm({ tool, onSave, onClose, onDelete, canEdit }) {
         onRemove={() => u("foto", null)}
       />
 
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
+      <div style={{
+        display: "flex",
+        flexDirection: isMobile ? "column" : "row",
+        justifyContent: "space-between",
+        gap: 8,
+        marginTop: 8,
+      }}>
         {isEdit && canEdit && onDelete ? (
-          <Btn variant="danger" onClick={() => {
+          <Btn variant="danger" style={isMobile ? { width: "100%" } : undefined} onClick={() => {
             if (confirm(`¿Eliminar la herramienta ${f.nombre}? Esta accion no se puede deshacer.`)) onDelete(f.id);
           }}>Eliminar herramienta</Btn>
-        ) : <span />}
-        <div style={{ display: "flex", gap: 8 }}>
-          <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
-          {canEdit && <Btn onClick={save} disabled={saving}>{saving ? "Guardando..." : isEdit ? "Guardar cambios" : "Crear herramienta"}</Btn>}
+        ) : !isMobile ? <span /> : null}
+        <div style={{
+          display: "flex",
+          flexDirection: isMobile ? "column-reverse" : "row",
+          gap: 8,
+        }}>
+          <Btn variant="ghost" style={isMobile ? { width: "100%" } : undefined} onClick={onClose}>Cancelar</Btn>
+          {canEdit && <Btn style={isMobile ? { width: "100%" } : undefined} onClick={save} disabled={saving}>{saving ? "Guardando..." : isEdit ? "Guardar cambios" : "Crear herramienta"}</Btn>}
         </div>
       </div>
     </div>
@@ -1044,6 +1100,8 @@ function QRScannerModal({ onScan, onClose }) {
 
 // SalidaForm — registrar una salida (despacho a obra).
 function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, machines }) {
+  const isMobile = useIsMobile();
+  const cols2 = isMobile ? "1fr" : "1fr 1fr";
   const today = new Date().toISOString().slice(0, 10);
   const [f, setF] = useState({
     fecha: today,
@@ -1125,7 +1183,7 @@ function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, 
         📤 Registra la salida de unidades de una caja. La cantidad se restara automaticamente del inventario.
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols2, gap: 14 }}>
         <Input
           label="Fecha *"
           type="date"
@@ -1138,7 +1196,7 @@ function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, 
           </label>
           <div style={{ display: "flex", gap: 6 }}>
             <input
-              style={{ flex: 1, padding: "9px 12px", border: `1px solid ${BRAND.border}`, borderRadius: 8, fontSize: 14, fontFamily: "inherit", background: "#fff", color: BRAND.charcoal, outline: "none" }}
+              style={{ flex: 1, minWidth: 0, padding: isMobile ? "11px 12px" : "9px 12px", border: `1px solid ${BRAND.border}`, borderRadius: 8, fontSize: 14, fontFamily: "inherit", background: "#fff", color: BRAND.charcoal, outline: "none" }}
               placeholder="Ej: JM-P-001"
               value={f.scan}
               onChange={e => u("scan", e.target.value)}
@@ -1150,12 +1208,17 @@ function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, 
               style={{
                 background: BRAND.charcoal, color: "#fff",
                 border: "none", borderRadius: 8,
-                padding: "9px 14px", fontSize: 13, fontWeight: 700,
+                padding: isMobile ? "11px 12px" : "9px 14px",
+                fontSize: isMobile ? 16 : 13, fontWeight: 700,
                 cursor: "pointer", fontFamily: "inherit",
-                whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6,
+                whiteSpace: "nowrap", display: "flex", alignItems: "center", justifyContent: "center",
+                gap: isMobile ? 0 : 6,
+                minWidth: isMobile ? 48 : "auto",
+                flexShrink: 0,
               }}
               title="Escanear QR con la camara"
-            >📷 Camara</button>
+              aria-label="Escanear QR con la camara"
+            >📷{!isMobile && " Camara"}</button>
           </div>
           <div style={{ fontSize: 10.5, color: BRAND.stone, marginTop: 4 }}>
             Escanea el QR pegado en la caja o pega el codigo manualmente.
@@ -1199,7 +1262,7 @@ function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, 
         emptyLabel="— Elige proyecto —"
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols2, gap: 14 }}>
         <Select
           label="Maquina destino (opcional)"
           value={f.maquinaId}
@@ -1229,9 +1292,15 @@ function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, 
         onChange={e => u("notas", e.target.value)}
       />
 
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-        <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
-        <Btn variant="warn" onClick={save} disabled={saving}>{saving ? "Guardando..." : "Registrar salida"}</Btn>
+      <div style={{
+        display: "flex",
+        flexDirection: isMobile ? "column-reverse" : "row",
+        justifyContent: "flex-end",
+        gap: 8,
+        marginTop: 8,
+      }}>
+        <Btn variant="ghost" style={isMobile ? { width: "100%" } : undefined} onClick={onClose}>Cancelar</Btn>
+        <Btn variant="warn" style={isMobile ? { width: "100%" } : undefined} onClick={save} disabled={saving}>{saving ? "Guardando..." : "Registrar salida"}</Btn>
       </div>
     </div>
   );
@@ -1239,6 +1308,8 @@ function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, 
 
 // EntradaForm — registrar recarga de una caja existente.
 function EntradaForm({ items, userName, onSave, onClose }) {
+  const isMobile = useIsMobile();
+  const cols2 = isMobile ? "1fr" : "1fr 1fr";
   const today = new Date().toISOString().slice(0, 10);
   const [f, setF] = useState({
     fecha: today,
@@ -1296,7 +1367,7 @@ function EntradaForm({ items, userName, onSave, onClose }) {
         📥 Registra una recarga (entrada) sumando unidades a una caja existente. Para una caja nueva, usa "+ Registrar nueva caja" desde Inventario.
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols2, gap: 14 }}>
         <Input label="Fecha *" type="date" value={f.fecha} onChange={e => u("fecha", e.target.value)} />
         <Input label="Cantidad a agregar *" type="number" min={1} value={f.cantidad} onChange={e => u("cantidad", e.target.value)} />
       </div>
@@ -1336,9 +1407,15 @@ function EntradaForm({ items, userName, onSave, onClose }) {
       <Input label="Solicitado / recibido por" value={f.solicitadoPor} onChange={e => u("solicitadoPor", e.target.value)} />
       <Textarea label="Notas" value={f.notas} onChange={e => u("notas", e.target.value)} />
 
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-        <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
-        <Btn variant="success" onClick={save} disabled={saving}>{saving ? "Guardando..." : "Registrar entrada"}</Btn>
+      <div style={{
+        display: "flex",
+        flexDirection: isMobile ? "column-reverse" : "row",
+        justifyContent: "flex-end",
+        gap: 8,
+        marginTop: 8,
+      }}>
+        <Btn variant="ghost" style={isMobile ? { width: "100%" } : undefined} onClick={onClose}>Cancelar</Btn>
+        <Btn variant="success" style={isMobile ? { width: "100%" } : undefined} onClick={save} disabled={saving}>{saving ? "Guardando..." : "Registrar entrada"}</Btn>
       </div>
     </div>
   );
@@ -1348,6 +1425,7 @@ function EntradaForm({ items, userName, onSave, onClose }) {
 // DETAIL VIEW (modal completo de una caja)
 // =====================================================================
 function CajaDetail({ caja, onClose, onEdit, onDespachar, onDelete, canEdit }) {
+  const isMobile = useIsMobile();
   // Hidratar foto on-demand (load on-demand pattern)
   const [foto, setFoto] = useState(caja.foto);
   useEffect(() => {
@@ -1414,7 +1492,7 @@ function CajaDetail({ caja, onClose, onEdit, onDespachar, onDelete, canEdit }) {
 
   return (
     <Modal title={`📦 ${caja.codigo}`} onClose={onClose} wide>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 16 : 24 }}>
         {/* Columna izquierda: foto + QR */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{
@@ -1474,7 +1552,7 @@ function CajaDetail({ caja, onClose, onEdit, onDespachar, onDelete, canEdit }) {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr", gap: 12 }}>
             <DataRow label="Ubicacion" value={caja.ubicacion || "—"} />
             <DataRow label="Ingresada" value={fmt(caja.createdAt)} />
             <DataRow label="Actualizada" value={fmtDT(caja.updatedAt)} />
@@ -1516,9 +1594,13 @@ const DataRow = ({ label, value, mono }) => (
 // =====================================================================
 export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) {
   const canEdit = userRole === "admin" || userRole === "tesoreria" || userRole === "almacenista";
+  const isMobile = useIsMobile();
 
   // ── Estado ──
+  // sb = sidebar colapsado/expandido en desktop (estilo Notion).
+  // sbOpen = sidebar visible como drawer en mobile (overlay).
   const [sb, setSb] = useState(true);
+  const [sbOpen, setSbOpen] = useState(false);
   const [sec, setSec] = useState("resumen");
   const [items, setItems] = useState([]);          // gdv-items (cajas)
   const [tools, setTools] = useState([]);          // gdv-tools (herramientas)
@@ -1779,22 +1861,34 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
   const renderResumen = () => {
     const recent = [...movements].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).slice(0, 10);
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-          <StatCard icon="⛏️" label="Picas (unidades)" value={totals.totalUnidadesPorTipo.pica || 0} color={VAULT_BLUE} sub={`${totals.counts.pica || 0} cajas`} />
-          <StatCard icon="🔩" label="Portapicas (unidades)" value={totals.totalUnidadesPorTipo.portapica || 0} color={BRAND.blue} sub={`${totals.counts.portapica || 0} cajas`} />
-          <StatCard icon="⚙️" label="Muelas encamisado" value={totals.totalUnidadesPorTipo.muela_encamisado || 0} color={BRAND.purple} sub={`${totals.counts.muela_encamisado || 0} cajas`} />
-          <StatCard icon="🚪" label="Puerta muelas" value={totals.totalUnidadesPorTipo.puerta_muela || 0} color={BRAND.orange} sub={`${totals.counts.puerta_muela || 0} cajas`} />
-          <StatCard icon="🔧" label="Herramientas" value={tools.length} color={BRAND.green} sub={`${tools.filter(t => t.estado === "operativa").length} operativas`} />
-        </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 18 : 24 }}>
+        {isMobile ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <StatCard icon="⛏️" label="Picas (unidades)" value={totals.totalUnidadesPorTipo.pica || 0} color={VAULT_BLUE} sub={`${totals.counts.pica || 0} cajas`} />
+            <StatCard icon="🔩" label="Portapicas (unidades)" value={totals.totalUnidadesPorTipo.portapica || 0} color={BRAND.blue} sub={`${totals.counts.portapica || 0} cajas`} />
+            <StatCard icon="⚙️" label="Muelas encamisado" value={totals.totalUnidadesPorTipo.muela_encamisado || 0} color={BRAND.purple} sub={`${totals.counts.muela_encamisado || 0} cajas`} />
+            <StatCard icon="🚪" label="Puerta muelas" value={totals.totalUnidadesPorTipo.puerta_muela || 0} color={BRAND.orange} sub={`${totals.counts.puerta_muela || 0} cajas`} />
+            <div style={{ gridColumn: "1 / -1" }}>
+              <StatCard icon="🔧" label="Herramientas" value={tools.length} color={BRAND.green} sub={`${tools.filter(t => t.estado === "operativa").length} operativas`} />
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+            <StatCard icon="⛏️" label="Picas (unidades)" value={totals.totalUnidadesPorTipo.pica || 0} color={VAULT_BLUE} sub={`${totals.counts.pica || 0} cajas`} />
+            <StatCard icon="🔩" label="Portapicas (unidades)" value={totals.totalUnidadesPorTipo.portapica || 0} color={BRAND.blue} sub={`${totals.counts.portapica || 0} cajas`} />
+            <StatCard icon="⚙️" label="Muelas encamisado" value={totals.totalUnidadesPorTipo.muela_encamisado || 0} color={BRAND.purple} sub={`${totals.counts.muela_encamisado || 0} cajas`} />
+            <StatCard icon="🚪" label="Puerta muelas" value={totals.totalUnidadesPorTipo.puerta_muela || 0} color={BRAND.orange} sub={`${totals.counts.puerta_muela || 0} cajas`} />
+            <StatCard icon="🔧" label="Herramientas" value={tools.length} color={BRAND.green} sub={`${tools.filter(t => t.estado === "operativa").length} operativas`} />
+          </div>
+        )}
 
         {/* Alertas de stock minimo */}
         {alertasStock.length > 0 && (
-          <div style={{ background: BRAND.redSoft, border: `1px solid ${BRAND.red}`, borderRadius: 14, padding: 18 }}>
+          <div style={{ background: BRAND.redSoft, border: `1px solid ${BRAND.red}`, borderRadius: 14, padding: isMobile ? 14 : 18 }}>
             <div style={{ fontSize: 14, fontWeight: 800, color: BRAND.red, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
               ⚠️ Stock por debajo del minimo ({alertasStock.length} subcategoria{alertasStock.length === 1 ? "" : "s"})
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
               {alertasStock.map(a => (
                 <div key={a.key} style={{ background: "#fff", borderRadius: 10, padding: 12, border: `1px solid ${BRAND.red}40` }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL }}>{subLabel(a.key)}</div>
@@ -1810,11 +1904,11 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
 
         {/* Cajas con stock critico */}
         {cajasCriticas.length > 0 && (
-          <div style={{ background: BRAND.yellowSoft, border: `1px solid ${BRAND.yellow}`, borderRadius: 14, padding: 18 }}>
+          <div style={{ background: BRAND.yellowSoft, border: `1px solid ${BRAND.yellow}`, borderRadius: 14, padding: isMobile ? 14 : 18 }}>
             <div style={{ fontSize: 14, fontWeight: 800, color: "#8B6A0B", marginBottom: 10 }}>
               🟡 Cajas con stock critico ({cajasCriticas.length})
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
               {cajasCriticas.map(c => (
                 <button key={c.id} onClick={() => setModal({ type: "caja-detail", data: c })}
                   style={{ background: "#fff", border: `1px solid ${BRAND.yellow}40`, borderRadius: 10, padding: 12, textAlign: "left", cursor: "pointer", fontFamily: "inherit" }}>
@@ -1828,7 +1922,7 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
         )}
 
         {/* Movimientos recientes */}
-        <div style={{ background: CREAM, border: `1px solid ${BRAND.borderSoft}`, borderRadius: 14, padding: 18 }}>
+        <div style={{ background: CREAM, border: `1px solid ${BRAND.borderSoft}`, borderRadius: 14, padding: isMobile ? 14 : 18 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL }}>📋 Movimientos recientes</div>
             <Btn small variant="ghost" onClick={() => setSec("movimientos")}>Ver todos →</Btn>
@@ -1867,26 +1961,39 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
         {/* Toolbar */}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ minWidth: 160 }}>
+        {isMobile ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <Input label="" placeholder="Buscar codigo (ej: JM-P-001)" value={invFilter.q} onChange={e => setInvFilter(s => ({ ...s, q: e.target.value }))} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Select label="Tipo" value={invFilter.tipo} options={TIPOS_ITEM.map(t => ({ value: t.value, label: t.label }))} onChange={e => setInvFilter(s => ({ ...s, tipo: e.target.value }))} emptyLabel="Todos" />
-            </div>
-            <div style={{ minWidth: 160 }}>
               <Select label="Marca" value={invFilter.marca} options={MARCAS} onChange={e => setInvFilter(s => ({ ...s, marca: e.target.value }))} emptyLabel="Todas" />
-            </div>
-            <div style={{ minWidth: 140 }}>
               <Select label="Tamano" value={invFilter.tamano} options={TAMANOS.map(t => ({ value: t, label: cap(t) }))} onChange={e => setInvFilter(s => ({ ...s, tamano: e.target.value }))} emptyLabel="Todos" />
-            </div>
-            <div style={{ minWidth: 160 }}>
               <Input label="Ubicacion" placeholder="Ej: A-1" value={invFilter.ubicacion} onChange={e => setInvFilter(s => ({ ...s, ubicacion: e.target.value }))} />
             </div>
-            <div style={{ minWidth: 180 }}>
-              <Input label="Buscar codigo" placeholder="Ej: JM-P-001" value={invFilter.q} onChange={e => setInvFilter(s => ({ ...s, q: e.target.value }))} />
-            </div>
+            {canEdit && <Btn style={{ width: "100%" }} onClick={() => setModal({ type: "caja-new" })}>+ Registrar nueva caja</Btn>}
           </div>
-          {canEdit && <Btn onClick={() => setModal({ type: "caja-new" })}>+ Registrar nueva caja</Btn>}
-        </div>
+        ) : (
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 160 }}>
+                <Select label="Tipo" value={invFilter.tipo} options={TIPOS_ITEM.map(t => ({ value: t.value, label: t.label }))} onChange={e => setInvFilter(s => ({ ...s, tipo: e.target.value }))} emptyLabel="Todos" />
+              </div>
+              <div style={{ minWidth: 160 }}>
+                <Select label="Marca" value={invFilter.marca} options={MARCAS} onChange={e => setInvFilter(s => ({ ...s, marca: e.target.value }))} emptyLabel="Todas" />
+              </div>
+              <div style={{ minWidth: 140 }}>
+                <Select label="Tamano" value={invFilter.tamano} options={TAMANOS.map(t => ({ value: t, label: cap(t) }))} onChange={e => setInvFilter(s => ({ ...s, tamano: e.target.value }))} emptyLabel="Todos" />
+              </div>
+              <div style={{ minWidth: 160 }}>
+                <Input label="Ubicacion" placeholder="Ej: A-1" value={invFilter.ubicacion} onChange={e => setInvFilter(s => ({ ...s, ubicacion: e.target.value }))} />
+              </div>
+              <div style={{ minWidth: 180 }}>
+                <Input label="Buscar codigo" placeholder="Ej: JM-P-001" value={invFilter.q} onChange={e => setInvFilter(s => ({ ...s, q: e.target.value }))} />
+              </div>
+            </div>
+            {canEdit && <Btn onClick={() => setModal({ type: "caja-new" })}>+ Registrar nueva caja</Btn>}
+          </div>
+        )}
 
         {ubicacionesUnicas.length > 0 && invFilter.ubicacion === "" && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -1908,7 +2015,7 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
               : "No hay cajas que coincidan con los filtros."}
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
             {filteredItems.map(c => <CajaCard key={c.id} caja={c} onClick={() => setModal({ type: "caja-detail", data: c })} />)}
           </div>
         )}
@@ -1918,20 +2025,31 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
 
   const renderHerramientas = () => (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-end" }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ minWidth: 160 }}>
+      {isMobile ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <Select label="Tipo" value={toolFilter.tipo} options={TIPOS_HERRAMIENTA.map(t => ({ value: t, label: cap(t) }))} onChange={e => setToolFilter(s => ({ ...s, tipo: e.target.value }))} emptyLabel="Todos" />
-          </div>
-          <div style={{ minWidth: 160 }}>
             <Select label="Estado" value={toolFilter.estado} options={ESTADOS_HERRAMIENTA.map(e => ({ value: e, label: estadoHerramienta(e).label }))} onChange={e => setToolFilter(s => ({ ...s, estado: e.target.value }))} emptyLabel="Todos" />
           </div>
-          <div style={{ minWidth: 200 }}>
-            <Select label="Proyecto" value={toolFilter.projectCode} options={PROJECTS.map(p => ({ value: p.short, label: p.short }))} onChange={e => setToolFilter(s => ({ ...s, projectCode: e.target.value }))} emptyLabel="Todos" />
-          </div>
+          <Select label="Proyecto" value={toolFilter.projectCode} options={PROJECTS.map(p => ({ value: p.short, label: p.short }))} onChange={e => setToolFilter(s => ({ ...s, projectCode: e.target.value }))} emptyLabel="Todos" />
+          {canEdit && <Btn style={{ width: "100%" }} onClick={() => setModal({ type: "tool-new" })}>+ Registrar herramienta</Btn>}
         </div>
-        {canEdit && <Btn onClick={() => setModal({ type: "tool-new" })}>+ Registrar herramienta</Btn>}
-      </div>
+      ) : (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-end" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ minWidth: 160 }}>
+              <Select label="Tipo" value={toolFilter.tipo} options={TIPOS_HERRAMIENTA.map(t => ({ value: t, label: cap(t) }))} onChange={e => setToolFilter(s => ({ ...s, tipo: e.target.value }))} emptyLabel="Todos" />
+            </div>
+            <div style={{ minWidth: 160 }}>
+              <Select label="Estado" value={toolFilter.estado} options={ESTADOS_HERRAMIENTA.map(e => ({ value: e, label: estadoHerramienta(e).label }))} onChange={e => setToolFilter(s => ({ ...s, estado: e.target.value }))} emptyLabel="Todos" />
+            </div>
+            <div style={{ minWidth: 200 }}>
+              <Select label="Proyecto" value={toolFilter.projectCode} options={PROJECTS.map(p => ({ value: p.short, label: p.short }))} onChange={e => setToolFilter(s => ({ ...s, projectCode: e.target.value }))} emptyLabel="Todos" />
+            </div>
+          </div>
+          {canEdit && <Btn onClick={() => setModal({ type: "tool-new" })}>+ Registrar herramienta</Btn>}
+        </div>
+      )}
 
       {filteredTools.length === 0 ? (
         <div style={{ background: CREAM, borderRadius: 14, padding: 40, textAlign: "center", color: BRAND.stone, border: `1px solid ${BRAND.borderSoft}` }}>
@@ -1940,7 +2058,7 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
             : "No hay herramientas que coincidan con los filtros."}
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
           {filteredTools.map(t => <ToolCard key={t.id} tool={t} onClick={() => setModal({ type: "tool-edit", data: t })} />)}
         </div>
       )}
@@ -1949,28 +2067,45 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
 
   const renderMovimientos = () => (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-end" }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ minWidth: 140 }}>
+      {isMobile ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <Select label="Tipo" value={movFilter.tipo} options={[{ value: "entrada", label: "Entrada" }, { value: "salida", label: "Salida" }]} onChange={e => setMovFilter(s => ({ ...s, tipo: e.target.value }))} emptyLabel="Ambos" />
-          </div>
-          <div style={{ minWidth: 200 }}>
             <Select label="Proyecto" value={movFilter.projectCode} options={PROJECTS.map(p => ({ value: p.short, label: p.short }))} onChange={e => setMovFilter(s => ({ ...s, projectCode: e.target.value }))} emptyLabel="Todos" />
-          </div>
-          <div style={{ minWidth: 140 }}>
             <Input label="Desde" type="date" value={movFilter.from} onChange={e => setMovFilter(s => ({ ...s, from: e.target.value }))} />
-          </div>
-          <div style={{ minWidth: 140 }}>
             <Input label="Hasta" type="date" value={movFilter.to} onChange={e => setMovFilter(s => ({ ...s, to: e.target.value }))} />
           </div>
+          {canEdit && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <Btn variant="warn" style={{ width: "100%" }} onClick={() => setModal({ type: "salida-new" })}>📤 Registrar salida</Btn>
+              <Btn variant="success" style={{ width: "100%" }} onClick={() => setModal({ type: "entrada-new" })}>📥 Registrar entrada</Btn>
+            </div>
+          )}
         </div>
-        {canEdit && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <Btn variant="success" onClick={() => setModal({ type: "entrada-new" })}>📥 Registrar entrada</Btn>
-            <Btn variant="warn" onClick={() => setModal({ type: "salida-new" })}>📤 Registrar salida</Btn>
+      ) : (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-end" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ minWidth: 140 }}>
+              <Select label="Tipo" value={movFilter.tipo} options={[{ value: "entrada", label: "Entrada" }, { value: "salida", label: "Salida" }]} onChange={e => setMovFilter(s => ({ ...s, tipo: e.target.value }))} emptyLabel="Ambos" />
+            </div>
+            <div style={{ minWidth: 200 }}>
+              <Select label="Proyecto" value={movFilter.projectCode} options={PROJECTS.map(p => ({ value: p.short, label: p.short }))} onChange={e => setMovFilter(s => ({ ...s, projectCode: e.target.value }))} emptyLabel="Todos" />
+            </div>
+            <div style={{ minWidth: 140 }}>
+              <Input label="Desde" type="date" value={movFilter.from} onChange={e => setMovFilter(s => ({ ...s, from: e.target.value }))} />
+            </div>
+            <div style={{ minWidth: 140 }}>
+              <Input label="Hasta" type="date" value={movFilter.to} onChange={e => setMovFilter(s => ({ ...s, to: e.target.value }))} />
+            </div>
           </div>
-        )}
-      </div>
+          {canEdit && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn variant="success" onClick={() => setModal({ type: "entrada-new" })}>📥 Registrar entrada</Btn>
+              <Btn variant="warn" onClick={() => setModal({ type: "salida-new" })}>📤 Registrar salida</Btn>
+            </div>
+          )}
+        </div>
+      )}
 
       {filteredMovements.length === 0 ? (
         <div style={{ background: CREAM, borderRadius: 14, padding: 40, textAlign: "center", color: BRAND.stone, border: `1px solid ${BRAND.borderSoft}` }}>
@@ -1979,8 +2114,8 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
             : "No hay movimientos que coincidan con los filtros."}
         </div>
       ) : (
-        <div style={{ background: CREAM, borderRadius: 12, border: `1px solid ${BRAND.borderSoft}`, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <div style={{ background: CREAM, borderRadius: 12, border: `1px solid ${BRAND.borderSoft}`, overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: isMobile ? 800 : "auto" }}>
             <thead>
               <tr style={{ background: BRAND.beigeLight, textAlign: "left" }}>
                 <th style={th}>Fecha</th>
@@ -2015,7 +2150,7 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
                     <td style={td}>{maq?.nombre || "—"}</td>
                     <td style={td}>{tool ? `${cap(tool.tipo)} · ${tool.nombre}` : "—"}</td>
                     <td style={td}>{m.solicitadoPor || "—"}</td>
-                    <td style={{ ...td, maxWidth: 200, whiteSpace: "pre-wrap", color: BRAND.graphite }}>{m.notas || ""}</td>
+                    <td style={{ ...td, maxWidth: 200, whiteSpace: isMobile ? "nowrap" : "pre-wrap", overflow: isMobile ? "hidden" : "visible", textOverflow: isMobile ? "ellipsis" : "clip", color: BRAND.graphite }}>{m.notas || ""}</td>
                   </tr>
                 );
               })}
@@ -2034,9 +2169,9 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
           ⚙️ Configura el stock minimo de cada subcategoria. Cuando el inventario total de una subcategoria caiga por debajo de este valor, el modulo mostrara una alerta roja en el Resumen.
         </div>
 
-        <div style={{ background: CREAM, borderRadius: 14, padding: 22, border: `1px solid ${BRAND.borderSoft}` }}>
+        <div style={{ background: CREAM, borderRadius: 14, padding: isMobile ? 16 : 22, border: `1px solid ${BRAND.borderSoft}` }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL, marginBottom: 14 }}>Stock minimo por subcategoria</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
             {keys.map(k => (
               <div key={k}>
                 <Input
@@ -2131,30 +2266,54 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
     return null;
   };
 
+  // En mobile: tabs cierran el drawer despues de cambiar de seccion.
+  const goTo = (id) => {
+    setSec(id);
+    if (isMobile) setSbOpen(false);
+  };
+
   // ── LAYOUT principal ──
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: FONT.body, background: BEIGE, color: CHARCOAL }}>
-      {/* Sidebar oscuro */}
+    <div style={{ display: "flex", height: "100vh", fontFamily: FONT.body, background: BEIGE, color: CHARCOAL, position: "relative", overflow: "hidden" }}>
+      {/* Backdrop solo en mobile cuando el drawer esta abierto */}
+      {isMobile && sbOpen && (
+        <div
+          onClick={() => setSbOpen(false)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+            zIndex: 90,
+          }}
+        />
+      )}
+
+      {/* Sidebar oscuro — drawer en mobile, fijo a la izquierda en desktop */}
       <div style={{
-        width: sb ? 240 : 60,
+        width: isMobile ? 260 : (sb ? 240 : 60),
         background: DARK_BG,
         color: BRAND.darkText,
-        transition: "width .2s",
+        transition: isMobile ? "transform .25s ease" : "width .2s",
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
         flexShrink: 0,
+        ...(isMobile ? {
+          position: "fixed",
+          top: 0, bottom: 0, left: 0,
+          transform: sbOpen ? "translateX(0)" : "translateX(-100%)",
+          zIndex: 100,
+          boxShadow: sbOpen ? "0 0 30px rgba(0,0,0,0.5)" : "none",
+        } : {}),
       }}>
         <div style={{
           padding: sb ? "20px 16px" : "20px 12px",
           borderBottom: `1px solid ${DARK_BORDER}`,
           display: "flex", alignItems: "center", gap: 10,
         }}>
-          <button onClick={() => setSb(!sb)} style={{
+          <button onClick={() => isMobile ? setSbOpen(false) : setSb(!sb)} style={{
             background: "none", border: "none", color: BRAND.darkTextMuted,
             fontSize: 20, cursor: "pointer", flexShrink: 0,
-          }}>☰</button>
-          {sb && (
+          }}>{isMobile ? "✕" : "☰"}</button>
+          {(sb || isMobile) && (
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               <Logo size={28} showText={false} />
               <div style={{ fontWeight: 800, fontSize: 12, letterSpacing: 1.5, color: BRAND.darkText, marginTop: 4 }}>
@@ -2175,9 +2334,10 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
             { id: "movimientos",  icon: "📋", label: "Movimientos" },
             { id: "config",       icon: "⚙️", label: "Configuracion" },
           ].map(n => (
-            <button key={n.id} onClick={() => setSec(n.id)} style={{
+            <button key={n.id} onClick={() => goTo(n.id)} style={{
               display: "flex", alignItems: "center", gap: 12, width: "100%",
-              padding: sb ? "11px 20px" : "11px 18px",
+              padding: (sb || isMobile) ? "11px 20px" : "11px 18px",
+              minHeight: isMobile ? 44 : "auto",
               background: sec === n.id ? "rgba(15,76,117,0.30)" : "transparent",
               border: "none",
               color: sec === n.id ? "#fff" : BRAND.darkTextMuted,
@@ -2188,12 +2348,12 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
               fontWeight: sec === n.id ? 600 : 500,
               transition: "all .15s",
             }}>
-              <span style={{ fontSize: 18 }}>{n.icon}</span>{sb && <span>{n.label}</span>}
+              <span style={{ fontSize: 18 }}>{n.icon}</span>{(sb || isMobile) && <span>{n.label}</span>}
             </button>
           ))}
         </div>
 
-        {sb && (
+        {(sb || isMobile) && (
           <div style={{ padding: 12, borderTop: `1px solid ${DARK_BORDER}`, display: "flex", flexDirection: "column", gap: 6 }}>
             {onBack && (
               <button onClick={onBack} style={{
@@ -2201,7 +2361,7 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
                 border: `1px solid ${DARK_BORDER}`,
                 borderRadius: 8,
                 color: BRAND.darkTextMuted,
-                padding: "9px 12px",
+                padding: isMobile ? "11px 12px" : "9px 12px",
                 cursor: "pointer",
                 fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit",
               }}>← Volver al panel</button>
@@ -2212,7 +2372,7 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
                 border: "1px solid rgba(192,57,43,0.4)",
                 borderRadius: 8,
                 color: "#F0AAA0",
-                padding: "9px 12px",
+                padding: isMobile ? "11px 12px" : "9px 12px",
                 cursor: "pointer",
                 fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit",
               }}>Cerrar sesion</button>
@@ -2231,32 +2391,66 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
       </div>
 
       {/* Main */}
-      <div style={{ flex: 1, overflow: "auto" }}>
+      <div style={{ flex: 1, overflow: "auto", width: isMobile ? "100%" : "auto" }}>
         <div style={{
-          padding: "22px 32px",
+          padding: isMobile ? "12px 16px" : "22px 32px",
           borderBottom: `1px solid ${BORDER}`,
           background: CREAM,
-          display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: isMobile ? "stretch" : "center",
+          flexDirection: isMobile ? "column" : "row",
+          flexWrap: isMobile ? "nowrap" : "wrap",
+          gap: isMobile ? 10 : 12,
         }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
-              {sec === "resumen" ? "Resumen — GeoDrill Vault"
-                : sec === "inventario" ? "Inventario de cajas"
-                : sec === "herramientas" ? "Herramientas de perforacion"
-                : sec === "movimientos" ? "Movimientos (entradas y salidas)"
-                : "Configuracion"}
-            </h2>
-            <span style={{ fontSize: 13, color: VAULT_BLUE, fontWeight: 600, letterSpacing: 0.3 }}>
-              Bodega de alto valor · Grupo Geotecnica
-            </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+            {isMobile && (
+              <button onClick={() => setSbOpen(true)} aria-label="Abrir menu" style={{
+                background: VAULT_BLUE, color: "#fff",
+                border: "none", borderRadius: 8,
+                width: 40, height: 40,
+                fontSize: 20, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                flexShrink: 0, fontFamily: "inherit",
+              }}>☰</button>
+            )}
+            <div style={{ minWidth: 0 }}>
+              <h2 style={{
+                margin: 0,
+                fontSize: isMobile ? 18 : 22,
+                fontWeight: 800, color: CHARCOAL,
+                letterSpacing: -0.3,
+                lineHeight: 1.2,
+              }}>
+                {sec === "resumen" ? (isMobile ? "Resumen" : "Resumen — GeoDrill Vault")
+                  : sec === "inventario" ? "Inventario de cajas"
+                  : sec === "herramientas" ? (isMobile ? "Herramientas" : "Herramientas de perforacion")
+                  : sec === "movimientos" ? (isMobile ? "Movimientos" : "Movimientos (entradas y salidas)")
+                  : "Configuracion"}
+              </h2>
+              {!isMobile && (
+                <span style={{ fontSize: 13, color: VAULT_BLUE, fontWeight: 600, letterSpacing: 0.3 }}>
+                  Bodega de alto valor · Grupo Geotecnica
+                </span>
+              )}
+            </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{
+            display: "flex",
+            gap: 8,
+            ...(isMobile ? {
+              overflowX: "auto",
+              flexWrap: "nowrap",
+              WebkitOverflowScrolling: "touch",
+              paddingBottom: 2,
+            } : {}),
+          }}>
             <Badge color={VAULT_BLUE}>{items.length} caja{items.length === 1 ? "" : "s"}</Badge>
             <Badge color={BRAND.green}>{tools.length} herramienta{tools.length === 1 ? "" : "s"}</Badge>
             <Badge color={BRAND.graphite}>{movements.length} movimiento{movements.length === 1 ? "" : "s"}</Badge>
           </div>
         </div>
-        <div style={{ padding: 28 }}>
+        <div style={{ padding: isMobile ? 16 : 28 }}>
           {!loaded ? (
             <div style={{ textAlign: "center", padding: 40, color: BRAND.stone }}>Cargando inventario…</div>
           ) : (
@@ -2272,7 +2466,7 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
         {/* Footer del modulo — autoria */}
         <div style={{
           borderTop: `1px solid ${BRAND.borderSoft}`,
-          padding: "16px 32px",
+          padding: isMobile ? "12px 16px" : "16px 32px",
           marginTop: 12,
           textAlign: "center",
           background: BRAND.cream,
