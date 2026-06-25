@@ -47,6 +47,147 @@ const MARCA_INICIALES = {
   "Well Equips":    "WE",
   "Otro":           "OT",
 };
+
+// Paleta por marca — colores corporativos aproximados para hacer el placeholder
+// reconocible aun sin foto. Los colores se usan en el SVG y en la banda de marca.
+const MARCA_PALETTE = {
+  "Drill Master":   { primary: "#DC2626", dark: "#7F1D1D", soft: "#FEE2E2", label: "DRILLMASTER" },
+  "Jeffry Machine": { primary: "#1E40AF", dark: "#1E3A8A", soft: "#DBEAFE", label: "JEFFRY MACHINE" },
+  "Well Equips":    { primary: "#047857", dark: "#064E3B", soft: "#D1FAE5", label: "WELL EQUIPS" },
+  "Otro":           { primary: "#475569", dark: "#1E293B", soft: "#F1F5F9", label: "GENERICO" },
+};
+
+// SVGs ilustrativos por tipo. Devuelven JSX que escala con el contenedor.
+// Diseñados para verse claramente sin perder el caracter industrial.
+const TipoSVG = {
+  pica: ({ color, dark }) => (
+    <svg viewBox="0 0 100 140" style={{ width: "100%", height: "100%", maxHeight: "100%", display: "block" }} preserveAspectRatio="xMidYMid meet">
+      {/* Sombra base */}
+      <ellipse cx="50" cy="128" rx="28" ry="4" fill="#000" opacity="0.15" />
+      {/* Punta superior (carburo brillante) */}
+      <polygon points="50,8 62,32 38,32" fill={dark} />
+      <polygon points="50,8 56,24 50,22 44,24" fill="#fff" opacity="0.5" />
+      {/* Cuerpo conico de la pica */}
+      <polygon points="38,32 62,32 66,118 34,118" fill={color} stroke={dark} strokeWidth="1.5" />
+      {/* Reflejo lateral */}
+      <polygon points="40,34 44,34 47,116 43,116" fill="#fff" opacity="0.25" />
+      {/* Banda central reforzada */}
+      <rect x="34" y="58" width="32" height="4" fill={dark} opacity="0.55" />
+      <rect x="34" y="86" width="32" height="4" fill={dark} opacity="0.55" />
+      {/* Base */}
+      <rect x="30" y="118" width="40" height="10" rx="2" fill={dark} />
+      <rect x="32" y="120" width="36" height="3" fill={color} opacity="0.4" />
+    </svg>
+  ),
+  portapica: ({ color, dark }) => (
+    <svg viewBox="0 0 100 140" style={{ width: "100%", height: "100%", maxHeight: "100%", display: "block" }} preserveAspectRatio="xMidYMid meet">
+      <ellipse cx="50" cy="128" rx="32" ry="4" fill="#000" opacity="0.15" />
+      {/* Boca superior (hueco donde entra la pica) */}
+      <ellipse cx="50" cy="22" rx="20" ry="6" fill={dark} />
+      <ellipse cx="50" cy="22" rx="14" ry="4" fill="#0a0a0a" />
+      {/* Cuerpo cilindrico */}
+      <path d="M 30 22 L 30 116 Q 50 124 70 116 L 70 22 Z" fill={color} stroke={dark} strokeWidth="1.5" />
+      {/* Reflejo lateral */}
+      <path d="M 33 26 L 33 114 Q 37 116 38 116 L 38 26 Z" fill="#fff" opacity="0.3" />
+      {/* Bandas estructurales */}
+      <line x1="30" y1="55" x2="70" y2="55" stroke={dark} strokeWidth="1.5" opacity="0.7" />
+      <line x1="30" y1="90" x2="70" y2="90" stroke={dark} strokeWidth="1.5" opacity="0.7" />
+      {/* Base */}
+      <ellipse cx="50" cy="120" rx="20" ry="5" fill={dark} />
+    </svg>
+  ),
+  muela_encamisado: ({ color, dark }) => (
+    <svg viewBox="0 0 100 140" style={{ width: "100%", height: "100%", maxHeight: "100%", display: "block" }} preserveAspectRatio="xMidYMid meet">
+      <ellipse cx="50" cy="125" rx="36" ry="4" fill="#000" opacity="0.15" />
+      {/* Disco principal */}
+      <circle cx="50" cy="70" r="38" fill={color} stroke={dark} strokeWidth="2" />
+      {/* Dientes alrededor */}
+      {[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((deg) => {
+        const r = (deg * Math.PI) / 180;
+        const x1 = 50 + Math.cos(r) * 38;
+        const y1 = 70 + Math.sin(r) * 38;
+        const x2 = 50 + Math.cos(r) * 46;
+        const y2 = 70 + Math.sin(r) * 46;
+        return <line key={deg} x1={x1} y1={y1} x2={x2} y2={y2} stroke={dark} strokeWidth="4" />;
+      })}
+      {/* Centro */}
+      <circle cx="50" cy="70" r="10" fill={dark} />
+      <circle cx="50" cy="70" r="5" fill={color} />
+      {/* Reflejo */}
+      <ellipse cx="38" cy="55" rx="14" ry="6" fill="#fff" opacity="0.25" />
+    </svg>
+  ),
+  puerta_muela: ({ color, dark }) => (
+    <svg viewBox="0 0 100 140" style={{ width: "100%", height: "100%", maxHeight: "100%", display: "block" }} preserveAspectRatio="xMidYMid meet">
+      <ellipse cx="50" cy="128" rx="34" ry="4" fill="#000" opacity="0.15" />
+      {/* Placa rectangular */}
+      <rect x="18" y="22" width="64" height="98" rx="4" fill={color} stroke={dark} strokeWidth="2" />
+      {/* Tornillos esquinas */}
+      {[[28, 32], [72, 32], [28, 110], [72, 110]].map(([x, y], i) => (
+        <g key={i}>
+          <circle cx={x} cy={y} r="4" fill={dark} />
+          <circle cx={x} cy={y} r="2" fill="#fff" opacity="0.6" />
+        </g>
+      ))}
+      {/* Hueco central para muela */}
+      <circle cx="50" cy="71" r="22" fill={dark} />
+      <circle cx="50" cy="71" r="17" fill={color} opacity="0.4" />
+      <circle cx="50" cy="71" r="6" fill={dark} />
+      {/* Reflejo */}
+      <rect x="22" y="26" width="56" height="3" fill="#fff" opacity="0.35" />
+    </svg>
+  ),
+};
+
+// Placeholder ilustrado para cuando una caja no tiene foto subida.
+// Muestra: SVG del tipo + nombre de la marca prominente + colores de marca.
+function DefaultIllustration({ caja, height = 80, showBrand = true }) {
+  const palette = MARCA_PALETTE[caja.marca] || MARCA_PALETTE["Otro"];
+  const Svg = TipoSVG[caja.tipo] || TipoSVG.pica;
+  return (
+    <div style={{
+      position: "relative",
+      height,
+      borderRadius: 10,
+      overflow: "hidden",
+      background: `linear-gradient(135deg, ${palette.soft} 0%, #fff 60%, ${palette.soft} 100%)`,
+      border: `1px solid ${palette.primary}25`,
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 6,
+    }}>
+      <div style={{
+        flex: 1,
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: 0,
+      }}>
+        <Svg color={palette.primary} dark={palette.dark} />
+      </div>
+      {showBrand && (
+        <div style={{
+          width: "100%",
+          background: palette.primary,
+          color: "#fff",
+          textAlign: "center",
+          fontSize: Math.max(8, Math.min(11, height / 9)),
+          fontWeight: 800,
+          letterSpacing: 1.2,
+          padding: "3px 4px",
+          marginTop: 4,
+          borderRadius: 4,
+          fontFamily: "ui-monospace, Menlo, monospace",
+        }}>
+          {palette.label}
+        </div>
+      )}
+    </div>
+  );
+}
 const DEFAULT_MIN_STOCK = {
   pica_jumbo: 30, pica_mediana: 30, pica_pequena: 30,
   portapica_jumbo: 30, portapica_mediana: 30, portapica_pequena: 30,
@@ -1001,11 +1142,14 @@ function CajaDetail({ caja, onClose, onEdit, onDespachar, onDelete, canEdit }) {
             minHeight: 220,
             display: "flex", alignItems: "center", justifyContent: "center",
             overflow: "hidden",
+            padding: foto?.dataUrl ? 0 : 12,
           }}>
             {foto?.dataUrl ? (
               <img src={foto.dataUrl} alt={caja.codigo} style={{ maxWidth: "100%", maxHeight: 260, objectFit: "contain" }} />
             ) : (
-              <div style={{ fontSize: 64, color: BRAND.ash }}>📦</div>
+              <div style={{ width: "100%", maxWidth: 260, height: 240 }}>
+                <DefaultIllustration caja={caja} height={240} showBrand={true} />
+              </div>
             )}
           </div>
           <div style={{
@@ -1877,18 +2021,7 @@ function CajaCard({ caja, onClick }) {
       onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = BRAND.shadow; }}
       onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = BRAND.shadowSm; }}
     >
-      <div style={{
-        background: BRAND.beigeLight,
-        borderRadius: 10,
-        height: 80,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: 36,
-        color: BRAND.ash,
-      }}>
-        {caja.tipo === "pica" ? "⛏️" : caja.tipo === "portapica" ? "🔩" : caja.tipo === "muela_encamisado" ? "⚙️" : caja.tipo === "puerta_muela" ? "🚪" : "📦"}
-      </div>
+      <DefaultIllustration caja={caja} height={110} showBrand={true} />
       <div style={{ fontFamily: "monospace", fontSize: 14, fontWeight: 800, color: VAULT_BLUE, letterSpacing: 0.5 }}>
         {caja.codigo}
       </div>
