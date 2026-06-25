@@ -210,23 +210,45 @@ const StatCard = ({ label, value, icon, color = "#BE185D" }) => <div style={{ ba
 const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = "#2563EB" }) => {
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
+  const [opening, setOpening] = useState(false);
 
-  const openFile = () => {
+  // Abre un archivo, hidratandolo desde cloud si solo tiene fileId (sin dataUrl).
+  // Ahora que la carga inicial NO hidrata archivos en bulk (para evitar saturar
+  // Supabase), cada click "Ver/Descargar" tiene que cargar el archivo on-demand.
+  const openFile = async () => {
     if (!file) return;
-    if (file.type?.startsWith("image/") || file.type === "application/pdf") {
+    let fileToOpen = file;
+    if (!file.dataUrl && file.fileId) {
+      setOpening(true);
+      try {
+        const full = await store.get(`cp-file-${file.fileId}`);
+        if (!full?.dataUrl) {
+          alert("❌ No se pudo cargar el archivo desde la nube.\n\nPuede ser un problema temporal de Supabase. Reintenta en unos segundos.");
+          setOpening(false);
+          return;
+        }
+        fileToOpen = { ...full, fileId: file.fileId };
+      } catch (err) {
+        alert("Error cargando archivo: " + (err?.message || err));
+        setOpening(false);
+        return;
+      }
+      setOpening(false);
+    }
+    if (fileToOpen.type?.startsWith("image/") || fileToOpen.type === "application/pdf") {
       const w = window.open();
       if (w) {
-        w.document.write(`<!DOCTYPE html><html><head><title>${file.name}</title></head><body style='margin:0;background:#222;display:flex;align-items:center;justify-content:center;min-height:100vh'>` +
-          (file.type === "application/pdf"
-            ? `<iframe src='${file.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>`
-            : `<img src='${file.dataUrl}' style='max-width:100vw;max-height:100vh'/>`) +
+        w.document.write(`<!DOCTYPE html><html><head><title>${fileToOpen.name}</title></head><body style='margin:0;background:#222;display:flex;align-items:center;justify-content:center;min-height:100vh'>` +
+          (fileToOpen.type === "application/pdf"
+            ? `<iframe src='${fileToOpen.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>`
+            : `<img src='${fileToOpen.dataUrl}' style='max-width:100vw;max-height:100vh'/>`) +
           `</body></html>`);
       }
     } else {
       // Trigger download for Excel/Word/etc
       const a = document.createElement("a");
-      a.href = file.dataUrl;
-      a.download = file.name;
+      a.href = fileToOpen.dataUrl;
+      a.download = fileToOpen.name;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
     }
   };
@@ -267,7 +289,7 @@ const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = "#2563E
         </div>
         <div style={{ fontSize: 11, color: "#64748b" }}>{file.type} · {fmtMB(file.size)}</div>
       </div>
-      <Btn small variant="info" onClick={openFile}>Ver / Descargar</Btn>
+      <Btn small variant="info" onClick={openFile} disabled={opening}>{opening ? "Cargando..." : "Ver / Descargar"}</Btn>
       {canUpload && <Btn small variant="danger" onClick={() => { if (confirm("¿Eliminar este archivo?")) onRemove(); }}>Eliminar</Btn>}
     </div> : <div style={{ fontSize: 12, color: "#94A3B8" }}>Sin archivo adjunto</div>}
     {canUpload && <>
