@@ -1986,6 +1986,22 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
             null
           )}
         </div>
+
+        {/* Footer del modulo — autoria */}
+        <div style={{
+          borderTop: `1px solid ${BRAND.borderSoft}`,
+          padding: "16px 32px",
+          marginTop: 12,
+          textAlign: "center",
+          background: BRAND.cream,
+        }}>
+          <div style={{ fontSize: 11, color: BRAND.stone, letterSpacing: 0.5 }}>
+            🗄️ <b style={{ color: VAULT_BLUE }}>GeoDrill Vault</b> · Modulo de inventario de alto valor
+          </div>
+          <div style={{ fontSize: 10.5, color: BRAND.ash, marginTop: 4, letterSpacing: 0.3 }}>
+            Creado por <span style={{ color: BRAND.graphite, fontWeight: 600 }}>Lic. Gerson Trochez</span> &amp; <span style={{ color: BRAND.graphite, fontWeight: 600 }}>Ronald Arias</span>
+          </div>
+        </div>
       </div>
 
       {renderModal()}
