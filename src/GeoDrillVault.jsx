@@ -15,6 +15,7 @@
 // =====================================================================
 
 import { useState, useEffect, useRef } from "react";
+import QrScanner from "qr-scanner";
 import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { BRAND, FONT, R } from "./theme.js";
@@ -887,6 +888,160 @@ function HerramientaForm({ tool, onSave, onClose, onDelete, canEdit }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// QRScannerModal — abre la camara del dispositivo y lee codigos QR de las cajas.
+// Usa la libreria qr-scanner (basada en Web Workers, soporta camara trasera).
+//
+// Flujo:
+//   1. Click "📷 Escanear con camara" en SalidaForm/EntradaForm.
+//   2. Se abre este modal con el video stream de la camara.
+//   3. Apuntas la camara al sticker QR pegado en la caja fisica.
+//   4. Cuando detecta un QR, llama a onScan(codigo) y cierra el modal.
+//   5. El form padre busca la caja por codigo y la autocompleta.
+//
+// Manejo de errores:
+//   - Permiso denegado de camara → mensaje claro.
+//   - Sin camara disponible → fallback a entrada manual.
+//   - QR no detectado → se mantiene activo hasta que el user cancela.
+// ─────────────────────────────────────────────────────────────────────────────
+function QRScannerModal({ onScan, onClose }) {
+  const videoRef = useRef(null);
+  const scannerRef = useRef(null);
+  const [error, setError] = useState("");
+  const [starting, setStarting] = useState(true);
+  const [lastCode, setLastCode] = useState(""); // para feedback visual
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    let cancelled = false;
+
+    const start = async () => {
+      try {
+        const hasCamera = await QrScanner.hasCamera();
+        if (!hasCamera) {
+          if (!cancelled) {
+            setError("No se detecto camara en este dispositivo. Usa el campo de codigo manual.");
+            setStarting(false);
+          }
+          return;
+        }
+        const scanner = new QrScanner(
+          video,
+          (result) => {
+            const code = (result.data || "").trim();
+            if (!code) return;
+            setLastCode(code);
+            // Pequeño feedback haptico si el browser lo soporta
+            try { navigator.vibrate?.(80); } catch {}
+            onScan(code);
+          },
+          {
+            preferredCamera: "environment", // camara trasera del celular
+            highlightScanRegion: true,
+            highlightCodeOutline: true,
+            maxScansPerSecond: 5,
+          }
+        );
+        scannerRef.current = scanner;
+        await scanner.start();
+        if (!cancelled) setStarting(false);
+      } catch (err) {
+        console.error("QRScanner error:", err);
+        if (!cancelled) {
+          const msg = err?.message || String(err);
+          if (msg.toLowerCase().includes("permission") || msg.toLowerCase().includes("denied")) {
+            setError("Permiso de camara denegado. Habilita la camara en la configuracion del navegador y reintenta.");
+          } else if (msg.toLowerCase().includes("notfound") || msg.toLowerCase().includes("no camera")) {
+            setError("No se encontro camara en este dispositivo.");
+          } else {
+            setError(`Error iniciando camara: ${msg}`);
+          }
+          setStarting(false);
+        }
+      }
+    };
+    start();
+
+    return () => {
+      cancelled = true;
+      const sc = scannerRef.current;
+      if (sc) {
+        try { sc.stop(); } catch {}
+        try { sc.destroy(); } catch {}
+      }
+    };
+  }, [onScan]);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)",
+      zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center",
+      padding: 20,
+    }}>
+      <div style={{
+        background: "#fff", borderRadius: 14, padding: 18, maxWidth: 480, width: "100%",
+        display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: BRAND.charcoal }}>📷 Escanear codigo QR</div>
+          <button onClick={onClose} style={{
+            background: "transparent", border: "none", fontSize: 22, color: BRAND.stone,
+            cursor: "pointer", lineHeight: 1, padding: 4,
+          }}>✕</button>
+        </div>
+
+        {error ? (
+          <div style={{
+            background: BRAND.redSoft, border: `1px solid ${BRAND.red}`,
+            borderRadius: 10, padding: 14, fontSize: 13, color: "#7F1D1D",
+          }}>{error}</div>
+        ) : (
+          <>
+            <div style={{
+              background: "#000", borderRadius: 10, overflow: "hidden",
+              aspectRatio: "4 / 3", position: "relative",
+            }}>
+              <video
+                ref={videoRef}
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                muted
+                playsInline
+              />
+              {starting && (
+                <div style={{
+                  position: "absolute", inset: 0, display: "flex",
+                  alignItems: "center", justifyContent: "center",
+                  color: "#fff", fontSize: 14, fontWeight: 600,
+                  background: "rgba(0,0,0,0.5)",
+                }}>Iniciando camara…</div>
+              )}
+              {lastCode && (
+                <div style={{
+                  position: "absolute", bottom: 0, left: 0, right: 0,
+                  background: BRAND.green, color: "#fff",
+                  padding: "8px 12px", fontSize: 13, fontWeight: 700, textAlign: "center",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                }}>✓ {lastCode}</div>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: BRAND.graphite, textAlign: "center", lineHeight: 1.4 }}>
+              Apunta la camara al sticker QR pegado en la caja.<br />
+              <span style={{ color: BRAND.stone }}>El codigo se detecta automaticamente.</span>
+            </div>
+          </>
+        )}
+
+        <button onClick={onClose} style={{
+          background: BRAND.beigeDeep, border: `1px solid ${BRAND.border}`,
+          borderRadius: 8, padding: "10px 16px", fontSize: 13, fontWeight: 700,
+          color: BRAND.charcoal, cursor: "pointer", fontFamily: "inherit",
+        }}>Cerrar</button>
+      </div>
+    </div>
+  );
+}
+
 // SalidaForm — registrar una salida (despacho a obra).
 function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, machines }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -902,21 +1057,37 @@ function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, 
     scan: "",
   });
   const [saving, setSaving] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
 
   const selectedCaja = items.find(i => i.id === f.itemId);
   const maxCantidad = selectedCaja ? selectedCaja.cantidadActual : 0;
 
-  // Buscar caja por codigo (escanear o pegar)
-  const buscarPorCodigo = () => {
-    const code = f.scan.trim();
-    if (!code) return;
-    const match = items.find(i => (i.codigo || "").toLowerCase() === code.toLowerCase());
+  // Buscar caja por codigo (escanear o pegar). Devuelve la caja encontrada o null.
+  const buscarPorCodigoFn = (code) => {
+    const c = (code || "").trim();
+    if (!c) return null;
+    const match = items.find(i => (i.codigo || "").toLowerCase() === c.toLowerCase());
     if (match) {
       u("itemId", match.id);
       u("scan", "");
-    } else {
-      alert(`No se encontro ninguna caja con codigo "${code}".`);
+      return match;
+    }
+    return null;
+  };
+  const buscarPorCodigo = () => {
+    const code = f.scan.trim();
+    if (!code) return;
+    const match = buscarPorCodigoFn(code);
+    if (!match) alert(`No se encontro ninguna caja con codigo "${code}".`);
+  };
+
+  // Callback desde el QRScannerModal cuando detecta un codigo.
+  const onQRScanned = (code) => {
+    setShowScanner(false);
+    const match = buscarPorCodigoFn(code);
+    if (!match) {
+      alert(`Escaneaste "${code}" pero no hay ninguna caja con ese codigo registrada.`);
     }
   };
 
@@ -946,6 +1117,10 @@ function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {showScanner && (
+        <QRScannerModal onScan={onQRScanned} onClose={() => setShowScanner(false)} />
+      )}
+
       <div style={{ background: BRAND.yellowSoft, border: `1px solid ${BRAND.yellow}`, borderRadius: 10, padding: 12, fontSize: 12, color: "#8B6A0B" }}>
         📤 Registra la salida de unidades de una caja. La cantidad se restara automaticamente del inventario.
       </div>
@@ -957,13 +1132,35 @@ function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, 
           value={f.fecha}
           onChange={e => u("fecha", e.target.value)}
         />
-        <Input
-          label="Escanear / pegar codigo de caja"
-          placeholder="Ej: JM-P-001"
-          value={f.scan}
-          onChange={e => u("scan", e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); buscarPorCodigo(); } }}
-        />
+        <div>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: BRAND.graphite, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.3 }}>
+            Codigo de caja
+          </label>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              style={{ flex: 1, padding: "9px 12px", border: `1px solid ${BRAND.border}`, borderRadius: 8, fontSize: 14, fontFamily: "inherit", background: "#fff", color: BRAND.charcoal, outline: "none" }}
+              placeholder="Ej: JM-P-001"
+              value={f.scan}
+              onChange={e => u("scan", e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); buscarPorCodigo(); } }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowScanner(true)}
+              style={{
+                background: BRAND.charcoal, color: "#fff",
+                border: "none", borderRadius: 8,
+                padding: "9px 14px", fontSize: 13, fontWeight: 700,
+                cursor: "pointer", fontFamily: "inherit",
+                whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6,
+              }}
+              title="Escanear QR con la camara"
+            >📷 Camara</button>
+          </div>
+          <div style={{ fontSize: 10.5, color: BRAND.stone, marginTop: 4 }}>
+            Escanea el QR pegado en la caja o pega el codigo manualmente.
+          </div>
+        </div>
       </div>
 
       <Select
@@ -1051,9 +1248,21 @@ function EntradaForm({ items, userName, onSave, onClose }) {
     notas: "",
   });
   const [saving, setSaving] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
 
   const selected = items.find(i => i.id === f.itemId);
+
+  // Callback del QR scanner: busca la caja y autoselecciona
+  const onQRScanned = (code) => {
+    setShowScanner(false);
+    const match = items.find(i => (i.codigo || "").toLowerCase() === (code || "").trim().toLowerCase());
+    if (match) {
+      u("itemId", match.id);
+    } else {
+      alert(`Escaneaste "${code}" pero no hay ninguna caja con ese codigo registrada.`);
+    }
+  };
 
   const save = async () => {
     if (!f.itemId) { alert("Selecciona la caja a recargar."); return; }
@@ -1079,6 +1288,10 @@ function EntradaForm({ items, userName, onSave, onClose }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {showScanner && (
+        <QRScannerModal onScan={onQRScanned} onClose={() => setShowScanner(false)} />
+      )}
+
       <div style={{ background: BRAND.greenSoft, border: `1px solid ${BRAND.green}`, borderRadius: 10, padding: 12, fontSize: 12, color: "#3D5F35" }}>
         📥 Registra una recarga (entrada) sumando unidades a una caja existente. Para una caja nueva, usa "+ Registrar nueva caja" desde Inventario.
       </div>
@@ -1088,16 +1301,32 @@ function EntradaForm({ items, userName, onSave, onClose }) {
         <Input label="Cantidad a agregar *" type="number" min={1} value={f.cantidad} onChange={e => u("cantidad", e.target.value)} />
       </div>
 
-      <Select
-        label="Caja * (a la que se le suma stock)"
-        value={f.itemId}
-        options={items.map(i => ({
-          value: i.id,
-          label: `${i.codigo} · ${tipoLabel(i.tipo)}${i.tamano ? ` ${cap(i.tamano)}` : ""} · ${i.marca} · actual: ${i.cantidadActual}/${i.cantidadOriginal}`,
-        }))}
-        onChange={e => u("itemId", e.target.value)}
-        emptyLabel="— Elige caja —"
-      />
+      <div>
+        <div style={{ display: "flex", alignItems: "end", gap: 8, marginBottom: 4 }}>
+          <div style={{ flex: 1, fontSize: 12, fontWeight: 700, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.3 }}>
+            Caja * (elige del listado o escanea su QR)
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowScanner(true)}
+            style={{
+              background: BRAND.charcoal, color: "#fff", border: "none",
+              borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700,
+              cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+            }}
+          >📷 Escanear QR</button>
+        </div>
+        <Select
+          label=""
+          value={f.itemId}
+          options={items.map(i => ({
+            value: i.id,
+            label: `${i.codigo} · ${tipoLabel(i.tipo)}${i.tamano ? ` ${cap(i.tamano)}` : ""} · ${i.marca} · actual: ${i.cantidadActual}/${i.cantidadOriginal}`,
+          }))}
+          onChange={e => u("itemId", e.target.value)}
+          emptyLabel="— Elige caja —"
+        />
+      </div>
       {selected && (
         <div style={{ fontSize: 12, color: BRAND.graphite, padding: "8px 12px", background: BRAND.beigeLight, borderRadius: 8 }}>
           Caja: <strong>{selected.codigo}</strong> · Actual: <strong>{selected.cantidadActual}</strong> · Despues del ingreso: <strong>{selected.cantidadActual + Number(f.cantidad || 0)}</strong>
