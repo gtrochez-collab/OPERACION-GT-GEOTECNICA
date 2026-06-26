@@ -1424,7 +1424,7 @@ function EntradaForm({ items, userName, onSave, onClose }) {
 // =====================================================================
 // DETAIL VIEW (modal completo de una caja)
 // =====================================================================
-function CajaDetail({ caja, onClose, onEdit, onDespachar, onDelete, canEdit }) {
+function CajaDetail({ caja, onClose, onEdit, onDespachar, onDelete, onDuplicate, canEdit }) {
   const isMobile = useIsMobile();
   // Hidratar foto on-demand (load on-demand pattern)
   const [foto, setFoto] = useState(caja.foto);
@@ -1569,6 +1569,26 @@ function CajaDetail({ caja, onClose, onEdit, onDespachar, onDelete, canEdit }) {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
             <Btn variant="ghost" onClick={printLabel}>🖨 Imprimir etiqueta</Btn>
             {canEdit && <Btn onClick={onEdit}>✏️ Editar</Btn>}
+            {canEdit && onDuplicate && (
+              <Btn variant="info" onClick={async () => {
+                const raw = prompt(
+                  `Duplicar caja ${caja.codigo}\n\n` +
+                  `¿Cuantas copias adicionales queres crear?\n` +
+                  `(Cada copia tendra su propio codigo correlativo, ej: ${caja.codigo.replace(/\d+$/, "")}XXX)`,
+                  "1"
+                );
+                if (raw === null) return; // cancelo
+                const n = parseInt((raw || "").trim(), 10);
+                if (!n || n <= 0) { alert("Numero invalido. Ingresa un entero positivo."); return; }
+                if (n > 200) { alert("Maximo 200 copias por operacion."); return; }
+                const res = await onDuplicate(caja, n);
+                if (res?.ok !== false && res?.codigos?.length) {
+                  const first = res.codigos[0], last = res.codigos[res.codigos.length - 1];
+                  alert(`✓ Se crearon ${res.codigos.length} cajas adicionales.\n\n${first} a ${last}\n\nCada una con ${caja.cantidadOriginal} unidades.`);
+                  onClose();
+                }
+              }}>📋 Duplicar</Btn>
+            )}
             {canEdit && caja.cantidadActual > 0 && <Btn variant="warn" onClick={onDespachar}>📤 Despachar</Btn>}
             {canEdit && onDelete && (
               <Btn variant="danger" onClick={() => {
@@ -1771,6 +1791,38 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
   };
   const deleteItem = async (id) => {
     return await saveItems(items.filter(i => i.id !== id));
+  };
+  // Duplica una caja N veces. Genera codigos secuenciales (DM-P-002, DM-P-003,
+  // etc) continuando desde el ultimo codigo registrado para esa marca+tipo.
+  // Cada copia es independiente (su propio id, codigo, fechas). Comparten
+  // marca, tipo, tamano, cantidad original, ubicacion, notas y foto (la foto
+  // se comparte por referencia al mismo fileId — no se re-sube).
+  // Devuelve la lista de codigos creados.
+  const duplicateItem = async (caja, copies) => {
+    const n = Math.floor(Number(copies));
+    if (!caja || !n || n <= 0) return { ok: false, codigos: [] };
+    const now = new Date().toISOString();
+    const created = [];
+    // Generar todos los codigos antes de guardar — cada nuevo codigo depende
+    // de los que ya generamos para que no se repita el correlativo.
+    const accumulator = [...items];
+    for (let k = 0; k < n; k++) {
+      const codigo = nextCodigoFor(caja.marca, caja.tipo, accumulator);
+      const copia = {
+        ...caja,
+        id: uid(),
+        codigo,
+        // Stock fresco: la copia arranca llena con la misma capacidad
+        cantidadActual: caja.cantidadOriginal,
+        cantidadOriginal: caja.cantidadOriginal,
+        createdAt: now,
+        updatedAt: now,
+      };
+      accumulator.push(copia);
+      created.push(copia);
+    }
+    const ok = await saveItems(accumulator);
+    return { ok, codigos: created.map(c => c.codigo) };
   };
   const upsertTool = async (data) => {
     const exists = tools.find(t => t.id === data.id);
@@ -2224,6 +2276,7 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
         onEdit={() => setModal({ type: "caja-edit", data: modal.data })}
         onDespachar={() => setModal({ type: "salida-new", preselected: modal.data })}
         onDelete={async (id) => { const ok = await deleteItem(id); if (ok !== false) close(); }}
+        onDuplicate={duplicateItem}
         canEdit={canEdit}
       />;
     }
