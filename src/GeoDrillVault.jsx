@@ -1633,6 +1633,9 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
   const [modal, setModal] = useState(null);
   // Filtros
   const [invFilter, setInvFilter] = useState({ tipo: "", marca: "", tamano: "", ubicacion: "", q: "" });
+  // Navegacion jerarquica por ubicacion. Array de partes ya entradas.
+  // Ej: [] = raiz, ["Estante A"] = dentro de Estante A, ["Estante A", "Nivel 2"] = mas profundo.
+  const [invPath, setInvPath] = useState([]);
   const [toolFilter, setToolFilter] = useState({ tipo: "", estado: "", projectCode: "" });
   const [movFilter, setMovFilter] = useState({ tipo: "", projectCode: "", from: "", to: "" });
 
@@ -2047,30 +2050,157 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
           </div>
         )}
 
-        {ubicacionesUnicas.length > 0 && invFilter.ubicacion === "" && (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 11, color: BRAND.stone, alignSelf: "center" }}>Ubicaciones registradas:</span>
-            {ubicacionesUnicas.map(u => (
-              <button key={u} onClick={() => setInvFilter(s => ({ ...s, ubicacion: u }))}
-                style={{ background: BRAND.beigeLight, border: `1px solid ${BRAND.borderSoft}`, borderRadius: 16, padding: "3px 10px", fontSize: 11, color: BRAND.graphite, cursor: "pointer", fontFamily: "inherit" }}>
-                {u}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Navegacion jerarquica por ubicacion (carpetas).
+            Si hay filtros activos (codigo, tipo, marca, tamano, ubicacion-texto)
+            mostramos resultados PLANOS sin carpetas — el filtro pisa la navegacion. */}
+        {(() => {
+          const parseUbic = (u) => (u || "Sin ubicacion").split(",").map(s => s.trim()).filter(Boolean);
+          const hasActiveFilter = !!(invFilter.q || invFilter.tipo || invFilter.marca || invFilter.tamano || invFilter.ubicacion);
+          // Items que viven en o debajo del path actual (parts comienzan con el path)
+          const itemsAtOrBelowPath = filteredItems.filter(item => {
+            const parts = parseUbic(item.ubicacion);
+            if (parts.length < invPath.length) return false;
+            return invPath.every((p, i) => (parts[i] || "").toLowerCase() === p.toLowerCase());
+          });
+          // Si hay filtro activo o el path llego al fondo (no quedan mas sub-partes), mostrar PLANO
+          const nextPartsCount = new Map(); // nombre → cantidad de items
+          itemsAtOrBelowPath.forEach(item => {
+            const parts = parseUbic(item.ubicacion);
+            if (parts.length > invPath.length) {
+              const next = parts[invPath.length];
+              nextPartsCount.set(next, (nextPartsCount.get(next) || 0) + 1);
+            }
+          });
+          const nextParts = [...nextPartsCount.keys()].sort();
+          const showFolders = !hasActiveFilter && nextParts.length > 0;
+          // Items que estan EXACTAMENTE en este nivel (no mas profundo)
+          const itemsAtThisLevel = itemsAtOrBelowPath.filter(item => {
+            const parts = parseUbic(item.ubicacion);
+            return parts.length === invPath.length;
+          });
+          const cardsToShow = hasActiveFilter ? filteredItems : (showFolders ? itemsAtThisLevel : itemsAtOrBelowPath);
 
-        {/* Grid de cajas */}
-        {filteredItems.length === 0 ? (
-          <div style={{ background: CREAM, borderRadius: 14, padding: 40, textAlign: "center", color: BRAND.stone, border: `1px solid ${BRAND.borderSoft}` }}>
-            {items.length === 0
-              ? "Aun no hay cajas registradas. Comienza con + Registrar nueva caja."
-              : "No hay cajas que coincidan con los filtros."}
-          </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
-            {filteredItems.map(c => <CajaCard key={c.id} caja={c} onClick={() => setModal({ type: "caja-detail", data: c })} />)}
-          </div>
-        )}
+          return (
+            <>
+              {/* Breadcrumbs */}
+              {!hasActiveFilter && (
+                <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", fontSize: 13, color: BRAND.graphite }}>
+                  <button
+                    onClick={() => setInvPath([])}
+                    style={{
+                      background: invPath.length === 0 ? VAULT_BLUE : "transparent",
+                      color: invPath.length === 0 ? "#fff" : VAULT_BLUE,
+                      border: `1px solid ${VAULT_BLUE}`,
+                      borderRadius: 6, padding: "5px 10px", fontSize: 12, fontWeight: 700,
+                      cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >🏠 Todas</button>
+                  {invPath.map((part, idx) => (
+                    <span key={idx} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ color: BRAND.stone }}>›</span>
+                      <button
+                        onClick={() => setInvPath(invPath.slice(0, idx + 1))}
+                        style={{
+                          background: idx === invPath.length - 1 ? VAULT_BLUE : "transparent",
+                          color: idx === invPath.length - 1 ? "#fff" : VAULT_BLUE,
+                          border: `1px solid ${VAULT_BLUE}`,
+                          borderRadius: 6, padding: "5px 10px", fontSize: 12, fontWeight: 700,
+                          cursor: "pointer", fontFamily: "inherit",
+                        }}
+                      >{part}</button>
+                    </span>
+                  ))}
+                  {invPath.length > 0 && (
+                    <button
+                      onClick={() => setInvPath(invPath.slice(0, -1))}
+                      style={{
+                        background: "transparent", color: BRAND.stone, border: "none",
+                        cursor: "pointer", fontSize: 12, marginLeft: 6,
+                      }}
+                    >← Subir</button>
+                  )}
+                </div>
+              )}
+
+              {hasActiveFilter && (
+                <div style={{
+                  background: BRAND.yellowSoft, border: `1px solid ${BRAND.yellow}`,
+                  borderRadius: 10, padding: "8px 12px", fontSize: 12, color: "#8B6A0B",
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                }}>
+                  <span>🔍 Filtros activos — mostrando resultados de TODA la bodega ({filteredItems.length} cajas).</span>
+                  <button
+                    onClick={() => setInvFilter({ tipo: "", marca: "", tamano: "", ubicacion: "", q: "" })}
+                    style={{ background: "transparent", border: `1px solid ${BRAND.yellow}`, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, color: "#8B6A0B", cursor: "pointer", fontFamily: "inherit" }}
+                  >Limpiar filtros</button>
+                </div>
+              )}
+
+              {/* Carpetas (sub-niveles) */}
+              {showFolders && nextParts.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.stone, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                    📁 Carpetas en {invPath.length === 0 ? "raiz" : `"${invPath[invPath.length - 1]}"`}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+                    {nextParts.map(part => {
+                      const count = nextPartsCount.get(part);
+                      return (
+                        <button
+                          key={part}
+                          onClick={() => setInvPath([...invPath, part])}
+                          style={{
+                            background: "#fff",
+                            border: `1px solid ${BRAND.borderSoft}`,
+                            borderLeft: `4px solid ${VAULT_BLUE}`,
+                            borderRadius: 12, padding: 16,
+                            textAlign: "left", cursor: "pointer", fontFamily: "inherit",
+                            display: "flex", alignItems: "center", gap: 12,
+                            transition: "transform .1s, box-shadow .15s",
+                            boxShadow: BRAND.shadowSm,
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = BRAND.shadow; }}
+                          onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = BRAND.shadowSm; }}
+                        >
+                          <div style={{ fontSize: 32 }}>📁</div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL }}>{part}</div>
+                            <div style={{ fontSize: 11, color: BRAND.stone, marginTop: 2 }}>{count} {count === 1 ? "caja" : "cajas"}</div>
+                          </div>
+                          <div style={{ fontSize: 16, color: VAULT_BLUE }}>›</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Grid de cajas */}
+              {cardsToShow.length === 0 && nextParts.length === 0 ? (
+                <div style={{ background: CREAM, borderRadius: 14, padding: 40, textAlign: "center", color: BRAND.stone, border: `1px solid ${BRAND.borderSoft}` }}>
+                  {items.length === 0
+                    ? "Aun no hay cajas registradas. Comienza con + Registrar nueva caja."
+                    : hasActiveFilter
+                      ? "No hay cajas que coincidan con los filtros."
+                      : invPath.length === 0
+                        ? "No hay cajas en la raiz."
+                        : `No hay cajas directamente en "${invPath[invPath.length - 1]}".`}
+                </div>
+              ) : cardsToShow.length > 0 && (
+                <div>
+                  {showFolders && (
+                    <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.stone, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, marginTop: 16 }}>
+                      📦 Cajas {invPath.length === 0 ? "en la raiz" : `directamente en "${invPath[invPath.length - 1]}"`}
+                    </div>
+                  )}
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+                    {cardsToShow.map(c => <CajaCard key={c.id} caja={c} onClick={() => setModal({ type: "caja-detail", data: c })} />)}
+                  </div>
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
     );
   };
