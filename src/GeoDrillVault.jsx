@@ -2864,6 +2864,7 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
                 {userRole === "admin" ? "Administrador"
                   : userRole === "tesoreria" ? "Tesoreria"
                   : userRole === "almacenista" ? "Encargado de Almacen"
+                  : userRole === "almacen_visor" ? "Visor de Almacen"
                   : userRole}
               </span>
             </div>

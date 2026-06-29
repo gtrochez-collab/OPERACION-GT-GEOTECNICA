@@ -70,7 +70,7 @@ const MODULES = [
     desc: "Inventario de alto valor: picas, portapicas, muelas y herramientas de perforacion",
     accent: "#0F4C75",
     accentSoft: "rgba(15,76,117,0.10)",
-    roles: ["admin", "tesoreria", "almacenista"],
+    roles: ["admin", "tesoreria", "almacenista", "almacen_visor"],
   },
 ];
 
