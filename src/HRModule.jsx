@@ -1767,6 +1767,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       company: co, fullName: "", dni: "", position: "", department: "Operaciones",
       contractType: "permanent", startDate: new Date().toISOString().slice(0, 10),
       endDate: "", salary: "", bonificacion: 0, motivo: "Contratacion nueva", notas: "",
+      excepcional: false, payrollEffectiveDate: "",
     });
     const u = (k, v) => setF(p => ({ ...p, [k]: v }));
     const grupo = getGrupo(f.company, f.contractType);
@@ -1849,25 +1850,59 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       <div style={{ gridColumn: "1/-1" }}>
         <Input label="Notas" value={f.notas} onChange={e => u("notas", e.target.value)} />
       </div>
+
+      {/* Bloque "Caso excepcional" — solo para permanentes y honorarios (NO temporales) */}
+      {!esTemporal && <div style={{ gridColumn: "1/-1", background: "#DBEAFE", border: "2px solid #93C5FD", borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#1E3A8A", lineHeight: 1.4 }}>
+          <input type="checkbox" checked={f.excepcional} onChange={e => u("excepcional", e.target.checked)} style={{ marginTop: 3 }} />
+          <span>Caso excepcional: el efecto en planilla es distinto a la fecha de ingreso</span>
+        </label>
+        {f.excepcional && <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingLeft: 24 }}>
+          <div style={{ maxWidth: 280 }}>
+            <Input label="Fecha de efecto en planilla *" type="date" value={f.payrollEffectiveDate} onChange={e => u("payrollEffectiveDate", e.target.value)} />
+          </div>
+          <div style={{ background: "#fff", border: "1px solid #BFDBFE", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#1E3A8A", lineHeight: 1.6 }}>
+            El empleado conservará su fecha de ingreso original (<b>{f.startDate ? fmt(f.startDate) : "—"}</b>) para antigüedad y contrato.
+            En el reporte de Movimientos aparecerá como alta en <b>{f.payrollEffectiveDate ? fmt(f.payrollEffectiveDate) : "—"}</b> con pago proporcional.
+          </div>
+        </div>}
+      </div>}
+
       <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
         <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
         <Btn variant="success" onClick={() => {
           if (!f.fullName || !f.dni || !f.startDate || !f.salary) return alert("Complete nombre, DNI, fecha de ingreso y salario");
           if (f.contractType === "temporary" && !f.endDate) return alert("⚠️ El contrato por obra (temporal) requiere fecha de fin del contrato.");
           if (f.contractType === "temporary" && new Date(f.endDate) < new Date(f.startDate)) return alert("⚠️ La fecha de fin no puede ser anterior a la fecha de inicio.");
+          if (f.excepcional && !f.payrollEffectiveDate) return alert("⚠️ Marcaste el caso excepcional: indica la fecha de efecto en planilla.");
+          if (f.excepcional && new Date(f.payrollEffectiveDate) < new Date(f.startDate)) return alert("⚠️ La fecha de efecto en planilla debe ser igual o posterior a la fecha de ingreso.");
           const empId = uid();
+          const usaExcepcional = f.excepcional && !!f.payrollEffectiveDate && !esTemporal;
+          // Nota automatica del caso excepcional, concatenada con la nota existente si la habia
+          let notasFinal = f.notas;
+          if (usaExcepcional) {
+            const notaExc = `[CASO EXCEPCIONAL] Ingreso real: ${fmt(f.startDate)}. Efecto en planilla: ${fmt(f.payrollEffectiveDate)}. Primer pago proporcional al periodo trabajado en este mes.`;
+            notasFinal = f.notas ? `${f.notas} | ${notaExc}` : notaExc;
+          }
           const newEmp = {
             id: empId, company: f.company, fullName: f.fullName, dni: f.dni, position: f.position,
             department: f.department, contractType: f.contractType, startDate: f.startDate,
             endDate: f.endDate || "", salary: Number(f.salary), bonificacion: Number(f.bonificacion) || 0,
             cooperativa: 0, gastosMedicos: 40000, status: "active", phone: "", email: "",
+            ...(usaExcepcional ? { payrollEffectiveDate: f.payrollEffectiveDate } : {}),
           };
           sE([...emps, newEmp]);
           const mov = {
             id: uid(), tipo: "alta", company: f.company, employeeId: empId,
             fullName: f.fullName, dni: f.dni, position: f.position, contractType: f.contractType,
             grupo: getGrupo(f.company, f.contractType), salary: Number(f.salary), endDate: f.endDate || "",
-            date: f.startDate, motivo: f.motivo, notas: f.notas, createdAt: new Date().toISOString(),
+            date: usaExcepcional ? f.payrollEffectiveDate : f.startDate,
+            motivo: f.motivo, notas: notasFinal, createdAt: new Date().toISOString(),
+            ...(usaExcepcional ? {
+              payrollEffectiveDate: f.payrollEffectiveDate,
+              realStartDate: f.startDate,
+              proporcional: true,
+            } : {}),
           };
           sM([...movs, mov]);
           // Crear contrato automaticamente vinculado al alta
