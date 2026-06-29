@@ -2061,6 +2061,47 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
     return true;
   };
 
+  // ── Eliminar movimiento (hard delete) ──
+  // Para movimientos creados por error. Borra el registro y revierte el stock
+  // (a menos que el movimiento ya estuviera marcado como revertido — en ese
+  // caso el stock ya fue ajustado y no se vuelve a tocar).
+  const eliminarMovimiento = async (mov) => {
+    if (!confirm(`¿Eliminar este movimiento? (${mov.tipo} de ${mov.cantidad} unidades el ${fmt(mov.fecha)}). Esta accion es permanente — para mantener registro usa Revertir.`)) return;
+    const caja = items.find(i => i.id === mov.itemId);
+    if (caja && !mov.reverted) {
+      const delta = mov.tipo === "salida" ? +Number(mov.cantidad) : -Number(mov.cantidad);
+      const nuevaCantidad = Math.max(0, Math.min(caja.cantidadOriginal, caja.cantidadActual + delta));
+      const ok = await saveItems(items.map(i => i.id === caja.id ? { ...i, cantidadActual: nuevaCantidad, updatedAt: new Date().toISOString() } : i));
+      if (!ok) return;
+    }
+    await saveMovements(movements.filter(m => m.id !== mov.id));
+  };
+
+  // ── Revertir movimiento (soft) ──
+  // El movimiento existio pero se cancela. Se mantiene en la lista marcado
+  // como revertido (con fecha, autor y motivo). El stock revierte.
+  const revertirMovimiento = async (mov) => {
+    if (mov.reverted) { alert("Este movimiento ya fue revertido."); return; }
+    const motivo = prompt(`Motivo de la reversion (${mov.tipo} de ${mov.cantidad} unidades el ${fmt(mov.fecha)}):\n\nEjemplo: "Despacho cancelado por residente", "Picas regresaron sin uso", "Error de cantidad"`);
+    if (motivo === null) return;
+    if (!motivo.trim()) { alert("Debes ingresar un motivo para la reversion."); return; }
+    const caja = items.find(i => i.id === mov.itemId);
+    if (caja) {
+      const delta = mov.tipo === "salida" ? +Number(mov.cantidad) : -Number(mov.cantidad);
+      const nuevaCantidad = Math.max(0, Math.min(caja.cantidadOriginal, caja.cantidadActual + delta));
+      const ok = await saveItems(items.map(i => i.id === caja.id ? { ...i, cantidadActual: nuevaCantidad, updatedAt: new Date().toISOString() } : i));
+      if (!ok) return;
+    }
+    const updated = {
+      ...mov,
+      reverted: true,
+      revertedAt: new Date().toISOString(),
+      revertedBy: userName || userRole || "usuario",
+      revertReason: motivo.trim(),
+    };
+    await saveMovements(movements.map(m => m.id === mov.id ? updated : m));
+  };
+
   // ── Stats / Resumen ──
   const totals = (() => {
     const counts = {};
@@ -2194,14 +2235,16 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {recent.map(m => {
                 const caja = items.find(i => i.id === m.itemId);
+                const isRev = !!m.reverted;
                 return (
-                  <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", background: "#fff", borderRadius: 8, border: `1px solid ${BRAND.borderSoft}` }}>
+                  <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", background: "#fff", borderRadius: 8, border: `1px solid ${BRAND.borderSoft}`, opacity: isRev ? 0.65 : 1 }} title={isRev ? `Revertido por ${m.revertedBy || "—"} el ${fmt(m.revertedAt)}\n${m.revertReason || ""}` : undefined}>
                     <div style={{ width: 36, height: 36, borderRadius: 8, background: m.tipo === "salida" ? BRAND.yellowSoft : BRAND.greenSoft, color: m.tipo === "salida" ? BRAND.yellow : BRAND.green, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>
                       {m.tipo === "salida" ? "📤" : "📥"}
                     </div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: CHARCOAL }}>
-                        {m.tipo === "salida" ? "Salida" : "Entrada"} · {m.cantidad} u · {caja?.codigo || "(caja eliminada)"}
+                      <div style={{ fontSize: 13, fontWeight: 600, color: CHARCOAL, textDecoration: isRev ? "line-through" : "none", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        <span>{m.tipo === "salida" ? "Salida" : "Entrada"} · {m.cantidad} u · {caja?.codigo || "(caja eliminada)"}</span>
+                        {isRev && <Badge color={BRAND.red} bg={BRAND.redSoft}>REVERTIDO</Badge>}
                       </div>
                       <div style={{ fontSize: 11, color: BRAND.stone }}>
                         {fmt(m.fecha)}{m.projectCode ? ` · ${projLabel(m.projectCode)}` : ""}{m.solicitadoPor ? ` · ${m.solicitadoPor}` : ""}
@@ -2518,6 +2561,7 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
                 <th style={th}>Herramienta</th>
                 <th style={th}>Solicitado por</th>
                 <th style={th}>Notas</th>
+                {canEdit && <th style={th}>Acciones</th>}
               </tr>
             </thead>
             <tbody>
@@ -2525,23 +2569,68 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
                 const caja = items.find(i => i.id === m.itemId);
                 const tool = tools.find(t => t.id === m.herramientaId);
                 const maq = machines.find(mm => mm.id === m.maquinaId);
+                const isRev = !!m.reverted;
+                const rowStyle = {
+                  borderTop: `1px solid ${BRAND.borderSoft}`,
+                  ...(isRev ? { opacity: 0.65 } : {}),
+                };
+                const strike = isRev ? { textDecoration: "line-through" } : {};
+                const notasText = isRev
+                  ? (m.notas ? `[REVERTIDO] ${m.revertReason || ""} · ${m.notas}` : `[REVERTIDO] ${m.revertReason || ""}`)
+                  : (m.notas || "");
+                const revTooltip = isRev
+                  ? `Revertido por ${m.revertedBy || "—"} el ${fmt(m.revertedAt)}\n${m.revertReason || ""}`
+                  : undefined;
                 return (
-                  <tr key={m.id} style={{ borderTop: `1px solid ${BRAND.borderSoft}` }}>
-                    <td style={td}>{fmt(m.fecha)}</td>
+                  <tr key={m.id} style={rowStyle} title={revTooltip}>
+                    <td style={{ ...td, ...strike }}>{fmt(m.fecha)}</td>
                     <td style={td}>
-                      {m.tipo === "salida"
-                        ? <Badge color={BRAND.yellow} bg={BRAND.yellowSoft}>📤 Salida</Badge>
-                        : <Badge color={BRAND.green} bg={BRAND.greenSoft}>📥 Entrada</Badge>}
+                      <span style={{ display: "inline-flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+                        {m.tipo === "salida"
+                          ? <Badge color={BRAND.yellow} bg={BRAND.yellowSoft}>📤 Salida</Badge>
+                          : <Badge color={BRAND.green} bg={BRAND.greenSoft}>📥 Entrada</Badge>}
+                        {isRev && <Badge color={BRAND.red} bg={BRAND.redSoft}>REVERTIDO</Badge>}
+                      </span>
                     </td>
                     <td style={td}>
-                      {caja ? <span style={{ fontFamily: "monospace", color: VAULT_BLUE, fontWeight: 600 }}>{caja.codigo}</span> : <span style={{ color: BRAND.stone }}>—</span>}
+                      {caja
+                        ? <span style={{ fontFamily: "monospace", color: VAULT_BLUE, fontWeight: 600, ...strike }}>{caja.codigo}</span>
+                        : <span style={{ color: BRAND.stone }}>—</span>}
                     </td>
-                    <td style={{ ...td, fontWeight: 600 }}>{m.cantidad}</td>
-                    <td style={td}>{m.projectCode ? projLabel(m.projectCode) : "—"}</td>
-                    <td style={td}>{maq?.nombre || "—"}</td>
-                    <td style={td}>{tool ? `${cap(tool.tipo)} · ${tool.nombre}` : "—"}</td>
-                    <td style={td}>{m.solicitadoPor || "—"}</td>
-                    <td style={{ ...td, maxWidth: 200, whiteSpace: isMobile ? "nowrap" : "pre-wrap", overflow: isMobile ? "hidden" : "visible", textOverflow: isMobile ? "ellipsis" : "clip", color: BRAND.graphite }}>{m.notas || ""}</td>
+                    <td style={{ ...td, fontWeight: 600, ...strike }}>{m.cantidad}</td>
+                    <td style={{ ...td, ...strike }}>{m.projectCode ? projLabel(m.projectCode) : "—"}</td>
+                    <td style={{ ...td, ...strike }}>{maq?.nombre || "—"}</td>
+                    <td style={{ ...td, ...strike }}>{tool ? `${cap(tool.tipo)} · ${tool.nombre}` : "—"}</td>
+                    <td style={{ ...td, ...strike }}>{m.solicitadoPor || "—"}</td>
+                    <td style={{ ...td, maxWidth: 200, whiteSpace: isMobile ? "nowrap" : "pre-wrap", overflow: isMobile ? "hidden" : "visible", textOverflow: isMobile ? "ellipsis" : "clip", color: isRev ? BRAND.red : BRAND.graphite, fontWeight: isRev ? 600 : 400 }}>{notasText}</td>
+                    {canEdit && (
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>
+                        <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                          {!isRev && (
+                            <button
+                              type="button"
+                              onClick={() => revertirMovimiento(m)}
+                              title="Revertir movimiento (mantiene el registro)"
+                              style={{
+                                padding: "4px 8px", fontSize: 11, fontWeight: 600,
+                                background: BRAND.yellowSoft, color: BRAND.yellow,
+                                border: `1px solid ${BRAND.yellow}`, borderRadius: 6, cursor: "pointer",
+                              }}
+                            >↩ Revertir</button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => eliminarMovimiento(m)}
+                            title="Eliminar movimiento (permanente, sin rastro)"
+                            style={{
+                              padding: "4px 8px", fontSize: 11, fontWeight: 600,
+                              background: BRAND.redSoft, color: BRAND.red,
+                              border: `1px solid ${BRAND.red}`, borderRadius: 6, cursor: "pointer",
+                            }}
+                          >🗑 Eliminar</button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
