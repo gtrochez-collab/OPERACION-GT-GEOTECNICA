@@ -256,6 +256,212 @@ function DefaultIllustration({ caja, height = 80, showBrand = true }) {
     </div>
   );
 }
+
+// Leyenda visual que explica que tipo de pieza representa cada ilustracion.
+// Persiste estado dismissed en localStorage (key versionada por si en el futuro
+// se agregan tipos nuevos y queremos re-mostrar la leyenda a usuarios que ya la cerraron).
+function LegendaTipos({ isMobile }) {
+  const [dismissed, setDismissed] = useState(
+    () => typeof window !== "undefined" && localStorage.getItem("gdv-legend-dismissed-v1") === "true"
+  );
+
+  const dismiss = () => {
+    localStorage.setItem("gdv-legend-dismissed-v1", "true");
+    setDismissed(true);
+  };
+  const restore = () => {
+    localStorage.removeItem("gdv-legend-dismissed-v1");
+    setDismissed(false);
+  };
+
+  // Tipo neutral "Otro" para que la ilustracion explique el TIPO, no la marca.
+  const chips = [
+    { tipo: "pica",             label: "Pica",         hint: "domo + carburo" },
+    { tipo: "portapica",        label: "Portapica",    hint: "cilindro hueco" },
+    { tipo: "muela_encamisado", label: "Muela",        hint: "disco dentado" },
+    { tipo: "puerta_muela",     label: "Puerta muela", hint: "placa + tornillos" },
+  ];
+
+  // Caja "fake" para alimentar a DefaultIllustration sin marca real.
+  const cajaNeutral = (tipo) => ({ tipo, marca: "Otro", tamano: "mediana" });
+
+  if (dismissed) {
+    return (
+      <button
+        onClick={restore}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "6px 12px",
+          fontSize: 12,
+          fontWeight: 600,
+          color: VAULT_BLUE,
+          background: "transparent",
+          border: `1px dashed ${BORDER}`,
+          borderRadius: 8,
+          cursor: "pointer",
+          marginBottom: 12,
+        }}
+        title="Mostrar leyenda de iconos"
+      >
+        <span style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 16,
+          height: 16,
+          borderRadius: "50%",
+          background: VAULT_BLUE,
+          color: "#fff",
+          fontSize: 11,
+          fontWeight: 700,
+        }}>?</span>
+        Ver leyenda de iconos
+      </button>
+    );
+  }
+
+  return (
+    <div
+      role="region"
+      aria-label="Leyenda de tipos de caja"
+      style={{
+        position: "relative",
+        background: CREAM,
+        border: `1px solid ${BORDER}`,
+        borderRadius: 12,
+        padding: isMobile ? "10px 40px 10px 12px" : "10px 40px 10px 14px",
+        marginBottom: 14,
+        boxShadow: "0 1px 2px rgba(15,76,117,0.04)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 8,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: 0.6,
+            color: VAULT_BLUE,
+            textTransform: "uppercase",
+          }}
+        >
+          Leyenda de iconos
+        </span>
+        <span style={{ fontSize: 11, color: CHARCOAL, opacity: 0.7 }}>
+          Asi se ve cada tipo de caja
+        </span>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: isMobile ? 6 : 8,
+        }}
+      >
+        {chips.map((c) => (
+          <div
+            key={c.tipo}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "4px 10px 4px 4px",
+              background: "#fff",
+              border: `1px solid ${BORDER}`,
+              borderRadius: 999,
+              minHeight: 40,
+              flex: isMobile ? "1 1 calc(50% - 6px)" : "0 0 auto",
+              minWidth: isMobile ? 0 : 140,
+            }}
+          >
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: BRAND.beige,
+                borderRadius: "50%",
+                overflow: "hidden",
+              }}
+            >
+              <DefaultIllustration
+                caja={cajaNeutral(c.tipo)}
+                height={28}
+                showBrand={false}
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15, minWidth: 0 }}>
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: CHARCOAL,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {c.label}
+              </span>
+              <span style={{
+                fontSize: isMobile ? 9.5 : 10,
+                color: CHARCOAL,
+                opacity: 0.6,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}>
+                {c.hint}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={dismiss}
+        aria-label="Ocultar leyenda"
+        title="Ocultar leyenda"
+        style={{
+          position: "absolute",
+          top: 4,
+          right: 4,
+          width: isMobile ? 32 : 24,
+          height: isMobile ? 32 : 24,
+          padding: 0,
+          background: "transparent",
+          border: "none",
+          borderRadius: 6,
+          cursor: "pointer",
+          color: CHARCOAL,
+          fontSize: 16,
+          lineHeight: 1,
+          opacity: 0.55,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.opacity = 1)}
+        onMouseLeave={(e) => (e.currentTarget.style.opacity = 0.55)}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 const DEFAULT_MIN_STOCK = {
   pica_jumbo: 30, pica_mediana: 30, pica_pequena: 30,
   portapica_jumbo: 30, portapica_mediana: 30, portapica_pequena: 30,
@@ -2015,6 +2221,9 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
     const ubicacionesUnicas = [...new Set(items.map(i => i.ubicacion).filter(Boolean))];
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        {/* Leyenda visual de tipos — explica que representa cada ilustracion. */}
+        <LegendaTipos isMobile={isMobile} />
+
         {/* Toolbar */}
         {isMobile ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
