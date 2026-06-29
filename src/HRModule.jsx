@@ -1927,6 +1927,103 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
+  // Editor de movimientos ya existentes. Permite cambiar la fecha del
+  // movimiento (date) y aplicar caso excepcional retroactivamente sin
+  // tener que borrar el empleado y recrear el alta. Util cuando hay que
+  // ajustar en que quincena/periodo cae el alta para reportes.
+  const EditMovForm = ({ mov, onSave }) => {
+    const [f, setF] = useState({
+      date: mov.date || "",
+      excepcional: !!mov.proporcional,
+      payrollEffectiveDate: mov.payrollEffectiveDate || "",
+      realStartDate: mov.realStartDate || mov.date || "",
+      notas: mov.notas || "",
+    });
+    const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const q = getQuincena(f.excepcional && f.payrollEffectiveDate ? f.payrollEffectiveDate : f.date);
+    const esAlta = mov.tipo === "alta";
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ background: "#F1F5F9", border: "1px solid #CBD5E1", borderRadius: 10, padding: 12, fontSize: 13, color: "#334155" }}>
+        Editando: <b>{mov.fullName}</b> · <b>{mov.dni}</b> · {mov.position}
+        <div style={{ fontSize: 11, color: "#64748B", marginTop: 4 }}>
+          Solo se modifican los campos del movimiento. La ficha del empleado y el contrato NO se tocan.
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Input label={esAlta ? "Fecha de efecto en planilla *" : "Fecha de baja *"} type="date" value={f.date} onChange={e => u("date", e.target.value)} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Quincena / periodo (auto)</label>
+          <div style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, background: "#fff", fontWeight: 700, fontSize: 13 }}>
+            {q ? `${q.quincena} ${q.periodo}` : "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* Caso excepcional - solo para altas no temporales */}
+      {esAlta && mov.contractType !== "temporary" && (
+        <div style={{ background: "#DBEAFE", border: "2px solid #93C5FD", borderRadius: 10, padding: 14 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#1E3A8A", cursor: "pointer" }}>
+            <input type="checkbox" checked={f.excepcional} onChange={e => u("excepcional", e.target.checked)} />
+            Caso excepcional: ingreso real distinto a fecha de efecto en planilla
+          </label>
+          {f.excepcional && (
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+              <Input label="Fecha de ingreso real (cuando empezo a trabajar)" type="date" value={f.realStartDate} onChange={e => u("realStartDate", e.target.value)} />
+              <div style={{ fontSize: 11, color: "#1E3A8A", lineHeight: 1.5 }}>
+                La fecha de arriba (efecto en planilla) determina en que quincena aparece en el reporte. La fecha de ingreso real se conserva como dato historico (no afecta antiguedad existente del empleado).
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Notas</label>
+        <textarea
+          style={{ width: "100%", padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, minHeight: 70, fontFamily: "inherit", outline: "none" }}
+          value={f.notas}
+          onChange={e => u("notas", e.target.value)}
+        />
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+        <Btn variant="success" onClick={() => {
+          if (!f.date) return alert("La fecha es obligatoria.");
+          if (f.excepcional && !f.realStartDate) return alert("Si es caso excepcional, indica la fecha de ingreso real.");
+          if (f.excepcional && new Date(f.realStartDate) > new Date(f.date)) return alert("La fecha de ingreso real debe ser igual o anterior a la fecha de efecto en planilla.");
+          // Construir la nota automatica si es excepcional y no esta ya
+          let notasFinal = f.notas || "";
+          if (f.excepcional) {
+            const notaExc = `[CASO EXCEPCIONAL] Ingreso real: ${fmt(f.realStartDate)}. Efecto en planilla: ${fmt(f.date)}. Primer pago proporcional al periodo trabajado en este mes.`;
+            if (!notasFinal.includes("[CASO EXCEPCIONAL]")) {
+              notasFinal = notasFinal ? `${notasFinal} | ${notaExc}` : notaExc;
+            }
+          }
+          const updated = {
+            ...mov,
+            date: f.date,
+            notas: notasFinal,
+          };
+          if (f.excepcional) {
+            updated.payrollEffectiveDate = f.date;
+            updated.realStartDate = f.realStartDate;
+            updated.proporcional = true;
+          } else {
+            // Si se desmarca excepcional, limpiar los campos extras
+            delete updated.payrollEffectiveDate;
+            delete updated.realStartDate;
+            delete updated.proporcional;
+          }
+          onSave(updated);
+          setModal(null);
+        }}>Guardar cambios</Btn>
+      </div>
+    </div>;
+  };
+
   const BajaForm = ({ onSave }) => {
     const [f, setF] = useState({
       employeeId: "", date: new Date().toISOString().slice(0, 10),
@@ -2183,7 +2280,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           { key: "contractType", label: "Contrato", render: r => <Badge color={r.contractType === "temporary" ? "#D97706" : r.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{r.contractType === "temporary" ? "Temporal" : r.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge> },
           { key: "salary", label: "Salario", render: r => fmtL(r.salary) },
           { key: "motivo", label: "Motivo" },
-        ]} data={altas.slice().reverse()} actions={r => <Btn small variant="danger" onClick={() => { if (confirm(`Eliminar registro de alta de ${r.fullName}?`)) sM(movs.filter(m => m.id !== r.id)); }}>×</Btn>} />
+        ]} data={altas.slice().reverse()} actions={r => <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+          <Btn small variant="ghost" onClick={() => setModal({ t: "me", d: r })} title="Editar fecha y caso excepcional">✏️</Btn>
+          <Btn small variant="danger" onClick={() => { if (confirm(`Eliminar registro de alta de ${r.fullName}?`)) sM(movs.filter(m => m.id !== r.id)); }}>×</Btn>
+        </div>} />
       </div>}
 
       {bajas.length > 0 && <div>
@@ -2200,7 +2300,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           { key: "contractType", label: "Contrato", render: r => <Badge color={r.contractType === "temporary" ? "#D97706" : r.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{r.contractType === "temporary" ? "Temporal" : r.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge> },
           { key: "motivo", label: "Motivo" },
           { key: "notas", label: "Notas" },
-        ]} data={bajas.slice().reverse()} actions={r => <Btn small variant="danger" onClick={() => { if (confirm(`Eliminar registro de baja de ${r.fullName}?`)) sM(movs.filter(m => m.id !== r.id)); }}>×</Btn>} />
+        ]} data={bajas.slice().reverse()} actions={r => <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+          <Btn small variant="ghost" onClick={() => setModal({ t: "me", d: r })} title="Editar fecha del movimiento">✏️</Btn>
+          <Btn small variant="danger" onClick={() => { if (confirm(`Eliminar registro de baja de ${r.fullName}?`)) sM(movs.filter(m => m.id !== r.id)); }}>×</Btn>
+        </div>} />
       </div>}
 
       {filtered.length === 0 && <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 30, textAlign: "center", color: "#94A3B8" }}>
@@ -2905,6 +3008,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     case "ag": return <Modal title={`Asistencia ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><AttendanceGrid sheet={m.d} /></Modal>;
     case "mn": return <Modal title="Registrar ALTA de empleado" onClose={() => setModal(null)} wide><AltaForm /></Modal>;
     case "mb": return <Modal title="Registrar BAJA de empleado" onClose={() => setModal(null)} wide><BajaForm /></Modal>;
+    case "me": return <Modal title={`Editar movimiento — ${m.d.fullName}`} onClose={() => setModal(null)} wide><EditMovForm mov={m.d} onSave={updated => sM(movs.map(x => x.id === updated.id ? updated : x))} /></Modal>;
     case "cn": return <Modal title="Constancia" onClose={() => setModal(null)} wide><ConForm /></Modal>;
     case "ctn": return <Modal title="Nuevo contrato" onClose={() => setModal(null)} wide><ContractForm presetEmpId={m.presetEmpId} onSave={() => {}} /></Modal>;
     case "cte": return <Modal title="Editar contrato" onClose={() => setModal(null)} wide><ContractForm contract={m.d} onSave={() => {}} /></Modal>;
