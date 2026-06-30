@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
+import { safeDynamicImport } from "./lazyLoad.js";
 
 // Marca Geotecnica
 const ORANGE = "#E8762D";
@@ -350,7 +351,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
                          (purchaseLight.receiptFile?.fileId && !purchaseLight.receiptFile?.dataUrl);
   const [purchase] = needsHydration ? await restoreFiles([purchaseLight]) : [purchaseLight];
 
-  const { jsPDF } = await import("jspdf");
+  const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const PW = 297, PH = 210, M = 14, CW = PW - 2 * M; // util: 269mm ancho
 
@@ -588,7 +589,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
 
   // Hay PDFs externos → mergear con pdf-lib
   const fichaBytes = doc.output("arraybuffer");
-  const { PDFDocument } = await import("pdf-lib");
+  const { PDFDocument } = await safeDynamicImport(() => import("pdf-lib"), "pdf-lib");
   const pdfOut = await PDFDocument.load(fichaBytes);
 
   for (const { titulo, file } of pdfAnexos) {

@@ -1752,7 +1752,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                   try {
                     await descargarFichaCompra(p, allProjects);
                   } catch (err) {
-                    alert("No se pudo generar la ficha: " + (err?.message || err));
+                    if (!err?.isStaleChunk) alert("No se pudo generar la ficha: " + (err?.message || err));
                   }
                 }}
                 style={{

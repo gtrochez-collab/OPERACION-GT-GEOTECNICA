@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
+import { safeDynamicImport } from "./lazyLoad.js";
 
 // Marca Geotecnica
 const ORANGE = "#E8762D";
@@ -377,7 +378,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
                          (purchaseLight.receiptFile?.fileId && !purchaseLight.receiptFile?.dataUrl);
   const [purchase] = needsHydration ? await restoreFiles([purchaseLight]) : [purchaseLight];
 
-  const { jsPDF } = await import("jspdf");
+  const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const PW = 297, PH = 210, M = 14, CW = PW - 2 * M; // util: 269mm ancho
 
@@ -615,7 +616,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
 
   // Hay PDFs externos → mergear con pdf-lib
   const fichaBytes = doc.output("arraybuffer");
-  const { PDFDocument } = await import("pdf-lib");
+  const { PDFDocument } = await safeDynamicImport(() => import("pdf-lib"), "pdf-lib");
   const pdfOut = await PDFDocument.load(fichaBytes);
 
   for (const { titulo, file } of pdfAnexos) {
@@ -1728,6 +1729,86 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // hacen uploads de archivos puedan AWAIT y dar feedback al usuario en caso
   // de error. Antes esto retornaba void y los errores quedaban en silencio.
   const updatePurchase = (updated) => sP(purchases.map(p => p.id === updated.id ? updated : p));
+
+  // Subir ficha firmada desde el Kanban (sin abrir el detail). Pedido del
+  // coordinador: Jorge necesita poder subir la ficha directo desde la lista
+  // de compras "En logistica" sin tener que abrir cada solicitud. El upload
+  // es atomico: archivo a row separada + referencia en la compra + estado
+  // "ficha_adjunta". Mismo flujo que LogisticsModule.uploadFichaFirmada,
+  // pero standalone (no requiere despacho — funciona aunque la compra no
+  // tenga orden de recogida formal).
+  const uploadFichaFromCard = async (purchase, fileObj) => {
+    if (!fileObj) return false;
+    if (fileObj.size > 2 * 1024 * 1024) {
+      alert(`❌ El archivo pesa ${(fileObj.size / 1024 / 1024).toFixed(2)} MB.\n\nLimite maximo: 2 MB por archivo.\n\nReduci antes de subir:\n• PDFs: https://smallpdf.com/compress-pdf\n• Fotos: exportar como JPG calidad media`);
+      return false;
+    }
+    try {
+      // 1) Leer como dataUrl
+      const dataUrl = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(fileObj);
+      });
+
+      // 2) Subir archivo a row separada
+      const fileId = uid();
+      const content = { name: fileObj.name, type: fileObj.type, size: fileObj.size, dataUrl };
+      const okFile = await store.set(fileKey(fileId), content);
+      if (!okFile) {
+        alert("⚠️ No se pudo subir el archivo a la nube. Verifica tu conexion e intenta de nuevo.");
+        return false;
+      }
+
+      // 3) Pre-fetch cp-purchases para no pisar cambios concurrentes de Ana/Carolina
+      const cloudPurchases = await store.get("cp-purchases");
+      const arr = Array.isArray(cloudPurchases) ? cloudPurchases : purchases;
+      const idx = arr.findIndex(p => p.id === purchase.id);
+      if (idx === -1) {
+        alert("⚠️ No se encontro la compra original. Recargar la pagina e intenta de nuevo.");
+        return false;
+      }
+
+      // 4) Actualizar la compra con la referencia
+      const orig = arr[idx];
+      const updated = {
+        ...orig,
+        deliveryStatus: "ficha_adjunta",
+        delivery: {
+          ...(orig.delivery || {}),
+          fichaFile: { fileId, name: fileObj.name, type: fileObj.type, size: fileObj.size },
+          fichaScanned: true,
+          fichaUploadedAt: new Date().toISOString(),
+        },
+        audit: [
+          ...(orig.audit || []),
+          {
+            action: "ficha_uploaded_from_kanban",
+            by: userName || userRole,
+            role: userRole,
+            at: new Date().toISOString(),
+            note: `Ficha firmada subida desde Compras (Kanban): ${fileObj.name}`,
+          },
+        ],
+      };
+      const nextPurchases = [...arr];
+      nextPurchases[idx] = updated;
+
+      // 5) Save
+      const okSave = await store.set("cp-purchases", nextPurchases);
+      if (!okSave) {
+        alert("⚠️ El archivo se subio pero no se pudo enlazar a la compra. Reintenta el upload.");
+        return false;
+      }
+      setPurchases(nextPurchases);
+      return true;
+    } catch (err) {
+      console.error("uploadFichaFromCard error:", err);
+      alert("Error subiendo la ficha: " + (err?.message || err));
+      return false;
+    }
+  };
   const removePurchase = (id) => sP(purchases.filter(p => p.id !== id));
   // Helper: guarda y retorna true/false segun exito. Para los botones que
   // quieren cerrar el modal solo si el guardado fue exitoso.
@@ -2700,7 +2781,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           </div>}
         </div>
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-          <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (err) { alert("No se pudo generar la ficha: " + (err?.message || err)); } }} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Descargar Ficha de Entrega</button>
+          <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (err) { if (!err?.isStaleChunk) alert("No se pudo generar la ficha: " + (err?.message || err)); } }} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Descargar Ficha de Entrega</button>
           {canSendToLogistics && <button onClick={() => setModal({ t: "send-pickup", d: p })} style={{ background: "#E8762D", color: "#fff", border: "none", padding: "9px 10px", borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", letterSpacing: 0.3 }}>🚛 Enviar a Logistica</button>}
         </div>
       </div>;
@@ -2803,8 +2884,28 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                             borderColor: "#BFDBFE",
                             dateRight: d?.fechaProgramada ? `📅 ${new Date(d.fechaProgramada + "T00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "",
                             subline: d?.motorista ? `🚛 ${d.motorista}` : null,
-                            actions: <div style={{ marginTop: 6 }}>
-                              <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: CHARCOAL, border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>📄 Ficha</button>
+                            actions: <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }} onClick={e => e.stopPropagation()}>
+                              <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { if (!e?.isStaleChunk) alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: CHARCOAL, border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>📄 Ficha en blanco</button>
+                              {canEditDelivery && <>
+                                <input
+                                  type="file"
+                                  accept=".pdf,image/*"
+                                  id={`upload-ficha-kanban-${p.id}`}
+                                  style={{ display: "none" }}
+                                  onChange={async (e) => {
+                                    const f = e.target.files?.[0];
+                                    if (!f) return;
+                                    e.target.value = "";
+                                    const ok = await uploadFichaFromCard(p, f);
+                                    if (ok) alert("✓ Ficha firmada subida y enlazada a la compra.\nLa compra paso a 'Listas para contabilidad'.");
+                                  }}
+                                />
+                                <label
+                                  htmlFor={`upload-ficha-kanban-${p.id}`}
+                                  style={{ background: "#E8762D", color: "#fff", padding: "6px 8px", borderRadius: 4, fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", width: "100%", boxSizing: "border-box", display: "block" }}
+                                  title="Subir el PDF/foto de la ficha que el residente firmo en obra"
+                                >📎 Subir ficha firmada</label>
+                              </>}
                             </div>,
                           });
                         })}
@@ -2844,7 +2945,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                                   }
                                 } catch (e) { alert("Error abriendo ficha firmada: " + e.message); }
                               } else {
-                                try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { alert("No se pudo: " + e.message); }
+                                try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { if (!e?.isStaleChunk) alert("No se pudo: " + e.message); }
                               }
                             }} style={{ background: "#059669", color: "#fff", border: "none", padding: "7px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>
                               👁 Ver ficha firmada
