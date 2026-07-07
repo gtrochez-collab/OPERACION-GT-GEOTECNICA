@@ -766,6 +766,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const [despFilter, setDespFilter] = useState({ projectCode: "", tipo: "", vehicleId: "", q: "" });
   const [expandedHistKanban, setExpandedHistKanban] = useState({}); // { projectKey: true } para mostrar entregados de esa col
   const [expandedProgKanban, setExpandedProgKanban] = useState({}); // { projectKey: true } para mostrar programados/en ruta de esa col
+  const [uploadingFichaId, setUploadingFichaId] = useState(null); // id del despacho cuya ficha se esta subiendo ahora
 
   // ── Carga inicial ──
   useEffect(() => {
@@ -1033,35 +1034,74 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       return false;
     }
 
+    const tStart = Date.now();
+    console.group(`[uploadFichaFirmada] ${despacho.id} - ${fileObj.name}`);
     try {
       // 1) Leer archivo como dataUrl
+      console.log(`Leyendo archivo (${(fileObj.size / 1024 / 1024).toFixed(2)} MB)...`);
       const dataUrl = await new Promise((resolve, reject) => {
         const r = new FileReader();
         r.onload = () => resolve(r.result);
-        r.onerror = reject;
+        r.onerror = () => reject(new Error("Error leyendo el archivo local"));
         r.readAsDataURL(fileObj);
       });
 
-      // 2) Generar fileId y subir a row separada
+      // 2) Subir cp-file-<id> con RETRY (3 intentos con backoff)
       const fileId = uid();
       const content = { name: fileObj.name, type: fileObj.type, size: fileObj.size, dataUrl };
-      const okFile = await store.set(fileKeyCompra(fileId), content);
+      console.log(`Subiendo cp-file-${fileId}...`);
+      let okFile = false;
+      let fileErr = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          okFile = await store.set(fileKeyCompra(fileId), content);
+          if (okFile) {
+            console.log(`Archivo subido OK en intento ${attempt}/3`);
+            break;
+          }
+          fileErr = new Error("store.set devolvio false");
+        } catch (e) { fileErr = e; }
+        if (attempt < 3) {
+          const delay = attempt === 1 ? 800 : 2500;
+          console.warn(`Intento ${attempt}/3 fallo, reintentando en ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
       if (!okFile) {
-        alert("⚠️ No se pudo subir el archivo a la nube. Verifica tu conexion.");
+        alert(`❌ No se pudo subir la ficha a la nube despues de 3 intentos.\n\nProbable causa: conexion inestable o Supabase lento.\n\nQue hacer:\n1. Verifica el WiFi/datos moviles.\n2. Reintenta en 30 segundos.\n3. Si el archivo pesa mas de 1 MB, comprimelo (smallpdf.com).\n\nDetalle tecnico: ${fileErr?.message || "fallo silencioso"}`);
         return false;
       }
 
-      // 3) Pre-fetch de cp-purchases para no pisar cambios concurrentes
-      const cloudPurchases = await store.get("cp-purchases");
+      // 3) Pre-fetch cp-purchases + verificar (con retry corto tambien)
+      console.log("Pre-fetch cp-purchases...");
+      let cloudPurchases;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          cloudPurchases = await store.get("cp-purchases");
+          break;
+        } catch (e) {
+          if (attempt === 3) throw e;
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
       const arr = Array.isArray(cloudPurchases) ? cloudPurchases : purchases;
       const idx = arr.findIndex(p => p.id === despacho.sourcePurchaseId);
       if (idx === -1) {
-        alert("⚠️ No se encontro la compra original. Puede haber sido borrada.");
+        alert("⚠️ No se encontro la compra original. Puede haber sido borrada mientras subias la ficha.\n\nEl archivo ya se subio a la nube pero no se pudo enlazar. Contacta al admin.");
         return false;
       }
 
-      // 4) Actualizar la compra: delivery.fichaFile + deliveryStatus = ficha_adjunta
+      // 4) MERGE robusto: solo actualizamos LA compra especifica, respetamos el resto
+      // del cloud tal como esta (asi si Ana/Carolina modificaron otra compra en paralelo,
+      // sus cambios no se pisan).
       const orig = arr[idx];
+      // Detectar si ya tiene ficha subida (para no pisar involuntariamente)
+      if (orig.delivery?.fichaFile?.fileId && orig.delivery.fichaFile.fileId !== undefined) {
+        if (!confirm(`Esta compra ya tiene una ficha subida (${orig.delivery.fichaFile.name || "sin nombre"}).\n\n¿Reemplazarla con la nueva ficha?`)) {
+          console.log("Usuario cancelo el reemplazo. No se guarda.");
+          return false;
+        }
+      }
       const updated = {
         ...orig,
         deliveryStatus: "ficha_adjunta",
@@ -1083,19 +1123,49 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       };
       const nextPurchases = [...arr];
       nextPurchases[idx] = updated;
+      console.log(`Guardando cp-purchases (total ${nextPurchases.length} compras)...`);
 
-      // 5) Save cp-purchases
-      const okSave = await store.set("cp-purchases", nextPurchases);
+      // 5) Save cp-purchases con retry
+      let okSave = false;
+      let saveErr = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          okSave = await store.set("cp-purchases", nextPurchases);
+          if (okSave) break;
+          saveErr = new Error("store.set devolvio false");
+        } catch (e) { saveErr = e; }
+        if (attempt < 3) await new Promise(r => setTimeout(r, attempt === 1 ? 800 : 2500));
+      }
       if (!okSave) {
-        alert("⚠️ El archivo se subio pero no se pudo enlazar a la compra. Reintenta.");
+        alert(`⚠️ El archivo se subio (cp-file-${fileId}) pero NO se pudo enlazar a la compra despues de 3 intentos.\n\nQue hacer:\n1. Verifica el WiFi.\n2. Recarga la pagina (Cmd+Shift+R) y reintenta.\n\nLa ficha esta en cloud pero huerfana. Si vuelves a subir, se creara una nueva ref (no es problema, hay stock de storage).\n\nError: ${saveErr?.message || "fallo silencioso"}`);
         return false;
       }
 
-      // 6) Actualizar state local para reflejar el cambio inmediato
+      // 6) VERIFY post-save: re-fetch cp-purchases y confirmar que la compra
+      // efectivamente tiene la ficha ahora en cloud.
+      console.log("Verify post-save...");
+      try {
+        const verify = await store.get("cp-purchases");
+        const verifyArr = Array.isArray(verify) ? verify : [];
+        const verified = verifyArr.find(p => p.id === despacho.sourcePurchaseId);
+        if (!verified?.delivery?.fichaFile?.fileId) {
+          alert("⚠️ VERIFICACION FALLO: cp-purchases se guardo pero la compra no muestra la ficha en cloud. Esto indica un problema de sincronizacion.\n\nRecarga la pagina y verifica manualmente. Si el problema persiste, contacta al admin.");
+          console.error("Verify fallo. Enviado:", updated, "| Cloud devolvio:", verified);
+          return false;
+        }
+        if (verified.delivery.fichaFile.fileId !== fileId) {
+          console.warn("Verify: cloud tiene una fileId distinta —", verified.delivery.fichaFile.fileId, "vs", fileId, ". Posible race condition con otro usuario.");
+          // No fallar, el otro usuario gano — reportar pero no revertir.
+        }
+      } catch (e) {
+        console.warn("No se pudo verificar post-save:", e?.message || e);
+        // No fallamos por esto — el save reporto OK, asumimos que fue.
+      }
+
+      // 7) Actualizar state local
       setPurchases(nextPurchases);
 
-      // 7) Marcar el despacho como "ficha_adjunta_subida" — con merge robusto
-      // para no pisar updates concurrentes de Oscar/Jorge desde otra Mac.
+      // 8) Marcar despacho como ficha subida (con el helper existente)
       await saveDespachosWithMerge((base) => base.map(d => d.id === despacho.id ? {
         ...d,
         fichaRecibidoFileId: fileId,
@@ -1103,11 +1173,14 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         updatedAt: new Date().toISOString(),
       } : d), { label: `uploadFichaFirmada-flag ${despacho.id}` });
 
+      console.log(`OK. Total: ${Date.now() - tStart}ms`);
       return true;
     } catch (err) {
-      console.error("uploadFichaFirmada error:", err);
-      alert("Error subiendo la ficha: " + (err?.message || err));
+      console.error("uploadFichaFirmada error inesperado:", err);
+      alert(`Error inesperado subiendo la ficha: ${err?.message || err}\n\nAbri la consola del navegador (Cmd+Option+I) y avisale al admin con lo que salga en rojo.`);
       return false;
+    } finally {
+      console.groupEnd();
     }
   };
 
@@ -2013,7 +2086,10 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
               </div>}
 
               {/* SUBIR FICHA FIRMADA (Jorge) — solo si viene de compra y aun no se subio */}
-              {sourcePurchase && !sourcePurchase.delivery?.fichaFile && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.orange}50` }}>
+              {sourcePurchase && !sourcePurchase.delivery?.fichaFile && (() => {
+                const isUploading = uploadingFichaId === d.id;
+                const anyUploading = uploadingFichaId !== null;
+                return <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.orange}50` }}>
                 <label style={{ display: "block", fontSize: 9, color: BRAND.orange, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
                   📎 Subir ficha firmada
                 </label>
@@ -2022,39 +2098,51 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                   accept=".pdf,image/*"
                   id={`ficha-firmada-${d.id}`}
                   style={{ display: "none" }}
+                  disabled={anyUploading}
                   onChange={async (e) => {
                     const f = e.target.files?.[0];
-                    if (!f) return;
-                    e.target.value = "";
-                    const ok = await uploadFichaFirmada(d, f);
-                    if (ok) {
-                      alert("✓ Ficha firmada subida y enlazada a la compra.\nAna ya puede verla en su sub-seccion 'Listas para cierre contable'.");
+                    if (!f) { e.target.value = ""; return; }
+                    setUploadingFichaId(d.id);
+                    try {
+                      const ok = await uploadFichaFirmada(d, f);
+                      if (ok) {
+                        alert("✓ Ficha firmada subida y enlazada a la compra.\nAna ya puede verla en su sub-seccion 'Listas para cierre contable'.");
+                      }
+                    } finally {
+                      setUploadingFichaId(null);
+                      e.target.value = "";
                     }
                   }}
                 />
                 <label
-                  htmlFor={`ficha-firmada-${d.id}`}
+                  htmlFor={anyUploading ? undefined : `ficha-firmada-${d.id}`}
                   style={{
                     display: "block",
                     width: "100%",
-                    background: BRAND.orange,
+                    background: isUploading ? BRAND.stone : BRAND.orange,
                     color: "#fff",
                     border: "none",
                     padding: "8px 10px",
                     borderRadius: R.sm,
                     fontSize: 11,
                     fontWeight: 800,
-                    cursor: "pointer",
+                    cursor: anyUploading ? "not-allowed" : "pointer",
                     fontFamily: "inherit",
                     textAlign: "center",
                     boxSizing: "border-box",
+                    opacity: anyUploading && !isUploading ? 0.5 : 1,
+                    animation: isUploading ? "logisticsFichaPulse 1.2s ease-in-out infinite" : "none",
                   }}
-                  title="Sube el PDF/foto de la ficha que el residente firmo en obra"
-                >📎 Subir ficha firmada</label>
+                  title={isUploading ? "Subiendo ficha, espera..." : "Sube el PDF/foto de la ficha que el residente firmo en obra"}
+                >{isUploading ? "⏳ Subiendo ficha… no cierres esta ventana" : "📎 Subir ficha firmada"}</label>
+                <style>{`@keyframes logisticsFichaPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }`}</style>
                 <div style={{ fontSize: 9, color: BRAND.stone, marginTop: 4, fontStyle: "italic" }}>
-                  Al subir, se enlaza automaticamente a la compra y Ana podra cerrar contable.
+                  {isUploading
+                    ? "Subiendo a la nube con reintentos automaticos. Puede tomar hasta 30s si la conexion esta lenta."
+                    : "Al subir, se enlaza automaticamente a la compra y Ana podra cerrar contable."}
                 </div>
-              </div>}
+              </div>;
+              })()}
 
               {/* FICHA YA SUBIDA — mostrar estado verde + boton ver */}
               {sourcePurchase?.delivery?.fichaFile && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.green}50`, background: BRAND.greenSoft, borderRadius: R.sm, padding: 8 }}>
