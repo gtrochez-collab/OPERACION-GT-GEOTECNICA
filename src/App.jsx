@@ -19,7 +19,7 @@ import { USERS, ROLE_LABEL } from "./users.js";
 const MODULES = [
   {
     id: "rrhh",
-    name: "Recursos Humanos",
+    name: "GeoTeam",
     icon: "👥",
     desc: "Empleados, planilla, asistencia, vacaciones, permisos",
     accent: "#2C5F5D", // verde acero industrial
@@ -37,7 +37,7 @@ const MODULES = [
   },
   {
     id: "maquinas",
-    name: "Maquinas",
+    name: "GeoMachinery",
     icon: "⚙️",
     desc: "Solicitudes de pago de repuestos y mantenimiento de maquinaria, por proyecto",
     accent: "#7C3AED",
@@ -56,7 +56,7 @@ const MODULES = [
   },
   {
     id: "logistica",
-    name: "Logistica",
+    name: "GeoFleet",
     icon: "🚛",
     desc: "Flota, mantenimientos, rutas y despachos",
     accent: "#2D4A6B",
@@ -186,8 +186,36 @@ export default function App() {
         </div>
       </div>
 
-      {/* Modulos */}
-      <main style={{ maxWidth: 1200, margin: "0 auto", padding: "40px 40px 64px 40px" }}>
+      {/* Modulos — con foto de campo difuminada atras */}
+      <div style={{ position: "relative", overflow: "hidden" }}>
+        {/* Background: foto del equipo en campo (difuminada + oscura para legibilidad
+            del contenido). Si la imagen no existe, el fondo queda solo beige — no rompe. */}
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 0,
+            backgroundImage: `url(${import.meta.env.BASE_URL}brand/panel-hero.jpg)`,
+            backgroundSize: "cover",
+            backgroundPosition: "center 40%",
+            backgroundRepeat: "no-repeat",
+            filter: "blur(3px) brightness(0.9)",
+            opacity: 0.28,
+            pointerEvents: "none",
+            transform: "scale(1.03)", // evitar que se vean bordes del blur
+          }}
+        />
+        {/* Overlay sutil para tint (crema del brand) */}
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: `linear-gradient(180deg, ${BRAND.beige}CC 0%, ${BRAND.beige}F0 100%)`,
+            pointerEvents: "none",
+          }}
+        />
+        <main style={{ maxWidth: 1200, margin: "0 auto", padding: "40px 40px 64px 40px", position: "relative" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 20 }}>
           {availableModules.map((m) => (
             <ModuleCard
@@ -198,7 +226,8 @@ export default function App() {
             />
           ))}
         </div>
-      </main>
+        </main>
+      </div>
 
       {/* Footer */}
       <footer style={{ borderTop: `1px solid ${BRAND.borderSoft}`, padding: "24px 40px", color: BRAND.stone, fontSize: 12, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
