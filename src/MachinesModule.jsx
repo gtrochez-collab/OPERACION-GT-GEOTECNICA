@@ -13,6 +13,18 @@ const DARK_BG = "#1F1B17";
 const DARK_BORDER = "#3D3530";
 const CHARCOAL = "#2C2A28";
 const BORDER = "#DBD4C8";
+const STONE = "#7A7268";
+
+// ── Hook responsive ──
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth < breakpoint : false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < breakpoint);
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [breakpoint]);
+  return isMobile;
+}
 
 // ── Constantes ──
 const COMPANIES = {
@@ -1176,7 +1188,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   const [machines, setMachines] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
-  const [sb, setSb] = useState(true);
+  const isMobile = useIsMobile();
   // Default section depende del rol:
   // - Fernando (coordinador_maquinas) → "list" (Solicitudes)
   // - Ana (asistente_compras, legacy) → "providers"
@@ -2519,57 +2531,109 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   };
 
   // ── LAYOUT ──
-  return <div style={{ display: "flex", height: "100vh", fontFamily: "inherit", background: BEIGE, color: CHARCOAL }}>
-    {/* Sidebar */}
-    <div style={{ width: sb ? 240 : 60, background: DARK_BG, color: "#F0EBE3", transition: "width .2s", overflow: "hidden", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-      <div style={{ padding: sb ? "20px 16px" : "20px 12px", borderBottom: `1px solid ${DARK_BORDER}`, display: "flex", alignItems: "center", gap: 10 }}>
-        <button onClick={() => setSb(!sb)} style={{ background: "none", border: "none", color: "#A8A096", fontSize: 20, cursor: "pointer", flexShrink: 0 }}>☰</button>
-        {sb && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <Logo size={28} showText={false} />
-            <div style={{ fontWeight: 800, fontSize: 12, letterSpacing: 1.5, color: "#F0EBE3", marginTop: 4 }}>GEOTECNICA</div>
-            <div style={{ fontSize: 9, letterSpacing: 2, color: "#A8A096", fontWeight: 600 }}>SOLUCIONES · MAQUINAS</div>
+  const allNav = [
+    { id: "resumen", icon: "📊", label: "Resumen" },
+    { id: "list", icon: "📋", label: "Solicitudes" },
+    { id: "projects", icon: "🏗️", label: "Proyectos" },
+    { id: "machines", icon: "⚙️", label: "Maquinas" },
+    { id: "providers", icon: "🏢", label: "Proveedores" },
+  ];
+  const canSeeResumen = isAdmin || isGerencia || isCostos || isCoordinadorMaquinas;
+  const visibleNav = allNav.filter(n => n.id !== "resumen" || canSeeResumen);
+  const roleLabel = isAdmin ? "Operaciones" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : isCostos ? "Costos / Operaciones" : isCoordinadorMaquinas ? "Coord. Maquinas" : userRole;
+  const heroBg = `${import.meta.env.BASE_URL}machines/bauer-bg20.png`;
+
+  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: BEIGE, color: CHARCOAL }}>
+    {/* HERO con imagen de fondo BAUER BG20 */}
+    <div style={{
+      position: "relative",
+      height: isMobile ? 140 : 220,
+      flexShrink: 0,
+      backgroundImage: `linear-gradient(90deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0.45) 40%, rgba(0,0,0,0.15) 100%), url("${heroBg}")`,
+      backgroundSize: "cover",
+      backgroundPosition: "right center",
+      backgroundRepeat: "no-repeat",
+      borderBottom: `1px solid ${BORDER}`,
+      overflow: "hidden",
+    }}>
+      {/* Botones arriba a la derecha */}
+      <div style={{ position: "absolute", top: isMobile ? 10 : 16, right: isMobile ? 12 : 24, display: "flex", gap: 8, zIndex: 2 }}>
+        {onBack && <button onClick={onBack} style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, color: "#fff", padding: isMobile ? "6px 10px" : "8px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", backdropFilter: "blur(4px)" }}>← Volver al panel</button>}
+        {onLogout && <button onClick={onLogout} style={{ background: "rgba(192,57,43,0.35)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, color: "#fff", padding: isMobile ? "6px 10px" : "8px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", backdropFilter: "blur(4px)" }}>Cerrar sesion</button>}
+      </div>
+
+      {/* Contenido central del hero */}
+      <div style={{ position: "absolute", left: isMobile ? 16 : 32, bottom: isMobile ? 14 : 24, right: isMobile ? 16 : 32, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, zIndex: 2 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 16 }}>
+          <div style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.25)", borderRadius: 12, padding: isMobile ? 6 : 10, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(6px)", flexShrink: 0 }}>
+            <Logo size={isMobile ? 28 : 40} showText={false} />
           </div>
-        )}
-      </div>
-      <div style={{ padding: "8px 0", flex: 1, marginTop: 8 }}>
-        {(() => {
-          // Nav del modulo Maquinas:
-          // - admin/costos/coordinador_maquinas: ven todo
-          // - tesoreria: ve Solicitudes (para pagar) y Resumen
-          // - gerencia: solo lectura — ve Resumen, Solicitudes y Maquinas
-          const allNav = [
-            { id: "resumen", icon: "📊", label: "Resumen" },
-            { id: "list", icon: "📋", label: "Solicitudes" },
-            { id: "projects", icon: "🏗️", label: "Proyectos" },
-            { id: "machines", icon: "⚙️", label: "Maquinas" },
-            { id: "providers", icon: "🏢", label: "Proveedores" },
-          ];
-          // Resumen (command center) solo para admin/gerencia/costos/coordinador_maquinas.
-          const canSeeResumen = isAdmin || isGerencia || isCostos || isCoordinadorMaquinas;
-          const visibleNav = allNav.filter(n => n.id !== "resumen" || canSeeResumen);
-          return visibleNav.map(n => <button key={n.id} onClick={() => setSec(n.id)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: sb ? "11px 20px" : "11px 18px", background: sec === n.id ? "rgba(232,118,45,0.18)" : "transparent", border: "none", color: sec === n.id ? "#fff" : "#A8A096", cursor: "pointer", fontSize: 14, textAlign: "left", borderLeft: sec === n.id ? `3px solid ${ORANGE}` : "3px solid transparent", fontFamily: "inherit", fontWeight: sec === n.id ? 600 : 500, transition: "all .15s" }}>
-            <span style={{ fontSize: 18 }}>{n.icon}</span>{sb && <span>{n.label}</span>}
-          </button>);
-        })()}
-      </div>
-      {sb && <div style={{ padding: "12px", borderTop: `1px solid ${DARK_BORDER}`, display: "flex", flexDirection: "column", gap: 6 }}>
-        {onBack && <button onClick={onBack} style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${DARK_BORDER}`, borderRadius: 8, color: "#A8A096", padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit" }}>← Volver al panel</button>}
-        {onLogout && <button onClick={onLogout} style={{ background: "rgba(192,57,43,0.15)", border: "1px solid rgba(192,57,43,0.4)", borderRadius: 8, color: "#F0AAA0", padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit" }}>Cerrar sesion</button>}
-        <div style={{ fontSize: 11, color: "#7A7268", marginTop: 4, fontWeight: 500, lineHeight: 1.4 }}>
-          {userName || "Usuario"}<br />
-          <span style={{ color: isTesoreria ? "#D4A017" : isGerencia ? "#A8B5C4" : ORANGE, fontWeight: 600 }}>
-            {isAdmin ? "Operaciones" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : isCostos ? "Costos / Operaciones" : isCoordinadorMaquinas ? "Coord. Maquinas" : userRole}
-          </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ fontSize: isMobile ? 10 : 11, letterSpacing: 2, color: "rgba(255,255,255,0.75)", fontWeight: 700, textTransform: "uppercase" }}>Grupo Geotecnica</div>
+            <h1 style={{ margin: 0, fontSize: isMobile ? 20 : 28, fontWeight: 800, color: "#fff", letterSpacing: -0.5, textShadow: "0 2px 12px rgba(0,0,0,0.4)", lineHeight: 1.15 }}>
+              Maquinas — Solicitudes de Pago
+            </h1>
+            {!isMobile && <div style={{ fontSize: 14, color: "rgba(255,255,255,0.85)", fontWeight: 500, textShadow: "0 1px 4px rgba(0,0,0,0.3)" }}>
+              Repuestos y mantenimiento por proyecto
+            </div>}
+          </div>
         </div>
-      </div>}
+
+        {/* Badge del usuario */}
+        {!isMobile && <div style={{ background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.28)", borderRadius: 10, padding: "8px 14px", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+          <div style={{ fontSize: 13, color: "#fff", fontWeight: 700, letterSpacing: 0.2 }}>{userName || "Usuario"}</div>
+          <div style={{ fontSize: 11, color: isTesoreria ? "#FBD79A" : isGerencia ? "#C7D3E0" : "#FFC59B", fontWeight: 600 }}>{roleLabel}</div>
+        </div>}
+      </div>
     </div>
 
-    {/* Main */}
-    <div style={{ flex: 1, overflow: "auto" }}>
-      <div style={{ padding: "22px 32px", borderBottom: `1px solid ${BORDER}`, background: CREAM, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+    {/* TOPNAV horizontal */}
+    <div style={{
+      display: "flex",
+      background: CREAM,
+      borderBottom: `1px solid ${BORDER}`,
+      overflowX: "auto",
+      whiteSpace: "nowrap",
+      flexShrink: 0,
+      paddingLeft: isMobile ? 8 : 24,
+      scrollbarWidth: "thin",
+    }}>
+      {visibleNav.map(n => {
+        const active = sec === n.id;
+        return <button
+          key={n.id}
+          onClick={() => setSec(n.id)}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: isMobile ? "12px 16px" : "14px 22px",
+            background: "transparent",
+            border: "none",
+            borderBottom: active ? `3px solid ${ORANGE}` : "3px solid transparent",
+            color: active ? CHARCOAL : STONE,
+            cursor: "pointer",
+            fontSize: 14,
+            fontWeight: active ? 700 : 500,
+            fontFamily: "inherit",
+            transition: "all .15s",
+            whiteSpace: "nowrap",
+            marginBottom: -1,
+          }}
+          onMouseEnter={e => { if (!active) e.currentTarget.style.color = CHARCOAL; }}
+          onMouseLeave={e => { if (!active) e.currentTarget.style.color = STONE; }}
+        >
+          <span style={{ fontSize: 16 }}>{n.icon}</span>
+          <span>{n.label}</span>
+        </button>;
+      })}
+    </div>
+
+    {/* CONTENIDO */}
+    <div style={{ flex: 1, overflow: "auto", background: BEIGE }}>
+      <div style={{ padding: isMobile ? "12px 16px" : "20px 32px 8px 32px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
+          <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
             {sec === "resumen" ? "Command Center — Seguimiento por proyecto"
               : sec === "projects" ? "Proyectos"
               : sec === "providers" ? "Proveedores"
@@ -2580,7 +2644,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
         </div>
         <Badge color={cc.color}>{cp.length} solicitudes</Badge>
       </div>
-      <div style={{ padding: 28 }}>{
+      <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{
         sec === "resumen" ? renderResumen()
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
