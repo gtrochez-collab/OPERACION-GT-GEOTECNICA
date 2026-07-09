@@ -726,21 +726,24 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           list="providers-datalist"
           style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, outline: "none", background: "#F8FAFC" }}
           value={f.provider}
-          onChange={e => {
-            const newName = e.target.value;
-            u("provider", newName);
-            // Si matchea exactamente un proveedor conocido, auto-fill su primera cuenta + datos
-            const match = (providers || []).find(p => (p.name || "").trim().toLowerCase() === newName.trim().toLowerCase());
-            if (match && match.bankAccounts?.length > 0) {
-              const bac = match.bankAccounts.find(b => /bac/i.test(b.bank || "")) || match.bankAccounts[0];
-              if (bac) {
-                if (!f.bacAccount && bac.number) u("bacAccount", bac.number);
-                if (!f.providerBank && bac.bank) u("providerBank", bac.bank);
-                if (!f.providerAccountType && bac.type) u("providerAccountType", bac.type);
-                if (!f.providerAccountHolder && bac.holder) u("providerAccountHolder", bac.holder);
-              }
-              if (!f.providerRTN && match.rtn) u("providerRTN", match.rtn);
+          onChange={e => u("provider", e.target.value)}
+          onBlur={e => {
+            const newName = (e.target.value || "").trim();
+            if (!newName) return;
+            const match = (providers || []).find(p => (p.name || "").trim().toLowerCase() === newName.toLowerCase());
+            if (!match) {
+              console.log("[Autofill proveedor] Sin match para:", newName, "— providers cargados:", (providers || []).length);
+              return;
             }
+            console.log("[Autofill proveedor] Match:", match.name, "| cuentas:", match.bankAccounts?.length || 0);
+            const bac = (match.bankAccounts || []).find(b => /bac/i.test(b.bank || "")) || (match.bankAccounts || [])[0];
+            if (bac) {
+              if (bac.number) u("bacAccount", bac.number);
+              if (bac.bank) u("providerBank", bac.bank);
+              if (bac.type) u("providerAccountType", bac.type);
+              if (bac.holder) u("providerAccountHolder", bac.holder);
+            }
+            if (match.rtn) u("providerRTN", match.rtn);
           }}
           placeholder="Escribe o elige de la lista"
         />
