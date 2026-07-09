@@ -2541,49 +2541,131 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   const canSeeResumen = isAdmin || isGerencia || isCostos || isCoordinadorMaquinas;
   const visibleNav = allNav.filter(n => n.id !== "resumen" || canSeeResumen);
   const roleLabel = isAdmin ? "Operaciones" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : isCostos ? "Costos / Operaciones" : isCoordinadorMaquinas ? "Coord. Maquinas" : userRole;
-  const heroBg = `${import.meta.env.BASE_URL}machines/bauer-bg20.png`;
+  const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+
+  // SVG cartoon de piloteadora BAUER
+  const PiloteadoraSVG = ({ height = 180 }) => (
+    <svg viewBox="0 0 200 260" xmlns="http://www.w3.org/2000/svg" style={{ height, width: "auto", display: "block" }} aria-hidden="true">
+      {/* Orugas (base) */}
+      <rect x="18" y="220" width="164" height="26" rx="13" fill="#1E3A8A" />
+      <rect x="26" y="226" width="148" height="14" rx="7" fill="#0F172A" />
+      {/* Detalles de orugas (segmentos) */}
+      {[36, 56, 76, 96, 116, 136, 156].map(x => (
+        <rect key={x} x={x} y="228" width="8" height="10" rx="1" fill="#1E3A8A" />
+      ))}
+      {/* Ruedas guía */}
+      <circle cx="30" cy="233" r="9" fill="#374151" stroke="#0F172A" strokeWidth="2" />
+      <circle cx="170" cy="233" r="9" fill="#374151" stroke="#0F172A" strokeWidth="2" />
+      {/* Chasis inferior amarillo */}
+      <rect x="30" y="200" width="140" height="24" rx="4" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
+      {/* Contrapeso trasero (izquierda) */}
+      <rect x="18" y="170" width="46" height="38" rx="4" fill="#1E3A8A" stroke="#0F172A" strokeWidth="1.5" />
+      <rect x="24" y="178" width="34" height="4" rx="1" fill="#F5B800" />
+      {/* Base rotatoria (plataforma superior) */}
+      <rect x="60" y="188" width="110" height="14" rx="3" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
+      {/* Cabina blanca */}
+      <rect x="118" y="150" width="52" height="42" rx="5" fill="#F5F5F5" stroke="#4B5563" strokeWidth="1.5" />
+      <rect x="124" y="156" width="40" height="20" rx="2" fill="#4B5563" />
+      <rect x="126" y="158" width="16" height="8" rx="1" fill="#93C5FD" opacity="0.7" />
+      <rect x="145" y="158" width="16" height="8" rx="1" fill="#93C5FD" opacity="0.7" />
+      {/* Escalera cabina */}
+      <line x1="118" y1="192" x2="112" y2="220" stroke="#4B5563" strokeWidth="2" />
+      <line x1="115" y1="200" x2="120" y2="200" stroke="#4B5563" strokeWidth="1.5" />
+      <line x1="114" y1="208" x2="119" y2="208" stroke="#4B5563" strokeWidth="1.5" />
+      {/* Mástil vertical amarillo (grande, con perforaciones) */}
+      <rect x="82" y="20" width="26" height="170" rx="3" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
+      {/* Perforaciones/agujeros del mástil */}
+      {[36, 60, 84, 108, 132, 156].map(y => (
+        <circle key={y} cx="95" cy={y} r="4" fill="#0F172A" />
+      ))}
+      {/* Detalles laterales del mástil */}
+      <line x1="82" y1="50" x2="82" y2="180" stroke="#B8860B" strokeWidth="1" />
+      <line x1="108" y1="50" x2="108" y2="180" stroke="#B8860B" strokeWidth="1" />
+      {/* Polea superior */}
+      <rect x="76" y="12" width="38" height="14" rx="3" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
+      <circle cx="95" cy="19" r="5" fill="#4B5563" stroke="#0F172A" strokeWidth="1.5" />
+      <circle cx="95" cy="19" r="2" fill="#F5B800" />
+      {/* Cable que baja */}
+      <line x1="95" y1="26" x2="95" y2="90" stroke="#1F2937" strokeWidth="1.5" />
+      {/* Kelly bar (barra telescópica colgando) */}
+      <rect x="90" y="90" width="10" height="80" rx="1" fill="#6B7280" stroke="#1F2937" strokeWidth="1.5" />
+      <line x1="90" y1="110" x2="100" y2="110" stroke="#1F2937" strokeWidth="0.8" />
+      <line x1="90" y1="130" x2="100" y2="130" stroke="#1F2937" strokeWidth="0.8" />
+      <line x1="90" y1="150" x2="100" y2="150" stroke="#1F2937" strokeWidth="0.8" />
+      {/* Punta de la broca (auger) */}
+      <polygon points="88,170 102,170 95,182" fill="#4B5563" stroke="#0F172A" strokeWidth="1.5" />
+      {/* Suelo (línea sutil) */}
+      <ellipse cx="100" cy="252" rx="90" ry="4" fill="#0F172A" opacity="0.08" />
+    </svg>
+  );
 
   return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: BEIGE, color: CHARCOAL }}>
-    {/* HERO con imagen de fondo BAUER BG20 */}
+    {/* HERO — logo Geotecnica + titulo + ilustracion cartoon de piloteadora */}
     <div style={{
       position: "relative",
-      height: isMobile ? 140 : 220,
+      minHeight: isMobile ? 120 : 180,
       flexShrink: 0,
-      backgroundImage: `linear-gradient(90deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0.45) 40%, rgba(0,0,0,0.15) 100%), url("${heroBg}")`,
-      backgroundSize: "cover",
-      backgroundPosition: "right center",
-      backgroundRepeat: "no-repeat",
-      borderBottom: `1px solid ${BORDER}`,
+      background: "linear-gradient(135deg, #E0EAF4 0%, #F3F6FA 100%)",
+      borderBottom: `1px solid #E2E8F0`,
+      padding: isMobile ? "14px 16px" : "24px 32px",
       overflow: "hidden",
+      display: "flex",
+      alignItems: "center",
     }}>
       {/* Botones arriba a la derecha */}
-      <div style={{ position: "absolute", top: isMobile ? 10 : 16, right: isMobile ? 12 : 24, display: "flex", gap: 8, zIndex: 2 }}>
-        {onBack && <button onClick={onBack} style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, color: "#fff", padding: isMobile ? "6px 10px" : "8px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", backdropFilter: "blur(4px)" }}>← Volver al panel</button>}
-        {onLogout && <button onClick={onLogout} style={{ background: "rgba(192,57,43,0.35)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, color: "#fff", padding: isMobile ? "6px 10px" : "8px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", backdropFilter: "blur(4px)" }}>Cerrar sesion</button>}
+      <div style={{ position: "absolute", top: isMobile ? 8 : 14, right: isMobile ? 12 : 24, display: "flex", gap: 8, zIndex: 3 }}>
+        {onBack && <button onClick={onBack} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 8, color: CHARCOAL, padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>← Volver al panel</button>}
+        {onLogout && <button onClick={onLogout} style={{ background: "#fff", border: "1px solid #E5B4A9", borderRadius: 8, color: "#B23A26", padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>Cerrar sesion</button>}
       </div>
 
-      {/* Contenido central del hero */}
-      <div style={{ position: "absolute", left: isMobile ? 16 : 32, bottom: isMobile ? 14 : 24, right: isMobile ? 16 : 32, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, zIndex: 2 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 16 }}>
-          <div style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.25)", borderRadius: 12, padding: isMobile ? 6 : 10, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(6px)", flexShrink: 0 }}>
-            <Logo size={isMobile ? 28 : 40} showText={false} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <div style={{ fontSize: isMobile ? 10 : 11, letterSpacing: 2, color: "rgba(255,255,255,0.75)", fontWeight: 700, textTransform: "uppercase" }}>Grupo Geotecnica</div>
-            <h1 style={{ margin: 0, fontSize: isMobile ? 20 : 28, fontWeight: 800, color: "#fff", letterSpacing: -0.5, textShadow: "0 2px 12px rgba(0,0,0,0.4)", lineHeight: 1.15 }}>
-              Maquinas — Solicitudes de Pago
-            </h1>
-            {!isMobile && <div style={{ fontSize: 14, color: "rgba(255,255,255,0.85)", fontWeight: 500, textShadow: "0 1px 4px rgba(0,0,0,0.3)" }}>
-              Repuestos y mantenimiento por proyecto
-            </div>}
-          </div>
+      {/* Row principal */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: isMobile ? 12 : 28,
+        width: "100%",
+        flexDirection: isMobile ? "row" : "row",
+      }}>
+        {/* IZQUIERDA — logo Geotecnica */}
+        <div style={{ flexShrink: 0, width: isMobile ? 90 : 200, display: "flex", alignItems: "center", justifyContent: isMobile ? "flex-start" : "center" }}>
+          <img
+            src={logoUrl}
+            alt="Geotecnica Soluciones"
+            style={{ height: isMobile ? 40 : 65, width: "auto", objectFit: "contain", display: "block" }}
+          />
         </div>
 
-        {/* Badge del usuario */}
-        {!isMobile && <div style={{ background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.28)", borderRadius: 10, padding: "8px 14px", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-          <div style={{ fontSize: 13, color: "#fff", fontWeight: 700, letterSpacing: 0.2 }}>{userName || "Usuario"}</div>
-          <div style={{ fontSize: 11, color: isTesoreria ? "#FBD79A" : isGerencia ? "#C7D3E0" : "#FFC59B", fontWeight: 600 }}>{roleLabel}</div>
-        </div>}
+        {/* CENTRO — texto */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+          <div style={{ fontSize: isMobile ? 10 : 11, letterSpacing: 2, color: ORANGE_DARK, fontWeight: 700, textTransform: "uppercase" }}>Grupo Geotecnica</div>
+          <h1 style={{ margin: 0, fontSize: isMobile ? 18 : 28, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.5, lineHeight: 1.15 }}>
+            Maquinas — Solicitudes de Pago
+          </h1>
+          {!isMobile && <div style={{ fontSize: 13, color: STONE, fontWeight: 500 }}>
+            Repuestos y mantenimiento por proyecto
+          </div>}
+          {/* Badge de usuario en mobile va debajo */}
+          {isMobile && userName && (
+            <div style={{ marginTop: 4, display: "inline-flex", background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "3px 8px", alignSelf: "flex-start", fontSize: 10, color: CHARCOAL, fontWeight: 700 }}>
+              {userName} · {roleLabel}
+            </div>
+          )}
+        </div>
+
+        {/* DERECHA — ilustracion de piloteadora (solo desktop) */}
+        {!isMobile && (
+          <div style={{ flexShrink: 0, display: "flex", alignItems: "flex-end", justifyContent: "center", height: 180, marginRight: 8 }}>
+            <PiloteadoraSVG height={170} />
+          </div>
+        )}
+
+        {/* Badge del usuario en desktop */}
+        {!isMobile && (
+          <div style={{ background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "8px 14px", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+            <div style={{ fontSize: 13, color: CHARCOAL, fontWeight: 700, letterSpacing: 0.2 }}>{userName || "Usuario"}</div>
+            <div style={{ fontSize: 11, color: ORANGE_DARK, fontWeight: 600 }}>{roleLabel}</div>
+          </div>
+        )}
       </div>
     </div>
 
