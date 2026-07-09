@@ -3203,10 +3203,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
           <div style={{ fontSize: isMobile ? 10 : 11, letterSpacing: 2, color: ORANGE_DARK, fontWeight: 700, textTransform: "uppercase" }}>Grupo Geotecnica</div>
           <h1 style={{ margin: 0, fontSize: isMobile ? 18 : 28, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.5, lineHeight: 1.15 }}>
-            Compras — Solicitudes de Operaciones
+            GeoShopping <span style={{ color: STONE, fontWeight: 500 }}>— Compras & Tesoreria</span>
           </h1>
           {!isMobile && <div style={{ fontSize: 13, color: STONE, fontWeight: 500 }}>
-            Compras validadas, pagos y comprobantes
+            Solicitudes validadas, pagos y comprobantes
           </div>}
           {/* Badge de usuario en mobile va debajo */}
           {isMobile && userName && (
