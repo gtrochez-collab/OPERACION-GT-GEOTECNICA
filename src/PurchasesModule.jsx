@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
-import Logo from "./Logo.jsx";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 
@@ -9,10 +8,20 @@ const ORANGE = "#E8762D";
 const ORANGE_DARK = "#C75F1F";
 const BEIGE = "#F5F0E8";
 const CREAM = "#FFFBF5";
-const DARK_BG = "#1F1B17";
-const DARK_BORDER = "#3D3530";
 const CHARCOAL = "#2C2A28";
 const BORDER = "#DBD4C8";
+const STONE = "#7A7268";
+
+// ── Hook responsive ──
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth < breakpoint : false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < breakpoint);
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [breakpoint]);
+  return isMobile;
+}
 
 // ── Constantes ──
 const COMPANIES = {
@@ -1187,7 +1196,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const [despachos, setDespachos] = useState([]); // shared con LogisticsModule — para saber si una compra ya tiene orden de recogida
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
-  const [sb, setSb] = useState(true);
+  const isMobile = useIsMobile();
   // Default section depende del rol:
   // - Ana (asistente_compras) → "ana" (Por coordinar)
   // - Jorge (recepcion) → "providers" (su tarea principal en Compras: mantener
@@ -3082,59 +3091,195 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   };
 
   // ── LAYOUT ──
-  return <div style={{ display: "flex", height: "100vh", fontFamily: "inherit", background: BEIGE, color: CHARCOAL }}>
-    {/* Sidebar */}
-    <div style={{ width: sb ? 240 : 60, background: DARK_BG, color: "#F0EBE3", transition: "width .2s", overflow: "hidden", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-      <div style={{ padding: sb ? "20px 16px" : "20px 12px", borderBottom: `1px solid ${DARK_BORDER}`, display: "flex", alignItems: "center", gap: 10 }}>
-        <button onClick={() => setSb(!sb)} style={{ background: "none", border: "none", color: "#A8A096", fontSize: 20, cursor: "pointer", flexShrink: 0 }}>☰</button>
-        {sb && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <Logo size={28} showText={false} />
-            <div style={{ fontWeight: 800, fontSize: 12, letterSpacing: 1.5, color: "#F0EBE3", marginTop: 4 }}>GEOTECNICA</div>
-            <div style={{ fontSize: 9, letterSpacing: 2, color: "#A8A096", fontWeight: 600 }}>SOLUCIONES · COMPRAS</div>
+  const allNav = [
+    { id: "resumen", icon: "📊", label: "Resumen" },
+    { id: "list", icon: "📋", label: "Solicitudes" },
+    { id: "projects", icon: "🏗️", label: "Proyectos" },
+    { id: "ana", icon: "📦", label: "Por coordinar" },
+    { id: "providers", icon: "🏢", label: "Proveedores" },
+  ];
+  // Resumen (command center) solo para admin/gerencia/costos — quien
+  // necesita dar seguimiento end-to-end. Ana ve su Kanban.
+  const canSeeResumen = isAdmin || isGerencia || isCostos;
+  const visibleNav = isAsistenteCompras
+    ? allNav.filter(n => n.id === "ana" || n.id === "providers")
+    : allNav.filter(n => n.id !== "resumen" || canSeeResumen);
+  const roleLabel = isAdmin ? "Operaciones"
+    : isTesoreria ? "Tesoreria"
+    : isGerencia ? "Gerencia (solo lectura)"
+    : isCostos ? "Costos / Operaciones"
+    : isAsistenteCompras ? "Asistente de Compras"
+    : isRecepcion ? "Recepcion"
+    : userRole;
+  const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+
+  // SVG cartoon de carrito de compras
+  const CarritoSVG = ({ height = 170 }) => (
+    <svg viewBox="0 0 220 180" xmlns="http://www.w3.org/2000/svg" style={{ height, width: "auto", display: "block" }} aria-hidden="true">
+      {/* Sombra eliptica bajo las ruedas */}
+      <ellipse cx="120" cy="168" rx="90" ry="5" fill="#0F172A" opacity="0.09" />
+
+      {/* Manija (handle) — barra horizontal con curva descendente hacia el cesto */}
+      <path
+        d="M 18 38 L 60 38 Q 74 38 78 52 L 88 78"
+        fill="none"
+        stroke="#1B2B5C"
+        strokeWidth="5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {/* Empuñadura de la manija */}
+      <rect x="10" y="32" width="16" height="12" rx="3" fill="#1B2B5C" />
+
+      {/* Barra superior del cesto (borde del trapecio) */}
+      <line x1="72" y1="62" x2="206" y2="62" stroke="#1B2B5C" strokeWidth="5" strokeLinecap="round" />
+
+      {/* Cesta trapezoidal — mas ancha arriba, mas angosta abajo — relleno naranja */}
+      <polygon
+        points="76,64 202,64 188,140 92,140"
+        fill="#F5762D"
+        stroke="#1B2B5C"
+        strokeWidth="5"
+        strokeLinejoin="round"
+      />
+
+      {/* Lineas rojas horizontales dentro del cesto (items) */}
+      <line x1="94" y1="86"  x2="184" y2="86"  stroke="#D93A3A" strokeWidth="4" strokeLinecap="round" />
+      <line x1="97" y1="106" x2="181" y2="106" stroke="#D93A3A" strokeWidth="4" strokeLinecap="round" />
+      <line x1="100" y1="126" x2="178" y2="126" stroke="#D93A3A" strokeWidth="4" strokeLinecap="round" />
+
+      {/* Barra decorativa superior derecha (detalle opcional) */}
+      <rect x="188" y="52" width="14" height="10" rx="2" fill="#1B2B5C" />
+
+      {/* Ejes / soportes de las ruedas hacia el cesto */}
+      <line x1="106" y1="140" x2="102" y2="152" stroke="#1B2B5C" strokeWidth="4" strokeLinecap="round" />
+      <line x1="174" y1="140" x2="178" y2="152" stroke="#1B2B5C" strokeWidth="4" strokeLinecap="round" />
+
+      {/* Ruedas */}
+      <circle cx="102" cy="156" r="12" fill="#DC2626" stroke="#1B2B5C" strokeWidth="4" />
+      <circle cx="102" cy="156" r="3.5" fill="#1B2B5C" />
+      <circle cx="178" cy="156" r="12" fill="#DC2626" stroke="#1B2B5C" strokeWidth="4" />
+      <circle cx="178" cy="156" r="3.5" fill="#1B2B5C" />
+    </svg>
+  );
+
+  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: BEIGE, color: CHARCOAL }}>
+    {/* HERO — logo Geotecnica + titulo + ilustracion cartoon de carrito */}
+    <div style={{
+      position: "relative",
+      minHeight: isMobile ? 120 : 180,
+      flexShrink: 0,
+      background: "linear-gradient(135deg, #FFF7ED 0%, #FEF3E6 100%)",
+      borderBottom: `1px solid #E2E8F0`,
+      padding: isMobile ? "14px 16px" : "24px 32px",
+      overflow: "hidden",
+      display: "flex",
+      alignItems: "center",
+    }}>
+      {/* Botones arriba a la derecha */}
+      <div style={{ position: "absolute", top: isMobile ? 8 : 14, right: isMobile ? 12 : 24, display: "flex", gap: 8, zIndex: 3 }}>
+        {onBack && <button onClick={onBack} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 8, color: CHARCOAL, padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>← Volver al panel</button>}
+        {onLogout && <button onClick={onLogout} style={{ background: "#fff", border: "1px solid #E5B4A9", borderRadius: 8, color: "#B23A26", padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>Cerrar sesion</button>}
+      </div>
+
+      {/* Row principal */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: isMobile ? 12 : 28,
+        width: "100%",
+        flexDirection: isMobile ? "row" : "row",
+      }}>
+        {/* IZQUIERDA — logo Geotecnica */}
+        <div style={{ flexShrink: 0, width: isMobile ? 90 : 200, display: "flex", alignItems: "center", justifyContent: isMobile ? "flex-start" : "center" }}>
+          <img
+            src={logoUrl}
+            alt="Geotecnica Soluciones"
+            style={{ height: isMobile ? 40 : 65, width: "auto", objectFit: "contain", display: "block" }}
+          />
+        </div>
+
+        {/* CENTRO — texto */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+          <div style={{ fontSize: isMobile ? 10 : 11, letterSpacing: 2, color: ORANGE_DARK, fontWeight: 700, textTransform: "uppercase" }}>Grupo Geotecnica</div>
+          <h1 style={{ margin: 0, fontSize: isMobile ? 18 : 28, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.5, lineHeight: 1.15 }}>
+            Compras — Solicitudes de Operaciones
+          </h1>
+          {!isMobile && <div style={{ fontSize: 13, color: STONE, fontWeight: 500 }}>
+            Compras validadas, pagos y comprobantes
+          </div>}
+          {/* Badge de usuario en mobile va debajo */}
+          {isMobile && userName && (
+            <div style={{ marginTop: 4, display: "inline-flex", background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "3px 8px", alignSelf: "flex-start", fontSize: 10, color: CHARCOAL, fontWeight: 700 }}>
+              {userName} · {roleLabel}
+            </div>
+          )}
+        </div>
+
+        {/* DERECHA — ilustracion de carrito (solo desktop) */}
+        {!isMobile && (
+          <div style={{ flexShrink: 0, display: "flex", alignItems: "flex-end", justifyContent: "center", height: 180, marginRight: 8 }}>
+            <CarritoSVG height={170} />
+          </div>
+        )}
+
+        {/* Badge del usuario en desktop */}
+        {!isMobile && (
+          <div style={{ background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "8px 14px", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+            <div style={{ fontSize: 13, color: CHARCOAL, fontWeight: 700, letterSpacing: 0.2 }}>{userName || "Usuario"}</div>
+            <div style={{ fontSize: 11, color: ORANGE_DARK, fontWeight: 600 }}>{roleLabel}</div>
           </div>
         )}
       </div>
-      <div style={{ padding: "8px 0", flex: 1, marginTop: 8 }}>
-        {(() => {
-          // Nav segun rol:
-          // - Ana (asistente_compras): SOLO "Por coordinar" y "Proveedores"
-          // - Todos los demas: ven todo (solicitudes, proyectos, por coordinar, proveedores)
-          const allNav = [
-            { id: "resumen", icon: "📊", label: "Resumen" },
-            { id: "list", icon: "📋", label: "Solicitudes" },
-            { id: "projects", icon: "🏗️", label: "Proyectos" },
-            { id: "ana", icon: "📦", label: "Por coordinar" },
-            { id: "providers", icon: "🏢", label: "Proveedores" },
-          ];
-          // Resumen (command center) solo para admin/gerencia/costos — quien
-          // necesita dar seguimiento end-to-end. Ana ve su Kanban.
-          const canSeeResumen = isAdmin || isGerencia || isCostos;
-          const visibleNav = isAsistenteCompras
-            ? allNav.filter(n => n.id === "ana" || n.id === "providers")
-            : allNav.filter(n => n.id !== "resumen" || canSeeResumen);
-          return visibleNav.map(n => <button key={n.id} onClick={() => setSec(n.id)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: sb ? "11px 20px" : "11px 18px", background: sec === n.id ? "rgba(232,118,45,0.18)" : "transparent", border: "none", color: sec === n.id ? "#fff" : "#A8A096", cursor: "pointer", fontSize: 14, textAlign: "left", borderLeft: sec === n.id ? `3px solid ${ORANGE}` : "3px solid transparent", fontFamily: "inherit", fontWeight: sec === n.id ? 600 : 500, transition: "all .15s" }}>
-            <span style={{ fontSize: 18 }}>{n.icon}</span>{sb && <span>{n.label}</span>}
-          </button>);
-        })()}
-      </div>
-      {sb && <div style={{ padding: "12px", borderTop: `1px solid ${DARK_BORDER}`, display: "flex", flexDirection: "column", gap: 6 }}>
-        {onBack && <button onClick={onBack} style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${DARK_BORDER}`, borderRadius: 8, color: "#A8A096", padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit" }}>← Volver al panel</button>}
-        {onLogout && <button onClick={onLogout} style={{ background: "rgba(192,57,43,0.15)", border: "1px solid rgba(192,57,43,0.4)", borderRadius: 8, color: "#F0AAA0", padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit" }}>Cerrar sesion</button>}
-        <div style={{ fontSize: 11, color: "#7A7268", marginTop: 4, fontWeight: 500, lineHeight: 1.4 }}>
-          {userName || "Usuario"}<br />
-          <span style={{ color: isTesoreria ? "#D4A017" : isGerencia ? "#A8B5C4" : ORANGE, fontWeight: 600 }}>
-            {isAdmin ? "Operaciones" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : isCostos ? "Costos / Operaciones" : userRole}
-          </span>
-        </div>
-      </div>}
     </div>
 
-    {/* Main */}
-    <div style={{ flex: 1, overflow: "auto" }}>
-      <div style={{ padding: "22px 32px", borderBottom: `1px solid ${BORDER}`, background: CREAM, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+    {/* TOPNAV horizontal */}
+    <div style={{
+      display: "flex",
+      background: CREAM,
+      borderBottom: `1px solid ${BORDER}`,
+      overflowX: "auto",
+      whiteSpace: "nowrap",
+      flexShrink: 0,
+      paddingLeft: isMobile ? 8 : 24,
+      scrollbarWidth: "thin",
+    }}>
+      {visibleNav.map(n => {
+        const active = sec === n.id;
+        return <button
+          key={n.id}
+          onClick={() => setSec(n.id)}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: isMobile ? "12px 16px" : "14px 22px",
+            background: "transparent",
+            border: "none",
+            borderBottom: active ? `3px solid ${ORANGE}` : "3px solid transparent",
+            color: active ? CHARCOAL : STONE,
+            cursor: "pointer",
+            fontSize: 14,
+            fontWeight: active ? 700 : 500,
+            fontFamily: "inherit",
+            transition: "all .15s",
+            whiteSpace: "nowrap",
+            marginBottom: -1,
+          }}
+          onMouseEnter={e => { if (!active) e.currentTarget.style.color = CHARCOAL; }}
+          onMouseLeave={e => { if (!active) e.currentTarget.style.color = STONE; }}
+        >
+          <span style={{ fontSize: 16 }}>{n.icon}</span>
+          <span>{n.label}</span>
+        </button>;
+      })}
+    </div>
+
+    {/* CONTENIDO */}
+    <div style={{ flex: 1, overflow: "auto", background: BEIGE }}>
+      <div style={{ padding: isMobile ? "12px 16px" : "20px 32px 8px 32px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
+          <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
             {sec === "resumen" ? "Command Center — Seguimiento por proyecto"
               : sec === "projects" ? "Proyectos"
               : sec === "providers" ? "Proveedores"
@@ -3145,7 +3290,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         </div>
         <Badge color={cc.color}>{cp.length} solicitudes</Badge>
       </div>
-      <div style={{ padding: 28 }}>{
+      <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{
         sec === "resumen" ? renderResumen()
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
