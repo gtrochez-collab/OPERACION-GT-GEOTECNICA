@@ -1167,7 +1167,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   const canPay = isTesoreria;                                                     // SOLO Carolina registra pago y cambia estado financiero
   const canViewOnly = isGerencia;                                                 // solo gerencia es read-only
   const canManageProviders = isAdmin || isCostos || isAsistenteCompras || isRecepcion || isCoordinadorMaquinas;  // CRUD de proveedores
-  const canManageMachines = isAdmin || isCostos || isCoordinadorMaquinas;         // CRUD de maquinas
+  const canManageMachines = isAdmin || isCostos || isCoordinadorMaquinas || isRecepcion;  // CRUD de maquinas (Jorge incluido para cargar maquinas)
 
   const [co, setCo] = useState("geotecnica");
   const [purchases, setPurchases] = useState([]);
