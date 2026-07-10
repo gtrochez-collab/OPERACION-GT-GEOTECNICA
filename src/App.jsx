@@ -197,21 +197,24 @@ export default function App() {
             inset: 0,
             backgroundImage: `url(${import.meta.env.BASE_URL}brand/GEO.jpg)`,
             backgroundSize: "cover",
-            backgroundPosition: "center 40%",
+            backgroundPosition: "center 35%",
             backgroundRepeat: "no-repeat",
-            filter: "blur(3px) brightness(0.9)",
-            opacity: 0.28,
+            filter: "blur(2px) saturate(1.1)",
+            opacity: 0.65,
             pointerEvents: "none",
-            transform: "scale(1.03)", // evitar que se vean bordes del blur
+            transform: "scale(1.05)", // evitar bordes del blur + un poco de zoom
           }}
         />
-        {/* Overlay sutil para tint (crema del brand) */}
+        {/* Overlay: gradiente suave crema hacia transparente para dejar
+            respirar la foto sin comprometer legibilidad de las cards.
+            Mas claro arriba (para el area de las cards en la parte superior),
+            un poco mas denso abajo. */}
         <div
           aria-hidden
           style={{
             position: "absolute",
             inset: 0,
-            background: `linear-gradient(180deg, ${BRAND.beige}CC 0%, ${BRAND.beige}F0 100%)`,
+            background: `linear-gradient(180deg, ${BRAND.beige}A0 0%, ${BRAND.beige}70 40%, ${BRAND.beige}CC 100%)`,
             pointerEvents: "none",
           }}
         />
