@@ -56,7 +56,7 @@ const MODULES = [
   },
   {
     id: "logistica",
-    name: "GeoFleet",
+    name: "GeoLogistics",
     icon: "🚛",
     desc: "Flota, mantenimientos, rutas y despachos",
     accent: "#2D4A6B",
@@ -195,7 +195,7 @@ export default function App() {
           style={{
             position: "absolute",
             inset: 0,
-            backgroundImage: `url(${import.meta.env.BASE_URL}brand/panel-hero.jpg)`,
+            backgroundImage: `url(${import.meta.env.BASE_URL}brand/GEO.jpg)`,
             backgroundSize: "cover",
             backgroundPosition: "center 40%",
             backgroundRepeat: "no-repeat",
