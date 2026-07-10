@@ -186,33 +186,29 @@ export default function App() {
         </div>
       </div>
 
-      {/* Modulos — con foto de campo difuminada atras */}
-      <div style={{ position: "relative", overflow: "hidden" }}>
-        {/* Background: foto del equipo en campo (difuminada + oscura para legibilidad
-            del contenido). Si la imagen no existe, el fondo queda solo beige — no rompe. */}
+      {/* Modulos — con escena cartoon de proyecto de fondo */}
+      <div style={{ position: "relative", overflow: "hidden", backgroundColor: BRAND.beige }}>
+        {/* Background: ilustracion SVG cartoon flat (piloteadora + personal + terreno).
+            Los colores son suaves — no hace falta filtro. Opacity leve para "de fondo". */}
         <div
           aria-hidden
           style={{
             position: "absolute",
             inset: 0,
-            backgroundImage: `url(${import.meta.env.BASE_URL}brand/GEO.jpg)`,
-            backgroundSize: "contain", // ZOOM OUT — se ve toda la foto sin cropear
-            backgroundPosition: "center center",
-            backgroundRepeat: "no-repeat",
-            backgroundColor: BRAND.beige, // relleno de los bordes si contain deja espacios
-            filter: "blur(1px) saturate(1.15)", // muy poco blur, colores vivos
-            opacity: 0.88, // casi limpia
+            opacity: 0.78,
             pointerEvents: "none",
           }}
-        />
-        {/* Overlay MUY SUTIL solo abajo — deja la foto casi limpia arriba
+        >
+          <PanelHeroSVG />
+        </div>
+        {/* Overlay MUY SUTIL solo abajo — mejora legibilidad del bloque final de cards
             y agrega una transicion hacia el footer. */}
         <div
           aria-hidden
           style={{
             position: "absolute",
             inset: 0,
-            background: `linear-gradient(180deg, transparent 0%, transparent 60%, ${BRAND.beige}80 100%)`,
+            background: `linear-gradient(180deg, ${BRAND.beige}40 0%, transparent 20%, transparent 65%, ${BRAND.beige}CC 100%)`,
             pointerEvents: "none",
           }}
         />
@@ -242,6 +238,239 @@ export default function App() {
         </div>
       </footer>
     </div>
+  );
+}
+
+// ── Escena cartoon de proyecto (fondo del panel de control) ──
+// SVG horizontal wide (viewBox 1200x360). Se estira 100% ancho y se recorta
+// verticalmente si hace falta via preserveAspectRatio="xMidYMid slice".
+function PanelHeroSVG() {
+  return (
+    <svg
+      viewBox="0 0 1200 360"
+      xmlns="http://www.w3.org/2000/svg"
+      preserveAspectRatio="xMidYMid slice"
+      style={{ width: "100%", height: "100%", display: "block" }}
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="phSky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#EFE6D3" />
+          <stop offset="100%" stopColor="#F6F0E2" />
+        </linearGradient>
+        <linearGradient id="phGround" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#B89876" />
+          <stop offset="100%" stopColor="#8C6E4D" />
+        </linearGradient>
+      </defs>
+
+      {/* Cielo */}
+      <rect x="0" y="0" width="1200" height="360" fill="url(#phSky)" />
+
+      {/* Nubes suaves */}
+      <g fill="#FFFFFF" opacity="0.85">
+        <ellipse cx="180" cy="70" rx="46" ry="14" />
+        <ellipse cx="210" cy="60" rx="30" ry="12" />
+        <ellipse cx="155" cy="62" rx="24" ry="10" />
+        <ellipse cx="870" cy="55" rx="52" ry="15" />
+        <ellipse cx="905" cy="45" rx="32" ry="13" />
+        <ellipse cx="840" cy="48" rx="26" ry="10" />
+      </g>
+
+      {/* Linea horizonte sutil */}
+      <line x1="0" y1="242" x2="1200" y2="242" stroke="#8C6E4D" strokeWidth="1" opacity="0.35" />
+
+      {/* Suelo/terreno */}
+      <path d="M0,244 Q300,238 600,246 T1200,242 L1200,360 L0,360 Z" fill="url(#phGround)" />
+
+      {/* Piedras y rocas en el suelo */}
+      <g stroke="#5C4632" strokeWidth="1.5" fill="#7A5C3F">
+        <ellipse cx="90" cy="330" rx="14" ry="6" />
+        <ellipse cx="112" cy="335" rx="8" ry="4" />
+        <ellipse cx="560" cy="345" rx="18" ry="7" />
+        <ellipse cx="780" cy="325" rx="10" ry="5" />
+        <ellipse cx="1100" cy="340" rx="16" ry="6" />
+        <ellipse cx="1140" cy="335" rx="9" ry="4" />
+      </g>
+
+      {/* Trabajador C (fondo, silueta pequeña) */}
+      <g transform="translate(1030, 218)">
+        {/* Casco */}
+        <path d="M-8,-4 Q0,-16 8,-4 L8,0 L-8,0 Z" fill="#F5B800" stroke="#B8860B" strokeWidth="1.2" />
+        <rect x="-9" y="0" width="18" height="2" fill="#B8860B" />
+        {/* Cabeza */}
+        <circle cx="0" cy="6" r="6" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1" />
+        {/* Cuerpo (chaleco naranja) */}
+        <rect x="-10" y="12" width="20" height="26" rx="3" fill="#F97316" stroke="#B84A0A" strokeWidth="1.2" />
+        <line x1="-10" y1="22" x2="10" y2="22" stroke="#F5F5F5" strokeWidth="1.2" />
+        {/* Piernas */}
+        <rect x="-9" y="38" width="8" height="22" rx="1.5" fill="#1E3A8A" />
+        <rect x="1" y="38" width="8" height="22" rx="1.5" fill="#1E3A8A" />
+        {/* Botas */}
+        <rect x="-10" y="58" width="10" height="4" rx="1" fill="#1F2937" />
+        <rect x="0" y="58" width="10" height="4" rx="1" fill="#1F2937" />
+      </g>
+
+      {/* Pilote perforado (visible bajo tierra atrás del mástil) */}
+      <rect x="422" y="248" width="26" height="90" rx="2" fill="#6B4E32" stroke="#3F2E1E" strokeWidth="1.5" opacity="0.85" />
+      <line x1="422" y1="270" x2="448" y2="270" stroke="#3F2E1E" strokeWidth="0.8" opacity="0.6" />
+      <line x1="422" y1="290" x2="448" y2="290" stroke="#3F2E1E" strokeWidth="0.8" opacity="0.6" />
+      <line x1="422" y1="310" x2="448" y2="310" stroke="#3F2E1E" strokeWidth="0.8" opacity="0.6" />
+      {/* Cráter / tierra removida alrededor del hoyo */}
+      <ellipse cx="435" cy="252" rx="42" ry="6" fill="#6B4E32" opacity="0.75" />
+
+      {/* PILOTEADORA — adaptada del cartoon de MachinesModule (scale ~1.0, en x=335,y=-5) */}
+      <g transform="translate(335, -5)">
+        {/* Orugas */}
+        <rect x="18" y="220" width="164" height="26" rx="13" fill="#1E3A8A" />
+        <rect x="26" y="226" width="148" height="14" rx="7" fill="#0F172A" />
+        <g fill="#1E3A8A">
+          <rect x="36" y="228" width="8" height="10" rx="1" />
+          <rect x="56" y="228" width="8" height="10" rx="1" />
+          <rect x="76" y="228" width="8" height="10" rx="1" />
+          <rect x="96" y="228" width="8" height="10" rx="1" />
+          <rect x="116" y="228" width="8" height="10" rx="1" />
+          <rect x="136" y="228" width="8" height="10" rx="1" />
+          <rect x="156" y="228" width="8" height="10" rx="1" />
+        </g>
+        <circle cx="30" cy="233" r="9" fill="#374151" stroke="#0F172A" strokeWidth="2" />
+        <circle cx="170" cy="233" r="9" fill="#374151" stroke="#0F172A" strokeWidth="2" />
+        {/* Chasis inferior */}
+        <rect x="30" y="200" width="140" height="24" rx="4" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
+        {/* Contrapeso trasero */}
+        <rect x="18" y="170" width="46" height="38" rx="4" fill="#1E3A8A" stroke="#0F172A" strokeWidth="1.5" />
+        <rect x="24" y="178" width="34" height="4" rx="1" fill="#F5B800" />
+        {/* Plataforma rotatoria */}
+        <rect x="60" y="188" width="110" height="14" rx="3" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
+        {/* Cabina */}
+        <rect x="118" y="150" width="52" height="42" rx="5" fill="#F5F5F5" stroke="#4B5563" strokeWidth="1.5" />
+        <rect x="124" y="156" width="40" height="20" rx="2" fill="#4B5563" />
+        <rect x="126" y="158" width="16" height="8" rx="1" fill="#93C5FD" opacity="0.75" />
+        <rect x="145" y="158" width="16" height="8" rx="1" fill="#93C5FD" opacity="0.75" />
+        {/* Escalera cabina */}
+        <line x1="118" y1="192" x2="112" y2="220" stroke="#4B5563" strokeWidth="2" />
+        <line x1="115" y1="200" x2="120" y2="200" stroke="#4B5563" strokeWidth="1.5" />
+        <line x1="114" y1="208" x2="119" y2="208" stroke="#4B5563" strokeWidth="1.5" />
+        {/* Mástil */}
+        <rect x="82" y="20" width="26" height="170" rx="3" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
+        <g fill="#0F172A">
+          <circle cx="95" cy="36" r="4" />
+          <circle cx="95" cy="60" r="4" />
+          <circle cx="95" cy="84" r="4" />
+          <circle cx="95" cy="108" r="4" />
+          <circle cx="95" cy="132" r="4" />
+          <circle cx="95" cy="156" r="4" />
+        </g>
+        <line x1="82" y1="50" x2="82" y2="180" stroke="#B8860B" strokeWidth="1" />
+        <line x1="108" y1="50" x2="108" y2="180" stroke="#B8860B" strokeWidth="1" />
+        {/* Polea */}
+        <rect x="76" y="12" width="38" height="14" rx="3" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
+        <circle cx="95" cy="19" r="5" fill="#4B5563" stroke="#0F172A" strokeWidth="1.5" />
+        <circle cx="95" cy="19" r="2" fill="#F5B800" />
+        {/* Cable + Kelly bar */}
+        <line x1="95" y1="26" x2="95" y2="90" stroke="#1F2937" strokeWidth="1.5" />
+        <rect x="90" y="90" width="10" height="80" rx="1" fill="#6B7280" stroke="#1F2937" strokeWidth="1.5" />
+        <line x1="90" y1="110" x2="100" y2="110" stroke="#1F2937" strokeWidth="0.8" />
+        <line x1="90" y1="130" x2="100" y2="130" stroke="#1F2937" strokeWidth="0.8" />
+        <line x1="90" y1="150" x2="100" y2="150" stroke="#1F2937" strokeWidth="0.8" />
+        {/* Broca */}
+        <polygon points="88,170 102,170 95,182" fill="#4B5563" stroke="#0F172A" strokeWidth="1.5" />
+      </g>
+
+      {/* Poste con señal de precaución (izquierda) */}
+      <g transform="translate(80, 200)">
+        <rect x="-1.5" y="0" width="3" height="70" fill="#4B5563" />
+        <polygon points="0,-30 26,-3 -26,-3" fill="#F5B800" stroke="#0F172A" strokeWidth="2" />
+        <text x="0" y="-8" textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="18" fontWeight="800" fill="#0F172A">!</text>
+      </g>
+
+      {/* Trabajador A (izquierda, con tablet) */}
+      <g transform="translate(220, 200)">
+        {/* Piernas */}
+        <rect x="-12" y="60" width="10" height="34" rx="2" fill="#1E3A8A" stroke="#0F172A" strokeWidth="1.2" />
+        <rect x="2" y="60" width="10" height="34" rx="2" fill="#1E3A8A" stroke="#0F172A" strokeWidth="1.2" />
+        {/* Botas */}
+        <rect x="-14" y="92" width="14" height="6" rx="2" fill="#1F2937" />
+        <rect x="0" y="92" width="14" height="6" rx="2" fill="#1F2937" />
+        {/* Chaleco naranja */}
+        <rect x="-16" y="24" width="32" height="42" rx="4" fill="#F97316" stroke="#B84A0A" strokeWidth="1.5" />
+        {/* Bandas reflectivas */}
+        <rect x="-16" y="38" width="32" height="3" fill="#F5F5F5" />
+        <rect x="-16" y="54" width="32" height="3" fill="#F5F5F5" />
+        {/* Camisa (interior azul) */}
+        <rect x="-16" y="24" width="32" height="6" fill="#1E3A8A" />
+        {/* Brazos */}
+        <rect x="-22" y="26" width="8" height="26" rx="3" fill="#F97316" stroke="#B84A0A" strokeWidth="1.2" />
+        <rect x="14" y="26" width="8" height="26" rx="3" fill="#F97316" stroke="#B84A0A" strokeWidth="1.2" />
+        {/* Manos */}
+        <circle cx="-18" cy="56" r="4" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1" />
+        <circle cx="18" cy="56" r="4" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1" />
+        {/* Tablet/plano en las manos */}
+        <rect x="-20" y="48" width="40" height="14" rx="2" fill="#F5F5F5" stroke="#0F172A" strokeWidth="1.5" />
+        <line x1="-16" y1="52" x2="16" y2="52" stroke="#4B5563" strokeWidth="0.8" />
+        <line x1="-16" y1="56" x2="10" y2="56" stroke="#4B5563" strokeWidth="0.8" />
+        {/* Cabeza */}
+        <circle cx="0" cy="12" r="12" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1.5" />
+        {/* Ojos + boca */}
+        <circle cx="-4" cy="12" r="1.4" fill="#0F172A" />
+        <circle cx="4" cy="12" r="1.4" fill="#0F172A" />
+        <path d="M-3,17 Q0,19 3,17" stroke="#0F172A" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+        {/* Casco naranja */}
+        <path d="M-13,4 Q0,-14 13,4 L13,7 L-13,7 Z" fill="#F97316" stroke="#B84A0A" strokeWidth="1.5" />
+        <rect x="-14" y="6" width="28" height="3" rx="1" fill="#B84A0A" />
+        <rect x="-4" y="-6" width="8" height="4" rx="1" fill="#F5B800" />
+      </g>
+
+      {/* Trabajador B (derecha, con radio) */}
+      <g transform="translate(720, 210)">
+        {/* Piernas */}
+        <rect x="-11" y="56" width="9" height="30" rx="2" fill="#1E3A8A" stroke="#0F172A" strokeWidth="1.2" />
+        <rect x="2" y="56" width="9" height="30" rx="2" fill="#1E3A8A" stroke="#0F172A" strokeWidth="1.2" />
+        {/* Botas */}
+        <rect x="-13" y="84" width="13" height="6" rx="2" fill="#1F2937" />
+        <rect x="0" y="84" width="13" height="6" rx="2" fill="#1F2937" />
+        {/* Camisa azul */}
+        <rect x="-15" y="22" width="30" height="38" rx="4" fill="#2563EB" stroke="#0F172A" strokeWidth="1.5" />
+        {/* Detalle bolsillo */}
+        <rect x="-10" y="30" width="8" height="8" rx="1" fill="#1E3A8A" stroke="#0F172A" strokeWidth="0.8" />
+        {/* Brazo izq (colgando) */}
+        <rect x="-21" y="24" width="8" height="24" rx="3" fill="#2563EB" stroke="#0F172A" strokeWidth="1.2" />
+        <circle cx="-17" cy="52" r="4" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1" />
+        {/* Brazo der (sosteniendo radio, doblado hacia arriba) */}
+        <rect x="13" y="20" width="8" height="20" rx="3" fill="#2563EB" stroke="#0F172A" strokeWidth="1.2" />
+        <circle cx="17" cy="42" r="4" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1" />
+        {/* Radio walkie-talkie */}
+        <rect x="13" y="30" width="10" height="16" rx="1.5" fill="#1F2937" stroke="#0F172A" strokeWidth="1.2" />
+        <rect x="15" y="33" width="6" height="4" rx="0.5" fill="#F5B800" />
+        <line x1="18" y1="30" x2="18" y2="22" stroke="#0F172A" strokeWidth="1.5" />
+        <circle cx="18" cy="21" r="1.5" fill="#F97316" />
+        {/* Cabeza */}
+        <circle cx="0" cy="10" r="11" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1.5" />
+        <circle cx="-3.5" cy="10" r="1.3" fill="#0F172A" />
+        <circle cx="3.5" cy="10" r="1.3" fill="#0F172A" />
+        <path d="M-2,15 Q0,16.5 2,15" stroke="#0F172A" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+        {/* Casco amarillo */}
+        <path d="M-12,3 Q0,-14 12,3 L12,6 L-12,6 Z" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
+        <rect x="-13" y="5" width="26" height="3" rx="1" fill="#B8860B" />
+      </g>
+
+      {/* Cono de seguridad (delante-derecha) */}
+      <g transform="translate(900, 260)">
+        <polygon points="-14,50 14,50 8,0 -8,0" fill="#F97316" stroke="#B84A0A" strokeWidth="1.8" />
+        <rect x="-11" y="18" width="22" height="5" fill="#F5F5F5" />
+        <rect x="-13" y="32" width="26" height="5" fill="#F5F5F5" />
+        <rect x="-18" y="50" width="36" height="6" rx="1.5" fill="#1F2937" />
+      </g>
+
+      {/* Cinta de seguridad (barrera amarilla con lineas negras, primer plano derecha) */}
+      <g>
+        <line x1="960" y1="285" x2="1180" y2="292" stroke="#F5B800" strokeWidth="6" strokeLinecap="round" />
+        <line x1="960" y1="285" x2="1180" y2="292" stroke="#0F172A" strokeWidth="5" strokeDasharray="10 12" strokeLinecap="round" />
+        {/* Postes */}
+        <rect x="955" y="282" width="3" height="42" fill="#4B5563" />
+        <rect x="1178" y="289" width="3" height="42" fill="#4B5563" />
+      </g>
+    </svg>
   );
 }
 
