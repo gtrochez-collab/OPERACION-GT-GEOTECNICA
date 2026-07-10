@@ -196,25 +196,23 @@ export default function App() {
             position: "absolute",
             inset: 0,
             backgroundImage: `url(${import.meta.env.BASE_URL}brand/GEO.jpg)`,
-            backgroundSize: "cover",
-            backgroundPosition: "center 35%",
+            backgroundSize: "contain", // ZOOM OUT — se ve toda la foto sin cropear
+            backgroundPosition: "center center",
             backgroundRepeat: "no-repeat",
-            filter: "blur(2px) saturate(1.1)",
-            opacity: 0.65,
+            backgroundColor: BRAND.beige, // relleno de los bordes si contain deja espacios
+            filter: "blur(1px) saturate(1.15)", // muy poco blur, colores vivos
+            opacity: 0.88, // casi limpia
             pointerEvents: "none",
-            transform: "scale(1.05)", // evitar bordes del blur + un poco de zoom
           }}
         />
-        {/* Overlay: gradiente suave crema hacia transparente para dejar
-            respirar la foto sin comprometer legibilidad de las cards.
-            Mas claro arriba (para el area de las cards en la parte superior),
-            un poco mas denso abajo. */}
+        {/* Overlay MUY SUTIL solo abajo — deja la foto casi limpia arriba
+            y agrega una transicion hacia el footer. */}
         <div
           aria-hidden
           style={{
             position: "absolute",
             inset: 0,
-            background: `linear-gradient(180deg, ${BRAND.beige}A0 0%, ${BRAND.beige}70 40%, ${BRAND.beige}CC 100%)`,
+            background: `linear-gradient(180deg, transparent 0%, transparent 60%, ${BRAND.beige}80 100%)`,
             pointerEvents: "none",
           }}
         />
