@@ -1201,8 +1201,16 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // - Ana (asistente_compras) → "ana" (Por coordinar)
   // - Jorge (recepcion) → "providers" (su tarea principal en Compras: mantener
   //   datos bancarios de proveedores al dia)
+  // - admin/gerencia/costos → "dashboard" (vista ejecutiva)
   // - Resto → "list" (solicitudes)
-  const defaultSec = isAsistenteCompras ? "ana" : isRecepcion ? "providers" : "list";
+  const canSeeDashboardDefault = isAdmin || isGerencia || isCostos;
+  const defaultSec = isAsistenteCompras
+    ? "ana"
+    : isRecepcion
+      ? "providers"
+      : canSeeDashboardDefault
+        ? "dashboard"
+        : "list";
   const [sec, setSec] = useState(defaultSec);
   const [filter, setFilter] = useState({ status: "", project: "", provider: "", from: "", to: "" });
   // Estado de expansion/colapso de sub-secciones en el Kanban de Ana.
@@ -2460,6 +2468,390 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   };
 
   // ─────────────────────────────────────────────────────────────────────────
+  // DASHBOARD GERENCIAL — vista ejecutiva de alto nivel
+  // ─────────────────────────────────────────────────────────────────────────
+  // Solo admin/gerencia/costos. Enfoque en "que falta pagar, que falta llegar,
+  // que falta ficha". KPIs + donut de estados + top 5 proyectos + alertas.
+  const renderDashboard = () => {
+    const now = Date.now();
+    const currMonth = new Date().getMonth();
+    const currYear = new Date().getFullYear();
+
+    // ── Datasets base ──
+    const activas = cp.filter(p => p.deliveryStatus !== "cerrado");
+    const validadas = cp.filter(p => p.status === "validado");
+    const montoPorPagar = validadas.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const pagadoMes = cp
+      .filter(p => (p.status === "pagado" || p.status === "finalizado") && p.paidAt)
+      .filter(p => {
+        const d = new Date(p.paidAt);
+        return d.getMonth() === currMonth && d.getFullYear() === currYear;
+      })
+      .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+    // Helpers de estado logistico
+    const despachoOf = (p) => despachos.find(d => d.sourcePurchaseId === p.id);
+    const isPaid = (p) => p.status === "pagado" || p.status === "finalizado";
+
+    // Pendiente entrega: pagadas, no cerradas, sin ficha adjunta
+    const pendienteEntrega = cp.filter(p => {
+      if (!isPaid(p)) return false;
+      if (p.deliveryStatus === "cerrado") return false;
+      if (p.deliveryStatus === "ficha_adjunta") return false;
+      return true;
+    });
+
+    // Pendiente ficha: entregado (deliveryStatus recibido/entregado o despacho entregado) sin fichaFile
+    const pendienteFicha = cp.filter(p => {
+      if (p.delivery?.fichaFile) return false;
+      if (p.deliveryStatus === "cerrado") return false;
+      const desp = despachoOf(p);
+      const entregado = desp?.estado === "entregado" || p.deliveryStatus === "recibido";
+      return isPaid(p) && entregado;
+    });
+
+    // ── KPI cards ──
+    const kpis = [
+      { icon: "📋", label: "Solicitudes activas", value: activas.length,          color: "#2563EB", tint: "#DBEAFE", fmt: (v) => v },
+      { icon: "💰", label: "Monto por pagar",     value: montoPorPagar,            color: "#D97706", tint: "#FEF3C7", fmt: (v) => fmtL(v) },
+      { icon: "✅", label: "Pagado este mes",      value: pagadoMes,                color: "#059669", tint: "#D1FAE5", fmt: (v) => fmtL(v) },
+      { icon: "🚛", label: "Pendiente entrega",    value: pendienteEntrega.length,  color: "#B45309", tint: "#FDE68A", fmt: (v) => v },
+      { icon: "📋", label: "Pendiente ficha",      value: pendienteFicha.length,    color: "#DC2626", tint: "#FEE2E2", fmt: (v) => v },
+    ];
+
+    // ── Distribucion por estado (donut) ──
+    // Categorias: Borrador / Validado / Pagado / Finalizado / Cerrado
+    const bucket = { borrador: 0, validado: 0, pagado: 0, finalizado: 0, cerrado: 0 };
+    cp.forEach(p => {
+      if (p.deliveryStatus === "cerrado") { bucket.cerrado++; return; }
+      const st = p.status || "borrador";
+      if (bucket[st] != null) bucket[st]++;
+    });
+    const donutCats = [
+      { key: "borrador",   label: "Borrador",   count: bucket.borrador,   color: STATUSES.borrador.color },
+      { key: "validado",   label: "Validado",   count: bucket.validado,   color: STATUSES.validado.color },
+      { key: "pagado",     label: "Pagado",     count: bucket.pagado,     color: STATUSES.pagado.color },
+      { key: "finalizado", label: "Finalizado", count: bucket.finalizado, color: STATUSES.finalizado.color },
+      { key: "cerrado",    label: "Cerrado",    count: bucket.cerrado,    color: "#475569" },
+    ];
+    const donutTotal = donutCats.reduce((s, c) => s + c.count, 0);
+
+    // Construir arcos del donut (SVG puro)
+    const donutR = 60;
+    const donutInner = 42;
+    const donutCircum = 2 * Math.PI * donutR;
+    let accAngle = 0;
+    const donutArcs = donutCats.map(c => {
+      const frac = donutTotal > 0 ? c.count / donutTotal : 0;
+      const dash = frac * donutCircum;
+      const seg = { ...c, dash, gap: donutCircum - dash, rotation: accAngle };
+      accAngle += frac * 360;
+      return seg;
+    });
+
+    // ── Top 5 proyectos por monto (excluye cerradas) ──
+    const proyMontos = {};
+    cp.forEach(p => {
+      if (p.deliveryStatus === "cerrado") return;
+      const key = p.projectCode || "_sin_proyecto";
+      proyMontos[key] = (proyMontos[key] || 0) + (Number(p.amount) || 0);
+    });
+    const topProyectos = Object.entries(proyMontos)
+      .map(([key, monto]) => {
+        const proj = allProjects.find(pr => pr.short === key);
+        return {
+          key,
+          name: proj?.name || key,
+          short: key,
+          monto,
+          color: proj?.color || ORANGE,
+        };
+      })
+      .sort((a, b) => b.monto - a.monto)
+      .slice(0, 5);
+    const maxProyMonto = Math.max(1, ...topProyectos.map(p => p.monto));
+
+    // ── Alertas de accion ──
+    const daysSince = (iso) => {
+      if (!iso) return 0;
+      return Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86400000));
+    };
+    // a) Pendientes de pago Lic. Carolina — validados no pagados
+    const alertaPago = validadas
+      .map(p => ({ p, dias: daysSince(p.validatedAt || p.createdAt) }))
+      .sort((a, b) => b.dias - a.dias);
+    // b) Sin ficha de recibido — despacho entregado y sin fichaFile, sin cerrar
+    const alertaFicha = cp
+      .filter(p => {
+        if (p.delivery?.fichaFile) return false;
+        if (p.deliveryStatus === "cerrado") return false;
+        const desp = despachoOf(p);
+        return desp?.estado === "entregado" || p.deliveryStatus === "recibido";
+      })
+      .map(p => {
+        const desp = despachoOf(p);
+        return { p, dias: daysSince(desp?.deliveredAt || desp?.updatedAt || p.paidAt) };
+      })
+      .sort((a, b) => b.dias - a.dias);
+    // c) Programados en logistica — con despacho pero no entregado
+    const alertaLogistica = cp
+      .filter(p => {
+        const desp = despachoOf(p);
+        if (!desp) return false;
+        return desp.estado !== "entregado" && desp.estado !== "cerrado";
+      })
+      .map(p => {
+        const desp = despachoOf(p);
+        return { p, dias: daysSince(desp?.createdAt || p.paidAt) };
+      })
+      .sort((a, b) => b.dias - a.dias);
+
+    // Estilos comunes
+    const cardStyle = {
+      background: "#fff",
+      border: `1px solid ${BORDER}`,
+      borderRadius: 12,
+      padding: 16,
+      boxShadow: "0 1px 3px rgba(15,23,42,0.05)",
+    };
+
+    // Sub-render: item de una alerta
+    const AlertItem = ({ item, days_color }) => {
+      const proj = allProjects.find(pr => pr.short === item.p.projectCode);
+      return (
+        <div
+          onClick={() => setModal({ t: "detail", d: item.p })}
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1.4fr) minmax(0,1.6fr) auto auto",
+            gap: 10,
+            alignItems: "center",
+            padding: "8px 10px",
+            borderRadius: 8,
+            background: "#F8FAFC",
+            border: "1px solid #E2E8F0",
+            cursor: "pointer",
+            fontSize: 12,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.p.provider || "—"}</div>
+            <div style={{ fontSize: 10, color: "#64748b", fontFamily: "ui-monospace, Menlo, monospace" }}>{proj?.short || item.p.projectCode || "—"}</div>
+          </div>
+          <div style={{ fontSize: 11, color: "#475569", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {item.p.description || item.p.items?.[0]?.description || "Compra"}
+          </div>
+          <div style={{ fontWeight: 800, color: "#059669", fontSize: 12, whiteSpace: "nowrap" }}>{fmtL(item.p.amount)}</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: days_color, background: days_color + "18", padding: "3px 8px", borderRadius: 10, whiteSpace: "nowrap" }}>
+            {item.dias}d
+          </div>
+        </div>
+      );
+    };
+
+    const AlertBlock = ({ icon, title, color, items, emptyMsg }) => (
+      <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ fontSize: 22 }}>{icon}</div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, lineHeight: 1.2 }}>{title}</div>
+              <div style={{ fontSize: 11, color: STONE, marginTop: 2 }}>{items.length} pendientes</div>
+            </div>
+          </div>
+          <div style={{
+            background: color, color: "#fff", fontWeight: 800, fontSize: 14,
+            width: 32, height: 32, borderRadius: 8,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>{items.length}</div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+          {items.length === 0 && (
+            <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "12px 4px" }}>{emptyMsg}</div>
+          )}
+          {items.slice(0, 5).map((it, i) => (
+            <AlertItem key={it.p.id || i} item={it} days_color={color} />
+          ))}
+        </div>
+        {items.length > 0 && (
+          <button
+            onClick={() => setSec("resumen")}
+            style={{
+              marginTop: 4, background: "transparent", border: `1px solid ${color}`, color: color,
+              padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer",
+              fontFamily: "inherit", alignSelf: "flex-start",
+            }}
+          >Ver todos en Resumen →</button>
+        )}
+      </div>
+    );
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        {/* HEADER intro */}
+        <div style={{
+          background: `linear-gradient(135deg, #FFF7ED 0%, #FEF3E6 100%)`,
+          border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 18px",
+          display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8,
+        }}>
+          <div>
+            <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
+              📊 Dashboard Gerencial
+            </div>
+            <div style={{ fontSize: 12, color: STONE, marginTop: 4 }}>Vista ejecutiva — lo que necesita tu atencion</div>
+          </div>
+          <div style={{ fontSize: 11, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>
+            {new Date().toLocaleDateString("es-HN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+          </div>
+        </div>
+
+        {/* KPI CARDS */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : `repeat(${kpis.length}, minmax(0,1fr))`,
+          gap: 12,
+        }}>
+          {kpis.map(k => (
+            <div key={k.label} style={{ ...cardStyle, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: 10, background: k.tint,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 22, flexShrink: 0,
+              }}>{k.icon}</div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: isMobile ? 15 : 18, fontWeight: 800, color: k.color, lineHeight: 1.1, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {k.fmt(k.value)}
+                </div>
+                <div style={{ fontSize: 10, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 3 }}>
+                  {k.label}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* CHARTS ROW */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr" : "1fr 1.3fr",
+          gap: 16,
+        }}>
+          {/* DONUT — distribucion por estado */}
+          <div style={cardStyle}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12, letterSpacing: -0.2 }}>
+              Distribucion por estado
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
+              <svg viewBox="0 0 160 160" style={{ width: 160, height: 160, flexShrink: 0 }}>
+                <g transform="translate(80,80)">
+                  {/* Fondo del donut */}
+                  <circle r={donutR} fill="none" stroke="#F1F5F9" strokeWidth={donutR - donutInner} />
+                  {donutTotal > 0 && donutArcs.map(seg => (
+                    <circle
+                      key={seg.key}
+                      r={donutR}
+                      fill="none"
+                      stroke={seg.color}
+                      strokeWidth={donutR - donutInner}
+                      strokeDasharray={`${seg.dash} ${seg.gap}`}
+                      transform={`rotate(${-90 + seg.rotation})`}
+                    />
+                  ))}
+                  <text textAnchor="middle" y="-4" style={{ fontSize: 22, fontWeight: 800, fill: CHARCOAL }}>{donutTotal}</text>
+                  <text textAnchor="middle" y="14" style={{ fontSize: 9, fill: STONE, letterSpacing: 0.5 }}>SOLICITUDES</text>
+                </g>
+              </svg>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 140, flex: 1 }}>
+                {donutCats.map(c => {
+                  const pct = donutTotal > 0 ? Math.round((c.count / donutTotal) * 100) : 0;
+                  return (
+                    <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                      <div style={{ width: 12, height: 12, borderRadius: 3, background: c.color, flexShrink: 0 }} />
+                      <div style={{ flex: 1, color: CHARCOAL, fontWeight: 600 }}>{c.label}</div>
+                      <div style={{ fontWeight: 800, color: CHARCOAL }}>{c.count}</div>
+                      <div style={{ color: STONE, fontSize: 11, width: 34, textAlign: "right" }}>{pct}%</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* BARS — top 5 proyectos por monto */}
+          <div style={cardStyle}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12, letterSpacing: -0.2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>Top 5 proyectos por monto</span>
+              <span style={{ fontSize: 10, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>excluye cerradas</span>
+            </div>
+            {topProyectos.length === 0 ? (
+              <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "20px 4px" }}>
+                Sin compras activas.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {topProyectos.map(pr => {
+                  const pct = (pr.monto / maxProyMonto) * 100;
+                  return (
+                    <div key={pr.key}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.3 }}>
+                          {pr.short}
+                        </div>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: pr.color }}>{fmtL(pr.monto)}</div>
+                      </div>
+                      <div style={{ height: 10, borderRadius: 5, background: "#F1F5F9", overflow: "hidden" }}>
+                        <div style={{
+                          width: `${pct}%`, height: "100%",
+                          background: pr.color,
+                          transition: "width .3s",
+                        }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ALERTAS DE ACCION */}
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 10, letterSpacing: -0.2, textTransform: "uppercase" }}>
+            🚨 Alertas de accion
+          </div>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0,1fr))",
+            gap: 14,
+          }}>
+            <AlertBlock
+              icon="💰"
+              title="Pendientes de pago Lic. Carolina"
+              color="#D97706"
+              items={alertaPago}
+              emptyMsg="Sin solicitudes pendientes de pago."
+            />
+            <AlertBlock
+              icon="📋"
+              title="Sin ficha de recibido"
+              color="#DC2626"
+              items={alertaFicha}
+              emptyMsg="Todas las entregas tienen ficha."
+            />
+            <AlertBlock
+              icon="🚛"
+              title="Programados en logistica"
+              color="#2563EB"
+              items={alertaLogistica}
+              emptyMsg="Sin despachos en curso."
+            />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
   // ─────────────────────────────────────────────────────────────────────────
   // COMMAND CENTER — Resumen end-to-end por proyecto
   // ─────────────────────────────────────────────────────────────────────────
@@ -3092,18 +3484,24 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
   // ── LAYOUT ──
   const allNav = [
+    { id: "dashboard", icon: "📊", label: "Dashboard" },
     { id: "resumen", icon: "📊", label: "Resumen" },
     { id: "list", icon: "📋", label: "Solicitudes" },
     { id: "projects", icon: "🏗️", label: "Proyectos" },
     { id: "ana", icon: "📦", label: "Por coordinar" },
     { id: "providers", icon: "🏢", label: "Proveedores" },
   ];
-  // Resumen (command center) solo para admin/gerencia/costos — quien
-  // necesita dar seguimiento end-to-end. Ana ve su Kanban.
+  // Dashboard y Resumen (command center) solo para admin/gerencia/costos —
+  // quien necesita seguimiento end-to-end. Ana ve su Kanban.
   const canSeeResumen = isAdmin || isGerencia || isCostos;
+  const canSeeDashboard = canSeeResumen;
   const visibleNav = isAsistenteCompras
     ? allNav.filter(n => n.id === "ana" || n.id === "providers")
-    : allNav.filter(n => n.id !== "resumen" || canSeeResumen);
+    : allNav.filter(n => {
+        if (n.id === "resumen") return canSeeResumen;
+        if (n.id === "dashboard") return canSeeDashboard;
+        return true;
+      });
   const roleLabel = isAdmin ? "Operaciones"
     : isTesoreria ? "Tesoreria"
     : isGerencia ? "Gerencia (solo lectura)"
@@ -3280,7 +3678,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       <div style={{ padding: isMobile ? "12px 16px" : "20px 32px 8px 32px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
-            {sec === "resumen" ? "Command Center — Seguimiento por proyecto"
+            {sec === "dashboard" ? "Dashboard gerencial"
+              : sec === "resumen" ? "Command Center — Seguimiento por proyecto"
               : sec === "projects" ? "Proyectos"
               : sec === "providers" ? "Proveedores"
               : sec === "ana" ? "Por coordinar con proveedores"
@@ -3291,7 +3690,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <Badge color={cc.color}>{cp.length} solicitudes</Badge>
       </div>
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{
-        sec === "resumen" ? renderResumen()
+        sec === "dashboard" ? renderDashboard()
+          : sec === "resumen" ? renderResumen()
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
           : sec === "ana" ? renderAnaKanban()
