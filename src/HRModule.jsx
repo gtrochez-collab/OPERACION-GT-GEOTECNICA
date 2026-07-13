@@ -152,6 +152,39 @@ const IHSS_AMOUNT = 595.16;
 // store is now imported from ./supabase.js (shared Supabase DB)
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+// ── Avatar helpers ──
+// Iniciales y color de un empleado a partir de su nombre (fallback cuando no
+// tiene foto subida). Replica la logica de users.js sin importarla porque
+// aca los "labels" son nombres completos y no usernames.
+const empInitials = (fullName) => {
+  if (!fullName) return "?";
+  const clean = String(fullName).replace(/^(Lic\.|Ing\.|Sr\.|Sra\.|Dr\.)\s+/i, "").trim();
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length > 2 ? 2 : 1][0]).toUpperCase();
+};
+const empColor = (seed) => {
+  const palette = ["#0F4C75", "#8B3A3A", "#1B4332", "#7C3AED", "#E8762D", "#0891B2", "#BE185D", "#D97706", "#2C5F5D", "#B45309", "#4C1D95"];
+  if (!seed) return "#64748b";
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  return palette[Math.abs(hash) % palette.length];
+};
+
+// Avatar reutilizable: si hay dataUrl la muestra, si no cae al circulo de
+// iniciales con color derivado del nombre. Tamano configurable (px).
+const EmpAvatar = ({ name, dataUrl, size = 90, borderRadius = "50%", style: sx }) => {
+  const st = { width: size, height: size, borderRadius, flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", ...(sx || {}) };
+  if (dataUrl) {
+    return <div style={{ ...st, background: "#F1F5F9" }}>
+      <img src={dataUrl} alt={name || ""} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+    </div>;
+  }
+  const bg = empColor(name);
+  return <div style={{ ...st, background: bg, color: "#fff", fontWeight: 700, fontSize: size * 0.36, letterSpacing: 0.5 }}>{empInitials(name)}</div>;
+};
 // Formatea una fecha "YYYY-MM-DD" (o ISO con timestamp) a "15 may 2026".
 // Parseamos los componentes manualmente para evitar el desfase de timezone
 // que hace que new Date("2026-05-01") devuelva "30 abr" en zonas UTC negativas.
@@ -274,6 +307,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // no pierda foco cuando HRModule re-renderiza (era bug en el subcomponente
   // anterior que se remontaba en cada render).
   const [contractSearch, setContractSearch] = useState("");
+  // Filtros del tab Empleados — al nivel del padre para no perder foco en el
+  // input de busqueda cuando el modulo re-renderiza.
+  const [empSearch, setEmpSearch] = useState("");
+  const [empDeptFilter, setEmpDeptFilter] = useState("");
+  // Cache de fotos de empleados: { fileId: dataUrl }. Cargamos las fotos
+  // en cloud (cp-file-<id>) despues del render inicial, para no bloquear el
+  // primer paint del tab.
+  const [photoCache, setPhotoCache] = useState({});
   const [modal, setModal] = useState(null);
   const isMobile = useIsMobile();
 
@@ -294,6 +335,38 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       setLoaded(true);
     })();
   }, []);
+
+  // Bulk load de fotos de empleados desde cloud una vez cargada la lista.
+  // Corre solo para los fileIds que aun no estan en el cache — asi al subir
+  // una foto nueva (que ya guardamos en el cache) no reintenta cargarla.
+  useEffect(() => {
+    if (!emps.length) return;
+    const missing = [];
+    const seen = new Set();
+    for (const e of emps) {
+      const fid = e.photo?.fileId;
+      if (fid && !photoCache[fid] && !seen.has(fid)) {
+        seen.add(fid);
+        missing.push(fid);
+      }
+    }
+    if (!missing.length) return;
+    (async () => {
+      const results = await Promise.all(missing.map(async (fid) => {
+        try {
+          const full = await store.get(`cp-file-${fid}`);
+          return [fid, full?.dataUrl || null];
+        } catch { return [fid, null]; }
+      }));
+      setPhotoCache(prev => {
+        const next = { ...prev };
+        let changed = false;
+        for (const [fid, url] of results) if (url) { next[fid] = url; changed = true; }
+        return changed ? next : prev;
+      });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emps]);
 
   const sE = d => { setEmps(d); store.set("hr-emps5", d); };
   const sV = d => { setVacs(d); store.set("hr-vacs", d); };
@@ -342,8 +415,59 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // ── FORMS ──
   const EmpForm = ({ emp, onSave }) => {
     const [f, setF] = useState(emp || { company: co, fullName: "", dni: "", position: "", department: "", contractType: "permanent", startDate: "", endDate: "", salary: "", bonificacion: 0, status: "active", phone: "", email: "" });
+    const [uploading, setUploading] = useState(false);
     const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+    // Upload de foto: lee file como dataUrl, sube a cp-file-<uuid> y guarda
+    // la referencia liviana en el objeto empleado (fileId, name, type, size).
+    // El dataUrl se agrega tambien al cache local para preview inmediato.
+    const handlePhotoFile = async (file) => {
+      if (!file) return;
+      if (!file.type?.startsWith("image/")) { alert("Selecciona un archivo de imagen (JPG/PNG)."); return; }
+      if (file.size > 5 * 1024 * 1024) {
+        if (!confirm(`La imagen pesa ${(file.size / 1024 / 1024).toFixed(1)} MB. Recomendamos < 2 MB. Continuar?`)) return;
+      }
+      setUploading(true);
+      try {
+        const dataUrl = await new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(r.result);
+          r.onerror = () => reject(new Error("No se pudo leer el archivo"));
+          r.readAsDataURL(file);
+        });
+        const fileId = uid();
+        await store.set(`cp-file-${fileId}`, { name: file.name, type: file.type, size: file.size, dataUrl });
+        setPhotoCache(prev => ({ ...prev, [fileId]: dataUrl }));
+        setF(p => ({ ...p, photo: { fileId, name: file.name, type: file.type, size: file.size } }));
+      } catch (err) {
+        alert("Error subiendo la foto: " + (err?.message || err));
+      } finally {
+        setUploading(false);
+      }
+    };
+    const removePhoto = () => setF(p => ({ ...p, photo: null }));
+
+    const currentPhotoUrl = f.photo?.fileId ? photoCache[f.photo.fileId] : null;
+
     return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      {/* Bloque de foto arriba, span completo */}
+      <div style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 18, padding: "14px 16px", background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10 }}>
+        <EmpAvatar name={f.fullName} dataUrl={currentPhotoUrl} size={82} borderRadius={12} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Foto del empleado</div>
+          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
+            {f.photo ? (f.photo.name || "Imagen cargada") : "Sin foto — se usan las iniciales."}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", background: "#2C5F5D", color: "#fff", border: "none", borderRadius: 8, cursor: uploading ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600, opacity: uploading ? 0.6 : 1 }}>
+              {uploading ? "Subiendo..." : (f.photo ? "Cambiar foto" : "Subir foto")}
+              <input type="file" accept="image/*" style={{ display: "none" }} disabled={uploading}
+                onChange={(ev) => { const file = ev.target.files?.[0]; ev.target.value = ""; if (file) handlePhotoFile(file); }} />
+            </label>
+            {f.photo && <Btn small variant="ghost" onClick={removePhoto}>Eliminar</Btn>}
+          </div>
+        </div>
+      </div>
       <Input label="Nombre completo" value={f.fullName} onChange={e => u("fullName", e.target.value)} />
       <Input label="DNI" value={f.dni} onChange={e => u("dni", e.target.value)} />
       <Input label="Cargo" value={f.position} onChange={e => u("position", e.target.value)} />
@@ -354,6 +478,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       {f.contractType === "temporary" && <Input label="Fecha fin" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />}
       <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
       <Input label="Bonificacion (L)" type="number" value={f.bonificacion || 0} onChange={e => u("bonificacion", e.target.value)} />
+      <Input label="Telefono" value={f.phone || ""} onChange={e => u("phone", e.target.value)} placeholder="9999-9999" />
+      <Input label="Email" type="email" value={f.email || ""} onChange={e => u("email", e.target.value)} placeholder="empleado@correo.com" />
       <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#92400E", cursor: "pointer" }}>
         <input type="checkbox" checked={!!f.payByHour} onChange={e => u("payByHour", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
         <span>
@@ -1495,44 +1621,124 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   };
 
   const renderEmps = () => {
-    // Agrupacion por tipo de contrato: Permanentes / Temporales / Honorarios.
-    // Render columnas compartidas para todas las secciones — la columna "Fin contrato"
-    // solo aparece en temporales (que es donde tiene sentido).
-    const permanentes = ce.filter(e => e.contractType === "permanent");
-    const temporales = ce.filter(e => e.contractType === "temporary");
-    const honorarios = ce.filter(e => e.contractType === "honorarios");
+    // Vista de cards estilo Odoo — foto grande arriba + info clave debajo.
+    // Filtros: search por nombre/DNI/cargo + dropdown por departamento.
+    const q = (empSearch || "").trim().toLowerCase();
+    const filtered = ce.filter((e) => {
+      if (empDeptFilter && e.department !== empDeptFilter) return false;
+      if (!q) return true;
+      const hay = [e.fullName, e.dni, e.position, e.department, e.email, e.phone]
+        .filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
 
-    const cols = (incluirFin) => {
-      const base = [
-        { key: "code", label: "Código", render: r => <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5 }}>{genEmpCode(r.fullName, r.dni)}</span> },
-        { key: "fullName", label: "Nombre" },
-        { key: "dni", label: "DNI" },
-        { key: "position", label: "Cargo" },
-        { key: "salary", label: "Sal.Bruto", render: r => fmtL(r.salary) },
-        { key: "bonificacion", label: "Bonif.", render: r => fmtL(r.bonificacion) },
-        { key: "startDate", label: "Inicio", render: r => fmt(r.startDate) },
-      ];
-      if (incluirFin) {
-        base.push({ key: "endDate", label: "Fin contrato", render: r => {
-          if (!r.endDate) return <span style={{ color: "#94A3B8", fontSize: 12 }}>—</span>;
-          const hoy = new Date(); hoy.setHours(0,0,0,0);
-          const fin = new Date(r.endDate); fin.setHours(0,0,0,0);
-          const diasRest = Math.ceil((fin - hoy) / 86400000);
-          const color = diasRest < 0 ? "#991B1B" : diasRest <= 7 ? "#DC2626" : diasRest <= 30 ? "#D97706" : "#059669";
-          return <span style={{ color, fontWeight: 600, fontSize: 12 }}>{fmt(r.endDate)}{r.status === "active" && <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.8 }}>({diasRest < 0 ? `vencido ${Math.abs(diasRest)}d` : `${diasRest}d`})</span>}</span>;
-        }});
+    const permanentes = filtered.filter(e => e.contractType === "permanent");
+    const temporales = filtered.filter(e => e.contractType === "temporary");
+    const honorarios = filtered.filter(e => e.contractType === "honorarios");
+
+    // Departamentos disponibles: canon + los que ya existen en la data.
+    const deptSet = new Set(DEPARTMENTS);
+    ce.forEach(e => { if (e.department) deptSet.add(e.department); });
+    const deptOptions = [...deptSet].sort();
+
+    const ctColor = (ct) => ct === "permanent" ? "#2563EB" : ct === "temporary" ? "#D97706" : "#7C3AED";
+    const ctLabel = (ct) => ct === "permanent" ? "Permanente" : ct === "temporary" ? "Temporal" : "Honorarios";
+
+    const Card = ({ r }) => {
+      const url = r.photo?.fileId ? photoCache[r.photo.fileId] : null;
+      const isActive = r.status === "active";
+      // Info de fin de contrato (solo para temporales/honorarios con endDate)
+      let endInfo = null;
+      if (r.endDate && r.contractType !== "permanent") {
+        const hoy = new Date(); hoy.setHours(0,0,0,0);
+        const fin = new Date(r.endDate); fin.setHours(0,0,0,0);
+        const diasRest = Math.ceil((fin - hoy) / 86400000);
+        const color = diasRest < 0 ? "#991B1B" : diasRest <= 7 ? "#DC2626" : diasRest <= 30 ? "#D97706" : "#059669";
+        endInfo = { color, text: `${fmt(r.endDate)}${isActive ? ` (${diasRest < 0 ? "vencido " + Math.abs(diasRest) + "d" : diasRest + "d"})` : ""}` };
       }
-      base.push({ key: "status", label: "Estado", render: r => <Badge color={r.status === "active" ? "#059669" : "#DC2626"}>{r.status === "active" ? "Activo" : "Inactivo"}</Badge> });
-      return base;
+      return (
+        <div
+          onClick={() => setModal({ t: "ee", d: r })}
+          style={{
+            background: "#fff",
+            border: "1px solid #E2E8F0",
+            borderRadius: 12,
+            padding: 16,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            cursor: "pointer",
+            transition: "all 0.15s ease",
+            boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+            position: "relative",
+            opacity: isActive ? 1 : 0.72,
+          }}
+          onMouseEnter={(ev) => { ev.currentTarget.style.boxShadow = "0 6px 18px rgba(232,118,45,0.15)"; ev.currentTarget.style.borderColor = "#E8762D"; ev.currentTarget.style.transform = "translateY(-2px)"; }}
+          onMouseLeave={(ev) => { ev.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,0.03)"; ev.currentTarget.style.borderColor = "#E2E8F0"; ev.currentTarget.style.transform = "translateY(0)"; }}
+          title="Click para editar"
+        >
+          {/* Botones flotantes (borrar) */}
+          <button
+            onClick={(ev) => { ev.stopPropagation(); if (confirm(`Eliminar a ${r.fullName}?`)) sE(emps.filter(e => e.id !== r.id)); }}
+            style={{ position: "absolute", top: 8, right: 8, width: 24, height: 24, borderRadius: 6, border: "none", background: "rgba(220,38,38,0.08)", color: "#DC2626", cursor: "pointer", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
+            title="Eliminar empleado"
+          >×</button>
+
+          {/* Foto + estado */}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+            <EmpAvatar name={r.fullName} dataUrl={url} size={92} borderRadius={12} />
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
+              <Badge color={isActive ? "#059669" : "#94A3B8"}>{isActive ? "Activo" : "Inactivo"}</Badge>
+              <Badge color={ctColor(r.contractType)}>{ctLabel(r.contractType)}</Badge>
+            </div>
+          </div>
+
+          {/* Nombre + cargo */}
+          <div style={{ textAlign: "center", marginTop: 2 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: "#1E293B", lineHeight: 1.25, wordBreak: "break-word" }}>{r.fullName || "—"}</div>
+            {r.position && <div style={{ fontSize: 12, color: "#64748b", marginTop: 3, lineHeight: 1.3 }}>{r.position}</div>}
+            <div style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 10, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5, marginTop: 4 }}>
+              {genEmpCode(r.fullName, r.dni)}
+            </div>
+          </div>
+
+          {/* Departamento */}
+          {r.department && (
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <Badge color="#0891B2">{r.department}</Badge>
+            </div>
+          )}
+
+          {/* Contacto */}
+          {(r.phone || r.email) && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11, color: "#475569", borderTop: "1px solid #F1F5F9", paddingTop: 8 }}>
+              {r.phone && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ opacity: 0.6 }}>📞</span><span>{r.phone}</span></div>}
+              {r.email && <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}><span style={{ opacity: 0.6 }}>✉️</span><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.email}</span></div>}
+            </div>
+          )}
+
+          {/* Fin de contrato (solo temporales) */}
+          {endInfo && (
+            <div style={{ fontSize: 10.5, color: endInfo.color, textAlign: "center", fontWeight: 600, background: endInfo.color + "10", padding: "3px 8px", borderRadius: 6 }}>
+              Fin contrato: {endInfo.text}
+            </div>
+          )}
+        </div>
+      );
     };
 
-    const actions = r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-      <Btn small variant="ghost" onClick={() => setModal({ t: "ee", d: r })}>Editar</Btn>
-      <Btn small variant="danger" onClick={() => { if (confirm(`Eliminar a ${r.fullName}?`)) sE(emps.filter(e => e.id !== r.id)); }}>×</Btn>
-    </div>;
+    const grid = (rows) => (
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
+        gap: 14,
+      }}>
+        {rows.map(r => <Card key={r.id} r={r} />)}
+      </div>
+    );
 
     const sectionHeader = (label, count, color, descripcion) => (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: color + "18", borderLeft: `4px solid ${color}`, borderRadius: "8px 8px 0 0", marginBottom: -1 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: color + "14", borderLeft: `4px solid ${color}`, borderRadius: 8, marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ color, fontWeight: 800, fontSize: 14, letterSpacing: 0.3 }}>{label}</span>
           <Badge color={color}>{count}</Badge>
@@ -1541,45 +1747,72 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       </div>
     );
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ color: "#64748b", fontSize: 13 }}>
-          <b style={{ color: "#1E293B" }}>{ce.length}</b> empleados &nbsp;·&nbsp;
-          <span style={{ color: "#2563EB" }}>{permanentes.length} permanente{permanentes.length !== 1 ? "s" : ""}</span> &nbsp;·&nbsp;
-          <span style={{ color: "#D97706" }}>{temporales.length} temporal{temporales.length !== 1 ? "es" : ""}</span>
-          {honorarios.length > 0 && <> &nbsp;·&nbsp; <span style={{ color: "#7C3AED" }}>{honorarios.length} honorarios</span></>}
+    return <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      {/* Barra de filtros + accion */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+          <input
+            type="text"
+            placeholder="Buscar por nombre, DNI, cargo..."
+            value={empSearch}
+            onChange={e => setEmpSearch(e.target.value)}
+            style={{ flex: 1, minWidth: 220, padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", outline: "none" }}
+          />
+          <select
+            value={empDeptFilter}
+            onChange={e => setEmpDeptFilter(e.target.value)}
+            style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff" }}
+          >
+            <option value="">Todos los departamentos</option>
+            {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          {(empSearch || empDeptFilter) && (
+            <Btn small variant="ghost" onClick={() => { setEmpSearch(""); setEmpDeptFilter(""); }}>Limpiar</Btn>
+          )}
         </div>
-        <Btn onClick={() => setModal({ t: "en" })}>+ Nuevo</Btn>
+        <Btn onClick={() => setModal({ t: "en" })}>+ Nuevo empleado</Btn>
+      </div>
+
+      {/* Contador */}
+      <div style={{ color: "#64748b", fontSize: 13 }}>
+        <b style={{ color: "#1E293B" }}>{filtered.length}</b> empleado{filtered.length !== 1 ? "s" : ""}
+        {(empSearch || empDeptFilter) && ce.length !== filtered.length && <span style={{ color: "#94A3B8" }}> · de {ce.length} totales</span>}
+        &nbsp;·&nbsp;
+        <span style={{ color: "#2563EB" }}>{permanentes.length} permanente{permanentes.length !== 1 ? "s" : ""}</span> &nbsp;·&nbsp;
+        <span style={{ color: "#D97706" }}>{temporales.length} temporal{temporales.length !== 1 ? "es" : ""}</span>
+        {honorarios.length > 0 && <> &nbsp;·&nbsp; <span style={{ color: "#7C3AED" }}>{honorarios.length} honorarios</span></>}
       </div>
 
       {/* Permanentes */}
-      <div>
+      {permanentes.length > 0 && <div>
         {sectionHeader(
-          "👔 PERMANENTES",
+          "PERMANENTES",
           permanentes.length,
           "#2563EB",
           co === "geotecnica"
             ? "Contratos indefinidos · IHSS + RAP aplicables en 2Q (grupo C)"
             : "Contratos indefinidos · IHSS aplicable en 2Q (grupo A · sin RAP)"
         )}
-        {permanentes.length > 0
-          ? <Table columns={cols(false)} data={permanentes} actions={actions} />
-          : <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: "0 0 8px 8px", padding: 24, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>Sin empleados permanentes en {cc.name}</div>}
-      </div>
+        {grid(permanentes)}
+      </div>}
 
       {/* Temporales */}
-      <div>
-        {sectionHeader("⏱️ TEMPORALES", temporales.length, "#D97706", "Contratos por obra determinada · con fecha de fin · IHSS aplicable en 2Q (sin RAP)")}
-        {temporales.length > 0
-          ? <Table columns={cols(true)} data={temporales} actions={actions} />
-          : <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: "0 0 8px 8px", padding: 24, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>Sin empleados temporales en {cc.name}</div>}
-      </div>
-
-      {/* Honorarios (solo si hay) */}
-      {honorarios.length > 0 && <div>
-        {sectionHeader("📑 HONORARIOS", honorarios.length, "#7C3AED", "ISR fijo 12.5% · sin IHSS ni RAP")}
-        <Table columns={cols(true)} data={honorarios} actions={actions} />
+      {temporales.length > 0 && <div>
+        {sectionHeader("TEMPORALES", temporales.length, "#D97706", "Contratos por obra determinada · con fecha de fin · IHSS aplicable en 2Q (sin RAP)")}
+        {grid(temporales)}
       </div>}
+
+      {/* Honorarios */}
+      {honorarios.length > 0 && <div>
+        {sectionHeader("HONORARIOS", honorarios.length, "#7C3AED", "ISR fijo 12.5% · sin IHSS ni RAP")}
+        {grid(honorarios)}
+      </div>}
+
+      {filtered.length === 0 && (
+        <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 40, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>
+          {ce.length === 0 ? `Sin empleados en ${cc.name}` : "Ningun empleado coincide con los filtros"}
+        </div>
+      )}
     </div>;
   };
 
