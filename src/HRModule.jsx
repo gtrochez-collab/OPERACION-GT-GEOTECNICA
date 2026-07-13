@@ -421,26 +421,71 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     // Upload de foto: lee file como dataUrl, sube a cp-file-<uuid> y guarda
     // la referencia liviana en el objeto empleado (fileId, name, type, size).
     // El dataUrl se agrega tambien al cache local para preview inmediato.
+    // Comprime la imagen a max 600px del lado mayor + JPEG quality 0.85.
+    // Reduce ~2-5MB de una foto de celu a ~50-150KB — evita que Supabase
+    // JSONB timeout con archivos grandes. Devuelve un dataUrl JPEG.
+    const compressImage = (file) => new Promise((resolve, reject) => {
+      const img = new Image();
+      const fr = new FileReader();
+      fr.onerror = () => reject(new Error("No se pudo leer el archivo"));
+      fr.onload = () => {
+        img.onerror = () => reject(new Error("No se pudo decodificar la imagen"));
+        img.onload = () => {
+          try {
+            const MAX = 600;
+            const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+            const w = Math.round(img.width * scale);
+            const h = Math.round(img.height * scale);
+            const canvas = document.createElement("canvas");
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            ctx.fillStyle = "#fff"; // fondo blanco en caso de PNG transparente
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+            resolve(dataUrl);
+          } catch (e) { reject(e); }
+        };
+        img.src = fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+
+    // Timeout defensivo para el upload — si Supabase se cuelga por N ms,
+    // se aborta con error en vez de dejar al usuario mirando "Subiendo..."
+    // para siempre.
+    const withTimeout = (promise, ms, label = "operation") => Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout ${ms}ms — ${label} no respondio`)), ms)),
+    ]);
+
     const handlePhotoFile = async (file) => {
       if (!file) return;
       if (!file.type?.startsWith("image/")) { alert("Selecciona un archivo de imagen (JPG/PNG)."); return; }
-      if (file.size > 5 * 1024 * 1024) {
-        if (!confirm(`La imagen pesa ${(file.size / 1024 / 1024).toFixed(1)} MB. Recomendamos < 2 MB. Continuar?`)) return;
-      }
       setUploading(true);
       try {
-        const dataUrl = await new Promise((resolve, reject) => {
-          const r = new FileReader();
-          r.onload = () => resolve(r.result);
-          r.onerror = () => reject(new Error("No se pudo leer el archivo"));
-          r.readAsDataURL(file);
-        });
+        // 1) Comprimir localmente (rapido, sin red)
+        console.log(`[EmpForm] Comprimiendo foto original ${(file.size/1024).toFixed(0)} KB...`);
+        const dataUrl = await compressImage(file);
+        const approxKB = Math.round((dataUrl.length * 0.75) / 1024); // base64 aprox
+        console.log(`[EmpForm] Comprimida a ~${approxKB} KB. Subiendo a cloud...`);
+
+        // 2) Subir con timeout defensivo (20s, mas que suficiente para 100-200KB)
         const fileId = uid();
-        await store.set(`cp-file-${fileId}`, { name: file.name, type: file.type, size: file.size, dataUrl });
+        const ok = await withTimeout(
+          store.set(`cp-file-${fileId}`, { name: file.name, type: "image/jpeg", size: dataUrl.length, dataUrl }),
+          20000,
+          "upload foto"
+        );
+        if (!ok) throw new Error("Supabase rechazo el upload despues de 3 reintentos");
+
+        // 3) Actualizar UI inmediatamente con la nueva foto
         setPhotoCache(prev => ({ ...prev, [fileId]: dataUrl }));
-        setF(p => ({ ...p, photo: { fileId, name: file.name, type: file.type, size: file.size } }));
+        setF(p => ({ ...p, photo: { fileId, name: file.name, type: "image/jpeg", size: dataUrl.length } }));
+        console.log(`[EmpForm] Foto subida OK (${fileId})`);
       } catch (err) {
-        alert("Error subiendo la foto: " + (err?.message || err));
+        console.error("[EmpForm] Error subiendo foto:", err);
+        alert(`Error subiendo la foto: ${err?.message || err}\n\nProbá:\n1. Reintentar\n2. Usar una imagen mas chica\n3. Verificar conexion a internet`);
       } finally {
         setUploading(false);
       }
