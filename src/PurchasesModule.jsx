@@ -556,19 +556,45 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   y = fillY + fillH + 5;
 
   // ════════════════════════════════════════════════════════
-  // 4. FIRMAS (2 bloques)  (y: ~154 → 188)
+  // 4. BANNER ALERTA MOTORISTA + FIRMAS (Ingeniero + Motorista)
   // ════════════════════════════════════════════════════════
-  const sigW = (CW - 8) / 2;
-  [
-    ["", "Nombre y Firma — Quien Recibe el Material"],
-    ["Visto Bueno", "Coordinacion de Operaciones"],
-  ].forEach(([top, bot], i) => {
-    const sx = M + i * (sigW + 8);
-    dc(BK); lw(0.4); ln(sx, y + 20, sx + sigW, y + 20);
-    if (top) { f(9, "bold"); tc(DK); doc.text(top, sx + sigW / 2, y + 25, { align: "center", maxWidth: sigW }); }
-    f(8, "normal"); tc(GR); doc.text(bot, sx + sigW / 2, y + (top ? 30 : 25), { align: "center", maxWidth: sigW });
-  });
-  y += 35;
+  // Banner amarillo de alerta
+  const bannerH = 10;
+  fc([254, 243, 199]); dc([217, 119, 6]); lw(0.4);
+  rc(M, y, CW, bannerH, "FD");
+  f(7.5, "bold"); tc([146, 64, 14]);
+  doc.text("⚠ MOTORISTA: cotejar que las cantidades entregadas coincidan EXACTAMENTE con la descripcion arriba antes de solicitar firma.", M + 4, y + 6.5);
+  y += bannerH + 4;
+
+  const sigW = (CW - 10) / 2;
+
+  // Bloque izquierdo — Ingeniero / Residente RECIBE (azul)
+  const sxL = M;
+  fc([239, 246, 255]); dc([37, 99, 235]); lw(0.35);
+  rc(sxL, y, sigW, 42, "FD");
+  f(8, "bold"); tc([37, 99, 235]); doc.text("Ingeniero / Residente  RECIBE", sxL + sigW / 2, y + 5.5, { align: "center" });
+  let syL = y + 11;
+  lbl("Nombre completo", sxL + 4, syL); blk(sxL + 4, syL + 4, sigW - 8); syL += 8;
+  lbl("Cargo", sxL + 4, syL); blk(sxL + 4, syL + 4, (sigW - 12) / 2);
+  lbl("DNI", sxL + 4 + (sigW - 12) / 2 + 4, syL); blk(sxL + 4 + (sigW - 12) / 2 + 4, syL + 4, (sigW - 12) / 2); syL += 8;
+  lbl("Firma", sxL + 4, syL); blk(sxL + 4, syL + 4, sigW - 8); syL += 7;
+  f(6, "italic"); tc([100, 116, 139]);
+  doc.text("Al firmar certifico que RECIBI las cantidades exactas descritas arriba, en buen estado.", sxL + 4, syL + 3, { maxWidth: sigW - 8 });
+
+  // Bloque derecho — Motorista ENTREGA (naranja)
+  const sxR = M + sigW + 10;
+  fc([255, 247, 237]); dc([234, 88, 12]); lw(0.35);
+  rc(sxR, y, sigW, 42, "FD");
+  f(8, "bold"); tc([234, 88, 12]); doc.text("Motorista  ENTREGA", sxR + sigW / 2, y + 5.5, { align: "center" });
+  let syR = y + 11;
+  lbl("Nombre completo", sxR + 4, syR); blk(sxR + 4, syR + 4, sigW - 8); syR += 8;
+  lbl("Placa vehiculo", sxR + 4, syR); blk(sxR + 4, syR + 4, (sigW - 12) / 2);
+  lbl("Fecha/Hora", sxR + 4 + (sigW - 12) / 2 + 4, syR); blk(sxR + 4 + (sigW - 12) / 2 + 4, syR + 4, (sigW - 12) / 2); syR += 8;
+  lbl("Firma", sxR + 4, syR); blk(sxR + 4, syR + 4, sigW - 8); syR += 7;
+  f(6, "italic"); tc([100, 116, 139]);
+  doc.text("Confirmo que ENTREGUE las cantidades exactas al Ingeniero/Residente indicado.", sxR + 4, syR + 3, { maxWidth: sigW - 8 });
+
+  y += 48;
 
   // Footer
   dc(BD); lw(0.25); ln(M, y, PW - M, y); y += 4;
@@ -2892,9 +2918,135 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     };
   };
 
-  // Render de la barra de fases (8 hitos) para una compra. Sacamos "Cerrada
-  // contablemente" porque eso lo maneja Ana sola con contabilidad — el
-  // coordinador no necesita visibilidad de ese ultimo paso.
+  // ── Pestaña COSTOS — vista ejecutiva de costos por proyecto ──
+  const renderCostos = () => {
+    const cardStyle = {
+      background: "#fff",
+      border: `1px solid ${BORDER}`,
+      borderRadius: 12,
+      padding: 16,
+      boxShadow: "0 1px 3px rgba(15,23,42,0.05)",
+    };
+    const costByProj = {};
+    cp.forEach(p => {
+      const key = p.projectCode || "_sin_proyecto";
+      if (!costByProj[key]) costByProj[key] = { solicitudes: 0, pagado: 0, porPagar: 0 };
+      costByProj[key].solicitudes++;
+      const amt = Number(p.amount) || 0;
+      if (p.status === "pagado" || p.status === "finalizado") costByProj[key].pagado += amt;
+      else costByProj[key].porPagar += amt;
+    });
+    const costRows = Object.entries(costByProj)
+      .map(([key, v]) => {
+        const proj = allProjects.find(pr => pr.short === key);
+        const total = v.pagado + v.porPagar;
+        return { key, name: proj?.name || key, ...v, total, pctPagado: total > 0 ? Math.round((v.pagado / total) * 100) : 0 };
+      })
+      .sort((a, b) => b.total - a.total);
+    const totalMat = costRows.reduce((s, r) => s + r.total, 0);
+    const totalPagado = costRows.reduce((s, r) => s + r.pagado, 0);
+    const totalPorPagar = costRows.reduce((s, r) => s + r.porPagar, 0);
+    const pctPagadoGlobal = totalMat > 0 ? Math.round((totalPagado / totalMat) * 100) : 0;
+    const pctPorPagarGlobal = totalMat > 0 ? 100 - pctPagadoGlobal : 0;
+    const barColor = (pct) => pct >= 90 ? "#059669" : pct >= 50 ? "#D97706" : "#DC2626";
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        {/* HEADER */}
+        <div style={{
+          background: "linear-gradient(135deg, #F0FDF4 0%, #ECFDF5 100%)",
+          border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 18px",
+          display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8,
+        }}>
+          <div>
+            <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
+              💵 Costos por Proyecto
+            </div>
+            <div style={{ fontSize: 12, color: STONE, marginTop: 4 }}>Desglose de pagos y saldos pendientes por proyecto</div>
+          </div>
+          <div style={{ fontSize: 11, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>
+            {new Date().toLocaleDateString("es-HN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+          </div>
+        </div>
+
+        {/* KPI CARDS */}
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 12 }}>
+          <div style={{ ...cardStyle, background: "#F0FDF4", border: "1px solid #BBF7D0", textAlign: "center", padding: 18 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#64748B", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>💵 Costo total materiales</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: "#1E293B" }}>{fmtL(totalMat)}</div>
+          </div>
+          <div style={{ ...cardStyle, background: "#F0FDF4", border: "1px solid #BBF7D0", textAlign: "center", padding: 18 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#64748B", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>✅ Ya pagado</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: "#059669" }}>{fmtL(totalPagado)}</div>
+            <div style={{ fontSize: 12, color: "#64748B", marginTop: 4 }}>{pctPagadoGlobal}% del total</div>
+          </div>
+          <div style={{ ...cardStyle, background: "#FFFBEB", border: "1px solid #FDE68A", textAlign: "center", padding: 18 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#64748B", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>⏳ Por pagar</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: "#D97706" }}>{fmtL(totalPorPagar)}</div>
+            <div style={{ fontSize: 12, color: "#64748B", marginTop: 4 }}>{pctPorPagarGlobal}% del total</div>
+          </div>
+        </div>
+
+        {/* TABLA DESGLOSE */}
+        <div style={cardStyle}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 14, letterSpacing: -0.2 }}>
+            Desglose por proyecto
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: "2px solid #E2E8F0" }}>
+                  {["Proyecto", "Solic.", "Pagado", "Por pagar", "Total", "% Pagado"].map(h => (
+                    <th key={h} style={{ textAlign: h === "Proyecto" ? "left" : "right", padding: "10px 8px", fontSize: 10, fontWeight: 700, color: "#64748B", textTransform: "uppercase", letterSpacing: 0.4 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {costRows.map(r => (
+                  <tr key={r.key} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                    <td style={{ padding: "10px 8px" }}>
+                      <div style={{ fontWeight: 700, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11 }}>{r.key}</div>
+                      {r.name !== r.key && <div style={{ fontSize: 10, color: STONE, marginTop: 2 }}>{r.name}</div>}
+                    </td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", color: "#64748B" }}>{r.solicitudes}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: "#059669" }}>{fmtL(r.pagado)}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: "#D97706" }}>{fmtL(r.porPagar)}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 800, color: CHARCOAL }}>{fmtL(r.total)}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", width: 130 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                        <div style={{ width: 60, height: 8, borderRadius: 4, background: "#F1F5F9", overflow: "hidden" }}>
+                          <div style={{ width: `${r.pctPagado}%`, height: "100%", background: barColor(r.pctPagado), transition: "width .3s" }} />
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: barColor(r.pctPagado), minWidth: 34, textAlign: "right" }}>{r.pctPagado}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: "2px solid #CBD5E1" }}>
+                  <td style={{ padding: "10px 8px", fontWeight: 800, color: CHARCOAL, fontSize: 12 }}>TOTAL</td>
+                  <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 800, color: CHARCOAL }}>{costRows.reduce((s, r) => s + r.solicitudes, 0)}</td>
+                  <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 800, color: "#059669" }}>{fmtL(totalPagado)}</td>
+                  <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 800, color: "#D97706" }}>{fmtL(totalPorPagar)}</td>
+                  <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 800, color: CHARCOAL }}>{fmtL(totalMat)}</td>
+                  <td style={{ padding: "10px 8px", textAlign: "right" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                      <div style={{ width: 60, height: 8, borderRadius: 4, background: "#F1F5F9", overflow: "hidden" }}>
+                        <div style={{ width: `${pctPagadoGlobal}%`, height: "100%", background: barColor(pctPagadoGlobal), transition: "width .3s" }} />
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: barColor(pctPagadoGlobal), minWidth: 34, textAlign: "right" }}>{pctPagadoGlobal}%</span>
+                    </div>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderLifecycleBar = (p, lc) => {
     const phases = [
       { key: "solicitud",  emoji: "📝", label: "Solicitud",      done: true },
@@ -3485,6 +3637,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // ── LAYOUT ──
   const allNav = [
     { id: "dashboard", icon: "🎯", label: "Dashboard" },
+    { id: "costos", icon: "💵", label: "Costos" },
     { id: "resumen", icon: "📊", label: "Resumen" },
     { id: "list", icon: "📋", label: "Solicitudes" },
     { id: "projects", icon: "🏗️", label: "Proyectos" },
@@ -3500,6 +3653,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     : allNav.filter(n => {
         if (n.id === "resumen") return canSeeResumen;
         if (n.id === "dashboard") return canSeeDashboard;
+        if (n.id === "costos") return canSeeDashboard;
         return true;
       });
   const roleLabel = isAdmin ? "Operaciones"
@@ -3679,6 +3833,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <div>
           <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
             {sec === "dashboard" ? "Dashboard gerencial"
+              : sec === "costos" ? "Costos por proyecto"
               : sec === "resumen" ? "Command Center — Seguimiento por proyecto"
               : sec === "projects" ? "Proyectos"
               : sec === "providers" ? "Proveedores"
@@ -3691,6 +3846,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       </div>
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{
         sec === "dashboard" ? renderDashboard()
+          : sec === "costos" ? renderCostos()
           : sec === "resumen" ? renderResumen()
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
