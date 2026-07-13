@@ -17,6 +17,20 @@ const CHARCOAL = "#2C2A28";
 const STONE = "#8B847C";
 const BORDER = "#DBD4C8";
 
+// ── Hook responsive ──
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth < breakpoint : false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < breakpoint);
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [breakpoint]);
+  return isMobile;
+}
+
+const HR_ACCENT = "#2C5F5D";
+const HR_ACCENT_DARK = "#1E4A48";
+
 const COMPANIES = {
   subterra: { name: "Subterra Honduras", color: "#3E6A99", accent: "#5A8AB8" },
   geotecnica: { name: "Geotecnica Soluciones", color: "#2C5F5D", accent: "#3D8580" },
@@ -257,7 +271,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [bonifs, setBonifs] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
-  const [sb, setSb] = useState(true);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     (async () => {
@@ -3019,39 +3033,267 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     default: return null;
   }};
 
-  return <div style={{ display: "flex", height: "100vh", fontFamily: "inherit", background: BEIGE, color: CHARCOAL }}>
-    <div style={{ width: sb ? 240 : 60, background: DARK_BG, color: "#F0EBE3", transition: "width .2s", overflow: "hidden", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-      <div style={{ padding: sb ? "20px 16px" : "20px 12px", borderBottom: `1px solid ${DARK_BORDER}`, display: "flex", alignItems: "center", gap: 10 }}>
-        <button onClick={() => setSb(!sb)} style={{ background: "none", border: "none", color: "#A8A096", fontSize: 20, cursor: "pointer", flexShrink: 0 }}>☰</button>
-        {sb && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <Logo size={28} showText={false} />
-            <div style={{ fontWeight: 800, fontSize: 12, letterSpacing: 1.5, color: "#F0EBE3", marginTop: 4 }}>GEOTECNICA</div>
-            <div style={{ fontSize: 9, letterSpacing: 2, color: "#A8A096", fontWeight: 600 }}>SOLUCIONES · RRHH</div>
+  const roleLabel = userRole === "admin" ? "Recursos Humanos" : userRole === "asistente" ? "Asistente RRHH" : userRole === "gerencia" ? "Gerencia (solo lectura)" : userRole === "costos" ? "Costos (solo lectura)" : (userRole || "Usuario");
+  const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+
+  // SVG cartoon team lineup — trabajadores del sector industrial
+  const TeamSVG = ({ height = 170 }) => (
+    <svg viewBox="0 0 240 180" xmlns="http://www.w3.org/2000/svg" style={{ height, width: "auto", display: "block" }} aria-hidden="true">
+      {/* Sombras bajo pies */}
+      <ellipse cx="45" cy="168" rx="26" ry="4" fill="#0F172A" opacity="0.10" />
+      <ellipse cx="105" cy="168" rx="26" ry="4" fill="#0F172A" opacity="0.10" />
+      <ellipse cx="165" cy="168" rx="26" ry="4" fill="#0F172A" opacity="0.10" />
+      <ellipse cx="215" cy="168" rx="20" ry="3" fill="#0F172A" opacity="0.07" />
+
+      {/* --- Personaje 4 (atras a la derecha, silueta) --- */}
+      <g opacity="0.55">
+        <rect x="205" y="105" width="24" height="42" rx="4" fill="#4A5568" />
+        <circle cx="217" cy="94" r="10" fill="#D4A574" />
+        {/* casco simple */}
+        <path d="M207 89 Q217 79 227 89 L227 94 L207 94 Z" fill="#F1C40F" />
+      </g>
+
+      {/* --- Personaje 1 (izquierda) — casco amarillo, chaleco naranja --- */}
+      <g>
+        {/* Piernas */}
+        <rect x="37" y="140" width="7" height="26" rx="2" fill="#2C3E50" />
+        <rect x="47" y="140" width="7" height="26" rx="2" fill="#2C3E50" />
+        {/* Zapatos */}
+        <rect x="35" y="163" width="10" height="5" rx="1.5" fill="#1F2937" />
+        <rect x="45" y="163" width="10" height="5" rx="1.5" fill="#1F2937" />
+        {/* Torso — chaleco reflectivo naranja sobre camiseta gris */}
+        <rect x="30" y="105" width="30" height="40" rx="5" fill="#7A7A7A" />
+        <rect x="30" y="112" width="30" height="26" rx="3" fill="#E8762D" />
+        {/* Franja reflectiva */}
+        <rect x="30" y="124" width="30" height="3" fill="#F5D76E" />
+        {/* Brazos */}
+        <rect x="22" y="108" width="8" height="30" rx="3" fill="#E8762D" />
+        <rect x="60" y="108" width="8" height="30" rx="3" fill="#E8762D" />
+        {/* Manos */}
+        <circle cx="26" cy="140" r="4" fill="#F4C88C" />
+        <circle cx="64" cy="140" r="4" fill="#F4C88C" />
+        {/* Cabeza */}
+        <circle cx="45" cy="88" r="14" fill="#F4C88C" />
+        {/* Casco amarillo */}
+        <path d="M31 87 Q45 68 59 87 L59 93 L31 93 Z" fill="#F1C40F" />
+        <rect x="31" y="91" width="28" height="4" fill="#D4A017" />
+        {/* Cara */}
+        <circle cx="41" cy="90" r="1.2" fill="#1F2937" />
+        <circle cx="49" cy="90" r="1.2" fill="#1F2937" />
+        <path d="M41 96 Q45 99 49 96" stroke="#1F2937" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+      </g>
+
+      {/* --- Personaje 2 (centro-izquierda) — casco naranja, polo verde acero --- */}
+      <g>
+        {/* Piernas */}
+        <rect x="97" y="140" width="7" height="26" rx="2" fill="#3E3E3E" />
+        <rect x="107" y="140" width="7" height="26" rx="2" fill="#3E3E3E" />
+        {/* Zapatos */}
+        <rect x="95" y="163" width="10" height="5" rx="1.5" fill="#1F2937" />
+        <rect x="105" y="163" width="10" height="5" rx="1.5" fill="#1F2937" />
+        {/* Torso — polo verde acero */}
+        <rect x="90" y="105" width="30" height="40" rx="5" fill="#2C5F5D" />
+        {/* Cuello polo */}
+        <path d="M100 105 L105 112 L110 105" stroke="#1E4A48" strokeWidth="1.5" fill="none" />
+        <rect x="103" y="105" width="4" height="6" fill="#F4C88C" />
+        {/* Brazos */}
+        <rect x="82" y="108" width="8" height="30" rx="3" fill="#2C5F5D" />
+        <rect x="120" y="108" width="8" height="30" rx="3" fill="#2C5F5D" />
+        {/* Manos */}
+        <circle cx="86" cy="140" r="4" fill="#D4A574" />
+        <circle cx="124" cy="140" r="4" fill="#D4A574" />
+        {/* Cabeza */}
+        <circle cx="105" cy="88" r="14" fill="#D4A574" />
+        {/* Casco naranja */}
+        <path d="M91 87 Q105 68 119 87 L119 93 L91 93 Z" fill="#E8762D" />
+        <rect x="91" y="91" width="28" height="4" fill="#C75F1F" />
+        {/* Cresta del casco */}
+        <rect x="103" y="72" width="4" height="15" fill="#C75F1F" />
+        {/* Cara */}
+        <circle cx="101" cy="90" r="1.2" fill="#1F2937" />
+        <circle cx="109" cy="90" r="1.2" fill="#1F2937" />
+        <path d="M101 96 Q105 98 109 96" stroke="#1F2937" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+        {/* Bigote sutil */}
+        <path d="M102 94 Q105 95 108 94" stroke="#4A2E1F" strokeWidth="1" fill="none" />
+      </g>
+
+      {/* --- Personaje 3 (centro-derecha) — administrativa con tablet, gafas --- */}
+      <g>
+        {/* Piernas — pantalon oscuro */}
+        <rect x="157" y="140" width="7" height="26" rx="2" fill="#1F2937" />
+        <rect x="167" y="140" width="7" height="26" rx="2" fill="#1F2937" />
+        {/* Zapatos */}
+        <rect x="155" y="163" width="10" height="5" rx="1.5" fill="#0F172A" />
+        <rect x="165" y="163" width="10" height="5" rx="1.5" fill="#0F172A" />
+        {/* Blusa color beige/naranja claro */}
+        <rect x="150" y="105" width="30" height="40" rx="5" fill="#F5D6B3" />
+        {/* Cuello blusa */}
+        <path d="M160 105 L165 110 L170 105" stroke="#E8762D" strokeWidth="1.3" fill="none" />
+        {/* Brazos */}
+        <rect x="142" y="108" width="8" height="28" rx="3" fill="#F5D6B3" />
+        <rect x="180" y="108" width="8" height="28" rx="3" fill="#F5D6B3" />
+        {/* Tablet en las manos */}
+        <rect x="150" y="130" width="30" height="18" rx="2" fill="#1F2937" />
+        <rect x="152" y="132" width="26" height="14" rx="1" fill="#5FD4E8" />
+        <rect x="154" y="134" width="6" height="1.5" fill="#fff" opacity="0.9" />
+        <rect x="154" y="137" width="14" height="1.5" fill="#fff" opacity="0.9" />
+        <rect x="154" y="140" width="10" height="1.5" fill="#fff" opacity="0.9" />
+        {/* Manos sobre tablet */}
+        <circle cx="146" cy="138" r="4" fill="#F4C88C" />
+        <circle cx="184" cy="138" r="4" fill="#F4C88C" />
+        {/* Cabeza */}
+        <circle cx="165" cy="88" r="14" fill="#F4C88C" />
+        {/* Pelo — melena castana */}
+        <path d="M151 85 Q152 72 165 70 Q178 72 179 85 L179 90 Q175 82 165 82 Q155 82 151 90 Z" fill="#5C3A21" />
+        {/* Coleta a un lado */}
+        <ellipse cx="179" cy="94" rx="4" ry="8" fill="#5C3A21" />
+        {/* Cara */}
+        <circle cx="161" cy="90" r="1.2" fill="#1F2937" />
+        <circle cx="169" cy="90" r="1.2" fill="#1F2937" />
+        {/* Gafas */}
+        <circle cx="161" cy="90" r="3.2" fill="none" stroke="#1F2937" strokeWidth="1" />
+        <circle cx="169" cy="90" r="3.2" fill="none" stroke="#1F2937" strokeWidth="1" />
+        <line x1="164.2" y1="90" x2="165.8" y2="90" stroke="#1F2937" strokeWidth="1" />
+        <path d="M161 96 Q165 98 169 96" stroke="#B23A5E" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+      </g>
+
+      {/* Piso — linea sutil */}
+      <line x1="15" y1="170" x2="235" y2="170" stroke="#0F172A" strokeWidth="1" opacity="0.08" />
+    </svg>
+  );
+
+  const activeNav = nav.find(n => n.id === sec);
+
+  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: BEIGE, color: CHARCOAL }}>
+    {/* HERO — logo Geotecnica + titulo + ilustracion equipo */}
+    <div style={{
+      position: "relative",
+      minHeight: isMobile ? 120 : 180,
+      flexShrink: 0,
+      background: "linear-gradient(135deg, #E8F0EF 0%, #F1F5F4 100%)",
+      borderBottom: `1px solid ${BORDER}`,
+      padding: isMobile ? "14px 16px" : "24px 32px",
+      overflow: "hidden",
+      display: "flex",
+      alignItems: "center",
+    }}>
+      {/* Botones arriba a la derecha */}
+      <div style={{ position: "absolute", top: isMobile ? 8 : 14, right: isMobile ? 12 : 24, display: "flex", gap: 8, zIndex: 3 }}>
+        {onBack && <button onClick={onBack} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 8, color: CHARCOAL, padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>← Volver al panel</button>}
+        {onLogout && <button onClick={onLogout} style={{ background: "#fff", border: "1px solid #E5B4A9", borderRadius: 8, color: "#B23A26", padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>Cerrar sesion</button>}
+      </div>
+
+      {/* Row principal */}
+      <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 12 : 28, width: "100%" }}>
+        {/* IZQUIERDA — logo Geotecnica */}
+        <div style={{ flexShrink: 0, width: isMobile ? 90 : 200, display: "flex", alignItems: "center", justifyContent: isMobile ? "flex-start" : "center" }}>
+          <img
+            src={logoUrl}
+            alt="Geotecnica Soluciones"
+            style={{ height: isMobile ? 40 : 65, width: "auto", objectFit: "contain", display: "block" }}
+          />
+        </div>
+
+        {/* CENTRO — texto */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+          <div style={{ fontSize: isMobile ? 10 : 11, letterSpacing: 2, color: HR_ACCENT_DARK, fontWeight: 700, textTransform: "uppercase" }}>Grupo Geotecnica</div>
+          <h1 style={{ margin: 0, fontSize: isMobile ? 18 : 28, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.5, lineHeight: 1.15 }}>
+            GeoTeam — Recursos Humanos
+          </h1>
+          {!isMobile && <div style={{ fontSize: 13, color: STONE, fontWeight: 500 }}>
+            Empleados, planilla, asistencia y beneficios
+          </div>}
+          {/* Selector empresa + badge usuario en mobile */}
+          {isMobile && (
+            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              {Object.entries(COMPANIES).map(([k, v]) => (
+                <button key={k} onClick={() => setCo(k)} style={{ background: co === k ? v.accent : "#fff", color: co === k ? "#fff" : "#5C5853", border: `1px solid ${co === k ? v.accent : BORDER}`, borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{v.name.split(" ")[0]}</button>
+              ))}
+              {userName && (
+                <div style={{ background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "3px 8px", fontSize: 10, color: CHARCOAL, fontWeight: 700 }}>
+                  {userName} · {roleLabel}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* DERECHA — ilustracion equipo (solo desktop) */}
+        {!isMobile && (
+          <div style={{ flexShrink: 0, display: "flex", alignItems: "flex-end", justifyContent: "center", height: 180, marginRight: 8 }}>
+            <TeamSVG height={170} />
+          </div>
+        )}
+
+        {/* Badge usuario + selector empresa en desktop */}
+        {!isMobile && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0, alignItems: "flex-end" }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              {Object.entries(COMPANIES).map(([k, v]) => (
+                <button key={k} onClick={() => setCo(k)} style={{ background: co === k ? v.accent : "#fff", color: co === k ? "#fff" : "#5C5853", border: `1px solid ${co === k ? v.accent : BORDER}`, borderRadius: 20, padding: "4px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all .15s" }}>{v.name}</button>
+              ))}
+            </div>
+            <div style={{ background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "8px 14px", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+              <div style={{ fontSize: 13, color: CHARCOAL, fontWeight: 700, letterSpacing: 0.2 }}>{userName || "Usuario"}</div>
+              <div style={{ fontSize: 11, color: HR_ACCENT_DARK, fontWeight: 600 }}>{roleLabel}</div>
+            </div>
           </div>
         )}
       </div>
-      {sb && <div style={{ padding: "14px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
-        {Object.entries(COMPANIES).map(([k, v]) => <button key={k} onClick={() => setCo(k)} style={{ background: co === k ? v.accent : "transparent", color: co === k ? "#fff" : "#A8A096", border: co === k ? "none" : `1px solid ${DARK_BORDER}`, borderRadius: 8, padding: "9px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600, textAlign: "left", fontFamily: "inherit", transition: "all .15s" }}>{v.name}</button>)}
-      </div>}
-      <div style={{ padding: "8px 0", flex: 1 }}>
-        {nav.map(n => <button key={n.id} onClick={() => setSec(n.id)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: sb ? "11px 20px" : "11px 18px", background: sec === n.id ? "rgba(232,118,45,0.18)" : "transparent", border: "none", color: sec === n.id ? "#fff" : "#A8A096", cursor: "pointer", fontSize: 14, textAlign: "left", borderLeft: sec === n.id ? `3px solid ${ORANGE}` : "3px solid transparent", fontFamily: "inherit", fontWeight: sec === n.id ? 600 : 500, transition: "all .15s" }}><span style={{ fontSize: 18, flexShrink: 0 }}>{n.icon}</span>{sb && <span>{n.label}</span>}</button>)}
-      </div>
-      {sb && <div style={{ padding: "12px", borderTop: `1px solid ${DARK_BORDER}`, display: "flex", flexDirection: "column", gap: 6 }}>
-        {onBack && <button onClick={onBack} style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${DARK_BORDER}`, borderRadius: 8, color: "#A8A096", padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit" }}>← Volver al panel</button>}
-        {onLogout && <button onClick={onLogout} style={{ background: "rgba(192,57,43,0.15)", border: "1px solid rgba(192,57,43,0.4)", borderRadius: 8, color: "#F0AAA0", padding: "9px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit" }}>Cerrar sesion</button>}
-        <div style={{ fontSize: 11, color: "#7A7268", marginTop: 4, fontWeight: 500, lineHeight: 1.4 }}>{userName || "Lic. Gerson Trochez"}<br /><span style={{ color: ORANGE, fontWeight: 600 }}>Recursos Humanos</span></div>
-      </div>}
     </div>
-    <div style={{ flex: 1, overflow: "auto" }}>
-      <div style={{ padding: "22px 32px", borderBottom: `1px solid ${BORDER}`, background: CREAM, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+
+    {/* TOPNAV horizontal */}
+    <div style={{
+      display: "flex",
+      background: CREAM,
+      borderBottom: `1px solid ${BORDER}`,
+      overflowX: "auto",
+      whiteSpace: "nowrap",
+      flexShrink: 0,
+      paddingLeft: isMobile ? 8 : 24,
+      scrollbarWidth: "thin",
+    }}>
+      {nav.map(n => {
+        const active = sec === n.id;
+        return <button
+          key={n.id}
+          onClick={() => setSec(n.id)}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: isMobile ? "12px 14px" : "14px 18px",
+            background: "transparent",
+            border: "none",
+            borderBottom: active ? `3px solid ${HR_ACCENT}` : "3px solid transparent",
+            color: active ? CHARCOAL : STONE,
+            cursor: "pointer",
+            fontSize: 14,
+            fontWeight: active ? 700 : 500,
+            fontFamily: "inherit",
+            transition: "all .15s",
+            whiteSpace: "nowrap",
+            marginBottom: -1,
+          }}
+          onMouseEnter={e => { if (!active) e.currentTarget.style.color = CHARCOAL; }}
+          onMouseLeave={e => { if (!active) e.currentTarget.style.color = STONE; }}
+        >
+          <span style={{ fontSize: 16 }}>{n.icon}</span>
+          <span>{n.label}</span>
+        </button>;
+      })}
+    </div>
+
+    {/* CONTENIDO */}
+    <div style={{ flex: 1, overflow: "auto", background: BEIGE }}>
+      <div style={{ padding: isMobile ? "12px 16px" : "20px 32px 8px 32px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>{nav.find(n => n.id === sec)?.label}</h2>
+          <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>{activeNav?.label}</h2>
           <span style={{ fontSize: 13, color: cc.accent, fontWeight: 600, letterSpacing: 0.3 }}>{cc.name}</span>
         </div>
         <Badge color={cc.color}>{ae.length} activos</Badge>
       </div>
-      <div style={{ padding: 28 }}>
+      <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>
         {isReadOnly && (
           <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", color: "#1E40AF", padding: "10px 16px", borderRadius: 8, marginBottom: 16, fontSize: 13, fontWeight: 600 }}>
             👁️ Modo solo lectura — podés ver toda la información pero no editar ni guardar cambios.

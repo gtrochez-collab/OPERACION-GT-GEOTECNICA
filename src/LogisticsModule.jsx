@@ -22,6 +22,66 @@ import { BRAND, FONT, R } from "./theme.js";
 import Logo from "./Logo.jsx";
 import { generateFichaPDF, restoreFiles } from "./PurchasesModule.jsx";
 
+// ── Hook responsive ──
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth < breakpoint : false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < breakpoint);
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [breakpoint]);
+  return isMobile;
+}
+
+// ── SVG cartoon camion (perfil, mirando a la derecha) ──
+const CamionSVG = ({ height = 170 }) => (
+  <svg viewBox="0 0 220 180" xmlns="http://www.w3.org/2000/svg" style={{ height, width: "auto", display: "block" }} aria-hidden="true">
+    {/* Sombra bajo el camion */}
+    <ellipse cx="110" cy="160" rx="95" ry="6" fill="#0F172A" opacity="0.10" />
+    {/* Caja de carga (atras, mas alta que la cabina) */}
+    <rect x="18" y="52" width="118" height="82" rx="4" fill="#E8762D" stroke="#0F172A" strokeWidth="4" />
+    {/* Detalles en la caja (líneas horizontales del contenedor) */}
+    <line x1="30" y1="72" x2="126" y2="72" stroke="#0F172A" strokeWidth="2" opacity="0.55" />
+    <line x1="30" y1="94" x2="126" y2="94" stroke="#0F172A" strokeWidth="2" opacity="0.55" />
+    <line x1="30" y1="116" x2="126" y2="116" stroke="#0F172A" strokeWidth="2" opacity="0.55" />
+    {/* Ventana lateral de la caja (opcional detalle vertical) */}
+    <rect x="120" y="60" width="10" height="66" rx="1.5" fill="#0F172A" opacity="0.25" />
+    {/* Puerta trasera de la caja */}
+    <rect x="22" y="58" width="6" height="70" rx="1" fill="#B8551C" />
+    {/* Cabina (adelante, redondeada) */}
+    <path d="M 136 62 L 156 62 Q 176 62 184 82 L 196 82 Q 202 82 202 88 L 202 132 Q 202 134 200 134 L 136 134 Z"
+      fill="#2D4A6B" stroke="#0F172A" strokeWidth="4" strokeLinejoin="round" />
+    {/* Parabrisas azul claro */}
+    <path d="M 148 74 L 158 74 Q 170 74 176 88 L 176 96 Q 176 98 174 98 L 148 98 Q 146 98 146 96 L 146 76 Q 146 74 148 74 Z"
+      fill="#93C5FD" stroke="#0F172A" strokeWidth="2" opacity="0.85" />
+    {/* Ventana lateral de la cabina */}
+    <rect x="142" y="104" width="34" height="18" rx="2" fill="#93C5FD" stroke="#0F172A" strokeWidth="2" opacity="0.75" />
+    {/* Manija/detalle puerta cabina */}
+    <line x1="150" y1="126" x2="160" y2="126" stroke="#0F172A" strokeWidth="2.5" />
+    {/* Luz frontal */}
+    <circle cx="197" cy="118" r="4" fill="#FDE68A" stroke="#0F172A" strokeWidth="2" />
+    {/* Parachoques frontal */}
+    <rect x="188" y="128" width="16" height="8" rx="2" fill="#4B5563" stroke="#0F172A" strokeWidth="2" />
+    {/* Linea del techo */}
+    <line x1="140" y1="66" x2="156" y2="66" stroke="#0F172A" strokeWidth="1.5" opacity="0.4" />
+    {/* Escape (tubo saliendo de la cabina hacia arriba) */}
+    <rect x="128" y="42" width="6" height="22" rx="1.5" fill="#4B5563" stroke="#0F172A" strokeWidth="2" />
+    <ellipse cx="131" cy="42" rx="4" ry="2" fill="#1F2937" />
+    {/* Chasis */}
+    <rect x="16" y="132" width="188" height="10" rx="2" fill="#1F2937" />
+    {/* Ruedas — 2 atras (grandes) y 1 adelante (grande) */}
+    <circle cx="46" cy="146" r="16" fill="#1F2937" stroke="#0F172A" strokeWidth="3" />
+    <circle cx="46" cy="146" r="7" fill="#9CA3AF" stroke="#0F172A" strokeWidth="2" />
+    <circle cx="46" cy="146" r="2" fill="#1F2937" />
+    <circle cx="90" cy="146" r="16" fill="#1F2937" stroke="#0F172A" strokeWidth="3" />
+    <circle cx="90" cy="146" r="7" fill="#9CA3AF" stroke="#0F172A" strokeWidth="2" />
+    <circle cx="90" cy="146" r="2" fill="#1F2937" />
+    <circle cx="168" cy="146" r="16" fill="#1F2937" stroke="#0F172A" strokeWidth="3" />
+    <circle cx="168" cy="146" r="7" fill="#9CA3AF" stroke="#0F172A" strokeWidth="2" />
+    <circle cx="168" cy="146" r="2" fill="#1F2937" />
+  </svg>
+);
+
 // Helper interno: dado un purchase (con projectCode), buscar el proyecto y
 // la empresa para llamar a generateFichaPDF correctamente. Usado por los
 // cards "De compra" del Kanban para descargar la misma ficha que en Compras.
@@ -750,6 +810,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const isRecepcion = userRole === "recepcion";
   const canEdit = isAdmin || isLogistica || isRecepcion;
 
+  const isMobile = useIsMobile();
   const [vehicles, setVehicles] = useState([]);
   const [maintenances, setMaintenances] = useState([]);
   const [despachos, setDespachos] = useState([]);
@@ -757,7 +818,6 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const [customProjects, setCustomProjects] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
-  const [sb, setSb] = useState(true);
   const [sec, setSec] = useState("flota");
   const [filter, setFilter] = useState({ estado: "", projectCode: "", type: "", q: "" });
   const [mantSubSec, setMantSubSec] = useState("pendientes"); // pendientes | programados | historial
@@ -2455,64 +2515,125 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   };
 
   // ── LAYOUT ──
-  return <div style={{ display: "flex", height: "100vh", fontFamily: FONT.body, background: BRAND.beige, color: BRAND.charcoal }}>
-    {/* Sidebar */}
-    <div style={{ width: sb ? 240 : 60, background: BRAND.darkBg, color: BRAND.darkText, transition: "width .2s", overflow: "hidden", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-      <div style={{ padding: sb ? "20px 16px" : "20px 12px", borderBottom: `1px solid ${BRAND.darkBorder}`, display: "flex", alignItems: "center", gap: 10 }}>
-        <button onClick={() => setSb(!sb)} style={{ background: "none", border: "none", color: BRAND.darkTextMuted, fontSize: 20, cursor: "pointer", flexShrink: 0 }}>☰</button>
-        {sb && <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <Logo size={28} showText={false} />
-          <div style={{ fontWeight: 800, fontSize: 12, letterSpacing: 1.5, color: BRAND.darkText, marginTop: 4 }}>GEOTECNICA</div>
-          <div style={{ fontSize: 9, letterSpacing: 2, color: BRAND.darkTextMuted, fontWeight: 600 }}>LOGISTICA · FLOTA</div>
-        </div>}
+  const LOGISTICS_ACCENT = "#2D4A6B";
+  const roleLabel = isAdmin ? "Admin" : isLogistica ? "Logistica" : isRecepcion ? "Recepcion" : (userRole || "");
+  const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+
+  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: FONT.body, background: BRAND.beige, color: BRAND.charcoal }}>
+    {/* HERO — logo Geotecnica + titulo + ilustracion cartoon de camion */}
+    <div style={{
+      position: "relative",
+      minHeight: isMobile ? 120 : 180,
+      flexShrink: 0,
+      background: "linear-gradient(135deg, #EAF0F5 0%, #F1F4F8 100%)",
+      borderBottom: `1px solid ${BRAND.borderSoft}`,
+      padding: isMobile ? "14px 16px" : "24px 32px",
+      overflow: "hidden",
+      display: "flex",
+      alignItems: "center",
+    }}>
+      {/* Botones arriba-derecha */}
+      <div style={{ position: "absolute", top: isMobile ? 8 : 14, right: isMobile ? 12 : 24, display: "flex", gap: 8, zIndex: 3 }}>
+        {onBack && <button onClick={onBack} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: 8, color: BRAND.charcoal, padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>← Volver al panel</button>}
+        {onLogout && <button onClick={onLogout} style={{ background: "#fff", border: "1px solid #E5B4A9", borderRadius: 8, color: "#B23A26", padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>Cerrar sesion</button>}
       </div>
-      <div style={{ flex: 1, padding: "16px 0", overflowY: "auto" }}>
-        {nav.map(n => (
-          <button
-            key={n.id}
-            onClick={() => !n.soon && setSec(n.id)}
-            disabled={n.soon}
-            style={{
-              width: "100%",
-              background: sec === n.id ? BRAND.orange : "transparent",
-              border: "none",
-              color: n.soon ? BRAND.darkTextMuted : (sec === n.id ? "#fff" : BRAND.darkText),
-              padding: sb ? "12px 20px" : "12px 16px",
-              textAlign: "left",
-              cursor: n.soon ? "not-allowed" : "pointer",
-              fontSize: 13,
-              fontFamily: "inherit",
-              fontWeight: sec === n.id ? 700 : 500,
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              opacity: n.soon ? 0.45 : 1,
-              borderLeft: sec === n.id ? `3px solid #fff` : `3px solid transparent`,
-            }}
-          >
-            <span style={{ fontSize: 16 }}>{n.icon}</span>
-            {sb && <span>{n.label}{n.soon && <span style={{ marginLeft: 6, fontSize: 9, color: BRAND.darkTextMuted, fontStyle: "italic" }}>(pronto)</span>}</span>}
-          </button>
-        ))}
-      </div>
-      <div style={{ padding: 14, borderTop: `1px solid ${BRAND.darkBorder}` }}>
-        {sb && <div style={{ fontSize: 11, color: BRAND.darkTextMuted, marginBottom: 8 }}>{userName || userRole}</div>}
-        <button onClick={onBack} style={{ width: "100%", background: BRAND.darkSurface, color: BRAND.darkText, border: `1px solid ${BRAND.darkBorder}`, borderRadius: R.sm, padding: "8px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 6 }}>
-          {sb ? "← Volver al panel" : "←"}
-        </button>
-        <button onClick={onLogout} style={{ width: "100%", background: BRAND.red, color: "#fff", border: "none", borderRadius: R.sm, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-          {sb ? "Cerrar sesion" : "✕"}
-        </button>
+
+      {/* Row principal */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: isMobile ? 12 : 28,
+        width: "100%",
+      }}>
+        {/* IZQUIERDA — logo Geotecnica */}
+        <div style={{ flexShrink: 0, width: isMobile ? 90 : 200, display: "flex", alignItems: "center", justifyContent: isMobile ? "flex-start" : "center" }}>
+          <img
+            src={logoUrl}
+            alt="Geotecnica Soluciones"
+            style={{ height: isMobile ? 40 : 65, width: "auto", objectFit: "contain", display: "block" }}
+          />
+        </div>
+
+        {/* CENTRO — texto */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+          <div style={{ fontSize: isMobile ? 10 : 11, letterSpacing: 2, color: BRAND.orangeDark || "#C75F1F", fontWeight: 700, textTransform: "uppercase" }}>Grupo Geotecnica</div>
+          <h1 style={{ margin: 0, fontSize: isMobile ? 18 : 28, fontWeight: 800, color: BRAND.charcoal, letterSpacing: -0.5, lineHeight: 1.15 }}>
+            GeoLogistics — Flota y Despachos
+          </h1>
+          {!isMobile && <div style={{ fontSize: 13, color: BRAND.stone, fontWeight: 500 }}>
+            Vehiculos, rutas, mantenimientos
+          </div>}
+          {isMobile && userName && (
+            <div style={{ marginTop: 4, display: "inline-flex", background: BRAND.beigeLight || BRAND.beige, border: `1px solid ${BRAND.border}`, borderRadius: 6, padding: "3px 8px", alignSelf: "flex-start", fontSize: 10, color: BRAND.charcoal, fontWeight: 700 }}>
+              {userName} · {roleLabel}
+            </div>
+          )}
+        </div>
+
+        {/* DERECHA — ilustracion de camion (solo desktop) */}
+        {!isMobile && (
+          <div style={{ flexShrink: 0, display: "flex", alignItems: "flex-end", justifyContent: "center", height: 180, marginRight: 8 }}>
+            <CamionSVG height={170} />
+          </div>
+        )}
+
+        {/* Badge del usuario en desktop */}
+        {!isMobile && (
+          <div style={{ background: BRAND.beigeLight || BRAND.beige, border: `1px solid ${BRAND.border}`, borderRadius: 10, padding: "8px 14px", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+            <div style={{ fontSize: 13, color: BRAND.charcoal, fontWeight: 700, letterSpacing: 0.2 }}>{userName || "Usuario"}</div>
+            <div style={{ fontSize: 11, color: BRAND.orangeDark || "#C75F1F", fontWeight: 600 }}>{roleLabel}</div>
+          </div>
+        )}
       </div>
     </div>
 
-    {/* Main */}
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <div style={{ padding: "20px 28px", background: BRAND.cream, borderBottom: `1px solid ${BRAND.borderSoft}` }}>
-        <h1 style={{ margin: 0, fontFamily: FONT.display, fontSize: 24, fontWeight: 800, color: BRAND.charcoal }}>Logistica</h1>
-        <div style={{ fontSize: 13, color: BRAND.orange, fontWeight: 600, marginTop: 2 }}>Control de flota y operaciones de transporte</div>
-      </div>
-      <div style={{ flex: 1, padding: 28, overflow: "auto" }}>
+    {/* TOPNAV horizontal */}
+    <div style={{
+      display: "flex",
+      background: BRAND.cream,
+      borderBottom: `1px solid ${BRAND.border}`,
+      overflowX: "auto",
+      whiteSpace: "nowrap",
+      flexShrink: 0,
+      paddingLeft: isMobile ? 8 : 24,
+      scrollbarWidth: "thin",
+    }}>
+      {nav.map(n => {
+        const active = sec === n.id;
+        return <button
+          key={n.id}
+          onClick={() => !n.soon && setSec(n.id)}
+          disabled={n.soon}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: isMobile ? "12px 16px" : "14px 22px",
+            background: "transparent",
+            border: "none",
+            borderBottom: active ? `3px solid ${LOGISTICS_ACCENT}` : "3px solid transparent",
+            color: n.soon ? BRAND.stone : (active ? BRAND.charcoal : BRAND.stone),
+            cursor: n.soon ? "not-allowed" : "pointer",
+            fontSize: 14,
+            fontWeight: active ? 700 : 500,
+            fontFamily: "inherit",
+            transition: "all .15s",
+            whiteSpace: "nowrap",
+            marginBottom: -1,
+            opacity: n.soon ? 0.55 : 1,
+          }}
+          onMouseEnter={e => { if (!active && !n.soon) e.currentTarget.style.color = BRAND.charcoal; }}
+          onMouseLeave={e => { if (!active && !n.soon) e.currentTarget.style.color = BRAND.stone; }}
+        >
+          <span style={{ fontSize: 16 }}>{n.icon}</span>
+          <span>{n.label}{n.soon && <span style={{ marginLeft: 6, fontSize: 9, fontStyle: "italic", color: BRAND.stone }}>(pronto)</span>}</span>
+        </button>;
+      })}
+    </div>
+
+    {/* CONTENIDO */}
+    <div style={{ flex: 1, overflow: "auto", background: BRAND.beige }}>
+      <div style={{ padding: isMobile ? "12px 16px" : "20px 32px" }}>
         {renderSec()}
       </div>
     </div>
