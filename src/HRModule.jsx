@@ -416,6 +416,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const EmpForm = ({ emp, onSave }) => {
     const [f, setF] = useState(emp || { company: co, fullName: "", dni: "", position: "", department: "", contractType: "permanent", startDate: "", endDate: "", salary: "", bonificacion: 0, status: "active", phone: "", email: "" });
     const [uploading, setUploading] = useState(false);
+    // Sync del form cuando el emp externo cambia (ej. sube foto y m.d se
+    // actualizo desde afuera, o cambia el empleado seleccionado). Sin esto,
+    // el useState solo se init una vez y no reflejaria cambios externos.
+    useEffect(() => {
+      if (emp) setF(emp);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [emp?.id, emp?.photo?.fileId]);
     const u = (k, v) => setF(p => ({ ...p, [k]: v }));
 
     // Upload de foto: lee file como dataUrl, sube a cp-file-<uuid> y guarda
@@ -497,12 +504,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         setF(p => ({ ...p, photo: newPhoto }));
 
         // 5) PERSISTIR INMEDIATO al empleado si estamos editando uno existente.
-        // Antes solo se actualizaba el state del form — si el user no le daba
-        // "Guardar" al modal, la foto se perdia (quedaba huerfana en Supabase
-        // y las iniciales seguian mostrandose).
+        // Ademas, sync el modal state (m.d) para que si EmpForm se remonta
+        // por un re-render del padre, el nuevo emp inicial ya tenga la foto
+        // (evita que se resetee a "Sin foto" tras el re-mount).
         if (emp && emp.id) {
           sE(emps.map(x => x.id === emp.id ? { ...x, photo: newPhoto } : x));
-          console.log(`[EmpForm] ✅ Foto subida + guardada al empleado ${emp.id} (${fileId})`);
+          setModal(prev => (prev && prev.t === "ee" && prev.d?.id === emp.id)
+            ? { ...prev, d: { ...prev.d, photo: newPhoto } }
+            : prev);
+          console.log(`[EmpForm] ✅ Foto subida + guardada al empleado ${emp.id} + sync modal (${fileId})`);
         } else {
           console.log(`[EmpForm] ✅ Foto subida (empleado nuevo — se persiste al hacer "Agregar")`);
         }
