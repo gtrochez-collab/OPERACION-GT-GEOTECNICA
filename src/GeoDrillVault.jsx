@@ -17,7 +17,6 @@
 import { useState, useEffect, useRef } from "react";
 import QrScanner from "qr-scanner";
 import { store } from "./supabase.js";
-import Logo from "./Logo.jsx";
 import { BRAND, FONT, R } from "./theme.js";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 
@@ -40,10 +39,10 @@ const VAULT_BLUE = "#0F4C75";
 const VAULT_BLUE_DARK = "#0B3A5C";
 const BEIGE = BRAND.beige;
 const CREAM = BRAND.cream;
-const DARK_BG = BRAND.darkBg;
-const DARK_BORDER = BRAND.darkBorder;
 const CHARCOAL = BRAND.charcoal;
 const BORDER = BRAND.border;
+const STONE = BRAND.stone;
+const ORANGE_DARK = "#C75F1F";
 
 // ── Constantes de dominio ──
 const MARCAS = ["Jeffry Machine", "Drill Master", "Well Equips", "Otro"];
@@ -1823,10 +1822,6 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
   const isMobile = useIsMobile();
 
   // ── Estado ──
-  // sb = sidebar colapsado/expandido en desktop (estilo Notion).
-  // sbOpen = sidebar visible como drawer en mobile (overlay).
-  const [sb, setSb] = useState(true);
-  const [sbOpen, setSbOpen] = useState(false);
   const [sec, setSec] = useState("resumen");
   const [items, setItems] = useState([]);          // gdv-items (cajas)
   const [tools, setTools] = useState([]);          // gdv-tools (herramientas)
@@ -2747,175 +2742,243 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
     return null;
   };
 
-  // En mobile: tabs cierran el drawer despues de cambiar de seccion.
-  const goTo = (id) => {
-    setSec(id);
-    if (isMobile) setSbOpen(false);
-  };
+  const roleLabel = userRole === "admin" ? "Administrador"
+    : userRole === "tesoreria" ? "Tesoreria"
+    : userRole === "almacenista" ? "Encargado de Almacen"
+    : userRole === "almacen_visor" ? "Visor de Almacen"
+    : userRole;
+  const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+
+  const NAV = [
+    { id: "resumen",      icon: "📊", label: "Resumen" },
+    { id: "inventario",   icon: "📦", label: "Inventario" },
+    { id: "herramientas", icon: "🔧", label: "Herramientas" },
+    { id: "movimientos",  icon: "📋", label: "Movimientos" },
+    { id: "config",       icon: "⚙️", label: "Configuracion" },
+  ];
+
+  // SVG cartoon — escena de bodega con estante, cajas (una con QR), y una pica.
+  const EscenaBodega = ({ height = 170 }) => (
+    <svg viewBox="0 0 220 180" xmlns="http://www.w3.org/2000/svg" style={{ height, width: "auto", display: "block" }} aria-hidden="true">
+      {/* Piso — lineas de perspectiva */}
+      <line x1="0"   y1="168" x2="220" y2="168" stroke="#94A3B8" strokeWidth="1" opacity="0.5" />
+      <line x1="10"  y1="174" x2="210" y2="174" stroke="#94A3B8" strokeWidth="0.8" opacity="0.35" />
+      {/* Sombra del estante */}
+      <ellipse cx="88" cy="164" rx="68" ry="4" fill="#0F172A" opacity="0.12" />
+
+      {/* Estante metalico azul marino — 2 niveles */}
+      {/* Postes verticales */}
+      <rect x="24"  y="42"  width="6" height="122" rx="1" fill={VAULT_BLUE} stroke="#0B2A44" strokeWidth="1.2" />
+      <rect x="150" y="42"  width="6" height="122" rx="1" fill={VAULT_BLUE} stroke="#0B2A44" strokeWidth="1.2" />
+      {/* Estante superior (barra) */}
+      <rect x="22"  y="42"  width="136" height="8" rx="1.5" fill={VAULT_BLUE} stroke="#0B2A44" strokeWidth="1.2" />
+      {/* Estante intermedio */}
+      <rect x="22"  y="100" width="136" height="8" rx="1.5" fill={VAULT_BLUE} stroke="#0B2A44" strokeWidth="1.2" />
+      {/* Base */}
+      <rect x="22"  y="160" width="136" height="6" rx="1.5" fill="#0B2A44" />
+      {/* Refuerzo diagonal (barra cruzada) */}
+      <line x1="30"  y1="108" x2="150" y2="158" stroke="#0B2A44" strokeWidth="1" opacity="0.5" />
+
+      {/* Nivel superior — 3 cajas apiladas */}
+      {/* Caja verde (fondo) */}
+      <rect x="38"  y="60"  width="34" height="38" rx="2" fill="#22A56A" stroke="#0B2A44" strokeWidth="2" />
+      <line x1="38"  y1="72" x2="72"  y2="72" stroke="#0B2A44" strokeWidth="1.2" opacity="0.7" />
+      <rect x="46"  y="78"  width="18" height="4" rx="1" fill="#FFFBF5" opacity="0.85" />
+      {/* Caja azul (medio) */}
+      <rect x="76"  y="58"  width="36" height="40" rx="2" fill="#3B82F6" stroke="#0B2A44" strokeWidth="2" />
+      <line x1="76"  y1="70" x2="112" y2="70" stroke="#0B2A44" strokeWidth="1.2" opacity="0.7" />
+      <rect x="84"  y="78"  width="20" height="4" rx="1" fill="#FFFBF5" opacity="0.85" />
+      {/* Caja naranja pequeña arriba */}
+      <rect x="118" y="66"  width="30" height="32" rx="2" fill="#F5762D" stroke="#0B2A44" strokeWidth="2" />
+      <line x1="118" y1="76" x2="148" y2="76" stroke="#0B2A44" strokeWidth="1.2" opacity="0.7" />
+
+      {/* Nivel inferior — caja principal con QR */}
+      <rect x="46" y="118" width="60" height="42" rx="3" fill="#F5762D" stroke="#0B2A44" strokeWidth="2.5" />
+      {/* Tapa/lineas de la caja */}
+      <line x1="46" y1="130" x2="106" y2="130" stroke="#0B2A44" strokeWidth="1.5" opacity="0.85" />
+      {/* Etiqueta blanca */}
+      <rect x="52" y="135" width="24" height="18" rx="1" fill="#FFFBF5" stroke="#0B2A44" strokeWidth="1" />
+      {/* QR code — patron de puntos */}
+      <rect x="53"  y="136" width="22" height="16" rx="0.5" fill="#FFFBF5" />
+      {/* QR: 6x4 grid de puntos */}
+      {[0,1,2,3,4,5].map(cx => (
+        [0,1,2,3].map(cy => {
+          const on = ((cx * 7 + cy * 13) % 3) !== 0;
+          if (!on) return null;
+          return <rect key={`qr-${cx}-${cy}`} x={54 + cx * 3.4} y={137 + cy * 3.6} width="2.6" height="2.6" fill="#0B2A44" />;
+        })
+      ))}
+      {/* Marcas del QR (esquinas) */}
+      <rect x="54"  y="137" width="4" height="4" fill="#0B2A44" />
+      <rect x="70"  y="137" width="4" height="4" fill="#0B2A44" />
+      <rect x="54"  y="148" width="4" height="4" fill="#0B2A44" />
+      {/* Codigo de caja */}
+      <rect x="80" y="140" width="22" height="10" rx="1" fill="#FFFBF5" stroke="#0B2A44" strokeWidth="0.8" />
+      <line x1="82" y1="144" x2="100" y2="144" stroke="#0B2A44" strokeWidth="0.8" />
+      <line x1="82" y1="147" x2="96"  y2="147" stroke="#0B2A44" strokeWidth="0.8" />
+
+      {/* Pica destacada — al lado del estante, apoyada */}
+      {/* Cuerpo (base cilindrica azul marino) */}
+      <rect x="176" y="90" width="18" height="72" rx="3" fill={VAULT_BLUE} stroke="#0B2A44" strokeWidth="2" />
+      {/* Anillos de la base */}
+      <line x1="176" y1="108" x2="194" y2="108" stroke="#0B2A44" strokeWidth="1.2" />
+      <line x1="176" y1="130" x2="194" y2="130" stroke="#0B2A44" strokeWidth="1.2" />
+      <line x1="176" y1="152" x2="194" y2="152" stroke="#0B2A44" strokeWidth="1.2" />
+      {/* Cuello */}
+      <rect x="178" y="82" width="14" height="10" rx="1.5" fill="#4B5563" stroke="#0B2A44" strokeWidth="1.5" />
+      {/* Domo bullet amarillo */}
+      <path d="M 178 84 Q 185 60 192 84 Z" fill="#F5B800" stroke="#0B2A44" strokeWidth="2" />
+      {/* Botones de carburo (puntos negros) */}
+      <circle cx="183" cy="76" r="1.8" fill="#0F172A" />
+      <circle cx="187" cy="72" r="1.8" fill="#0F172A" />
+      <circle cx="185" cy="80" r="1.6" fill="#0F172A" />
+      <circle cx="189" cy="78" r="1.6" fill="#0F172A" />
+      {/* Sombra de la pica */}
+      <ellipse cx="185" cy="164" rx="14" ry="2.5" fill="#0F172A" opacity="0.18" />
+    </svg>
+  );
 
   // ── LAYOUT principal ──
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: FONT.body, background: BEIGE, color: CHARCOAL, position: "relative", overflow: "hidden" }}>
-      {/* Backdrop solo en mobile cuando el drawer esta abierto */}
-      {isMobile && sbOpen && (
-        <div
-          onClick={() => setSbOpen(false)}
-          style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
-            zIndex: 90,
-          }}
-        />
-      )}
-
-      {/* Sidebar oscuro — drawer en mobile, fijo a la izquierda en desktop */}
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: FONT.body, background: BEIGE, color: CHARCOAL }}>
+      {/* HERO — logo Geotecnica + titulo + escena de bodega */}
       <div style={{
-        width: isMobile ? 260 : (sb ? 240 : 60),
-        background: DARK_BG,
-        color: BRAND.darkText,
-        transition: isMobile ? "transform .25s ease" : "width .2s",
+        position: "relative",
+        minHeight: isMobile ? 120 : 180,
+        flexShrink: 0,
+        background: "linear-gradient(135deg, #E0EAF4 0%, #F3F6FA 100%)",
+        borderBottom: `1px solid #E2E8F0`,
+        padding: isMobile ? "14px 16px" : "24px 32px",
         overflow: "hidden",
         display: "flex",
-        flexDirection: "column",
-        flexShrink: 0,
-        ...(isMobile ? {
-          position: "fixed",
-          top: 0, bottom: 0, left: 0,
-          transform: sbOpen ? "translateX(0)" : "translateX(-100%)",
-          zIndex: 100,
-          boxShadow: sbOpen ? "0 0 30px rgba(0,0,0,0.5)" : "none",
-        } : {}),
+        alignItems: "center",
       }}>
+        {/* Botones arriba a la derecha */}
+        <div style={{ position: "absolute", top: isMobile ? 8 : 14, right: isMobile ? 12 : 24, display: "flex", gap: 8, zIndex: 3 }}>
+          {onBack && <button onClick={onBack} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 8, color: CHARCOAL, padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>← Volver al panel</button>}
+          {onLogout && <button onClick={onLogout} style={{ background: "#fff", border: "1px solid #E5B4A9", borderRadius: 8, color: "#B23A26", padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>Cerrar sesion</button>}
+        </div>
+
+        {/* Row principal */}
         <div style={{
-          padding: sb ? "20px 16px" : "20px 12px",
-          borderBottom: `1px solid ${DARK_BORDER}`,
-          display: "flex", alignItems: "center", gap: 10,
+          display: "flex",
+          alignItems: "center",
+          gap: isMobile ? 12 : 28,
+          width: "100%",
         }}>
-          <button onClick={() => isMobile ? setSbOpen(false) : setSb(!sb)} style={{
-            background: "none", border: "none", color: BRAND.darkTextMuted,
-            fontSize: 20, cursor: "pointer", flexShrink: 0,
-          }}>{isMobile ? "✕" : "☰"}</button>
-          {(sb || isMobile) && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <Logo size={28} showText={false} />
-              <div style={{ fontWeight: 800, fontSize: 12, letterSpacing: 1.5, color: BRAND.darkText, marginTop: 4 }}>
-                GEODRILL VAULT
+          {/* IZQUIERDA — logo Geotecnica */}
+          <div style={{ flexShrink: 0, width: isMobile ? 90 : 200, display: "flex", alignItems: "center", justifyContent: isMobile ? "flex-start" : "center" }}>
+            <img
+              src={logoUrl}
+              alt="Geotecnica Soluciones"
+              style={{ height: isMobile ? 40 : 65, width: "auto", objectFit: "contain", display: "block" }}
+            />
+          </div>
+
+          {/* CENTRO — texto */}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+            <div style={{ fontSize: isMobile ? 10 : 11, letterSpacing: 2, color: ORANGE_DARK, fontWeight: 700, textTransform: "uppercase" }}>Grupo Geotecnica</div>
+            <h1 style={{ margin: 0, fontSize: isMobile ? 18 : 28, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.5, lineHeight: 1.15 }}>
+              GeoDrill Vault — Inventario de Alto Valor
+            </h1>
+            {!isMobile && <div style={{ fontSize: 13, color: STONE, fontWeight: 500 }}>
+              Picas, portapicas, muelas y herramientas de perforacion
+            </div>}
+            {/* Badge de usuario en mobile va debajo */}
+            {isMobile && userName && (
+              <div style={{ marginTop: 4, display: "inline-flex", background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "3px 8px", alignSelf: "flex-start", fontSize: 10, color: CHARCOAL, fontWeight: 700 }}>
+                {userName} · {roleLabel}
               </div>
-              <div style={{ fontSize: 9, letterSpacing: 2, color: BRAND.darkTextMuted, fontWeight: 600 }}>
-                BODEGA DE ALTO VALOR
-              </div>
+            )}
+          </div>
+
+          {/* DERECHA — escena de bodega (solo desktop) */}
+          {!isMobile && (
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "flex-end", justifyContent: "center", height: 180, marginRight: 8 }}>
+              <EscenaBodega height={170} />
+            </div>
+          )}
+
+          {/* Badge del usuario en desktop */}
+          {!isMobile && (
+            <div style={{ background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "8px 14px", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+              <div style={{ fontSize: 13, color: CHARCOAL, fontWeight: 700, letterSpacing: 0.2 }}>{userName || "Usuario"}</div>
+              <div style={{ fontSize: 11, color: VAULT_BLUE, fontWeight: 600 }}>{roleLabel}</div>
             </div>
           )}
         </div>
-
-        <div style={{ padding: "8px 0", flex: 1, marginTop: 8 }}>
-          {[
-            { id: "resumen",      icon: "📊", label: "Resumen" },
-            { id: "inventario",   icon: "📦", label: "Inventario" },
-            { id: "herramientas", icon: "🔧", label: "Herramientas" },
-            { id: "movimientos",  icon: "📋", label: "Movimientos" },
-            { id: "config",       icon: "⚙️", label: "Configuracion" },
-          ].map(n => (
-            <button key={n.id} onClick={() => goTo(n.id)} style={{
-              display: "flex", alignItems: "center", gap: 12, width: "100%",
-              padding: (sb || isMobile) ? "11px 20px" : "11px 18px",
-              minHeight: isMobile ? 44 : "auto",
-              background: sec === n.id ? "rgba(15,76,117,0.30)" : "transparent",
-              border: "none",
-              color: sec === n.id ? "#fff" : BRAND.darkTextMuted,
-              cursor: "pointer",
-              fontSize: 14, textAlign: "left",
-              borderLeft: sec === n.id ? `3px solid ${VAULT_BLUE}` : "3px solid transparent",
-              fontFamily: "inherit",
-              fontWeight: sec === n.id ? 600 : 500,
-              transition: "all .15s",
-            }}>
-              <span style={{ fontSize: 18 }}>{n.icon}</span>{(sb || isMobile) && <span>{n.label}</span>}
-            </button>
-          ))}
-        </div>
-
-        {(sb || isMobile) && (
-          <div style={{ padding: 12, borderTop: `1px solid ${DARK_BORDER}`, display: "flex", flexDirection: "column", gap: 6 }}>
-            {onBack && (
-              <button onClick={onBack} style={{
-                background: "rgba(255,255,255,0.06)",
-                border: `1px solid ${DARK_BORDER}`,
-                borderRadius: 8,
-                color: BRAND.darkTextMuted,
-                padding: isMobile ? "11px 12px" : "9px 12px",
-                cursor: "pointer",
-                fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit",
-              }}>← Volver al panel</button>
-            )}
-            {onLogout && (
-              <button onClick={onLogout} style={{
-                background: "rgba(192,57,43,0.15)",
-                border: "1px solid rgba(192,57,43,0.4)",
-                borderRadius: 8,
-                color: "#F0AAA0",
-                padding: isMobile ? "11px 12px" : "9px 12px",
-                cursor: "pointer",
-                fontSize: 12, fontWeight: 600, textAlign: "left", fontFamily: "inherit",
-              }}>Cerrar sesion</button>
-            )}
-            <div style={{ fontSize: 11, color: "#7A7268", marginTop: 4, fontWeight: 500, lineHeight: 1.4 }}>
-              {userName || "Usuario"}<br />
-              <span style={{ color: VAULT_BLUE === "#0F4C75" ? "#5BA8E0" : VAULT_BLUE, fontWeight: 600 }}>
-                {userRole === "admin" ? "Administrador"
-                  : userRole === "tesoreria" ? "Tesoreria"
-                  : userRole === "almacenista" ? "Encargado de Almacen"
-                  : userRole === "almacen_visor" ? "Visor de Almacen"
-                  : userRole}
-              </span>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Main */}
-      <div style={{ flex: 1, overflow: "auto", width: isMobile ? "100%" : "auto" }}>
+      {/* TOPNAV horizontal */}
+      <div style={{
+        display: "flex",
+        background: CREAM,
+        borderBottom: `1px solid ${BORDER}`,
+        overflowX: "auto",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+        paddingLeft: isMobile ? 8 : 24,
+        scrollbarWidth: "thin",
+      }}>
+        {NAV.map(n => {
+          const active = sec === n.id;
+          return <button
+            key={n.id}
+            onClick={() => setSec(n.id)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: isMobile ? "14px 18px" : "14px 22px",
+              background: "transparent",
+              border: "none",
+              borderBottom: active ? `3px solid ${VAULT_BLUE}` : "3px solid transparent",
+              color: active ? CHARCOAL : STONE,
+              cursor: "pointer",
+              fontSize: 14,
+              fontWeight: active ? 700 : 500,
+              fontFamily: "inherit",
+              transition: "all .15s",
+              whiteSpace: "nowrap",
+              marginBottom: -1,
+            }}
+            onMouseEnter={e => { if (!active) e.currentTarget.style.color = CHARCOAL; }}
+            onMouseLeave={e => { if (!active) e.currentTarget.style.color = STONE; }}
+          >
+            <span style={{ fontSize: 16 }}>{n.icon}</span>
+            <span>{n.label}</span>
+          </button>;
+        })}
+      </div>
+
+      {/* CONTENIDO */}
+      <div style={{ flex: 1, overflow: "auto", background: BEIGE }}>
         <div style={{
-          padding: isMobile ? "12px 16px" : "22px 32px",
-          borderBottom: `1px solid ${BORDER}`,
-          background: CREAM,
+          padding: isMobile ? "12px 16px" : "20px 32px 8px 32px",
           display: "flex",
           justifyContent: "space-between",
           alignItems: isMobile ? "stretch" : "center",
           flexDirection: isMobile ? "column" : "row",
-          flexWrap: isMobile ? "nowrap" : "wrap",
-          gap: isMobile ? 10 : 12,
+          flexWrap: "wrap",
+          gap: 12,
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-            {isMobile && (
-              <button onClick={() => setSbOpen(true)} aria-label="Abrir menu" style={{
-                background: VAULT_BLUE, color: "#fff",
-                border: "none", borderRadius: 8,
-                width: 40, height: 40,
-                fontSize: 20, cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                flexShrink: 0, fontFamily: "inherit",
-              }}>☰</button>
-            )}
-            <div style={{ minWidth: 0 }}>
-              <h2 style={{
-                margin: 0,
-                fontSize: isMobile ? 18 : 22,
-                fontWeight: 800, color: CHARCOAL,
-                letterSpacing: -0.3,
-                lineHeight: 1.2,
-              }}>
-                {sec === "resumen" ? (isMobile ? "Resumen" : "Resumen — GeoDrill Vault")
-                  : sec === "inventario" ? "Inventario de cajas"
-                  : sec === "herramientas" ? (isMobile ? "Herramientas" : "Herramientas de perforacion")
-                  : sec === "movimientos" ? (isMobile ? "Movimientos" : "Movimientos (entradas y salidas)")
-                  : "Configuracion"}
-              </h2>
-              {!isMobile && (
-                <span style={{ fontSize: 13, color: VAULT_BLUE, fontWeight: 600, letterSpacing: 0.3 }}>
-                  Bodega de alto valor · Grupo Geotecnica
-                </span>
-              )}
-            </div>
+          <div style={{ minWidth: 0 }}>
+            <h2 style={{
+              margin: 0,
+              fontSize: isMobile ? 18 : 22,
+              fontWeight: 800, color: CHARCOAL,
+              letterSpacing: -0.3,
+              lineHeight: 1.2,
+            }}>
+              {sec === "resumen" ? (isMobile ? "Resumen" : "Resumen — GeoDrill Vault")
+                : sec === "inventario" ? "Inventario de cajas"
+                : sec === "herramientas" ? (isMobile ? "Herramientas" : "Herramientas de perforacion")
+                : sec === "movimientos" ? (isMobile ? "Movimientos" : "Movimientos (entradas y salidas)")
+                : "Configuracion"}
+            </h2>
+            <span style={{ fontSize: 13, color: VAULT_BLUE, fontWeight: 600, letterSpacing: 0.3 }}>
+              Bodega de alto valor · Grupo Geotecnica
+            </span>
           </div>
           <div style={{
             display: "flex",
@@ -2932,7 +2995,8 @@ export default function GeoDrillVault({ userRole, userName, onBack, onLogout }) 
             <Badge color={BRAND.graphite}>{movements.length} movimiento{movements.length === 1 ? "" : "s"}</Badge>
           </div>
         </div>
-        <div style={{ padding: isMobile ? 16 : 28 }}>
+
+        <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>
           {!loaded ? (
             <div style={{ textAlign: "center", padding: 40, color: BRAND.stone }}>Cargando inventario…</div>
           ) : (
