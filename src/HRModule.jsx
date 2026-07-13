@@ -421,39 +421,42 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     // Upload de foto: lee file como dataUrl, sube a cp-file-<uuid> y guarda
     // la referencia liviana en el objeto empleado (fileId, name, type, size).
     // El dataUrl se agrega tambien al cache local para preview inmediato.
-    // Comprime la imagen a max 600px del lado mayor + JPEG quality 0.85.
-    // Reduce ~2-5MB de una foto de celu a ~50-150KB — evita que Supabase
-    // JSONB timeout con archivos grandes. Devuelve un dataUrl JPEG.
+    const [uploadStep, setUploadStep] = useState("");
+
+    // Comprime la imagen a max 400px + JPEG quality 0.75.
+    // Reduce fotos de celular/PNG grandes a ~30-80 KB. Cada paso tiene su
+    // propio timeout para que si algun paso se cuelga se diagnostique claro.
     const compressImage = (file) => new Promise((resolve, reject) => {
+      const timeoutMs = 15000;
+      const timeoutId = setTimeout(() => reject(new Error(`Compresion tardo mas de ${timeoutMs}ms — imagen muy grande o navegador lento`)), timeoutMs);
       const img = new Image();
       const fr = new FileReader();
-      fr.onerror = () => reject(new Error("No se pudo leer el archivo"));
+      fr.onerror = () => { clearTimeout(timeoutId); reject(new Error("FileReader fallo")); };
       fr.onload = () => {
-        img.onerror = () => reject(new Error("No se pudo decodificar la imagen"));
+        img.onerror = () => { clearTimeout(timeoutId); reject(new Error("Image decode fallo (posible PNG corrupto)")); };
         img.onload = () => {
           try {
-            const MAX = 600;
+            console.log(`[EmpForm] Imagen decodificada: ${img.width}x${img.height} px`);
+            const MAX = 400; // mas agresivo — quedan fotos de perfil chicas
             const scale = Math.min(1, MAX / Math.max(img.width, img.height));
             const w = Math.round(img.width * scale);
             const h = Math.round(img.height * scale);
             const canvas = document.createElement("canvas");
             canvas.width = w; canvas.height = h;
             const ctx = canvas.getContext("2d");
-            ctx.fillStyle = "#fff"; // fondo blanco en caso de PNG transparente
+            ctx.fillStyle = "#fff";
             ctx.fillRect(0, 0, w, h);
             ctx.drawImage(img, 0, 0, w, h);
-            const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+            const dataUrl = canvas.toDataURL("image/jpeg", 0.75);
+            clearTimeout(timeoutId);
             resolve(dataUrl);
-          } catch (e) { reject(e); }
+          } catch (e) { clearTimeout(timeoutId); reject(e); }
         };
         img.src = fr.result;
       };
       fr.readAsDataURL(file);
     });
 
-    // Timeout defensivo para el upload — si Supabase se cuelga por N ms,
-    // se aborta con error en vez de dejar al usuario mirando "Subiendo..."
-    // para siempre.
     const withTimeout = (promise, ms, label = "operation") => Promise.race([
       promise,
       new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout ${ms}ms — ${label} no respondio`)), ms)),
@@ -464,30 +467,40 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       if (!file.type?.startsWith("image/")) { alert("Selecciona un archivo de imagen (JPG/PNG)."); return; }
       setUploading(true);
       try {
-        // 1) Comprimir localmente (rapido, sin red)
-        console.log(`[EmpForm] Comprimiendo foto original ${(file.size/1024).toFixed(0)} KB...`);
+        // 1) Comprimir localmente
+        setUploadStep("Comprimiendo imagen...");
+        console.log(`[EmpForm] Comprimiendo foto original ${(file.size/1024).toFixed(0)} KB (${file.type})...`);
         const dataUrl = await compressImage(file);
-        const approxKB = Math.round((dataUrl.length * 0.75) / 1024); // base64 aprox
-        console.log(`[EmpForm] Comprimida a ~${approxKB} KB. Subiendo a cloud...`);
+        const approxKB = Math.round((dataUrl.length * 0.75) / 1024);
+        console.log(`[EmpForm] Comprimida a ~${approxKB} KB dataUrl length ${dataUrl.length}`);
 
-        // 2) Subir con timeout defensivo (20s, mas que suficiente para 100-200KB)
+        // 2) Subir con timeout 25s
+        setUploadStep(`Subiendo (${approxKB} KB) a la nube...`);
         const fileId = uid();
+        console.log(`[EmpForm] Subiendo a cp-file-${fileId}...`);
         const ok = await withTimeout(
           store.set(`cp-file-${fileId}`, { name: file.name, type: "image/jpeg", size: dataUrl.length, dataUrl }),
-          20000,
-          "upload foto"
+          25000,
+          "upload foto a Supabase"
         );
-        if (!ok) throw new Error("Supabase rechazo el upload despues de 3 reintentos");
+        console.log(`[EmpForm] store.set devolvio: ${ok}`);
+        if (!ok) throw new Error("Supabase rechazo el upload despues de 3 reintentos. Chequea la consola para el error tecnico.");
 
-        // 3) Actualizar UI inmediatamente con la nueva foto
+        // 3) Verify: releer para confirmar que quedo
+        setUploadStep("Verificando...");
+        const verify = await withTimeout(store.get(`cp-file-${fileId}`), 15000, "verify foto");
+        if (!verify?.dataUrl) throw new Error("Supabase acepto el save pero no puede leer el archivo de vuelta. Reintenta.");
+
+        // 4) Actualizar UI
         setPhotoCache(prev => ({ ...prev, [fileId]: dataUrl }));
         setF(p => ({ ...p, photo: { fileId, name: file.name, type: "image/jpeg", size: dataUrl.length } }));
-        console.log(`[EmpForm] Foto subida OK (${fileId})`);
+        console.log(`[EmpForm] ✅ Foto subida y verificada OK (${fileId})`);
       } catch (err) {
-        console.error("[EmpForm] Error subiendo foto:", err);
-        alert(`Error subiendo la foto: ${err?.message || err}\n\nProbá:\n1. Reintentar\n2. Usar una imagen mas chica\n3. Verificar conexion a internet`);
+        console.error("[EmpForm] ❌ Error subiendo foto:", err);
+        alert(`Fallo en el paso: "${uploadStep}"\n\nError: ${err?.message || err}\n\nAbri la consola del navegador (Cmd+Option+I) y mandame lo que sale en rojo/warning.`);
       } finally {
         setUploading(false);
+        setUploadStep("");
       }
     };
     const removePhoto = () => setF(p => ({ ...p, photo: null }));
@@ -500,12 +513,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <EmpAvatar name={f.fullName} dataUrl={currentPhotoUrl} size={82} borderRadius={12} />
         <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Foto del empleado</div>
-          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
-            {f.photo ? (f.photo.name || "Imagen cargada") : "Sin foto — se usan las iniciales."}
+          <div style={{ fontSize: 11, color: uploading ? "#B45309" : "#64748b", marginBottom: 4, fontWeight: uploading ? 700 : 400 }}>
+            {uploading ? `⏳ ${uploadStep || "Procesando..."}` : (f.photo ? (f.photo.name || "Imagen cargada") : "Sin foto — se usan las iniciales.")}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", background: "#2C5F5D", color: "#fff", border: "none", borderRadius: 8, cursor: uploading ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600, opacity: uploading ? 0.6 : 1 }}>
-              {uploading ? "Subiendo..." : (f.photo ? "Cambiar foto" : "Subir foto")}
+              {uploading ? (uploadStep || "Procesando...") : (f.photo ? "Cambiar foto" : "Subir foto")}
               <input type="file" accept="image/*" style={{ display: "none" }} disabled={uploading}
                 onChange={(ev) => { const file = ev.target.files?.[0]; ev.target.value = ""; if (file) handlePhotoFile(file); }} />
             </label>
