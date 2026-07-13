@@ -492,9 +492,20 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         if (!verify?.dataUrl) throw new Error("Supabase acepto el save pero no puede leer el archivo de vuelta. Reintenta.");
 
         // 4) Actualizar UI
+        const newPhoto = { fileId, name: file.name, type: "image/jpeg", size: dataUrl.length };
         setPhotoCache(prev => ({ ...prev, [fileId]: dataUrl }));
-        setF(p => ({ ...p, photo: { fileId, name: file.name, type: "image/jpeg", size: dataUrl.length } }));
-        console.log(`[EmpForm] ✅ Foto subida y verificada OK (${fileId})`);
+        setF(p => ({ ...p, photo: newPhoto }));
+
+        // 5) PERSISTIR INMEDIATO al empleado si estamos editando uno existente.
+        // Antes solo se actualizaba el state del form — si el user no le daba
+        // "Guardar" al modal, la foto se perdia (quedaba huerfana en Supabase
+        // y las iniciales seguian mostrandose).
+        if (emp && emp.id) {
+          sE(emps.map(x => x.id === emp.id ? { ...x, photo: newPhoto } : x));
+          console.log(`[EmpForm] ✅ Foto subida + guardada al empleado ${emp.id} (${fileId})`);
+        } else {
+          console.log(`[EmpForm] ✅ Foto subida (empleado nuevo — se persiste al hacer "Agregar")`);
+        }
       } catch (err) {
         console.error("[EmpForm] ❌ Error subiendo foto:", err);
         alert(`Fallo en el paso: "${uploadStep}"\n\nError: ${err?.message || err}\n\nAbri la consola del navegador (Cmd+Option+I) y mandame lo que sale en rojo/warning.`);
