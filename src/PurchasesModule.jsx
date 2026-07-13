@@ -3484,7 +3484,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
   // ── LAYOUT ──
   const allNav = [
-    { id: "dashboard", icon: "📊", label: "Dashboard" },
+    { id: "dashboard", icon: "🎯", label: "Dashboard" },
     { id: "resumen", icon: "📊", label: "Resumen" },
     { id: "list", icon: "📋", label: "Solicitudes" },
     { id: "projects", icon: "🏗️", label: "Proyectos" },
