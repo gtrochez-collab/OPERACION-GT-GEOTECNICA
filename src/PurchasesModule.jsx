@@ -556,63 +556,19 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   y = fillY + fillH + 5;
 
   // ════════════════════════════════════════════════════════
-  // 4. BANNER DE ALERTA — MOTORISTA COTEJAR ANTES DE FIRMA
-  // ════════════════════════════════════════════════════════
-  const bannerH = 12;
-  fc([254, 243, 199]); rc(M, y, CW, bannerH, "F"); // amarillo suave
-  fc([245, 158, 11]); rc(M, y, 3, bannerH, "F"); // barra naranja
-  f(9, "bold"); tc([146, 64, 14]);
-  doc.text("MOTORISTA: cotejar que las cantidades entregadas coincidan EXACTAMENTE con la descripcion arriba antes de solicitar firma.", M + 7, y + 8);
-  y += bannerH + 5;
-
-  // ════════════════════════════════════════════════════════
-  // 5. FIRMAS — 2 bloques amplios: INGENIERO (recibe) + MOTORISTA (entrega)
+  // 4. FIRMAS (2 bloques)  (y: ~154 → 188)
   // ════════════════════════════════════════════════════════
   const sigW = (CW - 8) / 2;
-  const sigH = 32; // altura del bloque
-
-  // ── Bloque IZQUIERDO: INGENIERO / RESIDENTE (quien recibe) ──
-  const sx1 = M;
-  fc([239, 246, 255]); rc(sx1, y, sigW, 6, "F"); // header azul suave
-  fc(B); rc(sx1, y, 3, 6, "F");
-  f(8, "bold"); tc(B); doc.text("INGENIERO / RESIDENTE EN OBRA — RECIBE MATERIAL", sx1 + 6, y + 4);
-  // Bloque de datos
-  dc(BD); lw(0.3); rc(sx1, y + 6, sigW, sigH - 6, "S");
-  // Campos: Nombre completo, Cargo, DNI/ID
-  let iy = y + 11;
-  f(7, "normal"); tc(GR); doc.text("NOMBRE COMPLETO", sx1 + 5, iy);
-  dc(BK); lw(0.25); ln(sx1 + 5, iy + 5, sx1 + sigW - 5, iy + 5);
-  iy += 9;
-  f(7, "normal"); tc(GR); doc.text("CARGO / POSICION", sx1 + 5, iy);
-  dc(BK); ln(sx1 + 5, iy + 5, sx1 + sigW * 0.55, iy + 5);
-  f(7, "normal"); tc(GR); doc.text("DNI / ID", sx1 + sigW * 0.6, iy);
-  dc(BK); ln(sx1 + sigW * 0.6, iy + 5, sx1 + sigW - 5, iy + 5);
-  iy += 9;
-  // Firma
-  f(8, "bold"); tc(DK); doc.text("Firma:", sx1 + 5, iy);
-  dc(BK); lw(0.5); ln(sx1 + 20, iy, sx1 + sigW - 5, iy);
-  f(6.5, "italic"); tc(GR); doc.text("Al firmar certifico que RECIBI las cantidades exactas descritas arriba, en buen estado.", sx1 + 5, iy + 5, { maxWidth: sigW - 10 });
-
-  // ── Bloque DERECHO: MOTORISTA (quien entrega) ──
-  const sx2 = M + sigW + 8;
-  fc([254, 243, 199]); rc(sx2, y, sigW, 6, "F"); // header naranja suave
-  fc([245, 158, 11]); rc(sx2, y, 3, 6, "F");
-  f(8, "bold"); tc([146, 64, 14]); doc.text("MOTORISTA — ENTREGA EL MATERIAL", sx2 + 6, y + 4);
-  dc(BD); lw(0.3); rc(sx2, y + 6, sigW, sigH - 6, "S");
-  let my = y + 11;
-  f(7, "normal"); tc(GR); doc.text("NOMBRE COMPLETO", sx2 + 5, my);
-  dc(BK); lw(0.25); ln(sx2 + 5, my + 5, sx2 + sigW - 5, my + 5);
-  my += 9;
-  f(7, "normal"); tc(GR); doc.text("PLACA VEHICULO", sx2 + 5, my);
-  dc(BK); ln(sx2 + 5, my + 5, sx2 + sigW * 0.4, my + 5);
-  f(7, "normal"); tc(GR); doc.text("FECHA/HORA ENTREGA", sx2 + sigW * 0.45, my);
-  dc(BK); ln(sx2 + sigW * 0.45, my + 5, sx2 + sigW - 5, my + 5);
-  my += 9;
-  f(8, "bold"); tc(DK); doc.text("Firma:", sx2 + 5, my);
-  dc(BK); lw(0.5); ln(sx2 + 20, my, sx2 + sigW - 5, my);
-  f(6.5, "italic"); tc(GR); doc.text("Confirmo que ENTREGUE las cantidades exactas al Ingeniero/Residente indicado.", sx2 + 5, my + 5, { maxWidth: sigW - 10 });
-
-  y += sigH + 4;
+  [
+    ["", "Nombre y Firma — Quien Recibe el Material"],
+    ["Visto Bueno", "Coordinacion de Operaciones"],
+  ].forEach(([top, bot], i) => {
+    const sx = M + i * (sigW + 8);
+    dc(BK); lw(0.4); ln(sx, y + 20, sx + sigW, y + 20);
+    if (top) { f(9, "bold"); tc(DK); doc.text(top, sx + sigW / 2, y + 25, { align: "center", maxWidth: sigW }); }
+    f(8, "normal"); tc(GR); doc.text(bot, sx + sigW / 2, y + (top ? 30 : 25), { align: "center", maxWidth: sigW });
+  });
+  y += 35;
 
   // Footer
   dc(BD); lw(0.25); ln(M, y, PW - M, y); y += 4;
@@ -2857,115 +2813,6 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             )}
           </div>
         </div>
-
-        {/* COSTOS POR PROYECTO — vista gerencial resumida */}
-        {(() => {
-          // Agrupar TODAS las compras por proyecto con desglose de status
-          const proyBreakdown = {};
-          cp.forEach(p => {
-            const key = p.projectCode || "_sin_proyecto";
-            if (!proyBreakdown[key]) {
-              proyBreakdown[key] = {
-                key,
-                proj: allProjects.find(pr => pr.short === key),
-                total: 0,
-                pagado: 0,
-                porPagar: 0,
-                count: 0,
-                countPagadas: 0,
-                countPorPagar: 0,
-              };
-            }
-            const row = proyBreakdown[key];
-            const amt = Number(p.amount) || 0;
-            row.total += amt;
-            row.count++;
-            if (p.status === "pagado" || p.status === "finalizado") {
-              row.pagado += amt;
-              row.countPagadas++;
-            } else if (p.status === "validado") {
-              row.porPagar += amt;
-              row.countPorPagar++;
-            }
-          });
-          const proyList = Object.values(proyBreakdown)
-            .filter(r => r.count > 0)
-            .sort((a, b) => b.total - a.total);
-          const grandTotal = proyList.reduce((s, r) => s + r.total, 0);
-          const grandPagado = proyList.reduce((s, r) => s + r.pagado, 0);
-          const grandPorPagar = proyList.reduce((s, r) => s + r.porPagar, 0);
-
-          if (proyList.length === 0) return null;
-
-          return (
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 10, letterSpacing: -0.2, textTransform: "uppercase" }}>
-                🏗️ Costos en materiales por proyecto
-              </div>
-              <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: 16, marginBottom: 18 }}>
-                {/* Resumen global arriba */}
-                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 12, marginBottom: 14, paddingBottom: 12, borderBottom: `1px solid ${BORDER}` }}>
-                  <div style={{ background: "#F1F5F9", borderRadius: 8, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 10, color: BRAND.stone, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>Costo total materiales</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: CHARCOAL, marginTop: 2 }}>{fmtL(grandTotal)}</div>
-                    <div style={{ fontSize: 10, color: BRAND.stone }}>{proyList.length} proyecto{proyList.length !== 1 ? "s" : ""}</div>
-                  </div>
-                  <div style={{ background: "#DCFCE7", borderRadius: 8, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 10, color: "#166534", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>Ya pagado</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: "#166534", marginTop: 2 }}>{fmtL(grandPagado)}</div>
-                    <div style={{ fontSize: 10, color: "#166534" }}>{grandTotal > 0 ? Math.round((grandPagado / grandTotal) * 100) : 0}% del total</div>
-                  </div>
-                  <div style={{ background: "#FEF3C7", borderRadius: 8, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 10, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>Por pagar</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: "#92400E", marginTop: 2 }}>{fmtL(grandPorPagar)}</div>
-                    <div style={{ fontSize: 10, color: "#92400E" }}>{grandTotal > 0 ? Math.round((grandPorPagar / grandTotal) * 100) : 0}% del total</div>
-                  </div>
-                </div>
-
-                {/* Tabla desglose por proyecto */}
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead>
-                      <tr style={{ background: "#F8FAFC" }}>
-                        <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>Proyecto</th>
-                        <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>Solic.</th>
-                        <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, color: "#166534", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>Pagado</th>
-                        <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, color: "#92400E", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>Por pagar</th>
-                        <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, color: CHARCOAL, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>Total</th>
-                        <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, minWidth: 120 }}>% Pagado</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {proyList.map(r => {
-                        const pct = r.total > 0 ? (r.pagado / r.total) * 100 : 0;
-                        return (
-                          <tr key={r.key} style={{ borderTop: `1px solid ${BORDER}` }}>
-                            <td style={{ padding: "8px 10px" }}>
-                              <div style={{ fontWeight: 700, color: CHARCOAL, fontSize: 12 }}>{r.key === "_sin_proyecto" ? "(Sin proyecto)" : r.key}</div>
-                              {r.proj?.name && <div style={{ fontSize: 10, color: BRAND.stone, marginTop: 1 }}>{r.proj.name}</div>}
-                            </td>
-                            <td style={{ padding: "8px 10px", textAlign: "right", color: BRAND.graphite, fontWeight: 600 }}>{r.count}</td>
-                            <td style={{ padding: "8px 10px", textAlign: "right", color: "#166534", fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace" }}>{fmtL(r.pagado)}</td>
-                            <td style={{ padding: "8px 10px", textAlign: "right", color: "#92400E", fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace" }}>{fmtL(r.porPagar)}</td>
-                            <td style={{ padding: "8px 10px", textAlign: "right", color: CHARCOAL, fontWeight: 800, fontFamily: "ui-monospace, Menlo, monospace" }}>{fmtL(r.total)}</td>
-                            <td style={{ padding: "8px 10px" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                <div style={{ flex: 1, height: 6, background: "#F1F5F9", borderRadius: 3, overflow: "hidden", minWidth: 60 }}>
-                                  <div style={{ width: `${pct}%`, height: "100%", background: pct >= 90 ? "#16A34A" : pct >= 50 ? "#F59E0B" : "#DC2626" }} />
-                                </div>
-                                <span style={{ fontSize: 10, color: BRAND.graphite, fontWeight: 700, minWidth: 32, textAlign: "right" }}>{Math.round(pct)}%</span>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
 
         {/* ALERTAS DE ACCION */}
         <div>
