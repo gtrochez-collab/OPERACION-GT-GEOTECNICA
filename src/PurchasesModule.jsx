@@ -712,10 +712,17 @@ function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, ren
         if (!isEdit) {
           // CREAR nuevo proyecto
           if (allProjects.some(p => p.short === cleanShort)) return alert("Ya existe un proyecto con ese alias. Usa otro.");
-          upsertProjectMeta(cleanShort, { short: cleanShort, name: cleanName, code: f.code });
+          const ok = await upsertProjectMeta(cleanShort, { short: cleanShort, name: cleanName, code: f.code });
+          if (!ok) {
+            // La sync a la nube fallo tras reintentos. NO cerramos el modal para
+            // que el usuario pueda reintentar sin re-tipear. El proyecto quedo en
+            // este navegador pero avisamos que podria perderse.
+            alert(`⚠️ El proyecto "${cleanShort}" se guardo en este navegador pero NO se pudo sincronizar a la nube.\n\nRevisa tu conexion a internet y volve a tocar "Crear proyecto". Si cerras sesion o abris en otro dispositivo antes de sincronizar, se puede perder.`);
+            return;
+          }
           if (onSaved) onSaved(cleanShort);
           setModal(null);
-          alert(`Proyecto "${cleanShort}" creado. Ya podes usarlo al crear solicitudes.`);
+          alert(`Proyecto "${cleanShort}" creado y sincronizado. Ya podes usarlo al crear solicitudes.`);
           return;
         }
         // EDITAR existente
@@ -728,7 +735,11 @@ function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, ren
           }
         } else {
           // Solo cambios de nombre/codigo
-          upsertProjectMeta(cleanShort, { short: cleanShort, name: cleanName, code: f.code });
+          const ok = await upsertProjectMeta(cleanShort, { short: cleanShort, name: cleanName, code: f.code });
+          if (!ok) {
+            alert("⚠️ Los cambios se ven en pantalla pero NO se sincronizaron a la nube. Revisa tu conexion y volve a guardar.");
+            return;
+          }
           if (onSaved) onSaved(cleanShort);
           setModal(null);
           alert("Proyecto actualizado");
@@ -1499,7 +1510,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       console.groupEnd();
     }
   };
-  const sCP = d => { setCustomProjects(d); store.set("cp-projects", d); };
+  // Guarda la lista de proyectos custom. AWAIT + retorna ok — igual que las
+  // compras (sP/saveOrAlert). Antes era fire-and-forget: el proyecto se veia en
+  // pantalla pero si la sync a la nube fallaba, se perdia en silencio (bug:
+  // "no se guardan los proyectos nuevos"). Ahora el caller sabe si fallo y avisa.
+  const sCP = async (d) => {
+    setCustomProjects(d);
+    return await store.set("cp-projects", d);
+  };
 
   // ── CRUD de Proveedores ──
   const saveProviders = async (next) => {
@@ -1661,14 +1679,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const getProject = (short) => allProjects.find(p => p.short === short);
 
   // Actualizar metadata custom de un proyecto (base o nuevo)
-  const upsertProjectMeta = (short, patch) => {
+  const upsertProjectMeta = async (short, patch) => {
     const base = PROJECTS.find(p => p.short === short);
     const existing = customProjects.find(cp => cp.short === short);
     if (existing) {
-      sCP(customProjects.map(cp => cp.short === short ? { ...cp, ...patch } : cp));
+      return await sCP(customProjects.map(cp => cp.short === short ? { ...cp, ...patch } : cp));
     } else {
       const seed = base ? { short: base.short, name: base.name, code: base.code } : { short };
-      sCP([...customProjects, { ...seed, ...patch, createdAt: new Date().toISOString() }]);
+      return await sCP([...customProjects, { ...seed, ...patch, createdAt: new Date().toISOString() }]);
     }
   };
 
