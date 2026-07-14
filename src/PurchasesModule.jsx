@@ -1193,6 +1193,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const isCostos = userRole === "costos";
   const isRecepcion = userRole === "recepcion";
   const isAsistenteCompras = userRole === "asistente_compras";
+  const isVisorCompras = userRole === "visor_compras";   // Arturo Trochez — solo lectura, acceso completo a Compras
 
   // Permisos (segregacion de funciones):
   // admin → Operaciones: crea, edita borradores, valida, envia a Tesoreria, edita proyectos.
@@ -1210,7 +1211,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   //         a Logistica cuando este confirmada. Cambio solicitado jun-2026.
   const canCreate = isAdmin || isCostos;                                          // crear/editar/validar solicitudes + editar proyectos
   const canPay = isTesoreria;                                                     // SOLO Carolina registra pago y cambia estado financiero
-  const canViewOnly = isGerencia;                                                 // solo gerencia es read-only
+  const canViewOnly = isGerencia || isVisorCompras;                               // gerencia y visor de compras (Arturo) son read-only
   const canEditDelivery = isAdmin || isCostos || isRecepcion;                     // subir/editar fichas de recibido
   const canManageProviders = isAdmin || isCostos || isAsistenteCompras || isRecepcion;  // CRUD de proveedores (Ana primaria, Jorge tambien para no quedar trabados)
   const canSendToLogistics = isAdmin || isCostos || isAsistenteCompras;           // crear orden de recogida desde compra pagada
@@ -1229,7 +1230,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   //   datos bancarios de proveedores al dia)
   // - admin/gerencia/costos → "dashboard" (vista ejecutiva)
   // - Resto → "list" (solicitudes)
-  const canSeeDashboardDefault = isAdmin || isGerencia || isCostos;
+  const canSeeDashboardDefault = isAdmin || isGerencia || isCostos || isVisorCompras;
   const defaultSec = isAsistenteCompras
     ? "ana"
     : isRecepcion
@@ -3646,7 +3647,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   ];
   // Dashboard y Resumen (command center) solo para admin/gerencia/costos —
   // quien necesita seguimiento end-to-end. Ana ve su Kanban.
-  const canSeeResumen = isAdmin || isGerencia || isCostos;
+  const canSeeResumen = isAdmin || isGerencia || isCostos || isVisorCompras;
   const canSeeDashboard = canSeeResumen;
   const visibleNav = isAsistenteCompras
     ? allNav.filter(n => n.id === "ana" || n.id === "providers")
@@ -3659,6 +3660,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const roleLabel = isAdmin ? "Operaciones"
     : isTesoreria ? "Tesoreria"
     : isGerencia ? "Gerencia (solo lectura)"
+    : isVisorCompras ? "Visor de Compras (solo lectura)"
     : isCostos ? "Costos / Operaciones"
     : isAsistenteCompras ? "Asistente de Compras"
     : isRecepcion ? "Recepcion"
@@ -3854,7 +3856,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           : renderList()
       }</div>
     </div>
-    {!canViewOnly && renderModal()}
+    {/* Usuarios read-only (gerencia, visor de compras) SOLO pueden abrir el
+        modal de detalle — es de solo lectura (sin botones de mutacion). El
+        resto de modales (nuevo/editar/pagar/etc.) sigue bloqueado para ellos. */}
+    {(!canViewOnly || modal?.t === "detail") && renderModal()}
   </div>;
 }
 

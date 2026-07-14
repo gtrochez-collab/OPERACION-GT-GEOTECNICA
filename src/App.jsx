@@ -33,7 +33,7 @@ const MODULES = [
     desc: "Solicitudes de compra, pagos y comprobantes de tesoreria",
     accent: "#8B3A3A", // borgona profesional
     accentSoft: "rgba(139,58,58,0.10)",
-    roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion", "asistente_compras"],
+    roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion", "asistente_compras", "visor_compras"],
   },
   {
     id: "maquinas",
@@ -178,10 +178,10 @@ export default function App() {
           <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: BRAND.stone }}>
             <span style={{ width: 28, height: 1, background: BRAND.orange, opacity: 0.6 }} />
             <span style={{ fontWeight: 600, letterSpacing: 0.4, color: BRAND.graphite }}>
-              Lic. Gerson Trochez
+              {user.label}
             </span>
             <span style={{ color: BRAND.ash }}>·</span>
-            <span style={{ fontStyle: "italic" }}>Coordinador de Operaciones</span>
+            <span style={{ fontStyle: "italic" }}>{ROLE_LABEL[user.role] || user.role}</span>
           </div>
         </div>
       </div>

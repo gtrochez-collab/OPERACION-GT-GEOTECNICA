@@ -19,6 +19,7 @@ export const USERS = [
   { username: "fernando",      password: "fernando1234",   role: "coordinador_maquinas", label: "Lic. Fernando Diaz" },
   { username: "almacen",       password: "almacen1234",    role: "almacenista",          label: "Encargado de Almacen" },
   { username: "jose",          password: "jose1234",       role: "almacen_visor",        label: "Jose (Asistente Almacen)" },
+  { username: "arturo",        password: "arturo1234",     role: "visor_compras",        label: "Arturo Trochez" },
 ];
 
 export const ROLE_LABEL = {
@@ -34,6 +35,7 @@ export const ROLE_LABEL = {
   coordinador_maquinas: "Coordinador de Maquinas",
   almacenista:        "Encargado de Almacen (GeoDrill Vault)",
   almacen_visor:      "Visor de Almacen (solo lectura)",
+  visor_compras:      "Visor de Compras (solo lectura)",
 };
 
 // Color para el avatar de cada usuario (rotativo segun el username)
