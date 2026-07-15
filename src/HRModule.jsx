@@ -288,9 +288,12 @@ const INP = { width: 75, padding: "4px 6px", border: "1px solid #E2E8F0", border
 // ── APP ──
 export default function HRModule({ userRole = "admin", userName, onBack, onLogout }) {
   const isAsistente = userRole === "asistente";
+  // Jorge (recepcion) — acceso acotado: SOLO ve la lista de empleados y puede
+  // subir/cambiar fotos. No ve planilla, salarios ni ningun otro dato sensible.
+  const isPhotoOnly = userRole === "recepcion";
   const isReadOnly = userRole === "gerencia" || userRole === "costos";
   const [co, setCo] = useState("subterra");
-  const [sec, setSec] = useState(isAsistente ? "attendance" : "dashboard");
+  const [sec, setSec] = useState(isAsistente ? "attendance" : isPhotoOnly ? "employees" : "dashboard");
   const [emps, setEmps] = useState([]);
   const [vacs, setVacs] = useState([]);
   const [lvs, setLvs] = useState([]);
@@ -408,7 +411,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     { id: "movimientos", icon: "🔄", label: "Movimientos" },
     { id: "constancias", icon: "📄", label: "Constancias" },
   ];
-  const nav = isAsistente ? allNav.filter(n => n.id === "attendance") : allNav;
+  const nav = isAsistente ? allNav.filter(n => n.id === "attendance")
+    : isPhotoOnly ? allNav.filter(n => n.id === "employees")
+    : allNav;
 
   if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "'Segoe UI', sans-serif", color: "#64748b" }}>Cargando RRHH...</div>;
 
@@ -534,6 +539,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <EmpAvatar name={f.fullName} dataUrl={currentPhotoUrl} size={82} borderRadius={12} />
         <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Foto del empleado</div>
+          {isPhotoOnly && (
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#1E293B", lineHeight: 1.3 }}>
+              {f.fullName || "—"}{f.position ? <span style={{ fontWeight: 400, color: "#64748b" }}> — {f.position}</span> : null}
+            </div>
+          )}
           <div style={{ fontSize: 11, color: uploading ? "#B45309" : "#64748b", marginBottom: 4, fontWeight: uploading ? 700 : 400 }}>
             {uploading ? `⏳ ${uploadStep || "Procesando..."}` : (f.photo ? (f.photo.name || "Imagen cargada") : "Sin foto — se usan las iniciales.")}
           </div>
@@ -547,30 +557,40 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           </div>
         </div>
       </div>
-      <Input label="Nombre completo" value={f.fullName} onChange={e => u("fullName", e.target.value)} />
-      <Input label="DNI" value={f.dni} onChange={e => u("dni", e.target.value)} />
-      <Input label="Cargo" value={f.position} onChange={e => u("position", e.target.value)} />
-      <Select label="Departamento" options={DEPARTMENTS} value={f.department} onChange={e => u("department", e.target.value)} />
-      <Select label="Contrato" options={[{ value: "permanent", label: "Permanente" }, { value: "temporary", label: "Temporal" }, { value: "honorarios", label: "Honorarios" }]} value={f.contractType} onChange={e => u("contractType", e.target.value)} />
-      <Select label="Estado" options={[{ value: "active", label: "Activo" }, { value: "inactive", label: "Inactivo" }]} value={f.status} onChange={e => u("status", e.target.value)} />
-      <Input label="Fecha inicio" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
-      {f.contractType === "temporary" && <Input label="Fecha fin" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />}
-      <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
-      <Input label="Bonificacion (L)" type="number" value={f.bonificacion || 0} onChange={e => u("bonificacion", e.target.value)} />
-      <Input label="Telefono" value={f.phone || ""} onChange={e => u("phone", e.target.value)} placeholder="9999-9999" />
-      <Input label="Email" type="email" value={f.email || ""} onChange={e => u("email", e.target.value)} placeholder="empleado@correo.com" />
-      <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#92400E", cursor: "pointer" }}>
-        <input type="checkbox" checked={!!f.payByHour} onChange={e => u("payByHour", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
-        <span>
-          <b>Pago proporcional por hora de entrada</b>
-          <div style={{ fontSize: 11, color: "#78350F", marginTop: 2 }}>
-            Activá esto solo para empleados que cobran segun la hora a la que llegan (ej: trabajadores con horario flexible). Vas a poder marcar la hora 7:00, 7:30, 8:00, 8:30, 9:00 o 9:30 en cada celda de asistencia con click derecho.
-          </div>
-        </span>
-      </label>
+      {isPhotoOnly ? (
+        <div style={{ gridColumn: "1/-1", fontSize: 12, color: "#64748b", background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 8, padding: "10px 14px" }}>
+          📷 La foto se guarda automáticamente al subirla. Cuando termines, tocá <b>Cerrar</b>.
+        </div>
+      ) : (<>
+        <Input label="Nombre completo" value={f.fullName} onChange={e => u("fullName", e.target.value)} />
+        <Input label="DNI" value={f.dni} onChange={e => u("dni", e.target.value)} />
+        <Input label="Cargo" value={f.position} onChange={e => u("position", e.target.value)} />
+        <Select label="Departamento" options={DEPARTMENTS} value={f.department} onChange={e => u("department", e.target.value)} />
+        <Select label="Contrato" options={[{ value: "permanent", label: "Permanente" }, { value: "temporary", label: "Temporal" }, { value: "honorarios", label: "Honorarios" }]} value={f.contractType} onChange={e => u("contractType", e.target.value)} />
+        <Select label="Estado" options={[{ value: "active", label: "Activo" }, { value: "inactive", label: "Inactivo" }]} value={f.status} onChange={e => u("status", e.target.value)} />
+        <Input label="Fecha inicio" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
+        {f.contractType === "temporary" && <Input label="Fecha fin" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />}
+        <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
+        <Input label="Bonificacion (L)" type="number" value={f.bonificacion || 0} onChange={e => u("bonificacion", e.target.value)} />
+        <Input label="Telefono" value={f.phone || ""} onChange={e => u("phone", e.target.value)} placeholder="9999-9999" />
+        <Input label="Email" type="email" value={f.email || ""} onChange={e => u("email", e.target.value)} placeholder="empleado@correo.com" />
+        <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#92400E", cursor: "pointer" }}>
+          <input type="checkbox" checked={!!f.payByHour} onChange={e => u("payByHour", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
+          <span>
+            <b>Pago proporcional por hora de entrada</b>
+            <div style={{ fontSize: 11, color: "#78350F", marginTop: 2 }}>
+              Activá esto solo para empleados que cobran segun la hora a la que llegan (ej: trabajadores con horario flexible). Vas a poder marcar la hora 7:00, 7:30, 8:00, 8:30, 9:00 o 9:30 en cada celda de asistencia con click derecho.
+            </div>
+          </span>
+        </label>
+      </>)}
       <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
-        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-        <Btn variant="success" onClick={() => { if (!f.fullName) return alert("Nombre requerido"); onSave({ ...f, id: f.id || uid(), company: f.company || co }); setModal(null); }}>{emp ? "Guardar" : "Agregar"}</Btn>
+        {isPhotoOnly ? (
+          <Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>
+        ) : (<>
+          <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+          <Btn variant="success" onClick={() => { if (!f.fullName) return alert("Nombre requerido"); onSave({ ...f, id: f.id || uid(), company: f.company || co }); setModal(null); }}>{emp ? "Guardar" : "Agregar"}</Btn>
+        </>)}
       </div>
     </div>;
   };
@@ -1756,12 +1776,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           onMouseLeave={(ev) => { ev.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,0.03)"; ev.currentTarget.style.borderColor = "#E2E8F0"; ev.currentTarget.style.transform = "translateY(0)"; }}
           title="Click para editar"
         >
-          {/* Botones flotantes (borrar) */}
-          <button
+          {/* Botones flotantes (borrar) — oculto para visor de solo-fotos */}
+          {!isPhotoOnly && <button
             onClick={(ev) => { ev.stopPropagation(); if (confirm(`Eliminar a ${r.fullName}?`)) sE(emps.filter(e => e.id !== r.id)); }}
             style={{ position: "absolute", top: 8, right: 8, width: 24, height: 24, borderRadius: 6, border: "none", background: "rgba(220,38,38,0.08)", color: "#DC2626", cursor: "pointer", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
             title="Eliminar empleado"
-          >×</button>
+          >×</button>}
 
           {/* Foto + estado */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
@@ -1849,7 +1869,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <Btn small variant="ghost" onClick={() => { setEmpSearch(""); setEmpDeptFilter(""); }}>Limpiar</Btn>
           )}
         </div>
-        <Btn onClick={() => setModal({ t: "en" })}>+ Nuevo empleado</Btn>
+        {!isPhotoOnly && <Btn onClick={() => setModal({ t: "en" })}>+ Nuevo empleado</Btn>}
       </div>
 
       {/* Contador */}
@@ -3375,7 +3395,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     default: return null;
   }};
 
-  const roleLabel = userRole === "admin" ? "Recursos Humanos" : userRole === "asistente" ? "Asistente RRHH" : userRole === "gerencia" ? "Gerencia (solo lectura)" : userRole === "costos" ? "Costos (solo lectura)" : (userRole || "Usuario");
+  const roleLabel = userRole === "admin" ? "Recursos Humanos" : userRole === "asistente" ? "Asistente RRHH" : userRole === "gerencia" ? "Gerencia (solo lectura)" : userRole === "costos" ? "Costos (solo lectura)" : userRole === "recepcion" ? "Fotos del personal" : (userRole || "Usuario");
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
   // SVG cartoon team lineup — trabajadores del sector industrial

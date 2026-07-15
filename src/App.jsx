@@ -24,7 +24,7 @@ const MODULES = [
     desc: "Empleados, planilla, asistencia, vacaciones, permisos",
     accent: "#2C5F5D", // verde acero industrial
     accentSoft: "rgba(44,95,93,0.10)",
-    roles: ["admin", "asistente", "costos"],
+    roles: ["admin", "asistente", "costos", "recepcion"],
   },
   {
     id: "compras-operaciones",
