@@ -1164,6 +1164,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   const isCostos = userRole === "costos";
   const isRecepcion = userRole === "recepcion";
   const isAsistenteCompras = userRole === "asistente_compras";
+  const isVisorCompras = userRole === "visor_compras";   // Arturo Trochez — solo lectura, acceso completo
   // Lic. Fernando Diaz — coordinador de maquinaria. Crea solicitudes de pago
   // de repuestos/mantenimiento y gestiona el catalogo de maquinas.
   const isCoordinadorMaquinas = userRole === "coordinador_maquinas";
@@ -1180,7 +1181,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   //         no se usan activamente en Maquinas.
   const canCreate = isAdmin || isCostos || isCoordinadorMaquinas;                 // crear/editar/validar solicitudes + editar proyectos
   const canPay = isTesoreria;                                                     // SOLO Carolina registra pago y cambia estado financiero
-  const canViewOnly = isGerencia;                                                 // solo gerencia es read-only
+  const canViewOnly = isGerencia || isVisorCompras;                               // gerencia y visor de compras (Arturo) son read-only
   const canManageProviders = isAdmin || isCostos || isAsistenteCompras || isRecepcion || isCoordinadorMaquinas;  // CRUD de proveedores
   const canManageMachines = isAdmin || isCostos || isCoordinadorMaquinas || isRecepcion;  // CRUD de maquinas (Jorge incluido para cargar maquinas)
 
@@ -2541,9 +2542,9 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     { id: "machines", icon: "⚙️", label: "Maquinas" },
     { id: "providers", icon: "🏢", label: "Proveedores" },
   ];
-  const canSeeResumen = isAdmin || isGerencia || isCostos || isCoordinadorMaquinas;
+  const canSeeResumen = isAdmin || isGerencia || isCostos || isCoordinadorMaquinas || isVisorCompras;
   const visibleNav = allNav.filter(n => n.id !== "resumen" || canSeeResumen);
-  const roleLabel = isAdmin ? "Operaciones" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : isCostos ? "Costos / Operaciones" : isCoordinadorMaquinas ? "Coord. Maquinas" : userRole;
+  const roleLabel = isAdmin ? "Operaciones" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : isVisorCompras ? "Visor de Compras (solo lectura)" : isCostos ? "Costos / Operaciones" : isCoordinadorMaquinas ? "Coord. Maquinas" : userRole;
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
   // SVG cartoon de piloteadora BAUER
@@ -2737,7 +2738,10 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
           : renderList()
       }</div>
     </div>
-    {!canViewOnly && renderModal()}
+    {/* Usuarios read-only (gerencia, visor de compras) SOLO pueden abrir el
+        modal de detalle — es de solo lectura (sin botones de mutacion). El
+        resto de modales (nuevo/editar/pagar/etc.) sigue bloqueado para ellos. */}
+    {(!canViewOnly || modal?.t === "detail") && renderModal()}
   </div>;
 }
 

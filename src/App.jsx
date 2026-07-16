@@ -42,7 +42,7 @@ const MODULES = [
     desc: "Solicitudes de pago de repuestos y mantenimiento de maquinaria, por proyecto",
     accent: "#7C3AED",
     accentSoft: "rgba(124,58,237,0.10)",
-    roles: ["admin", "coordinador_maquinas", "tesoreria", "gerencia", "costos", "recepcion"],
+    roles: ["admin", "coordinador_maquinas", "tesoreria", "gerencia", "costos", "recepcion", "visor_compras"],
   },
   {
     id: "almacen",
