@@ -2975,130 +2975,91 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       (x.emp.dni || "").toLowerCase().includes(q)
     );
 
-    // Grupos por urgencia (sobre lista filtrada)
-    const grupoUrgente = filtered.filter(x => x.active && x.active.endDate && daysUntil(x.active.endDate) !== null && daysUntil(x.active.endDate) <= 7);
-    const grupoMes = filtered.filter(x => x.active && x.active.endDate && daysUntil(x.active.endDate) > 7 && daysUntil(x.active.endDate) <= 30);
-    const grupoVigente = filtered.filter(x => {
-      if (!x.active) return false;
+    // ── Tabla unica ordenada por urgencia ──
+    // Orden: vencidos primero (dias negativos), luego proximos a vencer,
+    // luego vigentes con fecha, indefinidos, y sin contrato al final.
+    const urgencyKey = (x) => {
+      if (!x.active) return 900000;
       const d = x.active.endDate ? daysUntil(x.active.endDate) : null;
-      return d === null || d > 30;
-    });
-    const grupoSin = filtered.filter(x => !x.active);
-
-    const sortFn = (a, b) => {
-      if (a.active?.endDate && b.active?.endDate) return (a.active.endDate || "").localeCompare(b.active.endDate || "");
-      return (a.emp.fullName || "").localeCompare(b.emp.fullName || "");
+      if (d === null) return 800000;
+      return d;
     };
-    grupoUrgente.sort(sortFn);
-    grupoMes.sort(sortFn);
-    grupoVigente.sort(sortFn);
-    grupoSin.sort(sortFn);
+    const tableRows = [...filtered].sort((a, b) => {
+      const ka = urgencyKey(a), kb = urgencyKey(b);
+      if (ka !== kb) return ka - kb;
+      return (a.emp.fullName || "").localeCompare(b.emp.fullName || "");
+    });
 
-    // Fila compacta por empleado
-    const renderRow = ({ emp, active, all }) => {
+    const estadoDe = (x) => {
+      if (!x.active) return { label: "Sin contrato", color: "#94A3B8", tint: "#FAFAF9" };
+      const d = x.active.endDate ? daysUntil(x.active.endDate) : null;
+      if (d === null) return { label: "Indefinido", color: "#10B981", tint: "#fff" };
+      if (d < 0)   return { label: `Venció hace ${-d}d`, color: "#DC2626", tint: "#FEF2F2" };
+      if (d === 0) return { label: "Vence hoy", color: "#DC2626", tint: "#FEF2F2" };
+      if (d <= 7)  return { label: `Vence en ${d}d`, color: "#DC2626", tint: "#FEF2F2" };
+      if (d <= 30) return { label: `Vence en ${d}d`, color: "#F59E0B", tint: "#FFFBEB" };
+      return { label: "Vigente", color: "#10B981", tint: "#fff" };
+    };
+
+    const th = { textAlign: "left", padding: "10px 10px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap", borderBottom: "2px solid #E8E1D3", background: "#FFFBF5" };
+    const td = { padding: "9px 10px", fontSize: 12, color: "#2C2A28", verticalAlign: "top", borderBottom: "1px solid #F1EBE0" };
+
+    const renderTableRow = (x) => {
+      const { emp, active, all } = x;
       const code = genEmpCode(emp.fullName, emp.dni);
       const grupo = getGrupo(emp.company, emp.contractType);
       const acumDias = active ? cumulativeDaysOf(active) : 0;
-      const diasHasta = active && active.endDate ? daysUntil(active.endDate) : null;
       const tipoActivo = active?.contractType;
       const isTemp = tipoActivo === "temporary";
-      const tipoLabel = tipoActivo === "permanent" ? "Permanente" : tipoActivo === "honorarios" ? "Honorarios" : isTemp ? "Obra/Tiempo" : "Sin contrato";
+      const tipoLabel = tipoActivo === "permanent" ? "Permanente" : tipoActivo === "honorarios" ? "Honorarios" : isTemp ? "Obra/Tiempo" : "—";
       const tipoColor = tipoActivo === "permanent" ? "#2563EB" : tipoActivo === "honorarios" ? "#7C3AED" : isTemp ? "#D97706" : "#94A3B8";
+      const est = estadoDe(x);
 
       return (
-        <div key={emp.id} style={{
-          background: "#fff",
-          border: "1px solid #E8E1D3",
-          borderRadius: 10,
-          padding: "10px 14px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-        }}>
-          {/* Fila 1: nombre + code + tipo + grupo + vencimiento + accion */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
-              <span style={{ fontWeight: 700, fontSize: 14, color: "#2C2A28" }}>{emp.fullName}</span>
-              <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 10, fontWeight: 700, color: "#E8762D" }}>{code}</span>
-              <Badge color={tipoColor}>{tipoLabel}</Badge>
-              <Badge color={GRUPO_COLOR[grupo]}>{grupo}</Badge>
+        <tr key={emp.id} style={{ background: est.tint }} title={active?.notes || undefined}>
+          <td style={td}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 700, fontSize: 13 }}>{emp.fullName}</span>
+              <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 9.5, fontWeight: 700, color: "#E8762D" }}>{code}</span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {isTemp && diasHasta !== null && (
-                <Badge color={diasHasta < 0 ? "#DC2626" : diasHasta <= 7 ? "#DC2626" : diasHasta <= 30 ? "#F59E0B" : "#10B981"}>
-                  {diasHasta < 0 ? `Venció hace ${-diasHasta}d` : diasHasta === 0 ? "Vence hoy" : `Vence en ${diasHasta}d`}
-                </Badge>
-              )}
-              {!active && <Btn small onClick={() => setModal({ t: "ctn", presetEmpId: emp.id })}>+ Crear contrato</Btn>}
-              {active && isTemp && <Btn small variant="info" onClick={() => setModal({ t: "ctr", d: active })}>🔄 Renovar</Btn>}
-            </div>
-          </div>
-
-          {/* Fila 2: cargo + DNI */}
-          <div style={{ fontSize: 11, color: "#8B847C" }}>
-            {emp.position} · DNI {emp.dni}
-          </div>
-
-          {/* Fila 3: fechas + salario */}
-          {active ? (
-            <div style={{ fontSize: 12, color: "#5C5853", display: "flex", gap: 14, flexWrap: "wrap" }}>
-              <span>📅 <strong>Inicio:</strong> {fmt(active.startDate)}</span>
-              {active.endDate && <span><strong>Fin:</strong> {fmt(active.endDate)}</span>}
-              <span><strong>Salario:</strong> {fmtL(active.salary)}</span>
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Sin contrato activo registrado.</div>
-          )}
-
-          {/* Progreso 180 dias (temporales) */}
-          {active && isTemp && (
-            <div style={{ marginTop: 2 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#8B847C", marginBottom: 3 }}>
-                <span><strong>{acumDias}</strong>/180 días acumulados</span>
-                <span style={{ color: acumDias >= 180 ? "#DC2626" : acumDias >= 150 ? "#F59E0B" : "#5C5853", fontWeight: 600 }}>
-                  {acumDias >= 180 ? "⚠️ Cumplió 180 días" : `${180 - acumDias}d para 180`}
-                </span>
-              </div>
-              <div style={{ height: 5, background: "#E8E1D3", borderRadius: 3, overflow: "hidden" }}>
-                <div style={{ width: `${Math.min(100, (acumDias / 180) * 100)}%`, height: "100%", background: acumDias >= 180 ? "#DC2626" : acumDias >= 150 ? "#F59E0B" : "#10B981", transition: "width .3s" }} />
-              </div>
-            </div>
-          )}
-
-          {active && active.notes && <div style={{ fontSize: 11, color: "#5C5853", fontStyle: "italic" }}>{active.notes}</div>}
-
-          {/* Historial discreto */}
-          {all.length > 1 && (
-            <details style={{ marginTop: 2 }}>
-              <summary style={{ cursor: "pointer", fontSize: 10, color: "#8B847C", fontWeight: 600 }}>▸ Historial ({all.length} contratos)</summary>
-              <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
-                {all.map(c => (
-                  <div key={c.id} style={{ fontSize: 11, color: "#5C5853", padding: "3px 8px", background: c.status === "active" ? "#ECFDF5" : c.status === "liquidated" ? "#FEE2E2" : "#F1F5F9", borderRadius: 5 }}>
-                    <Badge color={c.status === "active" ? "#10B981" : c.status === "liquidated" ? "#DC2626" : c.status === "renewed" ? "#3B82F6" : "#8B847C"}>
-                      {c.status === "active" ? "Activo" : c.status === "liquidated" ? "Liquidado" : c.status === "renewed" ? "Renovado" : "Cerrado"}
-                    </Badge> {fmt(c.startDate)} → {c.endDate ? fmt(c.endDate) : "indefinido"} · {fmtL(c.salary)}{c.liquidationReason && ` · ${c.liquidationReason}`}
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
-        </div>
-      );
-    };
-
-    const renderGroup = (title, color, icon, items, defaultOpen) => {
-      if (items.length === 0) return null;
-      return (
-        <details open={defaultOpen} style={{ background: "#FFFBF5", border: `1px solid ${color}30`, borderLeft: `4px solid ${color}`, borderRadius: 10 }}>
-          <summary style={{ cursor: "pointer", padding: "10px 14px", fontWeight: 700, fontSize: 13, color, display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 15 }}>{icon}</span>
-            <span>{title}</span>
-            <span style={{ background: color + "20", color, padding: "2px 8px", borderRadius: 10, fontSize: 11 }}>{items.length}</span>
-          </summary>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "0 12px 12px 12px" }}>
-            {items.map(renderRow)}
-          </div>
-        </details>
+            <div style={{ fontSize: 10.5, color: "#8B847C", marginTop: 2 }}>{emp.position} · DNI {emp.dni}</div>
+            {all.length > 1 && (
+              <details style={{ marginTop: 3 }}>
+                <summary style={{ cursor: "pointer", fontSize: 10, color: "#8B847C", fontWeight: 600 }}>▸ Historial ({all.length})</summary>
+                <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
+                  {all.map(c => (
+                    <div key={c.id} style={{ fontSize: 10.5, color: "#5C5853", padding: "3px 8px", background: c.status === "active" ? "#ECFDF5" : c.status === "liquidated" ? "#FEE2E2" : "#F1F5F9", borderRadius: 5 }}>
+                      <b>{c.status === "active" ? "Activo" : c.status === "liquidated" ? "Liquidado" : c.status === "renewed" ? "Renovado" : "Cerrado"}</b> · {fmt(c.startDate)} → {c.endDate ? fmt(c.endDate) : "indefinido"} · {fmtL(c.salary)}{c.liquidationReason ? ` · ${c.liquidationReason}` : ""}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </td>
+          <td style={td}><Badge color={tipoColor}>{tipoLabel}</Badge></td>
+          <td style={td}><Badge color={GRUPO_COLOR[grupo]}>{grupo}</Badge></td>
+          <td style={{ ...td, whiteSpace: "nowrap" }}>{active ? fmt(active.startDate) : "—"}</td>
+          <td style={{ ...td, whiteSpace: "nowrap" }}>{active ? (active.endDate ? fmt(active.endDate) : "Indefinido") : "—"}</td>
+          <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap", fontWeight: 700, color: "#1E293B" }}>{active ? fmtL(active.salary) : "—"}</td>
+          <td style={{ ...td, whiteSpace: "nowrap" }}>
+            {active && isTemp ? (
+              <>
+                <span style={{ fontWeight: 800, color: acumDias >= 180 ? "#DC2626" : acumDias >= 150 ? "#B45309" : "#334155" }}>{acumDias}</span>
+                <span style={{ color: "#94A3B8" }}>/180</span>
+                <div style={{ fontSize: 9.5, color: acumDias >= 180 ? "#DC2626" : acumDias >= 150 ? "#B45309" : "#8B847C", fontWeight: 600 }}>
+                  {acumDias >= 180 ? "⚠️ cumplió 180" : `faltan ${180 - acumDias}d`}
+                </div>
+              </>
+            ) : <span style={{ color: "#CBD5E1" }}>—</span>}
+          </td>
+          <td style={td}>
+            <span style={{ background: est.color + "18", color: est.color, fontWeight: 700, fontSize: 11, padding: "3px 10px", borderRadius: 10, whiteSpace: "nowrap" }}>{est.label}</span>
+          </td>
+          <td style={{ ...td, whiteSpace: "nowrap" }}>
+            {!active && <Btn small onClick={() => setModal({ t: "ctn", presetEmpId: emp.id })}>+ Crear</Btn>}
+            {active && isTemp && <Btn small variant="info" onClick={() => setModal({ t: "ctr", d: active })}>🔄 Renovar</Btn>}
+          </td>
+        </tr>
       );
     };
 
@@ -3171,14 +3132,30 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         </span>
       </div>
 
-      {/* Grupos por urgencia */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {renderGroup("URGENTE — Vencen en 7 días", "#DC2626", "🔴", grupoUrgente, true)}
-        {renderGroup("Este mes (8–30 días)", "#F59E0B", "🟡", grupoMes, true)}
-        {renderGroup("Vigentes", "#10B981", "🟢", grupoVigente, false)}
-        {renderGroup("Sin contrato activo", "#94A3B8", "📭", grupoSin, false)}
+      {/* Tabla de contratos — ordenada por urgencia (vencidos primero) */}
+      <div style={{ background: "#fff", border: "1px solid #DBD4C8", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+            <thead>
+              <tr>
+                <th style={th}>Empleado</th>
+                <th style={th}>Tipo</th>
+                <th style={th}>Grupo</th>
+                <th style={th}>Inicio</th>
+                <th style={th}>Fin</th>
+                <th style={{ ...th, textAlign: "right" }}>Salario</th>
+                <th style={th}>Días 180</th>
+                <th style={th}>Estado</th>
+                <th style={th}>Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.map(renderTableRow)}
+            </tbody>
+          </table>
+        </div>
         {filtered.length === 0 && (
-          <div style={{ background: "#F1F5F9", border: "1px dashed #CBD5E1", borderRadius: 10, padding: 20, textAlign: "center", color: "#64748B", fontSize: 13 }}>
+          <div style={{ padding: 20, textAlign: "center", color: "#64748B", fontSize: 13 }}>
             Sin resultados para "{search}".
           </div>
         )}
