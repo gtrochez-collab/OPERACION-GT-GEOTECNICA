@@ -301,6 +301,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [cons, setCons] = useState([]);
   const [pays, setPays] = useState([]);
   const [cuadrillas, setCuadrillas] = useState([]);
+  // Proyectos custom creados en GeoShopping (cp-projects). Se leen (solo
+  // lectura) para que cuadrillas y asistencia usen la MISMA lista de
+  // proyectos que el modulo de compras. GeoShopping es el dueño del dato.
+  const [hrCustomProjects, setHrCustomProjects] = useState([]);
   const [movs, setMovs] = useState([]);
   const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
   const [contracts, setContracts] = useState([]);
@@ -323,10 +327,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
   useEffect(() => {
     (async () => {
-      const [e, v, l, a, c, p, cq2, mv, ct, bn] = await Promise.all([
+      const [e, v, l, a, c, p, cq2, mv, ct, bn, cpProj] = await Promise.all([
         store.get("hr-emps5"), store.get("hr-vacs"), store.get("hr-lvs"),
         store.get("hr-atts2"), store.get("hr-cons"), store.get("hr-pays"), store.get("hr-cuad"),
         store.get("hr-movs"), store.get("hr-contracts"), store.get("hr-bonuses"),
+        store.get("cp-projects"),
       ]);
       if (!e || e.length === 0) {
         const s = [];
@@ -335,6 +340,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         setEmps(s); store.set("hr-emps5", s);
       } else setEmps(e);
       if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2); if (mv) setMovs(mv); if (ct) setContracts(ct); if (bn) setBonifs(bn);
+      if (Array.isArray(cpProj)) setHrCustomProjects(cpProj);
       setLoaded(true);
     })();
   }, []);
@@ -371,16 +377,48 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [emps]);
 
-  const sE = d => { setEmps(d); store.set("hr-emps5", d); };
-  const sV = d => { setVacs(d); store.set("hr-vacs", d); };
-  const sL = d => { setLvs(d); store.set("hr-lvs", d); };
-  const sA = d => { setAtts(d); store.set("hr-atts2", d); };
-  const sC = d => { setCons(d); store.set("hr-cons", d); };
-  const sP = d => { setPays(d); store.set("hr-pays", d); };
-  const sCq = d => { setCuadrillas(d); store.set("hr-cuad", d); };
-  const sM = d => { setMovs(d); store.set("hr-movs", d); };
-  const sCt = d => { setContracts(d); store.set("hr-contracts", d); };
-  const sBn = d => { setBonifs(d); store.set("hr-bonuses", d); };
+  // Setters con persistencia. Son async y retornan el resultado real de
+  // store.set (true = sincronizado a la nube, false = solo quedo local).
+  // Los callers criticos (cuadrilla, asistencia) hacen await para avisar
+  // al usuario si la nube fallo; el resto puede seguir fire-and-forget.
+  const sE = async d => { setEmps(d); return await store.set("hr-emps5", d); };
+  const sV = async d => { setVacs(d); return await store.set("hr-vacs", d); };
+  const sL = async d => { setLvs(d); return await store.set("hr-lvs", d); };
+  const sA = async d => { setAtts(d); return await store.set("hr-atts2", d); };
+  const sC = async d => { setCons(d); return await store.set("hr-cons", d); };
+  const sP = async d => { setPays(d); return await store.set("hr-pays", d); };
+  const sCq = async d => { setCuadrillas(d); return await store.set("hr-cuad", d); };
+  const sM = async d => { setMovs(d); return await store.set("hr-movs", d); };
+  const sCt = async d => { setContracts(d); return await store.set("hr-contracts", d); };
+  const sBn = async d => { setBonifs(d); return await store.set("hr-bonuses", d); };
+
+  // ── Proyectos sincronizados con GeoShopping ──
+  // Lista unificada: base (projects.js) + custom de compras (cp-projects),
+  // respetando overrides (hidden/deleted) — misma logica que PurchasesModule.
+  const hrProjects = (() => {
+    const baseShorts = new Set(PROJECTS.map(p => p.short));
+    const out = [];
+    PROJECTS.forEach(p => {
+      const extra = hrCustomProjects.find(cp => cp.short === p.short);
+      if (extra?.hidden || extra?.deleted) return;
+      out.push({ ...p, ...(extra || {}), isCustom: false });
+    });
+    hrCustomProjects.forEach(cp => {
+      if (baseShorts.has(cp.short) || cp.hidden || cp.deleted) return;
+      out.push({ ...cp, isCustom: true });
+    });
+    return out;
+  })();
+  // Busca en la lista unificada (short, id o alias). Reemplaza a findProject
+  // (que solo conoce la lista base) en chequeos de asignaciones.
+  const findProjectHR = (k) => {
+    if (!k) return null;
+    const s = String(k).trim();
+    return hrProjects.find(p => p.short === s)
+      || hrProjects.find(p => p.id === s)
+      || hrProjects.find(p => (p.aliases || []).includes(s))
+      || null;
+  };
 
   const ce = emps.filter(e => e.company === co);
   // Politica: todo empleado en la base de datos de la empresa se considera activo.
@@ -953,7 +991,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
         {Object.keys(projCosts).length > 0 && <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {Object.entries(projCosts).sort((a, b) => b[1].neto - a[1].neto).map(([p, d]) => {
-            const pj = PROJECTS.find(x => x.short === p);
+            const pj = hrProjects.find(x => x.short === p);
             return <div key={p} style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 10, padding: "10px 16px", minWidth: 150 }}>
               <div style={{ fontWeight: 700, fontSize: 13, color: cc.color }}>{p}</div>
               {pj && <div style={{ fontSize: 9, color: "#94A3B8" }}>[{pj.code}]</div>}
@@ -1011,7 +1049,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const unassigned = ae.filter(e => {
       const a = assignments[e.id];
       if (!a) return true;
-      return !findProject(a);
+      return !findProjectHR(a);
     });
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1025,12 +1063,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           Distribucion {q} {per} — Asigne cada empleado a un proyecto. {unassigned.length > 0 && <b style={{ color: "#DC2626" }}>{unassigned.length} sin asignar</b>}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          {PROJECTS.map(proj => (
+          {hrProjects.map(proj => (
             <div key={proj.short} style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14 }}>
               <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4, color: cc.color, display: "flex", justifyContent: "space-between" }}>
-                <span>{proj.short}</span><Badge color={cc.color}>{projEmps(proj.short).length}</Badge>
+                <span>{proj.short}{proj.isCustom && <span title="Proyecto creado en GeoShopping" style={{ fontSize: 9, color: "#BE185D", fontWeight: 700, marginLeft: 6 }}>● compras</span>}</span><Badge color={cc.color}>{projEmps(proj.short).length}</Badge>
               </div>
-              <div style={{ fontSize: 10, color: "#64748b", marginBottom: 8 }}>[{proj.code}] {proj.name}</div>
+              <div style={{ fontSize: 10, color: "#64748b", marginBottom: 8 }}>{proj.code ? `[${proj.code}] ` : ""}{proj.name}</div>
               {projEmps(proj.short).map(e => (
                 <div key={e.id} style={{ fontSize: 12, padding: "4px 0", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F1F5F9" }}>
                   <span>{e.fullName}</span>
@@ -1047,20 +1085,33 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <span style={{ flex: 1 }}>{e.fullName} — {e.position}</span>
               <select value="" onChange={ev => { if (ev.target.value) setAssignments(a => ({ ...a, [e.id]: ev.target.value })); }} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #CBD5E1", fontSize: 12 }}>
                 <option value="">Asignar a...</option>
-                {PROJECTS.map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}</option>)}
+                {hrProjects.map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}</option>)}
               </select>
             </div>
           ))}
         </div>}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
           <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-          <Btn variant="success" onClick={() => {
+          <Btn variant="success" onClick={async () => {
             const record = { id: uid(), company: co, periodo: per, quincena: q, assignments, date: new Date().toISOString() };
             const existing = cuadrillas.findIndex(x => x.company === co && x.periodo === per && x.quincena === q);
-            if (existing >= 0) { const u = [...cuadrillas]; u[existing] = record; sCq(u); }
-            else sCq([...cuadrillas, record]);
+            const next = existing >= 0
+              ? cuadrillas.map((x, i) => i === existing ? record : x)
+              : [...cuadrillas, record];
+            // AWAIT: la cuadrilla es la base de asistencia y planilla — si la
+            // nube fallo hay que avisar, no cerrar como si nada (antes era
+            // fire-and-forget y los fallos quedaban en silencio).
+            const ok = await sCq(next);
             const updated = emps.map(e => assignments[e.id] ? { ...e, project: assignments[e.id] } : e);
             sE(updated);
+            if (!ok) {
+              alert(
+                "⚠️ La distribucion se guardo en este dispositivo pero NO se sincronizo a la nube.\n\n" +
+                "Revisa tu conexion a internet y volve a tocar \"Guardar distribucion\".\n" +
+                "Si abris el sistema en otra compu antes de sincronizar, esta cuadrilla no va a aparecer."
+              );
+              return; // modal queda abierto para reintentar sin re-armar todo
+            }
             setModal(null);
           }}>Guardar distribucion</Btn>
         </div>
@@ -1130,7 +1181,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     };
     const days = getDays();
     const assignments = sheet.assignments || {};
-    const projGroups = PROJECTS.filter(p => ae.some(e => (assignments[e.id] === p.short) || resolveShort(assignments[e.id]) === p.short));
+    // Grupos de proyecto del grid — sobre la lista unificada (base + compras).
+    // Red de seguridad: si una asignacion apunta a un proyecto que ya no esta
+    // en la lista (borrado/renombrado en compras), se crea un grupo "fantasma"
+    // con el short crudo para que NINGUN empleado desaparezca del grid.
+    const assignedShorts = [...new Set(ae.map(e => resolveShort(assignments[e.id])).filter(Boolean))];
+    const projGroups = hrProjects.filter(p => assignedShorts.includes(p.short) || ae.some(e => assignments[e.id] === p.short));
+    assignedShorts.forEach(s => {
+      if (!projGroups.some(p => p.short === s)) projGroups.push({ short: s, name: s, code: "" });
+    });
 
     // Determina si un dia esta bloqueado para un empleado.
     //
@@ -1350,7 +1409,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <div style={{ background: cc.color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span>{proj.short} ({pEmps.length})</span>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ fontWeight: 400, fontSize: 10, opacity: 0.7 }}>[{proj.code}]</span>
+              <span style={{ fontWeight: 400, fontSize: 10, opacity: 0.7 }}>{proj.code ? `[${proj.code}]` : ""}</span>
               {(() => {
                 // Detecta si todas las celdas editables de este proyecto ya tienen valor.
                 // Si si → boton en modo "Limpiar". Si no → boton en modo "Marcar completa".
@@ -1458,7 +1517,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                       {isEditing && <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 6, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 160 }} onClick={ev => ev.stopPropagation()}>
                         <div style={{ padding: "4px 8px", fontSize: 10, color: "#64748b", borderBottom: "1px solid #F1F5F9" }}>Proyecto para este dia:</div>
                         <div style={{ padding: "4px 8px", fontSize: 11, cursor: "pointer", background: !ovr ? "#EFF6FF" : "transparent" }} onClick={() => setOverride(e.id, d.day, null)}>✓ {assignments[e.id]} (base)</div>
-                        {PROJECTS.filter(p => p.short !== assignments[e.id]).map(p => (
+                        {hrProjects.filter(p => p.short !== assignments[e.id]).map(p => (
                           <div key={p.short} style={{ padding: "4px 8px", fontSize: 11, cursor: "pointer", background: ovr === p.short ? "#DBEAFE" : "transparent" }} onClick={() => setOverride(e.id, d.day, p.short)}>{ovr === p.short ? "✓ " : ""}{p.short}</div>
                         ))}
                         {e.payByHour && <>
@@ -1938,12 +1997,40 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         setModal({ t: "ag", d: { id: uid(), company: co, periodo: cuad.periodo, quincena: cuad.quincena, assignments: cuad.assignments, grid: {}, date: new Date().toISOString() } });
       }
     };
+    // Asistencias huerfanas: hojas guardadas de esta empresa cuya quincena ya
+    // NO tiene cuadrilla (ej. cuadrillas borradas por accidente). Cada hoja
+    // guarda sus propios assignments, asi que se pueden abrir directo — sin
+    // esto, el historico queda invisible e inaccesible.
+    const orphanAtts = ca.filter(a => !cq.some(c => c.periodo === a.periodo && c.quincena === a.quincena));
+
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <span style={{ color: "#64748b", fontSize: 13 }}>{cq.length} distribuciones | {ca.length} asistencias</span>
         <Btn onClick={() => setModal({ t: "cuad" })}>+ Distribucion de cuadrilla</Btn>
       </div>
       {cq.length === 0 && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: 20, textAlign: "center", color: "#92400E" }}>Paso 1: Cree una distribucion de cuadrilla para iniciar el tracking de asistencia.</div>}
+      {orphanAtts.length > 0 && (
+        <div style={{ background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 12, padding: 14 }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: "#9A3412", marginBottom: 4 }}>
+            📂 Asistencias históricas sin cuadrilla ({orphanAtts.length})
+          </div>
+          <div style={{ fontSize: 11, color: "#7C2D12", marginBottom: 10 }}>
+            Estas hojas quedaron sin su distribución de cuadrilla (probablemente se borró), pero la asistencia está intacta y se puede abrir. Solo lectura/edición normal — al guardar se conservan igual.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {orphanAtts.slice().reverse().map(a => (
+              <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #FED7AA", borderRadius: 8, padding: "8px 12px", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <b style={{ fontSize: 13, color: "#2C2A28" }}>{a.quincena} {a.periodo}</b>
+                  <span style={{ fontSize: 11, color: "#8B847C" }}>{Object.keys(a.assignments || {}).length} empleados · {Object.keys(a.grid || {}).length} celdas</span>
+                  {a.lastSaved && <span style={{ fontSize: 10, color: "#94A3B8" }}>guardada {fmt(a.lastSaved.slice(0, 10))}</span>}
+                </div>
+                <Btn small variant="primary" onClick={() => setModal({ t: "ag", d: { ...a } })}>Abrir asistencia</Btn>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <Table columns={[
         { key: "p", label: "Periodo", render: r => <b>{r.quincena} {r.periodo}</b> },
         { key: "c", label: "Empleados asignados", render: r => { const a = r.assignments || {}; return Object.values(a).filter(v => v).length; } },
@@ -1953,7 +2040,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       ]} data={cq.slice().reverse()} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
         <Btn small variant="primary" onClick={() => openGrid(r)}>Asistencia</Btn>
         <Btn small variant="ghost" onClick={() => setModal({ t: "cuad-edit", d: r })}>Editar cuadrilla</Btn>
-        <Btn small variant="danger" onClick={() => sCq(cuadrillas.filter(x => x.id !== r.id))}>×</Btn>
+        <Btn small variant="danger" onClick={async () => {
+          const hasAtt = ca.find(a => a.periodo === r.periodo && a.quincena === r.quincena);
+          const msg = `¿Eliminar la distribucion ${r.quincena} ${r.periodo}?` +
+            (hasAtt ? "\n\n⚠️ OJO: esta quincena YA tiene asistencia registrada. Sin la cuadrilla no vas a poder abrir esa asistencia desde esta tabla (la hoja no se borra, pero queda sin acceso). Lo normal es NO borrarla." : "");
+          if (!confirm(msg)) return;
+          const ok = await sCq(cuadrillas.filter(x => x.id !== r.id));
+          if (!ok) alert("⚠️ Se elimino en este dispositivo pero NO se sincronizo a la nube. Reintenta cuando tengas conexion.");
+        }}>×</Btn>
       </div>} />
     </div>;
   };
@@ -2086,7 +2180,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         {Object.entries(projCosts).sort((a, b) => b[1].neto - a[1].neto).map(([pr, d]) => {
-          const pj = PROJECTS.find(x => x.short === pr);
+          const pj = hrProjects.find(x => x.short === pr);
           return <div key={pr} style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 10, padding: "10px 16px", minWidth: 150 }}>
             <div style={{ fontWeight: 700, fontSize: 13, color: cc.color }}>{pr}</div>
             {pj && <div style={{ fontSize: 9, color: "#94A3B8" }}>[{pj.code}]</div>}
