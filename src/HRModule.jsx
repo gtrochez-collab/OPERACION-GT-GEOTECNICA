@@ -305,6 +305,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // lectura) para que cuadrillas y asistencia usen la MISMA lista de
   // proyectos que el modulo de compras. GeoShopping es el dueño del dato.
   const [hrCustomProjects, setHrCustomProjects] = useState([]);
+  // true cuando la carga de empleados desde la nube vino vacia/fallo —
+  // se muestra advertencia en el tab Empleados en vez de sembrar data.
+  const [empsLoadWarning, setEmpsLoadWarning] = useState(false);
+  // true mientras el boton "Actualizar" del tab Empleados esta re-cargando.
+  const [refreshing, setRefreshing] = useState(false);
   const [movs, setMovs] = useState([]);
   const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
   const [contracts, setContracts] = useState([]);
@@ -325,25 +330,35 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [modal, setModal] = useState(null);
   const isMobile = useIsMobile();
 
-  useEffect(() => {
-    (async () => {
-      const [e, v, l, a, c, p, cq2, mv, ct, bn, cpProj] = await Promise.all([
-        store.get("hr-emps5"), store.get("hr-vacs"), store.get("hr-lvs"),
-        store.get("hr-atts2"), store.get("hr-cons"), store.get("hr-pays"), store.get("hr-cuad"),
-        store.get("hr-movs"), store.get("hr-contracts"), store.get("hr-bonuses"),
-        store.get("cp-projects"),
-      ]);
-      if (!e || e.length === 0) {
-        const s = [];
-        SEED_SUB.forEach(x => s.push({ id: uid(), company: "subterra", fullName: x.n, dni: x.d, position: x.p, department: "Operaciones", contractType: x.ct, startDate: x.sd, endDate: x.ed || "", salary: x.s, bonificacion: x.b, cooperativa: x.coop || 0, gastosMedicos: x.gm || 40000, status: "active", phone: "", email: "" }));
-        SEED_GEO.forEach(x => s.push({ id: uid(), company: "geotecnica", fullName: x.n, dni: x.d, position: x.p, department: "Operaciones", contractType: x.ct, startDate: x.sd, endDate: x.ed || "", salary: x.s, bonificacion: x.b, cooperativa: x.coop || 0, gastosMedicos: x.gm || 40000, status: "active", phone: "", email: "" }));
-        setEmps(s); store.set("hr-emps5", s);
-      } else setEmps(e);
-      if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2); if (mv) setMovs(mv); if (ct) setContracts(ct); if (bn) setBonifs(bn);
-      if (Array.isArray(cpProj)) setHrCustomProjects(cpProj);
-      setLoaded(true);
-    })();
-  }, []);
+  // Carga TODO desde la base de datos (nube + cache local). Reutilizable:
+  // corre al montar el modulo y desde el boton "Actualizar" del tab
+  // Empleados, para que la lista quede siempre amarrada a lo que hay en la
+  // nube (ambas empresas viven en la misma key hr-emps5; el toggle de
+  // empresa filtra en memoria).
+  const loadAll = async () => {
+    const [e, v, l, a, c, p, cq2, mv, ct, bn, cpProj] = await Promise.all([
+      store.get("hr-emps5"), store.get("hr-vacs"), store.get("hr-lvs"),
+      store.get("hr-atts2"), store.get("hr-cons"), store.get("hr-pays"), store.get("hr-cuad"),
+      store.get("hr-movs"), store.get("hr-contracts"), store.get("hr-bonuses"),
+      store.get("cp-projects"),
+    ]);
+    if (Array.isArray(e) && e.length > 0) {
+      setEmps(e);
+      setEmpsLoadWarning(false);
+    } else {
+      // La base de datos es la UNICA fuente de verdad para empleados.
+      // OJO: aqui antes se re-sembraba una lista hardcodeada (abril 2026) y
+      // se SUBIA a la nube — si la lectura fallaba por red, eso PISABA la
+      // base real (fotos, salarios, altas/bajas). Eliminado. Si no cargo
+      // nada, se muestra advertencia y se reintenta con "Actualizar" —
+      // nunca se escribe nada automaticamente.
+      setEmpsLoadWarning(true);
+    }
+    if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2); if (mv) setMovs(mv); if (ct) setContracts(ct); if (bn) setBonifs(bn);
+    if (Array.isArray(cpProj)) setHrCustomProjects(cpProj);
+    setLoaded(true);
+  };
+  useEffect(() => { loadAll(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   // Bulk load de fotos de empleados desde cloud una vez cargada la lista.
   // Corre solo para los fileIds que aun no estan en el cache — asi al subir
@@ -1928,8 +1943,22 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <Btn small variant="ghost" onClick={() => { setEmpSearch(""); setEmpDeptFilter(""); }}>Limpiar</Btn>
           )}
         </div>
-        {!isPhotoOnly && <Btn onClick={() => setModal({ t: "en" })}>+ Nuevo empleado</Btn>}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <Btn small variant="ghost" disabled={refreshing} onClick={async () => {
+            setRefreshing(true);
+            try { await loadAll(); } finally { setRefreshing(false); }
+          }}>{refreshing ? "⏳ Actualizando..." : "🔄 Actualizar"}</Btn>
+          {!isPhotoOnly && <Btn onClick={() => setModal({ t: "en" })}>+ Nuevo empleado</Btn>}
+        </div>
       </div>
+
+      {/* Advertencia: la nube no devolvio empleados (red caida o key vacia). */}
+      {empsLoadWarning && (
+        <div style={{ background: "#FEF2F2", border: "1px solid #FCA5A5", borderRadius: 10, padding: "12px 16px", fontSize: 13, color: "#991B1B" }}>
+          ⚠️ <b>No se pudieron cargar los empleados desde la nube.</b> Puede ser un problema de conexion.
+          Tocá <b>🔄 Actualizar</b> para reintentar. No agregues ni edites empleados hasta que cargue la lista — para no duplicar ni pisar datos.
+        </div>
+      )}
 
       {/* Contador */}
       <div style={{ color: "#64748b", fontSize: 13 }}>
