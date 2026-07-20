@@ -434,6 +434,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       || hrProjects.find(p => (p.aliases || []).includes(s))
       || null;
   };
+  // Version HR de resolveShort: GeoShopping es la fuente de verdad. Si el
+  // short existe como proyecto REAL en la lista unificada, NO se remapea por
+  // alias legacy. Caso concreto que rompia: "PLANTEL" es proyecto de compras
+  // Y alias viejo de PLANTEL-OFICINA — resolveShort lo remapeaba y la gente
+  // asignada a PLANTEL "desaparecia" de su tarjeta y caia en PLANTEL-OFICINA.
+  // Solo shorts que NO existen como proyecto se resuelven como alias viejo.
+  const resolveShortHR = (s) => {
+    if (!s) return s;
+    if (hrProjects.some(p => p.short === s)) return s;
+    return resolveShort(s);
+  };
 
   const ce = emps.filter(e => e.company === co);
   // Politica: todo empleado en la base de datos de la empresa se considera activo.
@@ -720,7 +731,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
         // Proyecto base de la cuadrilla (para empleados sin overrides)
         const baseProjRaw = cuad?.assignments?.[emp.id] || emp.project || "";
-        const baseProj = resolveShort(baseProjRaw);
+        const baseProj = resolveShortHR(baseProjRaw);
 
         // Recorrer dias de la quincena respetando alta/baja
         // Estados de asistencia:
@@ -766,7 +777,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             if (v === "DT2") domTrabTriple++;
             if (v === "INC") diasIncap++;
             const ovr = projOvr[`${emp.id}-${d}`];
-            const projForDay = ovr ? resolveShort(ovr) : baseProj;
+            const projForDay = ovr ? resolveShortHR(ovr) : baseProj;
             if (projForDay) projDays[projForDay] = (projDays[projForDay] || 0) + 1;
             // Calcular fraccion del dia trabajado (1.0 = dia completo).
             // INC siempre cuenta como dia completo (incapacidad pagada).
@@ -1039,11 +1050,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const LvForm = ({ lv, onSave }) => { const [f, setF] = useState(lv || { employeeId: "", date: "", type: "", reason: "", status: "approved" }); const u = (k, v) => setF(p => ({ ...p, [k]: v })); return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}><Select label="Empleado" options={ae.map(e => ({ value: e.id, label: e.fullName }))} value={f.employeeId} onChange={e => u("employeeId", e.target.value)} /><Select label="Tipo" options={LEAVE_TYPES} value={f.type} onChange={e => u("type", e.target.value)} /><Input label="Fecha" type="date" value={f.date} onChange={e => u("date", e.target.value)} /><Select label="Estado" options={[{ value: "approved", label: "Aprobado" }, { value: "pending", label: "Pendiente" }]} value={f.status} onChange={e => u("status", e.target.value)} /><div style={{ gridColumn: "1/-1" }}><Input label="Motivo" value={f.reason} onChange={e => u("reason", e.target.value)} /></div><div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn><Btn variant="success" onClick={() => { if (!f.employeeId) return; onSave({ ...f, id: f.id || uid() }); setModal(null); }}>{lv ? "Actualizar" : "Registrar"}</Btn></div></div>; };
 
   // ── CUADRILLA DISTRIBUTION ──
-  const CuadrillaForm = () => {
-    const [per, setPer] = useState("");
-    const [q, setQ] = useState("2Q");
-    const [assignments, setAssignments] = useState({});
-    const [step, setStep] = useState(1);
+  // cuad (opcional): cuadrilla existente a editar. Cuando viene, el form
+  // arranca DIRECTO en el paso 2 con esa quincena y sus asignaciones
+  // cargadas — sin volver a preguntar periodo/quincena.
+  const CuadrillaForm = ({ cuad }) => {
+    const [per, setPer] = useState(cuad?.periodo || "");
+    const [q, setQ] = useState(cuad?.quincena || "2Q");
+    const [assignments, setAssignments] = useState(cuad?.assignments ? { ...cuad.assignments } : {});
+    const [step, setStep] = useState(cuad ? 2 : 1);
 
     const initAssign = () => {
       if (!per) return alert("Seleccione periodo");
@@ -1056,7 +1070,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     // projEmps: empleados asignados a un proyecto. Usa resolveShort para reconocer
     // aliases (ej: "VILLA ROY" → "VILLAROY", "PLAN-TALLER" → "PLANTEL-OFICINA")
     // y no perder empleados cuyo nombre de proyecto cambio.
-    const projEmps = (proj) => ae.filter(e => resolveShort(assignments[e.id]) === proj);
+    const projEmps = (proj) => ae.filter(e => resolveShortHR(assignments[e.id]) === proj);
     // unassigned: empleados sin asignacion valida. Incluye:
     //   - sin valor (vacio, null, undefined)
     //   - con valor pero apuntando a un proyecto que ya no existe (data stale)
@@ -1200,7 +1214,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     // Red de seguridad: si una asignacion apunta a un proyecto que ya no esta
     // en la lista (borrado/renombrado en compras), se crea un grupo "fantasma"
     // con el short crudo para que NINGUN empleado desaparezca del grid.
-    const assignedShorts = [...new Set(ae.map(e => resolveShort(assignments[e.id])).filter(Boolean))];
+    const assignedShorts = [...new Set(ae.map(e => resolveShortHR(assignments[e.id])).filter(Boolean))];
     const projGroups = hrProjects.filter(p => assignedShorts.includes(p.short) || ae.some(e => assignments[e.id] === p.short));
     assignedShorts.forEach(s => {
       if (!projGroups.some(p => p.short === s)) projGroups.push({ short: s, name: s, code: "" });
@@ -1387,7 +1401,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div style={{ fontSize: 11, fontWeight: 700, color: "#8B847C", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 8 }}>Resumen de la quincena</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
           {projGroups.map((proj) => {
-            const pEmps = ae.filter((e) => resolveShort(assignments[e.id]) === proj.short);
+            const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
             // Calcular dias pagados totales en el proyecto. Cuenta cualquier estado
             // que represente un dia pagado: 1 (presente), TF (feriado trabajado),
             // DT/DT2 (domingo trabajado), INC (incapacidad). No cuenta "0" ni vacios.
@@ -1399,7 +1413,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 const v = getVal(e.id, d.day);
                 if (v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC") {
                   const ovr = getProj(e.id, d.day);
-                  const projForDay = ovr || resolveShort(assignments[e.id]);
+                  const projForDay = ovr || resolveShortHR(assignments[e.id]);
                   if (projForDay === proj.short) totalDias += dayValueFor(e, d.day, v);
                 }
               });
@@ -1613,14 +1627,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       //   - totalNSP: "0" en dia regular (en domingo/feriado no descuenta)
       //   - totalINC: incapacidades
       const summary = projGroups.map((proj) => {
-        const pEmps = ae.filter((e) => resolveShort(assignments[e.id]) === proj.short);
+        const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
         let totalDias = 0;
         let totalDom = 0, totalFer = 0, totalNSP = 0, totalINC = 0;
         ae.forEach((e) => {
           days.forEach((d) => {
             const v = getVal(e.id, d.day);
             const ovr = getProj(e.id, d.day);
-            const baseProj = resolveShort(assignments[e.id]);
+            const baseProj = resolveShortHR(assignments[e.id]);
             const isPaid = v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC";
             if (isPaid) {
               const projForDay = ovr || baseProj;
@@ -1649,7 +1663,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
       const projTablesHtml = projGroups
         .map((proj) => {
-          const pEmps = ae.filter((e) => resolveShort(assignments[e.id]) === proj.short);
+          const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
           if (pEmps.length === 0) return "";
           const rows = pEmps
             .map((e) => {
@@ -3490,7 +3504,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     case "ln": return <Modal title="Permiso" onClose={() => setModal(null)}><LvForm onSave={l => sL([...lvs, l])} /></Modal>;
     case "le": return <Modal title="Editar permiso" onClose={() => setModal(null)}><LvForm lv={m.d} onSave={l => sL(lvs.map(x => x.id === l.id ? l : x))} /></Modal>;
     case "cuad": return <Modal title={`Distribucion de cuadrilla — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm /></Modal>;
-    case "cuad-edit": return <Modal title={`Editar cuadrilla — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm /></Modal>;
+    case "cuad-edit": return <Modal title={`Editar cuadrilla ${m.d.quincena} ${m.d.periodo} — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm cuad={m.d} /></Modal>;
     case "ag": return <Modal title={`Asistencia ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><AttendanceGrid sheet={m.d} /></Modal>;
     case "mn": return <Modal title="Registrar ALTA de empleado" onClose={() => setModal(null)} wide><AltaForm /></Modal>;
     case "mb": return <Modal title="Registrar BAJA de empleado" onClose={() => setModal(null)} wide><BajaForm /></Modal>;
