@@ -2054,7 +2054,16 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                   <span style={{ fontSize: 11, color: "#8B847C" }}>{Object.keys(a.assignments || {}).length} empleados · {Object.keys(a.grid || {}).length} celdas</span>
                   {a.lastSaved && <span style={{ fontSize: 10, color: "#94A3B8" }}>guardada {fmt(a.lastSaved.slice(0, 10))}</span>}
                 </div>
-                <Btn small variant="primary" onClick={() => setModal({ t: "ag", d: { ...a } })}>Abrir asistencia</Btn>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <Btn small variant="primary" onClick={() => setModal({ t: "ag", d: { ...a } })}>Abrir asistencia</Btn>
+                  {userRole === "admin" && (
+                    <Btn small variant="danger" onClick={async () => {
+                      if (!confirm(`¿Borrar DEFINITIVAMENTE la asistencia ${a.quincena} ${a.periodo} de ${cc.name} (${Object.keys(a.grid || {}).length} celdas)?\n\nEsta accion NO se puede deshacer.`)) return;
+                      const ok = await sA(atts.filter(x => x.id !== a.id));
+                      if (!ok) alert("⚠️ Se borro en este dispositivo pero NO se sincronizo a la nube. Reintenta cuando tengas conexion.");
+                    }}>🗑 Borrar</Btn>
+                  )}
+                </div>
               </div>
             ))}
           </div>
