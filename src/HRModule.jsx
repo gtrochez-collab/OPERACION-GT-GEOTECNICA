@@ -1402,16 +1402,20 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
           {projGroups.map((proj) => {
             const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
-            // Calcular dias pagados totales en el proyecto. Cuenta cualquier estado
-            // que represente un dia pagado: 1 (presente), TF (feriado trabajado),
-            // DT/DT2 (domingo trabajado), INC (incapacidad). No cuenta "0" ni vacios.
-            // Para empleados payByHour, cada dia se cuenta en su fraccion proporcional
-            // segun la hora de entrada. Asi el total refleja dias reales trabajados.
+            // Dias TRABAJADOS de verdad (persona-dia). Cuenta SOLO trabajo
+            // real: "1" en dia regular, DT/DT2 (domingo trabajado) y TF
+            // (feriado trabajado). NO cuenta los "1" de domingos/feriados
+            // (descanso pagado por ley — se auto-marcan al abrir la hoja y
+            // antes inflaban el contador: 8 personas x 2 domingos = "16 dias
+            // trabajados" sin haber registrado a nadie) ni INC (incapacidad,
+            // pagada pero no trabajada). Empieza en 0 y suma +1 por cada dia
+            // que se le marque a alguien (payByHour suma su fraccion).
             let totalDias = 0;
             ae.forEach((e) => {
               days.forEach((d) => {
                 const v = getVal(e.id, d.day);
-                if (v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC") {
+                const trabajado = (v === "1" && !d.isSun && !d.isHoliday) || v === "DT" || v === "DT2" || v === "TF";
+                if (trabajado) {
                   const ovr = getProj(e.id, d.day);
                   const projForDay = ovr || resolveShortHR(assignments[e.id]);
                   if (projForDay === proj.short) totalDias += dayValueFor(e, d.day, v);
@@ -1424,7 +1428,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 <div style={{ fontSize: 11, color: "#5C5853", marginTop: 2 }}>{proj.name}</div>
                 <div style={{ marginTop: 8, display: "flex", gap: 16, fontSize: 12 }}>
                   <span><strong style={{ color: "#E8762D" }}>{pEmps.length}</strong> personas</span>
-                  <span><strong style={{ color: "#2C5F5D" }}>{Number.isInteger(totalDias) ? totalDias : totalDias.toFixed(2)}</strong> días trabajados</span>
+                  <span title="Solo trabajo real: presente en dia regular + domingos/feriados TRABAJADOS. No cuenta descanso pagado ni incapacidad."><strong style={{ color: "#2C5F5D" }}>{Number.isInteger(totalDias) ? totalDias : totalDias.toFixed(2)}</strong> días trabajados</span>
                 </div>
               </div>
             );
@@ -1628,6 +1632,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       //   - totalINC: incapacidades
       const summary = projGroups.map((proj) => {
         const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
+        // totalDias = SOLO trabajo real (mismo criterio que el resumen en
+        // pantalla): "1" en dia regular + DT/DT2 + TF. No cuenta descanso
+        // pagado de domingos/feriados ni incapacidad.
         let totalDias = 0;
         let totalDom = 0, totalFer = 0, totalNSP = 0, totalINC = 0;
         ae.forEach((e) => {
@@ -1635,8 +1642,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             const v = getVal(e.id, d.day);
             const ovr = getProj(e.id, d.day);
             const baseProj = resolveShortHR(assignments[e.id]);
-            const isPaid = v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC";
-            if (isPaid) {
+            const trabajado = (v === "1" && !d.isSun && !d.isHoliday) || v === "DT" || v === "DT2" || v === "TF";
+            if (trabajado) {
               const projForDay = ovr || baseProj;
               if (projForDay === proj.short) totalDias += dayValueFor(e, d.day, v);
             }
@@ -1743,7 +1750,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <div style="font-size:11px;color:#5C5853;margin-top:2px">${s.proj.name}</div>
             <div style="margin-top:8px;font-size:11px;display:flex;gap:14px;flex-wrap:wrap">
               <span><strong style="color:#E8762D">${s.pEmps.length}</strong> personas</span>
-              <span><strong style="color:#2C5F5D">${Number.isInteger(s.totalDias) ? s.totalDias : s.totalDias.toFixed(2)}</strong> días</span>
+              <span><strong style="color:#2C5F5D">${Number.isInteger(s.totalDias) ? s.totalDias : s.totalDias.toFixed(2)}</strong> días trabajados</span>
               ${s.totalDom > 0 ? `<span><strong style="color:#7C3AED">${s.totalDom}</strong> dom.</span>` : ""}
               ${s.totalFer > 0 ? `<span><strong style="color:#9A3412">${s.totalFer}</strong> fer.</span>` : ""}
               ${s.totalNSP > 0 ? `<span><strong style="color:#DC2626">${s.totalNSP}</strong> NSP</span>` : ""}
