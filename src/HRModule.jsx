@@ -1402,23 +1402,32 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
           {projGroups.map((proj) => {
             const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
-            // Dias TRABAJADOS de verdad (persona-dia). Cuenta SOLO trabajo
-            // real: "1" en dia regular, DT/DT2 (domingo trabajado) y TF
-            // (feriado trabajado). NO cuenta los "1" de domingos/feriados
-            // (descanso pagado por ley — se auto-marcan al abrir la hoja y
-            // antes inflaban el contador: 8 personas x 2 domingos = "16 dias
-            // trabajados" sin haber registrado a nadie) ni INC (incapacidad,
-            // pagada pero no trabajada). Empieza en 0 y suma +1 por cada dia
-            // que se le marque a alguien (payByHour suma su fraccion).
-            let totalDias = 0;
+            // Metricas operativas del proyecto en la quincena:
+            // - trabajaron: personas DISTINTAS con al menos 1 dia de trabajo
+            //   real en este proyecto (incluye gente de otro proyecto que
+            //   vino un dia via reasignacion 1*).
+            // - jornadas: total persona-dia trabajado (para costeo de mano
+            //   de obra). Solo trabajo real: "1" en dia regular + DT/DT2 +
+            //   TF. No cuenta descanso pagado de domingos/feriados ni INC.
+            // - nsp / inc: ausencias e incapacidades de los asignados.
+            let jornadas = 0, nsp = 0, inc = 0;
+            const quienesTrabajaron = new Set();
             ae.forEach((e) => {
+              const base = resolveShortHR(assignments[e.id]);
               days.forEach((d) => {
                 const v = getVal(e.id, d.day);
                 const trabajado = (v === "1" && !d.isSun && !d.isHoliday) || v === "DT" || v === "DT2" || v === "TF";
                 if (trabajado) {
                   const ovr = getProj(e.id, d.day);
-                  const projForDay = ovr || resolveShortHR(assignments[e.id]);
-                  if (projForDay === proj.short) totalDias += dayValueFor(e, d.day, v);
+                  const projForDay = ovr || base;
+                  if (projForDay === proj.short) {
+                    jornadas += dayValueFor(e, d.day, v);
+                    quienesTrabajaron.add(e.id);
+                  }
+                }
+                if (base === proj.short) {
+                  if (v === "0" && !d.isSun && !d.isHoliday) nsp++;
+                  if (v === "INC") inc++;
                 }
               });
             });
@@ -1426,9 +1435,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <div key={proj.short} style={{ background: "#F8F2E6", padding: "10px 14px", borderRadius: 8, borderLeft: "3px solid #E8762D" }}>
                 <div style={{ fontWeight: 700, color: "#2C2A28", fontSize: 13 }}>{proj.short}</div>
                 <div style={{ fontSize: 11, color: "#5C5853", marginTop: 2 }}>{proj.name}</div>
-                <div style={{ marginTop: 8, display: "flex", gap: 16, fontSize: 12 }}>
+                <div style={{ marginTop: 8, display: "flex", gap: 12, fontSize: 12, flexWrap: "wrap" }}>
                   <span><strong style={{ color: "#E8762D" }}>{pEmps.length}</strong> personas</span>
-                  <span title="Solo trabajo real: presente en dia regular + domingos/feriados TRABAJADOS. No cuenta descanso pagado ni incapacidad."><strong style={{ color: "#2C5F5D" }}>{Number.isInteger(totalDias) ? totalDias : totalDias.toFixed(2)}</strong> días trabajados</span>
+                  <span title="Personas distintas que trabajaron al menos un dia en este proyecto en la quincena (incluye reasignados 1* de otros proyectos)"><strong style={{ color: "#2C5F5D" }}>{quienesTrabajaron.size}</strong> trabajaron</span>
+                  <span title="Total persona-dia trabajado (para costeo de mano de obra)"><strong style={{ color: "#7C3AED" }}>{Number.isInteger(jornadas) ? jornadas : jornadas.toFixed(2)}</strong> jornadas</span>
+                  <span title="No se presento (dias regulares)" style={{ color: nsp > 0 ? "#DC2626" : "#B9B2A8" }}><strong>{nsp}</strong> NSP</span>
+                  <span title="Incapacidades" style={{ color: inc > 0 ? "#92400E" : "#B9B2A8" }}><strong>{inc}</strong> INC</span>
                 </div>
               </div>
             );
@@ -1632,10 +1644,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       //   - totalINC: incapacidades
       const summary = projGroups.map((proj) => {
         const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
-        // totalDias = SOLO trabajo real (mismo criterio que el resumen en
-        // pantalla): "1" en dia regular + DT/DT2 + TF. No cuenta descanso
-        // pagado de domingos/feriados ni incapacidad.
+        // Mismas metricas que el resumen en pantalla: jornadas = solo trabajo
+        // real ("1" regular + DT/DT2 + TF); trabajaron = personas distintas
+        // con al menos 1 dia trabajado en el proyecto (incluye reasignados).
         let totalDias = 0;
+        const quienesTrabajaron = new Set();
         let totalDom = 0, totalFer = 0, totalNSP = 0, totalINC = 0;
         ae.forEach((e) => {
           days.forEach((d) => {
@@ -1645,7 +1658,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             const trabajado = (v === "1" && !d.isSun && !d.isHoliday) || v === "DT" || v === "DT2" || v === "TF";
             if (trabajado) {
               const projForDay = ovr || baseProj;
-              if (projForDay === proj.short) totalDias += dayValueFor(e, d.day, v);
+              if (projForDay === proj.short) {
+                totalDias += dayValueFor(e, d.day, v);
+                quienesTrabajaron.add(e.id);
+              }
             }
             if (baseProj !== proj.short) return;
             if (v === "TF") totalFer++;
@@ -1654,7 +1670,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             if (v === "0" && !d.isSun && !d.isHoliday) totalNSP++;
           });
         });
-        return { proj, pEmps, totalDias, totalDom, totalFer, totalNSP, totalINC };
+        return { proj, pEmps, totalDias, trabajaron: quienesTrabajaron.size, totalDom, totalFer, totalNSP, totalINC };
       });
 
       const dayHeaderHtml = days
@@ -1750,7 +1766,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <div style="font-size:11px;color:#5C5853;margin-top:2px">${s.proj.name}</div>
             <div style="margin-top:8px;font-size:11px;display:flex;gap:14px;flex-wrap:wrap">
               <span><strong style="color:#E8762D">${s.pEmps.length}</strong> personas</span>
-              <span><strong style="color:#2C5F5D">${Number.isInteger(s.totalDias) ? s.totalDias : s.totalDias.toFixed(2)}</strong> días trabajados</span>
+              <span><strong style="color:#2C5F5D">${s.trabajaron}</strong> trabajaron</span>
+              <span><strong style="color:#7C3AED">${Number.isInteger(s.totalDias) ? s.totalDias : s.totalDias.toFixed(2)}</strong> jornadas</span>
               ${s.totalDom > 0 ? `<span><strong style="color:#7C3AED">${s.totalDom}</strong> dom.</span>` : ""}
               ${s.totalFer > 0 ? `<span><strong style="color:#9A3412">${s.totalFer}</strong> fer.</span>` : ""}
               ${s.totalNSP > 0 ? `<span><strong style="color:#DC2626">${s.totalNSP}</strong> NSP</span>` : ""}
