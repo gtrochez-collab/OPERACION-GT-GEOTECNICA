@@ -1788,8 +1788,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   //                 "1"/"0"/"INC" = 1 (descanso pagado por ley), vacio = 0.
   //   Feriado:      "TF" = 3 (triple), "1"/"0"/"INC" = 1, vacio = 0.
   // Cada dia se atribuye al proyecto del override (1*) o al proyecto base de
-  // la cuadrilla. Costo = salario diario (salario/30) x valor del dia.
-  // NO incluye bonificaciones ni cargas patronales (IHSS/RAP patronal).
+  // la cuadrilla. Costo diario = (salario + bonificacion mensual) / 30 —
+  // eso es lo que la persona le cuesta a la empresa por dia (pedido del
+  // usuario 21-jul-2026). NO incluye cargas patronales (IHSS/RAP patronal).
   const calcCostoMO = (sheet) => {
     const grid = sheet.grid || {};
     const ovr = sheet.projOverrides || {};
@@ -1807,7 +1808,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const porProyecto = {};
     const personasSet = new Set();
     ce.forEach(e => {
-      const sd = (Number(e.salary) || 0) / 30;
+      const sd = ((Number(e.salary) || 0) + (Number(e.bonificacion) || 0)) / 30;
       const base = resolveShortHR(assignments[e.id]);
       dias.forEach(d => {
         const k = `${e.id}-${d.day}`;
@@ -1877,15 +1878,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const titulo = `Costo de Mano de Obra — ${sheet.quincena} ${sheet.periodo}`;
 
     const exportCostosCSV = () => {
-      const headers = ["Proyecto", "Empleado", "Cargo", "Salario mensual", "Salario diario", "Dias pagados", "Costo (L)"];
+      const headers = ["Proyecto", "Empleado", "Cargo", "Salario mensual", "Bonificacion mensual", "Costo diario (sal+bonif)/30", "Dias pagados", "Costo (L)"];
       const lines = [];
       rows.forEach(r => {
         r.emps.forEach(x => {
-          lines.push([`"${r.short}"`, `"${x.emp.fullName}"`, `"${x.emp.position || ""}"`, (Number(x.emp.salary) || 0).toFixed(2), x.sd.toFixed(2), fmtDias(x.dias), x.costo.toFixed(2)].join(","));
+          lines.push([`"${r.short}"`, `"${x.emp.fullName}"`, `"${x.emp.position || ""}"`, (Number(x.emp.salary) || 0).toFixed(2), (Number(x.emp.bonificacion) || 0).toFixed(2), x.sd.toFixed(2), fmtDias(x.dias), x.costo.toFixed(2)].join(","));
         });
-        lines.push([`"${r.short}"`, `"SUBTOTAL"`, "", "", "", fmtDias(r.diasPag), r.costo.toFixed(2)].join(","));
+        lines.push([`"${r.short}"`, `"SUBTOTAL"`, "", "", "", "", fmtDias(r.diasPag), r.costo.toFixed(2)].join(","));
       });
-      lines.push(["TOTAL", "", "", "", "", fmtDias(totalDias), total.toFixed(2)].join(","));
+      lines.push(["TOTAL", "", "", "", "", "", fmtDias(totalDias), total.toFixed(2)].join(","));
       const csv = [headers.join(","), ...lines].join("\n");
       const a = document.createElement("a");
       a.href = "data:text/csv;charset=utf-8," + encodeURIComponent("﻿" + csv);
@@ -1907,7 +1908,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <thead><tr style="background:#F1F5F9">
               <th style="text-align:left;padding:5px 10px;border-bottom:1px solid #E2E8F0">Empleado</th>
               <th style="text-align:left;padding:5px 10px;border-bottom:1px solid #E2E8F0">Cargo</th>
-              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Sal. diario</th>
+              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Costo diario</th>
               <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Días pag.</th>
               <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Costo</th>
             </tr></thead>
@@ -1943,9 +1944,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         </div>
         ${projBlocks}
         <div style="font-size:9.5px;color:#94A3B8;margin-top:10px;line-height:1.5">
-          Metodología: costo = salario diario (salario mensual ÷ 30) × días pagados atribuidos al proyecto según cuadrilla y reasignaciones diarias (1*).
+          Metodología: costo diario = (salario + bonificación mensual) ÷ 30; costo = costo diario × días pagados atribuidos al proyecto según cuadrilla y reasignaciones diarias (1*).
           Domingos/feriados de descanso pagan 1 día; domingo trabajado (DT) ×2, domingo triple (DT2) y feriado trabajado (TF) ×3; incapacidad (INC) paga 1 día; NSP no paga.
-          No incluye bonificaciones ni cargas patronales. Fuente: asistencia ${sheet.quincena} ${sheet.periodo}${sheet.lastSaved ? ` (guardada ${fmt(sheet.lastSaved.slice(0, 10))})` : ""}.
+          No incluye cargas patronales. Fuente: asistencia ${sheet.quincena} ${sheet.periodo}${sheet.lastSaved ? ` (guardada ${fmt(sheet.lastSaved.slice(0, 10))})` : ""}.
         </div>
         <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#059669;color:#fff;border:none;border-radius:8px">Imprimir / Guardar como PDF</button>
         </body></html>`);
@@ -2007,7 +2008,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 <thead><tr style={{ background: "#FFFBF5" }}>
                   <th style={{ textAlign: "left", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Empleado</th>
                   <th style={{ textAlign: "left", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Cargo</th>
-                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Sal. diario</th>
+                  <th title="(Salario + bonificacion mensual) / 30" style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Costo diario</th>
                   <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Días pag.</th>
                   <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Costo</th>
                 </tr></thead>
@@ -2037,8 +2038,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       )}
 
       <div style={{ fontSize: 10.5, color: "#94A3B8", lineHeight: 1.5 }}>
-        Metodología: costo = salario diario (salario ÷ 30) × días pagados por proyecto (cuadrilla + reasignaciones 1*).
-        Domingos/feriados de descanso pagan 1 día · DT ×2 · DT2 y TF ×3 · INC paga 1 · NSP no paga. No incluye bonificaciones ni cargas patronales.
+        Metodología: costo diario = (salario + bonificación mensual) ÷ 30 × días pagados por proyecto (cuadrilla + reasignaciones 1*).
+        Domingos/feriados de descanso pagan 1 día · DT ×2 · DT2 y TF ×3 · INC paga 1 · NSP no paga. No incluye cargas patronales.
       </div>
     </div>;
   };
@@ -2046,7 +2047,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const renderDashboard = () => {
     const tmp = ae.filter(e => e.contractType === "temporary"); const pm = ae.filter(e => e.contractType === "permanent"); const hon = ae.filter(e => e.contractType === "honorarios");
     const activos = ae.filter(e => e.status === "active");
-    const masaSalarial = activos.reduce((s, e) => s + (Number(e.salary) || 0), 0);
+    // Masa salarial = salario + bonificacion mensual (lo que cuesta el
+    // personal por mes) — misma base que el costo diario del tab Costos.
+    const masaSalarial = activos.reduce((s, e) => s + (Number(e.salary) || 0) + (Number(e.bonificacion) || 0), 0);
     const soon = tmp.filter(e => { if (!e.endDate) return false; const d = (new Date(e.endDate) - new Date()) / 86400000; return d >= 0 && d <= 30; });
 
     // Ultima planilla guardada de la empresa
@@ -2082,7 +2085,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       const d = e.department || "Sin departamento";
       if (!porDepto[d]) porDepto[d] = { count: 0, masa: 0 };
       porDepto[d].count++;
-      porDepto[d].masa += Number(e.salary) || 0;
+      porDepto[d].masa += (Number(e.salary) || 0) + (Number(e.bonificacion) || 0);
     });
     const deptoRows = Object.entries(porDepto).map(([dep, v]) => ({ dep, ...v })).sort((a, b) => b.masa - a.masa);
     const maxDeptoCount = Math.max(1, ...deptoRows.map(r => r.count));
@@ -2109,7 +2112,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <StatCard icon="📝" label="Permanentes" value={pm.length} color="#2563EB" />
         {tmp.length > 0 && <StatCard icon="⏳" label="Temporales" value={tmp.length} color="#D97706" />}
         {hon.length > 0 && <StatCard icon="📑" label="Honorarios" value={hon.length} color="#7C3AED" />}
-        <StatCard icon="💰" label="Masa salarial mensual" value={fmtL(masaSalarial)} color="#059669" />
+        <StatCard icon="💰" label="Masa salarial mensual (sal + bonif)" value={fmtL(masaSalarial)} color="#059669" />
         {lastPay && <StatCard icon="🧾" label={`Última planilla · ${lastPay.quincena} ${lastPay.periodo}`} value={fmtL(lastPay.total)} color="#0891B2" />}
       </div>
 
