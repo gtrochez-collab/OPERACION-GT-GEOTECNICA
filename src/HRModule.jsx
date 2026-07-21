@@ -1997,34 +1997,123 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
+  // Form "Nueva hoja de horas extras": pregunta periodo + quincena, muestra
+  // en que planilla se paga (quincena vencida) y de que cuadrilla copiar la
+  // distribucion. Permite crear HE de quincenas SIN cuadrilla propia (ej:
+  // 1Q julio usando la distribucion de la 2Q).
+  const HeNewForm = () => {
+    // Default inteligente: la quincena que se esta PAGANDO ahora (la anterior
+    // a la actual) — que es la que normalmente se esta digitando.
+    const now = new Date();
+    const curPer = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const prevPer = (() => { const d = new Date(now.getFullYear(), now.getMonth() - 1, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; })();
+    const [per, setPer] = useState(now.getDate() >= 16 ? curPer : prevPer);
+    const [q, setQ] = useState(now.getDate() >= 16 ? "1Q" : "2Q");
+    const [cuadId, setCuadId] = useState("");
+
+    const cqSorted = cq.slice().sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`));
+    const cuadSel = cqSorted.find(c => c.id === cuadId)
+      || cqSorted.find(c => c.periodo === per && c.quincena === q)
+      || cqSorted[0] || null;
+    const yaExiste = che.find(h => h.periodo === per && h.quincena === q);
+
+    const pagoLabel = (() => {
+      if (!per) return "";
+      if (q === "1Q") return `a FIN DE MES con la planilla 2Q ${per}`;
+      const [py, pm] = per.split("-").map(Number);
+      const d = new Date(py, pm, 1);
+      return `el 15 del mes siguiente con la planilla 1Q ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    })();
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Input label="Periodo (mes en que se TRABAJARON)" type="month" value={per} onChange={e => setPer(e.target.value)} />
+        <Select label="Quincena trabajada" options={[{ value: "1Q", label: "1Q (1-15)" }, { value: "2Q", label: "2Q (16-31)" }]} value={q} onChange={e => setQ(e.target.value)} />
+      </div>
+      {per && <div style={{ background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#9A3412" }}>
+        💰 Las HE de <b>{q} {per}</b> se pagan <b>{pagoLabel}</b> (pago quincena vencida) — y así aparecerán en el tab Costos.
+      </div>}
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#8B847C", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Usar distribución de cuadrilla</div>
+        <select value={cuadSel?.id || ""} onChange={e => setCuadId(e.target.value)} style={{ width: "100%", padding: "9px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff" }}>
+          {cqSorted.length === 0 && <option value="">No hay cuadrillas — creá una en Asistencia</option>}
+          {cqSorted.map(c => <option key={c.id} value={c.id}>{c.quincena} {c.periodo} · {Object.values(c.assignments || {}).filter(Boolean).length} empleados asignados</option>)}
+        </select>
+        {cuadSel && cuadSel.periodo !== per || (cuadSel && cuadSel.quincena !== q) ? (
+          <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>Se copia la distribución de <b>{cuadSel.quincena} {cuadSel.periodo}</b> — podés reasignar días con click derecho si alguien estuvo en otro proyecto.</div>
+        ) : null}
+      </div>
+      {yaExiste && <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: "9px 14px", fontSize: 12, color: "#1E40AF" }}>
+        ℹ️ Ya existe una hoja de HE para {q} {per} — se va a abrir esa (no se duplica).
+      </div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
+        <Btn variant="success" onClick={() => {
+          if (!per) return alert("Seleccioná el periodo");
+          if (yaExiste) {
+            setModal({ t: "he", d: { ...yaExiste } });
+            return;
+          }
+          if (!cuadSel) return alert("No hay ninguna distribución de cuadrilla. Creá una en el tab Asistencia primero.");
+          setModal({ t: "he", d: { id: uid(), company: co, periodo: per, quincena: q, assignments: { ...cuadSel.assignments }, hours: {}, date: new Date().toISOString(), basedOn: `${cuadSel.quincena} ${cuadSel.periodo}` } });
+        }}>{yaExiste ? "Abrir hoja existente" : "Crear hoja de HE"}</Btn>
+      </div>
+    </div>;
+  };
+
   const renderHE = () => {
-    const openHe = (cuad) => {
-      const existing = che.find(h => h.periodo === cuad.periodo && h.quincena === cuad.quincena);
+    // Filas: union de quincenas con cuadrilla y hojas HE ya creadas (una hoja
+    // HE puede existir sin cuadrilla propia, ej. 1Q julio con distribucion
+    // copiada de la 2Q).
+    const rowsMap = {};
+    cq.forEach(c => { rowsMap[`${c.periodo}|${c.quincena}`] = { periodo: c.periodo, quincena: c.quincena, cuad: c, he: null }; });
+    che.forEach(h => {
+      const k = `${h.periodo}|${h.quincena}`;
+      if (!rowsMap[k]) rowsMap[k] = { periodo: h.periodo, quincena: h.quincena, cuad: null, he: h };
+      else rowsMap[k].he = h;
+    });
+    const rows = Object.values(rowsMap).sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`));
+
+    const openHeRow = (r) => {
+      const existing = r.he || che.find(h => h.periodo === r.periodo && h.quincena === r.quincena);
       if (existing) {
-        setModal({ t: "he", d: { ...existing, assignments: cuad.assignments } });
-      } else {
-        setModal({ t: "he", d: { id: uid(), company: co, periodo: cuad.periodo, quincena: cuad.quincena, assignments: cuad.assignments, hours: {}, date: new Date().toISOString() } });
+        // Si la quincena tiene cuadrilla propia, refrescamos assignments desde
+        // ahi (fuente de verdad); si no (hoja con distribucion copiada), se
+        // usan las asignaciones guardadas en la propia hoja.
+        setModal({ t: "he", d: { ...existing, assignments: r.cuad ? r.cuad.assignments : existing.assignments } });
+      } else if (r.cuad) {
+        setModal({ t: "he", d: { id: uid(), company: co, periodo: r.periodo, quincena: r.quincena, assignments: r.cuad.assignments, hours: {}, date: new Date().toISOString() } });
       }
     };
+
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ background: "#FFFBF5", border: "1px solid #DBD4C8", borderRadius: 12, padding: "12px 16px", fontSize: 12, color: "#5C5853", lineHeight: 1.5 }}>
-        ⏰ <b>Cómo funciona:</b> las horas extras se registran en la quincena en que se <b>trabajaron</b> (misma distribución de cuadrilla que la asistencia) y
-        se pagan <b>quincena vencida</b>: las de 1Q se pagan a fin de mes, las de 2Q el 15 del mes siguiente. Hora base = salario ÷ 30 ÷ 8 ·
-        4-7pm +25% · 7-10pm +50% · 10pm-12am +75% · <b>domingo ×2</b>. En <b>Costos</b> aparecen en la quincena en que se pagan.
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ background: "#FFFBF5", border: "1px solid #DBD4C8", borderRadius: 12, padding: "12px 16px", fontSize: 12, color: "#5C5853", lineHeight: 1.5, flex: 1, minWidth: 280 }}>
+          ⏰ <b>Cómo funciona:</b> las HE se registran en la quincena en que se <b>trabajaron</b> y se pagan <b>quincena vencida</b>: las de 1Q a fin de mes (planilla 2Q), las de 2Q el 15 del mes siguiente (planilla 1Q).
+          Hora base = salario ÷ 30 ÷ 8 · 4-7pm +25% · 7-10pm +50% · 10pm-12am +75% · <b>domingo ×2</b>. En <b>Costos</b> aparecen en la quincena en que se pagan.
+        </div>
+        <Btn onClick={() => setModal({ t: "he-new" })}>+ Hoja de horas extras</Btn>
       </div>
-      {cq.length === 0 && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: 20, textAlign: "center", color: "#92400E" }}>Primero creá la distribución de cuadrilla (tab Asistencia) — las HE usan esa misma distribución.</div>}
+      {rows.length === 0 && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: 20, textAlign: "center", color: "#92400E" }}>Creá tu primera hoja con <b>+ Hoja de horas extras</b> (usa la distribución de una cuadrilla existente).</div>}
       <Table columns={[
-        { key: "p", label: "Periodo", render: r => <b>{r.quincena} {r.periodo}</b> },
+        { key: "p", label: "Quincena trabajada", render: r => <b>{r.quincena} {r.periodo}</b> },
         { key: "he", label: "HE registradas", render: r => {
-          const rec = che.find(h => h.periodo === r.periodo && h.quincena === r.quincena);
+          const rec = r.he;
           if (!rec || !Object.keys(rec.hours || {}).length) return <Badge color="#94A3B8">Sin registrar</Badge>;
           const t = heTotalsOf(rec);
           return <span style={{ fontSize: 12 }}><b style={{ color: "#059669" }}>{fmtDias(t.hrs)} hrs</b> · {fmtL(t.costo)}</span>;
         } },
-        { key: "pago", label: "Se pagan", render: r => <span style={{ fontSize: 11, color: "#9A3412" }}>{r.quincena === "1Q" ? "Fin de mes (2Q)" : "15 del mes sig. (1Q)"}</span> },
-        { key: "d", label: "Fecha cuadrilla", render: r => fmt(r.date) },
-      ]} data={cq.slice().reverse()} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-        <Btn small variant="primary" onClick={() => openHe(r)}>⏰ Horas extras</Btn>
+        { key: "pago", label: "Se pagan", render: r => {
+          if (r.quincena === "1Q") return <span style={{ fontSize: 11, color: "#9A3412" }}>Fin de mes (2Q {r.periodo})</span>;
+          const [py, pm] = r.periodo.split("-").map(Number);
+          const d = new Date(py, pm, 1);
+          return <span style={{ fontSize: 11, color: "#9A3412" }}>15 del mes sig. (1Q {d.getFullYear()}-{String(d.getMonth() + 1).padStart(2, "0")})</span>;
+        } },
+        { key: "dist", label: "Distribución", render: r => r.cuad
+          ? <span style={{ fontSize: 11, color: "#64748b" }}>Cuadrilla propia</span>
+          : <span style={{ fontSize: 11, color: "#7C3AED" }}>Copiada{r.he?.basedOn ? ` de ${r.he.basedOn}` : ""}</span> },
+      ]} data={rows} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+        <Btn small variant="primary" onClick={() => openHeRow(r)}>⏰ Horas extras</Btn>
       </div>} />
     </div>;
   };
@@ -4175,6 +4264,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     case "cuad-edit": return <Modal title={`Editar cuadrilla ${m.d.quincena} ${m.d.periodo} — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm cuad={m.d} /></Modal>;
     case "ag": return <Modal title={`Asistencia ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><AttendanceGrid sheet={m.d} /></Modal>;
     case "he": return <Modal title={`Horas Extras ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><HorasExtrasGrid sheet={m.d} /></Modal>;
+    case "he-new": return <Modal title="Nueva hoja de horas extras" onClose={() => setModal(null)}><HeNewForm /></Modal>;
     case "mn": return <Modal title="Registrar ALTA de empleado" onClose={() => setModal(null)} wide><AltaForm /></Modal>;
     case "mb": return <Modal title="Registrar BAJA de empleado" onClose={() => setModal(null)} wide><BajaForm /></Modal>;
     case "me": return <Modal title={`Editar movimiento — ${m.d.fullName}`} onClose={() => setModal(null)} wide><EditMovForm mov={m.d} onSave={updated => sM(movs.map(x => x.id === updated.id ? updated : x))} /></Modal>;
