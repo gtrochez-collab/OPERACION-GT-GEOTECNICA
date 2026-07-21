@@ -312,6 +312,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [refreshing, setRefreshing] = useState(false);
   // Hoja de asistencia seleccionada en el tab Costos ("" = la mas reciente).
   const [costosSheetId, setCostosSheetId] = useState("");
+  // Hojas de horas extras (hr-he): una por empresa+periodo+quincena.
+  // { id, company, periodo, quincena, assignments, hours: { "empId-dia":
+  //   { b1, b2, b3 } }, lastSaved } — b1=4-7pm(+25%), b2=7-10pm(+50%),
+  //   b3=10pm-12am(+75%); domingo todas las bandas ×2 (+100%).
+  const [hes, setHes] = useState([]);
   const [movs, setMovs] = useState([]);
   const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
   const [contracts, setContracts] = useState([]);
@@ -338,11 +343,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // nube (ambas empresas viven en la misma key hr-emps5; el toggle de
   // empresa filtra en memoria).
   const loadAll = async () => {
-    const [e, v, l, a, c, p, cq2, mv, ct, bn, cpProj] = await Promise.all([
+    const [e, v, l, a, c, p, cq2, mv, ct, bn, cpProj, he0] = await Promise.all([
       store.get("hr-emps5"), store.get("hr-vacs"), store.get("hr-lvs"),
       store.get("hr-atts2"), store.get("hr-cons"), store.get("hr-pays"), store.get("hr-cuad"),
       store.get("hr-movs"), store.get("hr-contracts"), store.get("hr-bonuses"),
-      store.get("cp-projects"),
+      store.get("cp-projects"), store.get("hr-he"),
     ]);
     if (Array.isArray(e) && e.length > 0) {
       setEmps(e);
@@ -357,6 +362,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       setEmpsLoadWarning(true);
     }
     if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2); if (mv) setMovs(mv); if (ct) setContracts(ct); if (bn) setBonifs(bn);
+    if (Array.isArray(he0)) setHes(he0);
     if (Array.isArray(cpProj)) setHrCustomProjects(cpProj);
     setLoaded(true);
   };
@@ -408,6 +414,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const sM = async d => { setMovs(d); return await store.set("hr-movs", d); };
   const sCt = async d => { setContracts(d); return await store.set("hr-contracts", d); };
   const sBn = async d => { setBonifs(d); return await store.set("hr-bonuses", d); };
+  const sHe = async d => { setHes(d); return await store.set("hr-he", d); };
 
   // ── Proyectos sincronizados con GeoShopping ──
   // Lista unificada: base (projects.js) + custom de compras (cp-projects),
@@ -457,6 +464,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const cl = lvs.filter(l => ce.some(e => e.id === l.employeeId));
   const ca = atts.filter(a => a.company === co);
   const cq = cuadrillas.filter(q => q.company === co);
+  const che = hes.filter(h => h.company === co);
   const cc2 = cons.filter(c => ce.some(e => e.id === c.employeeId));
   const cp = pays.filter(p => p.company === co);
   const cmov = movs.filter(m => m.company === co);
@@ -469,11 +477,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     { id: "dashboard", icon: "📊", label: "Dashboard" },
     { id: "employees", icon: "👥", label: "Empleados" },
     { id: "contracts", icon: "📝", label: "Contratos" },
-    { id: "bonuses", icon: "🎁", label: "Bonificaciones" },
+    // "bonuses" (Bonificaciones) oculto a pedido del usuario 21-jul-2026 —
+    // el codigo y la data siguen intactos; re-agregar aqui para reactivar.
     { id: "payroll", icon: "💰", label: "Planilla" },
     { id: "vacations", icon: "🏖️", label: "Vacaciones" },
     { id: "leaves", icon: "📋", label: "Permisos" },
     { id: "attendance", icon: "⏱️", label: "Asistencia" },
+    { id: "horasextras", icon: "⏰", label: "Horas Extras" },
     { id: "movimientos", icon: "🔄", label: "Movimientos" },
     { id: "constancias", icon: "📄", label: "Constancias" },
     { id: "costos", icon: "💵", label: "Costos" },
@@ -1780,6 +1790,245 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const ConForm = () => { const [eid, setEid] = useState(""); const [tp, setTp] = useState("laboral"); const emp = emps.find(e => e.id === eid); const today = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" }); const txt = emp ? (tp === "laboral" ? `CONSTANCIA LABORAL\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, desde ${fmt(emp.startDate)} a la fecha.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos` : `CONSTANCIA DE INGRESOS\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, salario mensual: ${fmtL(emp.salary)}.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos`) : ""; return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}><Select label="Empleado" options={ae.map(e => ({ value: e.id, label: e.fullName }))} value={eid} onChange={e => setEid(e.target.value)} /><Select label="Tipo" options={[{ value: "laboral", label: "Laboral" }, { value: "ingresos", label: "Ingresos" }]} value={tp} onChange={e => setTp(e.target.value)} /></div>{txt && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: 18 }}><pre style={{ whiteSpace: "pre-wrap", fontFamily: "'Segoe UI'", fontSize: 13, lineHeight: 1.7, margin: 0 }}>{txt}</pre></div>}<div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>{txt && <Btn variant="success" onClick={() => { sC([...cons, { id: uid(), employeeId: eid, type: tp, date: new Date().toISOString(), text: txt }]); navigator.clipboard?.writeText(txt); alert("Copiado"); setModal(null); }}>Copiar y guardar</Btn>}</div></div>; };
 
   // ── SECTIONS ──
+  // ── HORAS EXTRAS ──
+  // Bandas fijas de la empresa (jornada 7am-4pm):
+  //   b1 = 4pm-7pm  → +25% (hora × 1.25)
+  //   b2 = 7pm-10pm → +50% (hora × 1.50)
+  //   b3 = 10pm-12am→ +75% (hora × 1.75)
+  //   DOMINGO: todas las bandas ×2 (+100%).
+  // Hora base = salario base ÷ 30 ÷ 8 (SIN bonificacion — regla de la empresa).
+  // Pago quincena vencida: HE de 1Q se pagan a fin de mes (planilla 2Q);
+  // HE de 2Q se pagan el 15 del mes siguiente (planilla 1Q).
+  const HE_BANDAS = [
+    { k: "b1", label: "4-7", mult: 1.25, bg: "#FEF9C3", fg: "#854D0E" },
+    { k: "b2", label: "7-10", mult: 1.50, bg: "#FED7AA", fg: "#9A3412" },
+    { k: "b3", label: "10-12", mult: 1.75, bg: "#FECACA", fg: "#991B1B" },
+  ];
+  const heNum = (x) => { const n = parseFloat(String(x ?? "").replace(",", ".")); return isNaN(n) ? 0 : n; };
+  const heMult = (isSun, band) => isSun ? 2 : band.mult;
+  const heHoraBase = (e) => (Number(e.salary) || 0) / 30 / 8;
+  const heDiasQ = (periodo, quincena) => {
+    const [y, m] = (periodo || "").split("-").map(Number);
+    if (!y || !m) return [];
+    const start = quincena === "1Q" ? 1 : 16;
+    const end = quincena === "1Q" ? 15 : new Date(y, m, 0).getDate();
+    const out = [];
+    for (let d = start; d <= end; d++) {
+      const dt = new Date(y, m - 1, d);
+      out.push({ day: d, dow: DAYS_ES[dt.getDay()], isSun: dt.getDay() === 0, isHoliday: esFeriadoQuincena(periodo, d) });
+    }
+    return out;
+  };
+  const hePagoLabel = (quincena) => quincena === "1Q"
+    ? "se pagan a FIN DE ESTE MES (planilla 2Q)"
+    : "se pagan el 15 DEL MES SIGUIENTE (planilla 1Q)";
+  // Total de horas y costo de una hoja HE completa (para listados y Costos).
+  const heTotalsOf = (rec) => {
+    const dias = heDiasQ(rec.periodo, rec.quincena);
+    const sunSet = new Set(dias.filter(d => d.isSun).map(d => d.day));
+    let hrs = 0, costo = 0;
+    Object.entries(rec.hours || {}).forEach(([k, c]) => {
+      const day = Number(k.split("-").pop());
+      const eid = k.slice(0, k.lastIndexOf("-"));
+      const emp = emps.find(e => e.id === eid);
+      if (!emp) return;
+      const hb = heHoraBase(emp);
+      HE_BANDAS.forEach(b => {
+        const h = heNum(c[b.k]);
+        if (h <= 0) return;
+        hrs += h;
+        costo += h * heMult(sunSet.has(day), b) * hb;
+      });
+    });
+    return { hrs, costo };
+  };
+
+  const HorasExtrasGrid = ({ sheet }) => {
+    // hours en edicion: strings (acepta "1.5" y "1,5"); se normaliza al guardar.
+    const [hours, setHours] = useState(() => {
+      const h = {};
+      Object.entries(sheet.hours || {}).forEach(([k, c]) => { h[k] = { b1: c.b1 ? String(c.b1) : "", b2: c.b2 ? String(c.b2) : "", b3: c.b3 ? String(c.b3) : "" }; });
+      return h;
+    });
+    const [dirty, setDirty] = useState(false);
+    const days = heDiasQ(sheet.periodo, sheet.quincena);
+    const assignments = sheet.assignments || {};
+
+    const assignedShorts = [...new Set(ae.map(e => resolveShortHR(assignments[e.id])).filter(Boolean))];
+    const projGroups = hrProjects.filter(p => assignedShorts.includes(p.short) || ae.some(e => assignments[e.id] === p.short));
+    assignedShorts.forEach(s => { if (!projGroups.some(p => p.short === s)) projGroups.push({ short: s, name: s, code: "" }); });
+
+    const setCell = (eid, day, bandK, raw) => {
+      if (!/^\d{0,2}([.,]\d{0,2})?$/.test(raw)) return; // solo numeros con decimal
+      const k = `${eid}-${day}`;
+      setHours(h => ({ ...h, [k]: { ...(h[k] || { b1: "", b2: "", b3: "" }), [bandK]: raw } }));
+      setDirty(true);
+    };
+
+    // Totales por empleado
+    const empTotals = (e) => {
+      const hb = heHoraBase(e);
+      let hrs = 0, costo = 0;
+      days.forEach(d => {
+        const c = hours[`${e.id}-${d.day}`];
+        if (!c) return;
+        HE_BANDAS.forEach(b => {
+          const h = heNum(c[b.k]);
+          if (h <= 0) return;
+          hrs += h;
+          costo += h * heMult(d.isSun, b) * hb;
+        });
+      });
+      return { hrs, costo };
+    };
+
+    let granHrs = 0, granCosto = 0;
+
+    const guardar = async () => {
+      // Normalizar: solo celdas con algun valor > 0, como numeros.
+      const norm = {};
+      Object.entries(hours).forEach(([k, c]) => {
+        const b1 = heNum(c.b1), b2 = heNum(c.b2), b3 = heNum(c.b3);
+        if (b1 + b2 + b3 <= 0) return;
+        norm[k] = { b1, b2, b3 };
+      });
+      const record = { ...sheet, hours: norm, lastSaved: new Date().toISOString() };
+      const existing = hes.findIndex(h => h.id === sheet.id);
+      const updated = existing >= 0 ? hes.map((h, i) => i === existing ? record : h) : [...hes, record];
+      const ok = await sHe(updated);
+      if (ok) { setDirty(false); setModal(null); }
+      else {
+        alert("⚠️ Las horas extras se guardaron en este dispositivo pero NO se sincronizaron a la nube.\n\nRevisa tu conexion y volve a tocar Guardar. El modal queda abierto.");
+      }
+    };
+
+    const inputStyle = (bg) => ({ width: 34, padding: "3px 2px", border: "1px solid #E2E8F0", borderRadius: 4, fontSize: 11, textAlign: "center", background: bg, outline: "none" });
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 12, fontSize: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <span style={{ color: "#1E40AF", fontWeight: 600, fontSize: 14 }}>Horas Extras {sheet.quincena} {sheet.periodo} — {cc.name}</span>
+        <span style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+          <span style={{ background: "#FEF9C3", padding: "2px 8px", borderRadius: 4, color: "#854D0E" }}>4-7pm +25%</span>
+          <span style={{ background: "#FED7AA", padding: "2px 8px", borderRadius: 4, color: "#9A3412" }}>7-10pm +50%</span>
+          <span style={{ background: "#FECACA", padding: "2px 8px", borderRadius: 4, color: "#991B1B" }}>10pm-12am +75%</span>
+          <span style={{ background: "#E9D5FF", padding: "2px 8px", borderRadius: 4, color: "#6B21A8" }}>Domingo ×2 (todas)</span>
+          <span style={{ background: "#DCFCE7", padding: "2px 8px", borderRadius: 4, color: "#166534" }}>Hora = salario ÷ 30 ÷ 8</span>
+        </span>
+      </div>
+      <div style={{ background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 10, padding: "9px 14px", fontSize: 12, color: "#9A3412" }}>
+        💡 Pago quincena vencida: estas HE de <b>{sheet.quincena} {sheet.periodo}</b> {hePagoLabel(sheet.quincena)}. En el tab Costos aparecen en la quincena en que se pagan.
+      </div>
+
+      {projGroups.map(proj => {
+        const pEmps = ae.filter(e => resolveShortHR(assignments[e.id]) === proj.short);
+        if (pEmps.length === 0) return null;
+        let subHrs = 0, subCosto = 0;
+        const rows = pEmps.map(e => {
+          const t = empTotals(e);
+          subHrs += t.hrs; subCosto += t.costo;
+          return { e, t };
+        });
+        granHrs += subHrs; granCosto += subCosto;
+        return <div key={proj.short} style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden" }}>
+          <div style={{ background: cc.color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span>{proj.short} ({pEmps.length})</span>
+            <span style={{ fontSize: 12 }}>{fmtDias(subHrs)} hrs · <b>{fmtL(subCosto)}</b></span>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", fontSize: 11 }}>
+              <thead>
+                <tr style={{ background: "#F1F5F9" }}>
+                  <th rowSpan={2} style={{ ...TH, position: "sticky", left: 0, background: "#F1F5F9", zIndex: 2, minWidth: 160, verticalAlign: "bottom" }}>Nombre</th>
+                  {days.map(d => (
+                    <th key={d.day} colSpan={3} title={d.isHoliday ? "Feriado" : d.isSun ? "Domingo — todas las bandas ×2" : ""} style={{ ...TH, textAlign: "center", background: d.isSun ? "#F3E8FF" : d.isHoliday ? "#FED7AA" : "#F1F5F9", borderLeft: "2px solid #E2E8F0" }}>
+                      <div style={{ fontSize: 9, color: d.isSun ? "#7C3AED" : "#94A3B8" }}>{d.dow}{d.isSun ? " ×2" : ""}</div>
+                      {d.day}
+                    </th>
+                  ))}
+                  <th rowSpan={2} style={{ ...TH, textAlign: "center", background: "#ECFDF5", verticalAlign: "bottom" }}>Hrs</th>
+                  <th rowSpan={2} style={{ ...TH, textAlign: "right", background: "#ECFDF5", verticalAlign: "bottom" }}>Total L</th>
+                </tr>
+                <tr style={{ background: "#F8FAFC" }}>
+                  {days.map(d => HE_BANDAS.map((b, i) => (
+                    <th key={`${d.day}-${b.k}`} style={{ padding: "2px 1px", fontSize: 8, fontWeight: 700, color: b.fg, background: b.bg, textAlign: "center", minWidth: 36, borderLeft: i === 0 ? "2px solid #E2E8F0" : "1px solid #F1F5F9" }}>{b.label}</th>
+                  )))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ e, t }) => (
+                  <tr key={e.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                    <td style={{ ...TD, position: "sticky", left: 0, background: "#fff", zIndex: 1, fontWeight: 600, fontSize: 11 }}>
+                      <div>{e.fullName}</div>
+                      <div title="Hora base = salario ÷ 30 ÷ 8" style={{ fontSize: 9, color: "#94A3B8" }}>hora: {fmtL(heHoraBase(e))}</div>
+                    </td>
+                    {days.map(d => HE_BANDAS.map((b, i) => {
+                      const k = `${e.id}-${d.day}`;
+                      const val = hours[k]?.[b.k] ?? "";
+                      return <td key={`${k}-${b.k}`} style={{ padding: "3px 2px", textAlign: "center", borderLeft: i === 0 ? "2px solid #F1F5F9" : "none", background: d.isSun ? "#FAF5FF" : "transparent" }}>
+                        <input value={val} onChange={ev => setCell(e.id, d.day, b.k, ev.target.value)} placeholder="·" style={inputStyle(val ? b.bg : "#fff")} />
+                      </td>;
+                    }))}
+                    <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: "#ECFDF5", color: "#059669" }}>{t.hrs > 0 ? fmtDias(t.hrs) : ""}</td>
+                    <td style={{ ...TD, textAlign: "right", fontWeight: 700, background: "#ECFDF5", color: "#059669", whiteSpace: "nowrap" }}>{t.costo > 0 ? fmtL(t.costo) : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>;
+      })}
+
+      {/* Gran total */}
+      <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 12, padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <span style={{ fontWeight: 800, color: "#065F46" }}>TOTAL HORAS EXTRAS · {sheet.quincena} {sheet.periodo}</span>
+        <span style={{ fontWeight: 800, color: "#059669", fontSize: 18 }}>{fmtDias(granHrs)} hrs · {fmtL(granCosto)}</span>
+      </div>
+
+      {dirty && <div style={{ background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#92400E" }}>
+        ⚠️ <b>Tenés cambios sin guardar.</b> Tocá <b>Guardar horas extras</b> antes de cerrar.
+      </div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <Btn variant="ghost" onClick={() => {
+          if (dirty && !confirm("Tenés cambios SIN GUARDAR.\n\n¿Cerrar sin guardar?")) return;
+          setModal(null);
+        }}>Cerrar</Btn>
+        <Btn variant="success" onClick={guardar}>Guardar horas extras</Btn>
+      </div>
+    </div>;
+  };
+
+  const renderHE = () => {
+    const openHe = (cuad) => {
+      const existing = che.find(h => h.periodo === cuad.periodo && h.quincena === cuad.quincena);
+      if (existing) {
+        setModal({ t: "he", d: { ...existing, assignments: cuad.assignments } });
+      } else {
+        setModal({ t: "he", d: { id: uid(), company: co, periodo: cuad.periodo, quincena: cuad.quincena, assignments: cuad.assignments, hours: {}, date: new Date().toISOString() } });
+      }
+    };
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ background: "#FFFBF5", border: "1px solid #DBD4C8", borderRadius: 12, padding: "12px 16px", fontSize: 12, color: "#5C5853", lineHeight: 1.5 }}>
+        ⏰ <b>Cómo funciona:</b> las horas extras se registran en la quincena en que se <b>trabajaron</b> (misma distribución de cuadrilla que la asistencia) y
+        se pagan <b>quincena vencida</b>: las de 1Q se pagan a fin de mes, las de 2Q el 15 del mes siguiente. Hora base = salario ÷ 30 ÷ 8 ·
+        4-7pm +25% · 7-10pm +50% · 10pm-12am +75% · <b>domingo ×2</b>. En <b>Costos</b> aparecen en la quincena en que se pagan.
+      </div>
+      {cq.length === 0 && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: 20, textAlign: "center", color: "#92400E" }}>Primero creá la distribución de cuadrilla (tab Asistencia) — las HE usan esa misma distribución.</div>}
+      <Table columns={[
+        { key: "p", label: "Periodo", render: r => <b>{r.quincena} {r.periodo}</b> },
+        { key: "he", label: "HE registradas", render: r => {
+          const rec = che.find(h => h.periodo === r.periodo && h.quincena === r.quincena);
+          if (!rec || !Object.keys(rec.hours || {}).length) return <Badge color="#94A3B8">Sin registrar</Badge>;
+          const t = heTotalsOf(rec);
+          return <span style={{ fontSize: 12 }}><b style={{ color: "#059669" }}>{fmtDias(t.hrs)} hrs</b> · {fmtL(t.costo)}</span>;
+        } },
+        { key: "pago", label: "Se pagan", render: r => <span style={{ fontSize: 11, color: "#9A3412" }}>{r.quincena === "1Q" ? "Fin de mes (2Q)" : "15 del mes sig. (1Q)"}</span> },
+        { key: "d", label: "Fecha cuadrilla", render: r => fmt(r.date) },
+      ]} data={cq.slice().reverse()} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+        <Btn small variant="primary" onClick={() => openHe(r)}>⏰ Horas extras</Btn>
+      </div>} />
+    </div>;
+  };
+
   // ── COSTO DE MANO DE OBRA POR PROYECTO (amarrado a la asistencia) ──
   // Modelo de pago por celda (espeja la planilla):
   //   Dia regular:  "1" = 1 dia (payByHour: fraccion por hora de entrada),
@@ -1840,6 +2089,50 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         P.emps[e.id].costo += val * sd;
       });
     });
+    // HORAS EXTRAS pagadas en ESTA quincena = las trabajadas la quincena
+    // ANTERIOR (pago quincena vencida — regla de la empresa): el proyecto
+    // desembolsa esos fondos aqui, por eso se cargan a esta quincena.
+    //   Viendo 2Q de un mes → HE de la 1Q del mismo mes.
+    //   Viendo 1Q de un mes → HE de la 2Q del mes anterior.
+    const prevQ = sheet.quincena === "2Q"
+      ? { periodo: sheet.periodo, quincena: "1Q" }
+      : (() => { const pd = new Date(y, m - 2, 1); return { periodo: `${pd.getFullYear()}-${String(pd.getMonth() + 1).padStart(2, "0")}`, quincena: "2Q" }; })();
+    const heSheet = hes.find(h => h.company === sheet.company && h.periodo === prevQ.periodo && h.quincena === prevQ.quincena);
+    let totalHeHrs = 0, totalHeCosto = 0;
+    if (heSheet) {
+      const heDias = heDiasQ(heSheet.periodo, heSheet.quincena);
+      const sunSet = new Set(heDias.filter(d => d.isSun).map(d => d.day));
+      const heAssign = heSheet.assignments || {};
+      const hh = heSheet.hours || {};
+      ce.forEach(e => {
+        const hb = heHoraBase(e);
+        const proj = resolveShortHR(heAssign[e.id]);
+        if (!proj) return;
+        let hrs = 0, costoHe = 0;
+        heDias.forEach(d => {
+          const c = hh[`${e.id}-${d.day}`];
+          if (!c) return;
+          HE_BANDAS.forEach(b => {
+            const h = heNum(c[b.k]);
+            if (h <= 0) return;
+            hrs += h;
+            costoHe += h * heMult(sunSet.has(d.day), b) * hb;
+          });
+        });
+        if (hrs <= 0) return;
+        if (!porProyecto[proj]) porProyecto[proj] = { diasPag: 0, costo: 0, emps: {} };
+        const P = porProyecto[proj];
+        personasSet.add(e.id);
+        if (!P.emps[e.id]) P.emps[e.id] = { emp: e, sd: ((Number(e.salary) || 0) + (Number(e.bonificacion) || 0)) / 30, dias: 0, costo: 0 };
+        P.emps[e.id].heHrs = (P.emps[e.id].heHrs || 0) + hrs;
+        P.emps[e.id].heCosto = (P.emps[e.id].heCosto || 0) + costoHe;
+        P.heHrs = (P.heHrs || 0) + hrs;
+        P.heCosto = (P.heCosto || 0) + costoHe;
+        totalHeHrs += hrs;
+        totalHeCosto += costoHe;
+      });
+    }
+
     const rows = Object.entries(porProyecto).map(([short, v]) => {
       const pj = findProjectHR(short);
       return {
@@ -1847,14 +2140,27 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         name: pj?.name || short,
         code: pj?.code || "",
         diasPag: v.diasPag,
-        costo: v.costo,
-        emps: Object.values(v.emps).sort((a, b) => b.costo - a.costo),
+        costoDias: v.costo,
+        heHrs: v.heHrs || 0,
+        heCosto: v.heCosto || 0,
+        costo: v.costo + (v.heCosto || 0),
+        emps: Object.values(v.emps).map(x => ({
+          ...x,
+          costoDias: x.costo,
+          heHrs: x.heHrs || 0,
+          heCosto: x.heCosto || 0,
+          costo: x.costo + (x.heCosto || 0),
+        })).sort((a, b) => b.costo - a.costo),
       };
     }).sort((a, b) => b.costo - a.costo);
     return {
       rows,
       total: rows.reduce((s, r) => s + r.costo, 0),
       totalDias: rows.reduce((s, r) => s + r.diasPag, 0),
+      totalHeHrs,
+      totalHeCosto,
+      prevQLabel: `${prevQ.quincena} ${prevQ.periodo}`,
+      hayHe: !!heSheet,
       personas: personasSet.size,
     };
   };
@@ -1873,20 +2179,20 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       </div>;
     }
 
-    const { rows, total, totalDias, personas } = calcCostoMO(sheet);
+    const { rows, total, totalDias, totalHeHrs, totalHeCosto, prevQLabel, hayHe, personas } = calcCostoMO(sheet);
     const genFecha = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" });
     const titulo = `Costo de Mano de Obra — ${sheet.quincena} ${sheet.periodo}`;
 
     const exportCostosCSV = () => {
-      const headers = ["Proyecto", "Empleado", "Cargo", "Salario mensual", "Bonificacion mensual", "Costo diario (sal+bonif)/30", "Dias pagados", "Costo (L)"];
+      const headers = ["Proyecto", "Empleado", "Cargo", "Salario mensual", "Bonificacion mensual", "Costo diario (sal+bonif)/30", "Dias pagados", "Costo dias (L)", `HE hrs (de ${prevQLabel})`, "Costo HE (L)", "Total (L)"];
       const lines = [];
       rows.forEach(r => {
         r.emps.forEach(x => {
-          lines.push([`"${r.short}"`, `"${x.emp.fullName}"`, `"${x.emp.position || ""}"`, (Number(x.emp.salary) || 0).toFixed(2), (Number(x.emp.bonificacion) || 0).toFixed(2), x.sd.toFixed(2), fmtDias(x.dias), x.costo.toFixed(2)].join(","));
+          lines.push([`"${r.short}"`, `"${x.emp.fullName}"`, `"${x.emp.position || ""}"`, (Number(x.emp.salary) || 0).toFixed(2), (Number(x.emp.bonificacion) || 0).toFixed(2), x.sd.toFixed(2), fmtDias(x.dias), x.costoDias.toFixed(2), fmtDias(x.heHrs), x.heCosto.toFixed(2), x.costo.toFixed(2)].join(","));
         });
-        lines.push([`"${r.short}"`, `"SUBTOTAL"`, "", "", "", "", fmtDias(r.diasPag), r.costo.toFixed(2)].join(","));
+        lines.push([`"${r.short}"`, `"SUBTOTAL"`, "", "", "", "", fmtDias(r.diasPag), r.costoDias.toFixed(2), fmtDias(r.heHrs), r.heCosto.toFixed(2), r.costo.toFixed(2)].join(","));
       });
-      lines.push(["TOTAL", "", "", "", "", "", fmtDias(totalDias), total.toFixed(2)].join(","));
+      lines.push(["TOTAL", "", "", "", "", "", fmtDias(totalDias), (total - totalHeCosto).toFixed(2), fmtDias(totalHeHrs), totalHeCosto.toFixed(2), total.toFixed(2)].join(","));
       const csv = [headers.join(","), ...lines].join("\n");
       const a = document.createElement("a");
       a.href = "data:text/csv;charset=utf-8," + encodeURIComponent("﻿" + csv);
@@ -1910,7 +2216,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <th style="text-align:left;padding:5px 10px;border-bottom:1px solid #E2E8F0">Cargo</th>
               <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Costo diario</th>
               <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Días pag.</th>
-              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Costo</th>
+              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Costo días</th>
+              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">HE hrs</th>
+              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Costo HE</th>
+              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Total</th>
             </tr></thead>
             <tbody>
               ${r.emps.map(x => `<tr>
@@ -1918,11 +2227,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;color:#64748b">${x.emp.position || "—"}</td>
                 <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right">${fL(x.sd)}</td>
                 <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right">${fmtDias(x.dias)}</td>
+                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right">${fL(x.costoDias)}</td>
+                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right;color:#D97706">${x.heHrs > 0 ? fmtDias(x.heHrs) : "—"}</td>
+                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right;color:#D97706">${x.heCosto > 0 ? fL(x.heCosto) : "—"}</td>
                 <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right;font-weight:700">${fL(x.costo)}</td>
               </tr>`).join("")}
               <tr style="background:#F8FAFC;font-weight:700">
                 <td style="padding:5px 10px" colspan="3">Subtotal ${r.short} · ${r.emps.length} persona${r.emps.length !== 1 ? "s" : ""}</td>
                 <td style="padding:5px 10px;text-align:right">${fmtDias(r.diasPag)}</td>
+                <td style="padding:5px 10px;text-align:right">${fL(r.costoDias)}</td>
+                <td style="padding:5px 10px;text-align:right;color:#D97706">${r.heHrs > 0 ? fmtDias(r.heHrs) : "—"}</td>
+                <td style="padding:5px 10px;text-align:right;color:#D97706">${r.heCosto > 0 ? fL(r.heCosto) : "—"}</td>
                 <td style="padding:5px 10px;text-align:right;color:#059669">${fL(r.costo)}</td>
               </tr>
             </tbody>
@@ -1939,6 +2254,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div style="display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap">
           <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Costo total mano de obra</div><div style="font-size:19px;font-weight:800;color:#059669">${fL(total)}</div></div>
           <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Días pagados</div><div style="font-size:19px;font-weight:800">${fmtDias(totalDias)}</div></div>
+          <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">HE pagadas (de ${prevQLabel})</div><div style="font-size:19px;font-weight:800;color:#D97706">${fL(totalHeCosto)}</div><div style="font-size:10px;color:#94A3B8">${fmtDias(totalHeHrs)} horas</div></div>
           <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Personas</div><div style="font-size:19px;font-weight:800">${personas}</div></div>
           <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Proyectos</div><div style="font-size:19px;font-weight:800">${rows.length}</div></div>
         </div>
@@ -1946,6 +2262,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div style="font-size:9.5px;color:#94A3B8;margin-top:10px;line-height:1.5">
           Metodología: costo diario = (salario + bonificación mensual) ÷ 30; costo = costo diario × días pagados atribuidos al proyecto según cuadrilla y reasignaciones diarias (1*).
           Domingos/feriados de descanso pagan 1 día; domingo trabajado (DT) ×2, domingo triple (DT2) y feriado trabajado (TF) ×3; incapacidad (INC) paga 1 día; NSP no paga.
+          Horas extras: hora base = salario ÷ 30 ÷ 8 · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2. Las HE mostradas corresponden a las trabajadas en ${prevQLabel}, pagadas en esta quincena (pago quincena vencida).
           No incluye cargas patronales. Fuente: asistencia ${sheet.quincena} ${sheet.periodo}${sheet.lastSaved ? ` (guardada ${fmt(sheet.lastSaved.slice(0, 10))})` : ""}.
         </div>
         <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#059669;color:#fff;border:none;border-radius:8px">Imprimir / Guardar como PDF</button>
@@ -1976,6 +2293,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
         <StatCard icon="💰" label="Costo total mano de obra" value={fmtL(total)} color="#059669" />
         <StatCard icon="📅" label="Días pagados" value={fmtDias(totalDias)} color="#2563EB" />
+        <StatCard icon="⏰" label={hayHe ? `HE pagadas (${fmtDias(totalHeHrs)} hrs · de ${prevQLabel})` : `HE pagadas (de ${prevQLabel} — sin registrar)`} value={fmtL(totalHeCosto)} color="#D97706" />
         <StatCard icon="👥" label="Personas" value={personas} color="#E8762D" />
         <StatCard icon="🏗️" label="Proyectos" value={rows.length} color="#7C3AED" />
       </div>
@@ -1995,22 +2313,26 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 <span style={{ fontWeight: 800, fontSize: 14, color: cc.color }}>{r.short}</span>
                 <span style={{ fontSize: 11, color: "#8B847C" }}>{r.name !== r.short ? r.name : ""}{r.code ? ` · ${r.code}` : ""}</span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, fontSize: 12, flexWrap: "wrap" }}>
                 <span><strong style={{ color: "#E8762D" }}>{r.emps.length}</strong> persona{r.emps.length !== 1 ? "s" : ""}</span>
                 <span><strong style={{ color: "#2563EB" }}>{fmtDias(r.diasPag)}</strong> días pag.</span>
+                {r.heHrs > 0 && <span title={`Horas extras de ${prevQLabel} pagadas en esta quincena`}><strong style={{ color: "#D97706" }}>{fmtDias(r.heHrs)}</strong> hrs HE · <strong style={{ color: "#D97706" }}>{fmtL(r.heCosto)}</strong></span>}
                 <span style={{ fontWeight: 800, fontSize: 15, color: "#059669" }}>{fmtL(r.costo)}</span>
                 <span style={{ fontSize: 10, color: "#94A3B8" }}>({total > 0 ? Math.round((r.costo / total) * 100) : 0}%)</span>
                 <span style={{ fontSize: 11, color: "#8B847C" }}>▸ detalle</span>
               </div>
             </summary>
             <div style={{ overflowX: "auto", borderTop: "1px solid #F1EBE0" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 560 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 780 }}>
                 <thead><tr style={{ background: "#FFFBF5" }}>
                   <th style={{ textAlign: "left", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Empleado</th>
                   <th style={{ textAlign: "left", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Cargo</th>
                   <th title="(Salario + bonificacion mensual) / 30" style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Costo diario</th>
                   <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Días pag.</th>
-                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Costo</th>
+                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Costo días</th>
+                  <th title={`Horas extras de ${prevQLabel} pagadas en esta quincena`} style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>HE hrs</th>
+                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Costo HE</th>
+                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Total</th>
                 </tr></thead>
                 <tbody>
                   {r.emps.map(x => (
@@ -2019,6 +2341,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                       <td style={{ padding: "7px 14px", color: "#8B847C" }}>{x.emp.position || "—"}</td>
                       <td style={{ padding: "7px 14px", textAlign: "right" }}>{fmtL(x.sd)}</td>
                       <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: "#2563EB" }}>{fmtDias(x.dias)}</td>
+                      <td style={{ padding: "7px 14px", textAlign: "right" }}>{fmtL(x.costoDias)}</td>
+                      <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: x.heHrs > 0 ? "#D97706" : "#CBD5E1" }}>{x.heHrs > 0 ? fmtDias(x.heHrs) : "—"}</td>
+                      <td style={{ padding: "7px 14px", textAlign: "right", color: x.heCosto > 0 ? "#D97706" : "#CBD5E1" }}>{x.heCosto > 0 ? fmtL(x.heCosto) : "—"}</td>
                       <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: "#059669" }}>{fmtL(x.costo)}</td>
                     </tr>
                   ))}
@@ -2039,7 +2364,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
       <div style={{ fontSize: 10.5, color: "#94A3B8", lineHeight: 1.5 }}>
         Metodología: costo diario = (salario + bonificación mensual) ÷ 30 × días pagados por proyecto (cuadrilla + reasignaciones 1*).
-        Domingos/feriados de descanso pagan 1 día · DT ×2 · DT2 y TF ×3 · INC paga 1 · NSP no paga. No incluye cargas patronales.
+        Domingos/feriados de descanso pagan 1 día · DT ×2 · DT2 y TF ×3 · INC paga 1 · NSP no paga.
+        Horas extras: hora base = salario ÷ 30 ÷ 8 · 4-7pm +25% · 7-10pm +50% · 10pm-12am +75% · domingo ×2 — las HE de {prevQLabel} se muestran acá porque se pagan en esta quincena (pago quincena vencida). No incluye cargas patronales.
       </div>
     </div>;
   };
@@ -3834,7 +4160,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
-  const renderSec = () => { switch (sec) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); default: return renderDashboard(); } };
+  const renderSec = () => { switch (sec) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); case "horasextras": return renderHE(); default: return renderDashboard(); } };
 
   const renderModal = () => { if (!modal) return null; const m = modal; switch (m.t) {
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;
@@ -3848,6 +4174,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     case "cuad": return <Modal title={`Distribucion de cuadrilla — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm /></Modal>;
     case "cuad-edit": return <Modal title={`Editar cuadrilla ${m.d.quincena} ${m.d.periodo} — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm cuad={m.d} /></Modal>;
     case "ag": return <Modal title={`Asistencia ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><AttendanceGrid sheet={m.d} /></Modal>;
+    case "he": return <Modal title={`Horas Extras ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><HorasExtrasGrid sheet={m.d} /></Modal>;
     case "mn": return <Modal title="Registrar ALTA de empleado" onClose={() => setModal(null)} wide><AltaForm /></Modal>;
     case "mb": return <Modal title="Registrar BAJA de empleado" onClose={() => setModal(null)} wide><BajaForm /></Modal>;
     case "me": return <Modal title={`Editar movimiento — ${m.d.fullName}`} onClose={() => setModal(null)} wide><EditMovForm mov={m.d} onSave={updated => sM(movs.map(x => x.id === updated.id ? updated : x))} /></Modal>;
