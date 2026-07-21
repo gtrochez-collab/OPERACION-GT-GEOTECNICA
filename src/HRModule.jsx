@@ -310,6 +310,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [empsLoadWarning, setEmpsLoadWarning] = useState(false);
   // true mientras el boton "Actualizar" del tab Empleados esta re-cargando.
   const [refreshing, setRefreshing] = useState(false);
+  // Hoja de asistencia seleccionada en el tab Costos ("" = la mas reciente).
+  const [costosSheetId, setCostosSheetId] = useState("");
   const [movs, setMovs] = useState([]);
   const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
   const [contracts, setContracts] = useState([]);
@@ -474,6 +476,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     { id: "attendance", icon: "⏱️", label: "Asistencia" },
     { id: "movimientos", icon: "🔄", label: "Movimientos" },
     { id: "constancias", icon: "📄", label: "Constancias" },
+    { id: "costos", icon: "💵", label: "Costos" },
   ];
   const nav = isAsistente ? allNav.filter(n => n.id === "attendance")
     : isPhotoOnly ? allNav.filter(n => n.id === "employees")
@@ -1777,20 +1780,369 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const ConForm = () => { const [eid, setEid] = useState(""); const [tp, setTp] = useState("laboral"); const emp = emps.find(e => e.id === eid); const today = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" }); const txt = emp ? (tp === "laboral" ? `CONSTANCIA LABORAL\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, desde ${fmt(emp.startDate)} a la fecha.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos` : `CONSTANCIA DE INGRESOS\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, salario mensual: ${fmtL(emp.salary)}.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos`) : ""; return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}><Select label="Empleado" options={ae.map(e => ({ value: e.id, label: e.fullName }))} value={eid} onChange={e => setEid(e.target.value)} /><Select label="Tipo" options={[{ value: "laboral", label: "Laboral" }, { value: "ingresos", label: "Ingresos" }]} value={tp} onChange={e => setTp(e.target.value)} /></div>{txt && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: 18 }}><pre style={{ whiteSpace: "pre-wrap", fontFamily: "'Segoe UI'", fontSize: 13, lineHeight: 1.7, margin: 0 }}>{txt}</pre></div>}<div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>{txt && <Btn variant="success" onClick={() => { sC([...cons, { id: uid(), employeeId: eid, type: tp, date: new Date().toISOString(), text: txt }]); navigator.clipboard?.writeText(txt); alert("Copiado"); setModal(null); }}>Copiar y guardar</Btn>}</div></div>; };
 
   // ── SECTIONS ──
+  // ── COSTO DE MANO DE OBRA POR PROYECTO (amarrado a la asistencia) ──
+  // Modelo de pago por celda (espeja la planilla):
+  //   Dia regular:  "1" = 1 dia (payByHour: fraccion por hora de entrada),
+  //                 "INC" = 1 (incapacidad pagada), "0"/vacio = 0.
+  //   Domingo:      "DT" = 2 (doble), "DT2" = 3 (triple),
+  //                 "1"/"0"/"INC" = 1 (descanso pagado por ley), vacio = 0.
+  //   Feriado:      "TF" = 3 (triple), "1"/"0"/"INC" = 1, vacio = 0.
+  // Cada dia se atribuye al proyecto del override (1*) o al proyecto base de
+  // la cuadrilla. Costo = salario diario (salario/30) x valor del dia.
+  // NO incluye bonificaciones ni cargas patronales (IHSS/RAP patronal).
+  const calcCostoMO = (sheet) => {
+    const grid = sheet.grid || {};
+    const ovr = sheet.projOverrides || {};
+    const at = sheet.arrivalTimes || {};
+    const assignments = sheet.assignments || {};
+    const [y, m] = (sheet.periodo || "").split("-").map(Number);
+    if (!y || !m) return { rows: [], total: 0, totalDias: 0, personas: 0 };
+    const start = sheet.quincena === "1Q" ? 1 : 16;
+    const end = sheet.quincena === "1Q" ? 15 : new Date(y, m, 0).getDate();
+    const dias = [];
+    for (let d = start; d <= end; d++) {
+      const dt = new Date(y, m - 1, d);
+      dias.push({ day: d, isSun: dt.getDay() === 0, isHoliday: esFeriadoQuincena(sheet.periodo, d) });
+    }
+    const porProyecto = {};
+    const personasSet = new Set();
+    ce.forEach(e => {
+      const sd = (Number(e.salary) || 0) / 30;
+      const base = resolveShortHR(assignments[e.id]);
+      dias.forEach(d => {
+        const k = `${e.id}-${d.day}`;
+        const v = grid[k] || "";
+        let val = 0;
+        if (d.isSun || d.isHoliday) {
+          if (v === "DT") val = 2;
+          else if (v === "DT2" || v === "TF") val = 3;
+          else if (v) val = 1; // "1", "0", "INC" — pagado por ley
+        } else {
+          if (v === "1") {
+            val = 1;
+            if (e.payByHour && at[k]) {
+              const [h, mm] = at[k].split(":").map(Number);
+              val = Math.max(0, (8 - Math.max(0, h + mm / 60 - 7)) / 8);
+            }
+          } else if (v === "INC") val = 1;
+        }
+        if (val <= 0) return;
+        const proj = ovr[k] ? resolveShortHR(ovr[k]) : base;
+        if (!proj) return;
+        if (!porProyecto[proj]) porProyecto[proj] = { diasPag: 0, costo: 0, emps: {} };
+        const P = porProyecto[proj];
+        P.diasPag += val;
+        P.costo += val * sd;
+        personasSet.add(e.id);
+        if (!P.emps[e.id]) P.emps[e.id] = { emp: e, sd, dias: 0, costo: 0 };
+        P.emps[e.id].dias += val;
+        P.emps[e.id].costo += val * sd;
+      });
+    });
+    const rows = Object.entries(porProyecto).map(([short, v]) => {
+      const pj = findProjectHR(short);
+      return {
+        short,
+        name: pj?.name || short,
+        code: pj?.code || "",
+        diasPag: v.diasPag,
+        costo: v.costo,
+        emps: Object.values(v.emps).sort((a, b) => b.costo - a.costo),
+      };
+    }).sort((a, b) => b.costo - a.costo);
+    return {
+      rows,
+      total: rows.reduce((s, r) => s + r.costo, 0),
+      totalDias: rows.reduce((s, r) => s + r.diasPag, 0),
+      personas: personasSet.size,
+    };
+  };
+
+  const fmtDias = (n) => Number.isInteger(n) ? n : n.toFixed(2);
+
+  const renderCostosMO = () => {
+    // Hojas de asistencia de la empresa, mas reciente primero.
+    const sheets = ca.slice().sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`));
+    const sheet = sheets.find(s => s.id === costosSheetId) || sheets[0] || null;
+
+    if (!sheet) {
+      return <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: 24, textAlign: "center", color: "#92400E", fontSize: 14 }}>
+        Todavía no hay asistencia registrada en {cc.name}.<br />
+        <span style={{ fontSize: 12 }}>Registrá la asistencia de la quincena (tab Asistencia) y acá vas a ver el costo de mano de obra por proyecto.</span>
+      </div>;
+    }
+
+    const { rows, total, totalDias, personas } = calcCostoMO(sheet);
+    const genFecha = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" });
+    const titulo = `Costo de Mano de Obra — ${sheet.quincena} ${sheet.periodo}`;
+
+    const exportCostosCSV = () => {
+      const headers = ["Proyecto", "Empleado", "Cargo", "Salario mensual", "Salario diario", "Dias pagados", "Costo (L)"];
+      const lines = [];
+      rows.forEach(r => {
+        r.emps.forEach(x => {
+          lines.push([`"${r.short}"`, `"${x.emp.fullName}"`, `"${x.emp.position || ""}"`, (Number(x.emp.salary) || 0).toFixed(2), x.sd.toFixed(2), fmtDias(x.dias), x.costo.toFixed(2)].join(","));
+        });
+        lines.push([`"${r.short}"`, `"SUBTOTAL"`, "", "", "", fmtDias(r.diasPag), r.costo.toFixed(2)].join(","));
+      });
+      lines.push(["TOTAL", "", "", "", "", fmtDias(totalDias), total.toFixed(2)].join(","));
+      const csv = [headers.join(","), ...lines].join("\n");
+      const a = document.createElement("a");
+      a.href = "data:text/csv;charset=utf-8," + encodeURIComponent("﻿" + csv);
+      a.download = `CostoMO_${cc.name.replace(/ /g, "_")}_${sheet.quincena}_${sheet.periodo}.csv`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    };
+
+    const exportCostosPDF = () => {
+      const w = window.open("", "_blank");
+      if (!w) { alert("Permite popups para imprimir"); return; }
+      const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 });
+      const projBlocks = rows.map(r => `
+        <div style="margin-bottom:18px;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
+          <div style="background:#2C5F5D;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;display:flex;justify-content:space-between">
+            <span>${r.short}${r.code ? ` <span style="font-weight:400;font-size:10px;opacity:.75">[${r.code}]</span>` : ""}</span>
+            <span>${fL(r.costo)}</span>
+          </div>
+          <table style="width:100%;border-collapse:collapse;font-size:11px">
+            <thead><tr style="background:#F1F5F9">
+              <th style="text-align:left;padding:5px 10px;border-bottom:1px solid #E2E8F0">Empleado</th>
+              <th style="text-align:left;padding:5px 10px;border-bottom:1px solid #E2E8F0">Cargo</th>
+              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Sal. diario</th>
+              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Días pag.</th>
+              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Costo</th>
+            </tr></thead>
+            <tbody>
+              ${r.emps.map(x => `<tr>
+                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9">${x.emp.fullName}</td>
+                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;color:#64748b">${x.emp.position || "—"}</td>
+                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right">${fL(x.sd)}</td>
+                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right">${fmtDias(x.dias)}</td>
+                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right;font-weight:700">${fL(x.costo)}</td>
+              </tr>`).join("")}
+              <tr style="background:#F8FAFC;font-weight:700">
+                <td style="padding:5px 10px" colspan="3">Subtotal ${r.short} · ${r.emps.length} persona${r.emps.length !== 1 ? "s" : ""}</td>
+                <td style="padding:5px 10px;text-align:right">${fmtDias(r.diasPag)}</td>
+                <td style="padding:5px 10px;text-align:right;color:#059669">${fL(r.costo)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>`).join("");
+      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${titulo}</title>
+        <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#1E293B}@media print{.np{display:none}}</style>
+        </head><body>
+        <div style="border-left:4px solid #E8762D;padding-left:14px;margin-bottom:16px">
+          <div style="font-size:9px;color:#E8762D;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">Grupo Geotecnica · RRHH</div>
+          <h1 style="font-size:20px;letter-spacing:-0.3px">${titulo}</h1>
+          <div style="font-size:12px;color:#64748b;margin-top:2px">${cc.name} · Generado ${genFecha}</div>
+        </div>
+        <div style="display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap">
+          <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Costo total mano de obra</div><div style="font-size:19px;font-weight:800;color:#059669">${fL(total)}</div></div>
+          <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Días pagados</div><div style="font-size:19px;font-weight:800">${fmtDias(totalDias)}</div></div>
+          <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Personas</div><div style="font-size:19px;font-weight:800">${personas}</div></div>
+          <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Proyectos</div><div style="font-size:19px;font-weight:800">${rows.length}</div></div>
+        </div>
+        ${projBlocks}
+        <div style="font-size:9.5px;color:#94A3B8;margin-top:10px;line-height:1.5">
+          Metodología: costo = salario diario (salario mensual ÷ 30) × días pagados atribuidos al proyecto según cuadrilla y reasignaciones diarias (1*).
+          Domingos/feriados de descanso pagan 1 día; domingo trabajado (DT) ×2, domingo triple (DT2) y feriado trabajado (TF) ×3; incapacidad (INC) paga 1 día; NSP no paga.
+          No incluye bonificaciones ni cargas patronales. Fuente: asistencia ${sheet.quincena} ${sheet.periodo}${sheet.lastSaved ? ` (guardada ${fmt(sheet.lastSaved.slice(0, 10))})` : ""}.
+        </div>
+        <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#059669;color:#fff;border:none;border-radius:8px">Imprimir / Guardar como PDF</button>
+        </body></html>`);
+      w.document.close();
+    };
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Header + selector de quincena + exportar */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#2C2A28" }}>💵 Costo de Mano de Obra</div>
+          <div style={{ fontSize: 12, color: "#8B847C", marginTop: 2 }}>Por proyecto, según la asistencia registrada de la quincena</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Quincena</div>
+            <select value={sheet.id} onChange={e => setCostosSheetId(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff" }}>
+              {sheets.map(s => <option key={s.id} value={s.id}>{s.quincena} {s.periodo}</option>)}
+            </select>
+          </div>
+          <Btn variant="ghost" onClick={exportCostosCSV}>📊 CSV</Btn>
+          <Btn variant="info" onClick={exportCostosPDF}>📄 Descargar reporte PDF</Btn>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <StatCard icon="💰" label="Costo total mano de obra" value={fmtL(total)} color="#059669" />
+        <StatCard icon="📅" label="Días pagados" value={fmtDias(totalDias)} color="#2563EB" />
+        <StatCard icon="👥" label="Personas" value={personas} color="#E8762D" />
+        <StatCard icon="🏗️" label="Proyectos" value={rows.length} color="#7C3AED" />
+      </div>
+
+      {rows.length === 0 && (
+        <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 28, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>
+          La hoja {sheet.quincena} {sheet.periodo} todavía no tiene días marcados. Registrá asistencia y volvé acá.
+        </div>
+      )}
+
+      {/* Tabla por proyecto con detalle expandible por empleado */}
+      {rows.map(r => (
+        <div key={r.short} style={{ background: "#fff", border: "1px solid #DBD4C8", borderRadius: 12, overflow: "hidden" }}>
+          <details>
+            <summary style={{ cursor: "pointer", listStyle: "none", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", borderLeft: `4px solid ${cc.color}` }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 800, fontSize: 14, color: cc.color }}>{r.short}</span>
+                <span style={{ fontSize: 11, color: "#8B847C" }}>{r.name !== r.short ? r.name : ""}{r.code ? ` · ${r.code}` : ""}</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 12 }}>
+                <span><strong style={{ color: "#E8762D" }}>{r.emps.length}</strong> persona{r.emps.length !== 1 ? "s" : ""}</span>
+                <span><strong style={{ color: "#2563EB" }}>{fmtDias(r.diasPag)}</strong> días pag.</span>
+                <span style={{ fontWeight: 800, fontSize: 15, color: "#059669" }}>{fmtL(r.costo)}</span>
+                <span style={{ fontSize: 10, color: "#94A3B8" }}>({total > 0 ? Math.round((r.costo / total) * 100) : 0}%)</span>
+                <span style={{ fontSize: 11, color: "#8B847C" }}>▸ detalle</span>
+              </div>
+            </summary>
+            <div style={{ overflowX: "auto", borderTop: "1px solid #F1EBE0" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 560 }}>
+                <thead><tr style={{ background: "#FFFBF5" }}>
+                  <th style={{ textAlign: "left", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Empleado</th>
+                  <th style={{ textAlign: "left", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Cargo</th>
+                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Sal. diario</th>
+                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Días pag.</th>
+                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Costo</th>
+                </tr></thead>
+                <tbody>
+                  {r.emps.map(x => (
+                    <tr key={x.emp.id} style={{ borderTop: "1px solid #F8F2E6" }}>
+                      <td style={{ padding: "7px 14px", fontWeight: 600, color: "#2C2A28" }}>{x.emp.fullName}</td>
+                      <td style={{ padding: "7px 14px", color: "#8B847C" }}>{x.emp.position || "—"}</td>
+                      <td style={{ padding: "7px 14px", textAlign: "right" }}>{fmtL(x.sd)}</td>
+                      <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: "#2563EB" }}>{fmtDias(x.dias)}</td>
+                      <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: "#059669" }}>{fmtL(x.costo)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      ))}
+
+      {/* Total global */}
+      {rows.length > 0 && (
+        <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 12, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <span style={{ fontWeight: 800, color: "#065F46", fontSize: 15 }}>TOTAL MANO DE OBRA · {sheet.quincena} {sheet.periodo}</span>
+          <span style={{ fontWeight: 800, color: "#059669", fontSize: 20 }}>{fmtL(total)}</span>
+        </div>
+      )}
+
+      <div style={{ fontSize: 10.5, color: "#94A3B8", lineHeight: 1.5 }}>
+        Metodología: costo = salario diario (salario ÷ 30) × días pagados por proyecto (cuadrilla + reasignaciones 1*).
+        Domingos/feriados de descanso pagan 1 día · DT ×2 · DT2 y TF ×3 · INC paga 1 · NSP no paga. No incluye bonificaciones ni cargas patronales.
+      </div>
+    </div>;
+  };
+
   const renderDashboard = () => {
     const tmp = ae.filter(e => e.contractType === "temporary"); const pm = ae.filter(e => e.contractType === "permanent"); const hon = ae.filter(e => e.contractType === "honorarios");
-    const tp = ae.reduce((s, e) => s + (Number(e.salary) || 0), 0);
+    const activos = ae.filter(e => e.status === "active");
+    const masaSalarial = activos.reduce((s, e) => s + (Number(e.salary) || 0), 0);
     const soon = tmp.filter(e => { if (!e.endDate) return false; const d = (new Date(e.endDate) - new Date()) / 86400000; return d >= 0 && d <= 30; });
+
+    // Ultima planilla guardada de la empresa
+    const lastPay = cp.length > 0 ? cp[cp.length - 1] : null;
+
+    // Costo por proyecto de la ultima planilla (resumido). Si no hay
+    // planillas todavia, se estima desde la ultima asistencia (calcCostoMO).
+    let costoProyRows = [];
+    let costoProySource = "";
+    if (lastPay?.lines?.length) {
+      const acc = {};
+      lastPay.lines.forEach(l => {
+        const pr = l.proj || "SIN ASIGNAR";
+        if (!acc[pr]) acc[pr] = { costo: 0, count: 0 };
+        acc[pr].costo += Number(l.neto) || 0;
+        acc[pr].count++;
+      });
+      costoProyRows = Object.entries(acc).map(([short, v]) => ({ short, ...v })).sort((a, b) => b.costo - a.costo);
+      costoProySource = `Última planilla · ${lastPay.quincena} ${lastPay.periodo} (neto)`;
+    } else {
+      const lastSheet = ca.slice().sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`))[0];
+      if (lastSheet) {
+        const c = calcCostoMO(lastSheet);
+        costoProyRows = c.rows.map(r => ({ short: r.short, costo: r.costo, count: r.emps.length }));
+        costoProySource = `Estimado por asistencia · ${lastSheet.quincena} ${lastSheet.periodo}`;
+      }
+    }
+    const maxCostoProy = Math.max(1, ...costoProyRows.map(r => r.costo));
+
+    // Empleados activos y masa salarial por departamento
+    const porDepto = {};
+    activos.forEach(e => {
+      const d = e.department || "Sin departamento";
+      if (!porDepto[d]) porDepto[d] = { count: 0, masa: 0 };
+      porDepto[d].count++;
+      porDepto[d].masa += Number(e.salary) || 0;
+    });
+    const deptoRows = Object.entries(porDepto).map(([dep, v]) => ({ dep, ...v })).sort((a, b) => b.masa - a.masa);
+    const maxDeptoCount = Math.max(1, ...deptoRows.map(r => r.count));
+    const maxDeptoMasa = Math.max(1, ...deptoRows.map(r => r.masa));
+
+    const BarRow = ({ label, value, max, display, color }) => (
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+          <span style={{ fontWeight: 600, color: "#2C2A28" }}>{label}</span>
+          <span style={{ fontWeight: 800, color }}>{display}</span>
+        </div>
+        <div style={{ height: 8, borderRadius: 4, background: "#F1F5F9", overflow: "hidden" }}>
+          <div style={{ width: `${Math.min(100, (value / max) * 100)}%`, height: "100%", background: color, transition: "width .3s" }} />
+        </div>
+      </div>
+    );
+
+    const panelStyle = { background: "#fff", borderRadius: 12, border: "1px solid #E2E8F0", padding: 18 };
+
     return <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      {/* KPIs */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <StatCard icon="👥" label="Activos" value={ae.length} color={cc.color} />
+        <StatCard icon="👥" label="Empleados activos" value={activos.length} color={cc.color} />
         <StatCard icon="📝" label="Permanentes" value={pm.length} color="#2563EB" />
         {tmp.length > 0 && <StatCard icon="⏳" label="Temporales" value={tmp.length} color="#D97706" />}
         {hon.length > 0 && <StatCard icon="📑" label="Honorarios" value={hon.length} color="#7C3AED" />}
-        <StatCard icon="💰" label="Planilla mensual" value={fmtL(tp)} color="#059669" />
+        <StatCard icon="💰" label="Masa salarial mensual" value={fmtL(masaSalarial)} color="#059669" />
+        {lastPay && <StatCard icon="🧾" label={`Última planilla · ${lastPay.quincena} ${lastPay.periodo}`} value={fmtL(lastPay.total)} color="#0891B2" />}
       </div>
+
       {soon.length > 0 && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 12, padding: 18 }}><div style={{ fontWeight: 700, color: "#92400E", marginBottom: 8 }}>⚠️ Contratos por vencer (30 dias)</div>{soon.map(e => <div key={e.id} style={{ fontSize: 13, color: "#78350F" }}><b>{e.fullName}</b> — Vence: {fmt(e.endDate)}</div>)}</div>}
-      {cp.length > 0 && <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E2E8F0", padding: 18 }}><h4 style={{ margin: "0 0 12px" }}>Ultimas planillas</h4><Table columns={[{ key: "p", label: "Periodo", render: r => `${r.quincena} ${r.periodo}` }, { key: "count", label: "Empleados" }, { key: "total", label: "Total", render: r => <b style={{ color: "#059669" }}>{fmtL(r.total)}</b> }, { key: "date", label: "Fecha", render: r => fmt(r.date) }]} data={cp.slice(-3).reverse()} /></div>}
+
+      {/* Costo por proyecto (resumido) + Departamentos */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.2fr 1fr 1fr", gap: 16 }}>
+        <div style={panelStyle}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
+            <h4 style={{ margin: 0 }}>Costo por proyecto</h4>
+            <span style={{ fontSize: 10, color: "#94A3B8" }}>{costoProySource || "Sin datos aún"}</span>
+          </div>
+          {costoProyRows.length === 0 && <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Registrá asistencia o guardá una planilla para ver esto. El detalle completo está en el tab <b>Costos</b>.</div>}
+          {costoProyRows.slice(0, 8).map(r => (
+            <BarRow key={r.short} label={r.short} value={r.costo} max={maxCostoProy} display={fmtL(r.costo)} color="#059669" />
+          ))}
+        </div>
+        <div style={panelStyle}>
+          <h4 style={{ margin: "0 0 12px" }}>Activos por departamento</h4>
+          {deptoRows.length === 0 && <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Sin empleados activos.</div>}
+          {deptoRows.map(r => (
+            <BarRow key={r.dep} label={r.dep} value={r.count} max={maxDeptoCount} display={r.count} color="#2563EB" />
+          ))}
+        </div>
+        <div style={panelStyle}>
+          <h4 style={{ margin: "0 0 12px" }}>Masa salarial por departamento</h4>
+          {deptoRows.map(r => (
+            <BarRow key={r.dep} label={r.dep} value={r.masa} max={maxDeptoMasa} display={fmtL(r.masa)} color="#7C3AED" />
+          ))}
+        </div>
+      </div>
+
+      {cp.length > 0 && <div style={panelStyle}><h4 style={{ margin: "0 0 12px" }}>Ultimas planillas</h4><Table columns={[{ key: "p", label: "Periodo", render: r => `${r.quincena} ${r.periodo}` }, { key: "count", label: "Empleados" }, { key: "total", label: "Total", render: r => <b style={{ color: "#059669" }}>{fmtL(r.total)}</b> }, { key: "date", label: "Fecha", render: r => fmt(r.date) }]} data={cp.slice(-3).reverse()} /></div>}
     </div>;
   };
 
@@ -3479,7 +3831,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
-  const renderSec = () => { switch (sec) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); default: return renderDashboard(); } };
+  const renderSec = () => { switch (sec) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); default: return renderDashboard(); } };
 
   const renderModal = () => { if (!modal) return null; const m = modal; switch (m.t) {
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;
