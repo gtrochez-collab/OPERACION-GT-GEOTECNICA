@@ -1257,7 +1257,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const [anaExpand, setAnaExpand] = useState({});
   // Estado del Command Center (Resumen). showCompleted: incluir cerradas.
   // projectCode: filtrar a un solo proyecto.
-  const [resumenFilter, setResumenFilter] = useState({ showCompleted: false, projectCode: "" });
+  const [resumenFilter, setResumenFilter] = useState({
+    showCompleted: false,
+    projectCode: "",
+    // Filtro por mes (fecha de carga). Default: mes actual — el coordinador
+    // ve solo lo del mes y el Resumen no se hace kilometrico. "" = todos.
+    month: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
+  });
+  // Mes de las metricas mensuales del Dashboard ("" = mes actual).
+  const [dashMonth, setDashMonth] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -2519,19 +2527,23 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // que falta ficha". KPIs + donut de estados + top 5 proyectos + alertas.
   const renderDashboard = () => {
     const now = Date.now();
-    const currMonth = new Date().getMonth();
-    const currYear = new Date().getFullYear();
+    const hoy = new Date();
+    const mesActual = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}`;
+    // Mes seleccionado para las metricas mensuales (pagado, gasto por proyecto)
+    const mesSel = dashMonth || mesActual;
+    const mesSelLabel = (() => {
+      const [y, m] = mesSel.split("-").map(Number);
+      return new Date(y, m - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
+    })();
 
     // ── Datasets base ──
     const activas = cp.filter(p => p.deliveryStatus !== "cerrado");
     const validadas = cp.filter(p => p.status === "validado");
     const montoPorPagar = validadas.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    // Pagado en el MES SELECCIONADO (paidAt es ISO — slice(0,7) = "YYYY-MM")
     const pagadoMes = cp
       .filter(p => (p.status === "pagado" || p.status === "finalizado") && p.paidAt)
-      .filter(p => {
-        const d = new Date(p.paidAt);
-        return d.getMonth() === currMonth && d.getFullYear() === currYear;
-      })
+      .filter(p => String(p.paidAt).slice(0, 7) === mesSel)
       .reduce((s, p) => s + (Number(p.amount) || 0), 0);
 
     // Helpers de estado logistico
@@ -2555,13 +2567,24 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       return isPaid(p) && entregado;
     });
 
+    // Por enviar a logistica (Ana): pagadas, sin orden de recogida creada,
+    // sin ficha y no cerradas — lo que a Ana le falta coordinar con el
+    // proveedor y mandar a logistica.
+    const porEnviarLogistica = cp.filter(p => {
+      if (!isPaid(p)) return false;
+      if (p.deliveryStatus === "cerrado" || p.deliveryStatus === "ficha_adjunta") return false;
+      if (p.delivery?.fichaFile) return false;
+      return !despachoOf(p);
+    });
+
     // ── KPI cards ──
     const kpis = [
-      { icon: "📋", label: "Solicitudes activas", value: activas.length,          color: "#2563EB", tint: "#DBEAFE", fmt: (v) => v },
-      { icon: "💰", label: "Monto por pagar",     value: montoPorPagar,            color: "#D97706", tint: "#FEF3C7", fmt: (v) => fmtL(v) },
-      { icon: "✅", label: "Pagado este mes",      value: pagadoMes,                color: "#059669", tint: "#D1FAE5", fmt: (v) => fmtL(v) },
-      { icon: "🚛", label: "Pendiente entrega",    value: pendienteEntrega.length,  color: "#B45309", tint: "#FDE68A", fmt: (v) => v },
-      { icon: "📋", label: "Pendiente ficha",      value: pendienteFicha.length,    color: "#DC2626", tint: "#FEE2E2", fmt: (v) => v },
+      { icon: "📋", label: "Solicitudes activas",          value: activas.length,            color: "#2563EB", tint: "#DBEAFE", fmt: (v) => v },
+      { icon: "💰", label: "Por pagar (Lic. Carolina)",    value: montoPorPagar,             color: "#D97706", tint: "#FEF3C7", fmt: (v) => fmtL(v) },
+      { icon: "✅", label: `Pagado en ${mesSelLabel}`,      value: pagadoMes,                 color: "#059669", tint: "#D1FAE5", fmt: (v) => fmtL(v) },
+      { icon: "📦", label: "Por enviar a logística (Ana)", value: porEnviarLogistica.length, color: "#7C3AED", tint: "#EDE9FE", fmt: (v) => v },
+      { icon: "🚛", label: "Pendiente entrega",            value: pendienteEntrega.length,   color: "#B45309", tint: "#FDE68A", fmt: (v) => v },
+      { icon: "📋", label: "Pendiente ficha",              value: pendienteFicha.length,     color: "#DC2626", tint: "#FEE2E2", fmt: (v) => v },
     ];
 
     // ── Distribucion por estado (donut) ──
@@ -2594,27 +2617,25 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       return seg;
     });
 
-    // ── Top 5 proyectos por monto (excluye cerradas) ──
-    const proyMontos = {};
-    cp.forEach(p => {
-      if (p.deliveryStatus === "cerrado") return;
-      const key = p.projectCode || "_sin_proyecto";
-      proyMontos[key] = (proyMontos[key] || 0) + (Number(p.amount) || 0);
-    });
-    const topProyectos = Object.entries(proyMontos)
-      .map(([key, monto]) => {
-        const proj = allProjects.find(pr => pr.short === key);
-        return {
-          key,
-          name: proj?.name || key,
-          short: key,
-          monto,
-          color: proj?.color || ORANGE,
-        };
-      })
-      .sort((a, b) => b.monto - a.monto)
-      .slice(0, 5);
-    const maxProyMonto = Math.max(1, ...topProyectos.map(p => p.monto));
+    // ── Por proyecto: pendiente de pago (Lic. Carolina) + pagado en el mes ──
+    // Lo que pidio el usuario: ver de un vistazo cuanto le falta pagar a
+    // Carolina por proyecto y cuanto se ha gastado en materiales ese mes.
+    const proyRows = (() => {
+      const acc = {};
+      cp.forEach(p => {
+        const key = p.projectCode || "_sin_proyecto";
+        if (!acc[key]) acc[key] = { porPagar: 0, nPorPagar: 0, pagadoMes: 0, nPagadoMes: 0 };
+        if (p.status === "validado") { acc[key].porPagar += Number(p.amount) || 0; acc[key].nPorPagar++; }
+        if (isPaid(p) && String(p.paidAt || "").slice(0, 7) === mesSel) { acc[key].pagadoMes += Number(p.amount) || 0; acc[key].nPagadoMes++; }
+      });
+      return Object.entries(acc)
+        .map(([key, v]) => ({ key, name: allProjects.find(pr => pr.short === key)?.name || key, ...v }))
+        .filter(r => r.porPagar > 0 || r.pagadoMes > 0)
+        .sort((a, b) => b.porPagar - a.porPagar || b.pagadoMes - a.pagadoMes);
+    })();
+    const totPorPagarProy = proyRows.reduce((s, r) => s + r.porPagar, 0);
+    const totPagadoMesProy = proyRows.reduce((s, r) => s + r.pagadoMes, 0);
+    const maxPagadoMesProy = Math.max(1, ...proyRows.map(r => r.pagadoMes));
 
     // ── Alertas de accion ──
     const daysSince = (iso) => {
@@ -2745,8 +2766,16 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             </div>
             <div style={{ fontSize: 12, color: STONE, marginTop: 4 }}>Vista ejecutiva — lo que necesita tu atencion</div>
           </div>
-          <div style={{ fontSize: 11, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>
-            {new Date().toLocaleDateString("es-HN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 11, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>
+              {new Date().toLocaleDateString("es-HN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+            </div>
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: STONE, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Mes de análisis</div>
+              <input type="month" value={mesSel} onChange={e => setDashMonth(e.target.value)}
+                title="Mes para las métricas mensuales: pagado del mes y gasto por proyecto"
+                style={{ padding: "6px 10px", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12, background: "#fff", fontFamily: "inherit" }} />
+            </div>
           </div>
         </div>
 
@@ -2822,38 +2851,53 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             </div>
           </div>
 
-          {/* BARS — top 5 proyectos por monto */}
+          {/* POR PROYECTO — por pagar (Carolina) + pagado del mes */}
           <div style={cardStyle}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12, letterSpacing: -0.2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span>Top 5 proyectos por monto</span>
-              <span style={{ fontSize: 10, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>excluye cerradas</span>
+            <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12, letterSpacing: -0.2, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span>Por proyecto</span>
+              <span style={{ fontSize: 10, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>por pagar (Lic. Carolina) · pagado en {mesSelLabel}</span>
             </div>
-            {topProyectos.length === 0 ? (
+            {proyRows.length === 0 ? (
               <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "20px 4px" }}>
-                Sin compras activas.
+                Nada por pagar y ningún pago registrado en {mesSelLabel}.
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {topProyectos.map(pr => {
-                  const pct = (pr.monto / maxProyMonto) * 100;
-                  return (
-                    <div key={pr.key}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.3 }}>
-                          {pr.short}
-                        </div>
-                        <div style={{ fontSize: 12, fontWeight: 800, color: pr.color }}>{fmtL(pr.monto)}</div>
-                      </div>
-                      <div style={{ height: 10, borderRadius: 5, background: "#F1F5F9", overflow: "hidden" }}>
-                        <div style={{
-                          width: `${pct}%`, height: "100%",
-                          background: pr.color,
-                          transition: "width .3s",
-                        }} />
-                      </div>
-                    </div>
-                  );
-                })}
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid #E2E8F0" }}>
+                      <th style={{ textAlign: "left", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: STONE, textTransform: "uppercase", letterSpacing: 0.4 }}>Proyecto</th>
+                      <th style={{ textAlign: "right", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "#D97706", textTransform: "uppercase", letterSpacing: 0.4 }}>Por pagar</th>
+                      <th style={{ textAlign: "right", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "#059669", textTransform: "uppercase", letterSpacing: 0.4 }}>Pagado {mesSelLabel.split(" ")[0]}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {proyRows.slice(0, 10).map(r => (
+                      <tr key={r.key} style={{ borderBottom: "1px solid #F1F5F9" }}
+                        title={`${r.name} — ${r.nPorPagar} por pagar · ${r.nPagadoMes} pagadas en ${mesSelLabel}`}>
+                        <td style={{ padding: "7px 6px", fontWeight: 700, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11 }}>{r.key}</td>
+                        <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 700, color: r.porPagar > 0 ? "#D97706" : "#CBD5E1", whiteSpace: "nowrap" }}>
+                          {r.porPagar > 0 ? <>{fmtL(r.porPagar)} <span style={{ fontSize: 9, color: STONE }}>({r.nPorPagar})</span></> : "—"}
+                        </td>
+                        <td style={{ padding: "7px 6px", textAlign: "right", whiteSpace: "nowrap" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                            <div style={{ width: 46, height: 7, borderRadius: 4, background: "#F1F5F9", overflow: "hidden", flexShrink: 0 }}>
+                              <div style={{ width: `${(r.pagadoMes / maxPagadoMesProy) * 100}%`, height: "100%", background: "#059669" }} />
+                            </div>
+                            <span style={{ fontWeight: 700, color: r.pagadoMes > 0 ? "#059669" : "#CBD5E1" }}>{r.pagadoMes > 0 ? fmtL(r.pagadoMes) : "—"}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ borderTop: "2px solid #CBD5E1" }}>
+                      <td style={{ padding: "7px 6px", fontWeight: 800, color: CHARCOAL, fontSize: 11 }}>TOTAL</td>
+                      <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 800, color: "#D97706", whiteSpace: "nowrap" }}>{fmtL(totPorPagarProy)}</td>
+                      <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 800, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(totPagadoMesProy)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
             )}
           </div>
@@ -3105,6 +3149,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     //   Por default ocultas — el coordinador solo ve lo que tiene accion pendiente.
     const showCompleted = resumenFilter.showCompleted;
     const projFilter = resumenFilter.projectCode;
+    const monthFilter = resumenFilter.month;
+    const monthLabel = monthFilter ? (() => {
+      const [y, m] = monthFilter.split("-").map(Number);
+      return new Date(y, m - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
+    })() : "";
 
     // Agrupar compras por proyecto, filtrando segun company actual
     const grupos = {};
@@ -3114,6 +3163,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       const lista = !!p.delivery?.fichaFile || p.deliveryStatus === "cerrado";
       if (!showCompleted && lista) return;
       if (projFilter && p.projectCode !== projFilter) return;
+      // Filtro por mes de carga (createdAt). "" = todos los meses.
+      if (monthFilter && String(p.createdAt || "").slice(0, 7) !== monthFilter) return;
       const key = p.projectCode || "_sin_proyecto";
       (grupos[key] = grupos[key] || []).push(p);
     });
@@ -3125,9 +3176,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <div style={{ textAlign: "center", padding: 60, color: "#94A3B8" }}>
           <div style={{ fontSize: 56, marginBottom: 16 }}>📊</div>
           <div style={{ fontSize: 18, fontWeight: 700, color: "#475569" }}>
-            {showCompleted ? "No hay compras para mostrar" : "✓ Todo al dia — no hay acciones pendientes"}
+            {monthFilter ? `Nada pendiente cargado en ${monthLabel}` : showCompleted ? "No hay compras para mostrar" : "✓ Todo al dia — no hay acciones pendientes"}
           </div>
           {!showCompleted && <div style={{ marginTop: 8, fontSize: 13 }}>Activa "Mostrar listas" para ver las compras donde Jorge ya subio la ficha.</div>}
+          {monthFilter && (
+            <div style={{ marginTop: 12 }}>
+              <Btn small variant="ghost" onClick={() => setResumenFilter(s => ({ ...s, month: "" }))}>Ver todos los meses</Btn>
+            </div>
+          )}
         </div>
       );
     }
@@ -3148,8 +3204,18 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             onChange={e => setResumenFilter(s => ({ ...s, projectCode: e.target.value }))}
             emptyLabel="Todos los proyectos"
           />
+          <div style={{ height: 20, width: 1, background: "#E2E8F0" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: CHARCOAL }}>Mes:</span>
+            <input type="month" value={monthFilter} onChange={e => setResumenFilter(s => ({ ...s, month: e.target.value }))}
+              title="Filtra por mes de carga de la solicitud"
+              style={{ padding: "6px 10px", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12, background: "#fff", fontFamily: "inherit" }} />
+            {monthFilter
+              ? <button onClick={() => setResumenFilter(s => ({ ...s, month: "" }))} style={{ background: "transparent", border: `1px solid ${BORDER}`, borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer", color: "#64748b", fontFamily: "inherit" }}>Todos</button>
+              : <span style={{ fontSize: 11, color: "#94A3B8", fontStyle: "italic" }}>todos los meses</span>}
+          </div>
           <div style={{ marginLeft: "auto", fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-            {proyectosConCompras.length} proyectos · {Object.values(grupos).reduce((a, l) => a + l.length, 0)} compras
+            {monthFilter ? `${monthLabel} · ` : ""}{proyectosConCompras.length} proyectos · {Object.values(grupos).reduce((a, l) => a + l.length, 0)} compras
           </div>
         </div>
 
@@ -3179,9 +3245,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           });
 
           return (
-            <div key={key} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "hidden" }}>
-              {/* Header del proyecto */}
-              <div style={{ padding: "14px 18px", background: projColor + "15", borderBottom: `2px solid ${projColor}40`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <details key={key} open style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "hidden" }}>
+              {/* Header del proyecto — click para plegar/desplegar */}
+              <summary style={{ padding: "14px 18px", background: projColor + "15", borderBottom: `2px solid ${projColor}40`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, cursor: "pointer", listStyle: "none" }}>
                 <div>
                   <div style={{ fontSize: 16, fontWeight: 800, color: projColor, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.3 }}>{key}</div>
                   {projName && <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{projName}</div>}
@@ -3191,8 +3257,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                     <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{fmtL(totalMonto)}</div>
                     <div style={{ fontSize: 10, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 0.5 }}>{items.length} compras</div>
                   </div>
+                  <span title="Plegar / desplegar" style={{ fontSize: 12, color: projColor, fontWeight: 700 }}>▾</span>
                 </div>
-              </div>
+              </summary>
 
               {/* Resumen de acciones pendientes por owner */}
               {Object.keys(pendingByOwner).length > 0 && (
@@ -3254,7 +3321,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                   );
                 })}
               </div>
-            </div>
+            </details>
           );
         })}
       </div>
