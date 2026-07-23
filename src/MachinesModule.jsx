@@ -426,7 +426,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
     const partes = [];
     if (hasQuotePDF || hasQuoteImg) partes.push("Cotizacion");
     if (hasReceiptPDF || hasReceiptImg) partes.push("Transferencia");
-    doc.text(`* ${partes.join(" + ")} incluida${partes.length > 1 ? "s" : ""} en pag. 2+`, PW - M, y + 20, { align: "right" });
+    doc.text(`* ${partes.join(" + ")} incluida${partes.length > 1 ? "s" : ""} en pag. 3+`, PW - M, y + 20, { align: "right" });
   }
 
   y += 25; dc(B); lw(0.6); ln(M, y, PW - M, y); y += 4;
@@ -469,7 +469,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   // ════════════════════════════════════════════════════════
   // 3. DOS COLUMNAS: A llenar en campo | Verificacion  (y: 83 → 153)
   // ════════════════════════════════════════════════════════
-  const fillY = y, fillH = 66, divX = M + 168;
+  const fillY = y, fillH = 90, divX = M + 168;
 
   // Fondos
   fc(GL2); rc(M, y, divX - M, fillH, "F");
@@ -511,7 +511,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
 
   // Observaciones
   lbl("Observaciones", Fx, fy);
-  fy += 2; dc(BD); lw(0.2); rc(Fx, fy, Fw, 10, "S");
+  fy += 2; dc(BD); lw(0.2); rc(Fx, fy, Fw, 14, "S");
 
   // ── Columna derecha: verificacion ──
   const Vx = divX + 7;
@@ -532,24 +532,129 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   y = fillY + fillH + 5;
 
   // ════════════════════════════════════════════════════════
-  // 4. FIRMAS (2 bloques)  (y: ~154 → 188)
+  // 4. NOTA DE FIRMAS + FOOTER (pag. 1) — firmas en pag. 2 (Acta)
   // ════════════════════════════════════════════════════════
-  const sigW = (CW - 8) / 2;
-  [
-    ["", "Nombre y Firma — Quien Recibe el Material"],
-    ["Visto Bueno", "Coordinacion de Operaciones"],
-  ].forEach(([top, bot], i) => {
-    const sx = M + i * (sigW + 8);
-    dc(BK); lw(0.4); ln(sx, y + 20, sx + sigW, y + 20);
-    if (top) { f(9, "bold"); tc(DK); doc.text(top, sx + sigW / 2, y + 25, { align: "center", maxWidth: sigW }); }
-    f(8, "normal"); tc(GR); doc.text(bot, sx + sigW / 2, y + (top ? 30 : 25), { align: "center", maxWidth: sigW });
-  });
-  y += 35;
+  fc(BL); dc(B); lw(0.3); rc(M, y, CW, 9, "FD");
+  f(8.5, "bold"); tc(B);
+  doc.text("FIRMAS EN LA PAGINA 2 — ACTA DE ENTREGA Y RECEPCION: el motorista coteja las cantidades y el Ingeniero/Residente firma lo recibido.", PW / 2, y + 6, { align: "center" });
+  y += 13;
 
-  // Footer
   dc(BD); lw(0.25); ln(M, y, PW - M, y); y += 4;
   f(7, "normal"); tc([148, 163, 184]);
-  doc.text(`Grupo Geotecnica · Ficha de Recibido · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id}`, PW / 2, y, { align: "center" });
+  doc.text(`Grupo Geotecnica · Ficha de Recibido · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id} · Pag. 1`, PW / 2, y, { align: "center" });
+
+  // ════════════════════════════════════════════════════════
+  // PAG. 2 — ACTA DE ENTREGA Y RECEPCION (cantidades + firmas)
+  // ════════════════════════════════════════════════════════
+  doc.addPage();
+  let ay = M;
+  fc(B); rc(M, ay, 11, 20, "F");
+  f(11, "bold"); tc(W); doc.text("GT", M + 2, ay + 12);
+  f(14, "bold"); tc(B); doc.text("ACTA DE ENTREGA Y RECEPCION DE MATERIALES", M + 16, ay + 8);
+  f(9, "normal"); tc(GR); doc.text(doc.splitTextToSize(`${projFull} · ${purchase.provider}`, 150)[0], M + 16, ay + 15);
+  f(9, "normal"); tc(GR);
+  doc.text("Folio N°: _______________", PW - M, ay + 7, { align: "right" });
+  doc.text(`Generada: ${today} · ID: ${purchase.id}`, PW - M, ay + 14, { align: "right" });
+  ay += 23; dc(B); lw(0.6); ln(M, ay, PW - M, ay); ay += 4;
+
+  fc([254, 243, 199]); dc([217, 119, 6]); lw(0.4); rc(M, ay, CW, 13, "FD");
+  f(8.5, "bold"); tc([146, 64, 14]);
+  doc.text("ATENCION MOTORISTA: cotejar UNA POR UNA las cantidades entregadas contra esta lista ANTES de solicitar la firma.", M + 4, ay + 5.5);
+  doc.text("El Ingeniero/Residente firma que recibe EXACTAMENTE lo descrito en la cotizacion pagada con esta solicitud.", M + 4, ay + 10.5);
+  ay += 17;
+
+  const xN = M, xCant = M + 8, xDesc = M + 30, xOk = M + 195, xObs = M + 221;
+  const wDesc = xOk - xDesc - 4, wObs = PW - M - xObs;
+  const rowH = 8;
+  const firmasTop = PH - M - 58;
+  const tableBottom = firmasTop - 4;
+
+  fc(B); rc(M, ay, CW, 7, "F");
+  f(7.5, "bold"); tc(W);
+  doc.text("#", xN + 2, ay + 4.8);
+  doc.text("CANT.", xCant + 2, ay + 4.8);
+  doc.text("DESCRIPCION DEL MATERIAL / SERVICIO", xDesc, ay + 4.8);
+  doc.text("ENTREGADO", xOk, ay + 4.8);
+  doc.text("OBSERVACION", xObs, ay + 4.8);
+  ay += 7;
+
+  const drawRow = (num, cant, descTxt) => {
+    if (ay + rowH > tableBottom) return false;
+    dc(BD); lw(0.2); rc(M, ay, CW, rowH, "S");
+    ln(xCant - 1, ay, xCant - 1, ay + rowH);
+    ln(xDesc - 2, ay, xDesc - 2, ay + rowH);
+    ln(xOk - 2, ay, xOk - 2, ay + rowH);
+    ln(xObs - 2, ay, xObs - 2, ay + rowH);
+    f(8.5, "normal"); tc(DK);
+    doc.text(String(num), xN + 2, ay + 5.3);
+    if (cant) { f(9, "bold"); doc.text(String(cant).slice(0, 12), xCant + 2, ay + 5.3); }
+    else blk(xCant + 2, ay + 5.5, 16);
+    f(8.5, "normal"); tc(DK);
+    if (descTxt) doc.text(doc.splitTextToSize(descTxt, wDesc)[0] || "", xDesc, ay + 5.3);
+    else { dc(BD); lw(0.25); ln(xDesc, ay + 5.5, xDesc + wDesc - 4, ay + 5.5); }
+    cbx(xOk + 7, ay + 2);
+    dc(BD); lw(0.25); ln(xObs, ay + 5.5, xObs + wObs - 4, ay + 5.5);
+    ay += rowH;
+    return true;
+  };
+
+  const itemsArr = Array.isArray(purchase.items)
+    ? purchase.items.filter(it => it && ((it.description || it.desc || it.name || "").trim() || it.qty || it.cantidad))
+    : [];
+  let rowNum = 1;
+  if (itemsArr.length > 0) {
+    let dibujados = 0;
+    for (const it of itemsArr) {
+      const qty = it.qty ?? it.cantidad ?? it.cant ?? "";
+      const unit = it.unit ?? it.unidad ?? "";
+      const cant = [qty, unit].filter(Boolean).join(" ");
+      const desc = it.description || it.desc || it.name || "";
+      if (!drawRow(rowNum, cant, desc)) break;
+      rowNum++; dibujados++;
+    }
+    if (dibujados < itemsArr.length) {
+      f(7.5, "italic"); tc(GR);
+      doc.text(`(+${itemsArr.length - dibujados} item(s) mas — cotejar contra la cotizacion anexa)`, M + 2, ay + 4);
+      ay += 6;
+    }
+    while (ay + rowH <= tableBottom && rowNum <= dibujados + 2) { drawRow(rowNum, "", ""); rowNum++; }
+  } else {
+    f(7.5, "bold"); tc(B); doc.text("DETALLE SEGUN COTIZACION PAGADA (cotejar contra esto):", M + 2, ay + 4);
+    ay += 6;
+    fc(BL); dc(BD); lw(0.25);
+    const descLines = doc.splitTextToSize(purchase.description || "—", CW - 8).slice(0, 3);
+    const descBoxH = 4 + descLines.length * 4.5;
+    rc(M, ay, CW, descBoxH, "FD");
+    f(9, "bold"); tc(DK); doc.text(descLines, M + 4, ay + 5);
+    ay += descBoxH + 3;
+    while (ay + rowH <= tableBottom && rowNum <= 8) { drawRow(rowNum, "", ""); rowNum++; }
+  }
+
+  const sigW2 = (CW - 10) / 2;
+  fc(BL); dc([37, 99, 235]); lw(0.4); rc(M, firmasTop, sigW2, 48, "FD");
+  f(9.5, "bold"); tc([37, 99, 235]); doc.text("INGENIERO / RESIDENTE — RECIBE", M + sigW2 / 2, firmasTop + 6.5, { align: "center" });
+  let sl = firmasTop + 14;
+  lbl("Nombre completo", M + 5, sl); blk(M + 5, sl + 4.5, sigW2 - 10); sl += 10;
+  lbl("Cargo", M + 5, sl); blk(M + 5, sl + 4.5, (sigW2 - 14) / 2);
+  lbl("DNI", M + 5 + (sigW2 - 14) / 2 + 6, sl); blk(M + 5 + (sigW2 - 14) / 2 + 6, sl + 4.5, (sigW2 - 14) / 2); sl += 10;
+  lbl("Firma", M + 5, sl); blk(M + 5, sl + 4.5, sigW2 - 10); sl += 9;
+  f(6.5, "italic"); tc(GR);
+  doc.text("Al firmar certifico que RECIBI las cantidades exactas arriba detalladas, completas y en buen estado.", M + 5, sl + 3, { maxWidth: sigW2 - 10 });
+
+  const mx = M + sigW2 + 10;
+  fc([255, 247, 237]); dc([234, 88, 12]); lw(0.4); rc(mx, firmasTop, sigW2, 48, "FD");
+  f(9.5, "bold"); tc([234, 88, 12]); doc.text("MOTORISTA — ENTREGA", mx + sigW2 / 2, firmasTop + 6.5, { align: "center" });
+  sl = firmasTop + 14;
+  lbl("Nombre completo", mx + 5, sl); blk(mx + 5, sl + 4.5, sigW2 - 10); sl += 10;
+  lbl("Placa vehiculo", mx + 5, sl); blk(mx + 5, sl + 4.5, (sigW2 - 14) / 2);
+  lbl("Fecha / Hora", mx + 5 + (sigW2 - 14) / 2 + 6, sl); blk(mx + 5 + (sigW2 - 14) / 2 + 6, sl + 4.5, (sigW2 - 14) / 2); sl += 10;
+  lbl("Firma", mx + 5, sl); blk(mx + 5, sl + 4.5, sigW2 - 10); sl += 9;
+  f(6.5, "italic"); tc(GR);
+  doc.text("Confirmo que coteje y ENTREGUE las cantidades exactas al Ingeniero/Residente indicado.", mx + 5, sl + 3, { maxWidth: sigW2 - 10 });
+
+  dc(BD); lw(0.25); ln(M, PH - M + 2, PW - M, PH - M + 2);
+  f(7, "normal"); tc([148, 163, 184]);
+  doc.text(`Grupo Geotecnica · Acta de Entrega y Recepcion · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id} · Pag. 2`, PW / 2, PH - M + 6, { align: "center" });
 
   // ════════════════════════════════════════════════════════
   // PAG. 2+: Adjuntos en orden — Cotizacion + Transferencia de pago
