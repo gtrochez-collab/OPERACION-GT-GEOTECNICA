@@ -436,11 +436,8 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   fc(B); rc(M, y, 11, 22, "F");
   f(11, "bold"); tc(W); doc.text("GT", M + 2, y + 13);
 
-  f(15, "bold"); tc(B); doc.text("GRUPO GEOTECNICA", M + 14, y + 8);
-  f(9, "normal"); tc(GR); doc.text(companyName || "Geotecnica Soluciones", M + 14, y + 14);
-
-  fc(B); rc(PW / 2 - 44, y, 88, 22, "F");
-  f(10.5, "bold"); tc(W); doc.text("FICHA DE RECIBIDO DE MATERIALES", PW / 2, y + 13, { align: "center" });
+  f(14, "bold"); tc(B); doc.text("ACTA DE ENTREGA Y RECEPCION DE MATERIALES", M + 14, y + 8);
+  f(9, "normal"); tc(GR); doc.text(`Grupo Geotecnica · ${companyName || "Geotecnica Soluciones"}`, M + 14, y + 15);
 
   f(9, "normal"); tc(GR);
   doc.text("Folio N°: _______________", PW - M, y + 7, { align: "right" });
@@ -450,7 +447,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
     const partes = [];
     if (hasQuotePDF || hasQuoteImg) partes.push("Cotizacion");
     if (hasReceiptPDF || hasReceiptImg) partes.push("Transferencia");
-    doc.text(`* ${partes.join(" + ")} incluida${partes.length > 1 ? "s" : ""} en pag. 3+`, PW - M, y + 20, { align: "right" });
+    doc.text(`* ${partes.join(" + ")} incluida${partes.length > 1 ? "s" : ""} en pag. 2+`, PW - M, y + 20, { align: "right" });
   }
 
   y += 25; dc(B); lw(0.6); ln(M, y, PW - M, y); y += 4;
@@ -491,107 +488,16 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   y = refY + refH + 4;
 
   // ════════════════════════════════════════════════════════
-  // 3. DOS COLUMNAS: A llenar en campo | Verificacion  (y: 83 → 153)
+  // 3. AVISO AL MOTORISTA — la ficha es UNA sola pagina (acta completa):
+  //    referencia de la compra + detalle a cotejar + firmas. Pedido del
+  //    usuario 23-jul-2026: sin paginas repetidas ni filas de relleno.
+  //    (Texto plano: la helvetica de jsPDF no soporta emojis.)
   // ════════════════════════════════════════════════════════
-  const fillY = y, fillH = 90, divX = M + 168;
-
-  // Fondos
-  fc(GL2); rc(M, y, divX - M, fillH, "F");
-  fc([240, 253, 244]); rc(divX, y, M + CW - divX, fillH, "F");
-
-  // Barras de titulo de columna
-  fc(B); rc(M, y, 3, fillH, "F");
-  fc(G); rc(divX, y, 3, fillH, "F");
-  f(7.5, "bold"); tc(B); doc.text("A COMPLETAR EN CAMPO", M + 5, y + 5.5);
-  tc(G); doc.text("VERIFICACION", divX + 6, y + 5.5);
-
-  // Linea divisora entre columnas
-  dc(BD); lw(0.25); ln(divX, y, divX, y + fillH);
-
-  // ── Columna izquierda: campos a llenar ──
-  const Fx = M + 6, Fw = divX - M - 10;
-  const FH = (Fw - 5) / 2;
-  let fy = y + 12;
-
-  // Fecha | Hora (en la misma fila)
-  lbl("Fecha de recibido", Fx, fy); lbl("Hora", Fx + FH * 0.7 + 5, fy);
-  fy += 3; blk(Fx, fy + 3, FH * 0.65); blk(Fx + FH * 0.7 + 5, fy + 3, FH * 0.28); fy += 9;
-
-  // Nombre
-  lbl("Nombre completo de quien recibe", Fx, fy);
-  fy += 3; blk(Fx, fy + 3, Fw); fy += 9;
-
-  // Cargo
-  lbl("Cargo", Fx, fy);
-  fy += 3; blk(Fx, fy + 3, Fw); fy += 9;
-
-  // Lugar
-  lbl("Lugar de entrega / Bodega / Proyecto", Fx, fy);
-  fy += 3; blk(Fx, fy + 3, Fw); fy += 9;
-
-  // N° Factura
-  lbl("N° de factura del proveedor", Fx, fy);
-  fy += 3; blk(Fx, fy + 3, Fw * 0.6); fy += 9;
-
-  // Observaciones
-  lbl("Observaciones", Fx, fy);
-  fy += 2; dc(BD); lw(0.2); rc(Fx, fy, Fw, 14, "S");
-
-  // ── Columna derecha: verificacion ──
-  const Vx = divX + 7;
-  const chks = [
-    "Materiales completos y en buen estado",
-    "Cantidades correctas segun cotizacion",
-    "Conforme con la descripcion aprobada",
-    "Factura del proveedor recibida",
-    "Entrega parcial — pendiente: ___________",
-  ];
-  let cy = fillY + 13;
-  chks.forEach(t => {
-    cbx(Vx, cy - 3);
-    f(9.5, "normal"); tc(DK); doc.text(t, Vx + 6, cy);
-    cy += 11;
-  });
-
-  y = fillY + fillH + 5;
-
-  // ════════════════════════════════════════════════════════
-  // 4. NOTA DE FIRMAS + FOOTER (pag. 1)
-  // Las firmas ya no van apretadas aqui — viven en la pag. 2 (Acta de
-  // Entrega y Recepcion) con la tabla de cantidades para cotejo.
-  // ════════════════════════════════════════════════════════
-  fc(BL); dc(B); lw(0.3); rc(M, y, CW, 9, "FD");
-  f(8.5, "bold"); tc(B);
-  doc.text("FIRMAS EN LA PAGINA 2 — ACTA DE ENTREGA Y RECEPCION: el motorista coteja las cantidades y el Ingeniero/Residente firma lo recibido.", PW / 2, y + 6, { align: "center" });
-  y += 13;
-
-  dc(BD); lw(0.25); ln(M, y, PW - M, y); y += 4;
-  f(7, "normal"); tc([148, 163, 184]);
-  doc.text(`Grupo Geotecnica · Ficha de Recibido · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id} · Pag. 1`, PW / 2, y, { align: "center" });
-
-  // ════════════════════════════════════════════════════════
-  // PAG. 2 — ACTA DE ENTREGA Y RECEPCION (cantidades + firmas)
-  // El motorista coteja item por item y el Ingeniero/Residente firma que
-  // recibio EXACTAMENTE esas cantidades. (Sin emojis: la fuente helvetica
-  // del PDF no los soporta y salen como "&".)
-  // ════════════════════════════════════════════════════════
-  doc.addPage();
-  let ay = M;
-  fc(B); rc(M, ay, 11, 20, "F");
-  f(11, "bold"); tc(W); doc.text("GT", M + 2, ay + 12);
-  f(14, "bold"); tc(B); doc.text("ACTA DE ENTREGA Y RECEPCION DE MATERIALES", M + 16, ay + 8);
-  f(9, "normal"); tc(GR); doc.text(doc.splitTextToSize(`${projFull} · ${purchase.provider}`, 150)[0], M + 16, ay + 15);
-  f(9, "normal"); tc(GR);
-  doc.text("Folio N°: _______________", PW - M, ay + 7, { align: "right" });
-  doc.text(`Generada: ${today} · ID: ${purchase.id}`, PW - M, ay + 14, { align: "right" });
-  ay += 23; dc(B); lw(0.6); ln(M, ay, PW - M, ay); ay += 4;
-
-  // Instruccion al motorista
-  fc([254, 243, 199]); dc([217, 119, 6]); lw(0.4); rc(M, ay, CW, 13, "FD");
+  fc([254, 243, 199]); dc([217, 119, 6]); lw(0.4); rc(M, y, CW, 13, "FD");
   f(8.5, "bold"); tc([146, 64, 14]);
-  doc.text("ATENCION MOTORISTA: cotejar UNA POR UNA las cantidades entregadas contra esta lista ANTES de solicitar la firma.", M + 4, ay + 5.5);
-  doc.text("El Ingeniero/Residente firma que recibe EXACTAMENTE lo descrito en la cotizacion pagada con esta solicitud.", M + 4, ay + 10.5);
-  ay += 17;
+  doc.text("ATENCION MOTORISTA: cotejar UNA POR UNA las cantidades entregadas contra el detalle de abajo ANTES de solicitar la firma.", M + 4, y + 5.5);
+  doc.text("El Ingeniero/Residente firma que recibe EXACTAMENTE lo descrito en la cotizacion pagada con esta solicitud.", M + 4, y + 10.5);
+  let ay = y + 17;
 
   // ── Tabla de cantidades ──
   const xN = M, xCant = M + 8, xDesc = M + 30, xOk = M + 195, xObs = M + 221;
@@ -600,14 +506,18 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   const firmasTop = PH - M - 58;
   const tableBottom = firmasTop - 4;
 
-  fc(B); rc(M, ay, CW, 7, "F");
-  f(7.5, "bold"); tc(W);
-  doc.text("#", xN + 2, ay + 4.8);
-  doc.text("CANT.", xCant + 2, ay + 4.8);
-  doc.text("DESCRIPCION DEL MATERIAL / SERVICIO", xDesc, ay + 4.8);
-  doc.text("ENTREGADO", xOk, ay + 4.8);
-  doc.text("OBSERVACION", xObs, ay + 4.8);
-  ay += 7;
+  // Header de la tabla — solo se dibuja cuando hay items estructurados
+  // (sin items, el detalle va en un recuadro y el header sobraria).
+  const drawTableHeader = () => {
+    fc(B); rc(M, ay, CW, 7, "F");
+    f(7.5, "bold"); tc(W);
+    doc.text("#", xN + 2, ay + 4.8);
+    doc.text("CANT.", xCant + 2, ay + 4.8);
+    doc.text("DESCRIPCION DEL MATERIAL / SERVICIO", xDesc, ay + 4.8);
+    doc.text("ENTREGADO", xOk, ay + 4.8);
+    doc.text("OBSERVACION", xObs, ay + 4.8);
+    ay += 7;
+  };
 
   const drawRow = (num, cant, descTxt) => {
     if (ay + rowH > tableBottom) return false;
@@ -634,6 +544,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
     : [];
   let rowNum = 1;
   if (itemsArr.length > 0) {
+    drawTableHeader();
     let dibujados = 0;
     for (const it of itemsArr) {
       const qty = it.qty ?? it.cantidad ?? it.cant ?? "";
@@ -648,19 +559,18 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
       doc.text(`(+${itemsArr.length - dibujados} item(s) mas — cotejar contra la cotizacion anexa)`, M + 2, ay + 4);
       ay += 6;
     }
-    while (ay + rowH <= tableBottom && rowNum <= dibujados + 2) { drawRow(rowNum, "", ""); rowNum++; }
   } else {
-    // Sin items estructurados: mostrar la descripcion pagada + filas en
-    // blanco para que el motorista detalle las cantidades a mano.
+    // Sin items estructurados: el detalle pagado va en un recuadro amplio —
+    // eso es lo que el motorista coteja y el ingeniero firma. Sin filas de
+    // relleno (se sentian repetitivas).
     f(7.5, "bold"); tc(B); doc.text("DETALLE SEGUN COTIZACION PAGADA (cotejar contra esto):", M + 2, ay + 4);
     ay += 6;
     fc(BL); dc(BD); lw(0.25);
-    const descLines = doc.splitTextToSize(purchase.description || "—", CW - 8).slice(0, 3);
+    const descLines = doc.splitTextToSize(purchase.description || "—", CW - 8).slice(0, 10);
     const descBoxH = 4 + descLines.length * 4.5;
     rc(M, ay, CW, descBoxH, "FD");
     f(9, "bold"); tc(DK); doc.text(descLines, M + 4, ay + 5);
     ay += descBoxH + 3;
-    while (ay + rowH <= tableBottom && rowNum <= 8) { drawRow(rowNum, "", ""); rowNum++; }
   }
 
   // ── Firmas grandes ──
@@ -691,7 +601,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   // Footer pag. 2
   dc(BD); lw(0.25); ln(M, PH - M + 2, PW - M, PH - M + 2);
   f(7, "normal"); tc([148, 163, 184]);
-  doc.text(`Grupo Geotecnica · Acta de Entrega y Recepcion · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id} · Pag. 2`, PW / 2, PH - M + 6, { align: "center" });
+  doc.text(`Grupo Geotecnica · Acta de Entrega y Recepcion · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id}`, PW / 2, PH - M + 6, { align: "center" });
 
   // ════════════════════════════════════════════════════════
   // PAG. 2+: Adjuntos en orden — Cotizacion + Transferencia de pago
