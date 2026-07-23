@@ -2587,22 +2587,26 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       { icon: "📋", label: "Pendiente ficha",              value: pendienteFicha.length,     color: "#DC2626", tint: "#FEE2E2", fmt: (v) => v },
     ];
 
-    // ── Distribucion por estado (donut) ──
-    // Categorias: Borrador / Validado / Pagado / Finalizado / Cerrado
-    const bucket = { borrador: 0, validado: 0, pagado: 0, finalizado: 0, cerrado: 0 };
+    // ── Donut: % del gasto del MES por proyecto ──
+    // (antes era distribucion por estado — cambiado a pedido del usuario:
+    // "que la dona me diga el porcentaje de lo que vamos gastando por
+    // proyecto mensual"). Top 6 proyectos + "Otros".
+    const DONUT_COLORS = ["#059669", "#2563EB", "#D97706", "#7C3AED", "#DC2626", "#0891B2", "#BE185D", "#65A30D"];
+    const gastoMesProy = {};
     cp.forEach(p => {
-      if (p.deliveryStatus === "cerrado") { bucket.cerrado++; return; }
-      const st = p.status || "borrador";
-      if (bucket[st] != null) bucket[st]++;
+      if (!isPaid(p) || String(p.paidAt || "").slice(0, 7) !== mesSel) return;
+      const key = p.projectCode || "Sin proyecto";
+      gastoMesProy[key] = (gastoMesProy[key] || 0) + (Number(p.amount) || 0);
     });
+    const gastoSorted = Object.entries(gastoMesProy).sort((a, b) => b[1] - a[1]);
+    const otrosGasto = gastoSorted.slice(6).reduce((s, [, v]) => s + v, 0);
     const donutCats = [
-      { key: "borrador",   label: "Borrador",   count: bucket.borrador,   color: STATUSES.borrador.color },
-      { key: "validado",   label: "Validado",   count: bucket.validado,   color: STATUSES.validado.color },
-      { key: "pagado",     label: "Pagado",     count: bucket.pagado,     color: STATUSES.pagado.color },
-      { key: "finalizado", label: "Finalizado", count: bucket.finalizado, color: STATUSES.finalizado.color },
-      { key: "cerrado",    label: "Cerrado",    count: bucket.cerrado,    color: "#475569" },
+      ...gastoSorted.slice(0, 6).map(([k, v], i) => ({ key: k, label: k, count: v, color: DONUT_COLORS[i % DONUT_COLORS.length] })),
+      ...(otrosGasto > 0 ? [{ key: "_otros", label: "Otros", count: otrosGasto, color: "#94A3B8" }] : []),
     ];
     const donutTotal = donutCats.reduce((s, c) => s + c.count, 0);
+    // Formato corto para el centro de la dona (L 1.66M / L 263k)
+    const shortL = (v) => v >= 1e6 ? `L ${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `L ${Math.round(v / 1e3)}k` : `L ${Math.round(v)}`;
 
     // Construir arcos del donut (SVG puro)
     const donutR = 60;
@@ -2642,26 +2646,18 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       if (!iso) return 0;
       return Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86400000));
     };
-    // a) Pendientes de pago Lic. Carolina — validados no pagados
-    const alertaPago = validadas
-      .map(p => ({ p, dias: daysSince(p.validatedAt || p.createdAt) }))
+    // Enfoque pedido por el usuario: lo que importa es SUMINISTRAR el
+    // proyecto. Dos listas accionables + resumen por proyecto:
+    // a) Ana NO ha coordinado: pagadas sin orden de recogida (mismo criterio
+    //    que el KPI "Por enviar a logistica") — para preguntarle a Ana.
+    const alertaAna = porEnviarLogistica
+      .map(p => ({ p, dias: daysSince(p.paidAt || p.createdAt) }))
       .sort((a, b) => b.dias - a.dias);
-    // b) Sin ficha de recibido — despacho entregado y sin fichaFile, sin cerrar
-    const alertaFicha = cp
+    // b) Ya coordinadas pero logistica NO ha entregado (despacho vivo:
+    //    pendiente / programado / en_ruta) — para preguntarle a Oscar.
+    const alertaEntrega = cp
       .filter(p => {
-        if (p.delivery?.fichaFile) return false;
-        if (p.deliveryStatus === "cerrado") return false;
-        const desp = despachoOf(p);
-        return desp?.estado === "entregado" || p.deliveryStatus === "recibido";
-      })
-      .map(p => {
-        const desp = despachoOf(p);
-        return { p, dias: daysSince(desp?.deliveredAt || desp?.updatedAt || p.paidAt) };
-      })
-      .sort((a, b) => b.dias - a.dias);
-    // c) Programados en logistica — con despacho pero no entregado
-    const alertaLogistica = cp
-      .filter(p => {
+        if (p.delivery?.fichaFile || p.deliveryStatus === "cerrado" || p.deliveryStatus === "ficha_adjunta") return false;
         const desp = despachoOf(p);
         if (!desp) return false;
         return desp.estado !== "entregado" && desp.estado !== "cerrado";
@@ -2671,6 +2667,22 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         return { p, dias: daysSince(desp?.createdAt || p.paidAt) };
       })
       .sort((a, b) => b.dias - a.dias);
+    // c) Falta entregar POR PROYECTO — que proyecto esta mas desabastecido
+    //    (suma de a + b, con monto pendiente de entrega).
+    const faltaProy = {};
+    alertaAna.forEach(({ p }) => {
+      const k = p.projectCode || "—";
+      if (!faltaProy[k]) faltaProy[k] = { ana: 0, log: 0, monto: 0 };
+      faltaProy[k].ana++; faltaProy[k].monto += Number(p.amount) || 0;
+    });
+    alertaEntrega.forEach(({ p }) => {
+      const k = p.projectCode || "—";
+      if (!faltaProy[k]) faltaProy[k] = { ana: 0, log: 0, monto: 0 };
+      faltaProy[k].log++; faltaProy[k].monto += Number(p.amount) || 0;
+    });
+    const faltaProyRows = Object.entries(faltaProy)
+      .map(([k, v]) => ({ key: k, ...v, total: v.ana + v.log }))
+      .sort((a, b) => b.total - a.total || b.monto - a.monto);
 
     // Estilos comunes
     const cardStyle = {
@@ -2813,7 +2825,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           {/* DONUT — distribucion por estado */}
           <div style={cardStyle}>
             <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12, letterSpacing: -0.2 }}>
-              Distribucion por estado
+              Gasto del mes por proyecto — {mesSelLabel}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
               <svg viewBox="0 0 160 160" style={{ width: 160, height: 160, flexShrink: 0 }}>
@@ -2831,19 +2843,22 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                       transform={`rotate(${-90 + seg.rotation})`}
                     />
                   ))}
-                  <text textAnchor="middle" y="-4" style={{ fontSize: 22, fontWeight: 800, fill: CHARCOAL }}>{donutTotal}</text>
-                  <text textAnchor="middle" y="14" style={{ fontSize: 9, fill: STONE, letterSpacing: 0.5 }}>SOLICITUDES</text>
+                  <text textAnchor="middle" y="-4" style={{ fontSize: 15, fontWeight: 800, fill: CHARCOAL }}>{shortL(donutTotal)}</text>
+                  <text textAnchor="middle" y="14" style={{ fontSize: 8, fill: STONE, letterSpacing: 0.5 }}>PAGADO {mesSelLabel.split(" ")[0].toUpperCase()}</text>
                 </g>
               </svg>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 140, flex: 1 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 150, flex: 1 }}>
+                {donutCats.length === 0 && (
+                  <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Sin pagos registrados en {mesSelLabel}.</div>
+                )}
                 {donutCats.map(c => {
                   const pct = donutTotal > 0 ? Math.round((c.count / donutTotal) * 100) : 0;
                   return (
                     <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
                       <div style={{ width: 12, height: 12, borderRadius: 3, background: c.color, flexShrink: 0 }} />
-                      <div style={{ flex: 1, color: CHARCOAL, fontWeight: 600 }}>{c.label}</div>
-                      <div style={{ fontWeight: 800, color: CHARCOAL }}>{c.count}</div>
-                      <div style={{ color: STONE, fontSize: 11, width: 34, textAlign: "right" }}>{pct}%</div>
+                      <div style={{ flex: 1, color: CHARCOAL, fontWeight: 600, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.label}</div>
+                      <div style={{ fontWeight: 700, color: CHARCOAL, fontSize: 11, whiteSpace: "nowrap" }}>{fmtL(c.count)}</div>
+                      <div style={{ color: c.color, fontWeight: 800, fontSize: 11, width: 38, textAlign: "right" }}>{pct}%</div>
                     </div>
                   );
                 })}
@@ -2903,36 +2918,63 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           </div>
         </div>
 
-        {/* ALERTAS DE ACCION */}
+        {/* SUMINISTRO PENDIENTE — lo que falta ENTREGAR a los proyectos */}
         <div>
           <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 10, letterSpacing: -0.2, textTransform: "uppercase" }}>
-            🚨 Alertas de accion
+            🚚 Suministro pendiente — material que falta entregar
           </div>
           <div style={{
             display: "grid",
             gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0,1fr))",
             gap: 14,
           }}>
+            {/* Que proyecto esta mas desabastecido */}
+            <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ fontSize: 22 }}>🏗️</div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, lineHeight: 1.2 }}>Falta entregar por proyecto</div>
+                  <div style={{ fontSize: 11, color: STONE, marginTop: 2 }}>compras pagadas aún sin entregar</div>
+                </div>
+              </div>
+              {faltaProyRows.length === 0 ? (
+                <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "12px 4px" }}>✓ Todo entregado.</div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid #E2E8F0" }}>
+                      <th style={{ textAlign: "left", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: STONE, textTransform: "uppercase" }}>Proyecto</th>
+                      <th title="Ana no ha coordinado" style={{ textAlign: "center", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: "#7C3AED", textTransform: "uppercase" }}>Ana</th>
+                      <th title="En logistica, sin entregar" style={{ textAlign: "center", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: "#2563EB", textTransform: "uppercase" }}>Logíst.</th>
+                      <th style={{ textAlign: "right", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: STONE, textTransform: "uppercase" }}>Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {faltaProyRows.slice(0, 8).map(r => (
+                      <tr key={r.key} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                        <td style={{ padding: "6px 4px", fontWeight: 700, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 10 }}>{r.key}</td>
+                        <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 800, color: r.ana > 0 ? "#7C3AED" : "#CBD5E1" }}>{r.ana || "—"}</td>
+                        <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 800, color: r.log > 0 ? "#2563EB" : "#CBD5E1" }}>{r.log || "—"}</td>
+                        <td style={{ padding: "6px 4px", textAlign: "right", fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(r.monto)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
             <AlertBlock
-              icon="💰"
-              title="Pendientes de pago Lic. Carolina"
-              color="#D97706"
-              items={alertaPago}
-              emptyMsg="Sin solicitudes pendientes de pago."
-            />
-            <AlertBlock
-              icon="📋"
-              title="Sin ficha de recibido"
-              color="#DC2626"
-              items={alertaFicha}
-              emptyMsg="Todas las entregas tienen ficha."
+              icon="🕐"
+              title="Ana no ha coordinado"
+              color="#7C3AED"
+              items={alertaAna}
+              emptyMsg="✓ Ana coordinó todo — nada pendiente de enviar a logística."
             />
             <AlertBlock
               icon="🚛"
-              title="Programados en logistica"
+              title="Logística no ha entregado"
               color="#2563EB"
-              items={alertaLogistica}
-              emptyMsg="Sin despachos en curso."
+              items={alertaEntrega}
+              emptyMsg="✓ Logística al día — sin despachos pendientes de entrega."
             />
           </div>
         </div>
@@ -2972,7 +3014,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     else if (hasDesp && !hasVehicle && desp?.estado === "pendiente") { nextAction = "Asignar vehiculo + motorista"; nextOwner = "Oscar Paz"; }
     else if (hasVehicle && !enRuta && !entregado) { nextAction = "Salir en ruta"; nextOwner = "Oscar Paz"; }
     else if (enRuta) { nextAction = "Entregar en proyecto"; nextOwner = "Motorista"; }
-    else if (entregado && !fichaUploaded) { nextAction = "Subir ficha de recibido firmada"; nextOwner = "Jorge Castellanos"; }
+    else if (entregado && !fichaUploaded) { nextAction = "Entregado — pendiente subir ficha de recibido firmada"; nextOwner = "Jorge Castellanos"; }
     else if (fichaUploaded) { nextAction = "✓ Lista — pasar a contabilidad"; nextOwner = ""; }
 
     return {
@@ -3306,13 +3348,24 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#059669" }}>{fmtL(p.amount)}</div>
                       </div>
 
-                      {/* Siguiente accion */}
+                      {/* Siguiente accion + estado de entrega (lo que importa:
+                          suministrar el proyecto — se ve de un vistazo que
+                          esta entregado y que no) */}
                       <div style={{ minWidth: 0 }}>
                         {lc.lista ? (
-                          <div style={{ fontSize: 11, color: "#059669", fontWeight: 700 }}>✓ Lista — pasar a contabilidad</div>
+                          <div style={{ fontSize: 11, color: "#059669", fontWeight: 700 }}>🚚 Entregado · ✓ Lista — pasar a contabilidad</div>
                         ) : (
                           <>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: "#9A4F1D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lc.nextAction}</div>
+                            {lc.isPaid && (
+                              <span style={{
+                                display: "inline-block", fontSize: 9, fontWeight: 800, padding: "2px 8px", borderRadius: 8, marginBottom: 3, letterSpacing: 0.3,
+                                background: lc.entregado ? "#DCFCE7" : lc.hasDesp ? "#DBEAFE" : "#EDE9FE",
+                                color: lc.entregado ? "#166534" : lc.hasDesp ? "#1E40AF" : "#6B21A8",
+                              }}>
+                                {lc.entregado ? "🚚 ENTREGADO" : lc.hasDesp ? "🚛 EN LOGÍSTICA" : "🕐 SIN COORDINAR"}
+                              </span>
+                            )}
+                            <div style={{ fontSize: 11, fontWeight: 700, color: lc.entregado ? "#166534" : "#9A4F1D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lc.nextAction}</div>
                             {lc.nextOwner && <div style={{ fontSize: 10, color: "#64748b", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>→ {lc.nextOwner}</div>}
                           </>
                         )}
