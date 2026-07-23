@@ -1157,6 +1157,77 @@ function MachineFormImpl({ machine, setModal, upsertMachine, deleteMachine }) {
 }
 
 // ── MODULO ──
+// ─────────────────────────────────────────────────────────────────────────
+// SendPickupFormImpl: form para enviar una solicitud de Maquinas a Logistica
+// como orden de recogida (mismo flujo que GeoShopping). Fernando lo usa
+// despues de coordinar con el proveedor.
+// ─────────────────────────────────────────────────────────────────────────
+function SendPickupFormImpl({ purchase, provider, setModal, enviarAOrdenRecogida }) {
+  const manana = new Date();
+  manana.setDate(manana.getDate() + 1);
+  const defaultDate = manana.toISOString().slice(0, 10);
+
+  const [fechaConfirmada, setFechaConfirmada] = useState(defaultDate);
+  const [contactoProveedor, setContactoProveedor] = useState(provider?.contactName || "");
+  const [telefono, setTelefono] = useState(provider?.phones?.[0] || "");
+  const [notas, setNotas] = useState("");
+  const [sending, setSending] = useState(false);
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: 12, fontSize: 12, color: "#78350F" }}>
+      <b>Solicitud:</b> {purchase.provider} — {purchase.description}<br />
+      <b>Proyecto destino:</b> {purchase.projectCode}
+    </div>
+    <Input
+      label="Fecha confirmada de retiro *"
+      type="date"
+      value={fechaConfirmada}
+      onChange={e => setFechaConfirmada(e.target.value)}
+      hint="Cuando el proveedor confirmo que se puede ir a retirar"
+    />
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <Input label="Persona de contacto en proveedor" value={contactoProveedor} onChange={e => setContactoProveedor(e.target.value)} placeholder="Ej: Ing. Juan Perez" />
+      <Input label="Telefono del contacto" value={telefono} onChange={e => setTelefono(e.target.value)} placeholder="Ej: +504 9999-9999" />
+    </div>
+    <Textarea
+      label="Notas / instrucciones para el motorista"
+      value={notas}
+      onChange={e => setNotas(e.target.value)}
+      placeholder={"Ej:\n• Direccion exacta del proveedor\n• Repuesto fragil — llevar amarrado\n• Pedir factura"}
+    />
+    <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 10, padding: 12, fontSize: 12, color: "#065F46" }}>
+      ✓ Al enviar, esta orden cae automaticamente en el modulo de Logistica (mismo Kanban que las compras). Oscar/Jorge le asignan vehiculo + motorista.
+    </div>
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 12, borderTop: "1px solid #E2E8F0" }}>
+      <Btn variant="ghost" onClick={() => setModal(null)} disabled={sending}>Cancelar</Btn>
+      <Btn variant="success" disabled={sending} onClick={async () => {
+        if (!fechaConfirmada) return alert("La fecha confirmada es obligatoria");
+        setSending(true);
+        try {
+          const { ok } = await enviarAOrdenRecogida(purchase, {
+            fechaConfirmada,
+            contactoProveedor: contactoProveedor.trim(),
+            notas: [
+              contactoProveedor.trim() ? `Contacto: ${contactoProveedor.trim()}` : "",
+              telefono.trim() ? `Telefono: ${telefono.trim()}` : "",
+              notas.trim(),
+            ].filter(Boolean).join("\n"),
+          });
+          if (ok) {
+            setModal(null);
+            alert("✓ Orden de recogida enviada a Logistica. Aparece automaticamente en el Kanban de Oscar/Jorge.");
+          } else {
+            alert("⚠️ Se guardo localmente pero hubo un problema sincronizando con la nube. Reintenta si es necesario.");
+            setModal(null);
+          }
+        } finally {
+          setSending(false);
+        }
+      }}>{sending ? "Enviando..." : "🚛 Enviar a Logistica"}</Btn>
+    </div>
+  </div>;
+}
+
 export default function MachinesModule({ userRole, userName, onBack, onLogout }) {
   const isAdmin = userRole === "admin";
   const isTesoreria = userRole === "tesoreria";
@@ -1184,12 +1255,22 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   const canViewOnly = isGerencia || isVisorCompras;                               // gerencia y visor de compras (Arturo) son read-only
   const canManageProviders = isAdmin || isCostos || isAsistenteCompras || isRecepcion || isCoordinadorMaquinas;  // CRUD de proveedores
   const canManageMachines = isAdmin || isCostos || isCoordinadorMaquinas || isRecepcion;  // CRUD de maquinas (Jorge incluido para cargar maquinas)
+  // Flujo de logistica + fichas (mismo que GeoShopping, pedido 23-jul-2026):
+  // Fernando coordina con el proveedor y envia la orden a GeoLogistics, o
+  // cierra la compra sin logistica si el retiro no aplica (servicio en sitio,
+  // lo recoge el mismo, etc.). Jorge sube fichas de recibido.
+  const canEditDelivery = isAdmin || isCostos || isCoordinadorMaquinas || isRecepcion;
+  const canSendToLogistics = isAdmin || isCostos || isCoordinadorMaquinas || isAsistenteCompras;
 
   const [co, setCo] = useState("geotecnica");
   const [purchases, setPurchases] = useState([]);
   const [customProjects, setCustomProjects] = useState([]);
   const [providers, setProviders] = useState([]);
   const [machines, setMachines] = useState([]);
+  // Despachos compartidos con GeoLogistics (lg-despachos) — mismas ordenes de
+  // recogida que usa GeoShopping. Una orden de Maquinas cae en el mismo Kanban
+  // de Oscar/Jorge.
+  const [despachos, setDespachos] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
   const isMobile = useIsMobile();
@@ -1197,22 +1278,33 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   // - Fernando (coordinador_maquinas) → "list" (Solicitudes)
   // - Ana (asistente_compras, legacy) → "providers"
   // - Jorge (recepcion, legacy) → "providers"
+  // - admin/gerencia/costos/visor → "dashboard"
   // - Resto → "list" (solicitudes)
-  const defaultSec = isCoordinadorMaquinas ? "list" : isAsistenteCompras ? "providers" : isRecepcion ? "providers" : "list";
+  const canSeeDashboardDefault = isAdmin || isGerencia || isCostos || isVisorCompras;
+  const defaultSec = isCoordinadorMaquinas ? "list" : isAsistenteCompras ? "providers" : isRecepcion ? "providers" : canSeeDashboardDefault ? "dashboard" : "list";
   const [sec, setSec] = useState(defaultSec);
   const [filter, setFilter] = useState({ status: "", project: "", provider: "", from: "", to: "" });
   // Estado del Command Center (Resumen). showCompleted: incluir completas.
-  // projectCode: filtrar a un solo proyecto.
-  const [resumenFilter, setResumenFilter] = useState({ showCompleted: false, projectCode: "" });
+  // projectCode: filtrar a un solo proyecto. month: mes de carga (default
+  // mes actual — igual que GeoShopping; "" = todos).
+  const [resumenFilter, setResumenFilter] = useState({
+    showCompleted: false,
+    projectCode: "",
+    month: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
+  });
+  // Mes de las metricas mensuales del Dashboard ("" = mes actual).
+  const [dashMonth, setDashMonth] = useState("");
 
   useEffect(() => {
     (async () => {
-      const [p, cps, prov, mach] = await Promise.all([
+      const [p, cps, prov, mach, desp] = await Promise.all([
         store.get("mq-purchases"),
         store.get("cp-projects"),
         store.get("cp-providers"),
         store.get("mq-machines"),
+        store.get("lg-despachos"),
       ]);
+      if (Array.isArray(desp)) setDespachos(desp);
       let purchasesArr = [];
       if (p) {
         // Migracion 1: asegurar treasuryStatus y deliveryStatus
@@ -1494,6 +1586,69 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   };
   const cp = purchases.filter(p => p.company === co);
 
+  // ── Enviar solicitud de Maquinas a Logistica como orden de recogida ──
+  // Mismo contrato que GeoShopping (lg-despachos compartido): pre-fetch cloud,
+  // idempotencia por sourcePurchaseId, merge, save y verificacion post-save.
+  const enviarAOrdenRecogida = async (purchase, opts = {}) => {
+    console.group(`[MQ enviarAOrdenRecogida] ${new Date().toISOString()}`);
+    try {
+      const rec = {
+        id: uid(),
+        source: "maquinas",
+        sourcePurchaseId: purchase.id,
+        tipo: "repuesto_maquinas",
+        descripcion: purchase.description || "",
+        origen: purchase.provider || "Proveedor",
+        destino: `Proyecto ${purchase.projectCode || ""}`.trim(),
+        projectCode: purchase.projectCode || "",
+        vehicleId: "",
+        motorista: "",
+        fechaNecesaria: opts.fechaConfirmada || "",
+        fechaProgramada: opts.fechaConfirmada || "",
+        fechaEjecutada: "",
+        estado: "pendiente",
+        pickupInfo: {
+          coordinadoPor: userName || userRole,
+          coordinadoAt: new Date().toISOString(),
+          fechaConfirmada: opts.fechaConfirmada || "",
+          contactoProveedor: opts.contactoProveedor || "",
+          notas: opts.notas || "",
+        },
+        notas: opts.notas ? `[Coord. con proveedor — Maquinas]\n${opts.notas}` : "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      // 1) PRE-FETCH cloud (no pisar lo que Oscar/Jorge/Ana agregaron)
+      const cloudPrevio = await store.get("lg-despachos");
+      const cloudArr = Array.isArray(cloudPrevio) ? cloudPrevio : [];
+      // 2) Idempotencia
+      const existenteCloud = cloudArr.find(d => d.sourcePurchaseId === purchase.id);
+      if (existenteCloud) {
+        console.warn("Ya existe despacho para esta solicitud:", existenteCloud.id);
+        setDespachos(cloudArr);
+        return { ok: true, despachoId: existenteCloud.id, alreadyExisted: true };
+      }
+      // 3) Merge cloud (autoritativo) + local-only + nuevo
+      const cloudIds = new Set(cloudArr.map(d => d.id));
+      const localOnly = despachos.filter(d => !cloudIds.has(d.id));
+      const merged = [...cloudArr, ...localOnly, rec];
+      // 4) Save + 5) verificacion
+      setDespachos(merged);
+      const okSave = await store.set("lg-despachos", merged);
+      let verifiedOk = okSave;
+      if (okSave) {
+        try {
+          const verify = await store.get("lg-despachos");
+          verifiedOk = Array.isArray(verify) && !!verify.find(d => d.id === rec.id);
+        } catch { /* verificacion best-effort */ }
+      }
+      console.log("OK:", verifiedOk);
+      return { ok: verifiedOk, despachoId: rec.id };
+    } finally {
+      console.groupEnd();
+    }
+  };
+
   // Lista unificada de proyectos (base + custom con metadata adicional).
   // Reglas:
   // - Para cada proyecto BASE: si hay una entrada custom con mismo short, sus campos
@@ -1688,9 +1843,52 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     const [p, setP] = useState(purchase);
     const s = STATUSES[p.status] || STATUSES.borrador;
 
-    // Nota: el bloque "Recepcion de Materiales" del modulo Compras fue removido
-    // en Maquinas — el flujo termina cuando Tesoreria sube el comprobante, no
-    // hay logistica ni ficha de recibido.
+    // Recepcion de Materiales — REINTEGRADA (pedido 23-jul-2026): Maquinas
+    // ahora tiene el mismo flujo de logistica + fichas que GeoShopping.
+    const [dlvEdit, setDlvEdit] = useState(false);
+    const [df, setDf] = useState({
+      expectedDate: p.delivery?.expectedDate || "",
+      actualDate: p.delivery?.actualDate || "",
+      receivedBy: p.delivery?.receivedBy || "",
+      receivedByRole: p.delivery?.receivedByRole || "",
+      observations: p.delivery?.observations || "",
+      fichaGenerated: p.delivery?.fichaGenerated || false,
+      fichaSigned: p.delivery?.fichaSigned || false,
+      fichaScanned: p.delivery?.fichaScanned || false,
+      fichaFile: p.delivery?.fichaFile || null,
+      closingNotes: p.delivery?.closingNotes || "",
+    });
+    const ud = (k, v) => setDf(d => ({ ...d, [k]: v }));
+
+    const saveDelivery = (newDf, newStatus) => {
+      const rec = {
+        ...p,
+        deliveryStatus: newStatus || p.deliveryStatus || "pendiente_entrega",
+        delivery: { ...newDf, updatedAt: new Date().toISOString() },
+      };
+      const labels = {
+        recibido: "Materiales marcados como recibidos",
+        ficha_adjunta: "Ficha de recibido adjuntada",
+        cerrado: "Solicitud cerrada",
+        pendiente_entrega: "Seguimiento de entrega actualizado",
+      };
+      const saved = addAudit(rec, "delivery_updated", labels[newStatus] || "Datos de recepcion actualizados");
+      setP(saved); updatePurchase(saved);
+      setDlvEdit(false);
+    };
+
+    const setFichaFile = (fd) => {
+      const newDf = { ...df, fichaFile: fd, fichaScanned: true, fichaUploadedAt: new Date().toISOString() };
+      setDf(newDf);
+      saveDelivery(newDf, "ficha_adjunta");
+    };
+    const removeFichaFile = () => {
+      if (!confirm("¿Eliminar la ficha adjunta?")) return;
+      const newDf = { ...df, fichaFile: null, fichaScanned: false };
+      setDf(newDf);
+      const prev = p.deliveryStatus === "ficha_adjunta" ? "recibido" : (p.deliveryStatus || "recibido");
+      saveDelivery(newDf, prev);
+    };
 
     // Helper: actualiza state local + persiste + alerta si fallo.
     // El caller hace AWAIT — asi FileSlot mantiene "Subiendo..." hasta que
@@ -1882,8 +2080,86 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
         </div>
       </div>
 
-      {/* Recepcion de Materiales removida en modulo Maquinas — no aplica
-          (no hay logistica/despachos en este flujo). */}
+      {/* ═══ Recepcion de Materiales (mismo flujo que GeoShopping) ═══ */}
+      {(p.status === "pagado" || p.status === "finalizado") && (() => {
+        const ds = DELIVERY_STATUSES[p.deliveryStatus] || DELIVERY_STATUSES.pendiente_entrega;
+        const isClosed = p.deliveryStatus === "cerrado";
+        const canEditDlv = canEditDelivery && !isClosed;
+
+        return <div style={{ border: `2px solid ${ds.color}`, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ background: ds.bg, padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 22 }}>{ds.icon}</span>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: ds.color, textTransform: "uppercase", letterSpacing: 0.4 }}>Recepcion de Materiales</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: ds.color }}>{ds.label}</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {p.deliveryStatus === "pendiente_entrega" && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 8, padding: "6px 12px", fontSize: 12, color: "#92400E", fontWeight: 600 }}>
+                ⚠️ Pagada — pendiente coordinar entrega o cerrar
+              </div>}
+              <Btn small variant="info" onClick={async () => { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); }}>📥 Descargar Ficha PDF</Btn>
+              {canEditDlv && !dlvEdit && <Btn small variant="info" onClick={() => setDlvEdit(true)}>✏️ Editar recepcion</Btn>}
+            </div>
+          </div>
+
+          <div style={{ background: "#fff", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+            {dlvEdit && canEditDlv ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+                  <Input label="Fecha esperada de entrega" type="date" value={df.expectedDate} onChange={e => ud("expectedDate", e.target.value)} />
+                  <Input label="Fecha real de entrega" type="date" value={df.actualDate} onChange={e => ud("actualDate", e.target.value)} />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                  <Input label="Nombre de quien recibio" value={df.receivedBy} onChange={e => ud("receivedBy", e.target.value)} placeholder="Nombre completo" />
+                  <Input label="Cargo de quien recibio" value={df.receivedByRole} onChange={e => ud("receivedByRole", e.target.value)} placeholder="Cargo en el proyecto" />
+                </div>
+                <Textarea label="Observaciones de recepcion" value={df.observations} onChange={e => ud("observations", e.target.value)} placeholder="Estado de los repuestos/materiales, faltantes, incidencias, etc." />
+                <Textarea label="Notas de cierre" value={df.closingNotes} onChange={e => ud("closingNotes", e.target.value)} placeholder="Notas finales, conformidad, observaciones para el expediente..." />
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                  <Btn variant="ghost" onClick={() => setDlvEdit(false)}>Cancelar</Btn>
+                  <Btn variant="warn" onClick={() => saveDelivery(df, df.actualDate ? "recibido" : "pendiente_entrega")}>💾 Guardar</Btn>
+                  {df.actualDate && df.receivedBy && <Btn variant="success" onClick={() => saveDelivery(df, "recibido")}>✅ Marcar recibido</Btn>}
+                  <Btn variant="danger" onClick={() => {
+                    if (!confirm("¿Cerrar esta solicitud SIN enviar a logística?\n\nUsalo cuando no aplica retiro (servicio en sitio, lo recogió Fernando, etc.). No se podrá editar la recepción después.")) return;
+                    saveDelivery({ ...df, closingNotes: df.closingNotes || "Cerrada sin logística" }, "cerrado");
+                  }}>🔒 Cerrar sin logística</Btn>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, fontSize: 13 }}>
+                  <div><div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase" }}>Fecha esperada</div><div style={{ fontWeight: 600 }}>{fmt(p.delivery?.expectedDate) || "—"}</div></div>
+                  <div><div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase" }}>Fecha real de entrega</div><div style={{ fontWeight: 600 }}>{fmt(p.delivery?.actualDate) || "—"}</div></div>
+                  <div><div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase" }}>Recibido por</div><div style={{ fontWeight: 600 }}>{p.delivery?.receivedBy || "—"}</div></div>
+                </div>
+                {p.delivery?.observations && <div style={{ background: "#F8FAFC", borderRadius: 8, padding: 10, fontSize: 13, color: "#334155" }}>
+                  <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Observaciones</div>
+                  {p.delivery.observations}
+                </div>}
+                {p.delivery?.closingNotes && <div style={{ background: "#F0FDF4", borderRadius: 8, padding: 10, fontSize: 13, color: "#065F46", border: "1px solid #BBF7D0" }}>
+                  <div style={{ fontSize: 10, color: "#047857", fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Notas de cierre</div>
+                  {p.delivery.closingNotes}
+                </div>}
+                {isClosed && <div style={{ background: "#DCFCE7", border: "2px solid #059669", borderRadius: 10, padding: "10px 16px", display: "flex", alignItems: "center", gap: 8, fontWeight: 700, color: "#065F46", fontSize: 14 }}>
+                  🔒 Solicitud cerrada{p.delivery?.closingNotes === "Cerrada sin logística" ? " — sin logística" : ""} — ciclo completado
+                </div>}
+              </div>
+            )}
+
+            {/* Ficha adjunta (PDF/imagen firmada) */}
+            <FileSlot
+              label="📋 Ficha de recibido (PDF firmado)"
+              file={df.fichaFile}
+              canUpload={canEditDelivery && !isClosed}
+              accent="#7C3AED"
+              onUpload={setFichaFile}
+              onRemove={removeFichaFile}
+            />
+          </div>
+        </div>;
+      })()}
 
       {/* Historial / Auditoria */}
       {p.audit && p.audit.length > 0 && <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 18 }}>
@@ -2151,11 +2427,20 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   // su lifecycle (validacion → pago → comprobante) con la PROXIMA ACCION PENDIENTE
   // destacada. No hay flujo de logistica en Maquinas — el ciclo cierra cuando
   // Tesoreria sube el comprobante.
+  // Lifecycle completo — mismo flujo que GeoShopping (pedido 23-jul-2026):
+  // validacion → pago → comprobante → coordinacion (Fernando) → logistica →
+  // entrega → ficha de recibido (Jorge). Tambien contempla el cierre SIN
+  // logistica (deliveryStatus "cerrado" via boton en Por coordinar).
   const computeLifecycle = (p) => {
+    const desp = despachos.find(d => d.sourcePurchaseId === p.id);
     const isPaid = p.status === "pagado" || p.status === "finalizado";
     const hasReceipt = !!p.receiptFile;
-    // En Maquinas, una solicitud esta "lista" cuando hay pago + comprobante.
-    const lista = isPaid && hasReceipt;
+    const hasDesp = !!desp;
+    const enRuta = desp?.estado === "en_ruta";
+    const cerradoSinLog = p.deliveryStatus === "cerrado";
+    const entregado = desp?.estado === "entregado" || p.deliveryStatus === "ficha_adjunta" || cerradoSinLog || p.deliveryStatus === "recibido";
+    const fichaUploaded = !!p.delivery?.fichaFile;
+    const lista = fichaUploaded || cerradoSinLog;
 
     // Estado y "siguiente accion" en lenguaje claro
     let nextAction = "";
@@ -2163,21 +2448,29 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     if (p.status === "borrador") { nextAction = "Aprobar para enviar a Tesoreria"; nextOwner = "Coord. Maquinas"; }
     else if (p.status === "validado") { nextAction = "Registrar pago"; nextOwner = "Lic. Carolina"; }
     else if (isPaid && !hasReceipt) { nextAction = "Subir comprobante"; nextOwner = "Lic. Carolina"; }
-    else if (lista) { nextAction = "✓ Completa - pagada y con comprobante"; nextOwner = ""; }
+    else if (isPaid && hasReceipt && !hasDesp && !lista) { nextAction = "Coordinar con proveedor: enviar a logistica o cerrar"; nextOwner = "Lic. Fernando"; }
+    else if (hasDesp && !entregado && !enRuta) { nextAction = "Programar recogida (vehiculo + motorista)"; nextOwner = "Oscar Paz"; }
+    else if (enRuta) { nextAction = "Entregar en proyecto"; nextOwner = "Motorista"; }
+    else if (entregado && !fichaUploaded && !cerradoSinLog) { nextAction = "Entregado — pendiente subir ficha de recibido firmada"; nextOwner = "Jorge Castellanos"; }
+    else if (cerradoSinLog && !fichaUploaded) { nextAction = "✓ Cerrada sin logistica"; nextOwner = ""; }
+    else if (fichaUploaded) { nextAction = "✓ Lista — pasar a contabilidad"; nextOwner = ""; }
 
     return {
-      isPaid, hasReceipt, lista,
+      desp, isPaid, hasReceipt, hasDesp, enRuta, entregado, fichaUploaded, cerradoSinLog, lista,
       nextAction, nextOwner,
     };
   };
 
-  // Render de la barra de fases (4 hitos) para una solicitud de pago.
+  // Render de la barra de fases (7 hitos) para una solicitud de pago.
   const renderLifecycleBar = (p, lc) => {
     const phases = [
       { key: "solicitud", emoji: "📝", label: "Solicitud",   done: true },
       { key: "validado",  emoji: "✅", label: "Validada",    done: ["validado","pagado","finalizado"].includes(p.status) },
       { key: "pagado",    emoji: "💰", label: "Pagada",      done: lc.isPaid },
       { key: "compr",     emoji: "🧾", label: "Comprobante", done: lc.hasReceipt },
+      { key: "coord",     emoji: "📦", label: "Coordinada",  done: lc.hasDesp || lc.lista },
+      { key: "entrega",   emoji: "🚚", label: "Entregada",   done: lc.entregado },
+      { key: "ficha",     emoji: "📋", label: "Ficha",       done: lc.fichaUploaded || lc.cerradoSinLog },
     ];
     // El "current" es la primera fase NO done
     const currentIdx = phases.findIndex(ph => !ph.done);
@@ -2201,21 +2494,436 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     );
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // DASHBOARD GERENCIAL — misma estructura que GeoShopping (23-jul-2026)
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderDashboard = () => {
+    const now = Date.now();
+    const hoy = new Date();
+    const mesActual = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}`;
+    const mesSel = dashMonth || mesActual;
+    const mesSelLabel = (() => {
+      const [y, m] = mesSel.split("-").map(Number);
+      return new Date(y, m - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
+    })();
+
+    const activas = cp.filter(p => p.deliveryStatus !== "cerrado");
+    const validadas = cp.filter(p => p.status === "validado");
+    const montoPorPagar = validadas.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const pagadoMes = cp
+      .filter(p => (p.status === "pagado" || p.status === "finalizado") && p.paidAt)
+      .filter(p => String(p.paidAt).slice(0, 7) === mesSel)
+      .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+    const despachoOf = (p) => despachos.find(d => d.sourcePurchaseId === p.id);
+    const isPaid = (p) => p.status === "pagado" || p.status === "finalizado";
+    const cerradaOLista = (p) => p.delivery?.fichaFile || p.deliveryStatus === "cerrado" || p.deliveryStatus === "ficha_adjunta";
+
+    const porCoordinar = cp.filter(p => isPaid(p) && !cerradaOLista(p) && !despachoOf(p));
+    const pendienteEntrega = cp.filter(p => {
+      if (!isPaid(p) || cerradaOLista(p)) return false;
+      const d = despachoOf(p);
+      return d && d.estado !== "entregado" && d.estado !== "cerrado";
+    });
+    const pendienteFicha = cp.filter(p => {
+      if (p.delivery?.fichaFile || p.deliveryStatus === "cerrado") return false;
+      const d = despachoOf(p);
+      return isPaid(p) && (d?.estado === "entregado" || p.deliveryStatus === "recibido");
+    });
+
+    const kpis = [
+      { icon: "📋", label: "Solicitudes activas",          value: activas.length,          color: "#2563EB", tint: "#DBEAFE", fmt: (v) => v },
+      { icon: "💰", label: "Por pagar (Lic. Carolina)",    value: montoPorPagar,           color: "#D97706", tint: "#FEF3C7", fmt: (v) => fmtL(v) },
+      { icon: "✅", label: `Pagado en ${mesSelLabel}`,      value: pagadoMes,               color: "#059669", tint: "#D1FAE5", fmt: (v) => fmtL(v) },
+      { icon: "📦", label: "Por coordinar (Fernando)",     value: porCoordinar.length,     color: "#7C3AED", tint: "#EDE9FE", fmt: (v) => v },
+      { icon: "🚛", label: "Pendiente entrega",            value: pendienteEntrega.length, color: "#B45309", tint: "#FDE68A", fmt: (v) => v },
+      { icon: "📋", label: "Pendiente ficha",              value: pendienteFicha.length,   color: "#DC2626", tint: "#FEE2E2", fmt: (v) => v },
+    ];
+
+    // Dona: % del gasto del mes por proyecto (top 6 + otros)
+    const DONUT_COLORS = ["#059669", "#2563EB", "#D97706", "#7C3AED", "#DC2626", "#0891B2", "#BE185D", "#65A30D"];
+    const gastoMesProy = {};
+    cp.forEach(p => {
+      if (!isPaid(p) || String(p.paidAt || "").slice(0, 7) !== mesSel) return;
+      const key = p.projectCode || "Sin proyecto";
+      gastoMesProy[key] = (gastoMesProy[key] || 0) + (Number(p.amount) || 0);
+    });
+    const gastoSorted = Object.entries(gastoMesProy).sort((a, b) => b[1] - a[1]);
+    const otrosGasto = gastoSorted.slice(6).reduce((s, [, v]) => s + v, 0);
+    const donutCats = [
+      ...gastoSorted.slice(0, 6).map(([k, v], i) => ({ key: k, label: k, count: v, color: DONUT_COLORS[i % DONUT_COLORS.length] })),
+      ...(otrosGasto > 0 ? [{ key: "_otros", label: "Otros", count: otrosGasto, color: "#94A3B8" }] : []),
+    ];
+    const donutTotal = donutCats.reduce((s, c) => s + c.count, 0);
+    const shortL = (v) => v >= 1e6 ? `L ${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `L ${Math.round(v / 1e3)}k` : `L ${Math.round(v)}`;
+    const donutR = 60, donutInner = 42;
+    const donutCircum = 2 * Math.PI * donutR;
+    let accAngle = 0;
+    const donutArcs = donutCats.map(c => {
+      const frac = donutTotal > 0 ? c.count / donutTotal : 0;
+      const dash = frac * donutCircum;
+      const seg = { ...c, dash, gap: donutCircum - dash, rotation: accAngle };
+      accAngle += frac * 360;
+      return seg;
+    });
+
+    // Por proyecto: por pagar (Carolina) + pagado en el mes
+    const proyRows = (() => {
+      const acc = {};
+      cp.forEach(p => {
+        const key = p.projectCode || "_sin_proyecto";
+        if (!acc[key]) acc[key] = { porPagar: 0, nPorPagar: 0, pagadoMes: 0 };
+        if (p.status === "validado") { acc[key].porPagar += Number(p.amount) || 0; acc[key].nPorPagar++; }
+        if (isPaid(p) && String(p.paidAt || "").slice(0, 7) === mesSel) acc[key].pagadoMes += Number(p.amount) || 0;
+      });
+      return Object.entries(acc).map(([key, v]) => ({ key, ...v }))
+        .filter(r => r.porPagar > 0 || r.pagadoMes > 0)
+        .sort((a, b) => b.porPagar - a.porPagar || b.pagadoMes - a.pagadoMes);
+    })();
+    const totPorPagarProy = proyRows.reduce((s, r) => s + r.porPagar, 0);
+    const totPagadoMesProy = proyRows.reduce((s, r) => s + r.pagadoMes, 0);
+    const maxPagadoMesProy = Math.max(1, ...proyRows.map(r => r.pagadoMes));
+
+    // Suministro pendiente
+    const daysSince = (iso) => !iso ? 0 : Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86400000));
+    const alertaCoord = porCoordinar.map(p => ({ p, dias: daysSince(p.paidAt || p.createdAt) })).sort((a, b) => b.dias - a.dias);
+    const alertaEntrega = pendienteEntrega.map(p => { const d = despachoOf(p); return { p, dias: daysSince(d?.createdAt || p.paidAt) }; }).sort((a, b) => b.dias - a.dias);
+    const faltaProy = {};
+    alertaCoord.forEach(({ p }) => { const k = p.projectCode || "—"; if (!faltaProy[k]) faltaProy[k] = { coord: 0, log: 0, monto: 0 }; faltaProy[k].coord++; faltaProy[k].monto += Number(p.amount) || 0; });
+    alertaEntrega.forEach(({ p }) => { const k = p.projectCode || "—"; if (!faltaProy[k]) faltaProy[k] = { coord: 0, log: 0, monto: 0 }; faltaProy[k].log++; faltaProy[k].monto += Number(p.amount) || 0; });
+    const faltaProyRows = Object.entries(faltaProy).map(([k, v]) => ({ key: k, ...v, total: v.coord + v.log })).sort((a, b) => b.total - a.total || b.monto - a.monto);
+
+    const cardStyle = { background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: 16, boxShadow: "0 1px 3px rgba(15,23,42,0.05)" };
+
+    const AlertItem = ({ item, days_color }) => (
+      <div onClick={() => setModal({ t: "detail", d: item.p })}
+        style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1.4fr) minmax(0,1.6fr) auto auto", gap: 10, alignItems: "center", padding: "8px 10px", borderRadius: 8, background: "#F8FAFC", border: "1px solid #E2E8F0", cursor: "pointer", fontSize: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.p.provider || "—"}</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontFamily: "ui-monospace, Menlo, monospace" }}>{item.p.projectCode || "—"}</div>
+        </div>
+        <div style={{ fontSize: 11, color: "#475569", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.p.description || "Solicitud"}</div>
+        <div style={{ fontWeight: 800, color: "#059669", fontSize: 12, whiteSpace: "nowrap" }}>{fmtL(item.p.amount)}</div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: days_color, background: days_color + "18", padding: "3px 8px", borderRadius: 10, whiteSpace: "nowrap" }}>{item.dias}d</div>
+      </div>
+    );
+    const AlertBlock = ({ icon, title, color, items, emptyMsg }) => (
+      <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ fontSize: 22 }}>{icon}</div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, lineHeight: 1.2 }}>{title}</div>
+              <div style={{ fontSize: 11, color: STONE, marginTop: 2 }}>{items.length} pendientes</div>
+            </div>
+          </div>
+          <div style={{ background: color, color: "#fff", fontWeight: 800, fontSize: 14, width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>{items.length}</div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+          {items.length === 0 && <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "12px 4px" }}>{emptyMsg}</div>}
+          {items.slice(0, 5).map((it, i) => <AlertItem key={it.p.id || i} item={it} days_color={color} />)}
+        </div>
+        {items.length > 0 && <button onClick={() => setSec("coordinar")} style={{ marginTop: 4, background: "transparent", border: `1px solid ${color}`, color, padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", alignSelf: "flex-start" }}>Ver en Por coordinar →</button>}
+      </div>
+    );
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <div style={{ background: `linear-gradient(135deg, #FFF7ED 0%, #FEF3E6 100%)`, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <div>
+            <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>📊 Dashboard Gerencial — Maquinas</div>
+            <div style={{ fontSize: 12, color: STONE, marginTop: 4 }}>Vista ejecutiva — repuestos y mantenimiento</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 11, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>
+              {new Date().toLocaleDateString("es-HN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+            </div>
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: STONE, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Mes de análisis</div>
+              <input type="month" value={mesSel} onChange={e => setDashMonth(e.target.value)} style={{ padding: "6px 10px", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12, background: "#fff", fontFamily: "inherit" }} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : `repeat(${kpis.length}, minmax(0,1fr))`, gap: 12 }}>
+          {kpis.map(k => (
+            <div key={k.label} style={{ ...cardStyle, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 10, background: k.tint, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>{k.icon}</div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: isMobile ? 15 : 18, fontWeight: 800, color: k.color, lineHeight: 1.1, overflow: "hidden", textOverflow: "ellipsis" }}>{k.fmt(k.value)}</div>
+                <div style={{ fontSize: 10, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 3 }}>{k.label}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1.3fr", gap: 16 }}>
+          {/* Dona: gasto del mes por proyecto */}
+          <div style={cardStyle}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12, letterSpacing: -0.2 }}>Gasto del mes por proyecto — {mesSelLabel}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
+              <svg viewBox="0 0 160 160" style={{ width: 160, height: 160, flexShrink: 0 }}>
+                <g transform="translate(80,80)">
+                  <circle r={donutR} fill="none" stroke="#F1F5F9" strokeWidth={donutR - donutInner} />
+                  {donutTotal > 0 && donutArcs.map(seg => (
+                    <circle key={seg.key} r={donutR} fill="none" stroke={seg.color} strokeWidth={donutR - donutInner} strokeDasharray={`${seg.dash} ${seg.gap}`} transform={`rotate(${-90 + seg.rotation})`} />
+                  ))}
+                  <text textAnchor="middle" y="-4" style={{ fontSize: 15, fontWeight: 800, fill: CHARCOAL }}>{shortL(donutTotal)}</text>
+                  <text textAnchor="middle" y="14" style={{ fontSize: 8, fill: STONE, letterSpacing: 0.5 }}>PAGADO {mesSelLabel.split(" ")[0].toUpperCase()}</text>
+                </g>
+              </svg>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 150, flex: 1 }}>
+                {donutCats.length === 0 && <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Sin pagos registrados en {mesSelLabel}.</div>}
+                {donutCats.map(c => {
+                  const pct = donutTotal > 0 ? Math.round((c.count / donutTotal) * 100) : 0;
+                  return (
+                    <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                      <div style={{ width: 12, height: 12, borderRadius: 3, background: c.color, flexShrink: 0 }} />
+                      <div style={{ flex: 1, color: CHARCOAL, fontWeight: 600, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.label}</div>
+                      <div style={{ fontWeight: 700, color: CHARCOAL, fontSize: 11, whiteSpace: "nowrap" }}>{fmtL(c.count)}</div>
+                      <div style={{ color: c.color, fontWeight: 800, fontSize: 11, width: 38, textAlign: "right" }}>{pct}%</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Por proyecto: por pagar + pagado del mes */}
+          <div style={cardStyle}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12, letterSpacing: -0.2, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span>Por proyecto</span>
+              <span style={{ fontSize: 10, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>por pagar (Lic. Carolina) · pagado en {mesSelLabel}</span>
+            </div>
+            {proyRows.length === 0 ? (
+              <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "20px 4px" }}>Nada por pagar y ningún pago en {mesSelLabel}.</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid #E2E8F0" }}>
+                      <th style={{ textAlign: "left", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: STONE, textTransform: "uppercase" }}>Proyecto</th>
+                      <th style={{ textAlign: "right", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "#D97706", textTransform: "uppercase" }}>Por pagar</th>
+                      <th style={{ textAlign: "right", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "#059669", textTransform: "uppercase" }}>Pagado {mesSelLabel.split(" ")[0]}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {proyRows.slice(0, 10).map(r => (
+                      <tr key={r.key} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                        <td style={{ padding: "7px 6px", fontWeight: 700, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11 }}>{r.key}</td>
+                        <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 700, color: r.porPagar > 0 ? "#D97706" : "#CBD5E1", whiteSpace: "nowrap" }}>
+                          {r.porPagar > 0 ? <>{fmtL(r.porPagar)} <span style={{ fontSize: 9, color: STONE }}>({r.nPorPagar})</span></> : "—"}
+                        </td>
+                        <td style={{ padding: "7px 6px", textAlign: "right", whiteSpace: "nowrap" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                            <div style={{ width: 46, height: 7, borderRadius: 4, background: "#F1F5F9", overflow: "hidden", flexShrink: 0 }}>
+                              <div style={{ width: `${(r.pagadoMes / maxPagadoMesProy) * 100}%`, height: "100%", background: "#059669" }} />
+                            </div>
+                            <span style={{ fontWeight: 700, color: r.pagadoMes > 0 ? "#059669" : "#CBD5E1" }}>{r.pagadoMes > 0 ? fmtL(r.pagadoMes) : "—"}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ borderTop: "2px solid #CBD5E1" }}>
+                      <td style={{ padding: "7px 6px", fontWeight: 800, color: CHARCOAL, fontSize: 11 }}>TOTAL</td>
+                      <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 800, color: "#D97706", whiteSpace: "nowrap" }}>{fmtL(totPorPagarProy)}</td>
+                      <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 800, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(totPagadoMesProy)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* SUMINISTRO PENDIENTE */}
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 10, letterSpacing: -0.2, textTransform: "uppercase" }}>
+            🚚 Suministro pendiente — repuestos/material que falta entregar
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 14 }}>
+            <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ fontSize: 22 }}>🏗️</div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, lineHeight: 1.2 }}>Falta entregar por proyecto</div>
+                  <div style={{ fontSize: 11, color: STONE, marginTop: 2 }}>pagadas aún sin entregar</div>
+                </div>
+              </div>
+              {faltaProyRows.length === 0 ? (
+                <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "12px 4px" }}>✓ Todo entregado.</div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid #E2E8F0" }}>
+                      <th style={{ textAlign: "left", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: STONE, textTransform: "uppercase" }}>Proyecto</th>
+                      <th title="Fernando no ha coordinado" style={{ textAlign: "center", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: "#7C3AED", textTransform: "uppercase" }}>Coord.</th>
+                      <th title="En logistica, sin entregar" style={{ textAlign: "center", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: "#2563EB", textTransform: "uppercase" }}>Logíst.</th>
+                      <th style={{ textAlign: "right", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: STONE, textTransform: "uppercase" }}>Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {faltaProyRows.slice(0, 8).map(r => (
+                      <tr key={r.key} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                        <td style={{ padding: "6px 4px", fontWeight: 700, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 10 }}>{r.key}</td>
+                        <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 800, color: r.coord > 0 ? "#7C3AED" : "#CBD5E1" }}>{r.coord || "—"}</td>
+                        <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 800, color: r.log > 0 ? "#2563EB" : "#CBD5E1" }}>{r.log || "—"}</td>
+                        <td style={{ padding: "6px 4px", textAlign: "right", fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(r.monto)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <AlertBlock icon="🕐" title="Sin coordinar (Fernando)" color="#7C3AED" items={alertaCoord} emptyMsg="✓ Todo coordinado — nada pendiente de enviar a logística o cerrar." />
+            <AlertBlock icon="🚛" title="Logística no ha entregado" color="#2563EB" items={alertaEntrega} emptyMsg="✓ Logística al día — sin despachos pendientes." />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // POR COORDINAR — Kanban de solicitudes pagadas (mismo flujo que Ana en
+  // GeoShopping): por_coordinar → en_logistica → listas. Fernando coordina
+  // con el proveedor y envia a Logistica, O cierra sin logistica si no aplica.
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderCoordinar = () => {
+    const despachoDe = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
+    const clasificar = (p) => {
+      if (p.status !== "pagado" && p.status !== "finalizado") return null;
+      if (p.deliveryStatus === "ficha_adjunta" || p.deliveryStatus === "cerrado") return "listas";
+      const d = despachoDe(p.id);
+      if (d && (d.estado === "pendiente" || d.estado === "programado" || d.estado === "en_ruta" || d.estado === "entregado")) return "en_logistica";
+      return "por_coordinar";
+    };
+
+    const grupos = {};
+    const totales = { por_coordinar: 0, en_logistica: 0, listas: 0 };
+    cp.forEach(p => {
+      const bucket = clasificar(p);
+      if (!bucket) return;
+      const key = p.projectCode || "_sin_proyecto";
+      if (!grupos[key]) grupos[key] = { por_coordinar: [], en_logistica: [], listas: [] };
+      grupos[key][bucket].push(p);
+      totales[bucket]++;
+    });
+    const proyectos = Object.keys(grupos).sort((a, b) => grupos[b].por_coordinar.length - grupos[a].por_coordinar.length);
+
+    const cerrarSinLogistica = async (p) => {
+      if (!confirm(`¿Cerrar "${p.provider} — ${(p.description || "").slice(0, 60)}" SIN enviar a logística?\n\nUsalo cuando no aplica retiro (servicio en sitio, lo recoge Fernando, etc.).`)) return;
+      const rec = {
+        ...p,
+        deliveryStatus: "cerrado",
+        delivery: { ...(p.delivery || {}), closingNotes: p.delivery?.closingNotes || "Cerrada sin logística", updatedAt: new Date().toISOString() },
+      };
+      const saved = addAudit(rec, "closed_no_logistics", "Cerrada sin envio a logistica");
+      const ok = await updatePurchase(saved);
+      if (!ok) alert("⚠️ Se cerro en este dispositivo pero NO se sincronizo a la nube. Reintenta.");
+    };
+
+    const Card = ({ p, bucket }) => {
+      const d = despachoDe(p.id);
+      return (
+        <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div onClick={() => setModal({ t: "detail", d: p })} style={{ cursor: "pointer" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL }}>{p.provider || "—"}</div>
+            <div style={{ fontSize: 11, color: "#64748b", marginTop: 2, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "#059669" }}>{fmtL(p.amount)}</span>
+              {bucket === "en_logistica" && d && <Badge color="#0891B2">{d.estado === "entregado" ? "Entregado — falta ficha" : `Logística: ${d.estado}`}</Badge>}
+              {bucket === "listas" && <Badge color="#059669">{p.deliveryStatus === "cerrado" ? "Cerrada" : "Ficha subida"}</Badge>}
+            </div>
+          </div>
+          {bucket === "por_coordinar" && canSendToLogistics && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button onClick={() => setModal({ t: "send-pickup", d: p })} style={{ flex: 1, background: "#7C3AED", color: "#fff", border: "none", padding: "8px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🚛 Enviar a Logística</button>
+              <button onClick={() => cerrarSinLogistica(p)} title="Cerrar sin enviar a logística (no aplica retiro)" style={{ background: "transparent", color: "#DC2626", border: "1px solid #FCA5A5", padding: "8px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🔒 Cerrar sin logística</button>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {[
+            { label: "Por coordinar", value: totales.por_coordinar, color: "#7C3AED", desc: "pagadas sin orden de recogida" },
+            { label: "En logística", value: totales.en_logistica, color: "#0891B2", desc: "orden enviada — Oscar/Jorge" },
+            { label: "Listas", value: totales.listas, color: "#059669", desc: "ficha subida o cerradas" },
+          ].map(k => (
+            <div key={k.label} style={{ flex: 1, minWidth: 160, background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 18px" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: STONE, textTransform: "uppercase", letterSpacing: 0.4 }}>{k.label}</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: k.color, marginTop: 4 }}>{k.value}</div>
+              <div style={{ fontSize: 10, color: "#94A3B8", marginTop: 2 }}>{k.desc}</div>
+            </div>
+          ))}
+        </div>
+
+        {proyectos.length === 0 && (
+          <div style={{ textAlign: "center", padding: 50, color: "#94A3B8" }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#475569" }}>Nada por coordinar — no hay solicitudes pagadas pendientes.</div>
+          </div>
+        )}
+
+        {proyectos.map(key => {
+          const g = grupos[key];
+          const proj = allProjects.find(pr => pr.short === key);
+          return (
+            <details key={key} open={g.por_coordinar.length > 0 || g.en_logistica.length > 0} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "hidden" }}>
+              <summary style={{ padding: "12px 18px", background: (g.por_coordinar.length > 0 ? "#7C3AED" : g.en_logistica.length > 0 ? "#0891B2" : "#059669") + "15", cursor: "pointer", listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <div>
+                  <span style={{ fontWeight: 800, fontFamily: "ui-monospace, Menlo, monospace", color: CHARCOAL }}>{key}</span>
+                  {proj?.name && <span style={{ fontSize: 11, color: "#64748b", marginLeft: 8 }}>{proj.name}</span>}
+                </div>
+                <div style={{ display: "flex", gap: 8, fontSize: 11, fontWeight: 700 }}>
+                  {g.por_coordinar.length > 0 && <span style={{ color: "#7C3AED" }}>{g.por_coordinar.length} por coordinar</span>}
+                  {g.en_logistica.length > 0 && <span style={{ color: "#0891B2" }}>{g.en_logistica.length} en logística</span>}
+                  {g.listas.length > 0 && <span style={{ color: "#059669" }}>{g.listas.length} listas</span>}
+                </div>
+              </summary>
+              <div style={{ padding: 14, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 12 }}>
+                {[["por_coordinar", "🕐 Por coordinar", "#7C3AED"], ["en_logistica", "🚛 En logística", "#0891B2"], ["listas", "✓ Listas", "#059669"]].map(([bk, label, color]) => (
+                  <div key={bk} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color, textTransform: "uppercase", letterSpacing: 0.4 }}>{label} ({g[bk].length})</div>
+                    {g[bk].length === 0 && <div style={{ fontSize: 11, color: "#CBD5E1", fontStyle: "italic" }}>—</div>}
+                    {g[bk].map(p => <Card key={p.id} p={p} bucket={bk} />)}
+                  </div>
+                ))}
+              </div>
+            </details>
+          );
+        })}
+      </div>
+    );
+  };
+
   const renderResumen = () => {
     // Filtros del Command Center
     // - showCompleted: incluir las "listas" (ficha subida o cerradas).
     //   Por default ocultas — el coordinador solo ve lo que tiene accion pendiente.
     const showCompleted = resumenFilter.showCompleted;
     const projFilter = resumenFilter.projectCode;
+    const monthFilter = resumenFilter.month;
+    const monthLabel = monthFilter ? (() => {
+      const [y, m] = monthFilter.split("-").map(Number);
+      return new Date(y, m - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
+    })() : "";
 
     // Agrupar solicitudes por proyecto, filtrando segun company actual
     const grupos = {};
     cp.forEach(p => {
-      // En Maquinas, una solicitud esta "lista" cuando esta pagada y tiene
-      // comprobante. No hay flujo de logistica.
-      const lista = (p.status === "pagado" || p.status === "finalizado") && !!p.receiptFile;
+      // "Lista" = ficha de recibido subida o cerrada sin logistica (mismo
+      // criterio que GeoShopping ahora que Maquinas tiene el flujo completo).
+      const lista = computeLifecycle(p).lista;
       if (!showCompleted && lista) return;
       if (projFilter && p.projectCode !== projFilter) return;
+      // Filtro por mes de carga (createdAt). "" = todos los meses.
+      if (monthFilter && String(p.createdAt || "").slice(0, 7) !== monthFilter) return;
       const key = p.projectCode || "_sin_proyecto";
       (grupos[key] = grupos[key] || []).push(p);
     });
@@ -2227,9 +2935,14 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
         <div style={{ textAlign: "center", padding: 60, color: "#94A3B8" }}>
           <div style={{ fontSize: 56, marginBottom: 16 }}>📊</div>
           <div style={{ fontSize: 18, fontWeight: 700, color: "#475569" }}>
-            {showCompleted ? "No hay solicitudes para mostrar" : "✓ Todo al dia — no hay acciones pendientes"}
+            {monthFilter ? `Nada pendiente cargado en ${monthLabel}` : showCompleted ? "No hay solicitudes para mostrar" : "✓ Todo al dia — no hay acciones pendientes"}
           </div>
-          {!showCompleted && <div style={{ marginTop: 8, fontSize: 13 }}>Activa "Mostrar completas" para ver las solicitudes ya pagadas y con comprobante.</div>}
+          {!showCompleted && <div style={{ marginTop: 8, fontSize: 13 }}>Activa "Mostrar completas" para ver las solicitudes ya listas (ficha subida o cerradas).</div>}
+          {monthFilter && (
+            <div style={{ marginTop: 12 }}>
+              <Btn small variant="ghost" onClick={() => setResumenFilter(s => ({ ...s, month: "" }))}>Ver todos los meses</Btn>
+            </div>
+          )}
         </div>
       );
     }
@@ -2250,8 +2963,18 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
             onChange={e => setResumenFilter(s => ({ ...s, projectCode: e.target.value }))}
             emptyLabel="Todos los proyectos"
           />
+          <div style={{ height: 20, width: 1, background: "#E2E8F0" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: CHARCOAL }}>Mes:</span>
+            <input type="month" value={monthFilter} onChange={e => setResumenFilter(s => ({ ...s, month: e.target.value }))}
+              title="Filtra por mes de carga de la solicitud"
+              style={{ padding: "6px 10px", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12, background: "#fff", fontFamily: "inherit" }} />
+            {monthFilter
+              ? <button onClick={() => setResumenFilter(s => ({ ...s, month: "" }))} style={{ background: "transparent", border: `1px solid ${BORDER}`, borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer", color: "#64748b", fontFamily: "inherit" }}>Todos</button>
+              : <span style={{ fontSize: 11, color: "#94A3B8", fontStyle: "italic" }}>todos los meses</span>}
+          </div>
           <div style={{ marginLeft: "auto", fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-            {proyectosConCompras.length} proyectos · {Object.values(grupos).reduce((a, l) => a + l.length, 0)} solicitudes
+            {monthFilter ? `${monthLabel} · ` : ""}{proyectosConCompras.length} proyectos · {Object.values(grupos).reduce((a, l) => a + l.length, 0)} solicitudes
           </div>
         </div>
 
@@ -2281,9 +3004,9 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
           });
 
           return (
-            <div key={key} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "hidden" }}>
-              {/* Header del proyecto */}
-              <div style={{ padding: "14px 18px", background: projColor + "15", borderBottom: `2px solid ${projColor}40`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <details key={key} open style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "hidden" }}>
+              {/* Header del proyecto — click para plegar/desplegar */}
+              <summary style={{ padding: "14px 18px", background: projColor + "15", borderBottom: `2px solid ${projColor}40`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, cursor: "pointer", listStyle: "none" }}>
                 <div>
                   <div style={{ fontSize: 16, fontWeight: 800, color: projColor, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.3 }}>{key}</div>
                   {projName && <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{projName}</div>}
@@ -2293,8 +3016,9 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
                     <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{fmtL(totalMonto)}</div>
                     <div style={{ fontSize: 10, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 0.5 }}>{items.length} solicitudes</div>
                   </div>
+                  <span title="Plegar / desplegar" style={{ fontSize: 12, color: projColor, fontWeight: 700 }}>▾</span>
                 </div>
-              </div>
+              </summary>
 
               {/* Resumen de acciones pendientes por owner */}
               {Object.keys(pendingByOwner).length > 0 && (
@@ -2341,13 +3065,25 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#059669" }}>{fmtL(p.amount)}</div>
                       </div>
 
-                      {/* Siguiente accion */}
+                      {/* Siguiente accion + estado de entrega (que esta
+                          entregado y que no, de un vistazo) */}
                       <div style={{ minWidth: 0 }}>
                         {lc.lista ? (
-                          <div style={{ fontSize: 11, color: "#059669", fontWeight: 700 }}>✓ Completa — pagada y con comprobante</div>
+                          <div style={{ fontSize: 11, color: "#059669", fontWeight: 700 }}>
+                            {lc.cerradoSinLog && !lc.fichaUploaded ? "🔒 Cerrada sin logística" : "🚚 Entregado · ✓ Lista — pasar a contabilidad"}
+                          </div>
                         ) : (
                           <>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: "#9A4F1D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lc.nextAction}</div>
+                            {lc.isPaid && (
+                              <span style={{
+                                display: "inline-block", fontSize: 9, fontWeight: 800, padding: "2px 8px", borderRadius: 8, marginBottom: 3, letterSpacing: 0.3,
+                                background: lc.entregado ? "#DCFCE7" : lc.hasDesp ? "#DBEAFE" : "#EDE9FE",
+                                color: lc.entregado ? "#166534" : lc.hasDesp ? "#1E40AF" : "#6B21A8",
+                              }}>
+                                {lc.entregado ? "🚚 ENTREGADO" : lc.hasDesp ? "🚛 EN LOGÍSTICA" : "🕐 SIN COORDINAR"}
+                              </span>
+                            )}
+                            <div style={{ fontSize: 11, fontWeight: 700, color: lc.entregado ? "#166534" : "#9A4F1D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lc.nextAction}</div>
                             {lc.nextOwner && <div style={{ fontSize: 10, color: "#64748b", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>→ {lc.nextOwner}</div>}
                           </>
                         )}
@@ -2356,7 +3092,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
                   );
                 })}
               </div>
-            </div>
+            </details>
           );
         })}
       </div>
@@ -2530,20 +3266,26 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       case "provider-edit": return <Modal title={`Editar proveedor — ${m.d.name}`} onClose={() => setModal(null)} wide><ProviderFormImpl provider={m.d} setModal={setModal} upsertProvider={upsertProvider} deleteProvider={deleteProvider} /></Modal>;
       case "machine-new":   return <Modal title="Nueva maquina" onClose={() => setModal(null)}><MachineFormImpl setModal={setModal} upsertMachine={upsertMachine} /></Modal>;
       case "machine-edit":  return <Modal title={`Editar maquina — ${m.d.nombre}`} onClose={() => setModal(null)}><MachineFormImpl machine={m.d} setModal={setModal} upsertMachine={upsertMachine} deleteMachine={deleteMachine} /></Modal>;
+      case "send-pickup":   return <Modal title={`🚛 Enviar a Logistica — ${m.d.provider}`} onClose={() => setModal(null)}><SendPickupFormImpl purchase={m.d} provider={findProviderByName(m.d.provider)} setModal={setModal} enviarAOrdenRecogida={enviarAOrdenRecogida} /></Modal>;
       default: return null;
     }
   };
 
   // ── LAYOUT ──
   const allNav = [
+    { id: "dashboard", icon: "🎯", label: "Dashboard" },
     { id: "resumen", icon: "📊", label: "Resumen" },
     { id: "list", icon: "📋", label: "Solicitudes" },
     { id: "projects", icon: "🏗️", label: "Proyectos" },
     { id: "machines", icon: "⚙️", label: "Maquinas" },
+    { id: "coordinar", icon: "📦", label: "Por coordinar" },
     { id: "providers", icon: "🏢", label: "Proveedores" },
   ];
   const canSeeResumen = isAdmin || isGerencia || isCostos || isCoordinadorMaquinas || isVisorCompras;
-  const visibleNav = allNav.filter(n => n.id !== "resumen" || canSeeResumen);
+  const visibleNav = allNav.filter(n => {
+    if (n.id === "resumen" || n.id === "dashboard") return canSeeResumen;
+    return true;
+  });
   const roleLabel = isAdmin ? "Operaciones" : isTesoreria ? "Tesoreria" : isGerencia ? "Gerencia (solo lectura)" : isVisorCompras ? "Visor de Compras (solo lectura)" : isCostos ? "Costos / Operaciones" : isCoordinadorMaquinas ? "Coord. Maquinas" : userRole;
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
@@ -2720,10 +3462,12 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       <div style={{ padding: isMobile ? "12px 16px" : "20px 32px 8px 32px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
-            {sec === "resumen" ? "Command Center — Seguimiento por proyecto"
+            {sec === "dashboard" ? "Dashboard gerencial — Maquinas"
+              : sec === "resumen" ? "Command Center — Seguimiento por proyecto"
               : sec === "projects" ? "Proyectos"
               : sec === "providers" ? "Proveedores"
               : sec === "machines" ? "Maquinas registradas"
+              : sec === "coordinar" ? "Por coordinar con proveedores"
               : "Solicitudes de pago — Maquinas"}
           </h2>
           <span style={{ fontSize: 13, color: cc.accent, fontWeight: 600, letterSpacing: 0.3 }}>{cc.name}</span>
@@ -2731,10 +3475,12 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
         <Badge color={cc.color}>{cp.length} solicitudes</Badge>
       </div>
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{
-        sec === "resumen" ? renderResumen()
+        sec === "dashboard" ? renderDashboard()
+          : sec === "resumen" ? renderResumen()
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
           : sec === "machines" ? renderMachines()
+          : sec === "coordinar" ? renderCoordinar()
           : renderList()
       }</div>
     </div>
