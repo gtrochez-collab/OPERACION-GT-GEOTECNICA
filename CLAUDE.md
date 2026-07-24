@@ -33,12 +33,23 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   VARIOS colaboradores de hr-emps5 con cant+motivo c/u: primera_vez/perdida/
   danio), inventario, proveedores (Chispa Safety, Larach, La Mundial, Summit,
   Infra, Amazon), Descuentos planilla (pérdidas → deducir, marca "deducido").
-  Pestaña **Dotación**: ficha visual por colaborador (avatar EppFigure SVG
-  con slots casco/lentes/chaleco/guantes/botas/etc. — llenos=tiene, punteado=
-  falta vs BASELINE) alimentada de requisiciones ENTREGADAS; KPIs completos/
-  faltantes; foto del empleado (photoCache cp-file). Flujo: pendiente →
-  aprobada → entregada (descuenta stock + queda en ficha). Keys: `ep-*`.
+  Pestaña **Dotación**: KITS POR PUESTO (const PUESTOS) — ingeniero (casco
+  blanco+chaleco khaki, sin camisa/botas: no se proveen), operador_dg (casco
+  anaranjado+polo negra, SIN guantes), operador_dp (casco anaranjado+camisa
+  amarilla+guantes), ayudante/técnico (casco amarillo+camisa anaranjada),
+  ayudante_concreto (=ayudante+opcionales látex/KN95/overol), mecánico (casco
+  azul+guantes_mecanica), soldador (kit especial: careta/delantal/polainas/
+  mangas/capucha — Kevin Hernández y Norman SUB), tornero (carnaza/esmerilar/
+  lumbar/orejeras — Moisés SUB), oficina (sin EPP, excluido de KPIs). Jeans
+  default en todos. Avatar EppFigure SVG por puesto (color de casco + estilo
+  de camisa; tiene=color, falta=punteado). autoPuesto: SEED_PUESTOS por nombre
+  (listas DG/DP de Gerson) + keywords de position; override manual en
+  `ep-puestos` (selector en la ficha). inferTipo(nombre) resuelve items/líneas
+  viejas sin tipoEpp. KPIs solo personal de campo. Keys: `ep-*`.
   Footer créditos "Lic. Gerson & Ing. Nanu · GAIB Services".
+  ⚠ Forms (ItemFormImpl/ProvFormImpl) viven a NIVEL DE MÓDULO — definirlos
+  dentro del componente causa remount y pérdida de estado al subir fotos.
+  CartModal/FichaModal se renderizan como llamada `{CartModal()}`, no JSX.
 - `GeoDrillVault.jsx`, `projects.js` (base + helpers), `holidays.js`, `theme.js`.
 
 ## Claves de datos (store = supabase.js)

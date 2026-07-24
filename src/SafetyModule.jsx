@@ -39,21 +39,189 @@ const CATEGORIAS = [
 const catLabel = (v) => CATEGORIAS.find((c) => c.value === v)?.label || v || "—";
 const catIcon = (v) => CATEGORIAS.find((c) => c.value === v)?.icon || "🦺";
 
-// Tipos de EPP por parte del cuerpo — mapean a los "slots" del avatar.
+// Tipos de EPP — mapean a los "slots" del avatar y a los kits por puesto.
 const EPP_TIPOS = [
-  { value: "casco",      label: "Casco",                icon: "⛑️" },
-  { value: "lentes",     label: "Lentes / Gafas",       icon: "🥽" },
-  { value: "mascarilla", label: "Mascarilla / Careta",  icon: "😷" },
-  { value: "auditiva",   label: "Protección auditiva",  icon: "🎧" },
-  { value: "chaleco",    label: "Chaleco / Camisa",     icon: "🦺" },
-  { value: "guantes",    label: "Guantes",              icon: "🧤" },
-  { value: "botas",      label: "Botas",                icon: "🥾" },
-  { value: "arnes",      label: "Arnés",                icon: "🪢" },
-  { value: "otro",       label: "Otro EPP",             icon: "🧰" },
+  { value: "casco",                  label: "Casco",                            icon: "⛑️" },
+  { value: "lentes",                 label: "Gafas / Lentes",                   icon: "🥽" },
+  { value: "camisa",                 label: "Camisa de trabajo",                icon: "👕" },
+  { value: "chaleco",                label: "Chaleco",                          icon: "🦺" },
+  { value: "pantalon_reflectivo",    label: "Pantalón c/ cinta reflectiva",     icon: "👖" },
+  { value: "botas",                  label: "Burros con cubo (botas)",          icon: "🥾" },
+  { value: "guantes",                label: "Guantes de uso general",           icon: "🧤" },
+  { value: "guantes_mecanica",       label: "Guantes de mecánica",              icon: "🧤" },
+  { value: "guantes_soldadura",      label: "Guantes de soldadura",             icon: "🧤" },
+  { value: "guantes_carnaza",        label: "Guantes de carnaza",               icon: "🧤" },
+  { value: "guantes_latex",          label: "Guantes de látex / nitrilo",       icon: "🧤" },
+  { value: "auditiva",               label: "Tapones auditivos",                icon: "👂" },
+  { value: "auditiva_orejera",       label: "Orejeras (auditiva)",              icon: "🎧" },
+  { value: "cubrenucas",             label: "Cubrenucas / Balaclava",           icon: "🧣" },
+  { value: "mascarilla",             label: "Mascarilla desechable KN95",       icon: "😷" },
+  { value: "mascarilla_respiratoria",label: "Mascarilla respiratoria",          icon: "😷" },
+  { value: "careta_soldar",          label: "Careta electrónica de soldar",     icon: "🛡️" },
+  { value: "careta_esmerilar",       label: "Careta de esmerilar",              icon: "🔰" },
+  { value: "delantal_soldador",      label: "Delantal de soldador",             icon: "🥼" },
+  { value: "polainas_soldador",      label: "Polainas de soldador",             icon: "🦵" },
+  { value: "mangas_soldador",        label: "Mangas de soldador",               icon: "💪" },
+  { value: "capucha_carnaza",        label: "Monja / Capucha de carnaza",       icon: "🥷" },
+  { value: "overol",                 label: "Overol impermeable descartable",   icon: "🧥" },
+  { value: "soporte_lumbar",         label: "Soporte lumbar",                   icon: "🎽" },
+  { value: "arnes",                  label: "Arnés",                            icon: "🪢" },
+  { value: "otro",                   label: "Otro EPP",                         icon: "🧰" },
 ];
 const tipoDef = (v) => EPP_TIPOS.find((t) => t.value === v) || EPP_TIPOS[EPP_TIPOS.length - 1];
-// Dotacion base que idealmente TODOS deberian tener.
-const BASELINE = ["casco", "lentes", "chaleco", "guantes", "botas"];
+
+// Normalizador para matching de nombres/posiciones (sin acentos, minusculas).
+const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+// Inferir el tipo de EPP desde el nombre del item — para items/lineas viejas
+// que se crearon sin tipo (ej: "Casco" → casco). Asi las entregas viejas
+// SI llenan el slot del avatar.
+const inferTipo = (nombre) => {
+  const n = norm(nombre);
+  if (!n) return null;
+  if (n.includes("casco")) return "casco";
+  if (n.includes("gafa") || n.includes("lente")) return "lentes";
+  if (n.includes("careta") && (n.includes("soldar") || n.includes("solda"))) return "careta_soldar";
+  if (n.includes("careta") || n.includes("esmeril")) return "careta_esmerilar";
+  if (n.includes("guante")) {
+    if (n.includes("mecani")) return "guantes_mecanica";
+    if (n.includes("soldad")) return "guantes_soldadura";
+    if (n.includes("carnaza")) return "guantes_carnaza";
+    if (n.includes("latex") || n.includes("nitrilo")) return "guantes_latex";
+    return "guantes";
+  }
+  if (n.includes("chaleco")) return "chaleco";
+  if (n.includes("camisa") || n.includes("polo")) return "camisa";
+  if (n.includes("pantalon")) return "pantalon_reflectivo";
+  if (n.includes("bota") || n.includes("burro")) return "botas";
+  if (n.includes("tapon")) return "auditiva";
+  if (n.includes("orejera")) return "auditiva_orejera";
+  if (n.includes("balaclava") || n.includes("cubrenuca") || n.includes("cubre nuca")) return "cubrenucas";
+  if (n.includes("respirator")) return "mascarilla_respiratoria";
+  if (n.includes("mascarilla") || n.includes("kn95")) return "mascarilla";
+  if (n.includes("delantal")) return "delantal_soldador";
+  if (n.includes("polaina")) return "polainas_soldador";
+  if (n.includes("manga")) return "mangas_soldador";
+  if (n.includes("capucha") || n.includes("monja")) return "capucha_carnaza";
+  if (n.includes("overol") || n.includes("overall")) return "overol";
+  if (n.includes("lumbar") || n.includes("faja")) return "soporte_lumbar";
+  if (n.includes("arnes")) return "arnes";
+  return null;
+};
+
+// ── PUESTOS: kit de EPP por posicion (segun especificacion de Gerson) ──
+// casco = color del casco del puesto; camisa = estilo visual; req = lo que la
+// empresa provee y se le debe entregar; camisaDefault = camisa propia (no la
+// provee la empresa, se dibuja siempre); jeans van por defecto en TODOS.
+const PUESTOS = {
+  ingeniero: {
+    label: "Ingeniero",
+    casco: "#F6F5F2", cascoName: "Casco blanco",
+    camisa: "blanca_default", camisaDefault: true,
+    req: ["casco", "lentes", "chaleco", "guantes", "auditiva", "cubrenucas"],
+    notas: "Camisa y jeans por defecto (no los provee la empresa). El chaleco khaki sí lo puede solicitar. Protección auditiva de tapón + cubrenucas o balaclava.",
+  },
+  operador_dg: {
+    label: "Operador Ø grande",
+    casco: "#E8762D", cascoName: "Casco anaranjado",
+    camisa: "polo_negra", camisaName: "Polo manga corta negra (líneas anaranjadas)",
+    req: ["casco", "camisa", "pantalon_reflectivo", "botas", "lentes", "auditiva", "cubrenucas"],
+    notas: "Pantalón con cinta reflectiva: SÍ lo provee la empresa. Protección auditiva de tapón + cubrenucas o balaclava.",
+  },
+  operador_dp: {
+    label: "Operador Ø pequeño",
+    casco: "#E8762D", cascoName: "Casco anaranjado",
+    camisa: "amarilla", camisaName: "Camisa manga larga amarilla (líneas negras)",
+    req: ["casco", "camisa", "pantalon_reflectivo", "botas", "lentes", "guantes", "auditiva", "cubrenucas"],
+    notas: "Pantalón con cinta reflectiva: SÍ lo provee la empresa. Protección auditiva de tapón + cubrenucas o balaclava.",
+  },
+  ayudante: {
+    label: "Ayudante / Técnico",
+    casco: "#F2C40F", cascoName: "Casco amarillo",
+    camisa: "anaranjada", camisaName: "Camisa anaranjada (líneas negras)",
+    req: ["casco", "camisa", "botas", "lentes", "guantes", "auditiva", "cubrenucas"],
+    notas: "Jeans por defecto (no los provee la empresa). Protección auditiva de tapón + cubrenucas o balaclava.",
+  },
+  ayudante_concreto: {
+    label: "Ayudante Concreto",
+    casco: "#F2C40F", cascoName: "Casco amarillo",
+    camisa: "anaranjada", camisaName: "Camisa anaranjada (líneas negras)",
+    req: ["casco", "camisa", "botas", "lentes", "guantes", "auditiva", "cubrenucas"],
+    opcionales: ["guantes_latex", "mascarilla", "overol"],
+    notas: "Jeans por defecto. Para trabajos de concreto puede solicitar además: guantes de látex/nitrilo, mascarilla KN95 y overol impermeable descartable.",
+  },
+  mecanico: {
+    label: "Mecánico",
+    casco: "#2F6FE0", cascoName: "Casco azul",
+    camisa: "anaranjada_rayas", camisaName: "Camisa anaranjada (rayas negras)",
+    req: ["casco", "camisa", "guantes_mecanica", "botas", "lentes"],
+    notas: "Jeans por defecto. Guantes de mecánica (NO son los de uso general).",
+  },
+  soldador: {
+    label: "Soldador",
+    casco: null, camisa: "anaranjada",
+    req: ["careta_soldar", "mascarilla_respiratoria", "delantal_soldador", "polainas_soldador", "guantes_soldadura", "mangas_soldador", "capucha_carnaza"],
+    notas: "Kit completo de soldadura. Soldadores actuales: Kevin Hernández y Norman (Subterra).",
+  },
+  tornero: {
+    label: "Tornero",
+    casco: null, camisa: "anaranjada",
+    req: ["guantes_carnaza", "careta_esmerilar", "lentes", "soporte_lumbar", "auditiva_orejera"],
+    notas: "Tornero actual: Moisés (Subterra). Protección auditiva de orejera.",
+  },
+  oficina: {
+    label: "Oficina / Admin",
+    casco: null, camisa: "blanca_default", camisaDefault: true,
+    req: [],
+    notas: "Personal administrativo — sin dotación de EPP de campo requerida.",
+  },
+};
+const PUESTO_OPTIONS = Object.entries(PUESTOS).map(([value, p]) => ({ value, label: p.label }));
+
+// Etiqueta de un requisito DENTRO de un kit (casco/camisa con el color/estilo del puesto).
+const reqLabel = (puestoKey, tipo) => {
+  const P = PUESTOS[puestoKey] || {};
+  if (tipo === "casco" && P.cascoName) return P.cascoName;
+  if (tipo === "camisa" && P.camisaName) return P.camisaName;
+  return tipoDef(tipo).label;
+};
+
+// Asignacion automatica de puesto. Los overrides guardados en ep-puestos
+// GANAN siempre sobre esto (se cambian desde la ficha de dotacion).
+// Listas de operadores DG/DP y especialistas segun tabla de Gerson (jul 2026).
+const SEED_PUESTOS = [
+  // Operadores de diametro grande (polo negra)
+  { match: ["edgar", "izcano"], puesto: "operador_dg" },
+  { match: ["kevin", "guiza"], puesto: "operador_dg" },
+  { match: ["kevin", "sanchez", "adriano"], puesto: "operador_dg" },
+  { match: ["osue", "pineda"], puesto: "operador_dg" },
+  { match: ["joel", "maradiaga"], puesto: "operador_dg" },
+  // Operadores de diametro pequeno (camisa amarilla)
+  { match: ["josue", "izaguirre"], puesto: "operador_dp" },
+  { match: ["josue", "manuel", "andino"], puesto: "operador_dp" },
+  { match: ["luis", "carlos", "sanchez"], puesto: "operador_dp" },
+  { match: ["marvin", "zelaya"], puesto: "operador_dp" },
+  { match: ["yeferson", "andino"], puesto: "operador_dp" },
+  // Especialistas (Subterra)
+  { match: ["kevin", "hernandez"], puesto: "soldador", company: "subterra" },
+  { first: "norman", puesto: "soldador", company: "subterra" },
+  { first: "moises", puesto: "tornero", company: "subterra" },
+];
+const autoPuesto = (emp) => {
+  const toks = norm(emp.fullName).split(/\s+/).filter(Boolean);
+  for (const s of SEED_PUESTOS) {
+    if (s.company && emp.company !== s.company) continue;
+    if (s.first) { if (toks[0] === s.first) return s.puesto; continue; }
+    if (s.match.every((t) => toks.includes(t))) return s.puesto;
+  }
+  const p = norm(emp.position);
+  if (p.includes("ingenier") || p.includes("residente") || p.includes("encargado de proyecto")) return "ingeniero";
+  if (p.includes("mecanic")) return "mecanico";
+  if (p.includes("soldad")) return "soldador";
+  if (p.includes("torner")) return "tornero";
+  if (p.includes("asistente") || p.includes("contab") || p.includes("administr") || p.includes("financ") || p.includes("recepcion") || p.includes("gerencia") || p.includes("gerente") || p.includes("compras") || p.includes("conserje")) return "oficina";
+  return "ayudante"; // tecnicos, motoristas, operador de grua, etc. — ajustable desde la ficha
+};
 
 const MOTIVOS = [
   { value: "primera_vez", label: "Primera vez (dotación)", chip: "PRIMERA VEZ", color: BRAND.blue,   bg: BRAND.blueSoft },
@@ -123,74 +291,178 @@ const compressImage = (file) => new Promise((resolve, reject) => {
 });
 const withTimeout = (promise, ms, label = "operación") => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout ${ms}ms — ${label} no respondió`)), ms))]);
 
-// ── Avatar EPP: figura que muestra que equipo TIENE (color) y que le FALTA ──
-// `has` = Set de tipos de EPP que el colaborador posee. Los slots de la
-// dotacion base que faltan se dibujan como contorno punteado gris.
-const EppFigure = ({ has, size = 120 }) => {
-  const p = (t) => has.has(t);
-  const miss = (t) => !p(t) && BASELINE.includes(t);
-  const NEUTRAL = "#8B847C";
-  const COLORS = { casco: "#F59E0B", lentes: "#3E6A99", mascarilla: "#6B7280", auditiva: "#7B5FA8", chaleco: "#E8762D", guantes: "#5A8A4F", botas: "#6B4423", arnes: "#2C2A28" };
-  const MISS_ST = { fill: "none", stroke: "#C9C2B7", strokeWidth: 1.6, strokeDasharray: "3 2.5" };
-  const on = (t) => ({ fill: COLORS[t], stroke: "rgba(0,0,0,0.18)", strokeWidth: 1 });
+// ── Avatar EPP: obrero segun su puesto ──
+// Dibuja lo que TIENE (a color, con el estilo de su puesto: color de casco,
+// tipo de camisa) y lo que le FALTA del kit (contorno punteado). Los
+// "defaults" (jeans; camisa propia del ingeniero/oficina) se dibujan siempre
+// porque no los provee la empresa.
+const CAMISAS = {
+  blanca_default:   { fill: "#F7F4EE", trim: "#C9C2B7", sleeve: "long" },
+  polo_negra:       { fill: "#28231F", trim: "#E8762D", sleeve: "short", lines: true },
+  amarilla:         { fill: "#F2CE0D", trim: "#26221F", sleeve: "long", lines: true },
+  anaranjada:       { fill: "#E8762D", trim: "#26221F", sleeve: "long", lines: true },
+  anaranjada_rayas: { fill: "#E8762D", trim: "#26221F", sleeve: "long", stripes: true },
+};
+const GLOVES = { guantes: "#2E2B28", guantes_mecanica: "#23272E", guantes_soldadura: "#8B5E34", guantes_carnaza: "#C68B4E", guantes_latex: "#7DB8E8" };
+
+const EppFigure = ({ puesto = "ayudante", has, size = 120 }) => {
+  const P = PUESTOS[puesto] || PUESTOS.ayudante;
+  const need = (t) => P.req.includes(t);
+  const on = (t) => has.has(t);
+  const miss = (t) => need(t) && !has.has(t);
+  const SKIN = "#E9C6A0", SKIN_D = "#C79A70", JEANS = "#3E5578";
+  const DASH = { fill: "rgba(255,255,255,0.45)", stroke: "#B3A89A", strokeWidth: 1.7, strokeDasharray: "4 3" };
+  const cam = CAMISAS[P.camisa] || CAMISAS.blanca_default;
+  const camisaOn = on("camisa") || !!P.camisaDefault;
+  const shirtFill = camisaOn ? cam.fill : "#EDE9E1";
+  const shortSleeve = camisaOn && cam.sleeve === "short";
+  const pantsRefl = on("pantalon_reflectivo");
+  const pantsFill = pantsRefl ? "#49525C" : JEANS;
+  const gTypes = ["guantes_soldadura", "guantes_mecanica", "guantes_carnaza", "guantes_latex", "guantes"];
+  const gloveOn = gTypes.find((g) => on(g));
+  const gloveMiss = gTypes.some((g) => need(g)) && !gloveOn;
+  const armUp = camisaOn ? cam.fill : "#EDE9E1";
+  const armLo = shortSleeve ? SKIN : armUp;
+  const caretaOn = on("careta_soldar");
   return (
-    <svg viewBox="0 0 120 176" width={size} height={size * 176 / 120} style={{ display: "block" }}>
-      {/* Cuerpo base neutro (siempre visible) */}
-      <line x1="44" y1="70" x2="26" y2="108" stroke={NEUTRAL} strokeWidth="5" strokeLinecap="round" />
-      <line x1="76" y1="70" x2="94" y2="108" stroke={NEUTRAL} strokeWidth="5" strokeLinecap="round" />
-      <line x1="52" y1="116" x2="48" y2="158" stroke={NEUTRAL} strokeWidth="6" strokeLinecap="round" />
-      <line x1="68" y1="116" x2="72" y2="158" stroke={NEUTRAL} strokeWidth="6" strokeLinecap="round" />
-      <circle cx="60" cy="40" r="17" fill="#F1EDE5" stroke={NEUTRAL} strokeWidth="2" />
-      <rect x="55" y="55" width="10" height="9" rx="2" fill="#F1EDE5" stroke={NEUTRAL} strokeWidth="1.5" />
-
-      {/* Auditiva (orejeras) */}
-      {p("auditiva") && (<g><rect x="39" y="35" width="7" height="12" rx="3" {...on("auditiva")} /><rect x="74" y="35" width="7" height="12" rx="3" {...on("auditiva")} /></g>)}
-
-      {/* Chaleco / torso */}
-      {p("chaleco") ? (
-        <g>
-          <path d="M42 64 h36 a4 4 0 0 1 4 4 v44 a4 4 0 0 1 -4 4 h-36 a4 4 0 0 1 -4 -4 v-44 a4 4 0 0 1 4 -4 z" {...on("chaleco")} />
-          <rect x="47" y="72" width="26" height="4" fill="#FDE68A" opacity="0.9" />
-          <rect x="47" y="98" width="26" height="4" fill="#FDE68A" opacity="0.9" />
-          <line x1="60" y1="64" x2="60" y2="116" stroke="rgba(0,0,0,0.22)" strokeWidth="1.5" />
-        </g>
-      ) : miss("chaleco") ? (
-        <rect x="38" y="64" width="44" height="52" rx="6" {...MISS_ST} />
+    <svg viewBox="0 0 140 200" width={size} height={Math.round(size * 200 / 140)} style={{ display: "block" }}>
+      {/* sombra */}
+      <ellipse cx="70" cy="188" rx="34" ry="5" fill="rgba(44,42,40,0.10)" />
+      {/* pantalon: jeans por defecto / con cinta reflectiva si la tiene */}
+      <rect x="50" y="117" width="40" height="10" rx="2" fill={pantsFill} />
+      <rect x="50" y="124" width="17" height="47" rx="2" fill={pantsFill} />
+      <rect x="73" y="124" width="17" height="47" rx="2" fill={pantsFill} />
+      {pantsRefl && (<g><rect x="50" y="142" width="17" height="5" fill="#D9DEE3" /><rect x="73" y="142" width="17" height="5" fill="#D9DEE3" /></g>)}
+      {miss("pantalon_reflectivo") && (<g><rect x="50" y="142" width="17" height="5" {...DASH} /><rect x="73" y="142" width="17" height="5" {...DASH} /></g>)}
+      {/* polainas de soldador */}
+      {on("polainas_soldador") && (<g>
+        <rect x="49" y="146" width="19" height="26" rx="3" fill="#8B5E34" stroke="#6B4423" />
+        <rect x="72" y="146" width="19" height="26" rx="3" fill="#8B5E34" stroke="#6B4423" />
+        <line x1="49" y1="155" x2="68" y2="155" stroke="#6B4423" strokeWidth="1.2" /><line x1="72" y1="155" x2="91" y2="155" stroke="#6B4423" strokeWidth="1.2" />
+        <line x1="49" y1="164" x2="68" y2="164" stroke="#6B4423" strokeWidth="1.2" /><line x1="72" y1="164" x2="91" y2="164" stroke="#6B4423" strokeWidth="1.2" />
+      </g>)}
+      {miss("polainas_soldador") && (<g><rect x="49" y="146" width="19" height="26" rx="3" {...DASH} /><rect x="72" y="146" width="19" height="26" rx="3" {...DASH} /></g>)}
+      {/* burros con cubo (botas) */}
+      {on("botas") ? (<g>
+        <rect x="46" y="167" width="23" height="13" rx="3" fill="#8A5A2B" stroke="#6B4423" />
+        <rect x="71" y="167" width="23" height="13" rx="3" fill="#8A5A2B" stroke="#6B4423" />
+        <rect x="44" y="178" width="27" height="6" rx="2" fill="#3A2E20" />
+        <rect x="69" y="178" width="27" height="6" rx="2" fill="#3A2E20" />
+      </g>) : miss("botas") ? (<g>
+        <rect x="46" y="167" width="23" height="13" rx="3" {...DASH} />
+        <rect x="71" y="167" width="23" height="13" rx="3" {...DASH} />
+      </g>) : null}
+      {/* brazos (manga corta = antebrazo de piel) */}
+      <line x1="50" y1="73" x2="37" y2="93" stroke={armUp} strokeWidth="10" strokeLinecap="round" />
+      <line x1="90" y1="73" x2="103" y2="93" stroke={armUp} strokeWidth="10" strokeLinecap="round" />
+      <line x1="37" y1="93" x2="30" y2="110" stroke={armLo} strokeWidth="9" strokeLinecap="round" />
+      <line x1="103" y1="93" x2="110" y2="110" stroke={armLo} strokeWidth="9" strokeLinecap="round" />
+      {/* mangas de soldador */}
+      {on("mangas_soldador") && (<g><line x1="37" y1="91" x2="29.5" y2="110" stroke="#8B5E34" strokeWidth="9.5" strokeLinecap="round" /><line x1="103" y1="91" x2="110.5" y2="110" stroke="#8B5E34" strokeWidth="9.5" strokeLinecap="round" /></g>)}
+      {/* torso / camisa */}
+      <rect x="46" y="64" width="48" height="57" rx="9" fill={shirtFill} stroke="rgba(0,0,0,0.12)" />
+      {camisaOn && cam.lines && (<g><rect x="47" y="79" width="46" height="2.5" fill={cam.trim} opacity="0.95" /><rect x="47" y="103" width="46" height="2.5" fill={cam.trim} opacity="0.95" /></g>)}
+      {camisaOn && cam.stripes && (<g><rect x="47" y="77" width="46" height="6" fill={cam.trim} /><rect x="47" y="95" width="46" height="6" fill={cam.trim} /></g>)}
+      {camisaOn && <path d="M61,64 l9,10 l9,-10" fill="none" stroke={cam.trim} strokeWidth="2" />}
+      {miss("camisa") && <rect x="46" y="64" width="48" height="57" rx="9" {...DASH} />}
+      {/* chaleco khaki */}
+      {on("chaleco") ? (<g>
+        <rect x="48" y="64" width="17" height="48" rx="5" fill="#C7B287" stroke="#A8926B" />
+        <rect x="75" y="64" width="17" height="48" rx="5" fill="#C7B287" stroke="#A8926B" />
+        <rect x="51" y="93" width="11" height="9" rx="1.5" fill="#B7A276" stroke="#A8926B" />
+        <rect x="78" y="93" width="11" height="9" rx="1.5" fill="#B7A276" stroke="#A8926B" />
+      </g>) : miss("chaleco") ? (
+        <rect x="47" y="64" width="46" height="48" rx="6" {...DASH} />
       ) : null}
-
-      {/* Arnes (sobre el torso) */}
-      {p("arnes") && (<g stroke={COLORS.arnes} strokeWidth="3.5" fill="none" strokeLinecap="round"><line x1="46" y1="66" x2="74" y2="112" /><line x1="74" y1="66" x2="46" y2="112" /></g>)}
-
-      {/* Casco (domo + ala) */}
-      {p("casco") ? (
-        <g><path d="M43 40 a17 15 0 0 1 34 0 z" {...on("casco")} /><rect x="39" y="38" width="42" height="5" rx="2.5" {...on("casco")} /><rect x="58" y="24" width="4" height="7" rx="2" {...on("casco")} /></g>
-      ) : miss("casco") ? (
-        <path d="M42 42 a18 16 0 0 1 36 0" {...MISS_ST} />
+      {/* delantal de soldador */}
+      {on("delantal_soldador") ? (<g>
+        <path d="M57,74 L83,74 L88,143 L52,143 Z" fill="#7A6350" stroke="#5D4C3C" />
+        <line x1="61" y1="74" x2="66" y2="65" stroke="#5D4C3C" strokeWidth="2.5" /><line x1="79" y1="74" x2="74" y2="65" stroke="#5D4C3C" strokeWidth="2.5" />
+        <rect x="62" y="98" width="16" height="12" rx="2" fill="#6B563F" />
+      </g>) : miss("delantal_soldador") ? (
+        <path d="M57,74 L83,74 L88,143 L52,143 Z" {...DASH} />
       ) : null}
-
-      {/* Lentes */}
-      {p("lentes") ? (
-        <g><rect x="47" y="37" width="26" height="8" rx="4" {...on("lentes")} opacity="0.92" /><line x1="60" y1="41" x2="60" y2="41" stroke="#fff" strokeWidth="1" /></g>
+      {/* soporte lumbar */}
+      {on("soporte_lumbar") ? (<g>
+        <rect x="45" y="106" width="50" height="15" rx="5" fill="#23272E" stroke="#111418" />
+        <rect x="55" y="106" width="4" height="15" fill="#E8762D" /><rect x="81" y="106" width="4" height="15" fill="#E8762D" />
+      </g>) : miss("soporte_lumbar") ? (
+        <rect x="45" y="106" width="50" height="15" rx="5" {...DASH} />
+      ) : null}
+      {/* arnes */}
+      {on("arnes") && (<g><line x1="52" y1="67" x2="88" y2="114" stroke="#23272E" strokeWidth="4" strokeLinecap="round" /><line x1="88" y1="67" x2="52" y2="114" stroke="#23272E" strokeWidth="4" strokeLinecap="round" /><rect x="48" y="110" width="44" height="6" rx="3" fill="#23272E" /></g>)}
+      {/* manos / guantes */}
+      {gloveOn ? (<g>
+        {gloveOn === "guantes_soldadura" && (<g><rect x="23" y="101" width="12" height="9" rx="2" fill="#8B5E34" stroke="#6B4423" /><rect x="105" y="101" width="12" height="9" rx="2" fill="#8B5E34" stroke="#6B4423" /></g>)}
+        <circle cx="29" cy="114" r="6.8" fill={GLOVES[gloveOn]} stroke="rgba(0,0,0,0.3)" />
+        <circle cx="111" cy="114" r="6.8" fill={GLOVES[gloveOn]} stroke="rgba(0,0,0,0.3)" />
+        {gloveOn === "guantes_mecanica" && (<g><line x1="25" y1="111" x2="33" y2="111" stroke="#E8762D" strokeWidth="1.6" /><line x1="107" y1="111" x2="115" y2="111" stroke="#E8762D" strokeWidth="1.6" /></g>)}
+      </g>) : gloveMiss ? (<g>
+        <circle cx="29" cy="114" r="6.8" {...DASH} />
+        <circle cx="111" cy="114" r="6.8" {...DASH} />
+      </g>) : (<g>
+        <circle cx="29" cy="114" r="6" fill={SKIN} stroke={SKIN_D} />
+        <circle cx="111" cy="114" r="6" fill={SKIN} stroke={SKIN_D} />
+      </g>)}
+      {/* cubrenucas / balaclava */}
+      {on("cubrenucas") && <rect x="55" y="49" width="30" height="14" rx="5" fill="#4A5568" />}
+      {/* cuello + cabeza */}
+      <rect x="64" y="55" width="12" height="10" fill={SKIN} />
+      <circle cx="70" cy="44" r="15.5" fill={SKIN} stroke={SKIN_D} strokeWidth="1.2" />
+      <circle cx="64.5" cy="43" r="1.7" fill="#3B2F25" /><circle cx="75.5" cy="43" r="1.7" fill="#3B2F25" />
+      <path d="M65,50 Q70,54 75,50" fill="none" stroke="#B5836A" strokeWidth="1.4" strokeLinecap="round" />
+      {/* tapones auditivos */}
+      {on("auditiva") && (<g><circle cx="54.5" cy="44" r="2.6" fill="#E8762D" stroke="#fff" strokeWidth="0.7" /><circle cx="85.5" cy="44" r="2.6" fill="#E8762D" stroke="#fff" strokeWidth="0.7" /></g>)}
+      {/* gafas */}
+      {on("lentes") ? (
+        <rect x="56" y="37.5" width="28" height="8" rx="4" fill="#A9CBEE" opacity="0.92" stroke="#33608F" strokeWidth="1.2" />
       ) : miss("lentes") ? (
-        <rect x="47" y="37" width="26" height="8" rx="4" {...MISS_ST} />
+        <rect x="56" y="37.5" width="28" height="8" rx="4" {...DASH} />
       ) : null}
-
-      {/* Mascarilla */}
-      {p("mascarilla") && (<path d="M50 46 h20 l-3 11 h-14 z" {...on("mascarilla")} />)}
-
-      {/* Guantes */}
-      {p("guantes") ? (
-        <g><circle cx="24" cy="110" r="7.5" {...on("guantes")} /><circle cx="96" cy="110" r="7.5" {...on("guantes")} /></g>
-      ) : miss("guantes") ? (
-        <g><circle cx="24" cy="110" r="7.5" {...MISS_ST} /><circle cx="96" cy="110" r="7.5" {...MISS_ST} /></g>
+      {/* mascarillas (si no hay careta de soldar encima) */}
+      {(on("mascarilla") || on("mascarilla_respiratoria")) && !caretaOn && (<g>
+        <path d="M58,47 Q70,43 82,47 L79,58 Q70,62 61,58 Z" fill="#ECE9E4" stroke="#B8B0A4" />
+        {on("mascarilla_respiratoria") && (<g><circle cx="62" cy="54.5" r="3" fill="#77828C" stroke="#55606B" /><circle cx="78" cy="54.5" r="3" fill="#77828C" stroke="#55606B" /></g>)}
+      </g>)}
+      {miss("mascarilla_respiratoria") && !caretaOn && <path d="M58,47 Q70,43 82,47 L79,58 Q70,62 61,58 Z" {...DASH} />}
+      {/* monja / capucha de carnaza */}
+      {on("capucha_carnaza") && (<g>
+        <path fillRule="evenodd" d="M70,25.5 a19.5,19.5 0 1 0 0.01,0 Z M70,32.5 a12.5,12.5 0 1 1 -0.01,0 Z" fill="#8B5E34" stroke="#6B4423" />
+        <rect x="54" y="58" width="32" height="9" rx="4" fill="#8B5E34" stroke="#6B4423" />
+      </g>)}
+      {/* careta de esmerilar */}
+      {on("careta_esmerilar") ? (<g>
+        <rect x="52" y="24" width="36" height="6" rx="3" fill="#37404A" />
+        <path d="M52,28 h36 v27 q0,7 -7,7 h-22 q-7,0 -7,-7 Z" fill="#CFE4F7" opacity="0.55" stroke="#7FA5C4" />
+      </g>) : miss("careta_esmerilar") ? (
+        <path d="M52,28 h36 v27 q0,7 -7,7 h-22 q-7,0 -7,-7 Z" {...DASH} />
       ) : null}
-
-      {/* Botas */}
-      {p("botas") ? (
-        <g><path d="M40 152 h10 v8 h4 v6 h-18 v-6 z" {...on("botas")} /><path d="M66 152 h10 l4 14 h-18 v-6 h4 z" {...on("botas")} /></g>
-      ) : miss("botas") ? (
-        <g><path d="M40 152 h10 v8 h4 v6 h-18 v-6 z" {...MISS_ST} /><path d="M66 152 h10 l4 14 h-18 v-6 h4 z" {...MISS_ST} /></g>
+      {/* careta electronica de soldar */}
+      {caretaOn ? (<g>
+        <rect x="52" y="25" width="36" height="36" rx="6" fill="#3A3F45" stroke="#23272E" strokeWidth="1.3" />
+        <rect x="59" y="39" width="22" height="9" rx="2" fill="#14532D" stroke="#0B3B1E" />
+        <circle cx="52" cy="42" r="2.6" fill="#E8762D" /><circle cx="88" cy="42" r="2.6" fill="#E8762D" />
+      </g>) : miss("careta_soldar") ? (
+        <rect x="52" y="25" width="36" height="36" rx="6" {...DASH} />
       ) : null}
+      {/* casco (color del puesto) */}
+      {P.casco && on("casco") && (<g>
+        <path d="M52,35 a18,16 0 0 1 36,0 Z" fill={P.casco} stroke="rgba(0,0,0,0.28)" strokeWidth="1" />
+        <rect x="45" y="33" width="50" height="6" rx="3" fill={P.casco} stroke="rgba(0,0,0,0.28)" strokeWidth="1" />
+        <rect x="66.5" y="19" width="7" height="8" rx="3" fill={P.casco} stroke="rgba(0,0,0,0.28)" strokeWidth="1" />
+      </g>)}
+      {P.casco && miss("casco") && (<g>
+        <path d="M52,35 a18,16 0 0 1 36,0 Z" {...DASH} />
+        <rect x="45" y="33" width="50" height="6" rx="3" {...DASH} />
+      </g>)}
+      {/* orejeras */}
+      {on("auditiva_orejera") ? (<g>
+        <path d="M53,24 a17,15 0 0 1 34,0" fill="none" stroke="#23272E" strokeWidth="3.5" />
+        <rect x="48" y="37" width="9" height="14" rx="4" fill="#23272E" /><rect x="83" y="37" width="9" height="14" rx="4" fill="#23272E" />
+        <circle cx="52.5" cy="44" r="2" fill="#E8762D" /><circle cx="87.5" cy="44" r="2" fill="#E8762D" />
+      </g>) : miss("auditiva_orejera") ? (<g>
+        <rect x="48" y="37" width="9" height="14" rx="4" {...DASH} /><rect x="83" y="37" width="9" height="14" rx="4" {...DASH} />
+      </g>) : null}
     </svg>
   );
 };
@@ -240,6 +512,95 @@ const Modal = ({ title, onClose, children, width = 640 }) => (
 const th = { padding: "9px 10px", textAlign: "left", fontSize: 10.5, fontWeight: 800, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5, borderBottom: `2px solid ${BRAND.border}`, whiteSpace: "nowrap" };
 const td = { padding: "9px 10px", fontSize: 13, color: BRAND.charcoal, borderBottom: `1px solid ${BRAND.borderSoft}`, verticalAlign: "middle" };
 
+// ── Form de ítem (a nivel de módulo: los re-renders del padre no lo desmontan) ──
+// Items viejos sin tipoEpp/descripcion/minStock se normalizan al abrir:
+// el tipo se auto-infiere del nombre para no bloquear el guardado.
+const ItemFormImpl = ({ item, providers, photoCache, setPhotoCache, onSave, onCancel }) => {
+  const [f, setF] = useState(() => item
+    ? { descripcion: "", minStock: 2, stock: 0, foto: null, ...item, tipoEpp: item.tipoEpp || inferTipo(item.nombre) || "" }
+    : { nombre: "", categoria: "", tipoEpp: "", proveedorId: "", precio: "", stock: 0, minStock: 2, descripcion: "", foto: null });
+  const [uploading, setUploading] = useState(false);
+  const [tipoTouched, setTipoTouched] = useState(!!(item && item.tipoEpp));
+  const u = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const handleFile = async (file) => {
+    if (!file) return;
+    if (!file.type?.startsWith("image/")) { alert("Seleccioná una imagen (JPG/PNG)."); return; }
+    setUploading(true);
+    try {
+      const dataUrl = await compressImage(file);
+      const fileId = uid();
+      const ok = await withTimeout(store.set(`cp-file-${fileId}`, { name: file.name, type: "image/jpeg", size: dataUrl.length, dataUrl }), 25000, "subir foto");
+      if (!ok) throw new Error("Supabase rechazó el upload.");
+      setPhotoCache((prev) => ({ ...prev, [fileId]: dataUrl }));
+      setF((p) => ({ ...p, foto: { fileId, name: file.name } }));
+    } catch (err) { alert("No se pudo subir la foto: " + (err?.message || err)); }
+    finally { setUploading(false); }
+  };
+  const fotoUrl = f.foto?.fileId ? photoCache[f.foto.fileId] : null;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      {/* Foto */}
+      <div style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 16, padding: "12px 14px", background: BRAND.beigeLight, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.md }}>
+        <div style={{ width: 78, height: 78, borderRadius: R.md, overflow: "hidden", background: "#fff", border: `1px solid ${BRAND.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          {fotoUrl ? <img src={fotoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 34, opacity: 0.5 }}>📷</span>}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: BRAND.ink }}>Foto del artículo</div>
+          <div style={{ fontSize: 11, color: uploading ? "#B45309" : BRAND.stone }}>{uploading ? "⏳ Subiendo…" : (f.foto ? "Imagen cargada" : "Opcional — ayuda a identificar el EPP.")}</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", padding: "6px 14px", background: BRAND.orange, color: "#fff", borderRadius: R.sm, cursor: uploading ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700, opacity: uploading ? 0.6 : 1 }}>
+              {f.foto ? "Cambiar foto" : "Subir foto"}
+              <input type="file" accept="image/*" style={{ display: "none" }} disabled={uploading} onChange={(ev) => { const file = ev.target.files?.[0]; ev.target.value = ""; if (file) handleFile(file); }} />
+            </label>
+            {f.foto && <Btn small variant="ghost" onClick={() => u("foto", null)}>Quitar</Btn>}
+          </div>
+        </div>
+      </div>
+      <div style={{ gridColumn: "1/-1" }}><Input label="Nombre del ítem" placeholder="Ej: Casco tipo I con barbiquejo" value={f.nombre} onChange={(e) => { const v = e.target.value; setF((p) => ({ ...p, nombre: v, tipoEpp: tipoTouched ? p.tipoEpp : (inferTipo(v) || p.tipoEpp || "") })); }} /></div>
+      <Select label="Tipo de EPP (se detecta del nombre)" placeholder="— Seleccionar —" options={EPP_TIPOS.map((t) => ({ value: t.value, label: `${t.icon} ${t.label}` }))} value={f.tipoEpp} onChange={(e) => { setTipoTouched(true); u("tipoEpp", e.target.value); }} />
+      <Select label="Categoría (área)" placeholder="— Seleccionar —" options={CATEGORIAS} value={f.categoria} onChange={(e) => u("categoria", e.target.value)} />
+      <Select label="Proveedor" placeholder="— Seleccionar —" options={providers.map((p) => ({ value: p.id, label: p.nombre }))} value={f.proveedorId} onChange={(e) => u("proveedorId", e.target.value)} />
+      <Input label="Precio real (L)" type="number" min="0" step="0.01" value={f.precio} onChange={(e) => u("precio", e.target.value)} />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Input label="Stock actual" type="number" min="0" value={f.stock} onChange={(e) => u("stock", e.target.value)} />
+        <Input label="Stock mínimo" type="number" min="0" value={f.minStock} onChange={(e) => u("minStock", e.target.value)} />
+      </div>
+      <div style={{ gridColumn: "1/-1" }}><TextArea label="Descripción" placeholder="Talla, norma, material, especificaciones…" value={f.descripcion} onChange={(e) => u("descripcion", e.target.value)} /></div>
+      {!providers.length && <div style={{ gridColumn: "1/-1", background: BRAND.yellowSoft, borderRadius: R.sm, padding: "8px 12px", fontSize: 12.5, color: "#8a6d0b" }}>⚠ No hay proveedores — andá a la pestaña Proveedores primero.</div>}
+      <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        <Btn variant="success" disabled={uploading} onClick={() => {
+          if (!f.nombre.trim()) return alert("Poné el nombre del ítem.");
+          if (!f.tipoEpp) return alert("Seleccioná el tipo de EPP.");
+          if (!f.categoria) return alert("Seleccioná la categoría.");
+          if (!f.proveedorId) return alert("Seleccioná el proveedor.");
+          if (f.precio === "" || Number(f.precio) < 0) return alert("Poné el precio real.");
+          onSave({ ...f, precio: Number(f.precio), stock: Number(f.stock) || 0, minStock: Number(f.minStock) || 0, id: f.id || uid() });
+        }}>{item ? "Guardar cambios" : "Agregar al catálogo"}</Btn>
+      </div>
+    </div>
+  );
+};
+
+// ── Form de proveedor (a nivel de módulo, misma razón) ──
+const ProvFormImpl = ({ prov, onSave, onCancel }) => {
+  const [f, setF] = useState(prov || { nombre: "", contacto: "", telefono: "", correo: "", notas: "" });
+  const u = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ gridColumn: "1/-1" }}><Input label="Nombre" value={f.nombre} onChange={(e) => u("nombre", e.target.value)} /></div>
+      <Input label="Contacto" value={f.contacto} onChange={(e) => u("contacto", e.target.value)} />
+      <Input label="Teléfono" value={f.telefono} onChange={(e) => u("telefono", e.target.value)} />
+      <div style={{ gridColumn: "1/-1" }}><Input label="Correo" value={f.correo} onChange={(e) => u("correo", e.target.value)} /></div>
+      <div style={{ gridColumn: "1/-1" }}><Input label="Notas" value={f.notas} onChange={(e) => u("notas", e.target.value)} /></div>
+      <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        <Btn variant="success" onClick={() => { if (!f.nombre.trim()) return alert("Poné el nombre."); onSave({ ...f, id: f.id || uid() }); }}>{prov ? "Guardar cambios" : "Agregar proveedor"}</Btn>
+      </div>
+    </div>
+  );
+};
+
 // =====================================================================
 export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const [providers, setProviders] = useState([]);
@@ -257,7 +618,9 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const [fReqEstado, setFReqEstado] = useState("");
   const [fDotQ, setFDotQ] = useState("");
   const [fDotCo, setFDotCo] = useState("");
+  const [fDotPuesto, setFDotPuesto] = useState("");
   const [fDotFalta, setFDotFalta] = useState(false); // solo con faltantes
+  const [puestosMap, setPuestosMap] = useState({}); // ep-puestos: {empId: puestoKey} — overrides manuales
 
   const canManage = ["admin", "costos", "almacenista"].includes(userRole);
   const canDeduct = canManage || userRole === "tesoreria";
@@ -265,13 +628,14 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
   useEffect(() => {
     (async () => {
-      const [pv, it, rq, em] = await Promise.all([
-        store.get("ep-providers"), store.get("ep-items"), store.get("ep-reqs"), store.get("hr-emps5"),
+      const [pv, it, rq, em, pu] = await Promise.all([
+        store.get("ep-providers"), store.get("ep-items"), store.get("ep-reqs"), store.get("hr-emps5"), store.get("ep-puestos"),
       ]);
       setProviders(Array.isArray(pv) ? pv : []);
       setItems(Array.isArray(it) ? it : []);
       setReqs(Array.isArray(rq) ? rq : []);
       setEmps(Array.isArray(em) ? em : []);
+      setPuestosMap(pu && typeof pu === "object" && !Array.isArray(pu) ? pu : {});
       setLoaded(true);
     })();
   }, []);
@@ -291,6 +655,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const sProv = async (v) => { setProviders(v); const ok = await store.set("ep-providers", v); if (!ok) alert("⚠ No se guardó en la nube (ep-providers)."); return ok; };
   const sItems = async (v) => { setItems(v); const ok = await store.set("ep-items", v); if (!ok) alert("⚠ No se guardó en la nube (ep-items)."); return ok; };
   const sReqs = async (v) => { setReqs(v); const ok = await store.set("ep-reqs", v); if (!ok) alert("⚠ No se guardó en la nube (ep-reqs)."); return ok; };
+  const sPuestos = async (v) => { setPuestosMap(v); const ok = await store.set("ep-puestos", v); if (!ok) alert("⚠ No se guardó en la nube (ep-puestos)."); return ok; };
 
   const provName = (id) => providers.find((p) => p.id === id)?.nombre || "—";
   const itemById = (id) => items.find((i) => i.id === id);
@@ -299,8 +664,18 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const itemPhoto = (it) => (it?.foto?.fileId ? photoCache[it.foto.fileId] : null);
   const activeEmps = useMemo(() => emps.filter((e) => e.status === "active").sort((a, b) => String(a.fullName).localeCompare(b.fullName)), [emps]);
 
-  // ── Dotacion: que EPP tiene cada colaborador (de requisiciones ENTREGADAS) ──
-  // Devuelve { tiene:[{tipo,nombre,qty,reqs:[num],lastDate,motivos}], tipos:Set, pend:[...] }
+  // Tipo de EPP resuelto: el guardado gana; si falta o es "otro", se infiere
+  // del nombre (asi los items/lineas viejos SI llenan el avatar).
+  const tipoDeItem = (it) => (it?.tipoEpp && it.tipoEpp !== "otro") ? it.tipoEpp : (inferTipo(it?.nombre) || it?.tipoEpp || "otro");
+  const tipoDeLinea = (l) => {
+    if (l?.tipoEpp && l.tipoEpp !== "otro") return l.tipoEpp;
+    const it = itemById(l?.itemId);
+    if (it?.tipoEpp && it.tipoEpp !== "otro") return it.tipoEpp;
+    return inferTipo(l?.nombre) || l?.tipoEpp || "otro";
+  };
+
+  // ── Dotacion: que EPP tiene cada colaborador (de requisiciones ENTREGADAS),
+  // evaluado contra el KIT de su puesto (override ep-puestos > auto por posicion) ──
   const dotacionDe = useMemo(() => {
     const map = {}; // empId -> {entregado:{}, pend:{}}
     for (const r of reqs) {
@@ -310,7 +685,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         if (!l.paraEmpId) continue;
         if (!map[l.paraEmpId]) map[l.paraEmpId] = { entregado: {}, pend: {} };
         const bucket = entregada ? map[l.paraEmpId].entregado : map[l.paraEmpId].pend;
-        const tipo = l.tipoEpp || itemById(l.itemId)?.tipoEpp || "otro";
+        const tipo = tipoDeLinea(l);
         const k = (l.itemId || l.nombre) + "|" + tipo;
         if (!bucket[k]) bucket[k] = { tipo, nombre: l.nombre, qty: 0, reqs: [], lastDate: null, motivos: {} };
         bucket[k].qty += l.qty;
@@ -322,15 +697,16 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     }
     const out = {};
     for (const e of emps) {
+      const puesto = puestosMap[e.id] || autoPuesto(e);
+      const kit = PUESTOS[puesto] || PUESTOS.ayudante;
       const m = map[e.id] || { entregado: {}, pend: {} };
       const tiene = Object.values(m.entregado);
-      const pend = Object.values(m.pend);
       const tipos = new Set(tiene.map((x) => x.tipo));
-      const falta = BASELINE.filter((t) => !tipos.has(t));
-      out[e.id] = { tiene, pend, tipos, falta, completo: falta.length === 0 && tiene.length > 0 };
+      const falta = kit.req.filter((t) => !tipos.has(t));
+      out[e.id] = { tiene, pend: Object.values(m.pend), tipos, falta, puesto, completo: kit.req.length > 0 && falta.length === 0 };
     }
     return out;
-  }, [reqs, emps, items]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [reqs, emps, items, puestosMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const perdidas = useMemo(() => {
     const o = [];
@@ -365,7 +741,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         if (!d.empId) return alert(`Falta indicar PARA QUIÉN va "${it.nombre}".`);
         if (!d.motivo) return alert(`Falta el MOTIVO de "${it.nombre}".`);
         const emp = empById(d.empId) || {};
-        lineas.push({ itemId: l.itemId, nombre: it.nombre, categoria: it.categoria, tipoEpp: it.tipoEpp || "otro", proveedor: provName(it.proveedorId), precio: Number(it.precio) || 0, qty: Number(d.qty), paraEmpId: d.empId, paraNombre: emp.fullName || "—", paraEmpresa: emp.company || "", motivo: d.motivo, deducido: false });
+        lineas.push({ itemId: l.itemId, nombre: it.nombre, categoria: it.categoria, tipoEpp: tipoDeItem(it), proveedor: provName(it.proveedorId), precio: Number(it.precio) || 0, qty: Number(d.qty), paraEmpId: d.empId, paraNombre: emp.fullName || "—", paraEmpresa: emp.company || "", motivo: d.motivo, deducido: false });
       }
     }
     const numero = "EPP-" + String(reqs.length + 1).padStart(3, "0");
@@ -416,7 +792,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
             {vis.map((it) => {
               const sinStock = (Number(it.stock) || 0) <= 0;
               const bajo = !sinStock && (Number(it.stock) || 0) <= (Number(it.minStock) || 0);
-              const foto = itemPhoto(it); const tp = tipoDef(it.tipoEpp);
+              const foto = itemPhoto(it); const tp = tipoDef(tipoDeItem(it));
               return (
                 <div key={it.id} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: BRAND.shadowSm }}>
                   <div style={{ height: 130, background: foto ? "#F1EDE5" : BRAND.beigeLight, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", borderBottom: `1px solid ${BRAND.borderSoft}` }}>
@@ -465,7 +841,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
               return (
                 <div key={l.key} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.md, padding: 14 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 10 }}>
-                    <div style={{ fontWeight: 800, fontSize: 13.5, color: BRAND.charcoal }}>{tipoDef(it.tipoEpp).icon} {it.nombre} <span style={{ fontWeight: 600, color: GREEN }}>· {fmtL(it.precio)}</span> <span style={{ fontWeight: 600, color: BRAND.stone, fontSize: 12 }}>· {lineUnits(l)} uds</span></div>
+                    <div style={{ fontWeight: 800, fontSize: 13.5, color: BRAND.charcoal }}>{tipoDef(tipoDeItem(it)).icon} {it.nombre} <span style={{ fontWeight: 600, color: GREEN }}>· {fmtL(it.precio)}</span> <span style={{ fontWeight: 600, color: BRAND.stone, fontSize: 12 }}>· {lineUnits(l)} uds</span></div>
                     <button onClick={() => setCart((c) => c.filter((x) => x.key !== l.key))} style={{ background: "none", border: "none", color: BRAND.red, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Quitar ítem</button>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -541,7 +917,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                         return (
                           <tr key={i}>
                             <td style={{ ...td, fontWeight: 700 }}>{l.nombre}</td>
-                            <td style={td}>{tipoDef(l.tipoEpp).icon} {tipoDef(l.tipoEpp).label}</td>
+                            <td style={td}>{tipoDef(tipoDeLinea(l)).icon} {tipoDef(tipoDeLinea(l)).label}</td>
                             <td style={td}>{l.proveedor}</td>
                             <td style={td}>{l.paraNombre} <span style={{ fontSize: 10, color: BRAND.stone, fontWeight: 700 }}>{l.paraEmpresa ? coTag(l.paraEmpresa) : ""}</span></td>
                             <td style={td}><Chip color={m.color} bg={m.bg}>{m.chip}</Chip>{l.motivo === "perdida" && l.deducido && <Chip color={GREEN} bg={BRAND.greenSoft} style={{ marginLeft: 5 }}>DEDUCIDO ✓</Chip>}</td>
@@ -562,30 +938,47 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     );
   };
 
-  // ══════════════════════════ DOTACION (fichas visuales) ══════════════════════════
+  // ══════════════════════════ DOTACION (fichas visuales por puesto) ══════════════════════════
   const renderDotacion = () => {
     let list = activeEmps;
     if (fDotCo) list = list.filter((e) => e.company === fDotCo);
-    if (fDotQ) list = list.filter((e) => String(e.fullName).toLowerCase().includes(fDotQ.toLowerCase()));
-    if (fDotFalta) list = list.filter((e) => !dotacionDe[e.id]?.completo);
-    const completos = activeEmps.filter((e) => dotacionDe[e.id]?.completo).length;
+    if (fDotPuesto) list = list.filter((e) => dotacionDe[e.id]?.puesto === fDotPuesto);
+    if (fDotQ) list = list.filter((e) => norm(e.fullName).includes(norm(fDotQ)));
+    if (fDotFalta) list = list.filter((e) => { const d = dotacionDe[e.id]; return d && d.puesto !== "oficina" && !d.completo; });
+    const campo = activeEmps.filter((e) => dotacionDe[e.id]?.puesto !== "oficina");
+    const completos = campo.filter((e) => dotacionDe[e.id]?.completo).length;
+    const oficina = activeEmps.length - campo.length;
     return (
       <div>
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 16 }}>
-          <div style={{ flex: "1 1 200px", background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${GREEN}`, borderRadius: R.md, padding: 16 }}>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
+          <div style={{ flex: "1 1 190px", background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${GREEN}`, borderRadius: R.md, padding: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5 }}>Con EPP completo</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: GREEN, marginTop: 4 }}>{completos} <span style={{ fontSize: 15, color: BRAND.stone, fontWeight: 700 }}>/ {activeEmps.length}</span></div>
-            <div style={{ fontSize: 12, color: BRAND.stone }}>dotación base: {BASELINE.map((t) => tipoDef(t).icon).join(" ")}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: GREEN, marginTop: 4 }}>{completos} <span style={{ fontSize: 15, color: BRAND.stone, fontWeight: 700 }}>/ {campo.length}</span></div>
+            <div style={{ fontSize: 12, color: BRAND.stone }}>personal de campo, según el kit de su puesto</div>
           </div>
-          <div style={{ flex: "1 1 200px", background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${BRAND.red}`, borderRadius: R.md, padding: 16 }}>
+          <div style={{ flex: "1 1 190px", background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${BRAND.red}`, borderRadius: R.md, padding: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5 }}>Con faltantes</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: BRAND.red, marginTop: 4 }}>{activeEmps.length - completos}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: BRAND.red, marginTop: 4 }}>{campo.length - completos}</div>
             <div style={{ fontSize: 12, color: BRAND.stone }}>colaboradores a completar dotación</div>
           </div>
+          <div style={{ flex: "1 1 190px", background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${BRAND.ash}`, borderRadius: R.md, padding: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5 }}>Oficina / Admin</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: BRAND.graphite, marginTop: 4 }}>{oficina}</div>
+            <div style={{ fontSize: 12, color: BRAND.stone }}>sin dotación de campo requerida</div>
+          </div>
+        </div>
+        {/* Leyenda de cascos por puesto */}
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 14, background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.md, padding: "9px 14px", fontSize: 11.5, color: BRAND.graphite }}>
+          <b style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Cascos por puesto:</b>
+          {[["#F6F5F2", "Ingeniero"], ["#E8762D", "Operadores Ø grande y Ø pequeño"], ["#F2C40F", "Ayudantes / Técnicos"], ["#2F6FE0", "Mecánicos"]].map(([c, l]) => (
+            <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 11, height: 11, borderRadius: "50%", background: c, border: "1px solid rgba(0,0,0,0.25)", display: "inline-block" }} />{l}</span>
+          ))}
+          <span style={{ color: BRAND.stone }}>· Soldador y tornero: kit especial · Jeans: por defecto en todos</span>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
-          <div style={{ flex: "1 1 220px" }}><Input label="Buscar colaborador" placeholder="Nombre…" value={fDotQ} onChange={(e) => setFDotQ(e.target.value)} /></div>
-          <div style={{ flex: "0 1 200px" }}><Select label="Empresa" placeholder="Todas" options={[{ value: "geotecnica", label: "Geotecnica" }, { value: "subterra", label: "Subterra" }]} value={fDotCo} onChange={(e) => setFDotCo(e.target.value)} /></div>
+          <div style={{ flex: "1 1 200px" }}><Input label="Buscar colaborador" placeholder="Nombre…" value={fDotQ} onChange={(e) => setFDotQ(e.target.value)} /></div>
+          <div style={{ flex: "0 1 180px" }}><Select label="Empresa" placeholder="Todas" options={[{ value: "geotecnica", label: "Geotecnica" }, { value: "subterra", label: "Subterra" }]} value={fDotCo} onChange={(e) => setFDotCo(e.target.value)} /></div>
+          <div style={{ flex: "0 1 200px" }}><Select label="Puesto" placeholder="Todos" options={PUESTO_OPTIONS} value={fDotPuesto} onChange={(e) => setFDotPuesto(e.target.value)} /></div>
           <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, fontWeight: 700, color: BRAND.ink, paddingBottom: 9, cursor: "pointer" }}>
             <input type="checkbox" checked={fDotFalta} onChange={(e) => setFDotFalta(e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} /> Solo con faltantes
           </label>
@@ -595,12 +988,13 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 14 }}>
             {list.map((e) => {
-              const dot = dotacionDe[e.id] || { tiene: [], falta: BASELINE, tipos: new Set(), completo: false, pend: [] };
+              const dot = dotacionDe[e.id] || { tiene: [], falta: [], tipos: new Set(), completo: false, pend: [], puesto: "ayudante" };
+              const kit = PUESTOS[dot.puesto] || PUESTOS.ayudante;
               return (
                 <div key={e.id} onClick={() => setModal({ t: "ficha", empId: e.id })} style={{ background: "#fff", border: `1px solid ${dot.completo ? GREEN + "55" : BRAND.border}`, borderRadius: R.lg, padding: 14, cursor: "pointer", boxShadow: BRAND.shadowSm, transition: "transform .1s" }} onMouseEnter={(ev) => (ev.currentTarget.style.transform = "translateY(-2px)")} onMouseLeave={(ev) => (ev.currentTarget.style.transform = "none")}>
                   <div style={{ display: "flex", gap: 12 }}>
-                    <div style={{ background: BRAND.beigeLight, borderRadius: R.md, padding: 4, border: `1px solid ${BRAND.borderSoft}` }}><EppFigure has={dot.tipos} size={72} /></div>
-                    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ background: BRAND.beigeLight, borderRadius: R.md, padding: 4, border: `1px solid ${BRAND.borderSoft}` }}><EppFigure puesto={dot.puesto} has={dot.tipos} size={72} /></div>
+                    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <EmpAvatar name={e.fullName} dataUrl={empPhoto(e)} size={34} borderRadius={8} />
                         <div style={{ minWidth: 0 }}>
@@ -608,9 +1002,12 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                           <div style={{ fontSize: 10.5, color: BRAND.stone }}>{coTag(e.company)} · {e.position || "—"}</div>
                         </div>
                       </div>
-                      {dot.completo
-                        ? <Chip color={GREEN} bg={BRAND.greenSoft}>✓ EPP COMPLETO</Chip>
-                        : <div style={{ display: "flex", flexWrap: "wrap", gap: 3, alignItems: "center" }}><span style={{ fontSize: 10.5, fontWeight: 800, color: BRAND.red }}>FALTA:</span>{dot.falta.map((t) => <span key={t} title={tipoDef(t).label} style={{ fontSize: 15 }}>{tipoDef(t).icon}</span>)}</div>}
+                      <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B45309", letterSpacing: 0.4, textTransform: "uppercase" }}>{kit.label}</div>
+                      {dot.puesto === "oficina"
+                        ? <Chip color={BRAND.graphite} bg={BRAND.beigeDeep}>SIN EPP REQUERIDO</Chip>
+                        : dot.completo
+                          ? <Chip color={GREEN} bg={BRAND.greenSoft}>✓ EPP COMPLETO</Chip>
+                          : <div style={{ display: "flex", flexWrap: "wrap", gap: 3, alignItems: "center" }}><span style={{ fontSize: 10.5, fontWeight: 800, color: BRAND.red }}>FALTA:</span>{dot.falta.map((t) => <span key={t} title={reqLabel(dot.puesto, t)} style={{ fontSize: 15 }}>{tipoDef(t).icon}</span>)}</div>}
                     </div>
                   </div>
                 </div>
@@ -625,12 +1022,13 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
   const FichaModal = ({ empId }) => {
     const e = empById(empId); if (!e) return null;
-    const dot = dotacionDe[empId] || { tiene: [], pend: [], falta: BASELINE, tipos: new Set(), completo: false };
+    const dot = dotacionDe[empId] || { tiene: [], pend: [], falta: [], tipos: new Set(), completo: false, puesto: "ayudante" };
+    const kit = PUESTOS[dot.puesto] || PUESTOS.ayudante;
     return (
-      <Modal title="Ficha de dotación EPP" onClose={() => setModal(null)} width={720}>
-        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 18 }}>
-          <div style={{ background: BRAND.beigeLight, borderRadius: R.lg, padding: 10, border: `1px solid ${BRAND.borderSoft}` }}><EppFigure has={dot.tipos} size={150} /></div>
-          <div style={{ flex: 1, minWidth: 200, display: "flex", flexDirection: "column", gap: 8 }}>
+      <Modal title="Ficha de dotación EPP" onClose={() => setModal(null)} width={760}>
+        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 16 }}>
+          <div style={{ background: BRAND.beigeLight, borderRadius: R.lg, padding: 10, border: `1px solid ${BRAND.borderSoft}` }}><EppFigure puesto={dot.puesto} has={dot.tipos} size={150} /></div>
+          <div style={{ flex: 1, minWidth: 230, display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <EmpAvatar name={e.fullName} dataUrl={empPhoto(e)} size={56} borderRadius={12} />
               <div>
@@ -639,19 +1037,35 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                 {e.dni && <div style={{ fontSize: 11.5, color: BRAND.stone, fontFamily: FONT.mono }}>{e.dni}</div>}
               </div>
             </div>
-            <div style={{ marginTop: 4 }}>{dot.completo ? <Chip color={GREEN} bg={BRAND.greenSoft} style={{ fontSize: 12, padding: "5px 12px" }}>✓ DOTACIÓN BASE COMPLETA</Chip> : <Chip color={BRAND.red} bg={BRAND.redSoft} style={{ fontSize: 12, padding: "5px 12px" }}>FALTAN {dot.falta.length} DE LA DOTACIÓN BASE</Chip>}</div>
-            {/* Checklist dotacion base */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-              {BASELINE.map((t) => { const ok = dot.tipos.has(t); return (
+            {/* Perfil de EPP: override manual (ep-puestos) gana sobre el automatico */}
+            {canManage ? (
+              <Select label="Perfil de EPP (según su puesto)" options={PUESTO_OPTIONS} value={dot.puesto} onChange={(ev) => sPuestos({ ...puestosMap, [empId]: ev.target.value })} />
+            ) : (
+              <div><Chip color="#B45309" bg="rgba(180,83,9,0.10)">{kit.label.toUpperCase()}</Chip></div>
+            )}
+            <div>{dot.puesto === "oficina"
+              ? <Chip color={BRAND.graphite} bg={BRAND.beigeDeep} style={{ fontSize: 12, padding: "5px 12px" }}>SIN DOTACIÓN DE CAMPO REQUERIDA</Chip>
+              : dot.completo
+                ? <Chip color={GREEN} bg={BRAND.greenSoft} style={{ fontSize: 12, padding: "5px 12px" }}>✓ KIT DE {kit.label.toUpperCase()} COMPLETO</Chip>
+                : <Chip color={BRAND.red} bg={BRAND.redSoft} style={{ fontSize: 12, padding: "5px 12px" }}>FALTAN {dot.falta.length} DEL KIT DE {kit.label.toUpperCase()}</Chip>}</div>
+            {/* Checklist del kit del puesto */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
+              {kit.req.map((t) => { const ok = dot.tipos.has(t); return (
                 <div key={t} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: ok ? BRAND.charcoal : BRAND.stone }}>
                   <span style={{ fontSize: 16 }}>{tipoDef(t).icon}</span>
-                  <span style={{ flex: 1, fontWeight: ok ? 700 : 400 }}>{tipoDef(t).label}</span>
+                  <span style={{ flex: 1, fontWeight: ok ? 700 : 400 }}>{reqLabel(dot.puesto, t)}</span>
                   {ok ? <span style={{ color: GREEN, fontWeight: 800 }}>✓ tiene</span> : <span style={{ color: BRAND.red, fontWeight: 800 }}>✗ falta</span>}
                 </div>
               ); })}
             </div>
           </div>
         </div>
+        {kit.notas && <div style={{ background: BRAND.beigeLight, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: BRAND.ink, marginBottom: 10 }}>📌 {kit.notas}</div>}
+        {kit.opcionales && (
+          <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}30`, borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: BRAND.ink, marginBottom: 10 }}>
+            ➕ Puede solicitar además: {kit.opcionales.map((t) => `${tipoDef(t).icon} ${tipoDef(t).label}`).join(" · ")}
+          </div>
+        )}
 
         {/* EPP entregado (amarrado a requisiciones) */}
         <div style={{ fontSize: 12, fontWeight: 800, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>EPP asignado (entregado)</div>
@@ -704,7 +1118,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                   return (
                     <tr key={it.id} style={{ background: sinStock ? BRAND.redSoft : bajo ? BRAND.yellowSoft : "transparent" }}>
                       <td style={{ ...td, fontWeight: 700 }}>{it.nombre}</td>
-                      <td style={td}>{tipoDef(it.tipoEpp).icon} {tipoDef(it.tipoEpp).label}</td>
+                      <td style={td}>{tipoDef(tipoDeItem(it)).icon} {tipoDef(tipoDeItem(it)).label}</td>
                       <td style={td}>{catLabel(it.categoria)}</td>
                       <td style={td}>{provName(it.proveedorId)}</td>
                       <td style={{ ...td, textAlign: "right", fontWeight: 700, color: GREEN }}>{fmtL(it.precio)}</td>
@@ -723,72 +1137,8 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     );
   };
 
-  // ── Form de ítem (con foto + tipo EPP + descripcion) ──
-  const ItemForm = ({ item }) => {
-    const [f, setF] = useState(item || { nombre: "", categoria: "", tipoEpp: "", proveedorId: "", precio: "", stock: 0, minStock: 2, descripcion: "", foto: null });
-    const [uploading, setUploading] = useState(false);
-    const u = (k, v) => setF((p) => ({ ...p, [k]: v }));
-    const handleFile = async (file) => {
-      if (!file) return;
-      if (!file.type?.startsWith("image/")) { alert("Seleccioná una imagen (JPG/PNG)."); return; }
-      setUploading(true);
-      try {
-        const dataUrl = await compressImage(file);
-        const fileId = uid();
-        const ok = await withTimeout(store.set(`cp-file-${fileId}`, { name: file.name, type: "image/jpeg", size: dataUrl.length, dataUrl }), 25000, "subir foto");
-        if (!ok) throw new Error("Supabase rechazó el upload.");
-        setPhotoCache((prev) => ({ ...prev, [fileId]: dataUrl }));
-        setF((p) => ({ ...p, foto: { fileId, name: file.name } }));
-      } catch (err) { alert("No se pudo subir la foto: " + (err?.message || err)); }
-      finally { setUploading(false); }
-    };
-    const fotoUrl = f.foto?.fileId ? photoCache[f.foto.fileId] : null;
-    return (
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        {/* Foto */}
-        <div style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 16, padding: "12px 14px", background: BRAND.beigeLight, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.md }}>
-          <div style={{ width: 78, height: 78, borderRadius: R.md, overflow: "hidden", background: "#fff", border: `1px solid ${BRAND.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            {fotoUrl ? <img src={fotoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 34, opacity: 0.5 }}>📷</span>}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 700, color: BRAND.ink }}>Foto del artículo</div>
-            <div style={{ fontSize: 11, color: uploading ? "#B45309" : BRAND.stone }}>{uploading ? "⏳ Subiendo…" : (f.foto ? "Imagen cargada" : "Opcional — ayuda a identificar el EPP.")}</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <label style={{ display: "inline-flex", alignItems: "center", padding: "6px 14px", background: BRAND.orange, color: "#fff", borderRadius: R.sm, cursor: uploading ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700, opacity: uploading ? 0.6 : 1 }}>
-                {f.foto ? "Cambiar foto" : "Subir foto"}
-                <input type="file" accept="image/*" style={{ display: "none" }} disabled={uploading} onChange={(ev) => { const file = ev.target.files?.[0]; ev.target.value = ""; if (file) handleFile(file); }} />
-              </label>
-              {f.foto && <Btn small variant="ghost" onClick={() => u("foto", null)}>Quitar</Btn>}
-            </div>
-          </div>
-        </div>
-        <div style={{ gridColumn: "1/-1" }}><Input label="Nombre del ítem" placeholder="Ej: Casco tipo I con barbiquejo" value={f.nombre} onChange={(e) => u("nombre", e.target.value)} /></div>
-        <Select label="Tipo de EPP (parte del cuerpo)" placeholder="— Seleccionar —" options={EPP_TIPOS.map((t) => ({ value: t.value, label: `${t.icon} ${t.label}` }))} value={f.tipoEpp} onChange={(e) => u("tipoEpp", e.target.value)} />
-        <Select label="Categoría (área)" placeholder="— Seleccionar —" options={CATEGORIAS} value={f.categoria} onChange={(e) => u("categoria", e.target.value)} />
-        <Select label="Proveedor" placeholder="— Seleccionar —" options={providers.map((p) => ({ value: p.id, label: p.nombre }))} value={f.proveedorId} onChange={(e) => u("proveedorId", e.target.value)} />
-        <Input label="Precio real (L)" type="number" min="0" step="0.01" value={f.precio} onChange={(e) => u("precio", e.target.value)} />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <Input label="Stock actual" type="number" min="0" value={f.stock} onChange={(e) => u("stock", e.target.value)} />
-          <Input label="Stock mínimo" type="number" min="0" value={f.minStock} onChange={(e) => u("minStock", e.target.value)} />
-        </div>
-        <div style={{ gridColumn: "1/-1" }}><TextArea label="Descripción" placeholder="Talla, norma, material, especificaciones…" value={f.descripcion} onChange={(e) => u("descripcion", e.target.value)} /></div>
-        {!providers.length && <div style={{ gridColumn: "1/-1", background: BRAND.yellowSoft, borderRadius: R.sm, padding: "8px 12px", fontSize: 12.5, color: "#8a6d0b" }}>⚠ No hay proveedores — andá a la pestaña Proveedores primero.</div>}
-        <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-          <Btn variant="success" disabled={uploading} onClick={async () => {
-            if (!f.nombre.trim()) return alert("Poné el nombre del ítem.");
-            if (!f.tipoEpp) return alert("Seleccioná el tipo de EPP.");
-            if (!f.categoria) return alert("Seleccioná la categoría.");
-            if (!f.proveedorId) return alert("Seleccioná el proveedor.");
-            if (f.precio === "" || Number(f.precio) < 0) return alert("Poné el precio real.");
-            const rec = { ...f, precio: Number(f.precio), stock: Number(f.stock) || 0, minStock: Number(f.minStock) || 0, id: f.id || uid() };
-            const ok = await sItems(item ? items.map((x) => (x.id === rec.id ? rec : x)) : [...items, rec]);
-            if (ok) setModal(null);
-          }}>{item ? "Guardar cambios" : "Agregar al catálogo"}</Btn>
-        </div>
-      </div>
-    );
-  };
+  // (El form de ítem vive a nivel de módulo — ItemFormImpl — para que los
+  //  re-renders del padre NO lo desmonten y borren lo tecleado al subir foto.)
 
   // ══════════════════════════ PROVEEDORES ══════════════════════════
   const renderProveedores = () => (
@@ -823,23 +1173,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     </div>
   );
 
-  const ProvForm = ({ prov }) => {
-    const [f, setF] = useState(prov || { nombre: "", contacto: "", telefono: "", correo: "", notas: "" });
-    const u = (k, v) => setF((p) => ({ ...p, [k]: v }));
-    return (
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <div style={{ gridColumn: "1/-1" }}><Input label="Nombre" value={f.nombre} onChange={(e) => u("nombre", e.target.value)} /></div>
-        <Input label="Contacto" value={f.contacto} onChange={(e) => u("contacto", e.target.value)} />
-        <Input label="Teléfono" value={f.telefono} onChange={(e) => u("telefono", e.target.value)} />
-        <div style={{ gridColumn: "1/-1" }}><Input label="Correo" value={f.correo} onChange={(e) => u("correo", e.target.value)} /></div>
-        <div style={{ gridColumn: "1/-1" }}><Input label="Notas" value={f.notas} onChange={(e) => u("notas", e.target.value)} /></div>
-        <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-          <Btn variant="success" onClick={async () => { if (!f.nombre.trim()) return alert("Poné el nombre."); const rec = { ...f, id: f.id || uid() }; const ok = await sProv(prov ? providers.map((x) => (x.id === rec.id ? rec : x)) : [...providers, rec]); if (ok) setModal(null); }}>{prov ? "Guardar cambios" : "Agregar proveedor"}</Btn>
-        </div>
-      </div>
-    );
-  };
+  // (ProvFormImpl vive a nivel de módulo por la misma razón que ItemFormImpl.)
 
   // ══════════════════════════ DESCUENTOS ══════════════════════════
   const renderDescuentos = () => {
@@ -868,7 +1202,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                   <tr key={req.id + "-" + idx} style={{ background: linea.deducido ? "transparent" : BRAND.redSoft }}>
                     <td style={td}>{fmtDate(req.fecha)}</td>
                     <td style={{ ...td, fontWeight: 700 }}>{linea.paraNombre} <span style={{ fontSize: 10, color: BRAND.stone, fontWeight: 700 }}>{linea.paraEmpresa ? coTag(linea.paraEmpresa) : ""}</span></td>
-                    <td style={td}>{tipoDef(linea.tipoEpp).icon} {linea.nombre}</td>
+                    <td style={td}>{tipoDef(tipoDeLinea(linea)).icon} {linea.nombre}</td>
                     <td style={{ ...td, fontFamily: FONT.mono, fontWeight: 700, color: BRAND.orange }}>{req.numero}</td>
                     <td style={{ ...td, textAlign: "right" }}>{linea.qty}</td>
                     <td style={{ ...td, textAlign: "right", fontWeight: 800, color: BRAND.red }}>{fmtL(linea.precio * linea.qty)}</td>
@@ -915,7 +1249,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
       <div style={{ display: "flex", gap: 6, padding: "14px 26px 0", flexWrap: "wrap" }}>
         {TABS.map((t) => (
-          <button key={t.id} onClick={() => setSec(t.id)} style={{ padding: "9px 16px", borderRadius: `${R.md}px ${R.md}px 0 0`, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT.body, border: `1px solid ${sec === t.id ? BRAND.border : "transparent"}`, borderBottom: "none", background: sec === t.id ? "#fff" : "transparent", color: sec === t.id ? BRAND.orange : BRAND.graphite }}>
+          <button key={t.id} onClick={() => setSec(t.id)} style={{ padding: "9px 16px", borderRadius: `${R.md}px ${R.md}px 0 0`, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT.body, borderTop: `1px solid ${sec === t.id ? BRAND.border : "transparent"}`, borderLeft: `1px solid ${sec === t.id ? BRAND.border : "transparent"}`, borderRight: `1px solid ${sec === t.id ? BRAND.border : "transparent"}`, borderBottom: "none", background: sec === t.id ? "#fff" : "transparent", color: sec === t.id ? BRAND.orange : BRAND.graphite }}>
             {t.label}{t.badge ? <span style={{ marginLeft: 6, background: t.badgeColor || BRAND.orange, color: "#fff", borderRadius: R.full, padding: "1px 7px", fontSize: 10.5, fontWeight: 800 }}>{t.badge}</span> : null}
           </button>
         ))}
@@ -939,10 +1273,25 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         Lic. Gerson &nbsp;&amp;&nbsp; Ing. Nanu &nbsp;·&nbsp; <b style={{ color: BRAND.stone }}>GAIB Services</b>
       </div>
 
-      {modal?.t === "cart" && <CartModal />}
-      {modal?.t === "item" && <Modal title={modal.item ? "Editar ítem" : "Nuevo ítem de EPP"} onClose={() => setModal(null)}><ItemForm item={modal.item} /></Modal>}
-      {modal?.t === "prov" && <Modal title={modal.prov ? "Editar proveedor" : "Nuevo proveedor"} onClose={() => setModal(null)} width={520}><ProvForm prov={modal.prov} /></Modal>}
-      {modal?.t === "ficha" && <FichaModal empId={modal.empId} />}
+      {/* CartModal/FichaModal se renderizan como LLAMADA (no <JSX/>) a propósito:
+          son helpers sin hooks y así React no los desmonta en cada re-render
+          del padre (el input de cantidad del carrito perdería el foco). */}
+      {modal?.t === "cart" && CartModal()}
+      {modal?.t === "item" && (
+        <Modal title={modal.item ? "Editar ítem" : "Nuevo ítem de EPP"} onClose={() => setModal(null)}>
+          <ItemFormImpl item={modal.item} providers={providers} photoCache={photoCache} setPhotoCache={setPhotoCache}
+            onCancel={() => setModal(null)}
+            onSave={async (rec) => { const ok = await sItems(modal.item ? items.map((x) => (x.id === rec.id ? rec : x)) : [...items, rec]); if (ok) setModal(null); }} />
+        </Modal>
+      )}
+      {modal?.t === "prov" && (
+        <Modal title={modal.prov ? "Editar proveedor" : "Nuevo proveedor"} onClose={() => setModal(null)} width={520}>
+          <ProvFormImpl prov={modal.prov}
+            onCancel={() => setModal(null)}
+            onSave={async (rec) => { const ok = await sProv(modal.prov ? providers.map((x) => (x.id === rec.id ? rec : x)) : [...providers, rec]); if (ok) setModal(null); }} />
+        </Modal>
+      )}
+      {modal?.t === "ficha" && FichaModal({ empId: modal.empId })}
     </div>
   );
 }
