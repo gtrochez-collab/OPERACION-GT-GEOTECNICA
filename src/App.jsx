@@ -4,6 +4,7 @@ import PurchasesModule from "./PurchasesModule.jsx";
 import MachinesModule from "./MachinesModule.jsx";
 import LogisticsModule from "./LogisticsModule.jsx";
 import GeoDrillVault from "./GeoDrillVault.jsx";
+import SafetyModule from "./SafetyModule.jsx";
 // GeoChat: desactivado temporalmente (jun 2026). El polling y los mensajes
 // en localStorage estaban presionando el cache. Cuando lo retomemos, sera
 // con Supabase Realtime + bypass de localStorage (ya esta listo).
@@ -45,14 +46,13 @@ const MODULES = [
     roles: ["admin", "coordinador_maquinas", "tesoreria", "gerencia", "costos", "recepcion", "visor_compras"],
   },
   {
-    id: "almacen",
-    name: "Almacen",
-    icon: "📦",
-    desc: "Inventario, entradas, salidas, requisiciones",
-    accent: "#6B4F3A",
-    accentSoft: "rgba(107,79,58,0.10)",
-    roles: ["admin"],
-    soon: true,
+    id: "geosafety",
+    name: "GeoSafety",
+    icon: "🦺",
+    desc: "EPP: catalogo con carrito, inventario, proveedores y descuentos por perdida",
+    accent: "#B45309", // ambar seguridad industrial
+    accentSoft: "rgba(180,83,9,0.10)",
+    roles: ["admin", "costos", "tesoreria", "gerencia", "coordinador_maquinas", "asistente_compras", "recepcion", "logistica", "almacenista", "asistente"],
   },
   {
     id: "logistica",
@@ -121,6 +121,7 @@ export default function App() {
   if (activeModule === "maquinas") return <>{syncBanner}<MachinesModule {...moduleProps} /></>;
   if (activeModule === "logistica") return <>{syncBanner}<LogisticsModule {...moduleProps} /></>;
   if (activeModule === "geodrill-vault") return <>{syncBanner}<GeoDrillVault {...moduleProps} /></>;
+  if (activeModule === "geosafety") return <>{syncBanner}<SafetyModule {...moduleProps} /></>;
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
   // if (activeModule === "geochat") return <>{syncBanner}<ChatModule {...moduleProps} /></>;
 

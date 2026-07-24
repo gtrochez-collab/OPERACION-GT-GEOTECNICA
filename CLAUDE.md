@@ -28,6 +28,11 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Planilla, Asistencia (cuadrillas → grid 1/0/INC/DT/DT2/TF + override 1*),
   Horas Extras, Costos MO, Dashboard. Bonificaciones oculto (código intacto).
 - `LogisticsModule.jsx` (GeoLogistics) — flota y despachos (kanban Oscar/Jorge).
+- `SafetyModule.jsx` (GeoSafety) — EPP: catálogo con carrito estilo Amazon
+  (requisición indica colaborador de hr-emps5 + motivo primera_vez/perdida/danio),
+  inventario, proveedores (Chispa Safety, Larach, La Mundial, Summit, Infra,
+  Amazon), Descuentos planilla (pérdidas → deducir, marca "deducido").
+  Flujo: pendiente → aprobada → entregada (descuenta stock). Keys: `ep-*`.
 - `GeoDrillVault.jsx`, `projects.js` (base + helpers), `holidays.js`, `theme.js`.
 
 ## Claves de datos (store = supabase.js)

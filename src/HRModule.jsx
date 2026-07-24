@@ -1929,6 +1929,131 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
     const inputStyle = (bg) => ({ width: 34, padding: "3px 2px", border: "1px solid #E2E8F0", borderRadius: 4, fontSize: 11, textAlign: "center", background: bg, outline: "none" });
 
+    // ── Reporte PDF para la Lic. Carolina (planilla) ──
+    // Tabla POR EMPLEADO (horas por banda, domingos x2, total L) — eso es lo
+    // que se mete a planilla — + desglose por proyecto (atribuido con
+    // reasignaciones). Ventana de impresion → "Guardar como PDF".
+    const exportHePDF = () => {
+      const w = window.open("", "_blank");
+      if (!w) { alert("Permite popups para generar el PDF"); return; }
+      const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 });
+      const fH = (n) => Number.isInteger(n) ? n : n.toFixed(2);
+      const pago = sheet.quincena === "1Q"
+        ? `2Q ${sheet.periodo} (fin de mes)`
+        : (() => { const [py, pm] = sheet.periodo.split("-").map(Number); const d2 = new Date(py, pm, 1); return `1Q ${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, "0")} (15 del mes)`; })();
+
+      const porEmp = [];
+      const porProy = {};
+      ae.forEach(e => {
+        const hb = heHoraBase(e);
+        let b1 = 0, b2 = 0, b3 = 0, dom = 0, total = 0;
+        const proys = new Set();
+        days.forEach(d => {
+          const c = hours[`${e.id}-${d.day}`];
+          if (!c) return;
+          let hrsDia = 0, costoDia = 0;
+          HE_BANDAS.forEach(b => {
+            const h = heNum(c[b.k]);
+            if (h <= 0) return;
+            hrsDia += h;
+            costoDia += h * heMult(d.isSun, b) * hb;
+            if (d.isSun) dom += h;
+            else if (b.k === "b1") b1 += h;
+            else if (b.k === "b2") b2 += h;
+            else b3 += h;
+          });
+          if (hrsDia <= 0) return;
+          total += costoDia;
+          const pr = projDe(e.id, d.day) || "—";
+          proys.add(pr);
+          if (!porProy[pr]) porProy[pr] = { hrs: 0, costo: 0 };
+          porProy[pr].hrs += hrsDia;
+          porProy[pr].costo += costoDia;
+        });
+        const hrs = b1 + b2 + b3 + dom;
+        if (hrs > 0) porEmp.push({ e, hb, b1, b2, b3, dom, hrs, total, proys: [...proys].join(" + ") });
+      });
+      porEmp.sort((a, b) => b.total - a.total);
+      const granH = porEmp.reduce((s, r) => s + r.hrs, 0);
+      const granL = porEmp.reduce((s, r) => s + r.total, 0);
+      const proyRows = Object.entries(porProy).sort((a, b) => b[1].costo - a[1].costo);
+      const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+      const TD1 = "padding:6px 8px;border-bottom:1px solid #F1EBE0;font-size:11px";
+
+      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Horas Extras ${sheet.quincena} ${sheet.periodo}</title>
+        <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#2C2A28}@media print{.np{display:none}}</style>
+        </head><body>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:14px">
+            <img src="${logoUrl}" style="height:44px" onerror="this.style.display='none'" />
+            <div>
+              <div style="font-size:20px;font-weight:800;color:#E8762D;letter-spacing:-0.3px">REPORTE DE HORAS EXTRAS</div>
+              <div style="font-size:12px;color:#7A7268;margin-top:2px">${cc.name} · Quincena trabajada: <b>${sheet.quincena} ${sheet.periodo}</b></div>
+            </div>
+          </div>
+          <div style="text-align:right;font-size:11px;color:#7A7268">
+            <div>Generado: ${new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" })}</div>
+            <div style="margin-top:4px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:5px 10px;color:#92400E;font-weight:700">Se paga en planilla ${pago}</div>
+          </div>
+        </div>
+        <div style="height:4px;background:#E8762D;border-radius:2px;margin:14px 0 16px"></div>
+
+        <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#7A7268;text-transform:uppercase">Total a pagar</div><div style="font-size:20px;font-weight:800;color:#059669">${fL(granL)}</div></div>
+          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#7A7268;text-transform:uppercase">Horas extras</div><div style="font-size:20px;font-weight:800;color:#2C2A28">${fH(granH)}</div></div>
+          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#7A7268;text-transform:uppercase">Colaboradores</div><div style="font-size:20px;font-weight:800;color:#E8762D">${porEmp.length}</div></div>
+        </div>
+
+        <div style="font-size:11px;font-weight:700;color:#7A7268;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Detalle por colaborador (para planilla)</div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+          <thead><tr style="background:#E8762D;color:#fff">
+            <th style="text-align:left;padding:6px 8px;font-size:10px">COLABORADOR</th>
+            <th style="text-align:left;padding:6px 8px;font-size:10px">PROYECTO(S)</th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px">L/HORA</th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px">4-7PM (+25%)</th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px">7-10PM (+50%)</th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px">10-12AM (+75%)</th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px">DOMINGO (×2)</th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px">HRS</th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px">TOTAL L</th>
+          </tr></thead>
+          <tbody>
+            ${porEmp.map(r => `<tr>
+              <td style="${TD1};font-weight:700">${r.e.fullName}</td>
+              <td style="${TD1};font-family:ui-monospace,Menlo,monospace;font-size:10px">${r.proys}</td>
+              <td style="${TD1};text-align:right">${fL(r.hb)}</td>
+              <td style="${TD1};text-align:right">${r.b1 ? fH(r.b1) : "—"}</td>
+              <td style="${TD1};text-align:right">${r.b2 ? fH(r.b2) : "—"}</td>
+              <td style="${TD1};text-align:right">${r.b3 ? fH(r.b3) : "—"}</td>
+              <td style="${TD1};text-align:right">${r.dom ? fH(r.dom) : "—"}</td>
+              <td style="${TD1};text-align:right;font-weight:700">${fH(r.hrs)}</td>
+              <td style="${TD1};text-align:right;font-weight:800;color:#059669">${fL(r.total)}</td>
+            </tr>`).join("")}
+            <tr style="background:#FFFBF5;font-weight:800">
+              <td style="padding:7px 8px" colspan="7">TOTAL · ${sheet.quincena} ${sheet.periodo}</td>
+              <td style="padding:7px 8px;text-align:right">${fH(granH)}</td>
+              <td style="padding:7px 8px;text-align:right;color:#059669;font-size:13px">${fL(granL)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div style="font-size:11px;font-weight:700;color:#7A7268;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Distribución por proyecto (costos)</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+          ${proyRows.map(([pr, v]) => `<div style="background:#FFFBF5;border:1px solid #DBD4C8;border-left:3px solid #E8762D;border-radius:8px;padding:8px 14px">
+            <div style="font-weight:700;font-size:12px;font-family:ui-monospace,Menlo,monospace">${pr}</div>
+            <div style="font-size:11px;color:#7A7268">${fH(v.hrs)} hrs · <b style="color:#059669">${fL(v.costo)}</b></div>
+          </div>`).join("")}
+        </div>
+
+        <div style="font-size:9.5px;color:#94A3B8;line-height:1.5">
+          Hora base = salario ÷ 30 ÷ 8 (sin bonificación) · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2 en todas las bandas.
+          Pago quincena vencida: estas HE de ${sheet.quincena} ${sheet.periodo} se pagan en la planilla ${pago}. Proyectos según cuadrilla + reasignaciones por día.
+        </div>
+        <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
+        </body></html>`);
+      w.document.close();
+    };
+
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 12, fontSize: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
         <span style={{ color: "#1E40AF", fontWeight: 600, fontSize: 14 }}>Horas Extras {sheet.quincena} {sheet.periodo} — {cc.name}</span>
@@ -2048,6 +2173,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           if (dirty && !confirm("Tenés cambios SIN GUARDAR.\n\n¿Cerrar sin guardar?")) return;
           setModal(null);
         }}>Cerrar</Btn>
+        <Btn variant="info" onClick={exportHePDF}>📄 PDF para planilla</Btn>
         <Btn variant="success" onClick={guardar}>Guardar horas extras</Btn>
       </div>
     </div>;
