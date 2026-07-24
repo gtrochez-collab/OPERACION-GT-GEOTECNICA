@@ -502,7 +502,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   const xN = M, xCant = M + 8, xDesc = M + 30, xOk = M + 195, xObs = M + 221;
   const wDesc = xOk - xDesc - 4, wObs = PW - M - xObs;
   const rowH = 8;
-  const firmasTop = PH - M - 58;
+  const firmasTop = PH - M - 52;
   const tableBottom = firmasTop - 4;
 
   // Header de la tabla — solo se dibuja cuando hay items estructurados.
@@ -564,7 +564,10 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
     f(7.5, "bold"); tc(B); doc.text("DETALLE SEGUN COTIZACION PAGADA (cotejar contra esto):", M + 2, ay + 4);
     ay += 6;
     fc(BL); dc(BD); lw(0.25);
-    const descLines = doc.splitTextToSize(purchase.description || "—", CW - 8).slice(0, 10);
+    // Clamp por espacio: la descripcion nunca se come el recuadro de
+    // observaciones (~20mm reservados) ni desborda sobre las firmas.
+    const maxLines = Math.max(2, Math.floor((tableBottom - ay - 24 - 4) / 4.5));
+    const descLines = doc.splitTextToSize(purchase.description || "—", CW - 8).slice(0, Math.min(10, maxLines));
     const descBoxH = 4 + descLines.length * 4.5;
     rc(M, ay, CW, descBoxH, "FD");
     f(9, "bold"); tc(DK); doc.text(descLines, M + 4, ay + 5);
@@ -574,7 +577,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   // ── Observaciones de la entrega (faltantes / parciales / diferencias) ──
   // Espacio para anotar a mano, p.ej. "fui por 20 varillas y el proveedor
   // solo tenia 10" — llena el espacio libre hasta las firmas.
-  if (tableBottom - ay > 14) {
+  if (tableBottom - ay > 10) {
     f(7.5, "bold"); tc(B);
     doc.text("OBSERVACIONES DE LA ENTREGA (faltantes, entregas parciales, diferencias):", M + 2, ay + 4);
     ay += 6;
