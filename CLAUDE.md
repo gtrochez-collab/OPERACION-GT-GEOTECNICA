@@ -29,10 +29,16 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Horas Extras, Costos MO, Dashboard. Bonificaciones oculto (código intacto).
 - `LogisticsModule.jsx` (GeoLogistics) — flota y despachos (kanban Oscar/Jorge).
 - `SafetyModule.jsx` (GeoSafety) — EPP: catálogo con carrito estilo Amazon
-  (requisición indica colaborador de hr-emps5 + motivo primera_vez/perdida/danio),
-  inventario, proveedores (Chispa Safety, Larach, La Mundial, Summit, Infra,
-  Amazon), Descuentos planilla (pérdidas → deducir, marca "deducido").
-  Flujo: pendiente → aprobada → entregada (descuenta stock). Keys: `ep-*`.
+  (ítems con foto/tipoEpp/descripción; requisición reparte un ítem entre
+  VARIOS colaboradores de hr-emps5 con cant+motivo c/u: primera_vez/perdida/
+  danio), inventario, proveedores (Chispa Safety, Larach, La Mundial, Summit,
+  Infra, Amazon), Descuentos planilla (pérdidas → deducir, marca "deducido").
+  Pestaña **Dotación**: ficha visual por colaborador (avatar EppFigure SVG
+  con slots casco/lentes/chaleco/guantes/botas/etc. — llenos=tiene, punteado=
+  falta vs BASELINE) alimentada de requisiciones ENTREGADAS; KPIs completos/
+  faltantes; foto del empleado (photoCache cp-file). Flujo: pendiente →
+  aprobada → entregada (descuenta stock + queda en ficha). Keys: `ep-*`.
+  Footer créditos "Lic. Gerson & Ing. Nanu · GAIB Services".
 - `GeoDrillVault.jsx`, `projects.js` (base + helpers), `holidays.js`, `theme.js`.
 
 ## Claves de datos (store = supabase.js)
