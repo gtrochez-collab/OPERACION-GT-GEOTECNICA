@@ -365,6 +365,20 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
 
   const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+
+  // Logo real de la empresa (public/brand/logo-color.png). Si por cualquier
+  // razon no carga (offline, ruta), se cae al monograma "GT" naranja.
+  let logoImg = null;
+  try {
+    const resp = await fetch(`${import.meta.env.BASE_URL}brand/logo-color.png`);
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+      const dims = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight }); im.onerror = rej; im.src = dataUrl; });
+      const hMM = 14;
+      logoImg = { dataUrl, h: hMM, w: (dims.w / dims.h) * hMM };
+    }
+  } catch { /* fallback al monograma */ }
   const PW = 297, PH = 210, M = 14, CW = PW - 2 * M; // util: 269mm ancho
 
   const today = new Date().toLocaleDateString("es-HN", { day: "2-digit", month: "long", year: "numeric" });
@@ -376,11 +390,12 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   const hasReceiptImg = purchase.receiptFile?.dataUrl && purchase.receiptFile.type?.startsWith("image/");
   const hasAnyPDFAttachment = hasQuotePDF || hasReceiptPDF;
 
-  // Paleta
-  const B  = [15, 76, 117], BL = [239, 246, 255];   // azul
-  const G  = [5, 150, 105],  GL = [220, 252, 231];   // verde
-  const GR = [71, 85, 105],  GL2 = [248, 250, 252];  // gris
-  const DK = [30, 41, 59],  BD = [203, 213, 225];     // dark / borde
+  // Paleta de MARCA — mismo look del modulo: naranja Geotecnica + carbon +
+  // beige calido (antes era azul marino generico).
+  const B  = [232, 118, 45],  BL = [255, 251, 245];   // naranja #E8762D / beige #FFFBF5
+  const G  = [5, 150, 105],   GL = [220, 252, 231];   // verde (montos)
+  const GR = [122, 114, 104], GL2 = [248, 250, 252];  // stone calido #7A7268
+  const DK = [44, 42, 40],   BD = [219, 212, 200];    // carbon #2C2A28 / borde beige #DBD4C8
   const W  = [255, 255, 255], BK = [26, 26, 26];
 
   const tc = c => doc.setTextColor(...c);
@@ -409,11 +424,20 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   // ════════════════════════════════════════════════════════
   let y = M;
 
-  fc(B); rc(M, y, 11, 22, "F");
-  f(11, "bold"); tc(W); doc.text("GT", M + 2, y + 13);
-
-  f(14, "bold"); tc(B); doc.text("ACTA DE ENTREGA Y RECEPCION DE MATERIALES", M + 14, y + 8);
-  f(9, "normal"); tc(GR); doc.text(`Grupo Geotecnica · ${companyName || "Geotecnica Soluciones"}`, M + 14, y + 15);
+  // Logo real de la empresa; monograma naranja como respaldo
+  let tx = M + 14;
+  if (logoImg) {
+    try {
+      doc.addImage(logoImg.dataUrl, "PNG", M, y + 1, logoImg.w, logoImg.h);
+      tx = M + logoImg.w + 6;
+    } catch { logoImg = null; }
+  }
+  if (!logoImg) {
+    fc(B); rc(M, y, 11, 22, "F");
+    f(11, "bold"); tc(W); doc.text("GT", M + 2, y + 13);
+  }
+  f(14, "bold"); tc(B); doc.text("ACTA DE ENTREGA Y RECEPCION DE MATERIALES", tx, y + 8);
+  f(9, "normal"); tc(GR); doc.text(`Grupo Geotecnica · ${companyName || "Geotecnica Soluciones"}`, tx, y + 15);
 
   f(9, "normal"); tc(GR);
   doc.text("Folio N°: _______________", PW - M, y + 7, { align: "right" });
@@ -426,7 +450,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
     doc.text(`* ${partes.join(" + ")} incluida${partes.length > 1 ? "s" : ""} en pag. 2+`, PW - M, y + 20, { align: "right" });
   }
 
-  y += 25; dc(B); lw(0.6); ln(M, y, PW - M, y); y += 4;
+  y += 25; dc(B); lw(1.1); ln(M, y, PW - M, y); y += 4;
 
   // ════════════════════════════════════════════════════════
   // 2. REFERENCIA DE LA COMPRA — pre-llenado  (y: 43 → 79)
@@ -548,8 +572,8 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   }
 
   const sigW2 = (CW - 10) / 2;
-  fc(BL); dc([37, 99, 235]); lw(0.4); rc(M, firmasTop, sigW2, 48, "FD");
-  f(9.5, "bold"); tc([37, 99, 235]); doc.text("INGENIERO / RESIDENTE — RECIBE", M + sigW2 / 2, firmasTop + 6.5, { align: "center" });
+  fc(BL); dc(DK); lw(0.5); rc(M, firmasTop, sigW2, 48, "FD");
+  f(9.5, "bold"); tc(DK); doc.text("INGENIERO / RESIDENTE — RECIBE", M + sigW2 / 2, firmasTop + 6.5, { align: "center" });
   let sl = firmasTop + 14;
   lbl("Nombre completo", M + 5, sl); blk(M + 5, sl + 4.5, sigW2 - 10); sl += 10;
   lbl("Cargo", M + 5, sl); blk(M + 5, sl + 4.5, (sigW2 - 14) / 2);
@@ -559,8 +583,8 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   doc.text("Al firmar certifico que RECIBI las cantidades exactas arriba detalladas, completas y en buen estado.", M + 5, sl + 3, { maxWidth: sigW2 - 10 });
 
   const mx = M + sigW2 + 10;
-  fc([255, 247, 237]); dc([234, 88, 12]); lw(0.4); rc(mx, firmasTop, sigW2, 48, "FD");
-  f(9.5, "bold"); tc([234, 88, 12]); doc.text("MOTORISTA — ENTREGA", mx + sigW2 / 2, firmasTop + 6.5, { align: "center" });
+  fc([253, 240, 230]); dc(B); lw(0.5); rc(mx, firmasTop, sigW2, 48, "FD");
+  f(9.5, "bold"); tc(B); doc.text("MOTORISTA — ENTREGA", mx + sigW2 / 2, firmasTop + 6.5, { align: "center" });
   sl = firmasTop + 14;
   lbl("Nombre completo", mx + 5, sl); blk(mx + 5, sl + 4.5, sigW2 - 10); sl += 10;
   lbl("Placa vehiculo", mx + 5, sl); blk(mx + 5, sl + 4.5, (sigW2 - 14) / 2);
