@@ -571,6 +571,20 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
     ay += descBoxH + 3;
   }
 
+  // ── Observaciones de la entrega (faltantes / parciales / diferencias) ──
+  // Espacio para anotar a mano, p.ej. "fui por 20 varillas y el proveedor
+  // solo tenia 10" — llena el espacio libre hasta las firmas.
+  if (tableBottom - ay > 14) {
+    f(7.5, "bold"); tc(B);
+    doc.text("OBSERVACIONES DE LA ENTREGA (faltantes, entregas parciales, diferencias):", M + 2, ay + 4);
+    ay += 6;
+    const obsH = tableBottom - ay;
+    dc(BD); lw(0.3); rc(M, ay, CW, obsH, "S");
+    dc(BD); lw(0.2);
+    for (let ly = ay + 8; ly < ay + obsH - 2; ly += 8) ln(M + 4, ly, PW - M - 4, ly);
+    ay += obsH;
+  }
+
   const sigW2 = (CW - 10) / 2;
   fc(BL); dc(DK); lw(0.5); rc(M, firmasTop, sigW2, 48, "FD");
   f(9.5, "bold"); tc(DK); doc.text("INGENIERO / RESIDENTE — RECIBE", M + sigW2 / 2, firmasTop + 6.5, { align: "center" });
