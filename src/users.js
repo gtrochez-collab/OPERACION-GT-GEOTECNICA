@@ -8,6 +8,7 @@
 
 export const USERS = [
   { username: "administrador", password: "1234geo",        role: "admin",              label: "Lic. Gerson Trochez" },
+  { username: "daniel",        password: "daniel1234",     role: "admin",              label: "Daniel Flores" },
   { username: "asistente",     password: "asistente1234",  role: "asistente",          label: "Asistente" },
   { username: "carolina",      password: "carolina1234",   role: "tesoreria",          label: "Lic. Carolina Flores-Hernandez" },
   { username: "gerencia",      password: "gerencia1234",   role: "gerencia",           label: "Gerencia" },
