@@ -1851,12 +1851,37 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       return h;
     });
     const [dirty, setDirty] = useState(false);
+    // Overrides por dia: { "empId-dia": "SHORT" } — si el colaborador hizo
+    // HE para OTRO proyecto ese dia, el costo se carga a ese proyecto
+    // (mismo concepto que el "1*" de asistencia). Click derecho para asignar.
+    const [projOvr, setProjOvr] = useState(sheet.projOverrides || {});
+    const [editingCell, setEditingCell] = useState(null);
     const days = heDiasQ(sheet.periodo, sheet.quincena);
     const assignments = sheet.assignments || {};
 
     const assignedShorts = [...new Set(ae.map(e => resolveShortHR(assignments[e.id])).filter(Boolean))];
     const projGroups = hrProjects.filter(p => assignedShorts.includes(p.short) || ae.some(e => assignments[e.id] === p.short));
     assignedShorts.forEach(s => { if (!projGroups.some(p => p.short === s)) projGroups.push({ short: s, name: s, code: "" }); });
+    // Grupos "fantasma" para proyectos que solo reciben HE reasignadas
+    [...new Set(Object.values(projOvr).map(s => resolveShortHR(s)).filter(Boolean))].forEach(s => {
+      if (!projGroups.some(p => p.short === s)) projGroups.push({ short: s, name: s, code: "" });
+    });
+
+    const setOverride = (eid, day, short) => {
+      const k = `${eid}-${day}`;
+      setProjOvr(o => {
+        const n = { ...o };
+        if (!short || short === resolveShortHR(assignments[eid])) delete n[k];
+        else n[k] = short;
+        return n;
+      });
+      setEditingCell(null);
+      setDirty(true);
+    };
+    // Proyecto atribuido de un dia (override o base de cuadrilla)
+    const projDe = (eid, day) => projOvr[`${eid}-${day}`]
+      ? resolveShortHR(projOvr[`${eid}-${day}`])
+      : resolveShortHR(assignments[eid]);
 
     const setCell = (eid, day, bandK, raw) => {
       if (!/^\d{0,2}([.,]\d{0,2})?$/.test(raw)) return; // solo numeros con decimal
@@ -1892,7 +1917,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         if (b1 + b2 + b3 <= 0) return;
         norm[k] = { b1, b2, b3 };
       });
-      const record = { ...sheet, hours: norm, lastSaved: new Date().toISOString() };
+      const record = { ...sheet, hours: norm, projOverrides: projOvr, lastSaved: new Date().toISOString() };
       const existing = hes.findIndex(h => h.id === sheet.id);
       const updated = existing >= 0 ? hes.map((h, i) => i === existing ? record : h) : [...hes, record];
       const ok = await sHe(updated);
@@ -1913,6 +1938,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <span style={{ background: "#FECACA", padding: "2px 8px", borderRadius: 4, color: "#991B1B" }}>10pm-12am +75%</span>
           <span style={{ background: "#E9D5FF", padding: "2px 8px", borderRadius: 4, color: "#6B21A8" }}>Domingo ×2 (todas)</span>
           <span style={{ background: "#DCFCE7", padding: "2px 8px", borderRadius: 4, color: "#166534" }}>Hora = salario ÷ 30 ÷ 8</span>
+          <span style={{ background: "#DBEAFE", padding: "2px 8px", borderRadius: 4, color: "#1E40AF" }}>Click derecho = HE de otro proyecto</span>
         </span>
       </div>
       <div style={{ background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 10, padding: "9px 14px", fontSize: 12, color: "#9A3412" }}>
@@ -1921,20 +1947,35 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
       {projGroups.map(proj => {
         const pEmps = ae.filter(e => resolveShortHR(assignments[e.id]) === proj.short);
-        if (pEmps.length === 0) return null;
+        // Subtotal ATRIBUIDO: respeta los overrides por dia — las HE
+        // reasignadas cuentan para el proyecto que las recibio.
         let subHrs = 0, subCosto = 0;
-        const rows = pEmps.map(e => {
-          const t = empTotals(e);
-          subHrs += t.hrs; subCosto += t.costo;
-          return { e, t };
+        ae.forEach(e => {
+          const hb = heHoraBase(e);
+          days.forEach(d => {
+            if (projDe(e.id, d.day) !== proj.short) return;
+            const c = hours[`${e.id}-${d.day}`];
+            if (!c) return;
+            HE_BANDAS.forEach(b => {
+              const h = heNum(c[b.k]);
+              if (h > 0) { subHrs += h; subCosto += h * heMult(d.isSun, b) * hb; }
+            });
+          });
         });
+        if (pEmps.length === 0 && subHrs <= 0) return null;
+        const rows = pEmps.map(e => ({ e, t: empTotals(e) }));
         granHrs += subHrs; granCosto += subCosto;
         return <div key={proj.short} style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden" }}>
           <div style={{ background: cc.color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span>{proj.short} ({pEmps.length})</span>
             <span style={{ fontSize: 12 }}>{fmtDias(subHrs)} hrs · <b>{fmtL(subCosto)}</b></span>
           </div>
-          <div style={{ overflowX: "auto" }}>
+          {pEmps.length === 0 && (
+            <div style={{ padding: "8px 14px", fontSize: 11, color: "#64748b", fontStyle: "italic" }}>
+              Solo horas reasignadas desde otros proyectos (celdas azules en las cuadrillas de origen).
+            </div>
+          )}
+          {pEmps.length > 0 && <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse", fontSize: 11 }}>
               <thead>
                 <tr style={{ background: "#F1F5F9" }}>
@@ -1964,8 +2005,23 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                     {days.map(d => HE_BANDAS.map((b, i) => {
                       const k = `${e.id}-${d.day}`;
                       const val = hours[k]?.[b.k] ?? "";
-                      return <td key={`${k}-${b.k}`} style={{ padding: "3px 2px", textAlign: "center", borderLeft: i === 0 ? "2px solid #F1F5F9" : "none", background: d.isSun ? "#FAF5FF" : "transparent" }}>
-                        <input value={val} onChange={ev => setCell(e.id, d.day, b.k, ev.target.value)} placeholder="·" style={inputStyle(val ? b.bg : "#fff")} />
+                      const ovr = projOvr[k];
+                      const isEditing = editingCell === k;
+                      return <td key={`${k}-${b.k}`}
+                        onContextMenu={(ev) => { ev.preventDefault(); setEditingCell(isEditing ? null : k); }}
+                        title={ovr ? `HE cargadas a ${ovr} — click derecho para cambiar` : "Click derecho: cargar estas HE a otro proyecto"}
+                        style={{ padding: "3px 2px", textAlign: "center", borderLeft: i === 0 ? "2px solid #F1F5F9" : "none", background: ovr ? "#DBEAFE" : d.isSun ? "#FAF5FF" : "transparent", position: "relative" }}>
+                        <input value={val} onChange={ev => setCell(e.id, d.day, b.k, ev.target.value)} placeholder="·" style={inputStyle(val ? b.bg : ovr ? "#EFF6FF" : "#fff")} />
+                        {ovr && i === 0 && <div style={{ fontSize: 7, color: "#1E40AF", fontWeight: 700, lineHeight: 1, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden" }}>{ovr}</div>}
+                        {isEditing && i === 0 && (
+                          <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 6, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 170, maxHeight: 220, overflowY: "auto", textAlign: "left" }} onClick={ev => ev.stopPropagation()}>
+                            <div style={{ padding: "4px 8px", fontSize: 10, color: "#64748b", borderBottom: "1px solid #F1F5F9" }}>HE del día {d.day} se cargan a:</div>
+                            <div style={{ padding: "4px 8px", fontSize: 11, cursor: "pointer", background: !ovr ? "#EFF6FF" : "transparent" }} onClick={() => setOverride(e.id, d.day, null)}>✓ {resolveShortHR(assignments[e.id]) || "—"} (base)</div>
+                            {hrProjects.filter(p => p.short !== resolveShortHR(assignments[e.id])).map(p => (
+                              <div key={p.short} style={{ padding: "4px 8px", fontSize: 11, cursor: "pointer", background: ovr === p.short ? "#DBEAFE" : "transparent" }} onClick={() => setOverride(e.id, d.day, p.short)}>{ovr === p.short ? "✓ " : ""}{p.short}</div>
+                            ))}
+                          </div>
+                        )}
                       </td>;
                     }))}
                     <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: "#ECFDF5", color: "#059669" }}>{t.hrs > 0 ? fmtDias(t.hrs) : ""}</td>
@@ -1974,7 +2030,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 ))}
               </tbody>
             </table>
-          </div>
+          </div>}
         </div>;
       })}
 
@@ -2192,33 +2248,38 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       const heDias = heDiasQ(heSheet.periodo, heSheet.quincena);
       const sunSet = new Set(heDias.filter(d => d.isSun).map(d => d.day));
       const heAssign = heSheet.assignments || {};
+      const heOvr = heSheet.projOverrides || {};
       const hh = heSheet.hours || {};
       ce.forEach(e => {
         const hb = heHoraBase(e);
-        const proj = resolveShortHR(heAssign[e.id]);
-        if (!proj) return;
-        let hrs = 0, costoHe = 0;
+        const base = resolveShortHR(heAssign[e.id]);
         heDias.forEach(d => {
-          const c = hh[`${e.id}-${d.day}`];
+          const key = `${e.id}-${d.day}`;
+          const c = hh[key];
           if (!c) return;
+          // Atribucion POR DIA: si ese dia las HE fueron para otro proyecto
+          // (override del grid), el costo se carga a ese proyecto.
+          const proj = heOvr[key] ? resolveShortHR(heOvr[key]) : base;
+          if (!proj) return;
+          let hrs = 0, costoHe = 0;
           HE_BANDAS.forEach(b => {
             const h = heNum(c[b.k]);
             if (h <= 0) return;
             hrs += h;
             costoHe += h * heMult(sunSet.has(d.day), b) * hb;
           });
+          if (hrs <= 0) return;
+          if (!porProyecto[proj]) porProyecto[proj] = { diasPag: 0, costo: 0, emps: {} };
+          const P = porProyecto[proj];
+          personasSet.add(e.id);
+          if (!P.emps[e.id]) P.emps[e.id] = { emp: e, sd: ((Number(e.salary) || 0) + (Number(e.bonificacion) || 0)) / 30, dias: 0, costo: 0 };
+          P.emps[e.id].heHrs = (P.emps[e.id].heHrs || 0) + hrs;
+          P.emps[e.id].heCosto = (P.emps[e.id].heCosto || 0) + costoHe;
+          P.heHrs = (P.heHrs || 0) + hrs;
+          P.heCosto = (P.heCosto || 0) + costoHe;
+          totalHeHrs += hrs;
+          totalHeCosto += costoHe;
         });
-        if (hrs <= 0) return;
-        if (!porProyecto[proj]) porProyecto[proj] = { diasPag: 0, costo: 0, emps: {} };
-        const P = porProyecto[proj];
-        personasSet.add(e.id);
-        if (!P.emps[e.id]) P.emps[e.id] = { emp: e, sd: ((Number(e.salary) || 0) + (Number(e.bonificacion) || 0)) / 30, dias: 0, costo: 0 };
-        P.emps[e.id].heHrs = (P.emps[e.id].heHrs || 0) + hrs;
-        P.emps[e.id].heCosto = (P.emps[e.id].heCosto || 0) + costoHe;
-        P.heHrs = (P.heHrs || 0) + hrs;
-        P.heCosto = (P.heCosto || 0) + costoHe;
-        totalHeHrs += hrs;
-        totalHeCosto += costoHe;
       });
     }
 
