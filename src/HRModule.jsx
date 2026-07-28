@@ -317,6 +317,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   //   { b1, b2, b3 } }, lastSaved } — b1=4-7pm(+25%), b2=7-10pm(+50%),
   //   b3=10pm-12am(+75%); domingo todas las bandas ×2 (+100%).
   const [hes, setHes] = useState([]);
+  // Ajuste de salario base para HORAS EXTRAS (casos especiales: p.ej. a Edgar
+  // Izcano y Osue Pineda su HE se paga sobre salario minimo, no su salario
+  // real). Mapa global {empId: salarioBaseHE}. Si un empId no esta aca, se
+  // usa su salario real. Aplica a TODAS las quincenas (arreglo permanente).
+  const [heSalBase, setHeSalBase] = useState({});
   const [movs, setMovs] = useState([]);
   const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
   const [contracts, setContracts] = useState([]);
@@ -343,11 +348,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // nube (ambas empresas viven en la misma key hr-emps5; el toggle de
   // empresa filtra en memoria).
   const loadAll = async () => {
-    const [e, v, l, a, c, p, cq2, mv, ct, bn, cpProj, he0] = await Promise.all([
+    const [e, v, l, a, c, p, cq2, mv, ct, bn, cpProj, he0, hsb] = await Promise.all([
       store.get("hr-emps5"), store.get("hr-vacs"), store.get("hr-lvs"),
       store.get("hr-atts2"), store.get("hr-cons"), store.get("hr-pays"), store.get("hr-cuad"),
       store.get("hr-movs"), store.get("hr-contracts"), store.get("hr-bonuses"),
-      store.get("cp-projects"), store.get("hr-he"),
+      store.get("cp-projects"), store.get("hr-he"), store.get("hr-he-salbase"),
     ]);
     if (Array.isArray(e) && e.length > 0) {
       setEmps(e);
@@ -363,6 +368,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     }
     if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2); if (mv) setMovs(mv); if (ct) setContracts(ct); if (bn) setBonifs(bn);
     if (Array.isArray(he0)) setHes(he0);
+    if (hsb && typeof hsb === "object" && !Array.isArray(hsb)) setHeSalBase(hsb);
     if (Array.isArray(cpProj)) setHrCustomProjects(cpProj);
     setLoaded(true);
   };
@@ -415,6 +421,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const sCt = async d => { setContracts(d); return await store.set("hr-contracts", d); };
   const sBn = async d => { setBonifs(d); return await store.set("hr-bonuses", d); };
   const sHe = async d => { setHes(d); return await store.set("hr-he", d); };
+  const sHeSalBase = async d => { setHeSalBase(d); return await store.set("hr-he-salbase", d); };
 
   // ── Proyectos sincronizados con GeoShopping ──
   // Lista unificada: base (projects.js) + custom de compras (cp-projects),
@@ -1806,7 +1813,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   ];
   const heNum = (x) => { const n = parseFloat(String(x ?? "").replace(",", ".")); return isNaN(n) ? 0 : n; };
   const heMult = (isSun, band) => isSun ? 2 : band.mult;
-  const heHoraBase = (e) => (Number(e.salary) || 0) / 30 / 8;
+  // Salario base para HE: el ajuste especial (heSalBase) GANA sobre el salario
+  // real. Asi se refleja en el grid, en el PDF y en Costos (calcCostoMO).
+  const heSalarioBase = (e) => { const ov = heSalBase[e.id]; return (ov != null && ov !== "" && !isNaN(Number(ov)) && Number(ov) > 0) ? Number(ov) : (Number(e.salary) || 0); };
+  const heHoraBase = (e) => heSalarioBase(e) / 30 / 8;
   const heDiasQ = (periodo, quincena) => {
     const [y, m] = (periodo || "").split("-").map(Number);
     if (!y || !m) return [];
@@ -1815,7 +1825,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const out = [];
     for (let d = start; d <= end; d++) {
       const dt = new Date(y, m - 1, d);
-      out.push({ day: d, dow: DAYS_ES[dt.getDay()], isSun: dt.getDay() === 0, isHoliday: esFeriadoQuincena(periodo, d) });
+      out.push({ day: d, dow: DAYS_ES[dt.getDay()], isSun: dt.getDay() === 0, isSat: dt.getDay() === 6, isHoliday: esFeriadoQuincena(periodo, d) });
     }
     return out;
   };
@@ -1856,8 +1866,24 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     // (mismo concepto que el "1*" de asistencia). Click derecho para asignar.
     const [projOvr, setProjOvr] = useState(sheet.projOverrides || {});
     const [editingCell, setEditingCell] = useState(null);
+    // Ajuste de salario base para HE (casos especiales). Copia LOCAL del mapa
+    // global — se edita aca y se persiste junto con "Guardar horas extras"
+    // (guardar el mapa global a mitad de edicion remontaria la grid y
+    // perderia lo digitado). hbOf usa esta copia local para el preview vivo.
+    const [salBaseEdits, setSalBaseEdits] = useState(() => ({ ...heSalBase }));
+    const [salBaseOpen, setSalBaseOpen] = useState(false);
+    const [salBaseSearch, setSalBaseSearch] = useState("");
     const days = heDiasQ(sheet.periodo, sheet.quincena);
     const assignments = sheet.assignments || {};
+
+    // Hora base con el ajuste LOCAL (preview inmediato antes de guardar).
+    const hbOf = (e) => { const ov = salBaseEdits[e.id]; const base = (ov != null && ov !== "" && !isNaN(Number(ov)) && Number(ov) > 0) ? Number(ov) : (Number(e.salary) || 0); return base / 30 / 8; };
+    const tieneAjuste = (e) => { const ov = salBaseEdits[e.id]; return ov != null && ov !== "" && Number(ov) > 0 && Number(ov) !== (Number(e.salary) || 0); };
+    const nAjustes = ae.filter(e => tieneAjuste(e)).length;
+    const setSalBase = (eid, val) => { setSalBaseEdits(m => { const n = { ...m }; if (val === "" || val == null) delete n[eid]; else n[eid] = val; return n; }); setDirty(true); };
+    // Etiqueta de banda segun el dia: sabado la jornada termina a las 11am, asi
+    // que la 1a banda (+25%) corre de 11am a 7pm (no de 4-7pm como entre semana).
+    const bandLbl = (b, d) => (d.isSat && b.k === "b1") ? "11-7" : b.label;
 
     const assignedShorts = [...new Set(ae.map(e => resolveShortHR(assignments[e.id])).filter(Boolean))];
     const projGroups = hrProjects.filter(p => assignedShorts.includes(p.short) || ae.some(e => assignments[e.id] === p.short));
@@ -1892,7 +1918,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
     // Totales por empleado
     const empTotals = (e) => {
-      const hb = heHoraBase(e);
+      const hb = hbOf(e);
       let hrs = 0, costo = 0;
       days.forEach(d => {
         const c = hours[`${e.id}-${d.day}`];
@@ -1921,10 +1947,20 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       const existing = hes.findIndex(h => h.id === sheet.id);
       const updated = existing >= 0 ? hes.map((h, i) => i === existing ? record : h) : [...hes, record];
       const ok = await sHe(updated);
-      if (ok) { setDirty(false); setModal(null); }
-      else {
+      if (!ok) {
         alert("⚠️ Las horas extras se guardaron en este dispositivo pero NO se sincronizaron a la nube.\n\nRevisa tu conexion y volve a tocar Guardar. El modal queda abierto.");
+        return;
       }
+      // Persistir tambien los ajustes de salario base HE (mapa global). Limpio
+      // entradas vacias/no-numericas. Va DESPUES de sHe para no perder horas.
+      const cleanBase = {};
+      Object.entries(salBaseEdits).forEach(([k, v]) => { if (v !== "" && v != null && Number(v) > 0) cleanBase[k] = Number(v); });
+      const baseChanged = JSON.stringify(cleanBase) !== JSON.stringify(heSalBase);
+      if (baseChanged) {
+        const okB = await sHeSalBase(cleanBase);
+        if (!okB) { alert("⚠️ Las HORAS se guardaron, pero el ajuste de salario base NO se sincronizó a la nube. Reintentá."); return; }
+      }
+      setDirty(false); setModal(null);
     };
 
     const inputStyle = (bg) => ({ width: 34, padding: "3px 2px", border: "1px solid #E2E8F0", borderRadius: 4, fontSize: 11, textAlign: "center", background: bg, outline: "none" });
@@ -1944,8 +1980,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
       const porEmp = [];
       const porProy = {};
+      let hayAjuste = false;
       ae.forEach(e => {
-        const hb = heHoraBase(e);
+        const hb = hbOf(e);
+        const ajuste = tieneAjuste(e);
+        if (ajuste) hayAjuste = true;
         let b1 = 0, b2 = 0, b3 = 0, dom = 0, total = 0;
         const proys = new Set();
         days.forEach(d => {
@@ -1971,7 +2010,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           porProy[pr].costo += costoDia;
         });
         const hrs = b1 + b2 + b3 + dom;
-        if (hrs > 0) porEmp.push({ e, hb, b1, b2, b3, dom, hrs, total, proys: [...proys].join(" + ") });
+        if (hrs > 0) porEmp.push({ e, hb, ajuste, b1, b2, b3, dom, hrs, total, proys: [...proys].join(" + ") });
       });
       porEmp.sort((a, b) => b.total - a.total);
       const granH = porEmp.reduce((s, r) => s + r.hrs, 0);
@@ -2010,10 +2049,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <th style="text-align:left;padding:6px 8px;font-size:10px">COLABORADOR</th>
             <th style="text-align:left;padding:6px 8px;font-size:10px">PROYECTO(S)</th>
             <th style="text-align:right;padding:6px 8px;font-size:10px">L/HORA</th>
-            <th style="text-align:right;padding:6px 8px;font-size:10px">4-7PM (+25%)</th>
-            <th style="text-align:right;padding:6px 8px;font-size:10px">7-10PM (+50%)</th>
-            <th style="text-align:right;padding:6px 8px;font-size:10px">10-12AM (+75%)</th>
-            <th style="text-align:right;padding:6px 8px;font-size:10px">DOMINGO (×2)</th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px">+25%<div style="font-size:8px;font-weight:400;opacity:.85">4-7pm · sáb 11-7</div></th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px">+50%<div style="font-size:8px;font-weight:400;opacity:.85">7-10pm</div></th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px">+75%<div style="font-size:8px;font-weight:400;opacity:.85">10-12am</div></th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px">×2<div style="font-size:8px;font-weight:400;opacity:.85">domingo</div></th>
             <th style="text-align:right;padding:6px 8px;font-size:10px">HRS</th>
             <th style="text-align:right;padding:6px 8px;font-size:10px">TOTAL L</th>
           </tr></thead>
@@ -2021,7 +2060,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             ${porEmp.map(r => `<tr>
               <td style="${TD1};font-weight:700">${r.e.fullName}</td>
               <td style="${TD1};font-family:ui-monospace,Menlo,monospace;font-size:10px">${r.proys}</td>
-              <td style="${TD1};text-align:right">${fL(r.hb)}</td>
+              <td style="${TD1};text-align:right">${fL(r.hb)}${r.ajuste ? ' <span style="color:#B45309;font-weight:800">*</span>' : ''}</td>
               <td style="${TD1};text-align:right">${r.b1 ? fH(r.b1) : "—"}</td>
               <td style="${TD1};text-align:right">${r.b2 ? fH(r.b2) : "—"}</td>
               <td style="${TD1};text-align:right">${r.b3 ? fH(r.b3) : "—"}</td>
@@ -2047,6 +2086,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
         <div style="font-size:9.5px;color:#94A3B8;line-height:1.5">
           Hora base = salario ÷ 30 ÷ 8 (sin bonificación) · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2 en todas las bandas.
+          <b>Sábados:</b> la jornada termina a las 11am, por lo que la 1ª banda (+25%) corre de 11am-7pm.
+          ${hayAjuste ? '<b style="color:#B45309">* Hora extra pactada sobre un salario base especial</b> (arreglo), distinto del salario real. ' : ''}
           Pago quincena vencida: estas HE de ${sheet.quincena} ${sheet.periodo} se pagan en la planilla ${pago}. Proyectos según cuadrilla + reasignaciones por día.
         </div>
         <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
@@ -2062,13 +2103,59 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <span style={{ background: "#FED7AA", padding: "2px 8px", borderRadius: 4, color: "#9A3412" }}>7-10pm +50%</span>
           <span style={{ background: "#FECACA", padding: "2px 8px", borderRadius: 4, color: "#991B1B" }}>10pm-12am +75%</span>
           <span style={{ background: "#E9D5FF", padding: "2px 8px", borderRadius: 4, color: "#6B21A8" }}>Domingo ×2 (todas)</span>
-          <span style={{ background: "#DCFCE7", padding: "2px 8px", borderRadius: 4, color: "#166534" }}>Hora = salario ÷ 30 ÷ 8</span>
+          <span style={{ background: "#FEF3C7", padding: "2px 8px", borderRadius: 4, color: "#92400E" }}>Sábado: jornada hasta 11am (banda 1 = 11-7)</span>
           <span style={{ background: "#DBEAFE", padding: "2px 8px", borderRadius: 4, color: "#1E40AF" }}>Click derecho = HE de otro proyecto</span>
         </span>
       </div>
-      <div style={{ background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 10, padding: "9px 14px", fontSize: 12, color: "#9A3412" }}>
-        💡 Pago quincena vencida: estas HE de <b>{sheet.quincena} {sheet.periodo}</b> {hePagoLabel(sheet.quincena)}. En el tab Costos aparecen en la quincena en que se pagan.
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 10, padding: "9px 14px", fontSize: 12, color: "#9A3412", flex: 1, minWidth: 260 }}>
+          💡 Pago quincena vencida: estas HE de <b>{sheet.quincena} {sheet.periodo}</b> {hePagoLabel(sheet.quincena)}. En el tab Costos aparecen en la quincena en que se pagan.
+        </div>
+        <Btn small variant="ghost" onClick={() => setSalBaseOpen(true)}>⚙ Salario base de HE{nAjustes ? ` · ${nAjustes} ajustado${nAjustes > 1 ? "s" : ""}` : ""}</Btn>
       </div>
+
+      {/* Overlay: ajustar el salario base sobre el que se paga la HORA EXTRA
+          (arreglos especiales, p.ej. pagar a salario minimo). Es LOCAL — se
+          persiste al tocar "Guardar horas extras". */}
+      {salBaseOpen && (
+        <div onClick={() => setSalBaseOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 3000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 16px", overflowY: "auto" }}>
+          <div onClick={ev => ev.stopPropagation()} style={{ background: "#fff", borderRadius: 14, width: "100%", maxWidth: 640, boxShadow: "0 20px 60px rgba(0,0,0,.3)" }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #E2E8F0" }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#0F172A" }}>⚙ Salario base de la hora extra</div>
+              <div style={{ fontSize: 12, color: "#64748b", marginTop: 3, lineHeight: 1.45 }}>
+                Para casos especiales con arreglo (ej: la HE se paga a <b>salario mínimo</b>). Dejá vacío para usar el salario real.
+                La hora extra = <b>salario base ÷ 30 ÷ 8</b>. Aplica a <b>todas</b> las quincenas y se refleja en Costos. Se guarda al tocar <b>Guardar horas extras</b>.
+              </div>
+              <input value={salBaseSearch} onChange={e => setSalBaseSearch(e.target.value)} placeholder="🔍 Buscar colaborador…" style={{ marginTop: 10, width: "100%", padding: "8px 11px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, boxSizing: "border-box" }} />
+            </div>
+            <div style={{ maxHeight: "55vh", overflowY: "auto", padding: "6px 12px" }}>
+              {ae.filter(e => !salBaseSearch || e.fullName.toLowerCase().includes(salBaseSearch.toLowerCase())).sort((a, b) => a.fullName.localeCompare(b.fullName)).map(e => {
+                const real = Number(e.salary) || 0;
+                const aj = tieneAjuste(e);
+                return (
+                  <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 6px", borderBottom: "1px solid #F1F5F9", background: aj ? "#FFF7ED" : "transparent" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "#1E293B", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.fullName}{aj && <span style={{ color: "#B45309", fontWeight: 800 }}> *</span>}</div>
+                      <div style={{ fontSize: 10.5, color: "#94A3B8" }}>Salario real: {fmtL(real)} · hora real {fmtL(real / 30 / 8)}</div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontSize: 11, color: "#64748b" }}>Base HE L</span>
+                        <input value={salBaseEdits[e.id] ?? ""} onChange={ev => { const v = ev.target.value; if (/^\d{0,7}([.,]\d{0,2})?$/.test(v)) setSalBase(e.id, v); }} placeholder={String(real)} style={{ width: 96, padding: "5px 7px", border: `1px solid ${aj ? "#F59E0B" : "#CBD5E1"}`, borderRadius: 6, fontSize: 12, textAlign: "right", background: aj ? "#FFFBEB" : "#fff" }} />
+                      </div>
+                      <div style={{ fontSize: 10, color: aj ? "#B45309" : "#CBD5E1", fontWeight: aj ? 700 : 400 }}>hora HE: {fmtL(hbOf(e))}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ padding: "12px 20px", borderTop: "1px solid #E2E8F0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 11.5, color: "#92400E" }}>{nAjustes ? `${nAjustes} colaborador${nAjustes > 1 ? "es" : ""} con salario base especial` : "Sin ajustes — todos a su salario real"}</span>
+              <Btn variant="primary" onClick={() => setSalBaseOpen(false)}>Listo</Btn>
+            </div>
+          </div>
+        </div>
+      )}
 
       {projGroups.map(proj => {
         const pEmps = ae.filter(e => resolveShortHR(assignments[e.id]) === proj.short);
@@ -2076,7 +2163,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         // reasignadas cuentan para el proyecto que las recibio.
         let subHrs = 0, subCosto = 0;
         ae.forEach(e => {
-          const hb = heHoraBase(e);
+          const hb = hbOf(e);
           days.forEach(d => {
             if (projDe(e.id, d.day) !== proj.short) return;
             const c = hours[`${e.id}-${d.day}`];
@@ -2106,8 +2193,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 <tr style={{ background: "#F1F5F9" }}>
                   <th rowSpan={2} style={{ ...TH, position: "sticky", left: 0, background: "#F1F5F9", zIndex: 2, minWidth: 160, verticalAlign: "bottom" }}>Nombre</th>
                   {days.map(d => (
-                    <th key={d.day} colSpan={3} title={d.isHoliday ? "Feriado" : d.isSun ? "Domingo — todas las bandas ×2" : ""} style={{ ...TH, textAlign: "center", background: d.isSun ? "#F3E8FF" : d.isHoliday ? "#FED7AA" : "#F1F5F9", borderLeft: "2px solid #E2E8F0" }}>
-                      <div style={{ fontSize: 9, color: d.isSun ? "#7C3AED" : "#94A3B8" }}>{d.dow}{d.isSun ? " ×2" : ""}</div>
+                    <th key={d.day} colSpan={3} title={d.isHoliday ? "Feriado" : d.isSun ? "Domingo — todas las bandas ×2" : d.isSat ? "Sábado — jornada hasta 11am; la 1ª banda (+25%) va de 11am a 7pm" : ""} style={{ ...TH, textAlign: "center", background: d.isSun ? "#F3E8FF" : d.isHoliday ? "#FED7AA" : d.isSat ? "#FEF3C7" : "#F1F5F9", borderLeft: "2px solid #E2E8F0" }}>
+                      <div style={{ fontSize: 9, color: d.isSun ? "#7C3AED" : d.isSat ? "#B45309" : "#94A3B8" }}>{d.dow}{d.isSun ? " ×2" : d.isSat ? " ⏱11am" : ""}</div>
                       {d.day}
                     </th>
                   ))}
@@ -2116,7 +2203,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 </tr>
                 <tr style={{ background: "#F8FAFC" }}>
                   {days.map(d => HE_BANDAS.map((b, i) => (
-                    <th key={`${d.day}-${b.k}`} style={{ padding: "2px 1px", fontSize: 8, fontWeight: 700, color: b.fg, background: b.bg, textAlign: "center", minWidth: 36, borderLeft: i === 0 ? "2px solid #E2E8F0" : "1px solid #F1F5F9" }}>{b.label}</th>
+                    <th key={`${d.day}-${b.k}`} title={d.isSat && b.k === "b1" ? "Sábado: 11am-7pm (+25%)" : ""} style={{ padding: "2px 1px", fontSize: 8, fontWeight: 700, color: b.fg, background: b.bg, textAlign: "center", minWidth: 36, borderLeft: i === 0 ? "2px solid #E2E8F0" : "1px solid #F1F5F9" }}>{bandLbl(b, d)}</th>
                   )))}
                 </tr>
               </thead>
@@ -2125,7 +2212,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                   <tr key={e.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
                     <td style={{ ...TD, position: "sticky", left: 0, background: "#fff", zIndex: 1, fontWeight: 600, fontSize: 11 }}>
                       <div>{e.fullName}</div>
-                      <div title="Hora base = salario ÷ 30 ÷ 8" style={{ fontSize: 9, color: "#94A3B8" }}>hora: {fmtL(heHoraBase(e))}</div>
+                      <div title={tieneAjuste(e) ? `Hora extra pactada sobre salario base especial de ${fmtL(Number(salBaseEdits[e.id]))} (arreglo), no su salario real` : "Hora base = salario ÷ 30 ÷ 8"} style={{ fontSize: 9, color: tieneAjuste(e) ? "#B45309" : "#94A3B8", fontWeight: tieneAjuste(e) ? 700 : 400, cursor: "pointer" }} onClick={() => setSalBaseOpen(true)}>hora: {fmtL(hbOf(e))}{tieneAjuste(e) ? " *" : ""}</div>
                     </td>
                     {days.map(d => HE_BANDAS.map((b, i) => {
                       const k = `${e.id}-${d.day}`;
@@ -2272,7 +2359,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div style={{ background: "#FFFBF5", border: "1px solid #DBD4C8", borderRadius: 12, padding: "12px 16px", fontSize: 12, color: "#5C5853", lineHeight: 1.5, flex: 1, minWidth: 280 }}>
           ⏰ <b>Cómo funciona:</b> las HE se registran en la quincena en que se <b>trabajaron</b> y se pagan <b>quincena vencida</b>: las de 1Q a fin de mes (planilla 2Q), las de 2Q el 15 del mes siguiente (planilla 1Q).
-          Hora base = salario ÷ 30 ÷ 8 · 4-7pm +25% · 7-10pm +50% · 10pm-12am +75% · <b>domingo ×2</b>. En <b>Costos</b> aparecen en la quincena en que se pagan.
+          Hora base = salario ÷ 30 ÷ 8 · 4-7pm +25% · 7-10pm +50% · 10pm-12am +75% · <b>domingo ×2</b> · <b>sábado</b> jornada hasta 11am (1ª banda 11am-7pm). En <b>Costos</b> aparecen en la quincena en que se pagan.
         </div>
         <Btn onClick={() => setModal({ t: "he-new" })}>+ Hoja de horas extras</Btn>
       </div>
