@@ -81,9 +81,15 @@ logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 - Costos MO (HR): costo diario = (salario + bonificación) / 30 × días pagados
   (DT×2, DT2/TF×3, INC=1, NSP=0). Reporte PDF/CSV por proyecto/quincena.
 - Horas extras: hora base = salario/30/8 (SIN bonificación); 4-7pm +25%,
-  7-10pm +50%, 10pm-12am +75%, domingo ×2 todas. PAGO QUINCENA VENCIDA:
-  HE de 1Q se pagan fin de mes (2Q); HE de 2Q el 15 del mes siguiente.
-  En Costos aparecen en la quincena en que se PAGAN (desembolso).
+  7-10pm +50%, 10pm-12am +75%, domingo ×2 todas. SÁBADO: jornada hasta 11am,
+  la 1ª banda (+25%) corre 11am-7pm (grid muestra "11-7"; mult 25/50/75 igual,
+  solo domingo es ×2). PAGO QUINCENA VENCIDA: HE de 1Q se pagan fin de mes
+  (2Q); HE de 2Q el 15 del mes siguiente. En Costos aparecen en la quincena
+  en que se PAGAN (desembolso). Salario base de HE ajustable por colaborador
+  (arreglos: cobran HE a salario mínimo, no al real) — mapa global
+  `hr-he-salbase` {empId: salario}, overlay "⚙ Salario base de HE" en el grid,
+  heHoraBase lo lee (aplica a Costos), marca "*". Se persiste con "Guardar HE"
+  (el ajuste vive local en la grid para no remontarla a mitad de edición).
 - Dashboard compras: mensual (selector "Mes de análisis"), dona = % gasto del mes
   por proyecto, tabla por pagar (Carolina)/pagado mes, "Suministro pendiente"
   (falta entregar por proyecto / Ana-Fernando sin coordinar / logística sin entregar).
