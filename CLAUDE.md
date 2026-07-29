@@ -62,6 +62,15 @@ logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 ## Convenciones críticas
 - **Guardado robusto**: nunca fire-and-forget en datos importantes. Patrón:
   `const ok = await store.set(...)` → si falla, alert + mantener modal abierto.
+- **Grids/forms críticos** (patrón anti-pérdida de HE, jul 2026): los
+  componentes definidos DENTRO de un módulo se remontan con cualquier
+  re-render del padre (fotos cargando, resize) y pierden el estado local —
+  así se guardó vacía una hoja de HE. HorasExtrasGrid usa `heDraftRef`
+  (espejo del estado en un ref del padre, restaurado al remontar si dirty;
+  se descarta al cerrar). Guardados de arrays compartidos: merge por unidad
+  contra `store.getCloud()` (lectura directa a nube, sin cache) + verify
+  releyendo la nube + guardia anti-vaciado con confirm. No usar `store.get`
+  para merges (puede devolver cache local viejo y dispara re-syncs).
 - **Borrar siempre con confirm()** (las cuadrillas se perdieron una vez por un × sin confirm).
 - **Proyectos**: lista unificada base+custom con `resolveShortHR` en HR
   (los shorts de compras GANAN sobre aliases legacy de projects.js — caso PLANTEL).

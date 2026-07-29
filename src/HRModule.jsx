@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, findProject, resolveShort, projectName, projectCode } from "./projects.js";
@@ -322,6 +322,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // real). Mapa global {empId: salarioBaseHE}. Si un empId no esta aca, se
   // usa su salario real. Aplica a TODAS las quincenas (arreglo permanente).
   const [heSalBase, setHeSalBase] = useState({});
+  // RESPALDO VIVO de la grid de HE contra remounts. HorasExtrasGrid se define
+  // dentro de HRModule, asi que CUALQUIER re-render del padre (ej: fotos de
+  // empleados que terminan de cargar en segundo plano) la desmonta y remonta,
+  // reseteando lo digitado — asi se perdieron las HE de Geotecnica el
+  // 29-jul-2026 (se guardo la hoja vacia sin error). La grid espeja aca su
+  // estado en cada cambio y, si remonta, lo restaura. Key por
+  // company|periodo|quincena. Se limpia al guardar OK o al Cerrar explicito.
+  const heDraftRef = useRef(null);
   const [movs, setMovs] = useState([]);
   const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
   const [contracts, setContracts] = useState([]);
@@ -1854,25 +1862,42 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   };
 
   const HorasExtrasGrid = ({ sheet }) => {
+    // Si hay un respaldo vivo de ESTA hoja CON CAMBIOS (remount del padre a
+    // mitad de digitacion), se restaura — lo digitado no se pierde por un
+    // re-render. Drafts sin cambios (dirty=false) se descartan: la hoja que
+    // llega por props es la fuente de verdad. El respaldo NUNCA sobrevive al
+    // cierre del modal (Cerrar, ×, backdrop y guardar lo limpian).
+    const draftKey = `${sheet.company}|${sheet.periodo}|${sheet.quincena}`;
+    const draft = heDraftRef.current && heDraftRef.current.key === draftKey && heDraftRef.current.dirty ? heDraftRef.current : null;
     // hours en edicion: strings (acepta "1.5" y "1,5"); se normaliza al guardar.
     const [hours, setHours] = useState(() => {
+      if (draft) return draft.hours;
       const h = {};
       Object.entries(sheet.hours || {}).forEach(([k, c]) => { h[k] = { b1: c.b1 ? String(c.b1) : "", b2: c.b2 ? String(c.b2) : "", b3: c.b3 ? String(c.b3) : "" }; });
       return h;
     });
-    const [dirty, setDirty] = useState(false);
+    const [dirty, setDirty] = useState(draft ? draft.dirty : false);
     // Overrides por dia: { "empId-dia": "SHORT" } — si el colaborador hizo
     // HE para OTRO proyecto ese dia, el costo se carga a ese proyecto
     // (mismo concepto que el "1*" de asistencia). Click derecho para asignar.
-    const [projOvr, setProjOvr] = useState(sheet.projOverrides || {});
+    const [projOvr, setProjOvr] = useState(() => draft ? draft.projOvr : (sheet.projOverrides || {}));
     const [editingCell, setEditingCell] = useState(null);
     // Ajuste de salario base para HE (casos especiales). Copia LOCAL del mapa
     // global — se edita aca y se persiste junto con "Guardar horas extras"
     // (guardar el mapa global a mitad de edicion remontaria la grid y
     // perderia lo digitado). hbOf usa esta copia local para el preview vivo.
-    const [salBaseEdits, setSalBaseEdits] = useState(() => ({ ...heSalBase }));
+    const [salBaseEdits, setSalBaseEdits] = useState(() => draft ? draft.salBaseEdits : ({ ...heSalBase }));
+    // Mapa base sobre el que se hicieron las ediciones de salario — al
+    // guardar solo se aplican los empIds que el usuario CAMBIO respecto a
+    // este seed (no se pisan ajustes concurrentes que esta sesion nunca vio).
+    const [salBaseSeed] = useState(() => draft ? draft.salBaseSeed : ({ ...heSalBase }));
     const [salBaseOpen, setSalBaseOpen] = useState(false);
     const [salBaseSearch, setSalBaseSearch] = useState("");
+    const savingRef = useRef(false);
+    // Espejar el estado al respaldo en CADA cambio (proteccion anti-remount).
+    useEffect(() => {
+      heDraftRef.current = { key: draftKey, hours, projOvr, salBaseEdits, salBaseSeed, dirty };
+    }, [draftKey, hours, projOvr, salBaseEdits, salBaseSeed, dirty]);
     const days = heDiasQ(sheet.periodo, sheet.quincena);
     const assignments = sheet.assignments || {};
 
@@ -1936,6 +1961,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     let granHrs = 0, granCosto = 0;
 
     const guardar = async () => {
+      if (savingRef.current) return; // anti doble-clic mientras guarda
+      savingRef.current = true;
+      try { await guardarInner(); } finally { savingRef.current = false; }
+    };
+    const guardarInner = async () => {
       // Normalizar: solo celdas con algun valor > 0, como numeros.
       const norm = {};
       Object.entries(hours).forEach(([k, c]) => {
@@ -1943,23 +1973,71 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         if (b1 + b2 + b3 <= 0) return;
         norm[k] = { b1, b2, b3 };
       });
+      // GUARDIA anti-vaciado: si la hoja TENIA horas y ahora va sin ninguna,
+      // pedir confirmacion explicita (asi un reset accidental no borra nada).
+      if (Object.keys(norm).length === 0 && Object.keys(sheet.hours || {}).length > 0) {
+        if (!confirm(`⚠️ ATENCIÓN: estás por guardar la hoja ${sheet.quincena} ${sheet.periodo} SIN NINGUNA HORA.\n\nLa hoja tenía ${Object.keys(sheet.hours).length} celda(s) con horas que se BORRARÍAN.\n\n¿Seguro que querés guardarla vacía?`)) return;
+      }
       const record = { ...sheet, hours: norm, projOverrides: projOvr, lastSaved: new Date().toISOString() };
-      const existing = hes.findIndex(h => h.id === sheet.id);
-      const updated = existing >= 0 ? hes.map((h, i) => i === existing ? record : h) : [...hes, record];
+      // MERGE por hoja contra la NUBE (lectura DIRECTA getCloud, sin cache
+      // local que pueda estar viejo): union nube + memoria quedandose con la
+      // version MAS RECIENTE de cada hoja (company|periodo|quincena) — nunca
+      // se pisan otras hojas aunque esta pestana este desactualizada — y la
+      // hoja que se esta guardando manda sobre todas sus versiones. De paso
+      // colapsa duplicados de la misma quincena.
+      let cloudArr = null;
+      try { const c = await store.getCloud("hr-he"); if (Array.isArray(c)) cloudArr = c; } catch { cloudArr = null; /* nube caida: union solo con memoria */ }
+      const keyOf = h => `${h.company}|${h.periodo}|${h.quincena}`;
+      const byKey = {};
+      [...(Array.isArray(hes) ? hes : []), ...(cloudArr || [])].forEach(h => {
+        if (!h || !h.id) return;
+        const kk = keyOf(h);
+        const cur = byKey[kk];
+        if (!cur || String(h.lastSaved || h.date || "") > String(cur.lastSaved || cur.date || "")) byKey[kk] = h;
+      });
+      byKey[keyOf(record)] = record;
+      const updated = Object.values(byKey);
       const ok = await sHe(updated);
       if (!ok) {
         alert("⚠️ Las horas extras se guardaron en este dispositivo pero NO se sincronizaron a la nube.\n\nRevisa tu conexion y volve a tocar Guardar. El modal queda abierto.");
         return;
       }
-      // Persistir tambien los ajustes de salario base HE (mapa global). Limpio
-      // entradas vacias/no-numericas. Va DESPUES de sHe para no perder horas.
+      // VERIFICAR con lectura DIRECTA a la nube (getCloud no usa el cache
+      // local, asi que esto confirma lo que REALMENTE quedo en Supabase):
+      // la hoja debe estar con ESTE lastSaved y la misma cantidad de celdas.
+      let verified = false;
+      try {
+        const back = await store.getCloud("hr-he");
+        const mine = Array.isArray(back) ? back.find(h => h.id === record.id) : null;
+        verified = !!mine && mine.lastSaved === record.lastSaved && Object.keys(mine.hours || {}).length === Object.keys(norm).length;
+      } catch { verified = false; }
+      if (!verified) {
+        alert("⚠️ El guardado NO se pudo VERIFICAR en la nube.\n\nNO cierres la hoja: revisá tu conexión y tocá Guardar de nuevo.");
+        return;
+      }
+      // Persistir los ajustes de salario base HE — merge contra la nube
+      // fresca aplicando SOLO los empleados que el usuario CAMBIO esta
+      // sesion (diff contra el seed). No pisa ajustes de la otra empresa ni
+      // ajustes concurrentes que esta sesion nunca vio.
       const cleanBase = {};
       Object.entries(salBaseEdits).forEach(([k, v]) => { if (v !== "" && v != null && Number(v) > 0) cleanBase[k] = Number(v); });
       const baseChanged = JSON.stringify(cleanBase) !== JSON.stringify(heSalBase);
       if (baseChanged) {
-        const okB = await sHeSalBase(cleanBase);
-        if (!okB) { alert("⚠️ Las HORAS se guardaron, pero el ajuste de salario base NO se sincronizó a la nube. Reintentá."); return; }
+        let cloudMap = heSalBase;
+        try { const cm = await store.getCloud("hr-he-salbase"); if (cm && typeof cm === "object" && !Array.isArray(cm)) cloudMap = cm; } catch { /* nube caida: partir de memoria */ }
+        const mergedMap = { ...cloudMap };
+        ae.forEach(e => {
+          const antes = (salBaseSeed[e.id] != null && salBaseSeed[e.id] !== "" && Number(salBaseSeed[e.id]) > 0) ? Number(salBaseSeed[e.id]) : null;
+          const ahora = cleanBase[e.id] != null ? cleanBase[e.id] : null;
+          if (antes === ahora) return; // no lo toco esta sesion → respetar lo que haya en la nube
+          if (ahora != null) mergedMap[e.id] = ahora; else delete mergedMap[e.id];
+        });
+        const okB = await sHeSalBase(mergedMap);
+        if (!okB) { alert("⚠️ Las HORAS quedaron guardadas y verificadas, pero el ajuste de salario base NO se sincronizó. Abrí la hoja y tocá Guardar de nuevo."); return; }
       }
+      heDraftRef.current = null; // respaldo ya no necesario
+      const totHrs = Object.values(norm).reduce((s, c) => s + c.b1 + c.b2 + c.b3, 0);
+      alert(`✅ Horas extras ${sheet.quincena} ${sheet.periodo} guardadas y VERIFICADAS en la nube.\n\n${Object.keys(norm).length} celda(s) · ${totHrs} horas.`);
       setDirty(false); setModal(null);
     };
 
@@ -2261,6 +2339,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
         <Btn variant="ghost" onClick={() => {
           if (dirty && !confirm("Tenés cambios SIN GUARDAR.\n\n¿Cerrar sin guardar?")) return;
+          heDraftRef.current = null; // descarte explicito del respaldo
           setModal(null);
         }}>Cerrar</Btn>
         <Btn variant="info" onClick={exportHePDF}>📄 PDF para planilla</Btn>
@@ -2287,7 +2366,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const cuadSel = cqSorted.find(c => c.id === cuadId)
       || cqSorted.find(c => c.periodo === per && c.quincena === q)
       || cqSorted[0] || null;
-    const yaExiste = che.find(h => h.periodo === per && h.quincena === q);
+    const yaExiste = che.filter(h => h.periodo === per && h.quincena === q)
+      .sort((a, b) => String(b.lastSaved || "").localeCompare(String(a.lastSaved || "")))[0];
 
     const pagoLabel = (() => {
       if (!per) return "";
@@ -2342,12 +2422,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     che.forEach(h => {
       const k = `${h.periodo}|${h.quincena}`;
       if (!rowsMap[k]) rowsMap[k] = { periodo: h.periodo, quincena: h.quincena, cuad: null, he: h };
-      else rowsMap[k].he = h;
+      // Si hubiera hojas duplicadas de la misma quincena, gana la de ultimo
+      // guardado (que un duplicado vacio no "esconda" las horas reales).
+      else if (!rowsMap[k].he || String(h.lastSaved || "") > String(rowsMap[k].he.lastSaved || "")) rowsMap[k].he = h;
     });
     const rows = Object.values(rowsMap).sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`));
 
     const openHeRow = (r) => {
-      const existing = r.he || che.find(h => h.periodo === r.periodo && h.quincena === r.quincena);
+      const existing = r.he || che.filter(h => h.periodo === r.periodo && h.quincena === r.quincena)
+        .sort((a, b) => String(b.lastSaved || "").localeCompare(String(a.lastSaved || "")))[0];
       if (existing) {
         // Si la quincena tiene cuadrilla propia, refrescamos assignments desde
         // ahi (fuente de verdad); si no (hoja con distribucion copiada), se
@@ -4540,7 +4623,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     case "cuad": return <Modal title={`Distribucion de cuadrilla — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm /></Modal>;
     case "cuad-edit": return <Modal title={`Editar cuadrilla ${m.d.quincena} ${m.d.periodo} — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm cuad={m.d} /></Modal>;
     case "ag": return <Modal title={`Asistencia ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><AttendanceGrid sheet={m.d} /></Modal>;
-    case "he": return <Modal title={`Horas Extras ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><HorasExtrasGrid sheet={m.d} /></Modal>;
+    case "he": return <Modal title={`Horas Extras ${m.d.quincena} ${m.d.periodo}`} onClose={() => {
+      // Mismo contrato que el boton Cerrar: confirmar si hay cambios sin
+      // guardar y descartar el respaldo (el draft solo protege remounts
+      // MIENTRAS la hoja esta abierta — nunca sobrevive al cierre).
+      if (heDraftRef.current?.dirty && !confirm("Tenés cambios SIN GUARDAR en la hoja de horas extras.\n\n¿Cerrar sin guardar?")) return;
+      heDraftRef.current = null;
+      setModal(null);
+    }} wide><HorasExtrasGrid sheet={m.d} /></Modal>;
     case "he-new": return <Modal title="Nueva hoja de horas extras" onClose={() => setModal(null)}><HeNewForm /></Modal>;
     case "mn": return <Modal title="Registrar ALTA de empleado" onClose={() => setModal(null)} wide><AltaForm /></Modal>;
     case "mb": return <Modal title="Registrar BAJA de empleado" onClose={() => setModal(null)} wide><BajaForm /></Modal>;

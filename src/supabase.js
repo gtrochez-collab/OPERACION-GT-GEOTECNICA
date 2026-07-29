@@ -249,6 +249,19 @@ export const store = {
     return null;
   },
 
+  // Lectura DIRECTA de la nube — sin cache local, sin re-sync en background.
+  // Para operaciones criticas que necesitan la verdad de Supabase (ej: merge
+  // y verificacion del guardado de horas extras). LANZA si la nube no
+  // responde (el caller decide el fallback); devuelve null si la key no existe.
+  async getCloud(k) {
+    const { data, error } = await getWithTimeout(
+      supabase.from('app_data').select('value').eq('key', k).maybeSingle(),
+      15000
+    );
+    if (error && error.code !== 'PGRST116') throw error;
+    return data ? data.value : null;
+  },
+
   async set(k, v) {
     const ts = new Date().toISOString();
     // 1) Guardar SIEMPRE en localStorage primero (red de seguridad), con timestamp.
