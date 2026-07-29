@@ -16,10 +16,13 @@
 //
 // Storage keys (Supabase via store):
 //   - ep-providers : proveedores de EPP
-//   - ep-items     : catalogo {nombre, categoria, tipoEpp, proveedorId, precio, stock, foto, descripcion}
+//   - ep-items     : catalogo {nombre, codigo, categoria, tipoEpp, proveedorId, precio, stock, foto, descripcion}
 //   - ep-reqs      : requisiciones {numero, solicitante, lineas[], estado}
+//   - ep-jornaleros: personal por dia fuera de planilla {id, fullName, position, puesto, notas}
+//   - ep-puestos   : override de perfil EPP por persona {personaId: puestoKey}
 //   - cp-file-<id> : fotos de items (reutiliza el storage de archivos)
 //   Lee (NO escribe): hr-emps5 — empleados de GeoTeam (con sus fotos).
+// Las personas de Dotacion = empleados de GeoTeam + jornaleros (company:"jornal").
 //
 // Flujo requisicion: pendiente → aprobada → entregada (descuenta stock).
 // =====================================================================
@@ -72,6 +75,11 @@ const tipoDef = (v) => EPP_TIPOS.find((t) => t.value === v) || EPP_TIPOS[EPP_TIP
 
 // Normalizador para matching de nombres/posiciones (sin acentos, minusculas).
 const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+// NOTA: el codigo de cada producto se digita a mano en su casilla (item.codigo).
+// Los items viejos traian el codigo escrito dentro de la descripcion
+// ("Codigo: 08130215"); la busqueda tambien mira la descripcion para que esos
+// sigan siendo encontrables mientras se les pasa el codigo a su casilla.
 
 // Inferir el tipo de EPP desde el nombre del item — para items/lineas viejas
 // que se crearon sin tipo (ej: "Casco" → casco). Asi las entregas viejas
@@ -243,7 +251,7 @@ const GREEN = "#059669";
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 const fmtL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—");
-const coTag = (c) => (c === "subterra" ? "SUB" : "GEO");
+const coTag = (c) => (c === "subterra" ? "SUB" : c === "jornal" ? "JORNAL" : "GEO");
 
 // ── Avatar de empleado (foto o iniciales) ──
 const empInitials = (fullName) => {
@@ -517,8 +525,8 @@ const td = { padding: "9px 10px", fontSize: 13, color: BRAND.charcoal, borderBot
 // el tipo se auto-infiere del nombre para no bloquear el guardado.
 const ItemFormImpl = ({ item, providers, photoCache, setPhotoCache, onSave, onCancel }) => {
   const [f, setF] = useState(() => item
-    ? { descripcion: "", minStock: 2, stock: 0, foto: null, ...item, tipoEpp: item.tipoEpp || inferTipo(item.nombre) || "" }
-    : { nombre: "", categoria: "", tipoEpp: "", proveedorId: "", precio: "", stock: 0, minStock: 2, descripcion: "", foto: null });
+    ? { codigo: "", descripcion: "", minStock: 2, stock: 0, foto: null, ...item, tipoEpp: item.tipoEpp || inferTipo(item.nombre) || "", codigo: item.codigo || "" }
+    : { nombre: "", codigo: "", categoria: "", tipoEpp: "", proveedorId: "", precio: "", stock: 0, minStock: 2, descripcion: "", foto: null });
   const [uploading, setUploading] = useState(false);
   const [tipoTouched, setTipoTouched] = useState(!!(item && item.tipoEpp));
   const u = (k, v) => setF((p) => ({ ...p, [k]: v }));
@@ -556,7 +564,10 @@ const ItemFormImpl = ({ item, providers, photoCache, setPhotoCache, onSave, onCa
           </div>
         </div>
       </div>
-      <div style={{ gridColumn: "1/-1" }}><Input label="Nombre del ítem" placeholder="Ej: Casco tipo I con barbiquejo" value={f.nombre} onChange={(e) => { const v = e.target.value; setF((p) => ({ ...p, nombre: v, tipoEpp: tipoTouched ? p.tipoEpp : (inferTipo(v) || p.tipoEpp || "") })); }} /></div>
+      <div style={{ gridColumn: "1/-1", display: "grid", gridTemplateColumns: "1fr 200px", gap: 14 }}>
+        <Input label="Nombre del ítem" placeholder="Ej: Casco tipo I con barbiquejo" value={f.nombre} onChange={(e) => { const v = e.target.value; setF((p) => ({ ...p, nombre: v, tipoEpp: tipoTouched ? p.tipoEpp : (inferTipo(v) || p.tipoEpp || "") })); }} />
+        <Input label="Código del producto" placeholder="Ej: CAS-001" value={f.codigo} onChange={(e) => u("codigo", e.target.value)} style={{ fontFamily: FONT.mono, textTransform: "uppercase" }} />
+      </div>
       <Select label="Tipo de EPP (se detecta del nombre)" placeholder="— Seleccionar —" options={EPP_TIPOS.map((t) => ({ value: t.value, label: `${t.icon} ${t.label}` }))} value={f.tipoEpp} onChange={(e) => { setTipoTouched(true); u("tipoEpp", e.target.value); }} />
       <Select label="Categoría (área)" placeholder="— Seleccionar —" options={CATEGORIAS} value={f.categoria} onChange={(e) => u("categoria", e.target.value)} />
       <Select label="Proveedor" placeholder="— Seleccionar —" options={providers.map((p) => ({ value: p.id, label: p.nombre }))} value={f.proveedorId} onChange={(e) => u("proveedorId", e.target.value)} />
@@ -575,8 +586,40 @@ const ItemFormImpl = ({ item, providers, photoCache, setPhotoCache, onSave, onCa
           if (!f.categoria) return alert("Seleccioná la categoría.");
           if (!f.proveedorId) return alert("Seleccioná el proveedor.");
           if (f.precio === "" || Number(f.precio) < 0) return alert("Poné el precio real.");
-          onSave({ ...f, precio: Number(f.precio), stock: Number(f.stock) || 0, minStock: Number(f.minStock) || 0, id: f.id || uid() });
+          onSave({ ...f, codigo: String(f.codigo || "").trim().toUpperCase(), precio: Number(f.precio), stock: Number(f.stock) || 0, minStock: Number(f.minStock) || 0, id: f.id || uid() });
         }}>{item ? "Guardar cambios" : "Agregar al catálogo"}</Btn>
+      </div>
+    </div>
+  );
+};
+
+// ── Form de jornalero (personal por día, fuera de planilla) ──
+// Solo nombre + puesto: lo mínimo para clasificar y controlar su EPP.
+const JornalFormImpl = ({ jorn, onSave, onCancel }) => {
+  const [f, setF] = useState(jorn || { fullName: "", position: "", puesto: "", notas: "" });
+  const u = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const kit = PUESTOS[f.puesto];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ gridColumn: "1/-1", background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}30`, borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: BRAND.ink }}>
+        👷 <b>Personal jornal</b>: se le paga por día y no está en planilla, así que no vive en GeoTeam. Acá solo se registra <b>nombre y puesto</b> para clasificarle su EPP y llevar su dotación.
+      </div>
+      <div style={{ gridColumn: "1/-1" }}><Input label="Nombre completo" placeholder="Ej: Juan Carlos Pérez" value={f.fullName} onChange={(e) => u("fullName", e.target.value)} /></div>
+      <Input label="Posición / oficio" placeholder="Ej: Ayudante de concreto" value={f.position} onChange={(e) => u("position", e.target.value)} />
+      <Select label="Perfil de EPP (kit por puesto)" placeholder="— Seleccionar —" options={PUESTO_OPTIONS} value={f.puesto} onChange={(e) => u("puesto", e.target.value)} />
+      {kit && (
+        <div style={{ gridColumn: "1/-1", background: BRAND.beigeLight, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: BRAND.ink }}>
+          Kit de <b>{kit.label}</b>: {kit.req.length ? kit.req.map((t) => `${tipoDef(t).icon} ${reqLabel(f.puesto, t)}`).join(" · ") : "sin EPP de campo requerido"}
+        </div>
+      )}
+      <div style={{ gridColumn: "1/-1" }}><Input label="Notas (opcional)" placeholder="Proyecto donde trabaja, contacto…" value={f.notas} onChange={(e) => u("notas", e.target.value)} /></div>
+      <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        <Btn variant="success" onClick={() => {
+          if (!f.fullName.trim()) return alert("Poné el nombre del jornalero.");
+          if (!f.puesto) return alert("Seleccioná el perfil de EPP (para saber qué kit le toca).");
+          onSave({ ...f, fullName: f.fullName.trim(), id: f.id || uid() });
+        }}>{jorn ? "Guardar cambios" : "Agregar jornalero"}</Btn>
       </div>
     </div>
   );
@@ -607,6 +650,9 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const [items, setItems] = useState([]);
   const [reqs, setReqs] = useState([]);
   const [emps, setEmps] = useState([]);
+  // Jornaleros: personal por dia, fuera de planilla/GeoTeam. Solo nombre +
+  // puesto, para llevar el control de su dotacion de EPP. Key: ep-jornaleros.
+  const [jornaleros, setJornaleros] = useState([]);
   const [photoCache, setPhotoCache] = useState({}); // {fileId: dataUrl}
   const [loaded, setLoaded] = useState(false);
   const [sec, setSec] = useState("catalogo");
@@ -616,6 +662,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const [fProv, setFProv] = useState("");
   const [fQ, setFQ] = useState("");
   const [fReqEstado, setFReqEstado] = useState("");
+  const [fInvQ, setFInvQ] = useState("");   // busqueda en Inventario (nombre/codigo)
   const [fDotQ, setFDotQ] = useState("");
   const [fDotCo, setFDotCo] = useState("");
   const [fDotPuesto, setFDotPuesto] = useState("");
@@ -628,14 +675,15 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
   useEffect(() => {
     (async () => {
-      const [pv, it, rq, em, pu] = await Promise.all([
-        store.get("ep-providers"), store.get("ep-items"), store.get("ep-reqs"), store.get("hr-emps5"), store.get("ep-puestos"),
+      const [pv, it, rq, em, pu, jr] = await Promise.all([
+        store.get("ep-providers"), store.get("ep-items"), store.get("ep-reqs"), store.get("hr-emps5"), store.get("ep-puestos"), store.get("ep-jornaleros"),
       ]);
       setProviders(Array.isArray(pv) ? pv : []);
       setItems(Array.isArray(it) ? it : []);
       setReqs(Array.isArray(rq) ? rq : []);
       setEmps(Array.isArray(em) ? em : []);
       setPuestosMap(pu && typeof pu === "object" && !Array.isArray(pu) ? pu : {});
+      setJornaleros(Array.isArray(jr) ? jr : []);
       setLoaded(true);
     })();
   }, []);
@@ -655,14 +703,42 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const sProv = async (v) => { setProviders(v); const ok = await store.set("ep-providers", v); if (!ok) alert("⚠ No se guardó en la nube (ep-providers)."); return ok; };
   const sItems = async (v) => { setItems(v); const ok = await store.set("ep-items", v); if (!ok) alert("⚠ No se guardó en la nube (ep-items)."); return ok; };
   const sReqs = async (v) => { setReqs(v); const ok = await store.set("ep-reqs", v); if (!ok) alert("⚠ No se guardó en la nube (ep-reqs)."); return ok; };
-  const sPuestos = async (v) => { setPuestosMap(v); const ok = await store.set("ep-puestos", v); if (!ok) alert("⚠ No se guardó en la nube (ep-puestos)."); return ok; };
+  // ep-puestos guarda el perfil EPP de TODAS las personas. Se escribe con
+  // merge contra la nube (aplicando solo las claves que cambian) para no pisar
+  // clasificaciones que otro usuario haya hecho desde que cargó esta pestaña.
+  const sPuestos = async (cambios) => {
+    let base = puestosMap;
+    try { const c = await store.getCloud("ep-puestos"); if (c && typeof c === "object" && !Array.isArray(c)) base = c; } catch { /* nube caída: usar memoria */ }
+    const next = { ...base };
+    Object.entries(cambios).forEach(([k, v]) => { if (v == null || v === "") delete next[k]; else next[k] = v; });
+    setPuestosMap(next);
+    const ok = await store.set("ep-puestos", next);
+    if (!ok) alert("⚠ No se guardó en la nube (ep-puestos).");
+    return ok;
+  };
+  const rmPuesto = async (id) => {
+    let base = puestosMap;
+    try { const c = await store.getCloud("ep-puestos"); if (c && typeof c === "object" && !Array.isArray(c)) base = c; } catch { /* nube caída */ }
+    const next = { ...base }; delete next[id];
+    setPuestosMap(next);
+    return await store.set("ep-puestos", next);
+  };
+  const sJorn = async (v) => { setJornaleros(v); const ok = await store.set("ep-jornaleros", v); if (!ok) alert("⚠ No se guardó en la nube (ep-jornaleros)."); return ok; };
 
   const provName = (id) => providers.find((p) => p.id === id)?.nombre || "—";
   const itemById = (id) => items.find((i) => i.id === id);
-  const empById = (id) => emps.find((e) => e.id === id);
+  // PERSONAS = empleados de GeoTeam + jornaleros (personal por dia, fuera de
+  // planilla). Los jornaleros llevan company:"jornal" y esJornal:true; para
+  // EPP se tratan igual que cualquier colaborador (kit por puesto, ficha,
+  // requisiciones), solo que no tienen foto ni DNI.
+  const people = useMemo(() => [
+    ...emps,
+    ...jornaleros.map((j) => ({ ...j, company: "jornal", status: j.status || "active", esJornal: true })),
+  ], [emps, jornaleros]);
+  const empById = (id) => people.find((e) => e.id === id);
   const empPhoto = (e) => (e?.photo?.fileId ? photoCache[e.photo.fileId] : null);
   const itemPhoto = (it) => (it?.foto?.fileId ? photoCache[it.foto.fileId] : null);
-  const activeEmps = useMemo(() => emps.filter((e) => e.status === "active").sort((a, b) => String(a.fullName).localeCompare(b.fullName)), [emps]);
+  const activeEmps = useMemo(() => people.filter((e) => e.status === "active").sort((a, b) => String(a.fullName).localeCompare(b.fullName)), [people]);
 
   // Tipo de EPP resuelto: el guardado gana; si falta o es "otro", se infiere
   // del nombre (asi los items/lineas viejos SI llenan el avatar).
@@ -687,7 +763,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         const bucket = entregada ? map[l.paraEmpId].entregado : map[l.paraEmpId].pend;
         const tipo = tipoDeLinea(l);
         const k = (l.itemId || l.nombre) + "|" + tipo;
-        if (!bucket[k]) bucket[k] = { tipo, nombre: l.nombre, qty: 0, reqs: [], lastDate: null, motivos: {} };
+        if (!bucket[k]) bucket[k] = { tipo, nombre: l.nombre, codigo: l.codigo || itemById(l.itemId)?.codigo || "", qty: 0, reqs: [], lastDate: null, motivos: {} };
         bucket[k].qty += l.qty;
         if (!bucket[k].reqs.includes(r.numero)) bucket[k].reqs.push(r.numero);
         bucket[k].motivos[l.motivo] = (bucket[k].motivos[l.motivo] || 0) + l.qty;
@@ -696,8 +772,10 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       }
     }
     const out = {};
-    for (const e of emps) {
-      const puesto = puestosMap[e.id] || autoPuesto(e);
+    for (const e of people) {
+      // Prioridad: override manual > puesto propio (jornaleros lo eligen al
+      // registrarse) > inferencia automatica por nombre/posicion.
+      const puesto = puestosMap[e.id] || e.puesto || autoPuesto(e);
       const kit = PUESTOS[puesto] || PUESTOS.ayudante;
       const m = map[e.id] || { entregado: {}, pend: {} };
       const tiene = Object.values(m.entregado);
@@ -706,7 +784,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       out[e.id] = { tiene, pend: Object.values(m.pend), tipos, falta, puesto, completo: kit.req.length > 0 && falta.length === 0 };
     }
     return out;
-  }, [reqs, emps, items, puestosMap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [reqs, people, items, puestosMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const perdidas = useMemo(() => {
     const o = [];
@@ -740,8 +818,9 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         if (!Number(d.qty) || Number(d.qty) < 1) return alert(`Cantidad inválida en "${it.nombre}".`);
         if (!d.empId) return alert(`Falta indicar PARA QUIÉN va "${it.nombre}".`);
         if (!d.motivo) return alert(`Falta el MOTIVO de "${it.nombre}".`);
-        const emp = empById(d.empId) || {};
-        lineas.push({ itemId: l.itemId, nombre: it.nombre, categoria: it.categoria, tipoEpp: tipoDeItem(it), proveedor: provName(it.proveedorId), precio: Number(it.precio) || 0, qty: Number(d.qty), paraEmpId: d.empId, paraNombre: emp.fullName || "—", paraEmpresa: emp.company || "", motivo: d.motivo, deducido: false });
+        const emp = empById(d.empId);
+        if (!emp) return alert(`La persona asignada a "${it.nombre}" ya no existe (¿se borró?). Volvé a seleccionarla.`);
+        lineas.push({ itemId: l.itemId, nombre: it.nombre, codigo: it.codigo || "", categoria: it.categoria, tipoEpp: tipoDeItem(it), proveedor: provName(it.proveedorId), precio: Number(it.precio) || 0, qty: Number(d.qty), paraEmpId: d.empId, paraNombre: emp.fullName || "—", paraEmpresa: emp.company || "", motivo: d.motivo, deducido: false });
       }
     }
     const numero = "EPP-" + String(reqs.length + 1).padStart(3, "0");
@@ -772,11 +851,15 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
   // ══════════════════════════ CATALOGO ══════════════════════════
   const renderCatalogo = () => {
-    const vis = items.filter((it) => (!fCat || it.categoria === fCat) && (!fProv || it.proveedorId === fProv) && (!fQ || String(it.nombre).toLowerCase().includes(fQ.toLowerCase()))).sort((a, b) => String(a.nombre).localeCompare(b.nombre));
+    const vis = items.filter((it) => (!fCat || it.categoria === fCat) && (!fProv || it.proveedorId === fProv)
+      // Se busca tambien en la descripcion: mientras haya items con el codigo
+      // anotado ahi (dato viejo), teclearlo igual encuentra el item.
+      && (!fQ || norm(it.nombre).includes(norm(fQ)) || norm(it.codigo).includes(norm(fQ)) || norm(it.descripcion).includes(norm(fQ)))
+    ).sort((a, b) => String(a.nombre).localeCompare(b.nombre));
     return (
       <div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
-          <div style={{ flex: "1 1 220px" }}><Input label="Buscar" placeholder="Casco, guantes, careta…" value={fQ} onChange={(e) => setFQ(e.target.value)} /></div>
+          <div style={{ flex: "1 1 220px" }}><Input label="Buscar" placeholder="Casco, guantes, careta, código…" value={fQ} onChange={(e) => setFQ(e.target.value)} /></div>
           <div style={{ flex: "0 1 200px" }}><Select label="Categoría" placeholder="Todas" options={CATEGORIAS} value={fCat} onChange={(e) => setFCat(e.target.value)} /></div>
           <div style={{ flex: "0 1 200px" }}><Select label="Proveedor" placeholder="Todos" options={providers.map((p) => ({ value: p.id, label: p.nombre }))} value={fProv} onChange={(e) => setFProv(e.target.value)} /></div>
           {canManage && <Btn variant="ghost" onClick={() => setModal({ t: "item" })}>+ Nuevo ítem</Btn>}
@@ -801,6 +884,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                   </div>
                   <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
                     <div style={{ fontWeight: 800, fontSize: 14.5, color: BRAND.charcoal, lineHeight: 1.25 }}>{it.nombre}</div>
+                    {it.codigo && <div style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: BRAND.orange, letterSpacing: 0.4 }}>#{it.codigo}</div>}
                     {it.descripcion && <div style={{ fontSize: 11.5, color: BRAND.stone, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.descripcion}</div>}
                     <div style={{ fontSize: 12, color: BRAND.stone }}>🏪 {provName(it.proveedorId)}</div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto", paddingTop: 4 }}>
@@ -841,7 +925,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
               return (
                 <div key={l.key} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.md, padding: 14 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 10 }}>
-                    <div style={{ fontWeight: 800, fontSize: 13.5, color: BRAND.charcoal }}>{tipoDef(tipoDeItem(it)).icon} {it.nombre} <span style={{ fontWeight: 600, color: GREEN }}>· {fmtL(it.precio)}</span> <span style={{ fontWeight: 600, color: BRAND.stone, fontSize: 12 }}>· {lineUnits(l)} uds</span></div>
+                    <div style={{ fontWeight: 800, fontSize: 13.5, color: BRAND.charcoal }}>{tipoDef(tipoDeItem(it)).icon} {it.nombre}{it.codigo ? <span style={{ fontFamily: FONT.mono, fontSize: 11, color: BRAND.orange, fontWeight: 700 }}> #{it.codigo}</span> : null} <span style={{ fontWeight: 600, color: GREEN }}>· {fmtL(it.precio)}</span> <span style={{ fontWeight: 600, color: BRAND.stone, fontSize: 12 }}>· {lineUnits(l)} uds</span></div>
                     <button onClick={() => setCart((c) => c.filter((x) => x.key !== l.key))} style={{ background: "none", border: "none", color: BRAND.red, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Quitar ítem</button>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -910,12 +994,13 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                 </div>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Ítem</th><th style={th}>Tipo</th><th style={th}>Proveedor</th><th style={th}>Para</th><th style={th}>Motivo</th><th style={{ ...th, textAlign: "right" }}>Cant.</th><th style={{ ...th, textAlign: "right" }}>Precio</th><th style={{ ...th, textAlign: "right" }}>Subtotal</th></tr></thead>
+                    <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Tipo</th><th style={th}>Proveedor</th><th style={th}>Para</th><th style={th}>Motivo</th><th style={{ ...th, textAlign: "right" }}>Cant.</th><th style={{ ...th, textAlign: "right" }}>Precio</th><th style={{ ...th, textAlign: "right" }}>Subtotal</th></tr></thead>
                     <tbody>
                       {(r.lineas || []).map((l, i) => {
                         const m = motivoDef(l.motivo);
                         return (
                           <tr key={i}>
+                            <td style={{ ...td, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: BRAND.orange }}>{l.codigo || itemById(l.itemId)?.codigo || "—"}</td>
                             <td style={{ ...td, fontWeight: 700 }}>{l.nombre}</td>
                             <td style={td}>{tipoDef(tipoDeLinea(l)).icon} {tipoDef(tipoDeLinea(l)).label}</td>
                             <td style={td}>{l.proveedor}</td>
@@ -966,6 +1051,11 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
             <div style={{ fontSize: 24, fontWeight: 800, color: BRAND.graphite, marginTop: 4 }}>{oficina}</div>
             <div style={{ fontSize: 12, color: BRAND.stone }}>sin dotación de campo requerida</div>
           </div>
+          <div style={{ flex: "1 1 190px", background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid #B45309`, borderRadius: R.md, padding: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5 }}>Personal jornal</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: "#B45309", marginTop: 4 }}>{jornaleros.filter((j) => (j.status || "active") === "active").length}</div>
+            <div style={{ fontSize: 12, color: BRAND.stone }}>por día, fuera de planilla</div>
+          </div>
         </div>
         {/* Leyenda de cascos por puesto */}
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 14, background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.md, padding: "9px 14px", fontSize: 11.5, color: BRAND.graphite }}>
@@ -977,14 +1067,15 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
           <div style={{ flex: "1 1 200px" }}><Input label="Buscar colaborador" placeholder="Nombre…" value={fDotQ} onChange={(e) => setFDotQ(e.target.value)} /></div>
-          <div style={{ flex: "0 1 180px" }}><Select label="Empresa" placeholder="Todas" options={[{ value: "geotecnica", label: "Geotecnica" }, { value: "subterra", label: "Subterra" }]} value={fDotCo} onChange={(e) => setFDotCo(e.target.value)} /></div>
+          <div style={{ flex: "0 1 180px" }}><Select label="Empresa" placeholder="Todas" options={[{ value: "geotecnica", label: "Geotecnica" }, { value: "subterra", label: "Subterra" }, { value: "jornal", label: "Personal jornal" }]} value={fDotCo} onChange={(e) => setFDotCo(e.target.value)} /></div>
           <div style={{ flex: "0 1 200px" }}><Select label="Puesto" placeholder="Todos" options={PUESTO_OPTIONS} value={fDotPuesto} onChange={(e) => setFDotPuesto(e.target.value)} /></div>
           <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, fontWeight: 700, color: BRAND.ink, paddingBottom: 9, cursor: "pointer" }}>
             <input type="checkbox" checked={fDotFalta} onChange={(e) => setFDotFalta(e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} /> Solo con faltantes
           </label>
+          {canManage && <Btn variant="ghost" onClick={() => setModal({ t: "jornal" })} style={{ marginBottom: 1 }}>+ Personal jornal</Btn>}
         </div>
-        {!emps.length ? (
-          <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>No hay empleados cargados. Se leen de GeoTeam.</div>
+        {!people.length ? (
+          <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>No hay personal cargado. Los empleados se leen de GeoTeam; los jornaleros se agregan con <b>+ Personal jornal</b>.</div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 14 }}>
             {list.map((e) => {
@@ -999,7 +1090,9 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                         <EmpAvatar name={e.fullName} dataUrl={empPhoto(e)} size={34} borderRadius={8} />
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 800, fontSize: 13, color: BRAND.charcoal, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.fullName}</div>
-                          <div style={{ fontSize: 10.5, color: BRAND.stone }}>{coTag(e.company)} · {e.position || "—"}</div>
+                          <div style={{ fontSize: 10.5, color: BRAND.stone }}>
+                            {e.esJornal ? <span style={{ color: "#B45309", fontWeight: 800 }}>JORNAL</span> : coTag(e.company)} · {e.position || "—"}
+                          </div>
                         </div>
                       </div>
                       <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B45309", letterSpacing: 0.4, textTransform: "uppercase" }}>{kit.label}</div>
@@ -1033,15 +1126,42 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
               <EmpAvatar name={e.fullName} dataUrl={empPhoto(e)} size={56} borderRadius={12} />
               <div>
                 <div style={{ fontSize: 17, fontWeight: 800, color: BRAND.charcoal }}>{e.fullName}</div>
-                <div style={{ fontSize: 12.5, color: BRAND.stone }}>{e.position || "—"} · {coTag(e.company)}</div>
+                <div style={{ fontSize: 12.5, color: BRAND.stone }}>
+                  {e.position || "—"} · {e.esJornal ? <b style={{ color: "#B45309" }}>PERSONAL JORNAL</b> : coTag(e.company)}
+                </div>
                 {e.dni && <div style={{ fontSize: 11.5, color: BRAND.stone, fontFamily: FONT.mono }}>{e.dni}</div>}
+                {e.esJornal && e.notas && <div style={{ fontSize: 11.5, color: BRAND.stone }}>{e.notas}</div>}
               </div>
             </div>
             {/* Perfil de EPP: override manual (ep-puestos) gana sobre el automatico */}
             {canManage ? (
-              <Select label="Perfil de EPP (según su puesto)" options={PUESTO_OPTIONS} value={dot.puesto} onChange={(ev) => sPuestos({ ...puestosMap, [empId]: ev.target.value })} />
+              <Select label="Perfil de EPP (según su puesto)" options={PUESTO_OPTIONS} value={dot.puesto} onChange={async (ev) => {
+                const nuevo = ev.target.value;
+                await sPuestos({ [empId]: nuevo });
+                // Si es jornalero, sincronizar su propio registro para que
+                // "Editar jornalero" no muestre (ni reponga) el puesto viejo.
+                if (e.esJornal) await sJorn(jornaleros.map((j) => (j.id === empId ? { ...j, puesto: nuevo } : j)));
+              }} />
             ) : (
               <div><Chip color="#B45309" bg="rgba(180,83,9,0.10)">{kit.label.toUpperCase()}</Chip></div>
+            )}
+            {e.esJornal && canManage && (
+              <div style={{ display: "flex", gap: 8 }}>
+                {/* El puesto efectivo (override de la ficha) manda sobre el guardado */}
+                <Btn small variant="ghost" onClick={() => setModal({ t: "jornal", jorn: { ...jornaleros.find((j) => j.id === empId), puesto: dot.puesto } })}>✏️ Editar jornalero</Btn>
+                <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => {
+                  const tieneEpp = dot.tiene.length, enTramite = dot.pend.length;
+                  if (!confirm(`¿Quitar a "${e.fullName}" del personal jornal?`
+                    + (tieneEpp ? `\n\n• Tiene ${tieneEpp} EPP entregado(s).` : "")
+                    + (enTramite ? `\n• Tiene ${enTramite} EPP en trámite (requisición aprobada sin entregar) — quedaría sin dueño visible.` : "")
+                    + ((tieneEpp || enTramite) ? `\n\nLas requisiciones NO se borran (queda el historial).` : ""))) return;
+                  const ok = await sJorn(jornaleros.filter((j) => j.id !== empId));
+                  if (!ok) return;
+                  // Limpiar su perfil de EPP para no dejar basura en ep-puestos.
+                  if (puestosMap[empId] != null) await rmPuesto(empId);
+                  setModal(null);
+                }}>🗑 Quitar</Btn>
+              </div>
             )}
             <div>{dot.puesto === "oficina"
               ? <Chip color={BRAND.graphite} bg={BRAND.beigeDeep} style={{ fontSize: 12, padding: "5px 12px" }}>SIN DOTACIÓN DE CAMPO REQUERIDA</Chip>
@@ -1074,11 +1194,12 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         ) : (
           <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.md, overflow: "hidden" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Tipo</th><th style={th}>Ítem</th><th style={{ ...th, textAlign: "right" }}>Cant.</th><th style={th}>Últ. entrega</th><th style={th}>Requisición</th></tr></thead>
+              <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Tipo</th><th style={th}>Código</th><th style={th}>Ítem</th><th style={{ ...th, textAlign: "right" }}>Cant.</th><th style={th}>Últ. entrega</th><th style={th}>Requisición</th></tr></thead>
               <tbody>
                 {dot.tiene.map((x, i) => (
                   <tr key={i}>
                     <td style={td}>{tipoDef(x.tipo).icon} {tipoDef(x.tipo).label}</td>
+                    <td style={{ ...td, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: BRAND.orange }}>{x.codigo || "—"}</td>
                     <td style={{ ...td, fontWeight: 700 }}>{x.nombre}</td>
                     <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{x.qty}</td>
                     <td style={td}>{fmtDate(x.lastDate)}</td>
@@ -1091,7 +1212,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         )}
         {!!dot.pend.length && (
           <div style={{ marginTop: 12, background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}30`, borderRadius: R.md, padding: "10px 14px", fontSize: 12.5, color: BRAND.ink }}>
-            🚚 En trámite (aprobado, aún sin entregar): {dot.pend.map((x) => `${x.nombre} (${x.qty})`).join(" · ")}
+            🚚 En trámite (aprobado, aún sin entregar): {dot.pend.map((x) => `${x.codigo ? "#" + x.codigo + " " : ""}${x.nombre} (${x.qty})`).join(" · ")}
           </div>
         )}
       </Modal>
@@ -1100,23 +1221,30 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
   // ══════════════════════════ INVENTARIO ══════════════════════════
   const renderInventario = () => {
-    const sorted = [...items].sort((a, b) => String(a.categoria).localeCompare(b.categoria) || String(a.nombre).localeCompare(b.nombre));
+    const sorted = [...items]
+      .filter((it) => !fInvQ || norm(it.nombre).includes(norm(fInvQ)) || norm(it.codigo).includes(norm(fInvQ)) || norm(it.descripcion).includes(norm(fInvQ)))
+      .sort((a, b) => String(a.categoria).localeCompare(b.categoria) || String(a.nombre).localeCompare(b.nombre));
     const valorTotal = items.reduce((s, i) => s + (Number(i.precio) || 0) * (Number(i.stock) || 0), 0);
+    const sinCodigo = items.filter((it) => !String(it.codigo || "").trim());
     return (
       <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-          <div style={{ fontSize: 13, color: BRAND.graphite }}>{items.length} ítems · Valor del inventario: <b style={{ color: GREEN }}>{fmtL(valorTotal)}</b></div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+          <div style={{ flex: "1 1 280px", minWidth: 220 }}>
+            <Input label="Buscar en inventario" placeholder="Nombre o código…" value={fInvQ} onChange={(e) => setFInvQ(e.target.value)} />
+            <div style={{ fontSize: 12, color: BRAND.graphite, marginTop: 6 }}>{fInvQ ? `${sorted.length} de ${items.length}` : `${items.length}`} ítems · Valor del inventario: <b style={{ color: GREEN }}>{fmtL(valorTotal)}</b>{sinCodigo.length ? <span style={{ color: "#B45309" }}> · {sinCodigo.length} sin código</span> : null}</div>
+          </div>
           {canManage && <Btn onClick={() => setModal({ t: "item" })}>+ Nuevo ítem</Btn>}
         </div>
         <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Ítem</th><th style={th}>Tipo</th><th style={th}>Categoría</th><th style={th}>Proveedor</th><th style={{ ...th, textAlign: "right" }}>Precio</th><th style={{ ...th, textAlign: "right" }}>Stock</th><th style={{ ...th, textAlign: "right" }}>Mín.</th>{canManage && <th style={{ ...th, textAlign: "right" }}>Acciones</th>}</tr></thead>
+              <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Tipo</th><th style={th}>Categoría</th><th style={th}>Proveedor</th><th style={{ ...th, textAlign: "right" }}>Precio</th><th style={{ ...th, textAlign: "right" }}>Stock</th><th style={{ ...th, textAlign: "right" }}>Mín.</th>{canManage && <th style={{ ...th, textAlign: "right" }}>Acciones</th>}</tr></thead>
               <tbody>
                 {sorted.map((it) => {
                   const sinStock = (Number(it.stock) || 0) <= 0; const bajo = (Number(it.stock) || 0) <= (Number(it.minStock) || 0);
                   return (
                     <tr key={it.id} style={{ background: sinStock ? BRAND.redSoft : bajo ? BRAND.yellowSoft : "transparent" }}>
+                      <td style={{ ...td, fontFamily: FONT.mono, fontSize: 11.5, fontWeight: 700, color: it.codigo ? BRAND.orange : BRAND.ash }}>{it.codigo || "—"}</td>
                       <td style={{ ...td, fontWeight: 700 }}>{it.nombre}</td>
                       <td style={td}>{tipoDef(tipoDeItem(it)).icon} {tipoDef(tipoDeItem(it)).label}</td>
                       <td style={td}>{catLabel(it.categoria)}</td>
@@ -1128,7 +1256,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                     </tr>
                   );
                 })}
-                {!items.length && <tr><td style={{ ...td, textAlign: "center", color: BRAND.stone, padding: 30 }} colSpan={canManage ? 8 : 7}>Sin ítems. Agregalos con "+ Nuevo ítem".</td></tr>}
+                {!items.length && <tr><td style={{ ...td, textAlign: "center", color: BRAND.stone, padding: 30 }} colSpan={canManage ? 9 : 8}>Sin ítems. Agregalos con "+ Nuevo ítem".</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1202,7 +1330,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                   <tr key={req.id + "-" + idx} style={{ background: linea.deducido ? "transparent" : BRAND.redSoft }}>
                     <td style={td}>{fmtDate(req.fecha)}</td>
                     <td style={{ ...td, fontWeight: 700 }}>{linea.paraNombre} <span style={{ fontSize: 10, color: BRAND.stone, fontWeight: 700 }}>{linea.paraEmpresa ? coTag(linea.paraEmpresa) : ""}</span></td>
-                    <td style={td}>{tipoDef(tipoDeLinea(linea)).icon} {linea.nombre}</td>
+                    <td style={td}>{tipoDef(tipoDeLinea(linea)).icon} {linea.nombre}{(linea.codigo || itemById(linea.itemId)?.codigo) ? <span style={{ fontFamily: FONT.mono, fontSize: 10.5, color: BRAND.orange, fontWeight: 700 }}> #{linea.codigo || itemById(linea.itemId)?.codigo}</span> : null}</td>
                     <td style={{ ...td, fontFamily: FONT.mono, fontWeight: 700, color: BRAND.orange }}>{req.numero}</td>
                     <td style={{ ...td, textAlign: "right" }}>{linea.qty}</td>
                     <td style={{ ...td, textAlign: "right", fontWeight: 800, color: BRAND.red }}>{fmtL(linea.precio * linea.qty)}</td>
@@ -1289,6 +1417,20 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
           <ProvFormImpl prov={modal.prov}
             onCancel={() => setModal(null)}
             onSave={async (rec) => { const ok = await sProv(modal.prov ? providers.map((x) => (x.id === rec.id ? rec : x)) : [...providers, rec]); if (ok) setModal(null); }} />
+        </Modal>
+      )}
+      {modal?.t === "jornal" && (
+        <Modal title={modal.jorn ? "Editar personal jornal" : "Nuevo personal jornal"} onClose={() => setModal(null)} width={600}>
+          <JornalFormImpl jorn={modal.jorn}
+            onCancel={() => setModal(null)}
+            onSave={async (rec) => {
+              const ok = await sJorn(modal.jorn ? jornaleros.map((x) => (x.id === rec.id ? rec : x)) : [...jornaleros, rec]);
+              if (!ok) return;
+              // El puesto elegido manda: se guarda tambien como override para
+              // que la ficha y los KPIs no dependan de la inferencia.
+              await sPuestos({ [rec.id]: rec.puesto });
+              setModal(null); setSec("dotacion");
+            }} />
         </Modal>
       )}
       {modal?.t === "ficha" && FichaModal({ empId: modal.empId })}
