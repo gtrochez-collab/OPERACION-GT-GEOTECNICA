@@ -66,8 +66,9 @@ logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
   componentes definidos DENTRO de un módulo se remontan con cualquier
   re-render del padre (fotos cargando, resize) y pierden el estado local —
   así se guardó vacía una hoja de HE. HorasExtrasGrid usa `heDraftRef`
-  (espejo del estado en un ref del padre, restaurado al remontar si dirty;
-  se descarta al cerrar). Guardados de arrays compartidos: merge por unidad
+  y AttendanceGrid usa `attDraftRef` (espejo del estado en un ref del padre,
+  restaurado al remontar si dirty; se descarta al cerrar; así se perdió
+  también la asistencia de Subterra 30-jul). Guardados de arrays compartidos: merge por unidad
   contra `store.getCloud()` (lectura directa a nube, sin cache) + verify
   releyendo la nube + guardia anti-vaciado con confirm. No usar `store.get`
   para merges (puede devolver cache local viejo y dispara re-syncs).
