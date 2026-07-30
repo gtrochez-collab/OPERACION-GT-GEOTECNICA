@@ -33,6 +33,15 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   VARIOS colaboradores de hr-emps5 con cant+motivo c/u: primera_vez/perdida/
   danio), inventario, proveedores (Chispa Safety, Larach, La Mundial, Summit,
   Infra, Amazon), Descuentos planilla (pérdidas → deducir, marca "deducido").
+  Pestaña **Por comprar (PO)** (`ep-pos`): faltantes de stock → orden de
+  compra con PDF agrupado por proveedor (crearPo con merge getCloud; el
+  disponible descuenta lo comprometido en otras reqs abiertas). Reqs
+  editables por admin (EditReqFormImpl; saveReqEdit merge que respeta estado
+  de la nube y resetea deducido si cambia persona/motivo). Ítems con TALLA
+  (solo camisa/botas). Dotación agrupada por proyecto según la última
+  asistencia de GeoTeam (attAssign, shorts normalizados como resolveShortHR)
+  + grupo JORNAL. GeoSafetyScene: paisaje SVG decorativo al pie (BG-20 +
+  figuras con EPP).
   Pestaña **Dotación**: KITS POR PUESTO (const PUESTOS) — ingeniero (casco
   blanco+chaleco khaki, sin camisa/botas: no se proveen), operador_dg (casco
   anaranjado+polo negra, SIN guantes), operador_dp (casco anaranjado+camisa

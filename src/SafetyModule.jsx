@@ -30,6 +30,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { store } from "./supabase.js";
 import { BRAND, FONT, R } from "./theme.js";
+import { resolveShort } from "./projects.js";
 
 // ── Constantes de dominio ──
 const CATEGORIAS = [
@@ -570,6 +571,14 @@ const ItemFormImpl = ({ item, providers, photoCache, setPhotoCache, onSave, onCa
       </div>
       <Select label="Tipo de EPP (se detecta del nombre)" placeholder="— Seleccionar —" options={EPP_TIPOS.map((t) => ({ value: t.value, label: `${t.icon} ${t.label}` }))} value={f.tipoEpp} onChange={(e) => { setTipoTouched(true); u("tipoEpp", e.target.value); }} />
       <Select label="Categoría (área)" placeholder="— Seleccionar —" options={CATEGORIAS} value={f.categoria} onChange={(e) => u("categoria", e.target.value)} />
+      {/* Talla: solo aplica a camisas de trabajo y burros con cubo (botas) —
+          cada talla es un item distinto en el inventario (pedido 30-jul-2026). */}
+      {(f.tipoEpp === "camisa" || f.tipoEpp === "botas") && (
+        <div style={{ gridColumn: "1/-1", display: "grid", gridTemplateColumns: "200px 1fr", gap: 14, alignItems: "end" }}>
+          <Input label={`Talla (${f.tipoEpp === "camisa" ? "S / M / L / XL / 2XL" : "número, ej: 39, 42"})`} placeholder={f.tipoEpp === "camisa" ? "Ej: XL" : "Ej: 42"} value={f.talla || ""} onChange={(e) => u("talla", e.target.value)} style={{ textTransform: "uppercase" }} />
+          <div style={{ fontSize: 11.5, color: BRAND.stone, paddingBottom: 9 }}>Cada talla se maneja como su propio ítem con su stock (ej: "Bota Hule #39" y "Bota Hule #42" separadas).</div>
+        </div>
+      )}
       <Select label="Proveedor" placeholder="— Seleccionar —" options={providers.map((p) => ({ value: p.id, label: p.nombre }))} value={f.proveedorId} onChange={(e) => u("proveedorId", e.target.value)} />
       <Input label="Precio real (L)" type="number" min="0" step="0.01" value={f.precio} onChange={(e) => u("precio", e.target.value)} />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -586,7 +595,7 @@ const ItemFormImpl = ({ item, providers, photoCache, setPhotoCache, onSave, onCa
           if (!f.categoria) return alert("Seleccioná la categoría.");
           if (!f.proveedorId) return alert("Seleccioná el proveedor.");
           if (f.precio === "" || Number(f.precio) < 0) return alert("Poné el precio real.");
-          onSave({ ...f, codigo: String(f.codigo || "").trim().toUpperCase(), precio: Number(f.precio), stock: Number(f.stock) || 0, minStock: Number(f.minStock) || 0, id: f.id || uid() });
+          onSave({ ...f, codigo: String(f.codigo || "").trim().toUpperCase(), talla: (f.tipoEpp === "camisa" || f.tipoEpp === "botas") ? String(f.talla || "").trim().toUpperCase() : "", precio: Number(f.precio), stock: Number(f.stock) || 0, minStock: Number(f.minStock) || 0, id: f.id || uid() });
         }}>{item ? "Guardar cambios" : "Agregar al catálogo"}</Btn>
       </div>
     </div>
@@ -621,6 +630,270 @@ const JornalFormImpl = ({ jorn, onSave, onCancel }) => {
           onSave({ ...f, fullName: f.fullName.trim(), id: f.id || uid() });
         }}>{jorn ? "Guardar cambios" : "Agregar jornalero"}</Btn>
       </div>
+    </div>
+  );
+};
+
+// ── Editor de requisición ya enviada (solo admins: Gerson y Daniel) ──
+// Permite corregir cantidades, destinatario y motivo, o quitar líneas,
+// sin tener que rechazar y re-hacer la requisición. Vive a nivel de módulo
+// (regla anti-remount).
+const EditReqFormImpl = ({ req, people, onSave, onCancel }) => {
+  const [lines, setLines] = useState(() => (req.lineas || []).map((l) => ({ ...l, _k: uid(), _origPara: l.paraEmpId, _origMotivo: l.motivo })));
+  const upd = (k, patch) => setLines((ls) => ls.map((l) => (l._k === k ? { ...l, ...patch } : l)));
+  const activos = people.filter((e) => e.status === "active").sort((a, b) => String(a.fullName).localeCompare(b.fullName));
+  const total = lines.reduce((s, l) => s + (Number(l.precio) || 0) * (Number(l.qty) || 0), 0);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ background: BRAND.yellowSoft, border: `1px solid ${BRAND.yellow}50`, borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: "#8a6d0b" }}>
+        ✏️ Editando <b>{req.numero}</b> — podés corregir cantidades, para quién va, el motivo, o quitar líneas. El cambio queda registrado con tu nombre.
+      </div>
+      {lines.map((l) => (
+        <div key={l._k} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.md, padding: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <div style={{ fontWeight: 800, fontSize: 13, color: BRAND.charcoal }}>
+              {l.codigo && <span style={{ fontFamily: FONT.mono, color: BRAND.orange, marginRight: 6 }}>#{l.codigo}</span>}
+              {l.nombre}{l.talla ? <span style={{ color: "#0F766E" }}> · Talla {l.talla}</span> : null}
+              <span style={{ fontWeight: 600, color: GREEN }}> · {fmtL(l.precio)}</span>
+            </div>
+            <button onClick={() => setLines((ls) => ls.filter((x) => x._k !== l._k))} style={{ background: "none", border: "none", color: BRAND.red, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Quitar línea</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "90px 1fr 1fr", gap: 10 }}>
+            <Input label="Cant." type="number" min="1" value={l.qty} onChange={(e) => upd(l._k, { qty: e.target.value })} />
+            <Select label="Para (colaborador)" placeholder="— Seleccionar —" value={l.paraEmpId} onChange={(e) => upd(l._k, { paraEmpId: e.target.value })}
+              options={[
+                // Si el asignado actual ya no esta activo (baja / jornalero
+                // borrado), igual se muestra para no parecer "sin asignar".
+                ...(l.paraEmpId && !activos.some((e) => e.id === l.paraEmpId) ? [{ value: l.paraEmpId, label: `${l.paraNombre || "?"} (ya no activo)` }] : []),
+                ...activos.map((e) => ({ value: e.id, label: `${e.fullName} · ${e.esJornal || e.company === "jornal" ? "JORNAL" : coTag(e.company)}` })),
+              ]} />
+            <Select label="Motivo" placeholder="— Seleccionar —" value={l.motivo} onChange={(e) => upd(l._k, { motivo: e.target.value })}
+              options={MOTIVOS.map((m) => ({ value: m.value, label: m.label }))} />
+          </div>
+        </div>
+      ))}
+      {!lines.length && <div style={{ textAlign: "center", padding: 20, color: BRAND.stone, fontSize: 13 }}>Sin líneas — guardar así ELIMINA todos los ítems de la requisición.</div>}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.charcoal }}>Total: <span style={{ color: GREEN }}>{fmtL(total)}</span></div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+          <Btn variant="success" onClick={() => {
+            for (const l of lines) {
+              if (!Number(l.qty) || Number(l.qty) < 1) return alert(`Cantidad inválida en "${l.nombre}".`);
+              if (!l.paraEmpId) return alert(`Falta el colaborador de "${l.nombre}".`);
+              if (!l.motivo) return alert(`Falta el motivo de "${l.nombre}".`);
+            }
+            if (!lines.length && !confirm("Vas a guardar la requisición SIN LÍNEAS. ¿Seguro?")) return;
+            let resetDeducido = 0;
+            const lineas = lines.map(({ _k, _origPara, _origMotivo, ...l }) => {
+              const p = people.find((e) => e.id === l.paraEmpId);
+              const out = { ...l, qty: Number(l.qty), paraNombre: p?.fullName || l.paraNombre, paraEmpresa: p ? (p.esJornal ? "jornal" : p.company) : l.paraEmpresa };
+              // Si cambio el colaborador o el motivo de una linea que YA
+              // estaba deducida en planilla, la marca se resetea (la
+              // deduccion aplicada fue a OTRA persona / otro motivo).
+              if (l.deducido && (l.paraEmpId !== _origPara || l.motivo !== _origMotivo)) {
+                out.deducido = false; delete out.deducidoPor; delete out.deducidoAt; resetDeducido++;
+              }
+              return out;
+            });
+            if (resetDeducido && !confirm(`⚠ ${resetDeducido} línea(s) de pérdida ya estaban marcadas DEDUCIDAS y les cambiaste el colaborador o el motivo.\n\nLa marca de "deducido" se va a RESETEAR (tesorería deberá volver a aplicarla). ¿Continuar?`)) return;
+            onSave(lineas);
+          }}>Guardar cambios</Btn>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── Creador de orden "Por comprar" (PO) desde cero ──
+// Para pedidos grandes que no nacen de una requisición: se buscan ítems del
+// inventario (el código ya viene amarrado a su proveedor) y se arma la orden.
+const PoFormImpl = ({ items, providers, onSave, onCancel }) => {
+  const [q, setQ] = useState("");
+  const [lines, setLines] = useState([]); // [{_k, itemId, cant}]
+  const provName = (id) => providers.find((p) => p.id === id)?.nombre || "—";
+  const nq = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const results = q.trim()
+    ? items.filter((it) => (nq(it.nombre).includes(nq(q)) || nq(it.codigo).includes(nq(q))) && !lines.some((l) => l.itemId === it.id)).slice(0, 8)
+    : [];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Input label="Buscar ítem del inventario (nombre o código)" placeholder="Ej: bota, WE21-3113G, camisa…" value={q} onChange={(e) => setQ(e.target.value)} />
+      {!!results.length && (
+        <div style={{ border: `1px solid ${BRAND.border}`, borderRadius: R.md, overflow: "hidden" }}>
+          {results.map((it) => (
+            <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "8px 12px", borderBottom: `1px solid ${BRAND.borderSoft}`, background: "#fff" }}>
+              <div style={{ fontSize: 12.5, minWidth: 0 }}>
+                <b>{it.nombre}</b>{it.talla ? <span style={{ color: "#0F766E", fontWeight: 700 }}> · Talla {it.talla}</span> : null}
+                <div style={{ fontSize: 11, color: BRAND.stone }}>{it.codigo ? <span style={{ fontFamily: FONT.mono, color: BRAND.orange, fontWeight: 700 }}>#{it.codigo}</span> : "sin código"} · 🏪 {provName(it.proveedorId)} · stock {Number(it.stock) || 0}</div>
+              </div>
+              <Btn small onClick={() => { setLines((ls) => [...ls, { _k: uid(), itemId: it.id, cant: 1 }]); setQ(""); }}>＋ Agregar</Btn>
+            </div>
+          ))}
+        </div>
+      )}
+      {!!lines.length && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {lines.map((l) => {
+            const it = items.find((i) => i.id === l.itemId) || {};
+            return (
+              <div key={l._k} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.md, padding: "8px 12px" }}>
+                <div style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
+                  <b>{it.nombre}</b>{it.talla ? <span style={{ color: "#0F766E", fontWeight: 700 }}> · Talla {it.talla}</span> : null}
+                  <span style={{ fontSize: 11, color: BRAND.stone }}> · {it.codigo ? `#${it.codigo}` : "sin código"} · {provName(it.proveedorId)}</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ fontSize: 11, color: BRAND.graphite }}>Cant.</span>
+                  <input value={l.cant} onChange={(e) => { const v = e.target.value; if (/^\d{0,4}$/.test(v)) setLines((ls) => ls.map((x) => (x._k === l._k ? { ...x, cant: v } : x))); }} style={{ width: 60, padding: "6px 8px", border: `1px solid ${BRAND.border}`, borderRadius: R.sm, fontSize: 13, textAlign: "center" }} />
+                </div>
+                <button onClick={() => setLines((ls) => ls.filter((x) => x._k !== l._k))} style={{ background: "none", border: "none", color: BRAND.red, cursor: "pointer", fontWeight: 800, fontSize: 15 }}>×</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {!lines.length && <div style={{ textAlign: "center", padding: 18, color: BRAND.stone, fontSize: 12.5, background: BRAND.beigeLight, borderRadius: R.md }}>Buscá ítems arriba y agregalos a la orden. El PDF sale agrupado por proveedor.</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        <Btn variant="success" onClick={() => {
+          if (!lines.length) return alert("Agregá al menos un ítem.");
+          for (const l of lines) { if (!Number(l.cant) || Number(l.cant) < 1) return alert("Hay cantidades inválidas."); }
+          onSave(lines.map((l) => {
+            const it = items.find((i) => i.id === l.itemId) || {};
+            return { itemId: l.itemId, codigo: it.codigo || "", nombre: it.nombre || "?", talla: it.talla || "", proveedorId: it.proveedorId || "", cant: Number(l.cant) };
+          }));
+        }}>Crear orden</Btn>
+      </div>
+    </div>
+  );
+};
+
+// ── Paisaje decorativo GeoSafety ──
+// Un proyecto en miniatura estilo LEGO: la BG-20 perforando y el equipo con
+// su EPP puesto (ingeniero, operador, ayudante, mecánico y soldador). Se
+// muestra al pie de TODOS los apartados del módulo. Solo decorativo.
+const GeoSafetyScene = () => {
+  const SKIN = "#E9C6A0";
+  const Cara = ({ x, y }) => (<g><circle cx={x - 3} cy={y} r="1.3" fill="#3B2F25" /><circle cx={x + 3} cy={y} r="1.3" fill="#3B2F25" /><path d={`M ${x - 3} ${y + 4} Q ${x} ${y + 6.5} ${x + 3} ${y + 4}`} stroke="#B5836A" strokeWidth="1.2" fill="none" strokeLinecap="round" /></g>);
+  const Casco = ({ x, y, c }) => (<g><path d={`M ${x - 10} ${y} a10,9 0 0 1 20,0 Z`} fill={c} stroke="rgba(0,0,0,0.25)" /><rect x={x - 12.5} y={y - 1} width="25" height="3.5" rx="1.7" fill={c} stroke="rgba(0,0,0,0.25)" /><rect x={x - 2} y={y - 12} width="4" height="4.5" rx="1.5" fill={c} stroke="rgba(0,0,0,0.2)" /></g>);
+  const Piernas = ({ x, y }) => (<g><rect x={x - 8} y={y} width="7" height="16" rx="2" fill="#3E5578" /><rect x={x + 1} y={y} width="7" height="16" rx="2" fill="#3E5578" /><rect x={x - 10} y={y + 15} width="10" height="5" rx="2" fill="#6B4423" /><rect x={x} y={y + 15} width="10" height="5" rx="2" fill="#6B4423" /></g>);
+  return (
+    <div aria-hidden="true" style={{ width: "100%", overflow: "hidden", lineHeight: 0, background: "linear-gradient(#FFFBF500, #F5EFE3)" }}>
+      <svg viewBox="0 0 1200 175" width="100%" style={{ display: "block", minHeight: 120, maxHeight: 175 }} preserveAspectRatio="xMidYMax meet">
+        {/* sol y nubes */}
+        <circle cx="1080" cy="38" r="20" fill="#F5C97E" opacity="0.55" />
+        <g fill="#EFE7D6" opacity="0.9"><ellipse cx="240" cy="34" rx="34" ry="11" /><ellipse cx="268" cy="27" rx="22" ry="9" /><ellipse cx="880" cy="30" rx="30" ry="10" /><ellipse cx="905" cy="24" rx="18" ry="8" /></g>
+        {/* suelo */}
+        <rect x="0" y="148" width="1200" height="27" fill="#EDE5D5" />
+        <line x1="0" y1="148" x2="1200" y2="148" stroke="#DBD4C8" strokeWidth="1.5" />
+        <g fill="#DBD4C8"><ellipse cx="90" cy="158" rx="9" ry="2.5" /><ellipse cx="410" cy="162" rx="12" ry="3" /><ellipse cx="700" cy="159" rx="8" ry="2.5" /><ellipse cx="1050" cy="161" rx="11" ry="3" /></g>
+
+        {/* ── BG-20 perforando ── */}
+        <g>
+          {/* mastil */}
+          <rect x="216" y="12" width="13" height="126" rx="3" fill="#2C2A28" />
+          <g stroke="#4A443E" strokeWidth="1.5">{[24, 40, 56, 72, 88, 104, 120].map((y) => <line key={y} x1="216" y1={y} x2="229" y2={y + 9} />)}</g>
+          <circle cx="222" cy="12" r="6" fill="#C75F1F" stroke="#8F4415" />
+          <line x1="222" y1="16" x2="222" y2="98" stroke="#5C5853" strokeWidth="2" />
+          {/* cabezal + barra de perforacion */}
+          <rect x="211" y="96" width="23" height="14" rx="3" fill="#E8762D" stroke="#B4551B" />
+          <rect x="218.5" y="110" width="7" height="30" fill="#8B847C" />
+          <path d="M 216 140 h 13 l -6.5 9 z" fill="#4A443E" />
+          {/* polvo de perforacion */}
+          <g fill="#DBD4C8" opacity="0.8"><ellipse cx="212" cy="146" rx="7" ry="3.5" /><ellipse cx="234" cy="145" rx="6" ry="3" /></g>
+          {/* cuerpo + cabina */}
+          <rect x="128" y="96" width="86" height="30" rx="6" fill="#E8762D" stroke="#B4551B" strokeWidth="1.5" />
+          <rect x="136" y="76" width="34" height="26" rx="5" fill="#F1A263" stroke="#B4551B" />
+          <rect x="141" y="81" width="17" height="13" rx="2.5" fill="#BFDBFE" stroke="#8FB4E3" />
+          <text x="182" y="116" fontSize="12" fontWeight="800" fill="#fff" fontFamily="Arial, sans-serif">BG-20</text>
+          {/* orugas */}
+          <rect x="122" y="126" width="100" height="18" rx="9" fill="#3D3A37" />
+          {[136, 154, 172, 190, 208].map((cx) => <circle key={cx} cx={cx} cy="135" r="5.5" fill="#6B655E" stroke="#2C2A28" />)}
+        </g>
+
+        {/* conos */}
+        {[300, 760].map((cx) => (<g key={cx}><path d={`M ${cx} 128 l 7 20 h -14 z`} fill="#E8762D" /><rect x={cx - 9} y="146" width="18" height="3.5" rx="1.5" fill="#C75F1F" /><rect x={cx - 4.2} y="136" width="8.4" height="3.5" fill="#fff" /></g>))}
+
+        {/* ── Ingeniero: casco blanco + chaleco khaki + tablet ── */}
+        <g transform="translate(360,0)">
+          <Piernas x={0} y={128} />
+          <rect x="-11" y="100" width="22" height="30" rx="5" fill="#F7F4EE" stroke="#D8D2C6" />
+          <rect x="-11" y="100" width="8" height="30" rx="3" fill="#C7B287" />
+          <rect x="3" y="100" width="8" height="30" rx="3" fill="#C7B287" />
+          <line x1="-13" y1="105" x2="-20" y2="120" stroke="#F7F4EE" strokeWidth="5.5" strokeLinecap="round" />
+          <line x1="13" y1="105" x2="21" y2="118" stroke="#F7F4EE" strokeWidth="5.5" strokeLinecap="round" />
+          <rect x="14" y="114" width="14" height="10" rx="2" fill="#2C5F5D" stroke="#1E4341" />
+          <circle cx="0" cy="88" r="10.5" fill={SKIN} stroke="#C79A70" />
+          <Cara x={0} y={87} />
+          <Casco x={0} y={81} c="#F6F5F2" />
+        </g>
+
+        {/* ── Operador BG: casco anaranjado + polo negra, saludando ── */}
+        <g transform="translate(275,0)">
+          <Piernas x={0} y={128} />
+          <rect x="-11" y="100" width="22" height="30" rx="5" fill="#28231F" />
+          <rect x="-11" y="107" width="22" height="2.5" fill="#E8762D" />
+          <rect x="-11" y="120" width="22" height="2.5" fill="#E8762D" />
+          <line x1="-13" y1="106" x2="-22" y2="92" stroke="#28231F" strokeWidth="5.5" strokeLinecap="round" />
+          <circle cx="-24" cy="89" r="4" fill={SKIN} />
+          <line x1="13" y1="106" x2="20" y2="122" stroke="#28231F" strokeWidth="5.5" strokeLinecap="round" />
+          <circle cx="0" cy="88" r="10.5" fill={SKIN} stroke="#C79A70" />
+          <Cara x={0} y={87} />
+          <Casco x={0} y={81} c="#E8762D" />
+        </g>
+
+        {/* ── Ayudante: casco amarillo + camisa anaranjada + pala ── */}
+        <g transform="translate(480,0)">
+          <Piernas x={0} y={128} />
+          <rect x="-11" y="100" width="22" height="30" rx="5" fill="#E8762D" stroke="#B4551B" />
+          <rect x="-11" y="112" width="22" height="2.5" fill="#26221F" />
+          <line x1="-13" y1="106" x2="-19" y2="124" stroke="#E8762D" strokeWidth="5.5" strokeLinecap="round" />
+          <line x1="13" y1="106" x2="17" y2="124" stroke="#E8762D" strokeWidth="5.5" strokeLinecap="round" />
+          <line x1="20" y1="98" x2="20" y2="140" stroke="#8B5E34" strokeWidth="3.5" strokeLinecap="round" />
+          <path d="M 15 140 h 10 l -2 8 h -6 z" fill="#8B847C" stroke="#5C5853" />
+          <circle cx="0" cy="88" r="10.5" fill={SKIN} stroke="#C79A70" />
+          <Cara x={0} y={87} />
+          <Casco x={0} y={81} c="#F2C40F" />
+        </g>
+
+        {/* ── Mecánico: casco azul + rayas + llave + caja ── */}
+        <g transform="translate(620,0)">
+          <Piernas x={0} y={128} />
+          <rect x="-11" y="100" width="22" height="30" rx="5" fill="#E8762D" stroke="#B4551B" />
+          <rect x="-11" y="106" width="22" height="4" fill="#26221F" />
+          <rect x="-11" y="117" width="22" height="4" fill="#26221F" />
+          <line x1="-13" y1="106" x2="-20" y2="121" stroke="#E8762D" strokeWidth="5.5" strokeLinecap="round" />
+          <line x1="13" y1="106" x2="21" y2="115" stroke="#E8762D" strokeWidth="5.5" strokeLinecap="round" />
+          <g transform="rotate(40 24 112)"><rect x="21.5" y="103" width="5" height="18" rx="2" fill="#8B959E" /><circle cx="24" cy="102" r="4.5" fill="none" stroke="#8B959E" strokeWidth="3" /></g>
+          <circle cx="0" cy="88" r="10.5" fill={SKIN} stroke="#C79A70" />
+          <Cara x={0} y={87} />
+          <Casco x={0} y={81} c="#2F6FE0" />
+          <rect x="-38" y="136" width="22" height="12" rx="2" fill="#B4551B" stroke="#8F4415" /><rect x="-33" y="132" width="12" height="4" rx="2" fill="#8F4415" />
+        </g>
+
+        {/* ── Soldador: careta + delantal, soldando una viga con chispas ── */}
+        <g transform="translate(860,0)">
+          <rect x="18" y="132" width="70" height="9" rx="2" fill="#8B959E" stroke="#5C6670" />
+          <Piernas x={0} y={128} />
+          <rect x="-11" y="100" width="22" height="30" rx="5" fill="#5C5853" />
+          <path d="M -8 102 L 8 102 L 11 130 L -11 130 Z" fill="#7A6350" stroke="#5D4C3C" />
+          <line x1="13" y1="106" x2="24" y2="120" stroke="#5C5853" strokeWidth="5.5" strokeLinecap="round" />
+          <rect x="22" y="118" width="10" height="5" rx="2" fill="#3D3A37" transform="rotate(28 27 120)" />
+          <g><path d="M 33 126 l 3 -6 M 37 128 l 5 -3 M 36 132 l 6 1" stroke="#F5A623" strokeWidth="2" strokeLinecap="round" /><circle cx="34" cy="128" r="2.5" fill="#FDE68A" /></g>
+          <line x1="-13" y1="106" x2="-19" y2="122" stroke="#5C5853" strokeWidth="5.5" strokeLinecap="round" />
+          <circle cx="0" cy="88" r="10.5" fill={SKIN} />
+          <rect x="-9" y="78" width="18" height="20" rx="4" fill="#3A3F45" stroke="#23272E" />
+          <rect x="-5.5" y="86" width="11" height="5" rx="1.5" fill="#14532D" stroke="#0B3B1E" />
+        </g>
+
+        {/* letrero */}
+        <g transform="translate(1010,0)">
+          <rect x="-2" y="104" width="4" height="44" fill="#8B5E34" />
+          <rect x="-34" y="86" width="68" height="24" rx="4" fill="#2C2A28" />
+          <text x="0" y="98" fontSize="8.5" fontWeight="800" fill="#E8762D" textAnchor="middle" fontFamily="Arial, sans-serif">GEOSAFETY</text>
+          <text x="0" y="107" fontSize="6" fontWeight="600" fill="#DBD4C8" textAnchor="middle" fontFamily="Arial, sans-serif">SEGURIDAD PRIMERO</text>
+        </g>
+      </svg>
     </div>
   );
 };
@@ -668,6 +941,14 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const [fDotPuesto, setFDotPuesto] = useState("");
   const [fDotFalta, setFDotFalta] = useState(false); // solo con faltantes
   const [puestosMap, setPuestosMap] = useState({}); // ep-puestos: {empId: puestoKey} — overrides manuales
+  // Ordenes "Por comprar" (PO): lo que falta en stock y se manda a cotizar
+  // al proveedor. Key: ep-pos.
+  const [pos, setPos] = useState([]);
+  // Asignaciones empId→proyecto de la ULTIMA quincena registrada en la
+  // asistencia de GeoTeam (hr-atts2, solo lectura) — para agrupar la
+  // Dotacion por proyecto tal como esta distribuida la gente.
+  const [attAssign, setAttAssign] = useState({});
+  const [attAssignLabel, setAttAssignLabel] = useState("");
 
   const canManage = ["admin", "costos", "almacenista"].includes(userRole);
   const canDeduct = canManage || userRole === "tesoreria";
@@ -675,8 +956,8 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
   useEffect(() => {
     (async () => {
-      const [pv, it, rq, em, pu, jr] = await Promise.all([
-        store.get("ep-providers"), store.get("ep-items"), store.get("ep-reqs"), store.get("hr-emps5"), store.get("ep-puestos"), store.get("ep-jornaleros"),
+      const [pv, it, rq, em, pu, jr, po, at, cpp] = await Promise.all([
+        store.get("ep-providers"), store.get("ep-items"), store.get("ep-reqs"), store.get("hr-emps5"), store.get("ep-puestos"), store.get("ep-jornaleros"), store.get("ep-pos"), store.get("hr-atts2"), store.get("cp-projects"),
       ]);
       setProviders(Array.isArray(pv) ? pv : []);
       setItems(Array.isArray(it) ? it : []);
@@ -684,6 +965,30 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       setEmps(Array.isArray(em) ? em : []);
       setPuestosMap(pu && typeof pu === "object" && !Array.isArray(pu) ? pu : {});
       setJornaleros(Array.isArray(jr) ? jr : []);
+      setPos(Array.isArray(po) ? po : []);
+      // Ultima quincena registrada POR EMPRESA en la asistencia de GeoTeam:
+      // sus assignments dicen en que proyecto anda cada quien.
+      if (Array.isArray(at) && at.length) {
+        const latest = {};
+        at.forEach((s) => {
+          if (!s || !s.company) return;
+          const score = `${s.periodo || ""}|${s.quincena || ""}`;
+          if (!latest[s.company] || score > latest[s.company].score) latest[s.company] = { score, s };
+        });
+        // Normalizar shorts como lo hace GeoTeam (resolveShortHR): los shorts
+        // de proyectos custom de compras GANAN sobre los aliases legacy —
+        // caso PLANTEL. Sin esto, un alias viejo crearia grupos duplicados.
+        const customs = new Set((Array.isArray(cpp) ? cpp : []).map((p) => p && p.short).filter(Boolean));
+        const resolveS = (s) => (customs.has(s) ? s : resolveShort(s));
+        const map = {};
+        const labels = [];
+        Object.values(latest).forEach(({ s }) => {
+          labels.push(`${s.quincena} ${s.periodo}`);
+          Object.entries(s.assignments || {}).forEach(([eid, short]) => { if (short) map[eid] = resolveS(String(short)); });
+        });
+        setAttAssign(map);
+        setAttAssignLabel([...new Set(labels)].join(" · "));
+      }
       setLoaded(true);
     })();
   }, []);
@@ -724,6 +1029,38 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     return await store.set("ep-puestos", next);
   };
   const sJorn = async (v) => { setJornaleros(v); const ok = await store.set("ep-jornaleros", v); if (!ok) alert("⚠ No se guardó en la nube (ep-jornaleros)."); return ok; };
+  const sPos = async (v) => { setPos(v); const ok = await store.set("ep-pos", v); if (!ok) alert("⚠ No se guardó en la nube (ep-pos)."); return ok; };
+  // Crear una PO con MERGE contra la nube: dos admins creando ordenes casi a
+  // la vez no se pisan, y el numero se calcula sobre la lista fresca.
+  const crearPo = async (lines, fuente) => {
+    let base = pos;
+    try { const c = await store.getCloud("ep-pos"); if (Array.isArray(c)) base = c; } catch { /* nube caída: memoria */ }
+    const num = "PO-" + String(base.reduce((m, p) => Math.max(m, parseInt(String(p.numero || "").replace(/\D/g, ""), 10) || 0), 0) + 1).padStart(3, "0");
+    const po = { id: uid(), numero: num, fecha: new Date().toISOString(), estado: "pendiente", fuente: fuente || "", creadoPor: userName, lines };
+    const next = [po, ...base];
+    setPos(next);
+    const ok = await store.set("ep-pos", next);
+    if (!ok) { alert("⚠ No se guardó en la nube (ep-pos). Reintentá."); return null; }
+    return po;
+  };
+  // Guardar una requisicion EDITADA: se toma la version FRESCA de la nube y
+  // solo se le aplican las lineas editadas — el estado y sus metadatos
+  // (entregadaPor, etc.) NO se pisan. Si otro admin la entrego/rechazo/borro
+  // mientras el editor estaba abierto, se aborta con aviso (evita dobles
+  // descuentos de stock y resucitar requisiciones eliminadas).
+  const saveReqEdit = async (reqId, lineas) => {
+    let base = reqs;
+    try { const c = await store.getCloud("ep-reqs"); if (Array.isArray(c) && c.length) base = c; } catch { /* nube caída: memoria */ }
+    const fresca = base.find((r) => r.id === reqId);
+    if (!fresca) { alert("⚠ Esta requisición ya NO existe (otro usuario la eliminó). No se guardó nada."); return false; }
+    if (fresca.estado !== "pendiente" && fresca.estado !== "aprobada") { alert(`⚠ Esta requisición ya está "${fresca.estado}" (otro usuario le cambió el estado). No se puede editar — recargá la página.`); return false; }
+    const upd = { ...fresca, lineas, total: lineas.reduce((s, l) => s + (Number(l.precio) || 0) * l.qty, 0), editadoPor: userName, editadoAt: new Date().toISOString() };
+    const next = base.map((r) => (r.id === reqId ? upd : r));
+    setReqs(next);
+    const ok = await store.set("ep-reqs", next);
+    if (!ok) alert("⚠ No se guardó en la nube (ep-reqs). Reintentá.");
+    return ok;
+  };
 
   const provName = (id) => providers.find((p) => p.id === id)?.nombre || "—";
   const itemById = (id) => items.find((i) => i.id === id);
@@ -820,7 +1157,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         if (!d.motivo) return alert(`Falta el MOTIVO de "${it.nombre}".`);
         const emp = empById(d.empId);
         if (!emp) return alert(`La persona asignada a "${it.nombre}" ya no existe (¿se borró?). Volvé a seleccionarla.`);
-        lineas.push({ itemId: l.itemId, nombre: it.nombre, codigo: it.codigo || "", categoria: it.categoria, tipoEpp: tipoDeItem(it), proveedor: provName(it.proveedorId), precio: Number(it.precio) || 0, qty: Number(d.qty), paraEmpId: d.empId, paraNombre: emp.fullName || "—", paraEmpresa: emp.company || "", motivo: d.motivo, deducido: false });
+        lineas.push({ itemId: l.itemId, nombre: it.nombre, codigo: it.codigo || "", talla: it.talla || "", categoria: it.categoria, tipoEpp: tipoDeItem(it), proveedor: provName(it.proveedorId), precio: Number(it.precio) || 0, qty: Number(d.qty), paraEmpId: d.empId, paraNombre: emp.fullName || "—", paraEmpresa: emp.company || "", motivo: d.motivo, deducido: false });
       }
     }
     const numero = "EPP-" + String(reqs.length + 1).padStart(3, "0");
@@ -844,10 +1181,184 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       if (!ok2) alert("⚠ Quedó ENTREGADA pero el stock NO se actualizó. Ajustalo en Inventario.");
     }
   };
+  // Marcar deducido con MERGE contra la nube y verificacion de identidad de
+  // la linea: si otro admin edito/quito lineas de la requisicion (editor
+  // nuevo), el indice puede apuntar a otra linea — se aborta con aviso en
+  // vez de marcar la equivocada o pisar la edicion.
   const toggleDeducido = async (reqId, idx) => {
-    const upd = reqs.map((r) => r.id !== reqId ? r : { ...r, lineas: r.lineas.map((l, i) => (i === idx ? { ...l, deducido: !l.deducido, deducidoPor: !l.deducido ? userName : undefined, deducidoAt: !l.deducido ? new Date().toISOString() : undefined } : l)) });
-    await sReqs(upd);
+    let base = reqs;
+    try { const c = await store.getCloud("ep-reqs"); if (Array.isArray(c) && c.length) base = c; } catch { /* nube caída: memoria */ }
+    const localLinea = reqs.find((r) => r.id === reqId)?.lineas?.[idx];
+    const cloudReq = base.find((r) => r.id === reqId);
+    const cloudLinea = cloudReq?.lineas?.[idx];
+    if (!cloudReq || !cloudLinea || !localLinea || cloudLinea.itemId !== localLinea.itemId || cloudLinea.paraEmpId !== localLinea.paraEmpId) {
+      alert("⚠ Esta requisición fue modificada por otro usuario. Recargá la página e intentá de nuevo.");
+      return;
+    }
+    const marcar = !cloudLinea.deducido;
+    const next = base.map((r) => r.id !== reqId ? r : { ...r, lineas: r.lineas.map((l, i) => (i === idx ? { ...l, deducido: marcar, deducidoPor: marcar ? userName : undefined, deducidoAt: marcar ? new Date().toISOString() : undefined } : l)) });
+    setReqs(next);
+    const ok = await store.set("ep-reqs", next);
+    if (!ok) alert("⚠ No se guardó en la nube (ep-reqs).");
   };
+
+  // ══════════════════════════ POR COMPRAR (PO) ══════════════════════════
+  const ESTADOS_PO = {
+    pendiente: { label: "PENDIENTE", color: "#B45309", bg: "rgba(180,83,9,0.12)" },
+    enviada:   { label: "ENVIADA AL PROVEEDOR", color: BRAND.blue, bg: BRAND.blueSoft },
+    recibida:  { label: "RECIBIDA", color: BRAND.green, bg: BRAND.greenSoft },
+  };
+  const posAbiertas = pos.filter((p) => p.estado !== "recibida").length;
+
+  // Desde una requisicion: lo solicitado que NO alcanza el stock se manda a
+  // "Por comprar" con un click. El stock disponible descuenta lo COMPROMETIDO
+  // en las demas requisiciones abiertas (pendientes/aprobadas) del mismo
+  // item, para que dos requisiciones no se "coman" el mismo stock. Items ya
+  // borrados del catalogo se avisan (no se descartan en silencio).
+  const crearPoDesdeReq = async (r) => {
+    const agg = {};
+    const sinItem = [];
+    (r.lineas || []).forEach((l) => {
+      if (l.itemId && itemById(l.itemId)) agg[l.itemId] = (agg[l.itemId] || 0) + (Number(l.qty) || 0);
+      else sinItem.push(`${l.qty} × ${l.nombre}`);
+    });
+    const comprometido = {};
+    reqs.forEach((rq) => {
+      if (rq.id === r.id || (rq.estado !== "pendiente" && rq.estado !== "aprobada")) return;
+      (rq.lineas || []).forEach((l) => { if (l.itemId) comprometido[l.itemId] = (comprometido[l.itemId] || 0) + (Number(l.qty) || 0); });
+    });
+    const faltantes = Object.entries(agg).map(([iid, qty]) => {
+      const it = itemById(iid);
+      const disponible = Math.max(0, (Number(it.stock) || 0) - (comprometido[iid] || 0));
+      const falta = qty - disponible;
+      return falta > 0 ? { itemId: iid, codigo: it.codigo || "", nombre: it.nombre, talla: it.talla || "", proveedorId: it.proveedorId || "", cant: falta } : null;
+    }).filter(Boolean);
+    const avisoSinItem = sinItem.length ? `\n\n⚠ ${sinItem.length} línea(s) apuntan a ítems que YA NO existen en el catálogo y NO se incluyen:\n${sinItem.map((s) => "  " + s).join("\n")}` : "";
+    if (!faltantes.length) return alert((Object.keys(agg).length ? "Todo lo solicitado alcanza con el stock disponible (descontando lo comprometido en otras requisiciones abiertas) — no hay nada que comprar. ✔" : "No se pudo evaluar ninguna línea de esta requisición.") + avisoSinItem);
+    const lista = faltantes.map((f) => `  ${f.cant} × ${f.nombre}${f.talla ? ` (Talla ${f.talla})` : ""}${f.codigo ? `  [${f.codigo}]` : ""}`).join("\n");
+    if (!confirm(`Se creará una orden POR COMPRAR con lo que NO alcanza el stock para ${r.numero}\n(disponible = stock actual − comprometido en otras requisiciones abiertas):\n\n${lista}${avisoSinItem}\n\n¿Continuar?`)) return;
+    const po = await crearPo(faltantes, r.numero);
+    if (po) { setSec("porcomprar"); alert(`✅ ${po.numero} creada con ${faltantes.length} ítem(s). Generá el PDF y mandáselo al proveedor.`); }
+  };
+
+  // PDF de la orden: agrupado POR PROVEEDOR (el codigo de cada item ya viene
+  // amarrado a la tienda donde se compra) — listo para pedir cotizacion.
+  const exportPoPDF = (po) => {
+    const w = window.open("", "_blank");
+    if (!w) { alert("Permite popups para generar el PDF"); return; }
+    // Escape HTML: nombres/codigos son texto libre — sin esto un "<" o "&"
+    // en el nombre de un item rompe la tabla del PDF que se le manda al
+    // proveedor.
+    const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+    const porProv = {};
+    (po.lines || []).forEach((l) => { const k = l.proveedorId || "?"; (porProv[k] = porProv[k] || []).push(l); });
+    const provSection = (provId, lines) => {
+      const p = providers.find((x) => x.id === provId);
+      return `<div style="margin-bottom:16px;border:1px solid #DBD4C8;border-radius:10px;overflow:hidden;page-break-inside:avoid">
+        <div style="background:#2C2A28;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-weight:800;font-size:13px">🏪 ${esc(p ? p.nombre : "Proveedor por definir")}</span>
+          <span style="font-size:10.5px;color:#C9C2B7">${esc(p ? [p.contacto, p.telefono, p.correo].filter(Boolean).join(" · ") : "")}</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="background:#F7F1E8">
+            <th style="text-align:left;padding:6px 14px;font-size:9px;color:#7A7268;letter-spacing:0.5px">CÓDIGO</th>
+            <th style="text-align:left;padding:6px 10px;font-size:9px;color:#7A7268;letter-spacing:0.5px">DESCRIPCIÓN</th>
+            <th style="text-align:center;padding:6px 10px;font-size:9px;color:#7A7268;letter-spacing:0.5px">TALLA</th>
+            <th style="text-align:right;padding:6px 14px;font-size:9px;color:#7A7268;letter-spacing:0.5px">CANTIDAD</th>
+          </tr></thead>
+          <tbody>${lines.map((l) => `<tr>
+            <td style="padding:7px 14px;font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:700;color:#C75F1F;border-top:1px solid #F1EBE0">${esc(l.codigo) || "—"}</td>
+            <td style="padding:7px 10px;font-size:11.5px;font-weight:600;border-top:1px solid #F1EBE0">${esc(l.nombre)}</td>
+            <td style="padding:7px 10px;font-size:11px;text-align:center;color:#0F766E;font-weight:700;border-top:1px solid #F1EBE0">${esc(l.talla) || "—"}</td>
+            <td style="padding:7px 14px;font-size:13px;font-weight:800;text-align:right;border-top:1px solid #F1EBE0">${l.cant}</td>
+          </tr>`).join("")}</tbody>
+        </table>
+      </div>`;
+    };
+    const totalUds = (po.lines || []).reduce((s, l) => s + l.cant, 0);
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${po.numero} — Orden de compra</title>
+      <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:30px;color:#2C2A28;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{.np{display:none}}</style>
+      </head><body>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:14px">
+          <img src="${logoUrl}" style="height:46px" onerror="this.style.display='none'" />
+          <div>
+            <div style="font-size:21px;font-weight:800;color:#E8762D;letter-spacing:-0.3px">ORDEN DE COMPRA</div>
+            <div style="font-size:12px;color:#7A7268;margin-top:2px">Grupo Geotecnica · Solicitud de cotización de EPP</div>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:17px;font-weight:800;color:#2C2A28">${po.numero}</div>
+          <div style="font-size:11px;color:#7A7268">${fmtDate(po.fecha)}${po.fuente ? ` · Origen: ${po.fuente}` : ""}</div>
+        </div>
+      </div>
+      <div style="height:4px;background:#E8762D;border-radius:2px;margin:14px 0 16px"></div>
+      <div style="background:#FFFBF5;border:1px solid #DBD4C8;border-radius:10px;padding:10px 14px;font-size:11.5px;color:#5C5853;margin-bottom:16px">
+        Estimado proveedor: favor <b>cotizar formalmente</b> los siguientes ítems (${totalUds} unidad${totalUds !== 1 ? "es" : ""}). Los códigos corresponden a su catálogo. Agradecemos indicar disponibilidad, precio unitario y tiempo de entrega.
+      </div>
+      ${Object.entries(porProv).map(([pid, lines]) => provSection(pid, lines)).join("")}
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:26px;gap:20px">
+        <div style="font-size:10px;color:#8B847C">Documento generado por GeoSafety · Sistema de Operaciones — Grupo Geotecnica</div>
+        <div style="text-align:center">
+          <div style="border-top:1.5px solid #2C2A28;width:220px;padding-top:5px;font-size:11px;font-weight:700">${esc(userName)}</div>
+          <div style="font-size:9.5px;color:#7A7268">Compras / Seguridad Industrial · Grupo Geotecnica</div>
+        </div>
+      </div>
+      <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
+      </body></html>`);
+    w.document.close();
+  };
+
+  const renderPorComprar = () => (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}30`, borderRadius: R.md, padding: "9px 14px", fontSize: 12.5, color: BRAND.ink, flex: 1, minWidth: 280 }}>
+          🧾 <b>Por comprar (PO)</b>: lo que falta en stock. Desde una requisición usá <b>"Faltantes → Por comprar"</b>, o creá una orden desde cero. El <b>PDF sale agrupado por proveedor</b>, listo para pedir la cotización.
+        </div>
+        {canManage && <Btn onClick={() => setModal({ t: "po-new" })}>+ Nueva orden</Btn>}
+      </div>
+      {!pos.length && <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>Sin órdenes de compra todavía.</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {pos.map((po) => {
+          const est = ESTADOS_PO[po.estado] || ESTADOS_PO.pendiente;
+          return (
+            <div key={po.id} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 14, color: BRAND.charcoal }}>{po.numero}</span>
+                  <Chip color={est.color} bg={est.bg}>{est.label}</Chip>
+                  <span style={{ fontSize: 12, color: BRAND.graphite }}>{fmtDate(po.fecha)}{po.fuente ? <> · de <b style={{ color: BRAND.orange }}>{po.fuente}</b></> : " · creada desde cero"} · {po.creadoPor}</span>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <Btn small variant="info" onClick={() => exportPoPDF(po)}>📄 PDF para proveedor</Btn>
+                  {canManage && po.estado === "pendiente" && <Btn small variant="ghost" onClick={async () => { await sPos(pos.map((x) => (x.id === po.id ? { ...x, estado: "enviada", enviadaAt: new Date().toISOString() } : x))); }}>✉ Marcar enviada</Btn>}
+                  {canManage && po.estado === "enviada" && <Btn small variant="success" onClick={async () => { await sPos(pos.map((x) => (x.id === po.id ? { ...x, estado: "recibida", recibidaAt: new Date().toISOString() } : x))); }}>✓ Recibida</Btn>}
+                  {userRole === "admin" && <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => { if (!confirm(`¿ELIMINAR la orden ${po.numero}?`)) return; await sPos(pos.filter((x) => x.id !== po.id)); }}>🗑</Btn>}
+                </div>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Talla</th><th style={th}>Proveedor</th><th style={{ ...th, textAlign: "right" }}>Cantidad</th></tr></thead>
+                  <tbody>
+                    {(po.lines || []).map((l, i) => (
+                      <tr key={i}>
+                        <td style={{ ...td, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: BRAND.orange }}>{l.codigo || "—"}</td>
+                        <td style={{ ...td, fontWeight: 700 }}>{l.nombre}</td>
+                        <td style={{ ...td, color: "#0F766E", fontWeight: 700 }}>{l.talla || "—"}</td>
+                        <td style={td}>{provName(l.proveedorId)}</td>
+                        <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{l.cant}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   // ══════════════════════════ CATALOGO ══════════════════════════
   const renderCatalogo = () => {
@@ -884,7 +1395,10 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                   </div>
                   <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
                     <div style={{ fontWeight: 800, fontSize: 14.5, color: BRAND.charcoal, lineHeight: 1.25 }}>{it.nombre}</div>
-                    {it.codigo && <div style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: BRAND.orange, letterSpacing: 0.4 }}>#{it.codigo}</div>}
+                    {(it.codigo || it.talla) && <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      {it.codigo && <span style={{ fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: BRAND.orange, letterSpacing: 0.4 }}>#{it.codigo}</span>}
+                      {it.talla && <Chip color="#0F766E" bg="#CCFBF1">TALLA {it.talla}</Chip>}
+                    </div>}
                     {it.descripcion && <div style={{ fontSize: 11.5, color: BRAND.stone, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.descripcion}</div>}
                     <div style={{ fontSize: 12, color: BRAND.stone }}>🏪 {provName(it.proveedorId)}</div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto", paddingTop: 4 }}>
@@ -983,12 +1497,14 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 14, color: BRAND.orange }}>{r.numero}</span>
                     <Chip color={est.color} bg={est.bg}>{est.label}</Chip>
-                    <span style={{ fontSize: 12.5, color: BRAND.graphite }}>Solicitó: <b>{r.solicitante}</b> · {fmtDate(r.fecha)}</span>
+                    <span style={{ fontSize: 12.5, color: BRAND.graphite }}>Solicitó: <b>{r.solicitante}</b> · {fmtDate(r.fecha)}{r.editadoPor ? <span style={{ color: "#B45309" }}> · ✏️ editada por {r.editadoPor}</span> : null}</span>
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <span style={{ fontWeight: 800, color: GREEN, fontSize: 14 }}>{fmtL(r.total)}</span>
                     {canManage && r.estado === "pendiente" && <><Btn small variant="success" onClick={() => setEstadoReq(r, "aprobada")}>✓ Aprobar</Btn><Btn small variant="danger" onClick={() => setEstadoReq(r, "rechazada")}>✕ Rechazar</Btn></>}
                     {canManage && r.estado === "aprobada" && <Btn small variant="info" onClick={() => setEstadoReq(r, "entregada")}>📦 Marcar entregada</Btn>}
+                    {canManage && (r.estado === "pendiente" || r.estado === "aprobada") && <Btn small variant="ghost" style={{ color: "#B45309" }} onClick={() => crearPoDesdeReq(r)}>🧾 Faltantes → Por comprar</Btn>}
+                    {userRole === "admin" && (r.estado === "pendiente" || r.estado === "aprobada") && <Btn small variant="ghost" onClick={() => setModal({ t: "req-edit", req: r })}>✏️ Editar</Btn>}
                     {userRole === "admin" && <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => { if (!confirm(`¿ELIMINAR la requisición ${r.numero}?\n\nSe borra del historial. No se puede deshacer.`)) return; await sReqs(reqs.filter((x) => x.id !== r.id)); }}>🗑</Btn>}
                   </div>
                 </div>
@@ -1001,7 +1517,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                         return (
                           <tr key={i}>
                             <td style={{ ...td, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: BRAND.orange }}>{l.codigo || itemById(l.itemId)?.codigo || "—"}</td>
-                            <td style={{ ...td, fontWeight: 700 }}>{l.nombre}</td>
+                            <td style={{ ...td, fontWeight: 700 }}>{l.nombre}{(l.talla || itemById(l.itemId)?.talla) ? <span style={{ color: "#0F766E", fontWeight: 800 }}> · Talla {l.talla || itemById(l.itemId)?.talla}</span> : null}</td>
                             <td style={td}>{tipoDef(tipoDeLinea(l)).icon} {tipoDef(tipoDeLinea(l)).label}</td>
                             <td style={td}>{l.proveedor}</td>
                             <td style={td}>{l.paraNombre} <span style={{ fontSize: 10, color: BRAND.stone, fontWeight: 700 }}>{l.paraEmpresa ? coTag(l.paraEmpresa) : ""}</span></td>
@@ -1076,39 +1592,68 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         </div>
         {!people.length ? (
           <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>No hay personal cargado. Los empleados se leen de GeoTeam; los jornaleros se agregan con <b>+ Personal jornal</b>.</div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 14 }}>
-            {list.map((e) => {
-              const dot = dotacionDe[e.id] || { tiene: [], falta: [], tipos: new Set(), completo: false, pend: [], puesto: "ayudante" };
-              const kit = PUESTOS[dot.puesto] || PUESTOS.ayudante;
-              return (
-                <div key={e.id} onClick={() => setModal({ t: "ficha", empId: e.id })} style={{ background: "#fff", border: `1px solid ${dot.completo ? GREEN + "55" : BRAND.border}`, borderRadius: R.lg, padding: 14, cursor: "pointer", boxShadow: BRAND.shadowSm, transition: "transform .1s" }} onMouseEnter={(ev) => (ev.currentTarget.style.transform = "translateY(-2px)")} onMouseLeave={(ev) => (ev.currentTarget.style.transform = "none")}>
-                  <div style={{ display: "flex", gap: 12 }}>
-                    <div style={{ background: BRAND.beigeLight, borderRadius: R.md, padding: 4, border: `1px solid ${BRAND.borderSoft}` }}><EppFigure puesto={dot.puesto} has={dot.tipos} size={72} /></div>
-                    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <EmpAvatar name={e.fullName} dataUrl={empPhoto(e)} size={34} borderRadius={8} />
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: 800, fontSize: 13, color: BRAND.charcoal, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.fullName}</div>
-                          <div style={{ fontSize: 10.5, color: BRAND.stone }}>
-                            {e.esJornal ? <span style={{ color: "#B45309", fontWeight: 800 }}>JORNAL</span> : coTag(e.company)} · {e.position || "—"}
-                          </div>
+        ) : (() => {
+          // ── Agrupado POR PROYECTO según la última quincena registrada en la
+          // asistencia de GeoTeam. Jornaleros van en su propio grupo JORNAL;
+          // oficina y quienes no están en cuadrilla, al final.
+          const card = (e) => {
+            const dot = dotacionDe[e.id] || { tiene: [], falta: [], tipos: new Set(), completo: false, pend: [], puesto: "ayudante" };
+            const kit = PUESTOS[dot.puesto] || PUESTOS.ayudante;
+            return (
+              <div key={e.id} onClick={() => setModal({ t: "ficha", empId: e.id })} style={{ background: "#fff", border: `1px solid ${dot.completo ? GREEN + "55" : BRAND.border}`, borderRadius: R.lg, padding: 14, cursor: "pointer", boxShadow: BRAND.shadowSm, transition: "transform .1s" }} onMouseEnter={(ev) => (ev.currentTarget.style.transform = "translateY(-2px)")} onMouseLeave={(ev) => (ev.currentTarget.style.transform = "none")}>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <div style={{ background: BRAND.beigeLight, borderRadius: R.md, padding: 4, border: `1px solid ${BRAND.borderSoft}` }}><EppFigure puesto={dot.puesto} has={dot.tipos} size={72} /></div>
+                  <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <EmpAvatar name={e.fullName} dataUrl={empPhoto(e)} size={34} borderRadius={8} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 800, fontSize: 13, color: BRAND.charcoal, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.fullName}</div>
+                        <div style={{ fontSize: 10.5, color: BRAND.stone }}>
+                          {e.esJornal ? <span style={{ color: "#B45309", fontWeight: 800 }}>JORNAL</span> : coTag(e.company)} · {e.position || "—"}
                         </div>
                       </div>
-                      <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B45309", letterSpacing: 0.4, textTransform: "uppercase" }}>{kit.label}</div>
-                      {dot.puesto === "oficina"
-                        ? <Chip color={BRAND.graphite} bg={BRAND.beigeDeep}>SIN EPP REQUERIDO</Chip>
-                        : dot.completo
-                          ? <Chip color={GREEN} bg={BRAND.greenSoft}>✓ EPP COMPLETO</Chip>
-                          : <div style={{ display: "flex", flexWrap: "wrap", gap: 3, alignItems: "center" }}><span style={{ fontSize: 10.5, fontWeight: 800, color: BRAND.red }}>FALTA:</span>{dot.falta.map((t) => <span key={t} title={reqLabel(dot.puesto, t)} style={{ fontSize: 15 }}>{tipoDef(t).icon}</span>)}</div>}
                     </div>
+                    <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B45309", letterSpacing: 0.4, textTransform: "uppercase" }}>{kit.label}</div>
+                    {dot.puesto === "oficina"
+                      ? <Chip color={BRAND.graphite} bg={BRAND.beigeDeep}>SIN EPP REQUERIDO</Chip>
+                      : dot.completo
+                        ? <Chip color={GREEN} bg={BRAND.greenSoft}>✓ EPP COMPLETO</Chip>
+                        : <div style={{ display: "flex", flexWrap: "wrap", gap: 3, alignItems: "center" }}><span style={{ fontSize: 10.5, fontWeight: 800, color: BRAND.red }}>FALTA:</span>{dot.falta.map((t) => <span key={t} title={reqLabel(dot.puesto, t)} style={{ fontSize: 15 }}>{tipoDef(t).icon}</span>)}</div>}
                   </div>
                 </div>
-              );
-            })}
-            {!list.length && <div style={{ gridColumn: "1/-1", textAlign: "center", padding: 30, color: BRAND.stone, fontSize: 13 }}>Sin colaboradores con esos filtros.</div>}
-          </div>
-        )}
+              </div>
+            );
+          };
+          const groups = {};
+          list.forEach((e) => {
+            const g = e.esJornal ? "JORNAL"
+              : (attAssign[e.id] || (dotacionDe[e.id]?.puesto === "oficina" ? "OFICINA / ADMIN" : "SIN CUADRILLA"));
+            (groups[g] = groups[g] || []).push(e);
+          });
+          const rank = (g) => (g === "JORNAL" ? 1 : g === "OFICINA / ADMIN" ? 2 : g === "SIN CUADRILLA" ? 3 : 0);
+          const orden = Object.keys(groups).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+          const gColor = (g) => (g === "JORNAL" ? "#B45309" : g === "OFICINA / ADMIN" ? BRAND.stone : g === "SIN CUADRILLA" ? BRAND.ash : BRAND.charcoal);
+          if (!orden.length) return <div style={{ textAlign: "center", padding: 30, color: BRAND.stone, fontSize: 13 }}>Sin colaboradores con esos filtros.</div>;
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              {attAssignLabel && <div style={{ fontSize: 11.5, color: BRAND.stone, marginTop: -6 }}>Distribución por proyecto según la última asistencia registrada en GeoTeam: <b>{attAssignLabel}</b></div>}
+              {orden.map((g) => {
+                const done = groups[g].filter((e) => dotacionDe[e.id]?.completo).length;
+                return (
+                  <div key={g}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, background: gColor(g), color: "#fff", borderRadius: `${R.md}px ${R.md}px 0 0`, padding: "8px 14px" }}>
+                      <span style={{ fontWeight: 800, fontSize: 13, letterSpacing: 0.3 }}>{g === "JORNAL" ? "👷 JORNAL (por día)" : `📍 ${g}`}</span>
+                      <span style={{ fontSize: 11.5, opacity: 0.85 }}>{groups[g].length} persona{groups[g].length !== 1 ? "s" : ""}{g !== "OFICINA / ADMIN" ? ` · ${done} con EPP completo` : ""}</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 14, background: "rgba(255,255,255,0.5)", border: `1px solid ${BRAND.borderSoft}`, borderTop: "none", borderRadius: `0 0 ${R.md}px ${R.md}px`, padding: 12 }}>
+                      {groups[g].map(card)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
     );
   };
@@ -1351,6 +1896,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const TABS = [
     { id: "catalogo", label: "🛒 Catálogo" },
     { id: "requisiciones", label: "📋 Requisiciones", badge: reqsPendientes },
+    { id: "porcomprar", label: "🧾 Por comprar", badge: posAbiertas, badgeColor: "#B45309" },
     { id: "dotacion", label: "👷 Dotación" },
     { id: "inventario", label: "📦 Inventario" },
     { id: "proveedores", label: "🏪 Proveedores" },
@@ -1388,6 +1934,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
           <>
             {sec === "catalogo" && renderCatalogo()}
             {sec === "requisiciones" && renderRequisiciones()}
+            {sec === "porcomprar" && renderPorComprar()}
             {sec === "dotacion" && renderDotacion()}
             {sec === "inventario" && renderInventario()}
             {sec === "proveedores" && renderProveedores()}
@@ -1396,8 +1943,11 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         )}
       </div>
 
+      {/* Paisaje decorativo: la BG-20 y el equipo con su EPP (igual en todos los apartados) */}
+      <GeoSafetyScene />
+
       {/* Footer de créditos */}
-      <div style={{ textAlign: "center", padding: "16px 20px 22px", fontSize: 11.5, color: BRAND.ash, borderTop: `1px solid ${BRAND.borderSoft}` }}>
+      <div style={{ textAlign: "center", padding: "16px 20px 22px", fontSize: 11.5, color: BRAND.ash, borderTop: `1px solid ${BRAND.borderSoft}`, background: "#F5EFE3" }}>
         Lic. Gerson &nbsp;&amp;&nbsp; Ing. Nanu &nbsp;·&nbsp; <b style={{ color: BRAND.stone }}>GAIB Services</b>
       </div>
 
@@ -1430,6 +1980,26 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
               // que la ficha y los KPIs no dependan de la inferencia.
               await sPuestos({ [rec.id]: rec.puesto });
               setModal(null); setSec("dotacion");
+            }} />
+        </Modal>
+      )}
+      {modal?.t === "req-edit" && (
+        <Modal title={`✏️ Editar requisición ${modal.req.numero}`} onClose={() => setModal(null)} width={860}>
+          <EditReqFormImpl req={modal.req} people={people}
+            onCancel={() => setModal(null)}
+            onSave={async (lineas) => {
+              const ok = await saveReqEdit(modal.req.id, lineas);
+              if (ok) { setModal(null); alert(`✅ ${modal.req.numero} actualizada.`); }
+            }} />
+        </Modal>
+      )}
+      {modal?.t === "po-new" && (
+        <Modal title="🧾 Nueva orden — Por comprar" onClose={() => setModal(null)} width={720}>
+          <PoFormImpl items={items} providers={providers}
+            onCancel={() => setModal(null)}
+            onSave={async (lines) => {
+              const po = await crearPo(lines, "");
+              if (po) { setModal(null); alert(`✅ ${po.numero} creada. Generá el PDF para el proveedor.`); }
             }} />
         </Modal>
       )}
