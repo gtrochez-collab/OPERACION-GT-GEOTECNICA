@@ -330,6 +330,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // estado en cada cambio y, si remonta, lo restaura. Key por
   // company|periodo|quincena. Se limpia al guardar OK o al Cerrar explicito.
   const heDraftRef = useRef(null);
+  // Mismo respaldo anti-remount para la grid de ASISTENCIA (30-jul-2026 se
+  // perdio la asistencia de Subterra por la misma clase de bug que las HE).
+  const attDraftRef = useRef(null);
   const [movs, setMovs] = useState([]);
   const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
   const [contracts, setContracts] = useState([]);
@@ -671,7 +674,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <span>
             <b>Pago proporcional por hora de entrada</b>
             <div style={{ fontSize: 11, color: "#78350F", marginTop: 2 }}>
-              Activá esto solo para empleados que cobran segun la hora a la que llegan (ej: trabajadores con horario flexible). Vas a poder marcar la hora 7:00, 7:30, 8:00, 8:30, 9:00 o 9:30 en cada celda de asistencia con click derecho.
+              Activá esto solo para empleados que cobran segun la hora a la que llegan (ej: trabajadores con horario flexible). Vas a poder marcar la hora de entrada (7:00 a 11:00, cada 30 min) en cada celda de asistencia con click derecho.
             </div>
           </span>
         </label>
@@ -1178,6 +1181,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
   // ── ATTENDANCE GRID ──
   const AttendanceGrid = ({ sheet }) => {
+    // Respaldo anti-remount (igual que HorasExtrasGrid): si el padre se
+    // re-renderiza a mitad de digitacion (fotos cargando, resize), la grid
+    // remonta y este draft restaura lo marcado. Solo se restaura si tiene
+    // cambios (dirty) y NUNCA sobrevive al cierre del modal.
+    const attKey = `${sheet.company}|${sheet.periodo}|${sheet.quincena}`;
+    const attDraft = attDraftRef.current && attDraftRef.current.key === attKey && attDraftRef.current.dirty ? attDraftRef.current : null;
     // Auto-rellena domingos y feriados con "1" como valor por defecto.
     // Razon: la ley hondurena paga el domingo (dia de descanso) y los feriados
     // como dia normal aun si el empleado no trabaja. El usuario solo cambia a
@@ -1186,6 +1195,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     // rango). Solo rellena celdas que esten vacias — no sobrescribe valores
     // existentes (ya marcados, o explicitamente puestos por el usuario).
     const initialData = (() => {
+      if (attDraft) return attDraft.data;
       const initial = { ...(sheet?.grid || {}) };
       const [y, m] = sheet.periodo.split("-").map(Number);
       const start = sheet.quincena === "1Q" ? 1 : 16;
@@ -1208,12 +1218,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       return initial;
     })();
     const [data, setData] = useState(initialData);
-    const [overrides, setOverrides] = useState(sheet?.projOverrides || {});
-    const [arrivalTimes, setArrivalTimes] = useState(sheet?.arrivalTimes || {});
+    const [overrides, setOverrides] = useState(() => attDraft ? attDraft.overrides : (sheet?.projOverrides || {}));
+    const [arrivalTimes, setArrivalTimes] = useState(() => attDraft ? attDraft.arrivalTimes : (sheet?.arrivalTimes || {}));
     const [editingCell, setEditingCell] = useState(null);
     // Track de cambios sin guardar para advertir al cerrar.
     // Empieza limpio al abrir; cada edicion marca dirty=true.
-    const [dirty, setDirty] = useState(false);
+    const [dirty, setDirty] = useState(attDraft ? true : false);
+    const attSavingRef = useRef(false);
+    // Espejar el estado al respaldo en CADA cambio (proteccion anti-remount).
+    useEffect(() => {
+      attDraftRef.current = { key: attKey, data, overrides, arrivalTimes, dirty };
+    }, [attKey, data, overrides, arrivalTimes, dirty]);
 
     const getDays = () => {
       const [y, m] = sheet.periodo.split("-").map(Number);
@@ -1310,7 +1325,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
     // Setea hora de entrada para empleados con pago proporcional (e.g. José Miguel
     // que llega tarde y cobra segun la hora). Las opciones validas son 7:00 a
-    // 9:30 en intervalos de 30 min. Pasar "" limpia la hora del dia.
+    // 11:00 en intervalos de 30 min (ampliado 30-jul-2026: José Miguel viene
+    // llegando 10:30-11). Pasar "" limpia la hora del dia.
     const setArrivalTime = (eid, day, time) => {
       const k = cellKey(eid, day);
       if (!time) {
@@ -1321,7 +1337,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       setEditingCell(null);
       setDirty(true);
     };
-    const ARRIVAL_OPTIONS = ["7:00", "7:30", "8:00", "8:30", "9:00", "9:30"];
+    const ARRIVAL_OPTIONS = ["7:00", "7:30", "8:00", "8:30", "9:00", "9:30", "10:00", "10:30", "11:00"];
 
     // Color de fondo de la celda. Distingue visualmente el "1" segun el tipo
     // de dia para que el calendario se lea como un calendario de Excel pintado:
@@ -1609,32 +1625,63 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             );
             if (!ok) return;
           }
+          attDraftRef.current = null; // descarte explicito del respaldo
           setModal(null);
         }}>Cerrar</Btn>
         <Btn variant="info" onClick={() => exportAttendancePDF()}>📄 Exportar PDF</Btn>
         <Btn variant="success" onClick={async () => {
-          const record = { ...sheet, grid: data, projOverrides: overrides, arrivalTimes, lastSaved: new Date().toISOString() };
-          const existing = atts.findIndex(a => a.id === sheet.id);
-          const updated = existing >= 0
-            ? atts.map((a, i) => i === existing ? record : a)
-            : [...atts, record];
-          setAtts(updated);
-          // Esperamos a que termine el guardado en Supabase para detectar
-          // errores de red. localStorage se guarda primero (siempre) dentro
-          // de store.set, asi la red de seguridad local nunca se pierde.
-          const ok = await store.set("hr-atts2", updated);
-          if (ok) {
+          if (attSavingRef.current) return; // anti doble-clic
+          attSavingRef.current = true;
+          try {
+            // GUARDIA anti-vaciado: si la hoja TENIA celdas marcadas y ahora
+            // va sin ninguna, pedir confirmacion explicita.
+            const llenasNuevas = Object.values(data).filter(Boolean).length;
+            const llenasViejas = Object.values(sheet.grid || {}).filter(Boolean).length;
+            if (llenasNuevas === 0 && llenasViejas > 0) {
+              if (!confirm(`⚠️ ATENCIÓN: estás por guardar la asistencia ${sheet.quincena} ${sheet.periodo} SIN NINGUNA celda marcada.\n\nLa hoja tenía ${llenasViejas} celda(s) que se BORRARÍAN.\n\n¿Seguro?`)) return;
+            }
+            const record = { ...sheet, grid: data, projOverrides: overrides, arrivalTimes, lastSaved: new Date().toISOString() };
+            // MERGE por hoja contra la NUBE (lectura DIRECTA getCloud, sin
+            // cache local viejo): union nube + memoria conservando la version
+            // MAS RECIENTE de cada hoja (company|periodo|quincena) — asi una
+            // pestana desactualizada NUNCA pisa la asistencia de la otra
+            // empresa u otra quincena (asi se perdio Subterra el 30-jul).
+            let cloudArr = null;
+            try { const c = await store.getCloud("hr-atts2"); if (Array.isArray(c)) cloudArr = c; } catch { cloudArr = null; }
+            const keyOf = a => `${a.company}|${a.periodo}|${a.quincena}`;
+            const byKey = {};
+            [...(Array.isArray(atts) ? atts : []), ...(cloudArr || [])].forEach(a => {
+              if (!a || !a.id) return;
+              const kk = keyOf(a);
+              const cur = byKey[kk];
+              if (!cur || String(a.lastSaved || a.date || "") > String(cur.lastSaved || cur.date || "")) byKey[kk] = a;
+            });
+            byKey[keyOf(record)] = record;
+            const updated = Object.values(byKey);
+            setAtts(updated);
+            const ok = await store.set("hr-atts2", updated);
+            if (!ok) {
+              alert("⚠️ La asistencia se guardó en este dispositivo pero NO se sincronizó a la nube.\n\nRevisá tu conexión y volvé a tocar Guardar. El modal queda abierto.");
+              return;
+            }
+            // VERIFICAR con lectura DIRECTA a la nube: la hoja debe estar con
+            // ESTE lastSaved y la misma cantidad de celdas marcadas.
+            let verified = false;
+            try {
+              const back = await store.getCloud("hr-atts2");
+              const mine = Array.isArray(back) ? back.find(a => a.id === record.id) : null;
+              verified = !!mine && mine.lastSaved === record.lastSaved && Object.values(mine.grid || {}).filter(Boolean).length === llenasNuevas;
+            } catch { verified = false; }
+            if (!verified) {
+              alert("⚠️ El guardado NO se pudo VERIFICAR en la nube.\n\nNO cierres la hoja: revisá tu conexión y tocá Guardar de nuevo.");
+              return;
+            }
+            attDraftRef.current = null;
+            alert(`✅ Asistencia ${sheet.quincena} ${sheet.periodo} guardada y VERIFICADA en la nube.\n\n${llenasNuevas} celda(s) marcadas.`);
             setDirty(false);
             setModal(null);
-          } else {
-            alert(
-              "⚠️ Atencion: la asistencia se guardo en este dispositivo pero NO se sincronizo a la nube.\n\n" +
-              "Esto significa que si abris el sistema en otra Mac (o si limpian el cache de este navegador), los cambios se pueden perder.\n\n" +
-              "Posibles causas:\n" +
-              "• Sin conexion a internet\n" +
-              "• Problema temporal con Supabase\n\n" +
-              "El modal queda abierto. Reintenta guardar en un momento."
-            );
+          } finally {
+            attSavingRef.current = false;
           }
         }}>Guardar asistencia</Btn>
       </div>
@@ -4704,7 +4751,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     case "le": return <Modal title="Editar permiso" onClose={() => setModal(null)}><LvForm lv={m.d} onSave={l => sL(lvs.map(x => x.id === l.id ? l : x))} /></Modal>;
     case "cuad": return <Modal title={`Distribucion de cuadrilla — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm /></Modal>;
     case "cuad-edit": return <Modal title={`Editar cuadrilla ${m.d.quincena} ${m.d.periodo} — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm cuad={m.d} /></Modal>;
-    case "ag": return <Modal title={`Asistencia ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><AttendanceGrid sheet={m.d} /></Modal>;
+    case "ag": return <Modal title={`Asistencia ${m.d.quincena} ${m.d.periodo}`} onClose={() => {
+      // Mismo contrato que el boton Cerrar: confirmar si hay cambios sin
+      // guardar y descartar el respaldo anti-remount.
+      if (attDraftRef.current?.dirty && !confirm("Tenés cambios SIN GUARDAR en la asistencia.\n\n¿Cerrar sin guardar?")) return;
+      attDraftRef.current = null;
+      setModal(null);
+    }} wide><AttendanceGrid sheet={m.d} /></Modal>;
     case "he": return <Modal title={`Horas Extras ${m.d.quincena} ${m.d.periodo}`} onClose={() => {
       // Mismo contrato que el boton Cerrar: confirmar si hay cambios sin
       // guardar y descartar el respaldo (el draft solo protege remounts
