@@ -87,7 +87,12 @@ logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
   emergencia) → finalizado (comprobante) → coordinar (Ana/Fernando) → logística →
   entregado → ficha (Jorge) → lista. Máquinas puede "Cerrar sin logística".
 - Asistencia: cuadrilla por quincena es la fuente de asignaciones; domingos/feriados
-  auto "1" (descanso pagado). Resumen por proyecto: solo personas asignadas + NSP + INC.
+  auto "1" (descanso pagado). Ciclo día regular: ""→1→0→INC→V→"" (V=vacaciones,
+  día pagado, teal). Días BLOQUEADOS por alta/baja NO cuentan en totales/costos
+  aunque tengan valor guardado (fix Norman 30-jul). Hora de entrada payByHour
+  hasta 11:00 (José Miguel). Resumen por proyecto: personas + NSP + INC + VAC.
+  PDF: "1" regular sin color; celdas con * llevan el color del proyecto donde
+  trabajó ese día; al final "RESUMEN PARA PLANILLA" (NSP/INC/V con días y total).
 - Costos MO (HR): costo diario = (salario + bonificación) / 30 × días pagados
   (DT×2, DT2/TF×3, INC=1, NSP=0). Reporte PDF/CSV por proyecto/quincena.
 - Horas extras: hora base = salario/30/8 (SIN bonificación); 4-7pm +25%,
