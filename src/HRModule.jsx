@@ -1667,38 +1667,76 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         return { proj, pEmps, nsp, inc };
       });
 
+      // ── Paleta por PROYECTO ──
+      // Cada proyecto tiene su color: encabezado de su seccion, su tarjeta de
+      // resumen, y las celdas con override (1*) se tintean con el color del
+      // proyecto DONDE trabajo ese dia (pedido del usuario 30-jul-2026: que
+      // se entienda de un vistazo que Jose Henry trabajo la quincena en otro
+      // proyecto). Cubre tambien proyectos que solo aparecen via override.
+      const PROJ_PALETTE = [
+        { main: "#C75F1F", soft: "#FBE7D6" }, // naranja Geotecnica
+        { main: "#2C5F5D", soft: "#DCEBEA" }, // verde acero
+        { main: "#6D28D9", soft: "#EAE2FB" }, // morado
+        { main: "#1D6AC0", soft: "#DEEBFA" }, // azul
+        { main: "#BE3455", soft: "#F9DFE6" }, // frambuesa
+        { main: "#996A00", soft: "#F5EBCE" }, // ambar
+        { main: "#0E7490", soft: "#D9F0F6" }, // teal
+        { main: "#15803D", soft: "#DEF2E4" }, // verde
+        { main: "#9F1239", soft: "#F9DEE4" }, // vino
+        { main: "#4338CA", soft: "#E4E2FA" }, // indigo
+        { main: "#3F6212", soft: "#E9F1D8" }, // oliva
+        { main: "#A21CAF", soft: "#F6E0F8" }, // magenta
+      ];
+      const projColor = {};
+      {
+        const shorts = [];
+        projGroups.forEach((p) => { if (!shorts.includes(p.short)) shorts.push(p.short); });
+        ae.forEach((e) => days.forEach((d) => {
+          const o = getProj(e.id, d.day);
+          const s = o ? resolveShortHR(o) : null;
+          if (s && !shorts.includes(s)) shorts.push(s);
+        }));
+        shorts.forEach((s, i) => { projColor[s] = PROJ_PALETTE[i % PROJ_PALETTE.length]; });
+      }
+
       const dayHeaderHtml = days
         .map((d) => {
-          const bg = d.isHoliday ? "#FED7AA" : d.isSun ? "#F3E8FF" : d.isSat ? "#FEF3C7" : "#F1F5F9";
-          const labelColor = d.isHoliday ? "#9A3412" : "#64748b";
-          return `<th style="background:${bg};text-align:center;font-size:8px;padding:3px 2px;border:1px solid #E2E8F0">
+          const bg = d.isHoliday ? "#FED7AA" : d.isSun ? "#F3E8FF" : d.isSat ? "#FEF3C7" : "#F4F1EA";
+          const labelColor = d.isHoliday ? "#9A3412" : d.isSun ? "#7C3AED" : "#8B847C";
+          return `<th style="background:${bg};text-align:center;font-size:8px;padding:3px 2px;border:1px solid #E7E1D5">
             <div style="color:${labelColor};font-weight:${d.isHoliday ? 700 : 600};font-size:7px">${d.isHoliday ? "F" : d.dow}</div>
             <div>${d.day}</div>
           </th>`;
         })
         .join("");
 
+      let firstSection = true;
       const projTablesHtml = projGroups
         .map((proj) => {
           const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
           if (pEmps.length === 0) return "";
+          const pc = projColor[proj.short] || { main: cc.color, soft: "#F4F1EA" };
           const rows = pEmps
-            .map((e) => {
+            .map((e, ri) => {
               const st = empStats(e.id);
               const code = genEmpCode(e.fullName, e.dni);
+              const zebra = ri % 2 ? "#FBF9F4" : "#fff";
               const cells = days
                 .map((d) => {
                   const lockReason = dayLockReason(e, d);
                   if (lockReason) {
-                    return `<td style="background:#E5E7EB;color:#9CA3AF;text-align:center;font-size:9px;padding:3px 2px;border:1px solid #E2E8F0;font-weight:700">—</td>`;
+                    return `<td style="background:#E9E6DF;color:#A8A096;text-align:center;font-size:9px;padding:3px 2px;border:1px solid #E7E1D5;font-weight:700">—</td>`;
                   }
                   const v = getVal(e.id, d.day);
                   const ovr = getProj(e.id, d.day);
+                  // Color del proyecto donde REALMENTE trabajo ese dia (override):
+                  // la celda se pinta con el color de ESE proyecto.
+                  const oc = ovr ? projColor[resolveShortHR(ovr)] : null;
                   // Determinar background, color y texto segun el estado.
-                  // Distincion de "1" segun tipo de dia (calendario tipo Excel):
                   //   1 en feriado  → naranja claro (pagado por ley)
                   //   1 en domingo  → azul claro  (descanso pagado)
                   //   1 regular     → verde       (presente trabajando)
+                  //   con override  → colores del proyecto destino + "*"
                   let bg = "transparent", color = "#CBD5E1", txt = "·", fontSize = 9;
                   if (v === "TF") {
                     bg = "#FED7AA"; color = "#9A3412"; txt = ovr ? "TF*" : "TF"; fontSize = 8;
@@ -1707,45 +1745,56 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                   } else if (v === "DT2") {
                     bg = "#A855F7"; color = "#FFFFFF"; txt = ovr ? "DT2*" : "DT2"; fontSize = 7;
                   } else if (v === "1") {
-                    if (ovr) { bg = "#DBEAFE"; color = "#1E40AF"; txt = "1*"; }
-                    else if (d.isHoliday) { bg = "#FFEDD5"; color = "#9A3412"; txt = "1"; }
-                    else if (d.isSun) { bg = "#DBEAFE"; color = "#1E40AF"; txt = "1"; }
-                    else { bg = "#DCFCE7"; color = "#166534"; txt = "1"; }
+                    if (d.isHoliday) { bg = "#FFEDD5"; color = "#9A3412"; txt = ovr ? "1*" : "1"; }
+                    else if (d.isSun) { bg = "#DBEAFE"; color = "#1E40AF"; txt = ovr ? "1*" : "1"; }
+                    else { bg = "#DCFCE7"; color = "#166534"; txt = ovr ? "1*" : "1"; }
                   } else if (v === "0") {
                     bg = "#FEE2E2"; color = "#991B1B"; txt = "0";
                   } else if (v === "INC") {
                     bg = "#FEF9C3"; color = "#92400E"; txt = ovr ? "I*" : "I";
                   }
+                  // El override MANDA sobre el color base (dias normales):
+                  // celda con el color del proyecto destino, para que se vea
+                  // de un vistazo donde anduvo la persona.
+                  if (oc && v && v !== "0") { bg = oc.soft; color = oc.main; }
                   const arr = arrivalTimes[`${e.id}-${d.day}`];
                   const arrivalHtml = arr ? `<div style="font-size:6px;color:#92400E;font-weight:700;background:#FEF3C7;line-height:1;margin-top:1px">${arr}</div>` : "";
-                  return `<td style="background:${bg};color:${color};text-align:center;font-size:${fontSize}px;padding:3px 2px;border:1px solid #E2E8F0;font-weight:700">${txt}${arrivalHtml}</td>`;
+                  return `<td style="background:${bg};color:${color};text-align:center;font-size:${fontSize}px;padding:3px 2px;border:1px solid #E7E1D5;font-weight:700">${txt}${arrivalHtml}</td>`;
                 })
                 .join("");
-              return `<tr>
-                <td style="padding:5px 8px;border:1px solid #E2E8F0;font-size:10px;font-weight:600">
-                  ${e.fullName}<br><span style="font-family:monospace;color:#E8762D;font-size:8px">${code}</span>
+              return `<tr style="background:${zebra}">
+                <td style="padding:5px 8px;border:1px solid #E7E1D5;font-size:10px;font-weight:600">
+                  ${e.fullName}<br><span style="font-family:monospace;color:${pc.main};font-size:8px">${code}</span>
                 </td>
                 ${cells}
-                <td style="text-align:center;background:#ECFDF5;color:#059669;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0" title="${e.payByHour ? `${st.present} marcados · ${st.presentEffective.toFixed(2)} efectivos` : ""}">${e.payByHour ? st.presentEffective.toFixed(2) : st.present}</td>
-                <td style="text-align:center;background:${(st.domTrab + st.domTrabTriple) > 0 ? "#F3E8FF" : "#fff"};color:#7C3AED;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${(st.domTrab + st.domTrabTriple) || ""}</td>
-                <td style="text-align:center;background:${st.ferTrab > 0 ? "#FED7AA" : "#fff"};color:#9A3412;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.ferTrab || ""}</td>
-                <td style="text-align:center;background:${st.absent > 0 ? "#FEE2E2" : "#fff"};color:#DC2626;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.absent || ""}</td>
-                <td style="text-align:center;background:${st.incap > 0 ? "#FEF9C3" : "#fff"};color:#92400E;font-weight:700;padding:3px 6px;border:1px solid #E2E8F0">${st.incap || ""}</td>
+                <td style="text-align:center;background:#ECFDF5;color:#059669;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5" title="${e.payByHour ? `${st.present} marcados · ${st.presentEffective.toFixed(2)} efectivos` : ""}">${e.payByHour ? st.presentEffective.toFixed(2) : st.present}</td>
+                <td style="text-align:center;background:${(st.domTrab + st.domTrabTriple) > 0 ? "#F3E8FF" : "transparent"};color:#7C3AED;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5">${(st.domTrab + st.domTrabTriple) || ""}</td>
+                <td style="text-align:center;background:${st.ferTrab > 0 ? "#FED7AA" : "transparent"};color:#9A3412;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5">${st.ferTrab || ""}</td>
+                <td style="text-align:center;background:${st.absent > 0 ? "#FEE2E2" : "transparent"};color:#DC2626;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5">${st.absent || ""}</td>
+                <td style="text-align:center;background:${st.incap > 0 ? "#FEF9C3" : "transparent"};color:#92400E;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5">${st.incap || ""}</td>
               </tr>`;
             })
             .join("");
+          // Cortes de pagina: nunca partir un proyecto entre paginas. Los
+          // proyectos grandes (6+ personas) arrancan en pagina propia; el
+          // primero se queda con el resumen en la pagina 1.
+          const breakBefore = !firstSection && pEmps.length >= 6 ? "page-break-before:always;" : "";
+          firstSection = false;
           return `
-            <div style="margin-top:18px;page-break-inside:avoid">
-              <h3 style="background:${cc.color};color:#fff;padding:6px 10px;font-size:12px;margin:0">${proj.short} — ${proj.name} <span style="font-weight:400;font-size:10px;opacity:.7">[${proj.code}] · ${pEmps.length} personas</span></h3>
-              <table style="border-collapse:collapse;width:100%;margin-top:0">
+            <div style="margin-top:16px;page-break-inside:avoid;break-inside:avoid;${breakBefore}">
+              <h3 style="background:${pc.main};color:#fff;padding:7px 12px;font-size:12px;margin:0;border-radius:8px 8px 0 0;display:flex;justify-content:space-between;align-items:center">
+                <span>${proj.short} <span style="font-weight:400;opacity:.85">— ${proj.name}</span></span>
+                <span style="font-weight:400;font-size:10px;opacity:.85">[${proj.code}] · ${pEmps.length} persona${pEmps.length !== 1 ? "s" : ""}</span>
+              </h3>
+              <table style="border-collapse:collapse;width:100%;margin-top:0;border:1px solid ${pc.main}33">
                 <thead><tr>
-                  <th style="background:#F1F5F9;text-align:left;font-size:9px;padding:4px 8px;border:1px solid #E2E8F0">Empleado</th>
+                  <th style="background:#F4F1EA;text-align:left;font-size:9px;padding:4px 8px;border:1px solid #E7E1D5">Empleado</th>
                   ${dayHeaderHtml}
-                  <th style="background:#ECFDF5;font-size:9px;padding:4px 6px;border:1px solid #E2E8F0">Días</th>
-                  <th style="background:#F3E8FF;color:#7C3AED;font-size:9px;padding:4px 6px;border:1px solid #E2E8F0">DOM</th>
-                  <th style="background:#FED7AA;color:#9A3412;font-size:9px;padding:4px 6px;border:1px solid #E2E8F0">FER</th>
-                  <th style="background:#FEE2E2;font-size:9px;padding:4px 6px;border:1px solid #E2E8F0">NSP</th>
-                  <th style="background:#FEF9C3;font-size:9px;padding:4px 6px;border:1px solid #E2E8F0">INC</th>
+                  <th style="background:#ECFDF5;font-size:9px;padding:4px 6px;border:1px solid #E7E1D5">Días</th>
+                  <th style="background:#F3E8FF;color:#7C3AED;font-size:9px;padding:4px 6px;border:1px solid #E7E1D5">DOM</th>
+                  <th style="background:#FED7AA;color:#9A3412;font-size:9px;padding:4px 6px;border:1px solid #E7E1D5">FER</th>
+                  <th style="background:#FEE2E2;font-size:9px;padding:4px 6px;border:1px solid #E7E1D5">NSP</th>
+                  <th style="background:#FEF9C3;font-size:9px;padding:4px 6px;border:1px solid #E7E1D5">INC</th>
                 </tr></thead>
                 <tbody>${rows}</tbody>
               </table>
@@ -1754,47 +1803,80 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         .join("");
 
       const summaryHtml = summary
-        .map((s) => `
-          <div style="background:#F8F2E6;border-left:3px solid #E8762D;padding:10px 14px;border-radius:8px">
-            <div style="font-weight:700;color:#2C2A28;font-size:13px">${s.proj.short}</div>
-            <div style="font-size:11px;color:#5C5853;margin-top:2px">${s.proj.name}</div>
-            <div style="margin-top:8px;font-size:11px;display:flex;gap:12px;flex-wrap:wrap">
-              <span><strong style="color:#E8762D">${s.pEmps.length}</strong> persona${s.pEmps.length !== 1 ? "s" : ""} asignada${s.pEmps.length !== 1 ? "s" : ""}</span>
+        .filter((s) => s.pEmps.length > 0)
+        .map((s) => {
+          const pc = projColor[s.proj.short] || { main: "#E8762D", soft: "#F8F2E6" };
+          return `
+          <div style="background:${pc.soft};border-left:4px solid ${pc.main};padding:10px 14px;border-radius:8px">
+            <div style="font-weight:800;color:${pc.main};font-size:13px">${s.proj.short}</div>
+            <div style="font-size:10.5px;color:#5C5853;margin-top:2px">${s.proj.name}</div>
+            <div style="margin-top:7px;font-size:11px;display:flex;gap:12px;flex-wrap:wrap">
+              <span><strong style="color:${pc.main}">${s.pEmps.length}</strong> persona${s.pEmps.length !== 1 ? "s" : ""}</span>
               <span style="color:${s.nsp > 0 ? "#DC2626" : "#B9B2A8"}"><strong>${s.nsp}</strong> NSP</span>
               <span style="color:${s.inc > 0 ? "#92400E" : "#B9B2A8"}"><strong>${s.inc}</strong> INC</span>
             </div>
-          </div>
-        `)
+          </div>`;
+        })
+        .join("");
+      // KPIs globales para el encabezado
+      const totPersonas = summary.reduce((s, x) => s + x.pEmps.length, 0);
+      const totNSP = summary.reduce((s, x) => s + x.nsp, 0);
+      const totINC = summary.reduce((s, x) => s + x.inc, 0);
+      const nProy = summary.filter((s) => s.pEmps.length > 0).length;
+      const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+      // Leyenda de colores por proyecto (para leer las celdas con *)
+      const projLegendHtml = Object.entries(projColor)
+        .map(([s, pc]) => `<span style="background:${pc.soft};color:${pc.main};padding:2px 8px;border-radius:4px;border:1px solid ${pc.main}55;font-weight:700">● ${s}</span>`)
         .join("");
 
       w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Asistencia ${sheet.quincena} ${sheet.periodo}</title>
         <style>
           *{margin:0;padding:0;box-sizing:border-box}
-          body{font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;padding:24px;color:#2C2A28}
-          h1{font-size:22px;margin-bottom:4px;color:#2C2A28;letter-spacing:-0.3px}
-          h2{font-size:13px;color:#5C5853;font-weight:500;margin-bottom:14px}
+          body{font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;padding:24px;color:#2C2A28;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+          thead{display:table-header-group}
+          tr{page-break-inside:avoid}
           @media print {.np{display:none}}
         </style>
       </head><body>
-        <div style="border-left:4px solid #E8762D;padding-left:14px;margin-bottom:18px">
-          <div style="font-size:9px;color:#E8762D;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">Geotecnica Soluciones · RRHH</div>
-          <h1>Asistencia ${sheet.quincena} ${sheet.periodo}</h1>
-          <h2>${cc.name} · Generado ${new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" })}</h2>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:14px">
+            <img src="${logoUrl}" style="height:44px" onerror="this.style.display='none'" />
+            <div>
+              <div style="font-size:20px;font-weight:800;color:#E8762D;letter-spacing:-0.3px">REPORTE DE ASISTENCIA</div>
+              <div style="font-size:12px;color:#7A7268;margin-top:2px">${cc.name} · Quincena: <b>${sheet.quincena} ${sheet.periodo}</b></div>
+            </div>
+          </div>
+          <div style="text-align:right;font-size:11px;color:#7A7268">Generado: ${new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" })}</div>
         </div>
+        <div style="height:4px;background:#E8762D;border-radius:2px;margin:14px 0 14px"></div>
+
+        <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:8px 16px"><div style="font-size:9px;color:#7A7268;text-transform:uppercase">Personas asignadas</div><div style="font-size:18px;font-weight:800;color:#E8762D">${totPersonas}</div></div>
+          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:8px 16px"><div style="font-size:9px;color:#7A7268;text-transform:uppercase">Proyectos</div><div style="font-size:18px;font-weight:800;color:#2C2A28">${nProy}</div></div>
+          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:8px 16px"><div style="font-size:9px;color:#7A7268;text-transform:uppercase">Inasistencias (NSP)</div><div style="font-size:18px;font-weight:800;color:${totNSP > 0 ? "#DC2626" : "#B9B2A8"}">${totNSP}</div></div>
+          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:8px 16px"><div style="font-size:9px;color:#7A7268;text-transform:uppercase">Incapacidades</div><div style="font-size:18px;font-weight:800;color:${totINC > 0 ? "#92400E" : "#B9B2A8"}">${totINC}</div></div>
+        </div>
+
         <div style="font-size:11px;font-weight:700;color:#8B847C;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Resumen por proyecto</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:18px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:14px">
           ${summaryHtml}
         </div>
+        <div style="font-size:10px;color:#8B847C;display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
+          <b style="font-size:9px;text-transform:uppercase;letter-spacing:1px">Colores por proyecto:</b>
+          ${projLegendHtml}
+          <span>· una celda de color con <b>*</b> = ese día la persona trabajó en <b>ese</b> proyecto</span>
+        </div>
         ${projTablesHtml}
-        <div style="margin-top:24px;padding-top:14px;border-top:1px solid #DBD4C8;font-size:10px;color:#8B847C;display:flex;gap:12px;flex-wrap:wrap">
-          <span><strong>1</strong> = Presente (pago normal)</span>
-          <span><strong>0</strong> = NSP (No se presentó)</span>
-          <span><strong>I</strong> = Incapacidad</span>
-          <span style="background:#FED7AA;color:#9A3412;padding:2px 6px;border-radius:3px"><strong>TF</strong> = Trabajó feriado (×3 = triple)</span>
-          <span style="background:#E9D5FF;color:#6B21A8;padding:2px 6px;border-radius:3px"><strong>DT</strong> = Domingo trabajado (×2 = doble)</span>
+        <div style="margin-top:20px;padding-top:12px;border-top:1px solid #DBD4C8;font-size:10px;color:#8B847C;display:flex;gap:10px;flex-wrap:wrap;page-break-inside:avoid">
+          <span style="background:#DCFCE7;color:#166534;padding:2px 6px;border-radius:3px"><strong>1</strong> = Presente</span>
+          <span style="background:#FEE2E2;color:#991B1B;padding:2px 6px;border-radius:3px"><strong>0</strong> = NSP</span>
+          <span style="background:#FEF9C3;color:#92400E;padding:2px 6px;border-radius:3px"><strong>I</strong> = Incapacidad</span>
+          <span style="background:#FED7AA;color:#9A3412;padding:2px 6px;border-radius:3px"><strong>TF</strong> = Feriado trabajado (×3)</span>
+          <span style="background:#E9D5FF;color:#6B21A8;padding:2px 6px;border-radius:3px"><strong>DT</strong> = Domingo trabajado (×2)</span>
           <span style="background:#A855F7;color:#fff;padding:2px 6px;border-radius:3px"><strong>DT2</strong> = Domingo triple (×3)</span>
-          <span><strong>1*</strong> = Otro proyecto (override)</span>
-          <span><strong>—</strong> = Bloqueado por alta/baja</span>
+          <span style="background:#DBEAFE;color:#1E40AF;padding:2px 6px;border-radius:3px"><strong>1</strong> en domingo = descanso pagado</span>
+          <span><strong>*</strong> = trabajó en otro proyecto (celda con el color de ese proyecto)</span>
+          <span><strong>—</strong> = bloqueado por alta/baja</span>
         </div>
         <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:white;border:none;border-radius:8px;font-weight:600">Imprimir / Guardar como PDF</button>
       </body></html>`);
