@@ -30,7 +30,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { store } from "./supabase.js";
 import { BRAND, FONT, R } from "./theme.js";
-import { resolveShort } from "./projects.js";
+import { resolveShort, PROJECTS } from "./projects.js";
 
 // ── Constantes de dominio ──
 const CATEGORIAS = [
@@ -638,7 +638,7 @@ const JornalFormImpl = ({ jorn, onSave, onCancel }) => {
 // Permite corregir cantidades, destinatario y motivo, o quitar líneas,
 // sin tener que rechazar y re-hacer la requisición. Vive a nivel de módulo
 // (regla anti-remount).
-const EditReqFormImpl = ({ req, people, onSave, onCancel }) => {
+const EditReqFormImpl = ({ req, people, projOptions = [], onSave, onCancel }) => {
   const [lines, setLines] = useState(() => (req.lineas || []).map((l) => ({ ...l, _k: uid(), _origPara: l.paraEmpId, _origMotivo: l.motivo })));
   const upd = (k, patch) => setLines((ls) => ls.map((l) => (l._k === k ? { ...l, ...patch } : l)));
   const activos = people.filter((e) => e.status === "active").sort((a, b) => String(a.fullName).localeCompare(b.fullName));
@@ -658,7 +658,7 @@ const EditReqFormImpl = ({ req, people, onSave, onCancel }) => {
             </div>
             <button onClick={() => setLines((ls) => ls.filter((x) => x._k !== l._k))} style={{ background: "none", border: "none", color: BRAND.red, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Quitar línea</button>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "90px 1fr 1fr", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "90px 1fr 1fr 1fr", gap: 10 }}>
             <Input label="Cant." type="number" min="1" value={l.qty} onChange={(e) => upd(l._k, { qty: e.target.value })} />
             <Select label="Para (colaborador)" placeholder="— Seleccionar —" value={l.paraEmpId} onChange={(e) => upd(l._k, { paraEmpId: e.target.value })}
               options={[
@@ -669,6 +669,12 @@ const EditReqFormImpl = ({ req, people, onSave, onCancel }) => {
               ]} />
             <Select label="Motivo" placeholder="— Seleccionar —" value={l.motivo} onChange={(e) => upd(l._k, { motivo: e.target.value })}
               options={MOTIVOS.map((m) => ({ value: m.value, label: m.label }))} />
+            <Select label="Proyecto" placeholder="— Proyecto —" value={l.proyecto || ""} onChange={(e) => upd(l._k, { proyecto: e.target.value })}
+              options={[
+                // Proyecto legacy que ya no este en la lista: se muestra igual.
+                ...(l.proyecto && !projOptions.some((o) => o.value === l.proyecto) ? [{ value: l.proyecto, label: l.proyecto }] : []),
+                ...projOptions,
+              ]} />
           </div>
         </div>
       ))}
@@ -949,6 +955,11 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   // Dotacion por proyecto tal como esta distribuida la gente.
   const [attAssign, setAttAssign] = useState({});
   const [attAssignLabel, setAttAssignLabel] = useState("");
+  // Proyectos custom de GeoShopping (cp-projects, solo lectura) — se mergean
+  // con los base de projects.js para el dropdown de proyecto del carrito.
+  const [cpProjects, setCpProjects] = useState([]);
+  // Mes seleccionado en la pestaña Costos (formato YYYY-MM).
+  const [costosMes, setCostosMes] = useState(new Date().toISOString().slice(0, 7));
 
   const canManage = ["admin", "costos", "almacenista"].includes(userRole);
   const canDeduct = canManage || userRole === "tesoreria";
@@ -966,6 +977,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       setPuestosMap(pu && typeof pu === "object" && !Array.isArray(pu) ? pu : {});
       setJornaleros(Array.isArray(jr) ? jr : []);
       setPos(Array.isArray(po) ? po : []);
+      setCpProjects(Array.isArray(cpp) ? cpp : []);
       // Ultima quincena registrada POR EMPRESA en la asistencia de GeoTeam:
       // sus assignments dicen en que proyecto anda cada quien.
       if (Array.isArray(at) && at.length) {
@@ -1132,18 +1144,30 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const reqsPendientes = reqs.filter((r) => r.estado === "pendiente").length;
 
   // ── Carrito (multi-colaborador por item) ──
+  // Lista unificada de proyectos para el dropdown del carrito: base
+  // (projects.js) + custom de GeoShopping (cp-projects, sin ocultos), sin
+  // duplicados. Los shorts custom GANAN sobre los base (mismo criterio que
+  // resolveShortHR en GeoTeam).
+  const projOptions = useMemo(() => {
+    const customs = (cpProjects || []).filter((p) => p && p.short && !p.hidden && !p.deleted);
+    const customShorts = new Set(customs.map((p) => p.short));
+    const base = PROJECTS.filter((p) => !customShorts.has(p.short) && !customShorts.has(resolveShort(p.short)));
+    const all = [...customs, ...base].map((p) => ({ value: p.short, label: p.short }));
+    return all.sort((a, b) => a.label.localeCompare(b.label));
+  }, [cpProjects]);
+
   const addToCart = (item) => {
     setCart((c) => {
       const ex = c.find((l) => l.itemId === item.id);
       if (ex) return c.map((l) => (l === ex ? { ...l, dests: l.dests.map((d, i) => (i === 0 ? { ...d, qty: (Number(d.qty) || 0) + 1 } : d)) } : l));
-      return [...c, { key: uid(), itemId: item.id, dests: [{ empId: "", qty: 1, motivo: "" }] }];
+      return [...c, { key: uid(), itemId: item.id, dests: [{ empId: "", qty: 1, motivo: "", proj: "" }] }];
     });
   };
   const cartUnits = cart.reduce((s, l) => s + l.dests.reduce((a, d) => a + (Number(d.qty) || 0), 0), 0);
   const cartTotal = cart.reduce((s, l) => s + (Number(itemById(l.itemId)?.precio) || 0) * l.dests.reduce((a, d) => a + (Number(d.qty) || 0), 0), 0);
   const lineUnits = (l) => l.dests.reduce((a, d) => a + (Number(d.qty) || 0), 0);
   const updDest = (lineKey, di, patch) => setCart((c) => c.map((l) => (l.key === lineKey ? { ...l, dests: l.dests.map((d, i) => (i === di ? { ...d, ...patch } : d)) } : l)));
-  const addDest = (lineKey) => setCart((c) => c.map((l) => (l.key === lineKey ? { ...l, dests: [...l.dests, { empId: "", qty: 1, motivo: "" }] } : l)));
+  const addDest = (lineKey) => setCart((c) => c.map((l) => (l.key === lineKey ? { ...l, dests: [...l.dests, { empId: "", qty: 1, motivo: "", proj: "" }] } : l)));
   const rmDest = (lineKey, di) => setCart((c) => c.map((l) => (l.key === lineKey ? { ...l, dests: l.dests.filter((_, i) => i !== di) } : l)).filter((l) => l.dests.length));
 
   const enviarRequisicion = async () => {
@@ -1155,9 +1179,10 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         if (!Number(d.qty) || Number(d.qty) < 1) return alert(`Cantidad inválida en "${it.nombre}".`);
         if (!d.empId) return alert(`Falta indicar PARA QUIÉN va "${it.nombre}".`);
         if (!d.motivo) return alert(`Falta el MOTIVO de "${it.nombre}".`);
+        if (!d.proj) return alert(`Falta el PROYECTO de "${it.nombre}" (${empById(d.empId)?.fullName || "colaborador"}). Así el gasto queda cargado al proyecto correcto.`);
         const emp = empById(d.empId);
         if (!emp) return alert(`La persona asignada a "${it.nombre}" ya no existe (¿se borró?). Volvé a seleccionarla.`);
-        lineas.push({ itemId: l.itemId, nombre: it.nombre, codigo: it.codigo || "", talla: it.talla || "", categoria: it.categoria, tipoEpp: tipoDeItem(it), proveedor: provName(it.proveedorId), precio: Number(it.precio) || 0, qty: Number(d.qty), paraEmpId: d.empId, paraNombre: emp.fullName || "—", paraEmpresa: emp.company || "", motivo: d.motivo, deducido: false });
+        lineas.push({ itemId: l.itemId, nombre: it.nombre, codigo: it.codigo || "", talla: it.talla || "", categoria: it.categoria, tipoEpp: tipoDeItem(it), proveedor: provName(it.proveedorId), precio: Number(it.precio) || 0, qty: Number(d.qty), paraEmpId: d.empId, paraNombre: emp.fullName || "—", paraEmpresa: emp.company || "", proyecto: d.proj, motivo: d.motivo, deducido: false });
       }
     }
     const numero = "EPP-" + String(reqs.length + 1).padStart(3, "0");
@@ -1216,26 +1241,43 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   // item, para que dos requisiciones no se "coman" el mismo stock. Items ya
   // borrados del catalogo se avisan (no se descartan en silencio).
   const crearPoDesdeReq = async (r) => {
-    const agg = {};
+    const agg = {};       // itemId → total pedido
+    const aggProy = {};   // itemId → { proyecto → qty } (para repartir el faltante)
     const sinItem = [];
     (r.lineas || []).forEach((l) => {
-      if (l.itemId && itemById(l.itemId)) agg[l.itemId] = (agg[l.itemId] || 0) + (Number(l.qty) || 0);
-      else sinItem.push(`${l.qty} × ${l.nombre}`);
+      if (l.itemId && itemById(l.itemId)) {
+        agg[l.itemId] = (agg[l.itemId] || 0) + (Number(l.qty) || 0);
+        const pr = l.proyecto || "";
+        (aggProy[l.itemId] = aggProy[l.itemId] || {})[pr] = (aggProy[l.itemId]?.[pr] || 0) + (Number(l.qty) || 0);
+      } else sinItem.push(`${l.qty} × ${l.nombre}`);
     });
     const comprometido = {};
     reqs.forEach((rq) => {
       if (rq.id === r.id || (rq.estado !== "pendiente" && rq.estado !== "aprobada")) return;
       (rq.lineas || []).forEach((l) => { if (l.itemId) comprometido[l.itemId] = (comprometido[l.itemId] || 0) + (Number(l.qty) || 0); });
     });
-    const faltantes = Object.entries(agg).map(([iid, qty]) => {
+    const faltantes = [];
+    Object.entries(agg).forEach(([iid, qty]) => {
       const it = itemById(iid);
       const disponible = Math.max(0, (Number(it.stock) || 0) - (comprometido[iid] || 0));
-      const falta = qty - disponible;
-      return falta > 0 ? { itemId: iid, codigo: it.codigo || "", nombre: it.nombre, talla: it.talla || "", proveedorId: it.proveedorId || "", cant: falta } : null;
-    }).filter(Boolean);
+      let falta = qty - disponible;
+      if (falta <= 0) return;
+      // Repartir el faltante entre los proyectos que pidieron este item
+      // (greedy, de mayor a menor demanda) — asi cada linea de la PO queda
+      // cargada al proyecto correspondiente. El stock disponible se asume
+      // cubriendo primero a los proyectos con MENOR demanda (el remanente
+      // grande es el que se compra).
+      const porProy = Object.entries(aggProy[iid] || { "": qty }).sort((a, b) => b[1] - a[1]);
+      for (const [pr, q] of porProy) {
+        if (falta <= 0) break;
+        const asignar = Math.min(q, falta);
+        faltantes.push({ itemId: iid, codigo: it.codigo || "", nombre: it.nombre, talla: it.talla || "", proveedorId: it.proveedorId || "", cant: asignar, proyecto: pr });
+        falta -= asignar;
+      }
+    });
     const avisoSinItem = sinItem.length ? `\n\n⚠ ${sinItem.length} línea(s) apuntan a ítems que YA NO existen en el catálogo y NO se incluyen:\n${sinItem.map((s) => "  " + s).join("\n")}` : "";
     if (!faltantes.length) return alert((Object.keys(agg).length ? "Todo lo solicitado alcanza con el stock disponible (descontando lo comprometido en otras requisiciones abiertas) — no hay nada que comprar. ✔" : "No se pudo evaluar ninguna línea de esta requisición.") + avisoSinItem);
-    const lista = faltantes.map((f) => `  ${f.cant} × ${f.nombre}${f.talla ? ` (Talla ${f.talla})` : ""}${f.codigo ? `  [${f.codigo}]` : ""}`).join("\n");
+    const lista = faltantes.map((f) => `  ${f.cant} × ${f.nombre}${f.talla ? ` (Talla ${f.talla})` : ""}${f.codigo ? `  [${f.codigo}]` : ""}${f.proyecto ? `  → ${f.proyecto}` : ""}`).join("\n");
     if (!confirm(`Se creará una orden POR COMPRAR con lo que NO alcanza el stock para ${r.numero}\n(disponible = stock actual − comprometido en otras requisiciones abiertas):\n\n${lista}${avisoSinItem}\n\n¿Continuar?`)) return;
     const po = await crearPo(faltantes, r.numero);
     if (po) { setSec("porcomprar"); alert(`✅ ${po.numero} creada con ${faltantes.length} ítem(s). Generá el PDF y mandáselo al proveedor.`); }
@@ -1265,12 +1307,14 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
             <th style="text-align:left;padding:6px 14px;font-size:9px;color:#7A7268;letter-spacing:0.5px">CÓDIGO</th>
             <th style="text-align:left;padding:6px 10px;font-size:9px;color:#7A7268;letter-spacing:0.5px">DESCRIPCIÓN</th>
             <th style="text-align:center;padding:6px 10px;font-size:9px;color:#7A7268;letter-spacing:0.5px">TALLA</th>
+            <th style="text-align:left;padding:6px 10px;font-size:9px;color:#7A7268;letter-spacing:0.5px">PROYECTO</th>
             <th style="text-align:right;padding:6px 14px;font-size:9px;color:#7A7268;letter-spacing:0.5px">CANTIDAD</th>
           </tr></thead>
           <tbody>${lines.map((l) => `<tr>
             <td style="padding:7px 14px;font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:700;color:#C75F1F;border-top:1px solid #F1EBE0">${esc(l.codigo) || "—"}</td>
             <td style="padding:7px 10px;font-size:11.5px;font-weight:600;border-top:1px solid #F1EBE0">${esc(l.nombre)}</td>
             <td style="padding:7px 10px;font-size:11px;text-align:center;color:#0F766E;font-weight:700;border-top:1px solid #F1EBE0">${esc(l.talla) || "—"}</td>
+            <td style="padding:7px 10px;font-size:10.5px;font-weight:700;color:#C75F1F;border-top:1px solid #F1EBE0">${esc(l.proyecto) || "—"}</td>
             <td style="padding:7px 14px;font-size:13px;font-weight:800;text-align:right;border-top:1px solid #F1EBE0">${l.cant}</td>
           </tr>`).join("")}</tbody>
         </table>
@@ -1339,7 +1383,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
               </div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Talla</th><th style={th}>Proveedor</th><th style={{ ...th, textAlign: "right" }}>Cantidad</th></tr></thead>
+                  <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Talla</th><th style={th}>Proveedor</th><th style={th}>Proyecto</th><th style={{ ...th, textAlign: "right" }}>Cantidad</th></tr></thead>
                   <tbody>
                     {(po.lines || []).map((l, i) => (
                       <tr key={i}>
@@ -1347,6 +1391,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                         <td style={{ ...td, fontWeight: 700 }}>{l.nombre}</td>
                         <td style={{ ...td, color: "#0F766E", fontWeight: 700 }}>{l.talla || "—"}</td>
                         <td style={td}>{provName(l.proveedorId)}</td>
+                        <td style={td}>{l.proyecto ? <Chip color={BRAND.orange} bg="rgba(232,118,45,0.10)">{l.proyecto}</Chip> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
                         <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{l.cant}</td>
                       </tr>
                     ))}
@@ -1445,10 +1490,16 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {l.dests.map((d, di) => (
                       <div key={di}>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 1fr 30px", gap: 8, alignItems: "end" }}>
-                          <Select label={di === 0 ? "Para (colaborador)" : ""} placeholder="— Seleccionar —" value={d.empId} onChange={(e) => updDest(l.key, di, { empId: e.target.value })} options={activeEmps.map((e) => ({ value: e.id, label: `${e.fullName} · ${coTag(e.company)}` }))} />
+                        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 70px 1fr 1fr 30px", gap: 8, alignItems: "end" }}>
+                          <Select label={di === 0 ? "Para (colaborador)" : ""} placeholder="— Seleccionar —" value={d.empId} onChange={(e) => {
+                            const empId = e.target.value;
+                            // Auto-fill del proyecto segun la ultima asistencia de GeoTeam
+                            // (attAssign). Solo si el usuario no eligio uno a mano ya.
+                            updDest(l.key, di, { empId, proj: d.proj || attAssign[empId] || "" });
+                          }} options={activeEmps.map((e) => ({ value: e.id, label: `${e.fullName} · ${coTag(e.company)}` }))} />
                           <Input label={di === 0 ? "Cant." : ""} type="number" min="1" value={d.qty} onChange={(e) => updDest(l.key, di, { qty: e.target.value })} />
                           <Select label={di === 0 ? "Motivo" : ""} placeholder="— Seleccionar —" value={d.motivo} onChange={(e) => updDest(l.key, di, { motivo: e.target.value })} options={MOTIVOS.map((m) => ({ value: m.value, label: m.label }))} />
+                          <Select label={di === 0 ? "Proyecto" : ""} placeholder="— Proyecto —" value={d.proj || ""} onChange={(e) => updDest(l.key, di, { proj: e.target.value })} options={projOptions} />
                           <button onClick={() => rmDest(l.key, di)} title="Quitar colaborador" style={{ height: 38, background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.sm, color: BRAND.red, cursor: "pointer", fontWeight: 800 }}>×</button>
                         </div>
                         {d.motivo === "perdida" && (
@@ -1490,6 +1541,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
           {vis.map((r) => {
             const est = ESTADOS[r.estado] || ESTADOS.pendiente;
             const tienePerdida = (r.lineas || []).some((l) => l.motivo === "perdida");
+            const proyectosReq = [...new Set((r.lineas || []).map((l) => l.proyecto).filter(Boolean))];
             return (
               <div key={r.id} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
                 {tienePerdida && <div style={{ background: BRAND.redSoft, borderBottom: `1px solid ${BRAND.red}30`, padding: "7px 16px", fontSize: 12, fontWeight: 800, color: BRAND.red }}>⚠ CONTIENE PÉRDIDA/EXTRAVÍO — genera descuento en planilla</div>}
@@ -1497,6 +1549,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 14, color: BRAND.orange }}>{r.numero}</span>
                     <Chip color={est.color} bg={est.bg}>{est.label}</Chip>
+                    {proyectosReq.map((pr) => <Chip key={pr} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {pr}</Chip>)}
                     <span style={{ fontSize: 12.5, color: BRAND.graphite }}>Solicitó: <b>{r.solicitante}</b> · {fmtDate(r.fecha)}{r.editadoPor ? <span style={{ color: "#B45309" }}> · ✏️ editada por {r.editadoPor}</span> : null}</span>
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1510,7 +1563,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                 </div>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Tipo</th><th style={th}>Proveedor</th><th style={th}>Para</th><th style={th}>Motivo</th><th style={{ ...th, textAlign: "right" }}>Cant.</th><th style={{ ...th, textAlign: "right" }}>Precio</th><th style={{ ...th, textAlign: "right" }}>Subtotal</th></tr></thead>
+                    <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Tipo</th><th style={th}>Proveedor</th><th style={th}>Para</th><th style={th}>Proyecto</th><th style={th}>Motivo</th><th style={{ ...th, textAlign: "right" }}>Cant.</th><th style={{ ...th, textAlign: "right" }}>Precio</th><th style={{ ...th, textAlign: "right" }}>Subtotal</th></tr></thead>
                     <tbody>
                       {(r.lineas || []).map((l, i) => {
                         const m = motivoDef(l.motivo);
@@ -1521,6 +1574,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                             <td style={td}>{tipoDef(tipoDeLinea(l)).icon} {tipoDef(tipoDeLinea(l)).label}</td>
                             <td style={td}>{l.proveedor}</td>
                             <td style={td}>{l.paraNombre} <span style={{ fontSize: 10, color: BRAND.stone, fontWeight: 700 }}>{l.paraEmpresa ? coTag(l.paraEmpresa) : ""}</span></td>
+                            <td style={td}>{l.proyecto ? <Chip color={BRAND.orange} bg="rgba(232,118,45,0.10)">{l.proyecto}</Chip> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
                             <td style={td}><Chip color={m.color} bg={m.bg}>{m.chip}</Chip>{l.motivo === "perdida" && l.deducido && <Chip color={GREEN} bg={BRAND.greenSoft} style={{ marginLeft: 5 }}>DEDUCIDO ✓</Chip>}</td>
                             <td style={{ ...td, textAlign: "right" }}>{l.qty}</td>
                             <td style={{ ...td, textAlign: "right" }}>{fmtL(l.precio)}</td>
@@ -1892,11 +1946,135 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     );
   };
 
+  // ══════════════════════════ COSTOS EPP POR PROYECTO ══════════════════════════
+  // Gasto de EPP cargado a cada proyecto, por mes. Fuente: requisiciones NO
+  // rechazadas (pendiente/aprobada/entregada = gasto comprometido). Cada
+  // linea suma precio × qty al proyecto que se le asigno en el carrito.
+  // Lineas viejas sin proyecto caen en "SIN PROYECTO".
+  const renderCostos = () => {
+    const noRechazadas = reqs.filter((r) => r.estado !== "rechazada");
+    const mesDe = (iso) => String(iso || "").slice(0, 7);
+
+    // ── Detalle del mes seleccionado: proyecto → { total, uds, reqNums } ──
+    const delMes = noRechazadas.filter((r) => mesDe(r.fecha) === costosMes);
+    const porProy = {};
+    delMes.forEach((r) => {
+      (r.lineas || []).forEach((l) => {
+        const pr = l.proyecto || "SIN PROYECTO";
+        if (!porProy[pr]) porProy[pr] = { total: 0, uds: 0, reqNums: new Set() };
+        porProy[pr].total += (Number(l.precio) || 0) * (Number(l.qty) || 0);
+        porProy[pr].uds += Number(l.qty) || 0;
+        porProy[pr].reqNums.add(r.numero);
+      });
+    });
+    const filas = Object.entries(porProy).map(([pr, v]) => ({ proyecto: pr, ...v })).sort((a, b) => b.total - a.total);
+    const totalMes = filas.reduce((s, f) => s + f.total, 0);
+    const maxProy = Math.max(1, ...filas.map((f) => f.total));
+
+    // ── Historial: total por mes de los ultimos 6 meses (todos los proyectos) ──
+    const meses = [];
+    {
+      const [yy, mm] = costosMes.split("-").map(Number);
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(yy, (mm - 1) - i, 1);
+        meses.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+      }
+    }
+    const totalDe = (mes) => noRechazadas.filter((r) => mesDe(r.fecha) === mes).reduce((s, r) => s + (r.lineas || []).reduce((a, l) => a + (Number(l.precio) || 0) * (Number(l.qty) || 0), 0), 0);
+    const histMax = Math.max(1, ...meses.map(totalDe));
+    const mesLabel = (mes) => { const [y, m] = mes.split("-"); return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("es-HN", { month: "short", year: "2-digit" }); };
+
+    return (
+      <div>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap" }}>
+          <div style={{ flex: "0 1 200px" }}><Input label="Mes de análisis" type="month" value={costosMes} onChange={(e) => setCostosMes(e.target.value || new Date().toISOString().slice(0, 7))} /></div>
+          <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}30`, borderRadius: R.md, padding: "9px 14px", fontSize: 12, color: BRAND.ink, flex: 1, minWidth: 260 }}>
+            💰 Gasto de EPP <b>cargado a cada proyecto</b> según las requisiciones del mes (pendientes, aprobadas y entregadas — las rechazadas no cuentan). Las líneas viejas sin proyecto caen en <b>SIN PROYECTO</b>.
+          </div>
+        </div>
+
+        {/* KPIs del mes */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
+          <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, padding: "14px 16px" }}>
+            <div style={{ fontSize: 10.5, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Gasto EPP del mes</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: GREEN, marginTop: 3 }}>{fmtL(totalMes)}</div>
+          </div>
+          <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, padding: "14px 16px" }}>
+            <div style={{ fontSize: 10.5, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Proyectos con gasto</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: BRAND.charcoal, marginTop: 3 }}>{filas.length}</div>
+          </div>
+          <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, padding: "14px 16px" }}>
+            <div style={{ fontSize: 10.5, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Requisiciones del mes</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: BRAND.charcoal, marginTop: 3 }}>{delMes.length}</div>
+          </div>
+        </div>
+
+        {/* Tabla por proyecto */}
+        <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm, marginBottom: 16 }}>
+          <div style={{ padding: "11px 16px", borderBottom: `1px solid ${BRAND.borderSoft}`, fontWeight: 800, fontSize: 13.5, color: BRAND.charcoal }}>🏗 Gasto por proyecto — {mesLabel(costosMes)}</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Proyecto</th><th style={{ ...th, textAlign: "right" }}>Unidades</th><th style={{ ...th, textAlign: "right" }}>Requisiciones</th><th style={{ ...th, textAlign: "right" }}>Total</th><th style={{ ...th, minWidth: 140 }}>Peso del mes</th></tr></thead>
+              <tbody>
+                {filas.map((f) => (
+                  <tr key={f.proyecto}>
+                    <td style={{ ...td, fontWeight: 800, color: f.proyecto === "SIN PROYECTO" ? BRAND.stone : BRAND.orange }}>{f.proyecto}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{f.uds}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{f.reqNums.size}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 800, color: GREEN }}>{fmtL(f.total)}</td>
+                    <td style={td}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ flex: 1, height: 7, background: BRAND.beigeLight, borderRadius: 4, overflow: "hidden", minWidth: 70 }}>
+                          <div style={{ width: `${(f.total / maxProy) * 100}%`, height: "100%", background: BRAND.orange }} />
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.graphite, minWidth: 34, textAlign: "right" }}>{totalMes > 0 ? Math.round((f.total / totalMes) * 100) : 0}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!filas.length && <tr><td style={{ ...td, textAlign: "center", color: BRAND.stone, padding: 30 }} colSpan={5}>Sin requisiciones en {mesLabel(costosMes)}.</td></tr>}
+              </tbody>
+              {filas.length > 0 && <tfoot><tr style={{ background: BRAND.beigeLight }}>
+                <td style={{ ...td, fontWeight: 800 }}>TOTAL</td>
+                <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{filas.reduce((s, f) => s + f.uds, 0)}</td>
+                <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{delMes.length}</td>
+                <td style={{ ...td, textAlign: "right", fontWeight: 800, color: GREEN }}>{fmtL(totalMes)}</td>
+                <td style={td}></td>
+              </tr></tfoot>}
+            </table>
+          </div>
+        </div>
+
+        {/* Historial 6 meses */}
+        <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
+          <div style={{ padding: "11px 16px", borderBottom: `1px solid ${BRAND.borderSoft}`, fontWeight: 800, fontSize: 13.5, color: BRAND.charcoal }}>📈 Últimos 6 meses (todos los proyectos)</div>
+          <div style={{ display: "flex", gap: 14, alignItems: "flex-end", padding: "18px 20px 14px", overflowX: "auto" }}>
+            {meses.map((mes) => {
+              const t = totalDe(mes);
+              const hPct = Math.max(4, Math.round((t / histMax) * 100));
+              const activo = mes === costosMes;
+              return (
+                <div key={mes} onClick={() => setCostosMes(mes)} title={fmtL(t)} style={{ flex: 1, minWidth: 64, cursor: "pointer", textAlign: "center" }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: activo ? BRAND.orange : BRAND.graphite, marginBottom: 4 }}>{t > 0 ? fmtL(t) : "—"}</div>
+                  <div style={{ height: 90, display: "flex", alignItems: "flex-end" }}>
+                    <div style={{ width: "100%", height: `${hPct}%`, background: activo ? BRAND.orange : "#E4CDB8", borderRadius: "6px 6px 0 0", transition: "height .2s" }} />
+                  </div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: activo ? BRAND.orange : BRAND.stone, marginTop: 5, textTransform: "capitalize" }}>{mesLabel(mes)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ══════════════════════════ LAYOUT ══════════════════════════
   const TABS = [
     { id: "catalogo", label: "🛒 Catálogo" },
     { id: "requisiciones", label: "📋 Requisiciones", badge: reqsPendientes },
     { id: "porcomprar", label: "🧾 Por comprar", badge: posAbiertas, badgeColor: "#B45309" },
+    { id: "costos", label: "💰 Costos" },
     { id: "dotacion", label: "👷 Dotación" },
     { id: "inventario", label: "📦 Inventario" },
     { id: "proveedores", label: "🏪 Proveedores" },
@@ -1935,6 +2113,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
             {sec === "catalogo" && renderCatalogo()}
             {sec === "requisiciones" && renderRequisiciones()}
             {sec === "porcomprar" && renderPorComprar()}
+            {sec === "costos" && renderCostos()}
             {sec === "dotacion" && renderDotacion()}
             {sec === "inventario" && renderInventario()}
             {sec === "proveedores" && renderProveedores()}
@@ -1985,7 +2164,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       )}
       {modal?.t === "req-edit" && (
         <Modal title={`✏️ Editar requisición ${modal.req.numero}`} onClose={() => setModal(null)} width={860}>
-          <EditReqFormImpl req={modal.req} people={people}
+          <EditReqFormImpl req={modal.req} people={people} projOptions={projOptions}
             onCancel={() => setModal(null)}
             onSave={async (lineas) => {
               const ok = await saveReqEdit(modal.req.id, lineas);
