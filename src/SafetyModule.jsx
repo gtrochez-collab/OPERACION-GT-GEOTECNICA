@@ -256,6 +256,9 @@ const GREEN = "#059669";
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 const fmtL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—");
+// Fecha ultra-corta ("03 ago") para lineas de historial — el detalle completo
+// va en el tooltip (title) para no llenar la card de texto.
+const fmtDia = (iso) => (iso ? new Date(iso).toLocaleDateString("es-HN", { day: "2-digit", month: "short" }) : "—");
 const coTag = (c) => (c === "subterra" ? "SUB" : c === "jornal" ? "JORNAL" : "GEO");
 
 // ── Avatar de empleado (foto o iniciales) ──
@@ -1246,7 +1249,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   // UNA PO POR PROVEEDOR: cada proveedor se cotiza, se paga y se retira por
   // separado (flujo ferreteria) — si las lineas mezclan proveedores, salen
   // varias ordenes de un solo.
-  const crearPos = async (lines, fuente) => {
+  const crearPos = async (lines, fuente, fuenteReqId) => {
     let base = pos;
     try { const c = await store.getCloud("ep-pos"); if (Array.isArray(c)) base = c; } catch { /* nube caída: memoria */ }
     let n = base.reduce((m, p) => Math.max(m, parseInt(String(p.numero || "").replace(/\D/g, ""), 10) || 0), 0);
@@ -1254,7 +1257,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     lines.forEach((l) => { const k = l.proveedorId || ""; (porProv[k] = porProv[k] || []).push(l); });
     const nuevas = Object.entries(porProv).map(([provId, ls]) => ({
       id: uid(), numero: "PO-" + String(++n).padStart(3, "0"), fecha: new Date().toISOString(),
-      estado: "cotizando", fuente: fuente || "", creadoPor: userName, proveedorId: provId, lines: ls,
+      estado: "cotizando", fuente: fuente || "", fuenteReqId: fuenteReqId || "", creadoPor: userName, proveedorId: provId, lines: ls,
     }));
     const next = [...nuevas, ...base];
     setPos(next);
@@ -1392,9 +1395,14 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         lineas.push({ itemId: l.itemId, nombre: it.nombre, codigo: it.codigo || "", talla: it.talla || "", categoria: it.categoria, tipoEpp: tipoDeItem(it), proveedor: provName(it.proveedorId), precio: Number(it.precio) || 0, qty: Number(d.qty), paraEmpId: d.empId, paraNombre: emp.fullName || "—", paraEmpresa: emp.company || "", proyecto: d.proj, motivo: d.motivo, deducido: false });
       }
     }
-    const numero = "EPP-" + String(reqs.length + 1).padStart(3, "0");
+    // Numero de folio sobre la lista FRESCA de la nube y con max+1 (no
+    // length+1: si se borra una requisicion, length+1 REPITE folios — asi
+    // salieron dos EPP-006 en produccion).
+    let base = reqs;
+    try { const c = await store.getCloud("ep-reqs"); if (Array.isArray(c) && c.length) base = c; } catch { /* nube caída: memoria */ }
+    const numero = "EPP-" + String(base.reduce((m, r) => Math.max(m, parseInt(String(r.numero || "").replace(/\D/g, ""), 10) || 0), 0) + 1).padStart(3, "0");
     const req = { id: uid(), numero, solicitante: userName, fecha: new Date().toISOString(), estado: "pendiente", lineas, total: lineas.reduce((s, l) => s + l.precio * l.qty, 0) };
-    const ok = await sReqs([req, ...reqs]);
+    const ok = await sReqs([req, ...base]);
     if (!ok) return;
     const tienePerdida = lineas.some((l) => l.motivo === "perdida");
     setCart([]); setModal(null); setSec("requisiciones");
@@ -1456,6 +1464,11 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   // caen en "Por cotizar" y siguen el ciclo nuevo desde ahi.
   const poEstado = (po) => (po.estado === "pendiente" || po.estado === "enviada") ? "cotizando" : (po.estado || "cotizando");
   const posAbiertas = pos.filter((p) => poEstado(p) !== "recibida").length;
+  // POs vinculadas a una requisicion. Prioridad: fuenteReqId (id real). Las
+  // POs viejas solo guardan el FOLIO — y en produccion hay folios duplicados
+  // (dos EPP-006, dos EPP-005 por el bug de length+1 ya corregido), asi que
+  // el match legacy excluye reqs RECHAZADAS: la PO se creo desde la req viva.
+  const posDeReq = (r) => pos.filter((p) => (p.fuenteReqId ? p.fuenteReqId === r.id : (p.fuente === r.numero && r.estado !== "rechazada")));
 
   // Desde una requisicion: lo solicitado que NO alcanza el stock se manda a
   // "Por comprar" con un click. El stock disponible descuenta lo COMPROMETIDO
@@ -1463,6 +1476,10 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   // item, para que dos requisiciones no se "coman" el mismo stock. Items ya
   // borrados del catalogo se avisan (no se descartan en silencio).
   const crearPoDesdeReq = async (r) => {
+    // Guardia anti-duplicado: si la requisicion YA tiene ordenes en camino
+    // (no recibidas), crear otra probablemente compra lo mismo dos veces.
+    const enCamino = posDeReq(r).filter((p) => poEstado(p) !== "recibida");
+    if (enCamino.length && !confirm(`⚠ ${r.numero} YA tiene ${enCamino.length === 1 ? "una orden en camino" : enCamino.length + " órdenes en camino"}: ${enCamino.map((p) => `${p.numero} (${ESTADOS_PO[poEstado(p)].label})`).join(", ")}.\n\nCrear OTRA orden puede comprar lo mismo dos veces. ¿Continuar de todos modos?`)) return;
     const agg = {};       // itemId → total pedido
     const aggProy = {};   // itemId → { proyecto → qty } (para repartir el faltante)
     const sinItem = [];
@@ -1476,6 +1493,11 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     const comprometido = {};
     reqs.forEach((rq) => {
       if (rq.id === r.id || (rq.estado !== "pendiente" && rq.estado !== "aprobada")) return;
+      // Prioridad FIFO sobre el stock: solo comprometen las requisiciones
+      // abiertas MAS ANTIGUAS que esta (desempate por id). Sin esto, dos
+      // reqs abiertas se bloquean mutuamente (ambas ven disponible 0) y se
+      // termina comprando stock que ya esta en mano.
+      if (String(rq.fecha || "").localeCompare(String(r.fecha || "")) > 0 || (rq.fecha === r.fecha && String(rq.id) > String(r.id))) return;
       (rq.lineas || []).forEach((l) => { if (l.itemId) comprometido[l.itemId] = (comprometido[l.itemId] || 0) + (Number(l.qty) || 0); });
     });
     const faltantes = [];
@@ -1501,7 +1523,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     if (!faltantes.length) return alert((Object.keys(agg).length ? "Todo lo solicitado alcanza con el stock disponible (descontando lo comprometido en otras requisiciones abiertas) — no hay nada que comprar. ✔" : "No se pudo evaluar ninguna línea de esta requisición.") + avisoSinItem);
     const lista = faltantes.map((f) => `  ${f.cant} × ${f.nombre}${f.talla ? ` (Talla ${f.talla})` : ""}${f.codigo ? `  [${f.codigo}]` : ""}${f.proyecto ? `  → ${f.proyecto}` : ""}`).join("\n");
     if (!confirm(`Se creará una orden POR COMPRAR con lo que NO alcanza el stock para ${r.numero}\n(disponible = stock actual − comprometido en otras requisiciones abiertas):\n\n${lista}${avisoSinItem}\n\n¿Continuar?`)) return;
-    const nuevas = await crearPos(faltantes, r.numero);
+    const nuevas = await crearPos(faltantes, r.numero, r.id);
     if (nuevas) {
       setSec("porcomprar");
       alert((nuevas.length === 1
@@ -1509,6 +1531,118 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         : `✅ ${nuevas.length} órdenes creadas (una por proveedor): ${nuevas.map((p) => p.numero).join(", ")}.`)
         + "\n\nSiguiente paso: generá el PDF de cada orden, pedí la cotización al proveedor y registrala con 💲 Agregar cotización.");
     }
+  };
+
+  // ── CHEQUEO DE STOCK de una requisicion aprobada (amarrado al inventario) ──
+  // Por item: pedido vs disponible (stock actual − comprometido en OTRAS
+  // requisiciones abiertas). Si TODO esta cubierto, descuenta la SALIDA del
+  // inventario y pasa la requisicion a PREPARANDO ENVÍO (circuito cerrado:
+  // la PO recibida METE al stock, el despacho a proyecto SACA). Si falta,
+  // manda lo faltante a PO — el despacho se hace cuando la compra entre.
+  // Render function sin hooks (patron CartModal): se llama {ReqStockModal()}.
+  const ReqStockModal = () => {
+    const r = modal.req;
+    const agg = {}; const sinItem = [];
+    (r.lineas || []).forEach((l) => {
+      if (l.itemId && itemById(l.itemId)) agg[l.itemId] = (agg[l.itemId] || 0) + (Number(l.qty) || 0);
+      else sinItem.push(`${l.qty} × ${l.nombre}`);
+    });
+    const comprometido = {};
+    reqs.forEach((rq) => {
+      if (rq.id === r.id || (rq.estado !== "pendiente" && rq.estado !== "aprobada")) return;
+      // Prioridad FIFO sobre el stock: solo comprometen las requisiciones
+      // abiertas MAS ANTIGUAS que esta (desempate por id). Sin esto, dos
+      // reqs abiertas se bloquean mutuamente (ambas ven disponible 0) y se
+      // termina comprando stock que ya esta en mano.
+      if (String(rq.fecha || "").localeCompare(String(r.fecha || "")) > 0 || (rq.fecha === r.fecha && String(rq.id) > String(r.id))) return;
+      (rq.lineas || []).forEach((l) => { if (l.itemId) comprometido[l.itemId] = (comprometido[l.itemId] || 0) + (Number(l.qty) || 0); });
+    });
+    const filas = Object.entries(agg).map(([iid, pedido]) => {
+      const it = itemById(iid);
+      const disponible = Math.max(0, (Number(it.stock) || 0) - (comprometido[iid] || 0));
+      return { it, pedido, stock: Number(it.stock) || 0, disponible, falta: Math.max(0, pedido - disponible) };
+    });
+    const todoCubierto = filas.length > 0 && filas.every((f) => f.falta === 0);
+    const totalFalta = filas.reduce((s, f) => s + f.falta, 0);
+    // Despacho con MERGE contra la nube (patron CLAUDE.md): se relee ep-reqs
+    // para confirmar que la requisicion siga APROBADA y sin despachar (otro
+    // admin pudo ganarnos), y el stock se descuenta como DELTA sobre los
+    // items FRESCOS de la nube — nunca sobreescribiendo el snapshot local,
+    // que pisaria requisiciones nuevas o entradas de PO de otros usuarios.
+    // Orden: PRIMERO la req (envio + stockDescontado), DESPUES el stock — si
+    // el stock falla queda un aviso reparable en Inventario, en vez de un
+    // stock descontado con req "aprobada" que empuja al doble descuento.
+    const despachar = async () => {
+      if (!confirm(`¿Descontar del inventario y pasar ${r.numero} a PREPARANDO ENVÍO?\n\nSale del almacén:\n${filas.map((f) => `  ${f.pedido} × ${f.it.nombre}`).join("\n")}\n\nTip: imprimí la 📋 Ficha de Entrega para las firmas en proyecto.`)) return;
+      let baseReqs = reqs;
+      try { const c = await store.getCloud("ep-reqs"); if (Array.isArray(c) && c.length) baseReqs = c; } catch { /* nube caída: memoria */ }
+      const fresca = baseReqs.find((x) => x.id === r.id);
+      if (!fresca) { alert("⚠ Esta requisición ya NO existe (otro usuario la eliminó). No se descontó nada."); setModal(null); return; }
+      if (fresca.estado !== "aprobada" || fresca.stockDescontado) { alert(`⚠ Otro usuario se adelantó: la requisición ya está "${(ESTADOS[fresca.estado] || {}).label || fresca.estado}"${fresca.stockDescontado ? " con el stock YA descontado" : ""}. No se descontó nada.`); setModal(null); return; }
+      const okReq = await sReqs(baseReqs.map((x) => (x.id === r.id ? { ...x, estado: "envio", envioPor: userName, envioAt: new Date().toISOString(), stockDescontado: true } : x)));
+      if (!okReq) return; // sReqs ya avisó; el stock ni se tocó
+      let baseItems = items;
+      try { const c = await store.getCloud("ep-items"); if (Array.isArray(c) && c.length) baseItems = c; } catch { /* nube caída: memoria */ }
+      const ni = baseItems.map((it) => (agg[it.id] ? { ...it, stock: Math.max(0, (Number(it.stock) || 0) - agg[it.id]) } : it));
+      const okItems = await sItems(ni);
+      if (!okItems) alert(`⚠ ${r.numero} quedó en PREPARANDO ENVÍO pero el stock NO se pudo descontar. Ajustá a mano en Inventario:\n${filas.map((f) => `  −${f.pedido} ${f.it.nombre}`).join("\n")}`);
+      setModal(null);
+    };
+    return (
+      <Modal title={`📦 Chequeo de stock — ${r.numero}`} onClose={() => setModal(null)} width={640}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ overflowX: "auto", border: `1px solid ${BRAND.border}`, borderRadius: R.md, background: "#fff" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Ítem</th><th style={{ ...th, textAlign: "right" }}>Pedido</th><th style={{ ...th, textAlign: "right" }}>Stock</th><th style={{ ...th, textAlign: "right" }}>Disponible</th><th style={{ ...th, textAlign: "right" }}>Falta</th></tr></thead>
+              <tbody>
+                {filas.map((f) => (
+                  <tr key={f.it.id}>
+                    <td style={{ ...td, fontWeight: 700 }}>{f.it.nombre}{f.it.talla ? <span style={{ color: "#0F766E" }}> · Talla {f.it.talla}</span> : null}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{f.pedido}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{f.stock}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 700, color: f.disponible >= f.pedido ? GREEN : "#B45309" }}>{f.disponible}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 800, color: f.falta ? BRAND.red : BRAND.stone }}>{f.falta || "—"}</td>
+                  </tr>
+                ))}
+                {!filas.length && <tr><td colSpan={5} style={{ ...td, textAlign: "center", color: BRAND.stone }}>No hay líneas evaluables (los ítems ya no existen en el catálogo).</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11.5, color: BRAND.stone }}>Disponible = stock del almacén − lo comprometido en otras requisiciones abiertas.</div>
+          {(() => {
+            const enCamino = posDeReq(r).filter((p) => poEstado(p) !== "recibida");
+            return enCamino.length > 0 && (
+              <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}30`, borderRadius: R.md, padding: "8px 12px", fontSize: 12, color: BRAND.ink, fontWeight: 700 }}>
+                🚚 Ya en compra: {enCamino.map((p) => `${p.numero} (${ESTADOS_PO[poEstado(p)].label})`).join(" · ")} — al recibirla(s), las unidades entran al stock y este chequeo queda en verde.
+              </div>
+            );
+          })()}
+          {sinItem.length > 0 && (
+            <div style={{ background: BRAND.redSoft, border: `1px solid ${BRAND.red}40`, borderRadius: R.md, padding: "8px 12px", fontSize: 12, color: BRAND.red, fontWeight: 700 }}>
+              ⚠ {sinItem.length} línea(s) apuntan a ítems borrados del catálogo y no se pueden chequear: {sinItem.join(", ")}
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {todoCubierto
+              ? <span style={{ fontSize: 13, fontWeight: 800, color: GREEN }}>✓ Todo cubierto con el stock del almacén</span>
+              : filas.length
+              ? <span style={{ fontSize: 13, fontWeight: 800, color: BRAND.red }}>Faltan {totalFalta} unidad(es) — hay que comprarlas</span>
+              : <span />}
+            <div style={{ display: "flex", gap: 10 }}>
+              <Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>
+              {todoCubierto && canManage && <Btn variant="success" onClick={despachar}>✓ Descontar del inventario y preparar envío</Btn>}
+              {!todoCubierto && filas.length > 0 && canManage && <Btn style={{ background: "#B45309" }} onClick={() => { setModal(null); crearPoDesdeReq(r); }}>🧾 Enviar faltantes a PO</Btn>}
+              {!filas.length && canManage && <Btn variant="info" onClick={async () => { setModal(null); await setEstadoReq(r, "envio"); }}>🚚 Preparar envío sin tocar stock</Btn>}
+            </div>
+          </div>
+          {!todoCubierto && filas.some((f) => f.falta === 0 || f.disponible > 0) && filas.length > 0 && (
+            <div style={{ fontSize: 11.5, color: BRAND.stone, background: BRAND.beigeLight, borderRadius: R.md, padding: "7px 11px" }}>
+              El despacho a proyecto se hace cuando TODO esté cubierto: al recibir la PO las unidades entran al stock, y este chequeo queda en verde.
+            </div>
+          )}
+        </div>
+      </Modal>
+    );
   };
 
   // PDF de la orden: agrupado POR PROVEEDOR (el codigo de cada item ya viene
@@ -1587,6 +1721,10 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   // cada hoja se manda a su proveedor por separado, aunque la requisicion
   // mezcle gafas de Larach con guantes de Chispa. Incluye desglose por
   // proyecto por item (control interno de fondos, no le estorba al proveedor).
+  // NOTA ago 2026: sin boton en la UI — con el flujo ferreteria la cotizacion
+  // se pide con el PDF de cada PO (ya separada por proveedor). Se conserva
+  // por si hay que rehabilitarlo.
+  // eslint-disable-next-line no-unused-vars
   const exportReqPDF = (r) => {
     const w = window.open("", "_blank");
     if (!w) { alert("Permite popups para generar el PDF"); return; }
@@ -1785,11 +1923,13 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
             {userRole === "admin" && <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => { if (!confirm(`¿ELIMINAR la orden ${po.numero}?`)) return; await sPos(pos.filter((x) => x.id !== po.id)); }}>🗑</Btn>}
           </div>
         </div>
-        <div style={{ padding: "0 16px 10px", fontSize: 12, color: BRAND.graphite, display: "flex", gap: 14, flexWrap: "wrap" }}>
-          <span>{fmtDate(po.fecha)}{po.fuente ? <> · de <b style={{ color: BRAND.orange }}>{po.fuente}</b></> : " · creada desde cero"} · {po.creadoPor}</span>
-          {po.cotizadaAt && <span>💲 Cotizada {fmtDate(po.cotizadaAt)} ({po.cotizadaPor})</span>}
-          {po.pagadaAt && <span style={{ color: BRAND.blue, fontWeight: 700 }}>💵 Pagada {fmtDate(po.pagadaAt)} por {po.pagadaPor}{po.pagoRef ? ` · Ref: ${po.pagoRef}` : ""}</span>}
-          {po.recibidaAt && <span style={{ color: GREEN, fontWeight: 700 }}>📦 Recibida {fmtDate(po.recibidaAt)} ({po.recibidaPor})</span>}
+        {/* Historial compacto: fecha corta y nada mas — QUIEN y la fecha
+            completa van en el tooltip (feedback de Gerson: "mucho texto"). */}
+        <div style={{ padding: "0 16px 10px", fontSize: 11.5, color: BRAND.stone, display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <span title={`Creada por ${po.creadoPor || "?"} el ${fmtDate(po.fecha)}`}>{po.fuente ? <>de <b style={{ color: BRAND.orange }}>{po.fuente}</b> · </> : null}{fmtDia(po.fecha)}</span>
+          {po.cotizadaAt && <span title={`Cotizada por ${po.cotizadaPor || "?"} el ${fmtDate(po.cotizadaAt)}`}>💲 Cotizada {fmtDia(po.cotizadaAt)}</span>}
+          {po.pagadaAt && <span style={{ color: BRAND.blue, fontWeight: 700 }} title={`Pagada por ${po.pagadaPor || "?"} el ${fmtDate(po.pagadaAt)}`}>💵 Pagada {fmtDia(po.pagadaAt)}{po.pagoRef ? ` · Ref ${po.pagoRef}` : ""}</span>}
+          {po.recibidaAt && <span style={{ color: GREEN, fontWeight: 700 }} title={`Recibida por ${po.recibidaPor || "?"} el ${fmtDate(po.recibidaAt)}`}>📦 Recibida {fmtDia(po.recibidaAt)}</span>}
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -1857,7 +1997,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
           {canManage && <Btn onClick={() => setModal({ t: "po-new" })}>+ Nueva orden</Btn>}
         </div>
         {!pos.length ? (
-          <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>Sin órdenes de compra todavía. Se crean desde una requisición con "Faltantes → Por comprar".</div>
+          <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>Sin órdenes de compra todavía. Se crean desde una requisición aprobada con "🧾 Enviar a PO".</div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(245px, 1fr))", gap: 12, alignItems: "start" }}>
             {Object.entries(ESTADOS_PO).map(([est, def]) => {
@@ -1885,10 +2025,9 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                           style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${def.color}`, borderRadius: R.md, padding: "11px 12px", cursor: "pointer", boxShadow: BRAND.shadowSm, transition: "transform .1s, box-shadow .1s" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                             <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 13.5, color: BRAND.charcoal }}>{po.numero}</span>
-                            <span style={{ fontSize: 11, color: BRAND.stone, fontWeight: 700 }}>{fmtDate(po.fecha)}</span>
+                            <span style={{ fontSize: 11, color: BRAND.stone, fontWeight: 700 }} title={fmtDate(po.fecha)}>{po.fuente ? <b style={{ color: BRAND.orange }}>{po.fuente} · </b> : null}{fmtDia(po.fecha)}</span>
                           </div>
                           <div style={{ fontSize: 12, fontWeight: 800, color: BRAND.graphite, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🏪 {provTitulo}</div>
-                          {po.fuente && <div style={{ fontSize: 11, color: BRAND.stone, marginTop: 2 }}>de <b style={{ color: BRAND.orange }}>{po.fuente}</b></div>}
                           {(proyectosPo.length > 0 || po.cotizacionFile) && (
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
                               {proyectosPo.map((pr) => <Chip key={pr} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {pr}</Chip>)}
@@ -2049,16 +2188,19 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                     <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 14, color: BRAND.orange }}>{r.numero}</span>
                     <Chip color={est.color} bg={est.bg}>{est.label}</Chip>
                     {proyectosReq.map((pr) => <Chip key={pr} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {pr}</Chip>)}
+                    {posDeReq(r).map((p) => { const pe = ESTADOS_PO[poEstado(p)]; return <Chip key={p.id} color={pe.color} bg={pe.bg}>🧾 {p.numero} · {pe.label}</Chip>; })}
                     <span style={{ fontSize: 12.5, color: BRAND.graphite }}>Solicitó: <b>{r.solicitante}</b> · {fmtDate(r.fecha)}{r.editadoPor ? <span style={{ color: "#B45309" }}> · ✏️ editada por {r.editadoPor}</span> : null}</span>
                   </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {/* Acciones MINIMAS por estado (pedido de Gerson): pendiente =
+                      aprobar/rechazar; aprobada = chequear stock (amarrado al
+                      inventario) o enviar faltantes a PO; envio = enviada a
+                      proyecto + ficha. El PDF por proveedor vive en la PO. */}
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <span style={{ fontWeight: 800, color: GREEN, fontSize: 14 }}>{fmtL(r.total)}</span>
-                    <Btn small variant="info" onClick={() => exportReqPDF(r)} style={{ whiteSpace: "nowrap" }}>📄 PDF proveedores</Btn>
                     {canManage && r.estado === "pendiente" && <><Btn small variant="success" onClick={() => setEstadoReq(r, "aprobada")}>✓ Aprobar</Btn><Btn small variant="danger" onClick={() => setEstadoReq(r, "rechazada")}>✕ Rechazar</Btn></>}
-                    {canManage && r.estado === "aprobada" && <Btn small variant="info" onClick={() => setEstadoReq(r, "envio")}>🚚 Preparar envío</Btn>}
+                    {canManage && r.estado === "aprobada" && <><Btn small variant="success" onClick={() => setModal({ t: "req-stock", req: r })}>📦 Chequear stock…</Btn><Btn small variant="ghost" style={{ color: "#B45309" }} onClick={() => crearPoDesdeReq(r)}>🧾 Enviar a PO</Btn></>}
                     {canManage && r.estado === "envio" && <Btn small variant="success" onClick={() => setEstadoReq(r, "entregada")}>✅ Enviada a proyecto</Btn>}
                     {(r.estado === "envio" || r.estado === "entregada") && <Btn small variant="info" onClick={() => exportFichaEntregaPDF(r)} style={{ whiteSpace: "nowrap" }}>📋 Ficha de entrega</Btn>}
-                    {canManage && (r.estado === "pendiente" || r.estado === "aprobada") && <Btn small variant="ghost" style={{ color: "#B45309" }} onClick={() => crearPoDesdeReq(r)}>🧾 Faltantes → Por comprar</Btn>}
                     {userRole === "admin" && (r.estado === "pendiente" || r.estado === "aprobada") && <Btn small variant="ghost" onClick={() => setModal({ t: "req-edit", req: r })}>✏️ Editar</Btn>}
                     {userRole === "admin" && <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => { if (!confirm(`¿ELIMINAR la requisición ${r.numero}?\n\nSe borra del historial. No se puede deshacer.`)) return; await sReqs(reqs.filter((x) => x.id !== r.id)); }}>🗑</Btn>}
                   </div>
@@ -2155,6 +2297,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                   {arr.map((r) => {
                     const tienePerdida = (r.lineas || []).some((l) => l.motivo === "perdida");
                     const proyectosReq = [...new Set((r.lineas || []).map((l) => l.proyecto).filter(Boolean))];
+                    const posReq = posDeReq(r);
                     const personas = new Set((r.lineas || []).map((l) => l.empId || l.paraNombre)).size;
                     const tipos = {};
                     (r.lineas || []).forEach((l) => { const t = tipoDeLinea(l); tipos[t] = (tipos[t] || 0) + (Number(l.qty) || 0); });
@@ -2174,9 +2317,10 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                             return <span key={t} title={tdef.label} style={{ fontSize: 11, fontWeight: 700, color: BRAND.graphite, background: BRAND.beigeLight, border: `1px solid ${BRAND.border}`, borderRadius: 999, padding: "2px 8px" }}>{tdef.icon} {uds}</span>;
                           })}
                         </div>
-                        {(proyectosReq.length > 0 || tienePerdida) && (
+                        {(proyectosReq.length > 0 || tienePerdida || posReq.length > 0) && (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
                             {proyectosReq.map((pr) => <Chip key={pr} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {pr}</Chip>)}
+                            {posReq.map((p) => { const pe = ESTADOS_PO[poEstado(p)]; return <Chip key={p.id} color={pe.color} bg={pe.bg}>🧾 {p.numero} · {pe.label}</Chip>; })}
                             {tienePerdida && <Chip color={BRAND.red} bg={BRAND.redSoft}>⚠ PÉRDIDA</Chip>}
                           </div>
                         )}
@@ -2767,6 +2911,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
           son helpers sin hooks y así React no los desmonta en cada re-render
           del padre (el input de cantidad del carrito perdería el foco). */}
       {modal?.t === "cart" && CartModal()}
+      {modal?.t === "req-stock" && ReqStockModal()}
       {modal?.t === "item" && (
         <Modal title={modal.item ? "Editar ítem" : "Nuevo ítem de EPP"} onClose={() => setModal(null)}>
           <ItemFormImpl item={modal.item} providers={providers} photoCache={photoCache} setPhotoCache={setPhotoCache}
@@ -2876,7 +3021,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                 if (!ok2) alert("⚠ La orden quedó RECIBIDA pero el stock/precios del catálogo NO se actualizaron. Ajustalos en Inventario.");
               }
               setModal(null);
-              alert(`✅ ${modal.po.numero} recibida. Total desembolsado: ${fmtL(totalDesembolsado)}${modal.po.aplicarIsv ? " (incluye ISV 15%)" : ""}.` + (sumarStock ? "\n📦 Unidades sumadas al stock del almacén." : "") + "\n\nCuando el EPP salga a proyecto: en la requisición usá 🚚 Preparar envío y llevá la 📋 Ficha de entrega para las firmas.");
+              alert(`✅ ${modal.po.numero} recibida. Total desembolsado: ${fmtL(totalDesembolsado)}${modal.po.aplicarIsv ? " (incluye ISV 15%)" : ""}.` + (sumarStock ? "\n📦 Unidades sumadas al stock del almacén." : "") + "\n\nCuando el EPP salga a proyecto: en la requisición usá 📦 Chequear stock (ahora queda en verde) y llevá la 📋 Ficha de entrega para las firmas.");
             }} />
         </Modal>
       )}
