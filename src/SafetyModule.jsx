@@ -27,7 +27,7 @@
 // Flujo requisicion: pendiente → aprobada → entregada (descuenta stock).
 // =====================================================================
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { store } from "./supabase.js";
 import { BRAND, FONT, R } from "./theme.js";
 import { resolveShort, PROJECTS } from "./projects.js";
@@ -774,6 +774,74 @@ const PoFormImpl = ({ items, providers, onSave, onCancel }) => {
   );
 };
 
+// ── Recepcion de PO: cantidades y PRECIOS REALES ──
+// Al marcar una orden "Recibida" se abre este form para registrar lo que
+// REALMENTE llego y a que precio (los precios cambian mes a mes y al comprar
+// por mayor). Este es el cierre financiero veridico de la compra:
+//   - El total real queda guardado en la PO (auditable en Costos).
+//   - Las cantidades recibidas ENTRAN al stock del almacen (opcional).
+//   - El precio del catalogo se actualiza al precio real (opcional).
+const PoReciboFormImpl = ({ po, items, onSave, onCancel }) => {
+  const [lines, setLines] = useState(() => (po.lines || []).map((l, i) => {
+    const it = items.find((x) => x.id === l.itemId);
+    return { ...l, _k: `${i}`, cantRecibida: String(l.cant ?? ""), precioReal: String(Number(it?.precio) || "") };
+  }));
+  const [sumarStock, setSumarStock] = useState(true);
+  const [actualizarPrecios, setActualizarPrecios] = useState(true);
+  const upd = (k, patch) => setLines((ls) => ls.map((l) => (l._k === k ? { ...l, ...patch } : l)));
+  const totalReal = lines.reduce((s, l) => s + (Number(l.precioReal) || 0) * (Number(l.cantRecibida) || 0), 0);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ background: BRAND.greenSoft, border: `1px solid ${BRAND.green}40`, borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: "#3D5F35" }}>
+        📦 Registrá lo que <b>realmente llegó</b> y el <b>precio real</b> de esta compra (según factura del proveedor). Con esto queda el costo verídico de la orden y las unidades entran al almacén.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {lines.map((l) => (
+          <div key={l._k} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.md, padding: "10px 12px" }}>
+            <div style={{ fontWeight: 800, fontSize: 12.5, color: BRAND.charcoal, marginBottom: 6 }}>
+              {l.codigo && <span style={{ fontFamily: FONT.mono, color: BRAND.orange, marginRight: 6 }}>#{l.codigo}</span>}
+              {l.nombre}{l.talla ? <span style={{ color: "#0F766E" }}> · Talla {l.talla}</span> : null}
+              {l.proyecto ? <Chip color={BRAND.orange} bg="rgba(232,118,45,0.10)" style={{ marginLeft: 6 }}>{l.proyecto}</Chip> : null}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "90px 110px 130px 1fr", gap: 10, alignItems: "end" }}>
+              <Field label="Pedido"><div style={{ padding: "8px 10px", fontSize: 13, fontWeight: 800, color: BRAND.graphite }}>{l.cant}</div></Field>
+              <Input label="Recibido" type="number" min="0" value={l.cantRecibida} onChange={(e) => upd(l._k, { cantRecibida: e.target.value })} />
+              <Input label="Precio real (L)" type="number" min="0" step="0.01" value={l.precioReal} onChange={(e) => upd(l._k, { precioReal: e.target.value })} />
+              <div style={{ textAlign: "right", fontSize: 13.5, fontWeight: 800, color: GREEN, paddingBottom: 9 }}>{fmtL((Number(l.precioReal) || 0) * (Number(l.cantRecibida) || 0))}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, background: BRAND.beigeLight, borderRadius: R.md, padding: "10px 13px" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 700, color: BRAND.charcoal, cursor: "pointer" }}>
+          <input type="checkbox" checked={sumarStock} onChange={(e) => setSumarStock(e.target.checked)} />
+          Sumar las cantidades recibidas al stock del almacén (Inventario)
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 700, color: BRAND.charcoal, cursor: "pointer" }}>
+          <input type="checkbox" checked={actualizarPrecios} onChange={(e) => setActualizarPrecios(e.target.checked)} />
+          Actualizar el precio del catálogo con el precio real
+        </label>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.charcoal }}>Total real: <span style={{ color: GREEN }}>{fmtL(totalReal)}</span></div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+          <Btn variant="success" onClick={() => {
+            for (const l of lines) {
+              if (l.cantRecibida === "" || Number(l.cantRecibida) < 0) return alert(`Cantidad recibida inválida en "${l.nombre}".`);
+              if (l.precioReal === "" || Number(l.precioReal) < 0) return alert(`Precio real inválido en "${l.nombre}". Si fue gratis poné 0.`);
+            }
+            onSave(
+              lines.map(({ _k, ...l }) => ({ ...l, cantRecibida: Number(l.cantRecibida), precioReal: Number(l.precioReal) })),
+              { sumarStock, actualizarPrecios },
+            );
+          }}>✓ Confirmar recepción</Btn>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ── Paisaje decorativo GeoSafety ──
 // Un proyecto en miniatura estilo LEGO: la BG-20 perforando y el equipo con
 // su EPP puesto (ingeniero, operador, ayudante, mecánico y soldador). Se
@@ -1194,17 +1262,19 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     alert(`✅ Requisición ${numero} enviada.` + (tienePerdida ? "\n\n⚠ Incluye PÉRDIDA/EXTRAVÍO: quedó registrada en \"Descuentos planilla\"." : ""));
   };
 
+  // NOTA (cambio de modelo, ago 2026): marcar una requisicion ENTREGADA ya
+  // NO descuenta stock. Antes se descontaba automaticamente y eso registraba
+  // salidas de items que nunca habian ENTRADO al almacen (se pedian directo
+  // al proveedor y se repartian al instante). El stock ahora es:
+  //   - ENTRADA: al marcar una PO "Recibida" (con cantidades/precios reales).
+  //   - AJUSTE: manual desde Inventario (editar item).
+  // La ficha de Dotacion NO cambia: sigue leyendo las requisiciones
+  // entregadas (que EPP tiene cada colaborador), independiente del stock.
   const setEstadoReq = async (req, estado) => {
     const verbo = { aprobada: "APROBAR", rechazada: "RECHAZAR", entregada: "marcar ENTREGADA" }[estado];
-    if (!confirm(`¿${verbo} la requisición ${req.numero}?` + (estado === "entregada" ? "\n\nSe descontará el stock y el EPP quedará asignado a cada colaborador en su ficha de dotación." : ""))) return;
+    if (!confirm(`¿${verbo} la requisición ${req.numero}?` + (estado === "entregada" ? "\n\nEl EPP quedará asignado a cada colaborador en su ficha de dotación. (El stock del almacén NO se toca — las entradas reales se registran al recibir la orden Por Comprar.)" : ""))) return;
     const upd = reqs.map((r) => (r.id === req.id ? { ...r, estado, [estado + "Por"]: userName, [estado + "At"]: new Date().toISOString() } : r));
-    const ok = await sReqs(upd);
-    if (!ok) return;
-    if (estado === "entregada") {
-      const ni = items.map((it) => { const q = (req.lineas || []).filter((l) => l.itemId === it.id).reduce((s, l) => s + l.qty, 0); return q ? { ...it, stock: Math.max(0, (Number(it.stock) || 0) - q) } : it; });
-      const ok2 = await sItems(ni);
-      if (!ok2) alert("⚠ Quedó ENTREGADA pero el stock NO se actualizó. Ajustalo en Inventario.");
-    }
+    await sReqs(upd);
   };
   // Marcar deducido con MERGE contra la nube y verificacion de identidad de
   // la linea: si otro admin edito/quito lineas de la requisicion (editor
@@ -1354,11 +1424,85 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     w.document.close();
   };
 
+  // PDF de una REQUISICION agrupado por proveedor: UNA PAGINA POR PROVEEDOR
+  // (page-break entre secciones) con cantidades CONSOLIDADAS por item — asi
+  // cada hoja se manda a su proveedor por separado, aunque la requisicion
+  // mezcle gafas de Larach con guantes de Chispa. Incluye desglose por
+  // proyecto por item (control interno de fondos, no le estorba al proveedor).
+  const exportReqPDF = (r) => {
+    const w = window.open("", "_blank");
+    if (!w) { alert("Permite popups para generar el PDF"); return; }
+    const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+    // Agrupar por proveedor (string) y consolidar por item+talla
+    const porProv = {};
+    (r.lineas || []).forEach((l) => {
+      const prov = l.proveedor || "Proveedor por definir";
+      const key = `${l.itemId || l.nombre}|${l.talla || ""}`;
+      const g = (porProv[prov] = porProv[prov] || {});
+      if (!g[key]) g[key] = { codigo: l.codigo || itemById(l.itemId)?.codigo || "", nombre: l.nombre, talla: l.talla || itemById(l.itemId)?.talla || "", cant: 0, proys: {} };
+      g[key].cant += Number(l.qty) || 0;
+      const pr = l.proyecto || "SIN PROYECTO";
+      g[key].proys[pr] = (g[key].proys[pr] || 0) + (Number(l.qty) || 0);
+    });
+    const provs = Object.entries(porProv);
+    const seccion = (prov, itemsMap, idx) => {
+      const rows = Object.values(itemsMap);
+      const totalUds = rows.reduce((s, x) => s + x.cant, 0);
+      return `<div style="${idx < provs.length - 1 ? "page-break-after:always;" : ""}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:14px">
+            <img src="${logoUrl}" style="height:44px" onerror="this.style.display='none'" />
+            <div>
+              <div style="font-size:19px;font-weight:800;color:#E8762D;letter-spacing:-0.3px">SOLICITUD DE COTIZACIÓN — EPP</div>
+              <div style="font-size:11.5px;color:#7A7268;margin-top:2px">Grupo Geotecnica · Requisición ${esc(r.numero)} · ${fmtDate(r.fecha)}</div>
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:15px;font-weight:800;color:#2C2A28">🏪 ${esc(prov)}</div>
+            <div style="font-size:11px;color:#7A7268">${totalUds} unidad${totalUds !== 1 ? "es" : ""} solicitadas</div>
+          </div>
+        </div>
+        <div style="height:4px;background:#E8762D;border-radius:2px;margin:12px 0 14px"></div>
+        <table style="width:100%;border-collapse:collapse;border:1px solid #DBD4C8;border-radius:10px;overflow:hidden">
+          <thead><tr style="background:#F7F1E8">
+            <th style="text-align:left;padding:7px 14px;font-size:9px;color:#7A7268;letter-spacing:0.5px">CÓDIGO</th>
+            <th style="text-align:left;padding:7px 10px;font-size:9px;color:#7A7268;letter-spacing:0.5px">DESCRIPCIÓN</th>
+            <th style="text-align:center;padding:7px 10px;font-size:9px;color:#7A7268;letter-spacing:0.5px">TALLA</th>
+            <th style="text-align:left;padding:7px 10px;font-size:9px;color:#7A7268;letter-spacing:0.5px">DESGLOSE POR PROYECTO</th>
+            <th style="text-align:right;padding:7px 14px;font-size:9px;color:#7A7268;letter-spacing:0.5px">CANT. TOTAL</th>
+          </tr></thead>
+          <tbody>${rows.map((x) => `<tr>
+            <td style="padding:7px 14px;font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:700;color:#C75F1F;border-top:1px solid #F1EBE0">${esc(x.codigo) || "—"}</td>
+            <td style="padding:7px 10px;font-size:11.5px;font-weight:600;border-top:1px solid #F1EBE0">${esc(x.nombre)}</td>
+            <td style="padding:7px 10px;font-size:11px;text-align:center;color:#0F766E;font-weight:700;border-top:1px solid #F1EBE0">${esc(x.talla) || "—"}</td>
+            <td style="padding:7px 10px;font-size:10px;color:#7A7268;border-top:1px solid #F1EBE0">${Object.entries(x.proys).map(([p, q]) => `${esc(p)} ×${q}`).join(" · ")}</td>
+            <td style="padding:7px 14px;font-size:13px;font-weight:800;text-align:right;border-top:1px solid #F1EBE0">${x.cant}</td>
+          </tr>`).join("")}</tbody>
+        </table>
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:24px;gap:20px">
+          <div style="font-size:10px;color:#8B847C">Documento generado por GeoSafety · Sistema de Operaciones — Grupo Geotecnica · ${esc(r.numero)}</div>
+          <div style="text-align:center">
+            <div style="border-top:1.5px solid #2C2A28;width:220px;padding-top:5px;font-size:11px;font-weight:700">${esc(userName)}</div>
+            <div style="font-size:9.5px;color:#7A7268">Compras / Seguridad Industrial · Grupo Geotecnica</div>
+          </div>
+        </div>
+      </div>`;
+    };
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(r.numero)} — Solicitud por proveedor</title>
+      <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:30px;color:#2C2A28;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{.np{display:none}}</style>
+      </head><body>
+      ${provs.map(([prov, itemsMap], idx) => seccion(prov, itemsMap, idx)).join("")}
+      <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
+      </body></html>`);
+    w.document.close();
+  };
+
   const renderPorComprar = () => (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}30`, borderRadius: R.md, padding: "9px 14px", fontSize: 12.5, color: BRAND.ink, flex: 1, minWidth: 280 }}>
-          🧾 <b>Por comprar (PO)</b>: lo que falta en stock. Desde una requisición usá <b>"Faltantes → Por comprar"</b>, o creá una orden desde cero. El <b>PDF sale agrupado por proveedor</b>, listo para pedir la cotización.
+          🧾 <b>Por comprar (PO)</b>: lo que falta en stock. Desde una requisición usá <b>"Faltantes → Por comprar"</b>, o creá una orden desde cero. El <b>PDF sale agrupado por proveedor</b>. Al marcar <b>"✓ Recibida"</b> registrás las cantidades y <b>precios reales</b> de la factura — ahí las unidades ENTRAN al stock del almacén y el costo verídico queda en Costos.
         </div>
         {canManage && <Btn onClick={() => setModal({ t: "po-new" })}>+ Nueva orden</Btn>}
       </div>
@@ -1366,24 +1510,27 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {pos.map((po) => {
           const est = ESTADOS_PO[po.estado] || ESTADOS_PO.pendiente;
+          const proyectosPo = [...new Set((po.lines || []).map((l) => l.proyecto).filter(Boolean))];
           return (
             <div key={po.id} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", gap: 10, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 14, color: BRAND.charcoal }}>{po.numero}</span>
                   <Chip color={est.color} bg={est.bg}>{est.label}</Chip>
+                  {proyectosPo.map((pr) => <Chip key={pr} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {pr}</Chip>)}
                   <span style={{ fontSize: 12, color: BRAND.graphite }}>{fmtDate(po.fecha)}{po.fuente ? <> · de <b style={{ color: BRAND.orange }}>{po.fuente}</b></> : " · creada desde cero"} · {po.creadoPor}</span>
+                  {po.estado === "recibida" && po.totalReal != null && <Chip color={BRAND.green} bg={BRAND.greenSoft}>💰 Total real: {fmtL(po.totalReal)}</Chip>}
                 </div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <Btn small variant="info" onClick={() => exportPoPDF(po)}>📄 PDF para proveedor</Btn>
                   {canManage && po.estado === "pendiente" && <Btn small variant="ghost" onClick={async () => { await sPos(pos.map((x) => (x.id === po.id ? { ...x, estado: "enviada", enviadaAt: new Date().toISOString() } : x))); }}>✉ Marcar enviada</Btn>}
-                  {canManage && po.estado === "enviada" && <Btn small variant="success" onClick={async () => { await sPos(pos.map((x) => (x.id === po.id ? { ...x, estado: "recibida", recibidaAt: new Date().toISOString() } : x))); }}>✓ Recibida</Btn>}
+                  {canManage && po.estado === "enviada" && <Btn small variant="success" onClick={() => setModal({ t: "po-recibo", po })}>✓ Recibida…</Btn>}
                   {userRole === "admin" && <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => { if (!confirm(`¿ELIMINAR la orden ${po.numero}?`)) return; await sPos(pos.filter((x) => x.id !== po.id)); }}>🗑</Btn>}
                 </div>
               </div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Talla</th><th style={th}>Proveedor</th><th style={th}>Proyecto</th><th style={{ ...th, textAlign: "right" }}>Cantidad</th></tr></thead>
+                  <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Talla</th><th style={th}>Proveedor</th><th style={th}>Proyecto</th><th style={{ ...th, textAlign: "right" }}>Pedido</th>{po.estado === "recibida" && <><th style={{ ...th, textAlign: "right" }}>Recibido</th><th style={{ ...th, textAlign: "right" }}>Precio real</th><th style={{ ...th, textAlign: "right" }}>Subtotal</th></>}</tr></thead>
                   <tbody>
                     {(po.lines || []).map((l, i) => (
                       <tr key={i}>
@@ -1393,6 +1540,11 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                         <td style={td}>{provName(l.proveedorId)}</td>
                         <td style={td}>{l.proyecto ? <Chip color={BRAND.orange} bg="rgba(232,118,45,0.10)">{l.proyecto}</Chip> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
                         <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{l.cant}</td>
+                        {po.estado === "recibida" && <>
+                          <td style={{ ...td, textAlign: "right", fontWeight: 800, color: (l.cantRecibida ?? l.cant) !== l.cant ? "#B45309" : BRAND.charcoal }}>{l.cantRecibida ?? l.cant}</td>
+                          <td style={{ ...td, textAlign: "right" }}>{l.precioReal != null ? fmtL(l.precioReal) : "—"}</td>
+                          <td style={{ ...td, textAlign: "right", fontWeight: 800, color: GREEN }}>{l.precioReal != null ? fmtL((Number(l.precioReal) || 0) * (Number(l.cantRecibida ?? l.cant) || 0)) : "—"}</td>
+                        </>}
                       </tr>
                     ))}
                   </tbody>
@@ -1554,6 +1706,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <span style={{ fontWeight: 800, color: GREEN, fontSize: 14 }}>{fmtL(r.total)}</span>
+                    <Btn small variant="info" onClick={() => exportReqPDF(r)} style={{ whiteSpace: "nowrap" }}>📄 PDF proveedores</Btn>
                     {canManage && r.estado === "pendiente" && <><Btn small variant="success" onClick={() => setEstadoReq(r, "aprobada")}>✓ Aprobar</Btn><Btn small variant="danger" onClick={() => setEstadoReq(r, "rechazada")}>✕ Rechazar</Btn></>}
                     {canManage && r.estado === "aprobada" && <Btn small variant="info" onClick={() => setEstadoReq(r, "entregada")}>📦 Marcar entregada</Btn>}
                     {canManage && (r.estado === "pendiente" || r.estado === "aprobada") && <Btn small variant="ghost" style={{ color: "#B45309" }} onClick={() => crearPoDesdeReq(r)}>🧾 Faltantes → Por comprar</Btn>}
@@ -1563,25 +1716,49 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                 </div>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Tipo</th><th style={th}>Proveedor</th><th style={th}>Para</th><th style={th}>Proyecto</th><th style={th}>Motivo</th><th style={{ ...th, textAlign: "right" }}>Cant.</th><th style={{ ...th, textAlign: "right" }}>Precio</th><th style={{ ...th, textAlign: "right" }}>Subtotal</th></tr></thead>
+                    <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Proveedor</th><th style={th}>Para</th><th style={th}>Proyecto</th><th style={th}>Motivo</th><th style={{ ...th, textAlign: "right" }}>Cant.</th><th style={{ ...th, textAlign: "right" }}>Precio</th><th style={{ ...th, textAlign: "right" }}>Subtotal</th></tr></thead>
                     <tbody>
-                      {(r.lineas || []).map((l, i) => {
-                        const m = motivoDef(l.motivo);
-                        return (
-                          <tr key={i}>
-                            <td style={{ ...td, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: BRAND.orange }}>{l.codigo || itemById(l.itemId)?.codigo || "—"}</td>
-                            <td style={{ ...td, fontWeight: 700 }}>{l.nombre}{(l.talla || itemById(l.itemId)?.talla) ? <span style={{ color: "#0F766E", fontWeight: 800 }}> · Talla {l.talla || itemById(l.itemId)?.talla}</span> : null}</td>
-                            <td style={td}>{tipoDef(tipoDeLinea(l)).icon} {tipoDef(tipoDeLinea(l)).label}</td>
-                            <td style={td}>{l.proveedor}</td>
-                            <td style={td}>{l.paraNombre} <span style={{ fontSize: 10, color: BRAND.stone, fontWeight: 700 }}>{l.paraEmpresa ? coTag(l.paraEmpresa) : ""}</span></td>
-                            <td style={td}>{l.proyecto ? <Chip color={BRAND.orange} bg="rgba(232,118,45,0.10)">{l.proyecto}</Chip> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
-                            <td style={td}><Chip color={m.color} bg={m.bg}>{m.chip}</Chip>{l.motivo === "perdida" && l.deducido && <Chip color={GREEN} bg={BRAND.greenSoft} style={{ marginLeft: 5 }}>DEDUCIDO ✓</Chip>}</td>
-                            <td style={{ ...td, textAlign: "right" }}>{l.qty}</td>
-                            <td style={{ ...td, textAlign: "right" }}>{fmtL(l.precio)}</td>
-                            <td style={{ ...td, textAlign: "right", fontWeight: 700, color: GREEN }}>{fmtL(l.precio * l.qty)}</td>
-                          </tr>
-                        );
-                      })}
+                      {(() => {
+                        // Lineas agrupadas por TIPO de EPP: cada grupo con su
+                        // subheader (icono + label + uds + subtotal). Mucho mas
+                        // legible que la tabla plana cuando una requisicion trae
+                        // gafas + guantes + botas de proveedores distintos.
+                        const grupos = {};
+                        (r.lineas || []).forEach((l, i) => {
+                          const t = tipoDeLinea(l);
+                          (grupos[t] = grupos[t] || []).push({ l, i });
+                        });
+                        return Object.entries(grupos).map(([t, arr]) => {
+                          const def = tipoDef(t);
+                          const uds = arr.reduce((s, { l }) => s + (Number(l.qty) || 0), 0);
+                          const sub = arr.reduce((s, { l }) => s + (Number(l.precio) || 0) * (Number(l.qty) || 0), 0);
+                          return (
+                            <Fragment key={t}>
+                              <tr style={{ background: "#F7F1E8" }}>
+                                <td colSpan={9} style={{ padding: "6px 14px", fontSize: 11.5, fontWeight: 800, color: BRAND.graphite, borderTop: `2px solid ${BRAND.border}` }}>
+                                  {def.icon} {def.label} <span style={{ color: BRAND.stone, fontWeight: 700 }}>· {uds} uds</span> <span style={{ color: GREEN, fontWeight: 800, marginLeft: 6 }}>{fmtL(sub)}</span>
+                                </td>
+                              </tr>
+                              {arr.map(({ l, i }) => {
+                                const m = motivoDef(l.motivo);
+                                return (
+                                  <tr key={i}>
+                                    <td style={{ ...td, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: BRAND.orange }}>{l.codigo || itemById(l.itemId)?.codigo || "—"}</td>
+                                    <td style={{ ...td, fontWeight: 700 }}>{l.nombre}{(l.talla || itemById(l.itemId)?.talla) ? <span style={{ color: "#0F766E", fontWeight: 800 }}> · Talla {l.talla || itemById(l.itemId)?.talla}</span> : null}</td>
+                                    <td style={td}>{l.proveedor}</td>
+                                    <td style={td}>{l.paraNombre} <span style={{ fontSize: 10, color: BRAND.stone, fontWeight: 700 }}>{l.paraEmpresa ? coTag(l.paraEmpresa) : ""}</span></td>
+                                    <td style={td}>{l.proyecto ? <Chip color={BRAND.orange} bg="rgba(232,118,45,0.10)">{l.proyecto}</Chip> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
+                                    <td style={td}><Chip color={m.color} bg={m.bg}>{m.chip}</Chip>{l.motivo === "perdida" && l.deducido && <Chip color={GREEN} bg={BRAND.greenSoft} style={{ marginLeft: 5 }}>DEDUCIDO ✓</Chip>}</td>
+                                    <td style={{ ...td, textAlign: "right" }}>{l.qty}</td>
+                                    <td style={{ ...td, textAlign: "right" }}>{fmtL(l.precio)}</td>
+                                    <td style={{ ...td, textAlign: "right", fontWeight: 700, color: GREEN }}>{fmtL(l.precio * l.qty)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </Fragment>
+                          );
+                        });
+                      })()}
                     </tbody>
                   </table>
                 </div>
@@ -1967,7 +2144,26 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         porProy[pr].reqNums.add(r.numero);
       });
     });
-    const filas = Object.entries(porProy).map(([pr, v]) => ({ proyecto: pr, ...v })).sort((a, b) => b.total - a.total);
+    // ── Gasto REAL del mes: POs RECIBIDAS (precios reales de factura) ──
+    // El comprometido (requisiciones) estima con precios de catalogo; el real
+    // sale de lo que efectivamente se compro y recibio en el mes.
+    const realPorProy = {};
+    pos.filter((p) => p.estado === "recibida" && mesDe(p.recibidaAt || p.fecha) === costosMes).forEach((p) => {
+      (p.lines || []).forEach((l) => {
+        const pr = l.proyecto || "SIN PROYECTO";
+        const precio = l.precioReal != null ? Number(l.precioReal) : (Number(itemById(l.itemId)?.precio) || 0);
+        const cant = Number(l.cantRecibida ?? l.cant) || 0;
+        realPorProy[pr] = (realPorProy[pr] || 0) + precio * cant;
+      });
+    });
+    const totalRealMes = Object.values(realPorProy).reduce((s, v) => s + v, 0);
+
+    // Merge de proyectos: los que tienen requisiciones Y/O compras reales
+    const allProys = [...new Set([...Object.keys(porProy), ...Object.keys(realPorProy)])];
+    const filas = allProys.map((pr) => {
+      const v = porProy[pr] || { total: 0, uds: 0, reqNums: new Set() };
+      return { proyecto: pr, ...v, real: realPorProy[pr] || 0 };
+    }).sort((a, b) => (b.total + b.real) - (a.total + a.real));
     const totalMes = filas.reduce((s, f) => s + f.total, 0);
     const maxProy = Math.max(1, ...filas.map((f) => f.total));
 
@@ -1996,8 +2192,14 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         {/* KPIs del mes */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
           <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, padding: "14px 16px" }}>
-            <div style={{ fontSize: 10.5, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Gasto EPP del mes</div>
+            <div style={{ fontSize: 10.5, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Comprometido (requisiciones)</div>
             <div style={{ fontSize: 22, fontWeight: 800, color: GREEN, marginTop: 3 }}>{fmtL(totalMes)}</div>
+            <div style={{ fontSize: 10, color: BRAND.stone, marginTop: 2 }}>precios de catálogo</div>
+          </div>
+          <div style={{ background: "#fff", border: `1px solid ${BRAND.green}50`, borderRadius: R.lg, padding: "14px 16px" }}>
+            <div style={{ fontSize: 10.5, color: "#3D5F35", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Comprado REAL (POs recibidas)</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#166534", marginTop: 3 }}>{fmtL(totalRealMes)}</div>
+            <div style={{ fontSize: 10, color: "#3D5F35", marginTop: 2 }}>precios reales de factura</div>
           </div>
           <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, padding: "14px 16px" }}>
             <div style={{ fontSize: 10.5, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Proyectos con gasto</div>
@@ -2014,7 +2216,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
           <div style={{ padding: "11px 16px", borderBottom: `1px solid ${BRAND.borderSoft}`, fontWeight: 800, fontSize: 13.5, color: BRAND.charcoal }}>🏗 Gasto por proyecto — {mesLabel(costosMes)}</div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Proyecto</th><th style={{ ...th, textAlign: "right" }}>Unidades</th><th style={{ ...th, textAlign: "right" }}>Requisiciones</th><th style={{ ...th, textAlign: "right" }}>Total</th><th style={{ ...th, minWidth: 140 }}>Peso del mes</th></tr></thead>
+              <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Proyecto</th><th style={{ ...th, textAlign: "right" }}>Unidades</th><th style={{ ...th, textAlign: "right" }}>Requisiciones</th><th style={{ ...th, textAlign: "right" }}>Comprometido</th><th style={{ ...th, textAlign: "right" }}>Real (POs)</th><th style={{ ...th, minWidth: 140 }}>Peso del mes</th></tr></thead>
               <tbody>
                 {filas.map((f) => (
                   <tr key={f.proyecto}>
@@ -2022,6 +2224,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                     <td style={{ ...td, textAlign: "right" }}>{f.uds}</td>
                     <td style={{ ...td, textAlign: "right" }}>{f.reqNums.size}</td>
                     <td style={{ ...td, textAlign: "right", fontWeight: 800, color: GREEN }}>{fmtL(f.total)}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 800, color: f.real ? "#166534" : BRAND.stone }}>{f.real ? fmtL(f.real) : "—"}</td>
                     <td style={td}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{ flex: 1, height: 7, background: BRAND.beigeLight, borderRadius: 4, overflow: "hidden", minWidth: 70 }}>
@@ -2032,13 +2235,14 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                     </td>
                   </tr>
                 ))}
-                {!filas.length && <tr><td style={{ ...td, textAlign: "center", color: BRAND.stone, padding: 30 }} colSpan={5}>Sin requisiciones en {mesLabel(costosMes)}.</td></tr>}
+                {!filas.length && <tr><td style={{ ...td, textAlign: "center", color: BRAND.stone, padding: 30 }} colSpan={6}>Sin requisiciones ni compras en {mesLabel(costosMes)}.</td></tr>}
               </tbody>
               {filas.length > 0 && <tfoot><tr style={{ background: BRAND.beigeLight }}>
                 <td style={{ ...td, fontWeight: 800 }}>TOTAL</td>
                 <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{filas.reduce((s, f) => s + f.uds, 0)}</td>
                 <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{delMes.length}</td>
                 <td style={{ ...td, textAlign: "right", fontWeight: 800, color: GREEN }}>{fmtL(totalMes)}</td>
+                <td style={{ ...td, textAlign: "right", fontWeight: 800, color: "#166534" }}>{fmtL(totalRealMes)}</td>
                 <td style={td}></td>
               </tr></tfoot>}
             </table>
@@ -2179,6 +2383,43 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
             onSave={async (lines) => {
               const po = await crearPo(lines, "");
               if (po) { setModal(null); alert(`✅ ${po.numero} creada. Generá el PDF para el proveedor.`); }
+            }} />
+        </Modal>
+      )}
+      {modal?.t === "po-recibo" && (
+        <Modal title={`📦 Recepción de ${modal.po.numero} — cantidades y precios reales`} onClose={() => setModal(null)} width={760}>
+          <PoReciboFormImpl po={modal.po} items={items}
+            onCancel={() => setModal(null)}
+            onSave={async (linesRecibidas, { sumarStock, actualizarPrecios }) => {
+              const totalReal = linesRecibidas.reduce((s, l) => s + l.precioReal * l.cantRecibida, 0);
+              // 1) PO → recibida, con lineas actualizadas y total real
+              const ok = await sPos(pos.map((x) => (x.id === modal.po.id
+                ? { ...x, estado: "recibida", recibidaAt: new Date().toISOString(), recibidaPor: userName, lines: linesRecibidas, totalReal }
+                : x)));
+              if (!ok) return;
+              // 2) Stock + precios del catalogo en UN solo save (evita doble write)
+              if (sumarStock || actualizarPrecios) {
+                const porItem = {};
+                linesRecibidas.forEach((l) => {
+                  if (!l.itemId) return;
+                  if (!porItem[l.itemId]) porItem[l.itemId] = { cant: 0, precio: l.precioReal };
+                  porItem[l.itemId].cant += l.cantRecibida;
+                  porItem[l.itemId].precio = l.precioReal; // ultimo precio real gana
+                });
+                const ni = items.map((it) => {
+                  const rec = porItem[it.id];
+                  if (!rec) return it;
+                  return {
+                    ...it,
+                    ...(sumarStock ? { stock: (Number(it.stock) || 0) + rec.cant } : {}),
+                    ...(actualizarPrecios ? { precio: rec.precio } : {}),
+                  };
+                });
+                const ok2 = await sItems(ni);
+                if (!ok2) alert("⚠ La orden quedó RECIBIDA pero el stock/precios del catálogo NO se actualizaron. Ajustalos en Inventario.");
+              }
+              setModal(null);
+              alert(`✅ ${modal.po.numero} recibida. Total real: ${fmtL(totalReal)}.` + (sumarStock ? "\n📦 Unidades sumadas al stock del almacén." : ""));
             }} />
         </Modal>
       )}
