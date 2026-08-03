@@ -241,10 +241,14 @@ const motivoDef = (v) => MOTIVOS.find((m) => m.value === v) || MOTIVOS[0];
 
 const PROV_SEED = ["Chispa Safety", "Larach y Compañía", "La Mundial", "Summit", "Infra", "Amazon"];
 
+// Flujo de la requisicion (diagrama de Gerson, ago 2026): pendiente →
+// aprobada → (si falta stock, el abastecimiento corre en paralelo como PO)
+// → preparando envio → enviada a proyecto (con Ficha de Entrega firmada).
 const ESTADOS = {
   pendiente: { label: "PENDIENTE",  color: BRAND.yellow, bg: BRAND.yellowSoft },
   aprobada:  { label: "APROBADA",   color: BRAND.blue,   bg: BRAND.blueSoft },
-  entregada: { label: "ENTREGADA",  color: BRAND.green,  bg: BRAND.greenSoft },
+  envio:     { label: "PREPARANDO ENVÍO", color: "#7C3AED", bg: "rgba(124,58,237,0.10)" },
+  entregada: { label: "ENVIADA A PROYECTO", color: BRAND.green, bg: BRAND.greenSoft },
   rechazada: { label: "RECHAZADA",  color: BRAND.red,    bg: BRAND.redSoft },
 };
 
@@ -774,22 +778,142 @@ const PoFormImpl = ({ items, providers, onSave, onCancel }) => {
   );
 };
 
+// ── Subida de adjuntos (cotizacion / comprobante de pago) a cp-file ──
+// PDFs e imagenes van tal cual (sin comprimir: un PDF no pasa por canvas).
+// Limite 6MB para no inflar el JSONB (dataUrl pesa ~33% mas que el archivo).
+const subirAdjunto = async (f, label) => {
+  if (f.size > 6 * 1024 * 1024) { alert("El archivo pesa más de 6 MB. Mandá una versión más liviana."); return null; }
+  const dataUrl = await new Promise((res, rej) => { const fr = new FileReader(); fr.onerror = () => rej(new Error("no se pudo leer el archivo")); fr.onload = () => res(fr.result); fr.readAsDataURL(f); });
+  const fileId = uid();
+  const ok = await withTimeout(store.set(`cp-file-${fileId}`, { name: f.name, type: f.type, size: dataUrl.length, dataUrl }), 45000, label);
+  if (!ok) throw new Error("la nube no confirmó el guardado");
+  return { fileId, name: f.name };
+};
+
+// Slot de adjunto reutilizable (elegir archivo → subir → chip con nombre).
+const AdjuntoSlot = ({ label, file, subiendo, onFile, onQuitar }) => (
+  <Field label={label}>
+    {file ? (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, background: BRAND.greenSoft, border: `1px solid ${BRAND.green}40`, borderRadius: R.sm, padding: "7px 10px", fontSize: 12.5, fontWeight: 700, color: "#3D5F35" }}>
+        📎 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{file.name}</span>
+        <button onClick={onQuitar} style={{ background: "none", border: "none", color: BRAND.red, cursor: "pointer", fontWeight: 800 }}>×</button>
+      </div>
+    ) : subiendo ? (
+      <div style={{ fontSize: 12.5, color: BRAND.stone, padding: "8px 2px" }}>⏳ Subiendo a la nube…</div>
+    ) : (
+      <input type="file" accept="application/pdf,image/*" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} style={{ fontSize: 12 }} />
+    )}
+  </Field>
+);
+
+// ── Cotizacion de PO: precios unitarios + ISV 15% + documento adjunto ──
+// Paso "Por cotizar → Por pagar" del flujo ferreteria: articulos, cantidades
+// y proyectos YA vienen de la requisicion — aqui solo se registra el precio
+// unitario cotizado por el proveedor, el ISV 15% se calcula solo y se adjunta
+// el documento de la cotizacion. Con eso la orden queda lista para tesoreria.
+const PoCotizacionFormImpl = ({ po, items, onSave, onCancel }) => {
+  const [lines, setLines] = useState(() => (po.lines || []).map((l, i) => {
+    const it = items.find((x) => x.id === l.itemId);
+    return { ...l, _k: `${i}`, precioUnit: l.precioUnit != null ? String(l.precioUnit) : (Number(it?.precio) ? String(it.precio) : "") };
+  }));
+  const [aplicarIsv, setAplicarIsv] = useState(po.aplicarIsv != null ? !!po.aplicarIsv : true);
+  const [file, setFile] = useState(po.cotizacionFile || null);
+  const [subiendo, setSubiendo] = useState(false);
+  const upd = (k, v) => setLines((ls) => ls.map((l) => (l._k === k ? { ...l, precioUnit: v } : l)));
+  const subtotal = lines.reduce((s, l) => s + (Number(l.precioUnit) || 0) * (Number(l.cant) || 0), 0);
+  const isv = aplicarIsv ? subtotal * 0.15 : 0;
+  const total = subtotal + isv;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ background: "rgba(180,83,9,0.10)", border: "1px solid rgba(180,83,9,0.30)", borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: BRAND.ink }}>
+        💲 Registrá el <b>precio unitario cotizado</b> por el proveedor (viene precargado el de catálogo como referencia). El <b>ISV 15%</b> se calcula solo. Adjuntá el documento de la cotización — la orden pasa a <b>POR PAGAR</b> para tesorería.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {lines.map((l) => (
+          <div key={l._k} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.md, padding: "10px 12px" }}>
+            <div style={{ fontWeight: 800, fontSize: 12.5, color: BRAND.charcoal, marginBottom: 6 }}>
+              {l.codigo && <span style={{ fontFamily: FONT.mono, color: BRAND.orange, marginRight: 6 }}>#{l.codigo}</span>}
+              {l.nombre}{l.talla ? <span style={{ color: "#0F766E" }}> · Talla {l.talla}</span> : null}
+              {l.proyecto ? <Chip color={BRAND.orange} bg="rgba(232,118,45,0.10)" style={{ marginLeft: 6 }}>{l.proyecto}</Chip> : null}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "90px 150px 1fr", gap: 10, alignItems: "end" }}>
+              <Field label="Cantidad"><div style={{ padding: "8px 10px", fontSize: 13, fontWeight: 800, color: BRAND.graphite }}>{l.cant}</div></Field>
+              <Input label="Precio unitario (L)" type="number" min="0" step="0.01" value={l.precioUnit} onChange={(e) => upd(l._k, e.target.value)} />
+              <div style={{ textAlign: "right", fontSize: 13.5, fontWeight: 800, color: GREEN, paddingBottom: 9 }}>{fmtL((Number(l.precioUnit) || 0) * (Number(l.cant) || 0))}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12, alignItems: "start" }}>
+        <AdjuntoSlot label="Documento de la cotización (PDF o foto)" file={file} subiendo={subiendo}
+          onQuitar={() => setFile(null)}
+          onFile={async (f) => { setSubiendo(true); try { const r = await subirAdjunto(f, "subir cotización"); if (r) setFile(r); } catch (e) { alert("⚠ No se subió la cotización: " + e.message); } setSubiendo(false); }} />
+        <div style={{ background: BRAND.beigeLight, borderRadius: R.md, padding: "10px 13px", fontSize: 12.5 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, color: BRAND.graphite }}><span>Subtotal</span><span>{fmtL(subtotal)}</span></div>
+          <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, fontWeight: 700, color: BRAND.graphite, cursor: "pointer", margin: "4px 0" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><input type="checkbox" checked={aplicarIsv} onChange={(e) => setAplicarIsv(e.target.checked)} />ISV 15%</span>
+            <span>{fmtL(isv)}</span>
+          </label>
+          <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 800, fontSize: 14.5, color: BRAND.charcoal, borderTop: `1px dashed ${BRAND.border}`, paddingTop: 5 }}><span>TOTAL</span><span style={{ color: GREEN }}>{fmtL(total)}</span></div>
+        </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        <Btn variant="success" disabled={subiendo} onClick={() => {
+          for (const l of lines) { if (l.precioUnit === "" || Number(l.precioUnit) < 0) return alert(`Falta el precio unitario de "${l.nombre}".`); }
+          if (subiendo) return alert("Esperá a que termine de subir el adjunto.");
+          if (!file && !confirm("No adjuntaste el documento de la cotización. ¿Guardar sin adjunto?")) return;
+          onSave({ lines: lines.map(({ _k, ...l }) => ({ ...l, precioUnit: Number(l.precioUnit) })), aplicarIsv, cotizacionFile: file, subtotal, isv, total });
+        }}>✓ Guardar cotización → Por pagar</Btn>
+      </div>
+    </div>
+  );
+};
+
+// ── Pago de PO (tesoreria / admin / costos) ──
+const PoPagoFormImpl = ({ po, provNombre, onSave, onCancel }) => {
+  const [ref, setRef] = useState("");
+  const [file, setFile] = useState(null);
+  const [subiendo, setSubiendo] = useState(false);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}30`, borderRadius: R.md, padding: "10px 14px", fontSize: 13, color: BRAND.ink }}>
+        💵 Vas a registrar el pago de <b>{po.numero}</b>{provNombre ? <> a <b>🏪 {provNombre}</b></> : null} por{" "}
+        <b style={{ color: GREEN, fontSize: 15 }}>{fmtL(po.total ?? 0)}</b>
+        {po.aplicarIsv ? <span style={{ color: BRAND.stone }}> (incluye ISV 15%: {fmtL(po.isv || 0)})</span> : null}.
+        <div style={{ marginTop: 3, color: BRAND.stone, fontSize: 12 }}>Después del pago sigue: retirar la compra donde el proveedor y registrar la recepción.</div>
+      </div>
+      <Input label="Referencia del pago (No. de transferencia / cheque — opcional)" placeholder="Ej: TRF-04521" value={ref} onChange={(e) => setRef(e.target.value)} />
+      <AdjuntoSlot label="Comprobante de pago (PDF o foto — opcional)" file={file} subiendo={subiendo}
+        onQuitar={() => setFile(null)}
+        onFile={async (f) => { setSubiendo(true); try { const r = await subirAdjunto(f, "subir comprobante"); if (r) setFile(r); } catch (e) { alert("⚠ No se subió el comprobante: " + e.message); } setSubiendo(false); }} />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        <Btn variant="success" disabled={subiendo} onClick={() => { if (subiendo) return; onSave({ pagoRef: ref.trim(), comprobanteFile: file }); }}>💵 Confirmar pago</Btn>
+      </div>
+    </div>
+  );
+};
+
 // ── Recepcion de PO: cantidades y PRECIOS REALES ──
-// Al marcar una orden "Recibida" se abre este form para registrar lo que
-// REALMENTE llego y a que precio (los precios cambian mes a mes y al comprar
-// por mayor). Este es el cierre financiero veridico de la compra:
+// Al retirar la compra donde el proveedor se registra lo que REALMENTE llego
+// y a que precio de factura (puede variar vs la cotizacion). Este es el
+// cierre financiero veridico de la compra:
 //   - El total real queda guardado en la PO (auditable en Costos).
 //   - Las cantidades recibidas ENTRAN al stock del almacen (opcional).
 //   - El precio del catalogo se actualiza al precio real (opcional).
 const PoReciboFormImpl = ({ po, items, onSave, onCancel }) => {
   const [lines, setLines] = useState(() => (po.lines || []).map((l, i) => {
     const it = items.find((x) => x.id === l.itemId);
-    return { ...l, _k: `${i}`, cantRecibida: String(l.cant ?? ""), precioReal: String(Number(it?.precio) || "") };
+    // Default del precio real: lo COTIZADO (precioUnit) gana sobre el catalogo.
+    const def = l.precioReal != null ? l.precioReal : (l.precioUnit != null ? l.precioUnit : (Number(it?.precio) || ""));
+    return { ...l, _k: `${i}`, cantRecibida: String(l.cant ?? ""), precioReal: String(def) };
   }));
   const [sumarStock, setSumarStock] = useState(true);
   const [actualizarPrecios, setActualizarPrecios] = useState(true);
   const upd = (k, patch) => setLines((ls) => ls.map((l) => (l._k === k ? { ...l, ...patch } : l)));
   const totalReal = lines.reduce((s, l) => s + (Number(l.precioReal) || 0) * (Number(l.cantRecibida) || 0), 0);
+  const desembolsado = totalReal * (po.aplicarIsv ? 1.15 : 1);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ background: BRAND.greenSoft, border: `1px solid ${BRAND.green}40`, borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: "#3D5F35" }}>
@@ -823,7 +947,10 @@ const PoReciboFormImpl = ({ po, items, onSave, onCancel }) => {
         </label>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.charcoal }}>Total real: <span style={{ color: GREEN }}>{fmtL(totalReal)}</span></div>
+        <div style={{ fontWeight: 800, color: BRAND.charcoal }}>
+          <div style={{ fontSize: 12, color: BRAND.graphite }}>Subtotal real: {fmtL(totalReal)}{po.aplicarIsv ? ` + ISV 15%: ${fmtL(totalReal * 0.15)}` : ""}</div>
+          <div style={{ fontSize: 15 }}>Total desembolsado: <span style={{ color: GREEN }}>{fmtL(desembolsado)}</span></div>
+        </div>
         <div style={{ display: "flex", gap: 10 }}>
           <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
           <Btn variant="success" onClick={() => {
@@ -1009,6 +1136,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const [fProv, setFProv] = useState("");
   const [fQ, setFQ] = useState("");
   const [reqOpen, setReqOpen] = useState(null); // requisición abierta en el tablero (vista detalle)
+  const [poOpen, setPoOpen] = useState(null); // orden abierta en el tablero Por comprar (vista detalle)
   const [fInvQ, setFInvQ] = useState("");   // busqueda en Inventario (nombre/codigo)
   const [fDotQ, setFDotQ] = useState("");
   const [fDotCo, setFDotCo] = useState("");
@@ -1031,6 +1159,9 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
   const canManage = ["admin", "costos", "almacenista"].includes(userRole);
   const canDeduct = canManage || userRole === "tesoreria";
+  // Pagar POs: tesoreria (Carolina) es la titular; admin y costos como en
+  // GeoShopping (emergencia).
+  const canPay = ["admin", "tesoreria", "costos"].includes(userRole);
   const readOnly = userRole === "gerencia";
 
   useEffect(() => {
@@ -1110,18 +1241,26 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   };
   const sJorn = async (v) => { setJornaleros(v); const ok = await store.set("ep-jornaleros", v); if (!ok) alert("⚠ No se guardó en la nube (ep-jornaleros)."); return ok; };
   const sPos = async (v) => { setPos(v); const ok = await store.set("ep-pos", v); if (!ok) alert("⚠ No se guardó en la nube (ep-pos)."); return ok; };
-  // Crear una PO con MERGE contra la nube: dos admins creando ordenes casi a
-  // la vez no se pisan, y el numero se calcula sobre la lista fresca.
-  const crearPo = async (lines, fuente) => {
+  // Crear ordenes con MERGE contra la nube: dos admins creando ordenes casi a
+  // la vez no se pisan, y los numeros se calculan sobre la lista fresca.
+  // UNA PO POR PROVEEDOR: cada proveedor se cotiza, se paga y se retira por
+  // separado (flujo ferreteria) — si las lineas mezclan proveedores, salen
+  // varias ordenes de un solo.
+  const crearPos = async (lines, fuente) => {
     let base = pos;
     try { const c = await store.getCloud("ep-pos"); if (Array.isArray(c)) base = c; } catch { /* nube caída: memoria */ }
-    const num = "PO-" + String(base.reduce((m, p) => Math.max(m, parseInt(String(p.numero || "").replace(/\D/g, ""), 10) || 0), 0) + 1).padStart(3, "0");
-    const po = { id: uid(), numero: num, fecha: new Date().toISOString(), estado: "pendiente", fuente: fuente || "", creadoPor: userName, lines };
-    const next = [po, ...base];
+    let n = base.reduce((m, p) => Math.max(m, parseInt(String(p.numero || "").replace(/\D/g, ""), 10) || 0), 0);
+    const porProv = {};
+    lines.forEach((l) => { const k = l.proveedorId || ""; (porProv[k] = porProv[k] || []).push(l); });
+    const nuevas = Object.entries(porProv).map(([provId, ls]) => ({
+      id: uid(), numero: "PO-" + String(++n).padStart(3, "0"), fecha: new Date().toISOString(),
+      estado: "cotizando", fuente: fuente || "", creadoPor: userName, proveedorId: provId, lines: ls,
+    }));
+    const next = [...nuevas, ...base];
     setPos(next);
     const ok = await store.set("ep-pos", next);
     if (!ok) { alert("⚠ No se guardó en la nube (ep-pos). Reintentá."); return null; }
-    return po;
+    return nuevas;
   };
   // Guardar una requisicion EDITADA: se toma la version FRESCA de la nube y
   // solo se le aplican las lineas editadas — el estado y sus metadatos
@@ -1271,8 +1410,13 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   // La ficha de Dotacion NO cambia: sigue leyendo las requisiciones
   // entregadas (que EPP tiene cada colaborador), independiente del stock.
   const setEstadoReq = async (req, estado) => {
-    const verbo = { aprobada: "APROBAR", rechazada: "RECHAZAR", entregada: "marcar ENTREGADA" }[estado];
-    if (!confirm(`¿${verbo} la requisición ${req.numero}?` + (estado === "entregada" ? "\n\nEl EPP quedará asignado a cada colaborador en su ficha de dotación. (El stock del almacén NO se toca — las entradas reales se registran al recibir la orden Por Comprar.)" : ""))) return;
+    const verbo = { aprobada: "APROBAR", rechazada: "RECHAZAR", envio: "pasar a PREPARANDO ENVÍO", entregada: "marcar ENVIADA A PROYECTO" }[estado];
+    const extra = estado === "entregada"
+      ? "\n\nEl EPP quedará asignado a cada colaborador en su ficha de dotación. (El stock del almacén NO se toca — las entradas reales se registran al recibir la orden Por Comprar.)"
+      : estado === "envio"
+      ? "\n\nTip: imprimí la 📋 Ficha de Entrega para que cada colaborador FIRME al recibir su EPP en proyecto."
+      : "";
+    if (!confirm(`¿${verbo} la requisición ${req.numero}?` + extra)) return;
     const upd = reqs.map((r) => (r.id === req.id ? { ...r, estado, [estado + "Por"]: userName, [estado + "At"]: new Date().toISOString() } : r));
     await sReqs(upd);
   };
@@ -1298,12 +1442,20 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   };
 
   // ══════════════════════════ POR COMPRAR (PO) ══════════════════════════
+  // Ciclo ferreteria (diagrama de Gerson): POR COTIZAR (pedir cotizacion al
+  // proveedor) → POR PAGAR (precios+ISV+cotizacion adjunta, la paga
+  // tesoreria) → POR RETIRAR (pagada; falta ir a traerla) → RECIBIDA (entro
+  // al almacen con cantidades/precios reales).
   const ESTADOS_PO = {
-    pendiente: { label: "PENDIENTE", color: "#B45309", bg: "rgba(180,83,9,0.12)" },
-    enviada:   { label: "ENVIADA AL PROVEEDOR", color: BRAND.blue, bg: BRAND.blueSoft },
+    cotizando: { label: "POR COTIZAR", color: "#B45309", bg: "rgba(180,83,9,0.12)" },
+    por_pagar: { label: "POR PAGAR", color: BRAND.blue, bg: BRAND.blueSoft },
+    pagada:    { label: "POR RETIRAR", color: "#7C3AED", bg: "rgba(124,58,237,0.10)" },
     recibida:  { label: "RECIBIDA", color: BRAND.green, bg: BRAND.greenSoft },
   };
-  const posAbiertas = pos.filter((p) => p.estado !== "recibida").length;
+  // POs creadas antes del cambio de flujo (estados viejos pendiente/enviada)
+  // caen en "Por cotizar" y siguen el ciclo nuevo desde ahi.
+  const poEstado = (po) => (po.estado === "pendiente" || po.estado === "enviada") ? "cotizando" : (po.estado || "cotizando");
+  const posAbiertas = pos.filter((p) => poEstado(p) !== "recibida").length;
 
   // Desde una requisicion: lo solicitado que NO alcanza el stock se manda a
   // "Por comprar" con un click. El stock disponible descuenta lo COMPROMETIDO
@@ -1349,8 +1501,14 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     if (!faltantes.length) return alert((Object.keys(agg).length ? "Todo lo solicitado alcanza con el stock disponible (descontando lo comprometido en otras requisiciones abiertas) — no hay nada que comprar. ✔" : "No se pudo evaluar ninguna línea de esta requisición.") + avisoSinItem);
     const lista = faltantes.map((f) => `  ${f.cant} × ${f.nombre}${f.talla ? ` (Talla ${f.talla})` : ""}${f.codigo ? `  [${f.codigo}]` : ""}${f.proyecto ? `  → ${f.proyecto}` : ""}`).join("\n");
     if (!confirm(`Se creará una orden POR COMPRAR con lo que NO alcanza el stock para ${r.numero}\n(disponible = stock actual − comprometido en otras requisiciones abiertas):\n\n${lista}${avisoSinItem}\n\n¿Continuar?`)) return;
-    const po = await crearPo(faltantes, r.numero);
-    if (po) { setSec("porcomprar"); alert(`✅ ${po.numero} creada con ${faltantes.length} ítem(s). Generá el PDF y mandáselo al proveedor.`); }
+    const nuevas = await crearPos(faltantes, r.numero);
+    if (nuevas) {
+      setSec("porcomprar");
+      alert((nuevas.length === 1
+        ? `✅ ${nuevas[0].numero} creada con ${faltantes.length} ítem(s).`
+        : `✅ ${nuevas.length} órdenes creadas (una por proveedor): ${nuevas.map((p) => p.numero).join(", ")}.`)
+        + "\n\nSiguiente paso: generá el PDF de cada orden, pedí la cotización al proveedor y registrala con 💲 Agregar cotización.");
+    }
   };
 
   // PDF de la orden: agrupado POR PROVEEDOR (el codigo de cada item ya viene
@@ -1498,64 +1656,261 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     w.document.close();
   };
 
-  const renderPorComprar = () => (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-        <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}30`, borderRadius: R.md, padding: "9px 14px", fontSize: 12.5, color: BRAND.ink, flex: 1, minWidth: 280 }}>
-          🧾 <b>Por comprar (PO)</b>: lo que falta en stock. Desde una requisición usá <b>"Faltantes → Por comprar"</b>, o creá una orden desde cero. El <b>PDF sale agrupado por proveedor</b>. Al marcar <b>"✓ Recibida"</b> registrás las cantidades y <b>precios reales</b> de la factura — ahí las unidades ENTRAN al stock del almacén y el costo verídico queda en Costos.
+  // Abre un adjunto cp-file en pestaña nueva. dataUrl → Blob porque los
+  // browsers bloquean data: URLs a nivel top (no abriria el PDF).
+  const verArchivo = async (ref) => {
+    if (!ref?.fileId) return;
+    try {
+      const f = await withTimeout(store.get(`cp-file-${ref.fileId}`), 30000, "descargar archivo");
+      if (!f?.dataUrl) return alert("⚠ No se pudo cargar el archivo de la nube.");
+      const [meta, b64] = String(f.dataUrl).split(",");
+      const mime = (meta.match(/data:(.*?)[;,]/) || [])[1] || "application/octet-stream";
+      const bin = atob(b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      window.open(URL.createObjectURL(new Blob([arr], { type: mime })), "_blank");
+    } catch (e) { alert("⚠ No se pudo abrir el archivo: " + e.message); }
+  };
+
+  // ── FICHA DE ENTREGA DE EPP (cierre de la transaccion en proyecto) ──
+  // Agrupada POR COLABORADOR con linea de firma individual: al dejar el EPP
+  // en proyecto cada quien firma lo suyo, y GeoSafety (la "ferreteria")
+  // cierra su entrega con respaldo. Se imprime desde PREPARANDO ENVÍO.
+  const exportFichaEntregaPDF = (r) => {
+    const w = window.open("", "_blank");
+    if (!w) { alert("Permite popups para generar el PDF"); return; }
+    const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+    const porPersona = {};
+    (r.lineas || []).forEach((l) => {
+      const k = l.paraEmpId || l.paraNombre || "?";
+      if (!porPersona[k]) porPersona[k] = { nombre: l.paraNombre || "—", empresa: l.paraEmpresa || "", proys: new Set(), lineas: [] };
+      porPersona[k].lineas.push(l);
+      if (l.proyecto) porPersona[k].proys.add(l.proyecto);
+    });
+    const personas = Object.values(porPersona).sort((a, b) => a.nombre.localeCompare(b.nombre));
+    const proyectosReq = [...new Set((r.lineas || []).map((l) => l.proyecto).filter(Boolean))];
+    const bloque = (p) => `<div style="border:1px solid #DBD4C8;border-radius:10px;overflow:hidden;margin-bottom:12px;page-break-inside:avoid">
+      <div style="background:#F7F1E8;padding:7px 14px;display:flex;justify-content:space-between;align-items:center;gap:10">
+        <span style="font-size:12.5px;font-weight:800">👷 ${esc(p.nombre)} <span style="font-size:10px;color:#7A7268;font-weight:700">${esc(p.empresa ? p.empresa.toUpperCase() : "")}</span></span>
+        <span style="font-size:10.5px;color:#C75F1F;font-weight:800">${esc([...p.proys].join(" · "))}</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr>
+          <th style="text-align:left;padding:5px 14px;font-size:8.5px;color:#7A7268;letter-spacing:0.5px">CÓDIGO</th>
+          <th style="text-align:left;padding:5px 10px;font-size:8.5px;color:#7A7268;letter-spacing:0.5px">ÍTEM</th>
+          <th style="text-align:center;padding:5px 10px;font-size:8.5px;color:#7A7268;letter-spacing:0.5px">TALLA</th>
+          <th style="text-align:right;padding:5px 10px;font-size:8.5px;color:#7A7268;letter-spacing:0.5px">CANT.</th>
+          <th style="text-align:left;padding:5px 14px;font-size:8.5px;color:#7A7268;letter-spacing:0.5px">MOTIVO</th>
+        </tr></thead>
+        <tbody>${p.lineas.map((l) => `<tr>
+          <td style="padding:6px 14px;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;font-weight:700;color:#C75F1F;border-top:1px solid #F1EBE0">${esc(l.codigo || itemById(l.itemId)?.codigo) || "—"}</td>
+          <td style="padding:6px 10px;font-size:11px;font-weight:600;border-top:1px solid #F1EBE0">${esc(l.nombre)}</td>
+          <td style="padding:6px 10px;font-size:10.5px;text-align:center;color:#0F766E;font-weight:700;border-top:1px solid #F1EBE0">${esc(l.talla || itemById(l.itemId)?.talla) || "—"}</td>
+          <td style="padding:6px 10px;font-size:12px;font-weight:800;text-align:right;border-top:1px solid #F1EBE0">${l.qty}</td>
+          <td style="padding:6px 14px;font-size:10px;font-weight:700;color:#5C5853;border-top:1px solid #F1EBE0">${esc(motivoDef(l.motivo).chip)}</td>
+        </tr>`).join("")}</tbody>
+      </table>
+      <div style="display:flex;justify-content:flex-end;align-items:flex-end;gap:26px;padding:14px 14px 10px">
+        <div style="font-size:9.5px;color:#7A7268">Recibí conforme el equipo detallado y me comprometo a usarlo y cuidarlo.</div>
+        <div style="text-align:center;flex-shrink:0">
+          <div style="border-top:1.2px solid #2C2A28;width:190px;padding-top:4px;font-size:10px;font-weight:700">Firma del colaborador</div>
+          <div style="font-size:8.5px;color:#7A7268">Fecha: ____ / ____ / ______</div>
         </div>
-        {canManage && <Btn onClick={() => setModal({ t: "po-new" })}>+ Nueva orden</Btn>}
       </div>
-      {!pos.length && <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>Sin órdenes de compra todavía.</div>}
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {pos.map((po) => {
-          const est = ESTADOS_PO[po.estado] || ESTADOS_PO.pendiente;
-          const proyectosPo = [...new Set((po.lines || []).map((l) => l.proyecto).filter(Boolean))];
-          return (
-            <div key={po.id} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", gap: 10, flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 14, color: BRAND.charcoal }}>{po.numero}</span>
-                  <Chip color={est.color} bg={est.bg}>{est.label}</Chip>
-                  {proyectosPo.map((pr) => <Chip key={pr} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {pr}</Chip>)}
-                  <span style={{ fontSize: 12, color: BRAND.graphite }}>{fmtDate(po.fecha)}{po.fuente ? <> · de <b style={{ color: BRAND.orange }}>{po.fuente}</b></> : " · creada desde cero"} · {po.creadoPor}</span>
-                  {po.estado === "recibida" && po.totalReal != null && <Chip color={BRAND.green} bg={BRAND.greenSoft}>💰 Total real: {fmtL(po.totalReal)}</Chip>}
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <Btn small variant="info" onClick={() => exportPoPDF(po)}>📄 PDF para proveedor</Btn>
-                  {canManage && po.estado === "pendiente" && <Btn small variant="ghost" onClick={async () => { await sPos(pos.map((x) => (x.id === po.id ? { ...x, estado: "enviada", enviadaAt: new Date().toISOString() } : x))); }}>✉ Marcar enviada</Btn>}
-                  {canManage && po.estado === "enviada" && <Btn small variant="success" onClick={() => setModal({ t: "po-recibo", po })}>✓ Recibida…</Btn>}
-                  {userRole === "admin" && <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => { if (!confirm(`¿ELIMINAR la orden ${po.numero}?`)) return; await sPos(pos.filter((x) => x.id !== po.id)); }}>🗑</Btn>}
-                </div>
-              </div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Talla</th><th style={th}>Proveedor</th><th style={th}>Proyecto</th><th style={{ ...th, textAlign: "right" }}>Pedido</th>{po.estado === "recibida" && <><th style={{ ...th, textAlign: "right" }}>Recibido</th><th style={{ ...th, textAlign: "right" }}>Precio real</th><th style={{ ...th, textAlign: "right" }}>Subtotal</th></>}</tr></thead>
-                  <tbody>
-                    {(po.lines || []).map((l, i) => (
-                      <tr key={i}>
-                        <td style={{ ...td, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: BRAND.orange }}>{l.codigo || "—"}</td>
-                        <td style={{ ...td, fontWeight: 700 }}>{l.nombre}</td>
-                        <td style={{ ...td, color: "#0F766E", fontWeight: 700 }}>{l.talla || "—"}</td>
-                        <td style={td}>{provName(l.proveedorId)}</td>
-                        <td style={td}>{l.proyecto ? <Chip color={BRAND.orange} bg="rgba(232,118,45,0.10)">{l.proyecto}</Chip> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
-                        <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{l.cant}</td>
-                        {po.estado === "recibida" && <>
-                          <td style={{ ...td, textAlign: "right", fontWeight: 800, color: (l.cantRecibida ?? l.cant) !== l.cant ? "#B45309" : BRAND.charcoal }}>{l.cantRecibida ?? l.cant}</td>
-                          <td style={{ ...td, textAlign: "right" }}>{l.precioReal != null ? fmtL(l.precioReal) : "—"}</td>
-                          <td style={{ ...td, textAlign: "right", fontWeight: 800, color: GREEN }}>{l.precioReal != null ? fmtL((Number(l.precioReal) || 0) * (Number(l.cantRecibida ?? l.cant) || 0)) : "—"}</td>
-                        </>}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          );
-        })}
+    </div>`;
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(r.numero)} — Ficha de entrega EPP</title>
+      <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:30px;color:#2C2A28;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{.np{display:none}}</style>
+      </head><body>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:14px">
+          <img src="${logoUrl}" style="height:46px" onerror="this.style.display='none'" />
+          <div>
+            <div style="font-size:20px;font-weight:800;color:#E8762D;letter-spacing:-0.3px">FICHA DE ENTREGA DE EPP</div>
+            <div style="font-size:11.5px;color:#7A7268;margin-top:2px">Acta de entrega y recepción · Grupo Geotecnica — cada colaborador firma al recibir su equipo</div>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:16px;font-weight:800">${esc(r.numero)}</div>
+          <div style="font-size:11px;color:#7A7268">${fmtDate(r.fecha)}${proyectosReq.length ? ` · ${esc(proyectosReq.join(" · "))}` : ""}</div>
+        </div>
       </div>
-    </div>
-  );
+      <div style="height:4px;background:#E8762D;border-radius:2px;margin:12px 0 16px"></div>
+      ${personas.map(bloque).join("")}
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:24px;gap:20px;page-break-inside:avoid">
+        <div style="text-align:center">
+          <div style="border-top:1.5px solid #2C2A28;width:220px;padding-top:5px;font-size:11px;font-weight:700">${esc(userName)} — Entregó</div>
+          <div style="font-size:9.5px;color:#7A7268">GeoSafety / Seguridad Industrial · Grupo Geotecnica</div>
+        </div>
+        <div style="font-size:10px;color:#8B847C">Documento generado por GeoSafety · ${esc(r.numero)}</div>
+        <div style="text-align:center">
+          <div style="border-top:1.5px solid #2C2A28;width:220px;padding-top:5px;font-size:11px;font-weight:700">Recibió — Responsable en proyecto</div>
+          <div style="font-size:9.5px;color:#7A7268">Nombre y firma</div>
+        </div>
+      </div>
+      <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
+      </body></html>`);
+    w.document.close();
+  };
+
+  // Card COMPLETA de una orden: header con las acciones del paso en que va
+  // + tabla (precios cotizados y/o reales segun el estado). La usa la vista
+  // detalle del tablero Por comprar.
+  const renderPoFull = (po) => {
+    const est = ESTADOS_PO[poEstado(po)];
+    const proyectosPo = [...new Set((po.lines || []).map((l) => l.proyecto).filter(Boolean))];
+    const provTitulo = po.proveedorId ? provName(po.proveedorId) : [...new Set((po.lines || []).map((l) => provName(l.proveedorId)))].join(" · ");
+    const cotizada = (po.lines || []).some((l) => l.precioUnit != null);
+    const recibida = poEstado(po) === "recibida";
+    const cols = 6 + (cotizada ? 2 : 0) + (recibida ? 3 : 0);
+    return (
+      <div key={po.id} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 14, color: BRAND.charcoal }}>{po.numero}</span>
+            <Chip color={est.color} bg={est.bg}>{est.label}</Chip>
+            <Chip color={BRAND.charcoal} bg={BRAND.beigeLight}>🏪 {provTitulo}</Chip>
+            {proyectosPo.map((pr) => <Chip key={pr} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {pr}</Chip>)}
+            {po.total != null && !recibida && <Chip color={BRAND.blue} bg={BRAND.blueSoft}>💰 Total: {fmtL(po.total)}{po.aplicarIsv ? " (c/ISV)" : ""}</Chip>}
+            {recibida && (po.totalDesembolsado ?? po.totalReal) != null && <Chip color={BRAND.green} bg={BRAND.greenSoft}>💰 Desembolsado: {fmtL(po.totalDesembolsado ?? po.totalReal)}</Chip>}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <Btn small variant="info" onClick={() => exportPoPDF(po)}>📄 PDF para proveedor</Btn>
+            {po.cotizacionFile && <Btn small variant="ghost" onClick={() => verArchivo(po.cotizacionFile)}>📎 Cotización</Btn>}
+            {po.comprobanteFile && <Btn small variant="ghost" onClick={() => verArchivo(po.comprobanteFile)}>🧾 Comprobante</Btn>}
+            {canManage && poEstado(po) === "cotizando" && <Btn small variant="success" onClick={() => setModal({ t: "po-cotizar", po })}>💲 Agregar cotización…</Btn>}
+            {canManage && poEstado(po) === "por_pagar" && <Btn small variant="ghost" onClick={() => setModal({ t: "po-cotizar", po })}>💲 Editar cotización…</Btn>}
+            {canPay && poEstado(po) === "por_pagar" && <Btn small variant="success" onClick={() => setModal({ t: "po-pago", po })}>💵 Registrar pago…</Btn>}
+            {canManage && poEstado(po) === "pagada" && <Btn small variant="success" onClick={() => setModal({ t: "po-recibo", po })}>📦 Retirada — registrar recepción…</Btn>}
+            {userRole === "admin" && <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => { if (!confirm(`¿ELIMINAR la orden ${po.numero}?`)) return; await sPos(pos.filter((x) => x.id !== po.id)); }}>🗑</Btn>}
+          </div>
+        </div>
+        <div style={{ padding: "0 16px 10px", fontSize: 12, color: BRAND.graphite, display: "flex", gap: 14, flexWrap: "wrap" }}>
+          <span>{fmtDate(po.fecha)}{po.fuente ? <> · de <b style={{ color: BRAND.orange }}>{po.fuente}</b></> : " · creada desde cero"} · {po.creadoPor}</span>
+          {po.cotizadaAt && <span>💲 Cotizada {fmtDate(po.cotizadaAt)} ({po.cotizadaPor})</span>}
+          {po.pagadaAt && <span style={{ color: BRAND.blue, fontWeight: 700 }}>💵 Pagada {fmtDate(po.pagadaAt)} por {po.pagadaPor}{po.pagoRef ? ` · Ref: ${po.pagoRef}` : ""}</span>}
+          {po.recibidaAt && <span style={{ color: GREEN, fontWeight: 700 }}>📦 Recibida {fmtDate(po.recibidaAt)} ({po.recibidaPor})</span>}
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Talla</th><th style={th}>Proveedor</th><th style={th}>Proyecto</th><th style={{ ...th, textAlign: "right" }}>Pedido</th>{cotizada && <><th style={{ ...th, textAlign: "right" }}>Precio unit.</th><th style={{ ...th, textAlign: "right" }}>Subtotal</th></>}{recibida && <><th style={{ ...th, textAlign: "right" }}>Recibido</th><th style={{ ...th, textAlign: "right" }}>Precio real</th><th style={{ ...th, textAlign: "right" }}>Subtotal real</th></>}</tr></thead>
+            <tbody>
+              {(po.lines || []).map((l, i) => (
+                <tr key={i}>
+                  <td style={{ ...td, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: BRAND.orange }}>{l.codigo || "—"}</td>
+                  <td style={{ ...td, fontWeight: 700 }}>{l.nombre}</td>
+                  <td style={{ ...td, color: "#0F766E", fontWeight: 700 }}>{l.talla || "—"}</td>
+                  <td style={td}>{provName(l.proveedorId)}</td>
+                  <td style={td}>{l.proyecto ? <Chip color={BRAND.orange} bg="rgba(232,118,45,0.10)">{l.proyecto}</Chip> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{l.cant}</td>
+                  {cotizada && <>
+                    <td style={{ ...td, textAlign: "right" }}>{l.precioUnit != null ? fmtL(l.precioUnit) : "—"}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{l.precioUnit != null ? fmtL((Number(l.precioUnit) || 0) * (Number(l.cant) || 0)) : "—"}</td>
+                  </>}
+                  {recibida && <>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 800, color: (l.cantRecibida ?? l.cant) !== l.cant ? "#B45309" : BRAND.charcoal }}>{l.cantRecibida ?? l.cant}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{l.precioReal != null ? fmtL(l.precioReal) : "—"}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 800, color: GREEN }}>{l.precioReal != null ? fmtL((Number(l.precioReal) || 0) * (Number(l.cantRecibida ?? l.cant) || 0)) : "—"}</td>
+                  </>}
+                </tr>
+              ))}
+            </tbody>
+            {po.total != null && (
+              <tfoot>
+                <tr style={{ background: BRAND.beigeLight }}>
+                  <td colSpan={cols - 1} style={{ ...td, textAlign: "right", fontWeight: 700, color: BRAND.graphite }}>
+                    Subtotal {fmtL(po.subtotal ?? 0)}{po.aplicarIsv ? ` · ISV 15% ${fmtL(po.isv ?? 0)}` : " · exento de ISV"} · <b style={{ color: BRAND.charcoal }}>TOTAL COTIZADO</b>
+                  </td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 800, color: GREEN, fontSize: 13.5 }}>{fmtL(po.total)}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderPorComprar = () => {
+    const abierta = poOpen ? pos.find((p) => p.id === poOpen) : null;
+
+    // ── Vista DETALLE de una orden ──
+    if (abierta) {
+      return (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+            <Btn small variant="ghost" onClick={() => setPoOpen(null)}>← Volver al tablero</Btn>
+            <span style={{ fontSize: 12.5, color: BRAND.stone }}>Por comprar · <b style={{ color: BRAND.charcoal }}>{abierta.numero}</b> · detalle de la orden</span>
+          </div>
+          {renderPoFull(abierta)}
+        </div>
+      );
+    }
+
+    // ── Tablero KANBAN del ciclo de compra ──
+    return (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+          <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}30`, borderRadius: R.md, padding: "9px 14px", fontSize: 12.5, color: BRAND.ink, flex: 1, minWidth: 280 }}>
+            🧾 <b>Ciclo de compra</b> (una orden por proveedor): <b>📑 Por cotizar</b> (mandá el PDF y registrá la cotización con precio unitario + ISV 15%) → <b>💵 Por pagar</b> (tesorería) → <b>🚗 Por retirar</b> (ir a traerla) → <b>📦 Recibida</b> (cantidades/precios reales — ahí ENTRA al stock y el costo verídico queda en Costos). Hacé clic en una tarjeta para ver el detalle y las acciones.
+          </div>
+          {canManage && <Btn onClick={() => setModal({ t: "po-new" })}>+ Nueva orden</Btn>}
+        </div>
+        {!pos.length ? (
+          <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>Sin órdenes de compra todavía. Se crean desde una requisición con "Faltantes → Por comprar".</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(245px, 1fr))", gap: 12, alignItems: "start" }}>
+            {Object.entries(ESTADOS_PO).map(([est, def]) => {
+              const arr = pos.filter((p) => poEstado(p) === est).sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
+              return (
+                <div key={est} style={{ background: "rgba(219,212,200,0.22)", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, padding: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "2px 4px 10px" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 800, color: def.color, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      <span style={{ width: 9, height: 9, borderRadius: "50%", background: def.color, display: "inline-block" }} />
+                      {def.label}
+                      <span style={{ background: def.bg, color: def.color, borderRadius: 999, padding: "1px 8px", fontSize: 11 }}>{arr.length}</span>
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 640, overflowY: "auto" }}>
+                    {!arr.length && <div style={{ textAlign: "center", padding: "20px 8px", fontSize: 11.5, color: BRAND.stone, border: `1px dashed ${BRAND.border}`, borderRadius: R.md, background: "rgba(255,255,255,0.5)" }}>Sin órdenes</div>}
+                    {arr.map((po) => {
+                      const proyectosPo = [...new Set((po.lines || []).map((l) => l.proyecto).filter(Boolean))];
+                      const provTitulo = po.proveedorId ? provName(po.proveedorId) : [...new Set((po.lines || []).map((l) => provName(l.proveedorId)))].join(" · ");
+                      const uds = (po.lines || []).reduce((s, l) => s + (Number(l.cant) || 0), 0);
+                      const monto = poEstado(po) === "recibida" ? (po.totalDesembolsado ?? po.totalReal) : po.total;
+                      return (
+                        <div key={po.id} onClick={() => setPoOpen(po.id)}
+                          onMouseEnter={(ev) => { ev.currentTarget.style.transform = "translateY(-2px)"; ev.currentTarget.style.boxShadow = BRAND.shadowLg; }}
+                          onMouseLeave={(ev) => { ev.currentTarget.style.transform = "none"; ev.currentTarget.style.boxShadow = BRAND.shadowSm; }}
+                          style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${def.color}`, borderRadius: R.md, padding: "11px 12px", cursor: "pointer", boxShadow: BRAND.shadowSm, transition: "transform .1s, box-shadow .1s" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 13.5, color: BRAND.charcoal }}>{po.numero}</span>
+                            <span style={{ fontSize: 11, color: BRAND.stone, fontWeight: 700 }}>{fmtDate(po.fecha)}</span>
+                          </div>
+                          <div style={{ fontSize: 12, fontWeight: 800, color: BRAND.graphite, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🏪 {provTitulo}</div>
+                          {po.fuente && <div style={{ fontSize: 11, color: BRAND.stone, marginTop: 2 }}>de <b style={{ color: BRAND.orange }}>{po.fuente}</b></div>}
+                          {(proyectosPo.length > 0 || po.cotizacionFile) && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
+                              {proyectosPo.map((pr) => <Chip key={pr} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {pr}</Chip>)}
+                              {po.cotizacionFile && <Chip color={BRAND.blue} bg={BRAND.blueSoft}>📎 Cotización</Chip>}
+                            </div>
+                          )}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 9, paddingTop: 8, borderTop: `1px dashed ${BRAND.border}` }}>
+                            <span style={{ fontSize: 11.5, color: BRAND.stone, fontWeight: 700 }}>{(po.lines || []).length} ítem(s) · {uds} uds</span>
+                            <span style={{ fontWeight: 800, color: monto != null ? GREEN : BRAND.stone, fontSize: 13 }}>{monto != null ? fmtL(monto) : "sin cotizar"}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // ══════════════════════════ CATALOGO ══════════════════════════
   const renderCatalogo = () => {
@@ -1700,7 +2055,9 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                     <span style={{ fontWeight: 800, color: GREEN, fontSize: 14 }}>{fmtL(r.total)}</span>
                     <Btn small variant="info" onClick={() => exportReqPDF(r)} style={{ whiteSpace: "nowrap" }}>📄 PDF proveedores</Btn>
                     {canManage && r.estado === "pendiente" && <><Btn small variant="success" onClick={() => setEstadoReq(r, "aprobada")}>✓ Aprobar</Btn><Btn small variant="danger" onClick={() => setEstadoReq(r, "rechazada")}>✕ Rechazar</Btn></>}
-                    {canManage && r.estado === "aprobada" && <Btn small variant="info" onClick={() => setEstadoReq(r, "entregada")}>📦 Marcar entregada</Btn>}
+                    {canManage && r.estado === "aprobada" && <Btn small variant="info" onClick={() => setEstadoReq(r, "envio")}>🚚 Preparar envío</Btn>}
+                    {canManage && r.estado === "envio" && <Btn small variant="success" onClick={() => setEstadoReq(r, "entregada")}>✅ Enviada a proyecto</Btn>}
+                    {(r.estado === "envio" || r.estado === "entregada") && <Btn small variant="info" onClick={() => exportFichaEntregaPDF(r)} style={{ whiteSpace: "nowrap" }}>📋 Ficha de entrega</Btn>}
                     {canManage && (r.estado === "pendiente" || r.estado === "aprobada") && <Btn small variant="ghost" style={{ color: "#B45309" }} onClick={() => crearPoDesdeReq(r)}>🧾 Faltantes → Por comprar</Btn>}
                     {userRole === "admin" && (r.estado === "pendiente" || r.estado === "aprobada") && <Btn small variant="ghost" onClick={() => setModal({ t: "req-edit", req: r })}>✏️ Editar</Btn>}
                     {userRole === "admin" && <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => { if (!confirm(`¿ELIMINAR la requisición ${r.numero}?\n\nSe borra del historial. No se puede deshacer.`)) return; await sReqs(reqs.filter((x) => x.id !== r.id)); }}>🗑</Btn>}
@@ -1778,8 +2135,8 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     if (!reqs.length) return <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>Sin requisiciones todavía. Se crean desde el catálogo con el carrito 🛒.</div>;
     return (
       <div>
-        <div style={{ fontSize: 12.5, color: BRAND.stone, marginBottom: 12 }}>{reqs.length} requisición(es) · hacé clic en una tarjeta para ver el desglose completo y las acciones</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(245px, 1fr))", gap: 12, alignItems: "start" }}>
+        <div style={{ fontSize: 12.5, color: BRAND.stone, marginBottom: 12 }}>{reqs.length} requisición(es) · hacé clic en una tarjeta para ver el desglose completo y las acciones · flujo: pendiente → aprobada → preparando envío → enviada a proyecto (con 📋 ficha firmada)</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, alignItems: "start" }}>
           {Object.entries(ESTADOS).map(([est, def]) => {
             const arr = reqs.filter((r) => (r.estado || "pendiente") === est).sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
             const totalCol = arr.reduce((s, r) => s + (Number(r.total) || 0), 0);
@@ -2218,11 +2575,14 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     // sale de lo que efectivamente se compro y recibio en el mes.
     const realPorProy = {};
     pos.filter((p) => p.estado === "recibida" && mesDe(p.recibidaAt || p.fecha) === costosMes).forEach((p) => {
+      // Desembolso real: precio de factura × cantidad recibida, CON ISV si la
+      // cotizacion lo aplico (el gasto por proyecto es lo que salio de caja).
+      const factor = p.aplicarIsv ? 1.15 : 1;
       (p.lines || []).forEach((l) => {
         const pr = l.proyecto || "SIN PROYECTO";
-        const precio = l.precioReal != null ? Number(l.precioReal) : (Number(itemById(l.itemId)?.precio) || 0);
+        const precio = l.precioReal != null ? Number(l.precioReal) : (l.precioUnit != null ? Number(l.precioUnit) : (Number(itemById(l.itemId)?.precio) || 0));
         const cant = Number(l.cantRecibida ?? l.cant) || 0;
-        realPorProy[pr] = (realPorProy[pr] || 0) + precio * cant;
+        realPorProy[pr] = (realPorProy[pr] || 0) + precio * cant * factor;
       });
     });
     const totalRealMes = Object.values(realPorProy).reduce((s, v) => s + v, 0);
@@ -2450,20 +2810,48 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
           <PoFormImpl items={items} providers={providers}
             onCancel={() => setModal(null)}
             onSave={async (lines) => {
-              const po = await crearPo(lines, "");
-              if (po) { setModal(null); alert(`✅ ${po.numero} creada. Generá el PDF para el proveedor.`); }
+              const nuevas = await crearPos(lines, "");
+              if (nuevas) {
+                setModal(null);
+                alert((nuevas.length === 1 ? `✅ ${nuevas[0].numero} creada.` : `✅ ${nuevas.length} órdenes creadas (una por proveedor): ${nuevas.map((p) => p.numero).join(", ")}.`) + "\n\nGenerá el PDF y pedí la cotización al proveedor.");
+              }
+            }} />
+        </Modal>
+      )}
+      {modal?.t === "po-cotizar" && (
+        <Modal title={`💲 Cotización de ${modal.po.numero} — ${modal.po.proveedorId ? provName(modal.po.proveedorId) : "varios proveedores"}`} onClose={() => setModal(null)} width={760}>
+          <PoCotizacionFormImpl po={modal.po} items={items}
+            onCancel={() => setModal(null)}
+            onSave={async ({ lines, aplicarIsv, cotizacionFile, subtotal, isv, total }) => {
+              const ok = await sPos(pos.map((x) => (x.id === modal.po.id
+                ? { ...x, estado: "por_pagar", lines, aplicarIsv, cotizacionFile, subtotal, isv, total, cotizadaPor: userName, cotizadaAt: x.cotizadaAt || new Date().toISOString() }
+                : x)));
+              if (ok) { setModal(null); alert(`✅ Cotización registrada. ${modal.po.numero} pasó a POR PAGAR.\nTotal: ${fmtL(total)}${aplicarIsv ? " (incluye ISV 15%)" : ""} — le toca a tesorería.`); }
+            }} />
+        </Modal>
+      )}
+      {modal?.t === "po-pago" && (
+        <Modal title={`💵 Pago de ${modal.po.numero}`} onClose={() => setModal(null)} width={560}>
+          <PoPagoFormImpl po={modal.po} provNombre={modal.po.proveedorId ? provName(modal.po.proveedorId) : ""}
+            onCancel={() => setModal(null)}
+            onSave={async ({ pagoRef, comprobanteFile }) => {
+              const ok = await sPos(pos.map((x) => (x.id === modal.po.id
+                ? { ...x, estado: "pagada", pagadaPor: userName, pagadaAt: new Date().toISOString(), pagoRef, comprobanteFile }
+                : x)));
+              if (ok) { setModal(null); alert(`✅ ${modal.po.numero} PAGADA.\n\nSiguiente paso: retirar la compra donde el proveedor y registrar la recepción (📦 Retirada).`); }
             }} />
         </Modal>
       )}
       {modal?.t === "po-recibo" && (
-        <Modal title={`📦 Recepción de ${modal.po.numero} — cantidades y precios reales`} onClose={() => setModal(null)} width={760}>
+        <Modal title={`📦 Retiro de ${modal.po.numero} — cantidades y precios reales`} onClose={() => setModal(null)} width={760}>
           <PoReciboFormImpl po={modal.po} items={items}
             onCancel={() => setModal(null)}
             onSave={async (linesRecibidas, { sumarStock, actualizarPrecios }) => {
               const totalReal = linesRecibidas.reduce((s, l) => s + l.precioReal * l.cantRecibida, 0);
+              const totalDesembolsado = Math.round(totalReal * (modal.po.aplicarIsv ? 1.15 : 1) * 100) / 100;
               // 1) PO → recibida, con lineas actualizadas y total real
               const ok = await sPos(pos.map((x) => (x.id === modal.po.id
-                ? { ...x, estado: "recibida", recibidaAt: new Date().toISOString(), recibidaPor: userName, lines: linesRecibidas, totalReal }
+                ? { ...x, estado: "recibida", recibidaAt: new Date().toISOString(), recibidaPor: userName, lines: linesRecibidas, totalReal, totalDesembolsado }
                 : x)));
               if (!ok) return;
               // 2) Stock + precios del catalogo en UN solo save (evita doble write)
@@ -2488,7 +2876,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                 if (!ok2) alert("⚠ La orden quedó RECIBIDA pero el stock/precios del catálogo NO se actualizaron. Ajustalos en Inventario.");
               }
               setModal(null);
-              alert(`✅ ${modal.po.numero} recibida. Total real: ${fmtL(totalReal)}.` + (sumarStock ? "\n📦 Unidades sumadas al stock del almacén." : ""));
+              alert(`✅ ${modal.po.numero} recibida. Total desembolsado: ${fmtL(totalDesembolsado)}${modal.po.aplicarIsv ? " (incluye ISV 15%)" : ""}.` + (sumarStock ? "\n📦 Unidades sumadas al stock del almacén." : "") + "\n\nCuando el EPP salga a proyecto: en la requisición usá 🚚 Preparar envío y llevá la 📋 Ficha de entrega para las firmas.");
             }} />
         </Modal>
       )}
