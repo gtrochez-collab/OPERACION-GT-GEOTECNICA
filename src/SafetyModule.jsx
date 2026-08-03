@@ -1008,7 +1008,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const [fCat, setFCat] = useState("");
   const [fProv, setFProv] = useState("");
   const [fQ, setFQ] = useState("");
-  const [fReqEstado, setFReqEstado] = useState("");
+  const [reqOpen, setReqOpen] = useState(null); // requisición abierta en el tablero (vista detalle)
   const [fInvQ, setFInvQ] = useState("");   // busqueda en Inventario (nombre/codigo)
   const [fDotQ, setFDotQ] = useState("");
   const [fDotCo, setFDotCo] = useState("");
@@ -1680,17 +1680,9 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   );
 
   // ══════════════════════════ REQUISICIONES ══════════════════════════
-  const renderRequisiciones = () => {
-    const vis = reqs.filter((r) => !fReqEstado || r.estado === fReqEstado);
-    return (
-      <div>
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap" }}>
-          <div style={{ flex: "0 1 220px" }}><Select label="Estado" placeholder="Todos" value={fReqEstado} onChange={(e) => setFReqEstado(e.target.value)} options={Object.entries(ESTADOS).map(([v, d]) => ({ value: v, label: d.label }))} /></div>
-          <div style={{ fontSize: 12.5, color: BRAND.stone, paddingBottom: 10 }}>{vis.length} requisición(es)</div>
-        </div>
-        {!vis.length && <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>Sin requisiciones todavía. Se crean desde el catálogo con el carrito 🛒.</div>}
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {vis.map((r) => {
+  // Card COMPLETA de una requisición: header con acciones + desglose agrupado
+  // por tipo de EPP. La usa la vista detalle del tablero (clic en una tarjeta).
+  const renderReqFull = (r) => {
             const est = ESTADOS[r.estado] || ESTADOS.pendiente;
             const tienePerdida = (r.lineas || []).some((l) => l.motivo === "perdida");
             const proyectosReq = [...new Set((r.lineas || []).map((l) => l.proyecto).filter(Boolean))];
@@ -1761,6 +1753,83 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                       })()}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            );
+  };
+
+  const renderRequisiciones = () => {
+    const abierta = reqOpen ? reqs.find((r) => r.id === reqOpen) : null;
+
+    // ── Vista DETALLE: una requisición con su desglose completo ──
+    if (abierta) {
+      return (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+            <Btn small variant="ghost" onClick={() => setReqOpen(null)}>← Volver al tablero</Btn>
+            <span style={{ fontSize: 12.5, color: BRAND.stone }}>Requisiciones · <b style={{ color: BRAND.charcoal }}>{abierta.numero}</b> · desglose completo</span>
+          </div>
+          {renderReqFull(abierta)}
+        </div>
+      );
+    }
+
+    // ── Tablero KANBAN por estado: tarjetas compactas, clic → detalle ──
+    if (!reqs.length) return <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>Sin requisiciones todavía. Se crean desde el catálogo con el carrito 🛒.</div>;
+    return (
+      <div>
+        <div style={{ fontSize: 12.5, color: BRAND.stone, marginBottom: 12 }}>{reqs.length} requisición(es) · hacé clic en una tarjeta para ver el desglose completo y las acciones</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(245px, 1fr))", gap: 12, alignItems: "start" }}>
+          {Object.entries(ESTADOS).map(([est, def]) => {
+            const arr = reqs.filter((r) => (r.estado || "pendiente") === est).sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
+            const totalCol = arr.reduce((s, r) => s + (Number(r.total) || 0), 0);
+            return (
+              <div key={est} style={{ background: "rgba(219,212,200,0.22)", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, padding: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "2px 4px 10px" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 800, color: def.color, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: "50%", background: def.color, display: "inline-block" }} />
+                    {def.label}
+                    <span style={{ background: def.bg, color: def.color, borderRadius: 999, padding: "1px 8px", fontSize: 11 }}>{arr.length}</span>
+                  </span>
+                  {totalCol > 0 && <span style={{ fontSize: 11, fontWeight: 800, color: GREEN }}>{fmtL(totalCol)}</span>}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 640, overflowY: "auto" }}>
+                  {!arr.length && <div style={{ textAlign: "center", padding: "20px 8px", fontSize: 11.5, color: BRAND.stone, border: `1px dashed ${BRAND.border}`, borderRadius: R.md, background: "rgba(255,255,255,0.5)" }}>Sin requisiciones</div>}
+                  {arr.map((r) => {
+                    const tienePerdida = (r.lineas || []).some((l) => l.motivo === "perdida");
+                    const proyectosReq = [...new Set((r.lineas || []).map((l) => l.proyecto).filter(Boolean))];
+                    const personas = new Set((r.lineas || []).map((l) => l.empId || l.paraNombre)).size;
+                    const tipos = {};
+                    (r.lineas || []).forEach((l) => { const t = tipoDeLinea(l); tipos[t] = (tipos[t] || 0) + (Number(l.qty) || 0); });
+                    return (
+                      <div key={r.id} onClick={() => setReqOpen(r.id)}
+                        onMouseEnter={(ev) => { ev.currentTarget.style.transform = "translateY(-2px)"; ev.currentTarget.style.boxShadow = BRAND.shadowLg; }}
+                        onMouseLeave={(ev) => { ev.currentTarget.style.transform = "none"; ev.currentTarget.style.boxShadow = BRAND.shadowSm; }}
+                        style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${def.color}`, borderRadius: R.md, padding: "11px 12px", cursor: "pointer", boxShadow: BRAND.shadowSm, transition: "transform .1s, box-shadow .1s" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 13.5, color: BRAND.orange }}>{r.numero}</span>
+                          <span style={{ fontSize: 11, color: BRAND.stone, fontWeight: 700 }}>{fmtDate(r.fecha)}</span>
+                        </div>
+                        <div style={{ fontSize: 11.5, color: BRAND.graphite, marginTop: 3 }}>Solicitó <b>{r.solicitante}</b>{r.editadoPor ? <span style={{ color: "#B45309" }} title={`Editada por ${r.editadoPor}`}> · ✏️</span> : null}</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
+                          {Object.entries(tipos).map(([t, uds]) => {
+                            const tdef = tipoDef(t);
+                            return <span key={t} title={tdef.label} style={{ fontSize: 11, fontWeight: 700, color: BRAND.graphite, background: BRAND.beigeLight, border: `1px solid ${BRAND.border}`, borderRadius: 999, padding: "2px 8px" }}>{tdef.icon} {uds}</span>;
+                          })}
+                        </div>
+                        {(proyectosReq.length > 0 || tienePerdida) && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
+                            {proyectosReq.map((pr) => <Chip key={pr} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {pr}</Chip>)}
+                            {tienePerdida && <Chip color={BRAND.red} bg={BRAND.redSoft}>⚠ PÉRDIDA</Chip>}
+                          </div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 9, paddingTop: 8, borderTop: `1px dashed ${BRAND.border}` }}>
+                          <span style={{ fontSize: 11.5, color: BRAND.stone, fontWeight: 700 }}>👥 {personas} colab. · {(r.lineas || []).length} líneas</span>
+                          <span style={{ fontWeight: 800, color: GREEN, fontSize: 13.5 }}>{fmtL(r.total)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
