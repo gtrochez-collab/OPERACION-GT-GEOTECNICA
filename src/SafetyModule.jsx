@@ -3299,7 +3299,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
       {/* Footer de créditos */}
       <div style={{ textAlign: "center", padding: "16px 20px 22px", fontSize: 11.5, color: BRAND.ash, borderTop: `1px solid ${BRAND.borderSoft}`, background: "#F5EFE3" }}>
-        Lic. Gerson &nbsp;&amp;&nbsp; Ing. Nanu &nbsp;·&nbsp; <b style={{ color: BRAND.stone }}>GAIB Services</b>
+        Lic. Gerson &nbsp;&amp;&nbsp; Ing. Nanu &nbsp;·&nbsp; <b style={{ color: BRAND.stone }}>Capitel Group</b>
       </div>
 
       {/* CartModal/FichaModal se renderizan como LLAMADA (no <JSX/>) a propósito:
