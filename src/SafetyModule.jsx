@@ -2032,9 +2032,10 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   };
 
   // ── FICHA DE ENTREGA DE EPP (cierre de la transaccion en proyecto) ──
-  // Agrupada POR COLABORADOR con linea de firma individual: al dejar el EPP
-  // en proyecto cada quien firma lo suyo, y GeoSafety (la "ferreteria")
-  // cierra su entrega con respaldo. Se imprime desde PREPARANDO ENVÍO.
+  // UNA SOLA TABLA compacta (rediseño ago 2026: antes era un bloque por
+  // colaborador y salian 5 paginas). Cada colaborador ocupa las filas de sus
+  // items y UNA celda de firma (rowspan) — asi entra en 1-2 paginas y sigue
+  // habiendo firma individual. Se imprime desde PREPARANDO ENVÍO.
   const exportFichaEntregaPDF = (r) => {
     const w = window.open("", "_blank");
     if (!w) { alert("Permite popups para generar el PDF"); return; }
@@ -2049,62 +2050,69 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     });
     const personas = Object.values(porPersona).sort((a, b) => a.nombre.localeCompare(b.nombre));
     const proyectosReq = [...new Set((r.lineas || []).map((l) => l.proyecto).filter(Boolean))];
-    const bloque = (p) => `<div style="border:1px solid #DBD4C8;border-radius:10px;overflow:hidden;margin-bottom:12px;page-break-inside:avoid">
-      <div style="background:#F7F1E8;padding:7px 14px;display:flex;justify-content:space-between;align-items:center;gap:10">
-        <span style="font-size:12.5px;font-weight:800">👷 ${esc(p.nombre)} <span style="font-size:10px;color:#7A7268;font-weight:700">${esc(p.empresa ? p.empresa.toUpperCase() : "")}</span></span>
-        <span style="font-size:10.5px;color:#C75F1F;font-weight:800">${esc([...p.proys].join(" · "))}</span>
-      </div>
-      <table style="width:100%;border-collapse:collapse">
-        <thead><tr>
-          <th style="text-align:left;padding:5px 14px;font-size:8.5px;color:#7A7268;letter-spacing:0.5px">CÓDIGO</th>
-          <th style="text-align:left;padding:5px 10px;font-size:8.5px;color:#7A7268;letter-spacing:0.5px">ÍTEM</th>
-          <th style="text-align:center;padding:5px 10px;font-size:8.5px;color:#7A7268;letter-spacing:0.5px">TALLA</th>
-          <th style="text-align:right;padding:5px 10px;font-size:8.5px;color:#7A7268;letter-spacing:0.5px">CANT.</th>
-          <th style="text-align:left;padding:5px 14px;font-size:8.5px;color:#7A7268;letter-spacing:0.5px">MOTIVO</th>
-        </tr></thead>
-        <tbody>${p.lineas.map((l) => `<tr>
-          <td style="padding:6px 14px;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;font-weight:700;color:#C75F1F;border-top:1px solid #F1EBE0">${esc(l.codigo || itemById(l.itemId)?.codigo) || "—"}</td>
-          <td style="padding:6px 10px;font-size:11px;font-weight:600;border-top:1px solid #F1EBE0">${esc(l.nombre)}</td>
-          <td style="padding:6px 10px;font-size:10.5px;text-align:center;color:#0F766E;font-weight:700;border-top:1px solid #F1EBE0">${esc(l.talla || itemById(l.itemId)?.talla) || "—"}</td>
-          <td style="padding:6px 10px;font-size:12px;font-weight:800;text-align:right;border-top:1px solid #F1EBE0">${l.qty}</td>
-          <td style="padding:6px 14px;font-size:10px;font-weight:700;color:#5C5853;border-top:1px solid #F1EBE0">${esc(motivoDef(l.motivo).chip)}</td>
-        </tr>`).join("")}</tbody>
-      </table>
-      <div style="display:flex;justify-content:flex-end;align-items:flex-end;gap:26px;padding:14px 14px 10px">
-        <div style="font-size:9.5px;color:#7A7268">Recibí conforme el equipo detallado y me comprometo a usarlo y cuidarlo.</div>
-        <div style="text-align:center;flex-shrink:0">
-          <div style="border-top:1.2px solid #2C2A28;width:190px;padding-top:4px;font-size:10px;font-weight:700">Firma del colaborador</div>
-          <div style="font-size:8.5px;color:#7A7268">Fecha: ____ / ____ / ______</div>
-        </div>
-      </div>
-    </div>`;
+    const totalUds = (r.lineas || []).reduce((s, l) => s + (Number(l.qty) || 0), 0);
+    const bd = "border-bottom:1px solid #F1EBE0";
+    // Un <tbody> por colaborador: mantiene sus filas juntas al paginar y
+    // permite el rowspan de nombre + firma.
+    const grupo = (p, i) => {
+      const n = p.lineas.length;
+      const zebra = i % 2 ? "background:#FCFAF6;" : "";
+      const celdaPersona = `<td rowspan="${n}" style="${zebra}padding:5px 8px;border-left:3px solid #E8762D;border-right:1px solid #F1EBE0;${bd};vertical-align:top">
+        <div style="font-size:10.5px;font-weight:800;line-height:1.2">${esc(p.nombre)}</div>
+        <div style="font-size:8px;color:#7A7268;font-weight:700">${esc(p.empresa ? p.empresa.toUpperCase() : "")}${p.proys.size ? ` · ${esc([...p.proys].join(", "))}` : ""}</div>
+      </td>`;
+      const celdaFirma = `<td rowspan="${n}" style="${zebra}padding:6px 8px 3px;border-left:1px solid #F1EBE0;${bd};vertical-align:bottom">
+        <div style="border-top:1px solid #2C2A28;padding-top:2px;font-size:7.5px;color:#7A7268;text-align:center;min-width:150px">Firma · Fecha ___/___/____</div>
+      </td>`;
+      return `<tbody style="page-break-inside:avoid">${p.lineas.map((l, li) => `<tr>
+        ${li === 0 ? celdaPersona : ""}
+        <td style="${zebra}padding:5px 8px;font-family:ui-monospace,Menlo,monospace;font-size:9px;font-weight:700;color:#C75F1F;${bd}">${esc(l.codigo || itemById(l.itemId)?.codigo) || "—"}</td>
+        <td style="${zebra}padding:5px 8px;font-size:9.5px;font-weight:600;${bd}">${esc(l.nombre)}${(l.talla || itemById(l.itemId)?.talla) ? `<span style="color:#0F766E;font-weight:800"> · T-${esc(l.talla || itemById(l.itemId)?.talla)}</span>` : ""}</td>
+        <td style="${zebra}padding:5px 8px;font-size:11px;font-weight:800;text-align:center;${bd}">${l.qty}</td>
+        <td style="${zebra}padding:5px 8px;font-size:8.5px;font-weight:700;color:#5C5853;${bd}">${esc(motivoDef(l.motivo).chip)}</td>
+        ${li === 0 ? celdaFirma : ""}
+      </tr>`).join("")}</tbody>`;
+    };
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(r.numero)} — Ficha de entrega EPP</title>
-      <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:30px;color:#2C2A28;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{.np{display:none}}</style>
+      <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:22px 26px;color:#2C2A28;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      @page{margin:11mm}@media print{.np{display:none}}thead{display:table-header-group}</style>
       </head><body>
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:14px">
-          <img src="${logoUrl}" style="height:46px" onerror="this.style.display='none'" />
+        <div style="display:flex;align-items:center;gap:12px">
+          <img src="${logoUrl}" style="height:40px" onerror="this.style.display='none'" />
           <div>
-            <div style="font-size:20px;font-weight:800;color:#E8762D;letter-spacing:-0.3px">FICHA DE ENTREGA DE EPP</div>
-            <div style="font-size:11.5px;color:#7A7268;margin-top:2px">Acta de entrega y recepción · Grupo Geotecnica — cada colaborador firma al recibir su equipo</div>
+            <div style="font-size:18px;font-weight:800;color:#E8762D;letter-spacing:-0.3px">FICHA DE ENTREGA DE EPP</div>
+            <div style="font-size:10.5px;color:#7A7268;margin-top:1px">Acta de entrega y recepción · Grupo Geotecnica</div>
           </div>
         </div>
         <div style="text-align:right">
-          <div style="font-family:ui-monospace,Menlo,monospace;font-size:16px;font-weight:800">${esc(r.numero)}</div>
-          <div style="font-size:11px;color:#7A7268">${fmtDate(r.fecha)}${proyectosReq.length ? ` · ${esc(proyectosReq.join(" · "))}` : ""}</div>
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:15px;font-weight:800">${esc(r.numero)}</div>
+          <div style="font-size:10px;color:#7A7268">${fmtDate(r.fecha)}${proyectosReq.length ? ` · ${esc(proyectosReq.join(" · "))}` : ""}</div>
+          <div style="font-size:10px;color:#7A7268">${personas.length} colaborador(es) · ${totalUds} unidad(es)</div>
         </div>
       </div>
-      <div style="height:4px;background:#E8762D;border-radius:2px;margin:12px 0 16px"></div>
-      ${personas.map(bloque).join("")}
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:24px;gap:20px;page-break-inside:avoid">
+      <div style="height:3px;background:#E8762D;border-radius:2px;margin:9px 0 8px"></div>
+      <div style="font-size:9.5px;color:#5C5853;margin-bottom:8px">Recibí conforme el equipo de protección personal detallado en la fila correspondiente a mi nombre y me comprometo a usarlo y cuidarlo.</div>
+      <table style="width:100%;border-collapse:collapse;border:1px solid #DBD4C8">
+        <thead><tr style="background:#F7F1E8">
+          <th style="text-align:left;padding:5px 8px;font-size:8px;color:#7A7268;letter-spacing:0.5px;border-bottom:1px solid #DBD4C8">COLABORADOR</th>
+          <th style="text-align:left;padding:5px 8px;font-size:8px;color:#7A7268;letter-spacing:0.5px;border-bottom:1px solid #DBD4C8">CÓDIGO</th>
+          <th style="text-align:left;padding:5px 8px;font-size:8px;color:#7A7268;letter-spacing:0.5px;border-bottom:1px solid #DBD4C8">EQUIPO ENTREGADO</th>
+          <th style="text-align:center;padding:5px 8px;font-size:8px;color:#7A7268;letter-spacing:0.5px;border-bottom:1px solid #DBD4C8">CANT.</th>
+          <th style="text-align:left;padding:5px 8px;font-size:8px;color:#7A7268;letter-spacing:0.5px;border-bottom:1px solid #DBD4C8">MOTIVO</th>
+          <th style="text-align:center;padding:5px 8px;font-size:8px;color:#7A7268;letter-spacing:0.5px;border-bottom:1px solid #DBD4C8">FIRMA DEL COLABORADOR</th>
+        </tr></thead>
+        ${personas.map(grupo).join("")}
+      </table>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:26px;gap:20px;page-break-inside:avoid">
         <div style="text-align:center">
-          <div style="border-top:1.5px solid #2C2A28;width:220px;padding-top:5px;font-size:11px;font-weight:700">${esc(userName)} — Entregó</div>
-          <div style="font-size:9.5px;color:#7A7268">GeoSafety / Seguridad Industrial · Grupo Geotecnica</div>
+          <div style="border-top:1.3px solid #2C2A28;width:210px;padding-top:4px;font-size:10.5px;font-weight:700">${esc(userName)} — Entregó</div>
+          <div style="font-size:9px;color:#7A7268">GeoSafety · Grupo Geotecnica</div>
         </div>
-        <div style="font-size:10px;color:#8B847C">Documento generado por GeoSafety · ${esc(r.numero)}</div>
+        <div style="font-size:9px;color:#8B847C">${esc(r.numero)}</div>
         <div style="text-align:center">
-          <div style="border-top:1.5px solid #2C2A28;width:220px;padding-top:5px;font-size:11px;font-weight:700">Recibió — Responsable en proyecto</div>
-          <div style="font-size:9.5px;color:#7A7268">Nombre y firma</div>
+          <div style="border-top:1.3px solid #2C2A28;width:210px;padding-top:4px;font-size:10.5px;font-weight:700">Recibió — Responsable en proyecto</div>
+          <div style="font-size:9px;color:#7A7268">Nombre y firma</div>
         </div>
       </div>
       <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
