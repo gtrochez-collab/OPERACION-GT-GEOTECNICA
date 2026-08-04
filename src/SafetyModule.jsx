@@ -1284,11 +1284,17 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   // Mes seleccionado en la pestaña Costos (formato YYYY-MM).
   const [costosMes, setCostosMes] = useState(new Date().toISOString().slice(0, 7));
 
-  const canManage = ["admin", "costos", "almacenista"].includes(userRole);
-  const canDeduct = canManage || userRole === "tesoreria";
-  // Pagar POs: tesoreria (Carolina) es la titular; admin y costos como en
-  // GeoShopping (emergencia).
-  const canPay = ["admin", "tesoreria", "costos"].includes(userRole);
+  // ── ROLES DENTRO DE GEOSAFETY (ago 2026, pedido de Gerson) ──
+  // INGENIERO RESIDENTE: actua como el CLIENTE de la ferreteria. Entra al
+  // catalogo, elige lo que necesita y manda la requisicion — y nada mas: no
+  // ve proveedores ni precios de compra, no edita items, no aprueba, no
+  // compra. Son Carolina (tesoreria), Christian (costos) y Oscar (logistica);
+  // sus permisos en OTROS modulos (tesoreria en GeoShopping, etc.) no cambian.
+  // Solo admin (Gerson y Daniel) maneja el modulo completo.
+  const esResidente = ["tesoreria", "costos", "logistica"].includes(userRole);
+  const canManage = !esResidente && ["admin", "costos", "almacenista"].includes(userRole);
+  const canDeduct = canManage;
+  const canPay = !esResidente && ["admin", "tesoreria", "costos"].includes(userRole);
   const readOnly = userRole === "gerencia";
 
   useEffect(() => {
@@ -1529,8 +1535,12 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     const ok = await sReqs([req, ...base]);
     if (!ok) return;
     const tienePerdida = lineas.some((l) => l.motivo === "perdida");
-    setCart([]); setModal(null); setSec("requisiciones");
-    alert(`✅ Requisición ${numero} enviada.` + (tienePerdida ? "\n\n⚠ Incluye PÉRDIDA/EXTRAVÍO: quedó registrada en \"Descuentos planilla\"." : ""));
+    setCart([]); setModal(null);
+    // El residente no tiene la pestaña Requisiciones: se queda en el catalogo.
+    if (!esResidente) setSec("requisiciones");
+    alert(esResidente
+      ? `✅ Requisición ${numero} enviada. Queda en revisión — te avisamos cuando el EPP salga hacia el proyecto.` + (tienePerdida ? "\n\n⚠ Incluye PÉRDIDA/EXTRAVÍO: se aplicará el descuento correspondiente en planilla." : "")
+      : `✅ Requisición ${numero} enviada.` + (tienePerdida ? "\n\n⚠ Incluye PÉRDIDA/EXTRAVÍO: quedó registrada en \"Descuentos planilla\"." : ""));
   };
 
   // NOTA (cambio de modelo, ago 2026): marcar una requisicion ENTREGADA ya
@@ -2320,9 +2330,15 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
           <div style={{ flex: "1 1 220px" }}><Input label="Buscar" placeholder="Casco, guantes, careta, código…" value={fQ} onChange={(e) => setFQ(e.target.value)} /></div>
           <div style={{ flex: "0 1 200px" }}><Select label="Categoría" placeholder="Todas" options={CATEGORIAS} value={fCat} onChange={(e) => setFCat(e.target.value)} /></div>
-          <div style={{ flex: "0 1 200px" }}><Select label="Proveedor" placeholder="Todos" options={providers.map((p) => ({ value: p.id, label: p.nombre }))} value={fProv} onChange={(e) => setFProv(e.target.value)} /></div>
+          {/* El ingeniero residente NO ve de que proveedor sale cada cosa */}
+          {!esResidente && <div style={{ flex: "0 1 200px" }}><Select label="Proveedor" placeholder="Todos" options={providers.map((p) => ({ value: p.id, label: p.nombre }))} value={fProv} onChange={(e) => setFProv(e.target.value)} /></div>}
           {canManage && <Btn variant="ghost" onClick={() => setModal({ t: "item" })}>+ Nuevo ítem</Btn>}
         </div>
+        {esResidente && (
+          <div style={{ background: "rgba(180,83,9,0.08)", border: "1px solid rgba(180,83,9,0.22)", borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: "#7A4B09", marginBottom: 14 }}>
+            🛒 Elegí el EPP que necesitás con <b>“Agregar al carrito”</b>. Después, en el carrito, indicá <b>para qué colaborador</b>, el <b>motivo</b> y el <b>proyecto</b>, y enviá la requisición — nosotros nos encargamos del resto (aprobación, compra y envío a proyecto).
+          </div>
+        )}
         {!items.length ? (
           <div style={{ textAlign: "center", padding: 60, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>
             <div style={{ fontSize: 40 }}>🦺</div>
@@ -2348,10 +2364,12 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                       {it.talla && <Chip color="#0F766E" bg="#CCFBF1">TALLA {it.talla}</Chip>}
                     </div>}
                     {it.descripcion && <div style={{ fontSize: 11.5, color: BRAND.stone, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.descripcion}</div>}
-                    <div style={{ fontSize: 12, color: BRAND.stone }}>🏪 {provName(it.proveedorId)}</div>
+                    {!esResidente && <div style={{ fontSize: 12, color: BRAND.stone }}>🏪 {provName(it.proveedorId)}</div>}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto", paddingTop: 4 }}>
                       <div style={{ fontSize: 17, fontWeight: 800, color: GREEN }}>{fmtL(it.precio)}</div>
-                      <div style={{ fontSize: 11.5, fontWeight: 700, color: sinStock ? BRAND.red : bajo ? "#B45309" : BRAND.graphite }}>{sinStock ? "Sin stock" : `Stock: ${it.stock}${bajo ? " ⚠" : ""}`}</div>
+                      {/* Al residente no le sirve el stock del almacen (el
+                          abastecimiento lo resolvemos nosotros) */}
+                      {!esResidente && <div style={{ fontSize: 11.5, fontWeight: 700, color: sinStock ? BRAND.red : bajo ? "#B45309" : BRAND.graphite }}>{sinStock ? "Sin stock" : `Stock: ${it.stock}${bajo ? " ⚠" : ""}`}</div>}
                     </div>
                     {!readOnly && <Btn onClick={() => addToCart(it)} style={{ width: "100%" }}>🛒 Agregar al carrito</Btn>}
                     {canManage && (
@@ -3223,7 +3241,8 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   };
 
   // ══════════════════════════ LAYOUT ══════════════════════════
-  const TABS = [
+  // El ingeniero residente SOLO ve el catalogo (pide y listo).
+  const TABS = esResidente ? [{ id: "catalogo", label: "🛒 Catálogo" }] : [
     { id: "catalogo", label: "🛒 Catálogo" },
     { id: "requisiciones", label: "📋 Requisiciones", badge: reqsPendientes },
     { id: "porcomprar", label: "🧾 Por comprar", badge: posAbiertas, badgeColor: "#B45309" },
@@ -3241,7 +3260,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
           <div style={{ width: 40, height: 40, borderRadius: R.md, background: "#B45309", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 21 }}>🦺</div>
           <div>
             <div style={{ fontSize: 18, fontWeight: 800, color: BRAND.charcoal, fontFamily: FONT.display }}>GeoSafety</div>
-            <div style={{ fontSize: 11.5, color: BRAND.stone }}>EPP · Catálogo, dotación y requisiciones — Grupo Geotecnica</div>
+            <div style={{ fontSize: 11.5, color: BRAND.stone }}>{esResidente ? "Catálogo de EPP · pedí lo que necesita tu proyecto — Grupo Geotecnica" : "EPP · Catálogo, dotación y requisiciones — Grupo Geotecnica"}</div>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -3261,7 +3280,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       </div>
 
       <div style={{ padding: "20px 26px 40px", maxWidth: 1280, margin: "0 auto", width: "100%", boxSizing: "border-box", flex: 1 }}>
-        {!loaded ? <div style={{ textAlign: "center", padding: 60, color: BRAND.stone }}>Cargando GeoSafety…</div> : (
+        {!loaded ? <div style={{ textAlign: "center", padding: 60, color: BRAND.stone }}>Cargando GeoSafety…</div> : esResidente ? renderCatalogo() : (
           <>
             {sec === "catalogo" && renderCatalogo()}
             {sec === "requisiciones" && renderRequisiciones()}

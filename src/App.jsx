@@ -52,7 +52,11 @@ const MODULES = [
     desc: "EPP: catalogo con carrito, inventario, proveedores y descuentos por perdida",
     accent: "#B45309", // ambar seguridad industrial
     accentSoft: "rgba(180,83,9,0.10)",
-    roles: ["admin", "costos", "tesoreria", "gerencia", "coordinador_maquinas", "asistente_compras", "recepcion", "logistica", "almacenista", "asistente"],
+    // Acceso restringido (ago 2026, pedido de Gerson): admin (Gerson y Daniel)
+    // = todo; tesoreria (Carolina), costos (Christian) y logistica (Oscar)
+    // entran como INGENIEROS RESIDENTES — solo catalogo, carrito y enviar
+    // requisicion. Todos los demas roles quedaron fuera del modulo.
+    roles: ["admin", "tesoreria", "costos", "logistica"],
   },
   {
     id: "logistica",
