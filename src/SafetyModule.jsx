@@ -1287,14 +1287,14 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   // ── ROLES DENTRO DE GEOSAFETY (ago 2026, pedido de Gerson) ──
   // INGENIERO RESIDENTE: actua como el CLIENTE de la ferreteria. Entra al
   // catalogo, elige lo que necesita y manda la requisicion — y nada mas: no
-  // ve proveedores ni precios de compra, no edita items, no aprueba, no
-  // compra. Son Carolina (tesoreria), Christian (costos) y Oscar (logistica);
-  // sus permisos en OTROS modulos (tesoreria en GeoShopping, etc.) no cambian.
-  // Solo admin (Gerson y Daniel) maneja el modulo completo.
-  const esResidente = ["tesoreria", "costos", "logistica"].includes(userRole);
-  const canManage = !esResidente && ["admin", "costos", "almacenista"].includes(userRole);
+  // ve proveedores, no edita items, no aprueba, no compra. Son Christian
+  // (costos) y Oscar (logistica); sus permisos en OTROS modulos no cambian.
+  // Acceso COMPLETO: admin (Gerson y Daniel) y tesoreria (Carolina) — ella
+  // ademas es la que paga las ordenes y maneja los descuentos de planilla.
+  const esResidente = ["costos", "logistica"].includes(userRole);
+  const canManage = ["admin", "tesoreria", "almacenista"].includes(userRole);
   const canDeduct = canManage;
-  const canPay = !esResidente && ["admin", "tesoreria", "costos"].includes(userRole);
+  const canPay = ["admin", "tesoreria"].includes(userRole);
   const readOnly = userRole === "gerencia";
 
   useEffect(() => {
