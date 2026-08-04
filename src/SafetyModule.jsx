@@ -1263,6 +1263,8 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const [poOpen, setPoOpen] = useState(null); // orden abierta en el tablero Por comprar (vista detalle)
   const [fInvQ, setFInvQ] = useState("");   // busqueda en Inventario (nombre/codigo)
   const [invTodo, setInvTodo] = useState(false); // Inventario: mostrar tambien items SIN stock (default: solo con stock)
+  const [invVista, setInvVista] = useState("cards"); // Inventario: "cards" (con foto, por categoria) | "tabla" (compacta)
+  const [fInvCat, setFInvCat] = useState("");        // Inventario: filtro de categoria
   const [fDotQ, setFDotQ] = useState("");
   const [fDotCo, setFDotCo] = useState("");
   const [fDotPuesto, setFDotPuesto] = useState("");
@@ -1702,8 +1704,104 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     if (!okReq) return { ok: false }; // sReqs ya avisó; el stock ni se tocó
     const ni = baseItems.map((it) => (agg[it.id] ? { ...it, stock: Math.max(0, (Number(it.stock) || 0) - agg[it.id]) } : it));
     const okItems = await sItems(ni);
-    if (!okItems) alert(`⚠ ${r.numero} quedó en PREPARANDO ENVÍO pero el stock NO se pudo descontar. Ajustá a mano en Inventario:\n${filas.map((f) => `  −${f.pedido} ${f.it.nombre}`).join("\n")}`);
+    if (!okItems) {
+      alert(`⚠ ${r.numero} quedó en PREPARANDO ENVÍO pero el stock NO se pudo descontar. Ajustá a mano en Inventario:\n${filas.map((f) => `  −${f.pedido} ${f.it.nombre}`).join("\n")}`);
+      // Se marca la requisicion: asi al eliminarla NO se "devuelve" un stock
+      // que en realidad nunca salio (inflaria el inventario).
+      try { await sReqs((await store.getCloud("ep-reqs")).map((x) => (x.id === r.id ? { ...x, stockPendienteAjuste: true } : x))); } catch { /* best-effort */ }
+    }
     return { ok: true, stockOk: okItems };
+  };
+
+  // Borrar un item con MERGE contra la nube (sin esto se escribe el snapshot
+  // local y se pisan entradas de stock o items nuevos de otros usuarios) +
+  // aviso explicito cuando el item TIENE stock registrado (se pierde el
+  // registro de almacen). Lo usan Inventario y Catalogo.
+  const borrarItem = async (it) => {
+    const stock = Number(it.stock) || 0;
+    const aviso = stock > 0 ? `\n\n⚠ Tiene ${stock} unidad(es) registradas (${fmtL((Number(it.precio) || 0) * stock)}): ese registro de almacén se PIERDE. Si las unidades existen físicamente, mejor ajustá el stock con ✏️.` : "";
+    if (!confirm(`¿Borrar "${it.nombre}" del inventario y del catálogo?${aviso}\n\nLas requisiciones ya creadas no se tocan.`)) return;
+    let base = items;
+    try { const c = await store.getCloud("ep-items"); if (Array.isArray(c) && c.length) base = c; } catch { /* nube caída: memoria */ }
+    await sItems(base.filter((x) => x.id !== it.id));
+  };
+
+  // ── ELIMINAR una requisicion DEVOLVIENDO el stock que ya habia salido ──
+  // Caso real (Gerson): una requisicion erronea (nombre mal, item equivocado)
+  // que ya se aprobo y se preparo el envio. Al borrarla, las unidades que
+  // salieron del almacen REGRESAN — el inventario queda como antes de
+  // preparar ese envio. Merge contra la nube en ambas claves.
+  const eliminarReq = async (r) => {
+    // Helper: calcula que devolver contra listas dadas. Se corre DOS veces —
+    // una para armar el confirm (preview) y otra DESPUES del confirm con
+    // lecturas frescas, porque el dialogo puede quedar abierto minutos y
+    // mientras tanto otro usuario puede recibir una PO (sumar stock) o crear
+    // requisiciones: escribir el snapshot viejo las borraria.
+    const calc = (reqBase, itemBase) => {
+      const req = reqBase.find((x) => x.id === r.id);
+      const devolver = {}; const noExisten = [];
+      if (req && req.stockDescontado && !req.stockPendienteAjuste) {
+        (req.lineas || []).forEach((l) => {
+          if (!l.itemId) return;
+          if (itemBase.some((i) => i.id === l.itemId)) devolver[l.itemId] = (devolver[l.itemId] || 0) + (Number(l.qty) || 0);
+          else noExisten.push(`${l.qty} × ${l.nombre}`);
+        });
+      }
+      return { req, devolver, noExisten };
+    };
+    const leer = async () => {
+      let rq = reqs, im = items;
+      try { const c = await store.getCloud("ep-reqs"); if (Array.isArray(c) && c.length) rq = c; } catch { /* nube caída: memoria */ }
+      try { const c = await store.getCloud("ep-items"); if (Array.isArray(c) && c.length) im = c; } catch { /* nube caída: memoria */ }
+      return [rq, im];
+    };
+    const nombresDe = (devolver, itemBase) => Object.entries(devolver).map(([iid, q]) => `  +${q} ${itemBase.find((i) => i.id === iid)?.nombre || iid}`).join("\n");
+
+    let [baseReqs, baseItems] = await leer();
+    const prev = calc(baseReqs, baseItems);
+    // Si la requisicion ya NO esta en la nube, otro usuario la borro: abortar
+    // (con el fallback local se devolveria el stock DOS veces).
+    if (!prev.req) { alert(`⚠ La requisición ${r.numero} ya fue eliminada por otro usuario. No se hizo nada.`); if (reqOpen === r.id) setReqOpen(null); return; }
+    const fresca = prev.req;
+
+    // Avisos de lo que se pierde con la requisicion (vive todo en ep-reqs)
+    const lineasPerdida = (fresca.lineas || []).filter((l) => l.motivo === "perdida");
+    const yaDeducidas = lineasPerdida.filter((l) => l.deducido).length;
+    const personas = new Set((fresca.lineas || []).map((l) => l.paraEmpId).filter(Boolean)).size;
+    const posLigadas = posDeReq(fresca);
+    const avisoStock = Object.keys(prev.devolver).length
+      ? `\n\n📦 El stock que había salido del almacén REGRESA al inventario:\n${nombresDe(prev.devolver, baseItems)}`
+      : fresca.stockDescontado ? "\n\n📦 (No hay stock que devolver: los ítems ya no están en el catálogo o quedó pendiente de ajuste manual.)" : "";
+    const avisoNo = prev.noExisten.length ? `\n\n⚠ No se devuelven (ítems borrados del catálogo):\n${prev.noExisten.map((s) => "  " + s).join("\n")}` : "";
+    const avisoDot = fresca.estado === "entregada" && personas ? `\n\n👷 El EPP dejará de contar en la dotación de ${personas} colaborador(es).` : "";
+    const avisoPerd = lineasPerdida.length ? `\n\n⚠ Salen de "Descuentos planilla" ${lineasPerdida.length} línea(s) por pérdida${yaDeducidas ? ` (${yaDeducidas} ya marcada(s) como deducida(s))` : ""}.` : "";
+    const avisoPos = posLigadas.length ? `\n\n🧾 Sus órdenes de compra NO se borran (${posLigadas.map((p) => p.numero).join(", ")}) — quedan en "Por comprar" con su historial de pago.` : "";
+    const estadoLbl = (ESTADOS[fresca.estado] || {}).label || fresca.estado;
+    if (!confirm(`¿ELIMINAR la requisición ${r.numero} (${estadoLbl})?\n\nSe borra del historial. No se puede deshacer.${avisoStock}${avisoNo}${avisoDot}${avisoPerd}${avisoPos}`)) return;
+    // Requisicion ENVIADA A PROYECTO: el EPP ya salio fisicamente (esta con
+    // la gente). Devolver stock ahi solo tiene sentido si la entrega NO
+    // ocurrio de verdad — lo decide el usuario, no el sistema.
+    let devolverStock = true;
+    if (fresca.estado === "entregada" && Object.keys(prev.devolver).length) {
+      devolverStock = confirm(`${r.numero} ya estaba ENVIADA A PROYECTO — ese EPP salió físicamente del almacén.\n\n¿Devolver igual las unidades al inventario?\n\n• Aceptar = sí, la entrega no ocurrió realmente (fue un error).\n• Cancelar = no, el EPP sí se entregó (el stock queda como está).`);
+    }
+
+    // Re-lectura pegada al write: el confirm pudo estar abierto un rato
+    [baseReqs, baseItems] = await leer();
+    const now = calc(baseReqs, baseItems);
+    if (!now.req) { alert(`⚠ La requisición ${r.numero} ya fue eliminada por otro usuario mientras confirmabas. No se hizo nada.`); if (reqOpen === r.id) setReqOpen(null); return; }
+    const devolver = devolverStock ? now.devolver : {};
+    const lista = nombresDe(devolver, baseItems);
+    const okReq = await sReqs(baseReqs.filter((x) => x.id !== r.id));
+    if (!okReq) return; // sReqs ya avisó; el stock no se toca
+    if (Object.keys(devolver).length) {
+      const ni = baseItems.map((it) => (devolver[it.id] ? { ...it, stock: (Number(it.stock) || 0) + devolver[it.id] } : it));
+      const okItems = await sItems(ni);
+      alert(okItems
+        ? `🗑 ${r.numero} eliminada.\n📦 Stock devuelto al almacén:\n${lista}`
+        : `🗑 ${r.numero} eliminada, pero el stock NO se pudo devolver. Ajustá a mano en Inventario:\n${lista}`);
+    }
+    if (reqOpen === r.id) setReqOpen(null);
   };
 
   const ReqStockModal = () => {
@@ -2251,7 +2349,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                     {canManage && (
                       <div style={{ display: "flex", gap: 6 }}>
                         <Btn small variant="ghost" style={{ flex: 1 }} onClick={() => setModal({ t: "item", item: it })}>✏️ Editar</Btn>
-                        <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => { if (!confirm(`¿Borrar "${it.nombre}" del catálogo?\n\nLas requisiciones ya creadas no se tocan.`)) return; await sItems(items.filter((x) => x.id !== it.id)); }}>🗑</Btn>
+                        <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={() => borrarItem(it)}>🗑</Btn>
                       </div>
                     )}
                   </div>
@@ -2357,7 +2455,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                     {(r.estado === "envio" || r.estado === "entregada") && <Btn small variant="info" onClick={() => exportFichaEntregaPDF(r)} style={{ whiteSpace: "nowrap" }}>📋 Ficha de entrega</Btn>}
                     {r.salidaFotoFile && <Btn small variant="ghost" onClick={() => verArchivo(r.salidaFotoFile)}>📸 Foto de salida</Btn>}
                     {userRole === "admin" && (r.estado === "pendiente" || r.estado === "aprobada") && <Btn small variant="ghost" onClick={() => setModal({ t: "req-edit", req: r })}>✏️ Editar</Btn>}
-                    {userRole === "admin" && <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => { if (!confirm(`¿ELIMINAR la requisición ${r.numero}?\n\nSe borra del historial. No se puede deshacer.`)) return; await sReqs(reqs.filter((x) => x.id !== r.id)); }}>🗑</Btn>}
+                    {userRole === "admin" && <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={() => eliminarReq(r)}>🗑</Btn>}
                   </div>
                 </div>
                 <div style={{ overflowX: "auto" }}>
@@ -2724,59 +2822,159 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   };
 
   // ══════════════════════════ INVENTARIO ══════════════════════════
+  // Vista de ALMACEN (no catalogo): mismas fotos, pero agrupado por categoria
+  // y con el STOCK como protagonista (badge grande sobre la foto) + el valor
+  // inmovilizado por item. Por default solo lo que hay en stock (pedido de
+  // Gerson: "si no está registrado, NO HAY STOCK"); el toggle o la busqueda
+  // abren el catalogo completo para dar entrada manual o ajustar.
   const renderInventario = () => {
-    // El inventario muestra por default SOLO lo que hay en stock (pedido de
-    // Gerson: "si no está registrado, NO HAY STOCK" — el catalogo completo
-    // solo quita espacio). El toggle abre la vista completa para ajustar o
-    // dar entrada manual a cualquier item; la busqueda tambien la abre.
     const conStock = items.filter((it) => (Number(it.stock) || 0) > 0);
     const universo = invTodo || fInvQ ? items : conStock;
     const sorted = [...universo]
-      .filter((it) => !fInvQ || norm(it.nombre).includes(norm(fInvQ)) || norm(it.codigo).includes(norm(fInvQ)) || norm(it.descripcion).includes(norm(fInvQ)))
+      .filter((it) => (!fInvCat || it.categoria === fInvCat)
+        && (!fInvQ || norm(it.nombre).includes(norm(fInvQ)) || norm(it.codigo).includes(norm(fInvQ)) || norm(it.descripcion).includes(norm(fInvQ))))
       .sort((a, b) => String(a.categoria).localeCompare(b.categoria) || String(a.nombre).localeCompare(b.nombre));
     const valorTotal = items.reduce((s, i) => s + (Number(i.precio) || 0) * (Number(i.stock) || 0), 0);
+    const unidades = conStock.reduce((s, i) => s + (Number(i.stock) || 0), 0);
+    // "Stock bajo" cuenta sobre TODO el catalogo (no solo conStock): un item
+    // con minimo definido y stock 0 es el MAS urgente de reponer.
+    const bajos = items.filter((it) => (Number(it.minStock) || 0) > 0 && (Number(it.stock) || 0) <= (Number(it.minStock) || 0));
     const sinCodigo = items.filter((it) => !String(it.codigo || "").trim());
+    // Agrupado por categoria, respetando el orden de CATEGORIAS
+    const grupos = CATEGORIAS.map((c) => ({ cat: c, list: sorted.filter((it) => it.categoria === c.value) }))
+      .concat([{ cat: { value: "", label: "Sin categoría", icon: "🦺" }, list: sorted.filter((it) => !CATEGORIAS.some((c) => c.value === it.categoria)) }])
+      .filter((g) => g.list.length);
+    const kpi = (label, valor, color, nota) => (
+      <div style={{ flex: "1 1 170px", background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${color}`, borderRadius: R.md, padding: "13px 15px" }}>
+        <div style={{ fontSize: 10.5, fontWeight: 800, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color, marginTop: 3 }}>{valor}</div>
+        {nota && <div style={{ fontSize: 11.5, color: BRAND.stone }}>{nota}</div>}
+      </div>
+    );
     return (
       <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-          <div style={{ flex: "1 1 280px", minWidth: 220 }}>
-            <Input label="Buscar en inventario" placeholder="Nombre o código…" value={fInvQ} onChange={(e) => setFInvQ(e.target.value)} />
-            <div style={{ fontSize: 12, color: BRAND.graphite, marginTop: 6 }}>
-              {fInvQ ? `${sorted.length} resultado(s)` : `${conStock.length} ítem(s) con stock`} · Valor del inventario: <b style={{ color: GREEN }}>{fmtL(valorTotal)}</b>{sinCodigo.length ? <span style={{ color: "#B45309" }}> · {sinCodigo.length} sin código</span> : null}
-            </div>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: BRAND.graphite, marginTop: 5, cursor: "pointer" }}>
-              <input type="checkbox" checked={invTodo} onChange={(e) => setInvTodo(e.target.checked)} />
-              Mostrar catálogo completo ({items.length} ítems, incluye sin stock)
-            </label>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+          {kpi("En almacén", conStock.length, BRAND.orange, "ítems con stock")}
+          {kpi("Unidades", unidades, BRAND.charcoal, "piezas disponibles")}
+          {kpi("Valor inmovilizado", fmtL(valorTotal), GREEN, "stock × precio")}
+          {kpi("Stock bajo", bajos.length, bajos.length ? BRAND.red : BRAND.ash, "por debajo del mínimo")}
+        </div>
+        <div style={{ background: "rgba(180,83,9,0.08)", border: "1px solid rgba(180,83,9,0.22)", borderRadius: R.md, padding: "8px 13px", fontSize: 12, color: "#7A4B09", marginBottom: 14 }}>
+          📦 <b>Vista de almacén</b> — lo que realmente tenemos físicamente. Entra al recibir una orden de compra, sale al preparar el envío de una requisición. Los ajustes manuales se hacen con ✏️.
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
+          <div style={{ flex: "1 1 230px" }}><Input label="Buscar en inventario" placeholder="Nombre o código…" value={fInvQ} onChange={(e) => setFInvQ(e.target.value)} /></div>
+          <div style={{ flex: "0 1 200px" }}><Select label="Categoría" placeholder="Todas" options={CATEGORIAS} value={fInvCat} onChange={(e) => setFInvCat(e.target.value)} /></div>
+          <div style={{ display: "flex", gap: 0, paddingBottom: 1 }}>
+            {[["cards", "🖼 Fotos"], ["tabla", "☰ Tabla"]].map(([v, l], i) => (
+              <button key={v} onClick={() => setInvVista(v)} style={{ padding: "9px 13px", fontSize: 12.5, fontWeight: 700, fontFamily: FONT.body, cursor: "pointer", border: `1px solid ${BRAND.border}`, borderRadius: i === 0 ? `${R.sm}px 0 0 ${R.sm}px` : `0 ${R.sm}px ${R.sm}px 0`, borderLeft: i === 1 ? "none" : undefined, background: invVista === v ? BRAND.orange : "#fff", color: invVista === v ? "#fff" : BRAND.graphite }}>{l}</button>
+            ))}
           </div>
           {canManage && <Btn onClick={() => setModal({ t: "item" })}>+ Nuevo ítem</Btn>}
         </div>
-        <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Tipo</th><th style={th}>Categoría</th><th style={th}>Proveedor</th><th style={{ ...th, textAlign: "right" }}>Precio</th><th style={{ ...th, textAlign: "right" }}>Stock</th><th style={{ ...th, textAlign: "right" }}>Mín.</th>{canManage && <th style={{ ...th, textAlign: "right" }}>Acciones</th>}</tr></thead>
-              <tbody>
-                {sorted.map((it) => {
-                  const sinStock = (Number(it.stock) || 0) <= 0; const bajo = (Number(it.stock) || 0) <= (Number(it.minStock) || 0);
-                  return (
-                    <tr key={it.id} style={{ background: sinStock ? BRAND.redSoft : bajo ? BRAND.yellowSoft : "transparent" }}>
-                      <td style={{ ...td, fontFamily: FONT.mono, fontSize: 11.5, fontWeight: 700, color: it.codigo ? BRAND.orange : BRAND.ash }}>{it.codigo || "—"}</td>
-                      <td style={{ ...td, fontWeight: 700 }}>{it.nombre}</td>
-                      <td style={td}>{tipoDef(tipoDeItem(it)).icon} {tipoDef(tipoDeItem(it)).label}</td>
-                      <td style={td}>{catLabel(it.categoria)}</td>
-                      <td style={td}>{provName(it.proveedorId)}</td>
-                      <td style={{ ...td, textAlign: "right", fontWeight: 700, color: GREEN }}>{fmtL(it.precio)}</td>
-                      <td style={{ ...td, textAlign: "right", fontWeight: 800, color: sinStock ? BRAND.red : bajo ? "#B45309" : BRAND.charcoal }}>{Number(it.stock) || 0}{bajo && " ⚠"}</td>
-                      <td style={{ ...td, textAlign: "right", color: BRAND.stone }}>{Number(it.minStock) || 0}</td>
-                      {canManage && <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}><Btn small variant="ghost" onClick={() => setModal({ t: "item", item: it })}>✏️</Btn>{" "}<Btn small variant="ghost" style={{ color: BRAND.red }} onClick={async () => { if (!confirm(`¿Borrar "${it.nombre}" del catálogo?`)) return; await sItems(items.filter((x) => x.id !== it.id)); }}>🗑</Btn></td>}
-                    </tr>
-                  );
-                })}
-                {!items.length && <tr><td style={{ ...td, textAlign: "center", color: BRAND.stone, padding: 30 }} colSpan={canManage ? 9 : 8}>Sin ítems. Agregalos con "+ Nuevo ítem".</td></tr>}
-              </tbody>
-            </table>
-          </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: BRAND.graphite, cursor: "pointer" }}>
+            <input type="checkbox" checked={invTodo} onChange={(e) => setInvTodo(e.target.checked)} />
+            Mostrar catálogo completo ({items.length} ítems, incluye sin stock)
+          </label>
+          <div style={{ fontSize: 12, color: BRAND.stone }}>{sorted.length} ítem(s) en pantalla{sinCodigo.length ? <span style={{ color: "#B45309" }}> · {sinCodigo.length} sin código</span> : null}</div>
         </div>
+
+        {!sorted.length ? (
+          <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>
+            <div style={{ fontSize: 38 }}>📦</div>
+            <div style={{ fontWeight: 700, color: BRAND.ink, marginTop: 8 }}>{items.length ? (fInvQ || fInvCat ? "Sin resultados con esos filtros." : "No hay nada en el almacén todavía.") : "Sin ítems cargados."}</div>
+            <div style={{ fontSize: 12.5, marginTop: 4 }}>{items.length && !fInvQ && !fInvCat ? "El stock entra al recibir una orden en \"Por comprar\", o marcá \"catálogo completo\" y ajustalo a mano con ✏️." : ""}</div>
+          </div>
+        ) : invVista === "cards" ? (
+          grupos.map(({ cat, list }) => {
+            const uds = list.reduce((s, i) => s + (Number(i.stock) || 0), 0);
+            const val = list.reduce((s, i) => s + (Number(i.precio) || 0) * (Number(i.stock) || 0), 0);
+            return (
+              <div key={cat.value || "sincat"} style={{ marginBottom: 22 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "7px 12px", background: BRAND.beigeLight, border: `1px solid ${BRAND.border}`, borderRadius: R.md, marginBottom: 12 }}>
+                  <span style={{ fontSize: 15 }}>{cat.icon}</span>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: BRAND.charcoal, textTransform: "uppercase", letterSpacing: 0.4 }}>{cat.label}</span>
+                  <Chip color={BRAND.graphite} bg="#fff">{list.length} ítem(s)</Chip>
+                  <Chip color={BRAND.orange} bg="rgba(232,118,45,0.10)">{uds} uds</Chip>
+                  <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 800, color: GREEN }}>{fmtL(val)}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(215px, 1fr))", gap: 13 }}>
+                  {list.map((it) => {
+                    const stock = Number(it.stock) || 0;
+                    const min = Number(it.minStock) || 0;
+                    const sinStock = stock <= 0;
+                    const bajo = !sinStock && min > 0 && stock <= min;
+                    const foto = itemPhoto(it); const tp = tipoDef(tipoDeItem(it));
+                    const badgeBg = sinStock ? BRAND.red : bajo ? "#B45309" : GREEN;
+                    return (
+                      <div key={it.id} style={{ background: "#fff", border: `1px solid ${sinStock ? BRAND.red + "40" : BRAND.border}`, borderRadius: R.lg, overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: BRAND.shadowSm }}>
+                        <div style={{ height: 118, background: foto ? "#F1EDE5" : BRAND.beigeLight, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", borderBottom: `1px solid ${BRAND.borderSoft}` }}>
+                          {foto ? <img src={foto} alt={it.nombre} style={{ width: "100%", height: "100%", objectFit: "cover", opacity: sinStock ? 0.55 : 1 }} /> : <div style={{ fontSize: 40, opacity: 0.45 }}>{catIcon(it.categoria)}</div>}
+                          <span style={{ position: "absolute", top: 7, left: 7 }}><Chip color={BRAND.graphite} bg="rgba(255,255,255,0.92)">{tp.icon} {tp.label}</Chip></span>
+                          {/* El STOCK es el protagonista: asi se distingue del catalogo */}
+                          <div title={sinStock ? "Sin stock" : bajo ? `Stock bajo (mínimo ${min})` : "Unidades en almacén"}
+                            style={{ position: "absolute", bottom: 7, right: 7, background: badgeBg, color: "#fff", borderRadius: R.md, padding: "3px 10px", display: "flex", alignItems: "baseline", gap: 4, boxShadow: "0 2px 6px rgba(0,0,0,0.22)" }}>
+                            <span style={{ fontSize: 18, fontWeight: 800, lineHeight: 1 }}>{stock}</span>
+                            <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.5 }}>UDS{bajo ? " ⚠" : ""}</span>
+                          </div>
+                        </div>
+                        <div style={{ padding: "11px 12px", display: "flex", flexDirection: "column", gap: 5, flex: 1 }}>
+                          <div style={{ fontWeight: 800, fontSize: 13.5, color: BRAND.charcoal, lineHeight: 1.25 }}>{it.nombre}</div>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            {it.codigo ? <span style={{ fontFamily: FONT.mono, fontSize: 10.5, fontWeight: 700, color: BRAND.orange, letterSpacing: 0.4 }}>#{it.codigo}</span> : <span style={{ fontSize: 10.5, color: "#B45309", fontWeight: 700 }}>sin código</span>}
+                            {it.talla && <Chip color="#0F766E" bg="#CCFBF1">TALLA {it.talla}</Chip>}
+                          </div>
+                          <div style={{ fontSize: 11.5, color: BRAND.stone }}>🏪 {provName(it.proveedorId)}</div>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: "auto", paddingTop: 6, borderTop: `1px dashed ${BRAND.border}` }}>
+                            <div>
+                              <div style={{ fontSize: 10.5, color: BRAND.stone, fontWeight: 700 }}>c/u {fmtL(it.precio)}{min > 0 ? ` · mín ${min}` : ""}</div>
+                              <div style={{ fontSize: 14, fontWeight: 800, color: GREEN }}>{fmtL((Number(it.precio) || 0) * stock)}</div>
+                            </div>
+                            {canManage && (
+                              <div style={{ display: "flex", gap: 5 }}>
+                                <Btn small variant="ghost" onClick={() => setModal({ t: "item", item: it })}>✏️</Btn>
+                                <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={() => borrarItem(it)}>🗑</Btn>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.lg, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr style={{ background: BRAND.beigeLight }}><th style={th}>Código</th><th style={th}>Ítem</th><th style={th}>Tipo</th><th style={th}>Categoría</th><th style={th}>Proveedor</th><th style={{ ...th, textAlign: "right" }}>Precio</th><th style={{ ...th, textAlign: "right" }}>Stock</th><th style={{ ...th, textAlign: "right" }}>Mín.</th><th style={{ ...th, textAlign: "right" }}>Valor</th>{canManage && <th style={{ ...th, textAlign: "right" }}>Acciones</th>}</tr></thead>
+                <tbody>
+                  {sorted.map((it) => {
+                    const stock = Number(it.stock) || 0; const min = Number(it.minStock) || 0;
+                    const sinStock = stock <= 0; const bajo = !sinStock && min > 0 && stock <= min;
+                    return (
+                      <tr key={it.id} style={{ background: sinStock ? BRAND.redSoft : bajo ? BRAND.yellowSoft : "transparent" }}>
+                        <td style={{ ...td, fontFamily: FONT.mono, fontSize: 11.5, fontWeight: 700, color: it.codigo ? BRAND.orange : BRAND.ash }}>{it.codigo || "—"}</td>
+                        <td style={{ ...td, fontWeight: 700 }}>{it.nombre}{it.talla ? <span style={{ color: "#0F766E" }}> · Talla {it.talla}</span> : null}</td>
+                        <td style={td}>{tipoDef(tipoDeItem(it)).icon} {tipoDef(tipoDeItem(it)).label}</td>
+                        <td style={td}>{catLabel(it.categoria)}</td>
+                        <td style={td}>{provName(it.proveedorId)}</td>
+                        <td style={{ ...td, textAlign: "right", fontWeight: 700, color: GREEN }}>{fmtL(it.precio)}</td>
+                        <td style={{ ...td, textAlign: "right", fontWeight: 800, color: sinStock ? BRAND.red : bajo ? "#B45309" : BRAND.charcoal }}>{stock}{bajo && " ⚠"}</td>
+                        <td style={{ ...td, textAlign: "right", color: BRAND.stone }}>{min}</td>
+                        <td style={{ ...td, textAlign: "right", fontWeight: 700, color: GREEN }}>{fmtL((Number(it.precio) || 0) * stock)}</td>
+                        {canManage && <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}><Btn small variant="ghost" onClick={() => setModal({ t: "item", item: it })}>✏️</Btn>{" "}<Btn small variant="ghost" style={{ color: BRAND.red }} onClick={() => borrarItem(it)}>🗑</Btn></td>}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
