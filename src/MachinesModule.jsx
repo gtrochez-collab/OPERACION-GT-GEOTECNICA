@@ -1298,7 +1298,9 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   const isCostos = userRole === "costos";
   const isRecepcion = userRole === "recepcion";
   const isAsistenteCompras = userRole === "asistente_compras";
-  const isVisorCompras = userRole === "visor_compras";   // Arturo Trochez — solo lectura, acceso completo
+  // Arturo (compras_ops) tiene permisos plenos en GeoShopping pero en Maquinas
+  // sigue siendo SOLO LECTURA, igual que antes (no se le amplio el alcance).
+  const isVisorCompras = userRole === "visor_compras" || userRole === "compras_ops";
   // Lic. Fernando Diaz — coordinador de maquinaria. Crea solicitudes de pago
   // de repuestos/mantenimiento y gestiona el catalogo de maquinas.
   const isCoordinadorMaquinas = userRole === "coordinador_maquinas";

@@ -34,7 +34,7 @@ const MODULES = [
     desc: "Solicitudes de compra, pagos y comprobantes de tesoreria",
     accent: "#8B3A3A", // borgona profesional
     accentSoft: "rgba(139,58,58,0.10)",
-    roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion", "asistente_compras", "visor_compras"],
+    roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion", "asistente_compras", "visor_compras", "compras_ops"],
   },
   {
     id: "maquinas",
@@ -43,7 +43,7 @@ const MODULES = [
     desc: "Solicitudes de pago de repuestos y mantenimiento de maquinaria, por proyecto",
     accent: "#7C3AED",
     accentSoft: "rgba(124,58,237,0.10)",
-    roles: ["admin", "coordinador_maquinas", "tesoreria", "gerencia", "costos", "recepcion", "visor_compras"],
+    roles: ["admin", "coordinador_maquinas", "tesoreria", "gerencia", "costos", "recepcion", "visor_compras", "compras_ops"],
   },
   {
     id: "geosafety",

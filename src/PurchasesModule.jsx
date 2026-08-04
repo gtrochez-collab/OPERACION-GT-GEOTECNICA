@@ -1244,10 +1244,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const isAdmin = userRole === "admin";
   const isTesoreria = userRole === "tesoreria";
   const isGerencia = userRole === "gerencia";
-  const isCostos = userRole === "costos";
+  // compras_ops (Arturo Trochez, ago 2026) → MISMOS permisos que Christian
+  // DENTRO de GeoShopping. Se maneja como isCostos aqui para no duplicar
+  // reglas; en GeoMachinery sigue siendo solo lectura y NO tiene GeoTeam.
+  const isCostos = userRole === "costos" || userRole === "compras_ops";
   const isRecepcion = userRole === "recepcion";
   const isAsistenteCompras = userRole === "asistente_compras";
-  const isVisorCompras = userRole === "visor_compras";   // Arturo Trochez — solo lectura, acceso completo a Compras
+  const isVisorCompras = userRole === "visor_compras";   // solo lectura, acceso completo a Compras
 
   // Permisos (segregacion de funciones):
   // admin → Operaciones: crea, edita borradores, valida, envia a Tesoreria, edita proyectos.
@@ -3842,6 +3845,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     : isTesoreria ? "Tesoreria"
     : isGerencia ? "Gerencia (solo lectura)"
     : isVisorCompras ? "Visor de Compras (solo lectura)"
+    : userRole === "compras_ops" ? "Compras / Operaciones"
     : isCostos ? "Costos / Operaciones"
     : isAsistenteCompras ? "Asistente de Compras"
     : isRecepcion ? "Recepcion"
