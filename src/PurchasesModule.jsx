@@ -50,6 +50,10 @@ const TREASURY_STATUSES = {
 // Estados de Recepcion de Materiales (logistica, post-pago)
 const DELIVERY_STATUSES = {
   pendiente_entrega: { label: "Pendiente de entrega",      color: "#7C3AED", bg: "#F3E8FF", icon: "📦" },
+  // entrega_proveedor: el PROVEEDOR la lleva directo a proyecto (no pasa por
+  // logistica). Ana registra dia y hora de llegada; despues se sube la ficha
+  // firmada o se cierra sin ficha. Agregado ago 2026 a pedido de Gerson.
+  entrega_proveedor: { label: "La entrega el proveedor",    color: "#0F766E", bg: "#CCFBF1", icon: "🏪" },
   recibido:          { label: "Materiales recibidos",       color: "#0891B2", bg: "#ECFEFF", icon: "✅" },
   ficha_adjunta:     { label: "Ficha de recibido adjunta",  color: "#059669", bg: "#DCFCE7", icon: "📋" },
   cerrado:           { label: "Compra cerrada",             color: "#059669", bg: "#DCFCE7", icon: "🔒" },
@@ -1158,6 +1162,80 @@ function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider }
 // SendPickupFormImpl: form para enviar una compra a Logistica como orden
 // de recogida. Ana lo usa despues de hablar con el proveedor.
 // ─────────────────────────────────────────────────────────────────────────
+// ── ENTREGA DIRECTA DEL PROVEEDOR ──
+// Muchas compras NO hay que ir a traerlas: el proveedor las lleva al proyecto.
+// Ana registra el dia y la HORA en que llegan (unico punto del flujo con hora)
+// y la compra deja de aparecer como "por coordinar" — queda esperando la
+// llegada, y ahi se sube la ficha firmada o se cierra sin ficha.
+function EntregaDirectaFormImpl({ purchase, provider, setModal, marcarEntregaDirecta }) {
+  // Si ya estaba marcada (boton "Cambiar fecha/hora"), el form se hidrata con
+  // lo guardado — si no, arranca en mañana 09:00. Sin esto, reprogramar
+  // borraba el contacto y las notas que Ana ya habia escrito.
+  const yaMarcada = purchase.delivery?.arrivalAt ? new Date(purchase.delivery.arrivalAt) : null;
+  const mañana = new Date();
+  mañana.setHours(0, 0, 0, 0);
+  mañana.setDate(mañana.getDate() + 1);
+  const local = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString();
+  const [fecha, setFecha] = useState(local(yaMarcada || mañana).slice(0, 10));
+  const [hora, setHora] = useState(yaMarcada ? local(yaMarcada).slice(11, 16) : "09:00");
+  const [contacto, setContacto] = useState(purchase.delivery?.arrivalContacto || provider?.contactName || "");
+  const [notas, setNotas] = useState(purchase.delivery?.arrivalNotas || "");
+  const [sending, setSending] = useState(false);
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ background: "#CCFBF1", border: "1px solid #5EEAD4", borderRadius: 10, padding: 12, fontSize: 12, color: "#134E4A" }}>
+      <b>Compra:</b> {purchase.provider} — {purchase.description}<br />
+      <b>Proyecto destino:</b> {purchase.projectCode || "—"}
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 150px", gap: 12 }}>
+      <Input
+        label="Fecha de llegada al proyecto *"
+        type="date"
+        value={fecha}
+        onChange={e => setFecha(e.target.value)}
+        title="El dia que el proveedor dijo que la lleva"
+      />
+      <Input
+        label="Hora *"
+        type="time"
+        value={hora}
+        onChange={e => setHora(e.target.value)}
+      />
+    </div>
+
+    <Input
+      label="Quien confirma del lado del proveedor"
+      value={contacto}
+      onChange={e => setContacto(e.target.value)}
+      placeholder="Ej: Ing. Juan Perez"
+    />
+
+    <Textarea
+      label="Notas (opcional)"
+      value={notas}
+      onChange={e => setNotas(e.target.value)}
+      placeholder={"Ej:\n• Entregan en porton principal\n• Preguntar por el residente\n• Traen la factura fisica"}
+    />
+
+    <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 10, padding: 12, fontSize: 12, color: "#065F46" }}>
+      ✓ Esta compra <b>no se manda a Logistica</b> — la trae el proveedor. Queda en “Entrega del proveedor” con su dia y hora; cuando llegue, subis la ficha firmada o la cerras sin ficha.
+    </div>
+
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 12, borderTop: "1px solid #E2E8F0" }}>
+      <Btn variant="ghost" onClick={() => setModal(null)} disabled={sending}>Cancelar</Btn>
+      <Btn variant="success" disabled={sending} onClick={async () => {
+        if (!fecha) return alert("La fecha de llegada es obligatoria");
+        if (!hora) return alert("La hora de llegada es obligatoria");
+        setSending(true);
+        const ok = await marcarEntregaDirecta(purchase, { fecha, hora, contacto: contacto.trim(), notas: notas.trim() });
+        setSending(false);
+        if (ok) setModal(null);
+      }}>{sending ? "Guardando…" : "🏪 Confirmar entrega del proveedor"}</Btn>
+    </div>
+  </div>;
+}
+
 function SendPickupFormImpl({ purchase, provider, setModal, enviarAOrdenRecogida }) {
   const mañana = new Date();
   mañana.setDate(mañana.getDate() + 1);
@@ -1855,6 +1933,91 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // de error. Antes esto retornaba void y los errores quedaban en silencio.
   const updatePurchase = (updated) => sP(purchases.map(p => p.id === updated.id ? updated : p));
 
+  // ── SALIDAS ALTERNATIVAS DEL KANBAN DE ANA (ago 2026) ──
+  // Hasta ahora una compra pagada SOLO salia de "Por coordinar" mandandola a
+  // Logistica. Dos casos reales de la empresa no encajaban ahi:
+  //   1) El PROVEEDOR la lleva directo al proyecto (no hay que ir a traerla).
+  //   2) Rentas y servicios (ej. "Pago de seguridad mayo") que no llevan
+  //      ficha de recibido ni despacho — solo hay que cerrarlas.
+  // Ambas escriben con updatePurchase (merge + verify de sP) y dejan huella
+  // en el audit log.
+  const marcarEntregaDirecta = async (purchase, { fecha, hora, contacto, notas }) => {
+    const arrivalAt = new Date(`${fecha}T${hora || "00:00"}`).toISOString();
+    const rec = {
+      ...purchase,
+      deliveryStatus: "entrega_proveedor",
+      delivery: {
+        ...(purchase.delivery || {}),
+        entregaDirecta: true,
+        arrivalAt,
+        arrivalContacto: contacto || "",
+        arrivalNotas: notas || "",
+        expectedDate: fecha,               // compat con la vista de Recepcion
+        coordinadoPor: userName,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    const saved = addAudit(rec, "entrega_directa_proveedor", `Proveedor entrega en proyecto el ${fecha} ${hora || ""}`.trim());
+    const ok = await updatePurchase(saved);
+    if (!ok) alert("⚠️ Se marcó en este dispositivo pero NO se sincronizó a la nube. Reintentá.");
+    return ok;
+  };
+
+  // Deshacer la entrega directa: el proveedor no cumplio y hay que mandar el
+  // camion. Vuelve a "Por coordinar" conservando el historial en el audit.
+  const revertirEntregaDirecta = async (purchase) => {
+    if (!confirm(`¿El proveedor NO la va a entregar?\n\n${purchase.provider} — ${purchase.description}\n\nVuelve a "Por coordinar" para que la mandés a Logística.`)) return false;
+    const rec = {
+      ...purchase,
+      deliveryStatus: "pendiente_entrega",
+      delivery: { ...(purchase.delivery || {}), entregaDirecta: false, updatedAt: new Date().toISOString() },
+    };
+    const saved = addAudit(rec, "entrega_directa_revertida", "El proveedor no la entrega — vuelve a coordinacion");
+    const ok = await updatePurchase(saved);
+    if (!ok) alert("⚠️ Se revirtió en este dispositivo pero NO se sincronizó a la nube. Reintentá.");
+    return ok;
+  };
+
+  // Reabrir una compra cerrada sin ficha (se cerro por error). Solo admin.
+  const reabrirCerrada = async (purchase) => {
+    if (!confirm(`¿REABRIR ${purchase.provider} — ${purchase.description}?\n\nVuelve al circuito como pendiente de entrega.`)) return false;
+    const rec = {
+      ...purchase,
+      deliveryStatus: "pendiente_entrega",
+      delivery: { ...(purchase.delivery || {}), cerradaSinFicha: false, reabiertaPor: userName, reabiertaAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    };
+    const saved = addAudit(rec, "reabierta", "Compra reabierta (estaba cerrada sin ficha)");
+    const ok = await updatePurchase(saved);
+    if (!ok) alert("⚠️ Se reabrió en este dispositivo pero NO se sincronizó a la nube. Reintentá.");
+    return ok;
+  };
+
+  const cerrarSinFicha = async (purchase) => {
+    // Doble paso a proposito: cerrar saca la compra de TODOS los tableros.
+    if (!confirm(`¿CERRAR sin ficha de recibido?\n\n${purchase.provider} — ${purchase.description}\n${fmtL(Number(purchase.amount) || 0)}\n\nSale de los pendientes y no se le pedirá ficha. Usalo para rentas, servicios y pagos que no llevan acta de entrega.`)) return false;
+    const motivo = prompt(
+      `¿Por qué no lleva ficha? (queda en el historial)`,
+      "Pago de servicio / renta — no requiere ficha"
+    );
+    if (motivo === null) return false; // canceló
+    const rec = {
+      ...purchase,
+      deliveryStatus: "cerrado",
+      delivery: {
+        ...(purchase.delivery || {}),
+        cerradaSinFicha: true,
+        closingNotes: motivo.trim() || "Cerrada sin ficha de recibido",
+        closedBy: userName,
+        closedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    const saved = addAudit(rec, "closed_no_ficha", motivo.trim() || "Cerrada sin ficha de recibido");
+    const ok = await updatePurchase(saved);
+    if (!ok) alert("⚠️ Se cerró en este dispositivo pero NO se sincronizó a la nube. Reintentá.");
+    return ok;
+  };
+
   // Subir ficha firmada desde el Kanban (sin abrir el detail). Pedido del
   // coordinador: Jorge necesita poder subir la ficha directo desde la lista
   // de compras "En logistica" sin tener que abrir cada solicitud. El upload
@@ -1994,10 +2157,16 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const ud = (k, v) => setDf(d => ({ ...d, [k]: v }));
 
     const saveDelivery = (newDf, newStatus) => {
+      // MERGE, no reemplazo: `df` solo tiene los 10 campos del form de
+      // recepcion. Sin el spread de p.delivery, guardar aqui borraba los
+      // datos de la entrega directa del proveedor (arrivalAt, contacto,
+      // notas) y los del cierre sin ficha. Ademas, un guardado sin "fecha
+      // real" NO debe degradar una compra que el proveedor va a entregar.
+      const noDegradar = p.deliveryStatus === "entrega_proveedor" && newStatus === "pendiente_entrega";
       const rec = {
         ...p,
-        deliveryStatus: newStatus || p.deliveryStatus || "pendiente_entrega",
-        delivery: { ...newDf, updatedAt: new Date().toISOString() },
+        deliveryStatus: noDegradar ? "entrega_proveedor" : (newStatus || p.deliveryStatus || "pendiente_entrega"),
+        delivery: { ...(p.delivery || {}), ...newDf, updatedAt: new Date().toISOString() },
       };
       const labels = {
         recibido: "Materiales marcados como recibidos",
@@ -2615,13 +2784,18 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
     // Por enviar a logistica (Ana): pagadas, sin orden de recogida creada,
     // sin ficha y no cerradas — lo que a Ana le falta coordinar con el
-    // proveedor y mandar a logistica.
+    // proveedor y mandar a logistica. Las que YA resolvio marcando "la entrega
+    // el proveedor" salen de aqui: no le falta hacer nada con ellas.
     const porEnviarLogistica = cp.filter(p => {
       if (!isPaid(p)) return false;
       if (p.deliveryStatus === "cerrado" || p.deliveryStatus === "ficha_adjunta") return false;
+      if (p.deliveryStatus === "entrega_proveedor") return false;
       if (p.delivery?.fichaFile) return false;
       return !despachoOf(p);
     });
+
+    // Entrega directa del proveedor: pendientes de que lleguen a proyecto.
+    const entregaProveedor = cp.filter(p => isPaid(p) && p.deliveryStatus === "entrega_proveedor");
 
     // ── KPI cards ──
     const kpis = [
@@ -2629,6 +2803,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       { icon: "💰", label: "Por pagar (Lic. Carolina)",    value: montoPorPagar,             color: "#D97706", tint: "#FEF3C7", fmt: (v) => fmtL(v) },
       { icon: "✅", label: `Pagado en ${mesSelLabel}`,      value: pagadoMes,                 color: "#059669", tint: "#D1FAE5", fmt: (v) => fmtL(v) },
       { icon: "📦", label: "Por enviar a logística (Ana)", value: porEnviarLogistica.length, color: "#7C3AED", tint: "#EDE9FE", fmt: (v) => v },
+      { icon: "🏪", label: "La entrega el proveedor",      value: entregaProveedor.length,   color: "#0F766E", tint: "#CCFBF1", fmt: (v) => v },
       { icon: "🚛", label: "Pendiente entrega",            value: pendienteEntrega.length,   color: "#B45309", tint: "#FDE68A", fmt: (v) => v },
       { icon: "📋", label: "Pendiente ficha",              value: pendienteFicha.length,     color: "#DC2626", tint: "#FEE2E2", fmt: (v) => v },
     ];
@@ -2699,18 +2874,26 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const alertaAna = porEnviarLogistica
       .map(p => ({ p, dias: daysSince(p.paidAt || p.createdAt) }))
       .sort((a, b) => b.dias - a.dias);
-    // b) Ya coordinadas pero logistica NO ha entregado (despacho vivo:
-    //    pendiente / programado / en_ruta) — para preguntarle a Oscar.
+    // b) Ya coordinadas pero NO han llegado al proyecto. Dos casos:
+    //    - despacho vivo (pendiente/programado/en_ruta) → preguntarle a Oscar.
+    //    - entrega directa del proveedor con la fecha/hora ya vencida →
+    //      preguntarle al proveedor (sin esto se volvian invisibles al salir
+    //      de la lista de Ana).
     const alertaEntrega = cp
       .filter(p => {
         if (p.delivery?.fichaFile || p.deliveryStatus === "cerrado" || p.deliveryStatus === "ficha_adjunta") return false;
+        if (p.deliveryStatus === "entrega_proveedor") {
+          const at = p.delivery?.arrivalAt;
+          return !!at && new Date(at).getTime() < now;   // solo si ya se paso la hora
+        }
         const desp = despachoOf(p);
         if (!desp) return false;
         return desp.estado !== "entregado" && desp.estado !== "cerrado";
       })
       .map(p => {
         const desp = despachoOf(p);
-        return { p, dias: daysSince(desp?.createdAt || p.paidAt) };
+        const directa = p.deliveryStatus === "entrega_proveedor";
+        return { p, directa, dias: daysSince(directa ? p.delivery?.arrivalAt : (desp?.createdAt || p.paidAt)) };
       })
       .sort((a, b) => b.dias - a.dias);
     // c) Falta entregar POR PROYECTO — que proyecto esta mas desabastecido
@@ -3045,6 +3228,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const enRuta = desp?.estado === "en_ruta";
     const entregado = desp?.estado === "entregado" || p.deliveryStatus === "ficha_adjunta" || p.deliveryStatus === "cerrado";
     const fichaUploaded = !!p.delivery?.fichaFile;
+    // Salidas alternativas del kanban de Ana (ago 2026). Se usa el FLAG
+    // persistido para no confundir cierres viejos (que si pasaron por
+    // logistica) con los cierres nuevos de servicios/rentas.
+    // El flag persistido sobrevive a la subida de la ficha: asi la barra de
+    // fases sigue contando "la trajo el proveedor" y no deja "Coordinada Ana"
+    // y "Logistica" apagados para siempre.
+    const entregaDirecta = p.deliveryStatus === "entrega_proveedor" || !!p.delivery?.entregaDirecta;
+    const esperandoProveedor = p.deliveryStatus === "entrega_proveedor";
+    const cerradaSinFicha = p.deliveryStatus === "cerrado" && !fichaUploaded && !!p.delivery?.cerradaSinFicha;
     // Desde el POV del coordinador (admin/gerencia/costos), una compra esta
     // "lista" cuando Jorge subio la ficha — de ahi en adelante Ana cierra con
     // contabilidad y NO necesitamos visibilidad. Si conta tiene problema, avisa.
@@ -3056,6 +3248,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     if (p.status === "borrador") { nextAction = "Aprobar para enviar a Tesoreria"; nextOwner = "Operaciones"; }
     else if (p.status === "validado") { nextAction = "Registrar pago"; nextOwner = "Lic. Carolina"; }
     else if (isPaid && !hasReceipt) { nextAction = "Subir comprobante"; nextOwner = "Lic. Carolina"; }
+    else if (cerradaSinFicha) { nextAction = `🔒 Cerrada sin ficha${p.delivery?.closingNotes ? ` — ${p.delivery.closingNotes}` : ""}`; nextOwner = ""; }
+    else if (esperandoProveedor && !fichaUploaded) {
+      const llega = p.delivery?.arrivalAt ? new Date(p.delivery.arrivalAt) : null;
+      nextAction = `🏪 La entrega el proveedor${llega ? ` — llega ${llega.toLocaleDateString("es-HN", { day: "2-digit", month: "short" })} ${llega.toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}` : ""}`;
+      nextOwner = "Proveedor";
+    }
     else if (isPaid && hasReceipt && !hasDesp) { nextAction = "Coordinar con proveedor + enviar a logistica"; nextOwner = "Ana Vasquez"; }
     else if (hasDesp && !hasVehicle && desp?.estado === "pendiente") { nextAction = "Asignar vehiculo + motorista"; nextOwner = "Oscar Paz"; }
     else if (hasVehicle && !enRuta && !entregado) { nextAction = "Salir en ruta"; nextOwner = "Oscar Paz"; }
@@ -3065,6 +3263,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
     return {
       desp, isPaid, hasReceipt, hasDesp, hasVehicle, enRuta, entregado, fichaUploaded, lista,
+      entregaDirecta, esperandoProveedor, cerradaSinFicha,
       nextAction, nextOwner,
     };
   };
@@ -3199,15 +3398,28 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   };
 
   const renderLifecycleBar = (p, lc) => {
+    // Compras que NO pasan por logistica (las trae el proveedor, o son
+    // servicios/rentas cerrados sin ficha): la barra se acorta en vez de
+    // dejar hitos apagados para siempre.
+    const cerradaOk = p.deliveryStatus === "cerrado";
     const phases = [
       { key: "solicitud",  emoji: "📝", label: "Solicitud",      done: true },
       { key: "validado",   emoji: "✅", label: "Validada",       done: ["validado","pagado","finalizado"].includes(p.status) },
       { key: "pagado",     emoji: "💰", label: "Pagada",         done: lc.isPaid },
       { key: "compr",      emoji: "🧾", label: "Comprobante",    done: lc.hasReceipt },
-      { key: "coord",      emoji: "📞", label: "Coordinada Ana", done: lc.hasDesp },
-      { key: "logistica",  emoji: "🚛", label: "Logistica",      done: lc.hasVehicle },
-      { key: "entreg",     emoji: "📦", label: "Entregada",      done: lc.entregado },
-      { key: "ficha",      emoji: "📋", label: "Ficha firmada",  done: lc.fichaUploaded },
+      ...(lc.entregaDirecta || lc.cerradaSinFicha ? [
+        { key: "coord",    emoji: "📞", label: "Coordinada Ana", done: true },
+        ...(lc.entregaDirecta ? [{ key: "provee", emoji: "🏪", label: "Trae proveedor", done: true }] : []),
+        { key: "entreg",   emoji: "📦", label: "Entregada",      done: lc.entregado || cerradaOk },
+        ...(lc.cerradaSinFicha
+          ? [{ key: "cierre", emoji: "🔒", label: "Cerrada sin ficha", done: true }]
+          : [{ key: "ficha", emoji: "📋", label: "Ficha firmada", done: lc.fichaUploaded }]),
+      ] : [
+        { key: "coord",    emoji: "📞", label: "Coordinada Ana", done: lc.hasDesp },
+        { key: "logistica",emoji: "🚛", label: "Logistica",      done: lc.hasVehicle },
+        { key: "entreg",   emoji: "📦", label: "Entregada",      done: lc.entregado },
+        { key: "ficha",    emoji: "📋", label: "Ficha firmada",  done: lc.fichaUploaded },
+      ]),
     ];
     // El "current" es la primera fase NO done
     const currentIdx = phases.findIndex(ph => !ph.done);
@@ -3434,17 +3646,20 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     // El mismo ID de compra vive en una sola sub-seccion segun su estado actual.
     //
     // FLUJO (simplificado — el cierre contable lo maneja Ana fuera del sistema):
-    //   por_coordinar  → pagada, sin despacho
-    //   en_logistica   → tiene despacho pendiente/programado/en_ruta/entregado sin ficha
-    //   listas         → Jorge ya subio la ficha de recibido (informativo, sin accion)
+    //   por_coordinar    → pagada, sin despacho y sin entrega directa
+    //   entrega_directa  → el PROVEEDOR la lleva a proyecto (dia y hora pactados)
+    //   en_logistica     → tiene despacho pendiente/programado/en_ruta/entregado sin ficha
+    //   listas           → ficha de recibido subida, o cerrada sin ficha (servicios)
     const yaTieneDespacho = (purchaseId) => despachos.some(d => d.sourcePurchaseId === purchaseId);
     const despachoDe = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
 
     // Para cada compra pagada, decidir en que sub-seccion va
     const clasificar = (p) => {
       if (p.status !== "pagado" && p.status !== "finalizado") return null;
-      // ficha_adjunta o cerrada legacy → "listas" (informativo, no se actua mas aqui)
+      // ficha_adjunta o cerrada → "listas" (informativo, no se actua mas aqui)
       if (p.deliveryStatus === "ficha_adjunta" || p.deliveryStatus === "cerrado") return "listas";
+      // El proveedor la lleva directo: esperando la llegada al proyecto
+      if (p.deliveryStatus === "entrega_proveedor") return "entrega_directa";
       const d = despachoDe(p.id);
       if (d && (d.estado === "pendiente" || d.estado === "programado" || d.estado === "en_ruta" || d.estado === "entregado")) {
         // Entregado pero sin ficha aun: sigue en logistica
@@ -3456,8 +3671,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
     // Agrupar por proyecto, dentro de cada proyecto por sub-seccion
     const grupos = {};
-    const ensure = (key) => { if (!grupos[key]) grupos[key] = { por_coordinar: [], en_logistica: [], listas: [] }; };
-    let totales = { por_coordinar: 0, en_logistica: 0, listas: 0 };
+    const ensure = (key) => { if (!grupos[key]) grupos[key] = { por_coordinar: [], entrega_directa: [], en_logistica: [], listas: [] }; };
+    let totales = { por_coordinar: 0, entrega_directa: 0, en_logistica: 0, listas: 0 };
     cp.forEach(p => {
       const bucket = clasificar(p);
       if (!bucket) return;
@@ -3530,6 +3745,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
           <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (err) { if (!err?.isStaleChunk) alert("No se pudo generar la ficha: " + (err?.message || err)); } }} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Descargar Ficha de Entrega</button>
           {canSendToLogistics && <button onClick={() => setModal({ t: "send-pickup", d: p })} style={{ background: "#E8762D", color: "#fff", border: "none", padding: "9px 10px", borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", letterSpacing: 0.3 }}>🚛 Enviar a Logistica</button>}
+          {/* Salidas alternativas: la trae el proveedor, o es un servicio/renta sin ficha */}
+          {canSendToLogistics && <button onClick={() => setModal({ t: "entrega-directa", d: p })} style={{ background: "#0F766E", color: "#fff", border: "none", padding: "9px 10px", borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", letterSpacing: 0.3 }} title="El proveedor la lleva al proyecto — no hay que ir a traerla">🏪 La entrega el proveedor</button>}
+          {canSendToLogistics && <button onClick={() => cerrarSinFicha(p)} style={{ background: "transparent", color: "#64748b", border: "1px solid #CBD5E1", padding: "6px 10px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }} title="Rentas, servicios y pagos que no llevan ficha de recibido">🔒 Cerrar sin ficha (servicio/renta)</button>}
         </div>
       </div>;
     };
@@ -3541,6 +3759,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           <div style={{ fontSize: 22 }}>📦</div>
           <div style={{ fontSize: 26, fontWeight: 800, color: "#E8762D", marginTop: 4 }}>{totales.por_coordinar}</div>
           <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Por coordinar</div>
+        </div>
+        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
+          <div style={{ fontSize: 22 }}>🏪</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#0F766E", marginTop: 4 }}>{totales.entrega_directa}</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Entrega proveedor</div>
         </div>
         <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
           <div style={{ fontSize: 22 }}>🚛</div>
@@ -3571,8 +3794,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
               const proj = (customProjects || []).find(p => p.short === key);
               const projDisplay = key === "__sin__" ? "SIN PROYECTO" : key;
               const projName = proj?.name || "";
-              const colTotal = items.por_coordinar.length + items.en_logistica.length + items.listas.length;
-              const headerColor = items.listas.length > 0 && items.por_coordinar.length === 0 && items.en_logistica.length === 0 ? "#059669" : items.por_coordinar.length > 0 ? "#E8762D" : "#0891B2";
+              const colTotal = items.por_coordinar.length + items.entrega_directa.length + items.en_logistica.length + items.listas.length;
+              const headerColor = items.listas.length > 0 && items.por_coordinar.length === 0 && items.entrega_directa.length === 0 && items.en_logistica.length === 0
+                ? "#059669"
+                : items.por_coordinar.length > 0 ? "#E8762D"
+                : items.entrega_directa.length > 0 && items.en_logistica.length === 0 ? "#0F766E"
+                : "#0891B2";
 
               const expandedEnLog = anaExpand[`${key}-enlog`] !== false; // default visible
               const expandedCierre = anaExpand[`${key}-cierre`] !== false; // default visible
@@ -3610,6 +3837,56 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                       {items.por_coordinar
                         .sort((a, b) => (a.paidAt || "").localeCompare(b.paidAt || ""))
                         .map(renderCardPorCoordinar)}
+                    </div>
+                  </div>}
+
+                  {/* Sub-seccion: ENTREGA DIRECTA DEL PROVEEDOR (llega solo, con dia y hora) */}
+                  {items.entrega_directa.length > 0 && <div>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: "#0F766E", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, padding: "4px 8px", background: "#CCFBF1", borderRadius: 4 }}>
+                      🏪 La entrega el proveedor ({items.entrega_directa.length})
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {items.entrega_directa
+                        .sort((a, b) => (a.delivery?.arrivalAt || "").localeCompare(b.delivery?.arrivalAt || ""))
+                        .map(p => {
+                          const llega = p.delivery?.arrivalAt ? new Date(p.delivery.arrivalAt) : null;
+                          // Se compara contra AHORA (no contra medianoche): la
+                          // hora se pidio justamente para saber el mismo dia
+                          // si el proveedor ya se paso de la hora pactada.
+                          const atrasada = llega && llega < new Date();
+                          return renderCardCompacta(p, {
+                            badge: atrasada ? "⚠ Debió llegar" : "🏪 Llega directo",
+                            accentColor: atrasada ? "#B45309" : "#0F766E",
+                            borderColor: atrasada ? "#FCD34D" : "#5EEAD4",
+                            dateRight: llega ? `📅 ${llega.toLocaleDateString("es-HN", { day: "2-digit", month: "short" })} · ${llega.toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}` : "",
+                            subline: [p.delivery?.arrivalContacto ? `👤 ${p.delivery.arrivalContacto}` : "", p.delivery?.arrivalNotas || ""].filter(Boolean).join(" · ") || "El proveedor lo lleva al proyecto",
+                            actions: <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }} onClick={e => e.stopPropagation()}>
+                              <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { if (!e?.isStaleChunk) alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: CHARCOAL, border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>📄 Ficha en blanco</button>
+                              {canEditDelivery && <>
+                                <input
+                                  type="file"
+                                  accept=".pdf,image/*"
+                                  id={`upload-ficha-directa-${p.id}`}
+                                  style={{ display: "none" }}
+                                  onChange={async (e) => {
+                                    const f = e.target.files?.[0];
+                                    if (!f) return;
+                                    e.target.value = "";
+                                    const ok = await uploadFichaFromCard(p, f);
+                                    if (ok) alert("✓ Ficha firmada subida.\nLa compra paso a 'Listas para contabilidad'.");
+                                  }}
+                                />
+                                <label htmlFor={`upload-ficha-directa-${p.id}`} style={{ background: "#0F766E", color: "#fff", padding: "6px 8px", borderRadius: 4, fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", width: "100%", boxSizing: "border-box", display: "block" }} title="Subir la ficha que firmaron al recibir en proyecto">📎 Subir ficha firmada</label>
+                              </>}
+                              {canSendToLogistics && <button onClick={() => cerrarSinFicha(p)} style={{ background: "transparent", color: "#64748b", border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>🔒 Cerrar sin ficha</button>}
+                              <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+                                {canSendToLogistics && <button onClick={() => setModal({ t: "entrega-directa", d: p })} style={{ background: "none", border: "none", color: "#0891B2", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: 0 }}>✏️ Cambiar fecha/hora</button>}
+                                {/* Salida si el proveedor no cumple: vuelve a coordinacion para mandar el camion */}
+                                {canSendToLogistics && <button onClick={() => revertirEntregaDirecta(p)} style={{ background: "none", border: "none", color: "#B45309", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: 0 }} title="El proveedor no la entrega — volver a Por coordinar para mandar logistica">🚛 No la entrega</button>}
+                              </div>
+                            </div>,
+                          });
+                        })}
                     </div>
                   </div>}
 
@@ -3668,13 +3945,22 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                     {expandedCierre && <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
                       {items.listas.map(p => {
                         const tieneFichaFirmada = !!p.delivery?.fichaFile?.fileId;
+                        // Las cerradas sin ficha (servicios/rentas) NO tienen
+                        // ficha: la card lo dice tal cual en vez de prometer una.
+                        const sinFicha = !tieneFichaFirmada && p.deliveryStatus === "cerrado";
                         return renderCardCompacta(p, {
-                          badge: "✓ Lista — pasar a conta",
-                          accentColor: "#059669",
-                          borderColor: "#6EE7B7",
-                          dateRight: p.delivery?.fichaUploadedAt ? `Ficha ${new Date(p.delivery.fichaUploadedAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "",
-                          subline: p.delivery?.fichaFile?.name || "Ficha de recibido subida por Jorge",
-                          actions: <div style={{ marginTop: 6 }}>
+                          badge: sinFicha ? "🔒 Cerrada sin ficha" : "✓ Lista — pasar a conta",
+                          accentColor: sinFicha ? "#64748b" : "#059669",
+                          borderColor: sinFicha ? "#CBD5E1" : "#6EE7B7",
+                          dateRight: sinFicha
+                            ? (p.delivery?.closedAt ? `Cerrada ${new Date(p.delivery.closedAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "")
+                            : (p.delivery?.fichaUploadedAt ? `Ficha ${new Date(p.delivery.fichaUploadedAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : ""),
+                          subline: sinFicha
+                            ? (p.delivery?.closingNotes || "Cerrada sin ficha de recibido")
+                            : (p.delivery?.fichaFile?.name || "Ficha de recibido subida por Jorge"),
+                          actions: sinFicha ? (isAdmin ? <div style={{ marginTop: 6 }}>
+                            <button onClick={() => reabrirCerrada(p)} style={{ background: "transparent", color: "#B45309", border: "1px solid #FCD34D", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>↩ Reabrir (se cerró por error)</button>
+                          </div> : null) : <div style={{ marginTop: 6 }}>
                             <button onClick={async () => {
                               // Si Jorge subio la ficha firmada, abrirla. Sino fallback al template (deberia ser raro).
                               if (tieneFichaFirmada) {
@@ -3815,6 +4101,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       case "provider-new":  return <Modal title="Nuevo proveedor" onClose={() => setModal(null)} wide><ProviderFormImpl setModal={setModal} upsertProvider={upsertProvider} /></Modal>;
       case "provider-edit": return <Modal title={`Editar proveedor — ${m.d.name}`} onClose={() => setModal(null)} wide><ProviderFormImpl provider={m.d} setModal={setModal} upsertProvider={upsertProvider} deleteProvider={deleteProvider} /></Modal>;
       case "send-pickup":   return <Modal title={`🚛 Enviar a Logistica — ${m.d.provider}`} onClose={() => setModal(null)}><SendPickupFormImpl purchase={m.d} provider={findProviderByName(m.d.provider)} setModal={setModal} enviarAOrdenRecogida={enviarAOrdenRecogida} /></Modal>;
+      case "entrega-directa": return <Modal title={`🏪 La entrega el proveedor — ${m.d.provider}`} onClose={() => setModal(null)}><EntregaDirectaFormImpl purchase={m.d} provider={findProviderByName(m.d.provider)} setModal={setModal} marcarEntregaDirecta={marcarEntregaDirecta} /></Modal>;
       default: return null;
     }
   };
