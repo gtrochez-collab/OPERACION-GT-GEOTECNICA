@@ -312,6 +312,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [refreshing, setRefreshing] = useState(false);
   // Hoja de asistencia seleccionada en el tab Costos ("" = la mas reciente).
   const [costosSheetId, setCostosSheetId] = useState("");
+  // Mes del reporte EJECUTIVO mensual globalizado ("" = el mas reciente).
+  const [costosMesEjec, setCostosMesEjec] = useState("");
   // Hojas de horas extras (hr-he): una por empresa+periodo+quincena.
   // { id, company, periodo, quincena, assignments, hours: { "empId-dia":
   //   { b1, b2, b3 } }, lastSaved } — b1=4-7pm(+25%), b2=7-10pm(+50%),
@@ -2686,7 +2688,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // la cuadrilla. Costo diario = (salario + bonificacion mensual) / 30 —
   // eso es lo que la persona le cuesta a la empresa por dia (pedido del
   // usuario 21-jul-2026). NO incluye cargas patronales (IHSS/RAP patronal).
-  const calcCostoMO = (sheet) => {
+  // `empList` (opcional): lista de empleados a iterar. Por default usa `ce`
+  // (empresa activa del toggle); el reporte ejecutivo mensual lo llama con
+  // los empleados de CADA empresa para globalizar sin depender del toggle.
+  const calcCostoMO = (sheet, empList) => {
     const grid = sheet.grid || {};
     const ovr = sheet.projOverrides || {};
     const at = sheet.arrivalTimes || {};
@@ -2702,7 +2707,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     }
     const porProyecto = {};
     const personasSet = new Set();
-    ce.forEach(e => {
+    (empList || ce).forEach(e => {
       const sd = ((Number(e.salary) || 0) + (Number(e.bonificacion) || 0)) / 30;
       const base = resolveShortHR(assignments[e.id]);
       dias.forEach(d => {
@@ -2756,7 +2761,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       const heAssign = heSheet.assignments || {};
       const heOvr = heSheet.projOverrides || {};
       const hh = heSheet.hours || {};
-      ce.forEach(e => {
+      // OJO: mismo empList que el loop de dias — si aqui se itera `ce` a
+      // secas, el reporte ejecutivo pierde las HE de la empresa NO activa
+      // en el toggle (los ids nunca matchean las keys de hours).
+      (empList || ce).forEach(e => {
         const hb = heHoraBase(e);
         const base = resolveShortHR(heAssign[e.id]);
         heDias.forEach(d => {
@@ -2926,6 +2934,269 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       w.document.close();
     };
 
+    // ══════════ REPORTE EJECUTIVO MENSUAL GLOBALIZADO (ago 2026) ══════════
+    // Pedido de Gerson: un solo PDF del MES con AMBAS empresas para enviarlo
+    // al Dr. Flores. Portada con logo, KPIs y graficas (dona por proyecto +
+    // barras por empresa, SVG/divs inline — sin librerias); luego tablas por
+    // proyecto donde cada empleado lleva su chip GEO/SUB y los subtotales se
+    // desglosan por empresa. Suma 1Q+2Q del mes elegido corriendo el motor
+    // calcCostoMO por empresa (misma metodologia y misma regla de HE pagadas
+    // quincena vencida: en el mes se desembolsan las HE de 2Q del mes
+    // anterior y las de 1Q del propio mes).
+    const mesesDisponibles = [...new Set(atts.map(a => a.periodo).filter(Boolean))].sort().reverse();
+    const mesEjec = costosMesEjec && mesesDisponibles.includes(costosMesEjec) ? costosMesEjec : (mesesDisponibles[0] || "");
+    const exportCostosEjecutivoPDF = () => {
+      if (!mesEjec) { alert("Todavía no hay asistencia registrada en ninguna empresa."); return; }
+      const [yy, mmn] = mesEjec.split("-").map(Number);
+      const mesNombreRaw = new Date(yy, mmn - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
+      const mesTitulo = mesNombreRaw.charAt(0).toUpperCase() + mesNombreRaw.slice(1);
+      const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+      // ── Correr el motor por empresa × quincena y combinar por proyecto ──
+      const EMPRESAS = ["geotecnica", "subterra"];
+      const TAG = { geotecnica: "GEO", subterra: "SUB" };
+      const faltantes = [];
+      const porEmp = {};
+      const proy = {};
+      EMPRESAS.forEach((c) => {
+        porEmp[c] = { total: 0, costoDias: 0, heCosto: 0, heHrs: 0, dias: 0, personas: new Set() };
+        const empList = emps.filter(e => e.company === c);
+        ["1Q", "2Q"].forEach((q) => {
+          const sh = atts.find(a => a.company === c && a.periodo === mesEjec && a.quincena === q);
+          // Sin la hoja de asistencia se pierden tambien las HE que esa
+          // quincena DESEMBOLSA (quincena vencida) — se dice explicito.
+          if (!sh) { faltantes.push(`${COMPANIES[c].name}: ${q} sin asistencia registrada (sus días y las HE que esa quincena paga quedan fuera)`); return; }
+          const r = calcCostoMO(sh, empList);
+          porEmp[c].total += r.total || 0;
+          porEmp[c].dias += r.totalDias || 0;
+          porEmp[c].heCosto += r.totalHeCosto || 0;
+          porEmp[c].heHrs += r.totalHeHrs || 0;
+          porEmp[c].costoDias += (r.total || 0) - (r.totalHeCosto || 0);
+          (r.rows || []).forEach(row => {
+            if (!proy[row.short]) proy[row.short] = { short: row.short, name: row.name, code: row.code, total: 0, costoDias: 0, heCosto: 0, heHrs: 0, dias: 0, porCo: { geotecnica: 0, subterra: 0 }, emps: {} };
+            const P = proy[row.short];
+            P.total += row.costo; P.costoDias += row.costoDias; P.heCosto += row.heCosto; P.heHrs += row.heHrs; P.dias += row.diasPag;
+            P.porCo[c] += row.costo;
+            row.emps.forEach(x => {
+              porEmp[c].personas.add(x.emp.id);
+              const key = `${c}|${x.emp.id}`;
+              if (!P.emps[key]) P.emps[key] = { emp: x.emp, co: c, sd: x.sd, dias: 0, costoDias: 0, heHrs: 0, heCosto: 0, costo: 0 };
+              const E = P.emps[key];
+              E.dias += x.dias; E.costoDias += x.costoDias; E.heHrs += x.heHrs; E.heCosto += x.heCosto; E.costo += x.costo;
+            });
+          });
+        });
+      });
+      const rowsG = Object.values(proy)
+        .map(p => ({ ...p, emps: Object.values(p.emps).sort((a, b) => b.costo - a.costo) }))
+        .sort((a, b) => b.total - a.total);
+      if (!rowsG.length) { alert(`No hay asistencia registrada en ${mesTitulo} para ninguna de las dos empresas.`); return; }
+      const totalG = rowsG.reduce((s, r) => s + r.total, 0);
+      const diasG = rowsG.reduce((s, r) => s + r.dias, 0);
+      const heCostoG = rowsG.reduce((s, r) => s + r.heCosto, 0);
+      const heHrsG = rowsG.reduce((s, r) => s + r.heHrs, 0);
+      const costoDiasG = totalG - heCostoG;
+      const personasG = new Set([...porEmp.geotecnica.personas, ...porEmp.subterra.personas]).size;
+      const w = window.open("", "_blank");
+      if (!w) { alert("Permite popups para generar el PDF"); return; }
+      const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+      const genFecha = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" });
+
+      // ── Grafica 1: DONA de distribucion del costo por proyecto (SVG) ──
+      const PALETA = ["#E8762D", "#2C5F5D", "#3E6A99", "#B45309", "#6D28D9", "#0E7490", "#BE3455", "#15803D"];
+      const top = rowsG.slice(0, 8);
+      const otros = rowsG.slice(8);
+      const segs = [
+        ...top.map((r, i) => ({ label: r.short, val: r.total, color: PALETA[i % PALETA.length] })),
+        ...(otros.length ? [{ label: `Otros (${otros.length})`, val: otros.reduce((s, r) => s + r.total, 0), color: "#94A3B8" }] : []),
+      ];
+      const RAD = 62, CIRC = 2 * Math.PI * RAD;
+      let acum = 0;
+      const donaSegs = segs.map(s => {
+        const frac = totalG > 0 ? s.val / totalG : 0;
+        const el = `<circle r="${RAD}" cx="90" cy="90" fill="transparent" stroke="${s.color}" stroke-width="34" stroke-dasharray="${(frac * CIRC).toFixed(2)} ${CIRC.toFixed(2)}" stroke-dashoffset="${(-acum * CIRC).toFixed(2)}" transform="rotate(-90 90 90)"/>`;
+        acum += frac;
+        return el;
+      }).join("");
+      const donaLeyenda = segs.map(s => `<div style="display:flex;align-items:center;gap:7px;font-size:10.5px;margin-bottom:5px">
+        <span style="width:10px;height:10px;border-radius:3px;background:${s.color};flex-shrink:0"></span>
+        <span style="font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.label)}</span>
+        <span style="color:#64748b;min-width:42px;text-align:right">${totalG > 0 ? ((s.val / totalG) * 100).toFixed(1) : "0"}%</span>
+        <span style="font-weight:700;min-width:96px;text-align:right">${fL(s.val)}</span>
+      </div>`).join("");
+
+      // ── Grafica 2: barras horizontales por empresa ──
+      const maxEmpTotal = Math.max(porEmp.geotecnica.total, porEmp.subterra.total, 1);
+      const barrasEmp = EMPRESAS.map(c => {
+        const d = porEmp[c];
+        const pct = totalG > 0 ? (d.total / totalG) * 100 : 0;
+        const wpct = Math.max(2, (d.total / maxEmpTotal) * 100);
+        return `<div style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
+            <span style="font-weight:800;color:${COMPANIES[c].color}">${esc(COMPANIES[c].name)}</span>
+            <span style="color:#64748b">${d.personas.size} persona${d.personas.size !== 1 ? "s" : ""} · ${pct.toFixed(1)}% del grupo</span>
+          </div>
+          <div style="background:#F1F5F9;border-radius:6px;height:26px;position:relative;overflow:hidden">
+            <div style="width:${wpct.toFixed(1)}%;height:100%;background:${COMPANIES[c].color};border-radius:6px"></div>
+            <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11.5px;font-weight:800;color:#1E293B">${fL(d.total)}</span>
+          </div>
+          <div style="display:flex;gap:14px;font-size:9.5px;color:#64748b;margin-top:3px">
+            <span>Días: <b>${fmtDias(d.dias)}</b> · ${fL(d.costoDias)}</span>
+            <span style="color:#D97706">HE: <b>${fmtDias(d.heHrs)} hrs</b> · ${fL(d.heCosto)}</span>
+          </div>
+        </div>`;
+      }).join("");
+
+      // ── Grafica 3: mezcla GEO/SUB por proyecto (barras apiladas, top 10) ──
+      const topMix = rowsG.slice(0, 10);
+      const maxProy = Math.max(...topMix.map(r => r.total), 1);
+      const barrasProy = topMix.map(r => {
+        const wG = (r.porCo.geotecnica / maxProy) * 100;
+        const wS = (r.porCo.subterra / maxProy) * 100;
+        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:10px">
+          <span style="width:118px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">${esc(r.short)}</span>
+          <div style="flex:1;display:flex;height:16px;background:#F8FAFC;border-radius:4px;overflow:hidden">
+            ${wG > 0 ? `<div style="width:${wG.toFixed(1)}%;background:${COMPANIES.geotecnica.color}"></div>` : ""}
+            ${wS > 0 ? `<div style="width:${wS.toFixed(1)}%;background:${COMPANIES.subterra.color}"></div>` : ""}
+          </div>
+          <span style="width:92px;text-align:right;font-weight:700;flex-shrink:0">${fL(r.total)}</span>
+        </div>`;
+      }).join("");
+
+      // ── KPI cards de la portada ──
+      const kpi = (label, val, color, sub) => `<div style="flex:1;min-width:130px;border:1px solid #E2E8F0;border-radius:10px;padding:11px 14px">
+        <div style="font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:0.6px;font-weight:700">${label}</div>
+        <div style="font-size:17px;font-weight:800;color:${color};margin-top:3px;letter-spacing:-0.3px">${val}</div>
+        ${sub ? `<div style="font-size:9px;color:#94A3B8;margin-top:1px">${sub}</div>` : ""}
+      </div>`;
+      const chipCo = (c) => `<span style="display:inline-block;background:${COMPANIES[c].color};color:#fff;border-radius:4px;padding:1px 6px;font-size:8px;font-weight:800;letter-spacing:0.5px;vertical-align:1px">${TAG[c]}</span>`;
+
+      // ── Tablas por proyecto (paginas 2+) con chip de empresa por empleado ──
+      const projBlocks = rowsG.map(r => `
+      <div style="margin-bottom:16px;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
+        <div style="background:#2C2A28;color:#fff;padding:8px 14px;font-weight:700;font-size:12.5px;display:flex;justify-content:space-between;align-items:center">
+          <span>${esc(r.short)}${r.code ? ` <span style="font-weight:400;font-size:10px;opacity:.7">[${esc(r.code)}]</span>` : ""}</span>
+          <span style="font-size:10px;font-weight:600;opacity:.85">
+            ${r.porCo.geotecnica > 0 ? `GEO ${fL(r.porCo.geotecnica)}` : ""}${r.porCo.geotecnica > 0 && r.porCo.subterra > 0 ? " · " : ""}${r.porCo.subterra > 0 ? `SUB ${fL(r.porCo.subterra)}` : ""}
+            &nbsp;&nbsp;<span style="font-size:13px;font-weight:800;opacity:1">${fL(r.total)}</span>
+          </span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:10.5px">
+          <thead><tr style="background:#F1F5F9">
+            <th style="text-align:left;padding:6px 12px;font-size:8.5px;color:#64748b;letter-spacing:0.4px">EMPLEADO</th>
+            <th style="text-align:left;padding:6px 8px;font-size:8.5px;color:#64748b;letter-spacing:0.4px">CARGO</th>
+            <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">COSTO DIARIO</th>
+            <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">DÍAS PAG.</th>
+            <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">COSTO DÍAS</th>
+            <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">HE HRS</th>
+            <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">COSTO HE</th>
+            <th style="text-align:right;padding:6px 12px;font-size:8.5px;color:#64748b">TOTAL</th>
+          </tr></thead>
+          <tbody>
+            ${r.emps.map(x => `<tr style="border-top:1px solid #F1F5F9">
+              <td style="padding:5px 12px;font-weight:600">${chipCo(x.co)} ${esc(x.emp.fullName)}</td>
+              <td style="padding:5px 8px;color:#64748b">${esc(x.emp.position || "—")}</td>
+              <td style="padding:5px 8px;text-align:right">${fL(x.sd)}</td>
+              <td style="padding:5px 8px;text-align:right">${fmtDias(x.dias)}</td>
+              <td style="padding:5px 8px;text-align:right">${fL(x.costoDias)}</td>
+              <td style="padding:5px 8px;text-align:right;color:#D97706">${x.heHrs > 0 ? fmtDias(x.heHrs) : "—"}</td>
+              <td style="padding:5px 8px;text-align:right;color:#D97706">${x.heCosto > 0 ? fL(x.heCosto) : "—"}</td>
+              <td style="padding:5px 12px;text-align:right;font-weight:700">${fL(x.costo)}</td>
+            </tr>`).join("")}
+            <tr style="background:#F8FAFC;font-weight:700;border-top:1px solid #E2E8F0">
+              <td colspan="3" style="padding:6px 12px">Subtotal ${esc(r.short)} · ${r.emps.length} persona${r.emps.length !== 1 ? "s" : ""}</td>
+              <td style="padding:6px 8px;text-align:right">${fmtDias(r.dias)}</td>
+              <td style="padding:6px 8px;text-align:right">${fL(r.costoDias)}</td>
+              <td style="padding:6px 8px;text-align:right;color:#D97706">${r.heHrs > 0 ? fmtDias(r.heHrs) : "—"}</td>
+              <td style="padding:6px 8px;text-align:right;color:#D97706">${r.heCosto > 0 ? fL(r.heCosto) : "—"}</td>
+              <td style="padding:6px 12px;text-align:right;color:#059669">${fL(r.total)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>`).join("");
+
+      const [pyy, pmm] = [yy, mmn - 1 === 0 ? 12 : mmn - 1];
+      const mesAnt = `${mmn - 1 === 0 ? yy - 1 : pyy}-${String(pmm).padStart(2, "0")}`;
+      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costo de Mano de Obra — ${mesTitulo} · Grupo Geotecnica</title>
+      <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#1E293B;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{.np{display:none}}thead{display:table-header-group}tr{page-break-inside:avoid}</style>
+      </head><body>
+
+      <!-- ═══════ PAGINA 1: PORTADA EJECUTIVA ═══════ -->
+      <div style="page-break-after:always">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:14px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <img src="${logoUrl}" style="height:52px" onerror="this.style.display='none'" />
+            <div>
+              <div style="font-size:9px;color:#E8762D;font-weight:800;letter-spacing:1.8px;text-transform:uppercase">Grupo Geotecnica · Recursos Humanos</div>
+              <div style="font-size:23px;font-weight:800;letter-spacing:-0.4px;color:#2C2A28">Costo de Mano de Obra</div>
+              <div style="font-size:13px;color:#64748b">Reporte ejecutivo mensual — <b style="color:#2C2A28">${mesTitulo}</b></div>
+            </div>
+          </div>
+          <div style="text-align:right;font-size:10px;color:#64748b">
+            <div style="font-weight:800;color:${COMPANIES.geotecnica.color}">Geotecnica Soluciones</div>
+            <div style="font-weight:800;color:${COMPANIES.subterra.color}">Subterra Honduras</div>
+            <div style="margin-top:3px">Generado ${genFecha}</div>
+          </div>
+        </div>
+        <div style="height:4px;background:linear-gradient(90deg,#E8762D,${COMPANIES.geotecnica.color},${COMPANIES.subterra.color});border-radius:2px;margin:13px 0 16px"></div>
+
+        ${faltantes.length ? `<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:8px 12px;font-size:10.5px;color:#78350F;margin-bottom:14px"><b>⚠ Datos incompletos:</b> ${faltantes.map(esc).join(" · ")} — los totales reflejan solo lo registrado.</div>` : ""}
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
+          ${kpi("Costo total del grupo", fL(totalG), "#059669", `${personasG} colaboradores · ${rowsG.length} proyectos`)}
+          ${kpi("Costo días laborados", fL(costoDiasG), "#2563EB", `${fmtDias(diasG)} días pagados`)}
+          ${kpi("Horas extras pagadas", fL(heCostoG), "#D97706", `${fmtDias(heHrsG)} horas`)}
+          ${kpi("Geotecnica Soluciones", fL(porEmp.geotecnica.total), COMPANIES.geotecnica.color, `${porEmp.geotecnica.personas.size} personas`)}
+          ${kpi("Subterra Honduras", fL(porEmp.subterra.total), COMPANIES.subterra.color, `${porEmp.subterra.personas.size} personas`)}
+        </div>
+
+        <div style="display:flex;gap:18px;align-items:flex-start;margin-bottom:18px">
+          <div style="flex:1.15;border:1px solid #E2E8F0;border-radius:10px;padding:14px">
+            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px">Distribución del costo por proyecto</div>
+            <div style="display:flex;gap:14px;align-items:center">
+              <svg width="150" height="150" viewBox="0 0 180 180" style="flex-shrink:0">
+                ${donaSegs}
+                <text x="90" y="86" text-anchor="middle" style="font-size:11px;font-weight:800;fill:#2C2A28">${rowsG.length}</text>
+                <text x="90" y="100" text-anchor="middle" style="font-size:8px;fill:#64748b">proyectos</text>
+              </svg>
+              <div style="flex:1">${donaLeyenda}</div>
+            </div>
+          </div>
+          <div style="flex:1;border:1px solid #E2E8F0;border-radius:10px;padding:14px">
+            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px">Costo por empresa</div>
+            ${barrasEmp}
+            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin:14px 0 8px">Mezcla de personal por proyecto</div>
+            <div style="display:flex;gap:12px;font-size:9px;color:#64748b;margin-bottom:7px">
+              <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${COMPANIES.geotecnica.color};vertical-align:-1px"></span> Geotecnica</span>
+              <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${COMPANIES.subterra.color};vertical-align:-1px"></span> Subterra</span>
+            </div>
+            ${barrasProy}
+          </div>
+        </div>
+
+        <div style="font-size:9px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:8px;line-height:1.5">
+          <b>Metodología:</b> costo diario = (salario + bonificación mensual) ÷ 30 × días pagados. Domingo/feriado de descanso paga 1; DT ×2, DT2/TF ×3; INC/V pagan 1; NSP no paga.
+          Horas extras: hora base = salario ÷ 30 ÷ 8 · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2 (pago quincena vencida: en ${mesTitulo} se desembolsan las HE de 2Q ${mesAnt} y las de 1Q ${mesEjec}).
+          No incluye cargas patronales. Preparado por ${esc(userName || "Operaciones")} · GeoTeam — Sistema de Operaciones.
+        </div>
+      </div>
+
+      <!-- ═══════ PAGINAS 2+: DETALLE POR PROYECTO ═══════ -->
+      <div style="border-left:4px solid #E8762D;padding-left:12px;margin-bottom:14px">
+        <div style="font-size:9px;color:#E8762D;font-weight:800;letter-spacing:1.5px;text-transform:uppercase">Detalle por proyecto · ${mesTitulo}</div>
+        <div style="font-size:11px;color:#64748b">Cada colaborador con su empresa: ${chipCo("geotecnica")} Geotecnica Soluciones · ${chipCo("subterra")} Subterra Honduras</div>
+      </div>
+      ${projBlocks}
+      <div style="background:#2C2A28;color:#fff;border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;page-break-inside:avoid">
+        <span style="font-size:12px;font-weight:700">TOTAL MANO DE OBRA DEL GRUPO — ${mesTitulo}</span>
+        <span style="font-size:17px;font-weight:800;color:#6EE7B7">${fL(totalG)}</span>
+      </div>
+      <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
+      </body></html>`);
+      w.document.close();
+    };
+
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Header + selector de quincena + exportar */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
@@ -2942,6 +3213,19 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           </div>
           <Btn variant="ghost" onClick={exportCostosCSV}>📊 CSV</Btn>
           <Btn variant="info" onClick={exportCostosPDF}>📄 Descargar reporte PDF</Btn>
+          {/* Reporte EJECUTIVO del MES con ambas empresas (para direccion) */}
+          <div style={{ width: 1, alignSelf: "stretch", background: "#E2E8F0", margin: "0 4px" }} />
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Mes · ambas empresas</div>
+            <select value={mesEjec} onChange={e => setCostosMesEjec(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff" }}>
+              {mesesDisponibles.map(m => {
+                const [my, mn] = m.split("-").map(Number);
+                const lbl = new Date(my, mn - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
+                return <option key={m} value={m}>{lbl.charAt(0).toUpperCase() + lbl.slice(1)}</option>;
+              })}
+            </select>
+          </div>
+          <Btn onClick={exportCostosEjecutivoPDF}>🏢 Reporte ejecutivo PDF</Btn>
         </div>
       </div>
 
