@@ -3151,11 +3151,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           ${kpi("Subterra Honduras", fL(porEmp.subterra.total), COMPANIES.subterra.color, `${porEmp.subterra.personas.size} personas`)}
         </div>
 
-        <div style="display:flex;gap:18px;align-items:flex-start;margin-bottom:18px">
-          <div style="flex:1.15;border:1px solid #E2E8F0;border-radius:10px;padding:14px">
-            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px">Distribución del costo por proyecto</div>
+        <div style="display:flex;gap:14px;align-items:flex-start">
+          <div style="flex:1.15;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
+            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Distribución del costo por proyecto</div>
             <div style="display:flex;gap:14px;align-items:center">
-              <svg width="150" height="150" viewBox="0 0 180 180" style="flex-shrink:0">
+              <svg width="140" height="140" viewBox="0 0 180 180" style="flex-shrink:0">
                 ${donaSegs}
                 <text x="90" y="86" text-anchor="middle" style="font-size:11px;font-weight:800;fill:#2C2A28">${rowsG.length}</text>
                 <text x="90" y="100" text-anchor="middle" style="font-size:8px;fill:#64748b">proyectos</text>
@@ -3163,22 +3163,16 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <div style="flex:1">${donaLeyenda}</div>
             </div>
           </div>
-          <div style="flex:1;border:1px solid #E2E8F0;border-radius:10px;padding:14px">
-            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px">Costo por empresa</div>
+          <div style="flex:1;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
+            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:9px">Costo por empresa</div>
             ${barrasEmp}
-            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin:14px 0 8px">Mezcla de personal por proyecto</div>
-            <div style="display:flex;gap:12px;font-size:9px;color:#64748b;margin-bottom:7px">
+            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin:11px 0 7px">Mezcla de personal por proyecto</div>
+            <div style="display:flex;gap:12px;font-size:9px;color:#64748b;margin-bottom:6px">
               <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${COMPANIES.geotecnica.color};vertical-align:-1px"></span> Geotecnica</span>
               <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${COMPANIES.subterra.color};vertical-align:-1px"></span> Subterra</span>
             </div>
             ${barrasProy}
           </div>
-        </div>
-
-        <div style="font-size:9px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:8px;line-height:1.5">
-          <b>Metodología:</b> costo diario = (salario + bonificación mensual) ÷ 30 × días pagados. Domingo/feriado de descanso paga 1; DT ×2, DT2/TF ×3; INC/V pagan 1; NSP no paga.
-          Horas extras: hora base = salario ÷ 30 ÷ 8 · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2 (pago quincena vencida: en ${mesTitulo} se desembolsan las HE de 2Q ${mesAnt} y las de 1Q ${mesEjec}).
-          No incluye cargas patronales. Preparado por ${esc(userName || "Operaciones")} · GeoTeam — Sistema de Operaciones.
         </div>
       </div>
 
@@ -3191,6 +3185,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       <div style="background:#2C2A28;color:#fff;border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;page-break-inside:avoid">
         <span style="font-size:12px;font-weight:700">TOTAL MANO DE OBRA DEL GRUPO — ${mesTitulo}</span>
         <span style="font-size:17px;font-weight:800;color:#6EE7B7">${fL(totalG)}</span>
+      </div>
+      <!-- Metodologia al FINAL (antes vivia en la portada y se derramaba a
+           una pagina 2 casi en blanco al imprimir en horizontal) -->
+      <div style="font-size:9px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:8px;margin-top:12px;line-height:1.5;page-break-inside:avoid">
+        <b>Metodología:</b> costo diario = (salario + bonificación mensual) ÷ 30 × días pagados. Domingo/feriado de descanso paga 1; DT ×2, DT2/TF ×3; INC/V pagan 1; NSP no paga.
+        Horas extras: hora base = salario ÷ 30 ÷ 8 · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2 (pago quincena vencida: en ${mesTitulo} se desembolsan las HE de 2Q ${mesAnt} y las de 1Q ${mesEjec}).
+        No incluye cargas patronales. Preparado por ${esc(userName || "Operaciones")} · GeoTeam — Sistema de Operaciones.
       </div>
       <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
       </body></html>`);
