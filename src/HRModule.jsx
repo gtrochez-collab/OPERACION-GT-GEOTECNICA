@@ -4460,6 +4460,83 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     return total;
   };
 
+  // ── PASA A PERMANENCIA (ago 2026, pedido de Gerson) ──
+  // Convierte un temporal en permanente en UNA sola accion, sin crear un
+  // empleado nuevo (conserva id, fotos, asistencias, HE):
+  //   1. hr-emps5: contractType "permanent", endDate "" (ya no vence) —
+  //      la card de Empleados lo mueve sola a la seccion PERMANENTES.
+  //   2. hr-contracts: el contrato temporal activo se cierra el dia anterior
+  //      a la fecha de efecto (status "renewed") y nace el contrato
+  //      permanente indefinido desde la fecha de efecto.
+  //   3. hr-movs: se registran AUTOMATICAMENTE los dos movimientos —
+  //      BAJA del temporal (ultimo dia = dia anterior al efecto, motivo
+  //      "Fin de contrato temporal") y ALTA como permanente (fecha de
+  //      efecto, motivo "Conversion temporal a permanente") — asi el
+  //      reporte de Movimientos refleja el cambio de grupo (B → A/C).
+  const PermanenciaForm = ({ contract }) => {
+    const emp = ce.find(x => x.id === contract.employeeId);
+    const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+    const [salario, setSalario] = useState(contract.salary ?? emp?.salary ?? "");
+    const [bonif, setBonif] = useState(contract.bonificacion ?? emp?.bonificacion ?? 0);
+    const [notas, setNotas] = useState("");
+    const [saving, setSaving] = useState(false);
+    if (!emp) return <div style={{ padding: 10, color: "#DC2626" }}>El empleado de este contrato ya no existe.</div>;
+    const diaAnterior = fecha ? new Date(new Date(fecha + "T12:00").getTime() - 86400000).toISOString().slice(0, 10) : "";
+    const grupoNuevo = getGrupo(emp.company, "permanent");
+    const grupoViejo = getGrupo(emp.company, "temporary");
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 10, padding: 12, fontSize: 13, color: "#065F46" }}>
+        <b>{emp.fullName}</b> ({emp.position || "—"}) pasa de <b>Temporal (grupo {grupoViejo})</b> a <b>Permanente (grupo {grupoNuevo})</b>.
+        Su contrato temporal actual{contract.endDate ? ` (vence ${fmt(contract.endDate)})` : ""} se cierra el día anterior a la fecha de efecto.
+        Días acumulados de la cadena temporal: <b>{cumulativeDaysOf(contract)}</b>.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Input label="Fecha de efecto de la permanencia" type="date" value={fecha} onChange={e => setFecha(e.target.value)} />
+        <Input label="Salario bruto como permanente (L)" type="number" value={salario} onChange={e => setSalario(e.target.value)} />
+        <Input label="Bonificación (L)" type="number" value={bonif} onChange={e => setBonif(e.target.value)} />
+        <Input label="Notas (opcional)" value={notas} onChange={e => setNotas(e.target.value)} />
+      </div>
+      <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 11, fontSize: 12, color: "#1E40AF", lineHeight: 1.5 }}>
+        Se registrará automáticamente en <b>Movimientos</b>: BAJA del temporal el <b>{diaAnterior ? fmt(diaAnterior) : "—"}</b> (fin de contrato temporal)
+        y ALTA como permanente el <b>{fecha ? fmt(fecha) : "—"}</b> (conversión temporal a permanente). El colaborador conserva su ficha, fotos, asistencias y horas extras.
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cancelar</Btn>
+        <Btn variant="success" disabled={saving} onClick={async () => {
+          if (saving) return;
+          if (!fecha) return alert("Indicá la fecha de efecto de la permanencia.");
+          if (!salario || Number(salario) <= 0) return alert("Indicá el salario como permanente.");
+          if (!confirm(`¿Pasar a ${emp.fullName} a PERMANENTE con efecto ${fmt(fecha)}?\n\n• Contrato temporal se cierra el ${fmt(diaAnterior)}\n• Nuevo contrato permanente indefinido desde ${fmt(fecha)}\n• Salario: L ${Number(salario).toLocaleString("es-HN")}\n• Movimientos: baja (${grupoViejo}) + alta (${grupoNuevo}) automáticos`)) return;
+          setSaving(true);
+          const ts = new Date().toISOString();
+          // 1) Ficha del empleado: permanente, sin vencimiento
+          const ok1 = await sE(emps.map(x => x.id === emp.id ? { ...x, contractType: "permanent", endDate: "", salary: Number(salario), bonificacion: Number(bonif) || 0, status: "active" } : x));
+          // 2) Contratos: cerrar el temporal + crear el permanente
+          const nuevoContrato = {
+            id: uid(), employeeId: emp.id, company: emp.company, contractType: "permanent",
+            startDate: fecha, endDate: "", salary: Number(salario), bonificacion: Number(bonif) || 0,
+            status: "active", parentContractId: null,
+            notes: `Conversión a permanencia (efecto ${fmt(fecha)}).${notas ? " " + notas : ""}`,
+            createdAt: ts,
+          };
+          const ok2 = await sCt([
+            ...contracts.map(c => c.id === contract.id ? { ...c, status: "renewed", endDate: diaAnterior, liquidationReason: "conversion-permanente" } : c),
+            nuevoContrato,
+          ]);
+          // 3) Movimientos automaticos: baja temporal + alta permanente
+          const base = { employeeId: emp.id, fullName: emp.fullName, dni: emp.dni || "", position: emp.position || "", company: emp.company, createdAt: ts };
+          const movBaja = { id: uid(), tipo: "baja", ...base, contractType: "temporary", grupo: grupoViejo, salary: Number(contract.salary) || Number(emp.salary) || 0, endDate: diaAnterior, date: diaAnterior, motivo: "Fin de contrato temporal", notas: `Conversión a permanencia — pasa a permanente el ${fmt(fecha)}.${notas ? " " + notas : ""}` };
+          const movAlta = { id: uid(), tipo: "alta", ...base, contractType: "permanent", grupo: grupoNuevo, salary: Number(salario), endDate: "", date: fecha, motivo: "Conversion temporal a permanente", notas: `Era temporal desde ${fmt(emp.startDate)} (${cumulativeDaysOf(contract)} días acumulados).${notas ? " " + notas : ""}` };
+          const ok3 = await sM([...movs, movBaja, movAlta]);
+          setSaving(false);
+          if (!ok1 || !ok2 || !ok3) { alert("⚠ Algo no se sincronizó a la nube (ficha " + (ok1 ? "✓" : "✗") + ", contratos " + (ok2 ? "✓" : "✗") + ", movimientos " + (ok3 ? "✓" : "✗") + "). Recargá la página y verificá."); return; }
+          setModal(null);
+          alert(`⭐ ${emp.fullName} es PERMANENTE desde ${fmt(fecha)}.\n\n✓ Ficha actualizada (ya aparece en la sección Permanentes)\n✓ Contrato permanente indefinido creado\n✓ Movimientos registrados: baja ${grupoViejo} (${fmt(diaAnterior)}) + alta ${grupoNuevo} (${fmt(fecha)})`);
+        }}>{saving ? "Guardando…" : "⭐ Confirmar permanencia"}</Btn>
+      </div>
+    </div>;
+  };
+
   const ContractForm = ({ contract, parent, presetEmpId, onSave }) => {
     const inheritFromParent = !!parent;
     const presetEmp = presetEmpId ? ce.find(x => x.id === presetEmpId) : null;
@@ -4533,6 +4610,19 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             updated.push(newC);
             sCt(updated);
           }
+          // SINCRONIZAR LA FICHA DEL EMPLEADO (fix ago 2026): el contrato
+          // activo manda — antes Renovar solo escribia hr-contracts y la
+          // card de Empleados (que lee endDate/contractType/salary de
+          // hr-emps5) seguia mostrando "vencido Xd" con la fecha vieja.
+          // startDate del empleado NO se toca (es su ingreso original) y
+          // status tampoco (no revivir inactivos por accidente).
+          sE(emps.map(x => x.id === f.employeeId ? {
+            ...x,
+            contractType: f.contractType,
+            endDate: isPermOrHon ? "" : f.endDate,
+            salary: Number(f.salary),
+            bonificacion: Number(f.bonificacion) || 0,
+          } : x));
           setModal(null);
         }}>{contract ? "Guardar" : (inheritFromParent ? "Renovar contrato" : "Crear contrato")}</Btn>
       </div>
@@ -4813,6 +4903,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <td style={{ ...td, whiteSpace: "nowrap" }}>
             {!active && <Btn small onClick={() => setModal({ t: "ctn", presetEmpId: emp.id })}>+ Crear</Btn>}
             {active && isTemp && <Btn small variant="info" onClick={() => setModal({ t: "ctr", d: active })}>🔄 Renovar</Btn>}
+            {active && isTemp && <Btn small variant="success" onClick={() => setModal({ t: "perm", d: active })}>⭐ Pasa a permanencia</Btn>}
           </td>
         </tr>
       );
@@ -5137,6 +5228,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     case "ctn": return <Modal title="Nuevo contrato" onClose={() => setModal(null)} wide><ContractForm presetEmpId={m.presetEmpId} onSave={() => {}} /></Modal>;
     case "cte": return <Modal title="Editar contrato" onClose={() => setModal(null)} wide><ContractForm contract={m.d} onSave={() => {}} /></Modal>;
     case "ctr": return <Modal title="Renovar contrato" onClose={() => setModal(null)} wide><ContractForm parent={m.d} onSave={() => {}} /></Modal>;
+    case "perm": return <Modal title="⭐ Pasa a permanencia" onClose={() => setModal(null)} wide><PermanenciaForm contract={m.d} /></Modal>;
     case "bnn": return <Modal title="Nueva bonificación" onClose={() => setModal(null)} wide><BonusForm presetEmpId={m.presetEmpId} /></Modal>;
     case "bne": return <Modal title="Editar bonificación" onClose={() => setModal(null)} wide><BonusForm bonus={m.d} /></Modal>;
     default: return null;
