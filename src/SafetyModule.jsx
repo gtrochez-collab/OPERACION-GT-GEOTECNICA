@@ -24,6 +24,9 @@
 //   - ep-puestos   : override de perfil EPP por persona {personaId: puestoKey}
 //   - ep-dota      : dotacion manual {empId: {tipoEpp: {tiene: true, fecha: "YYYY-MM-DD"|""}}}
 //   - cp-file-<id> : fotos de items (reutiliza el storage de archivos)
+//   - lg-despachos : COMPARTIDA con GeoLogistics — "Enviar a logistica" crea
+//     despachos con sourceEppReqId (uno por proyecto) para el kanban de Oscar;
+//     LogisticsModule los sincroniza de vuelta (req → entregada al entregar).
 //   Lee (NO escribe): hr-emps5 — empleados de GeoTeam (con sus fotos).
 // Las personas de Dotacion = empleados de GeoTeam + jornaleros (company:"jornal").
 //
@@ -256,13 +259,26 @@ const PROV_SEED = ["Chispa Safety", "Larach y Compañía", "La Mundial", "Summit
 
 // Flujo de la requisicion (diagrama de Gerson, ago 2026): pendiente →
 // aprobada → (si falta stock, el abastecimiento corre en paralelo como PO)
-// → preparando envio → enviada a proyecto (con Ficha de Entrega firmada).
+// → preparando envio → EN LOGISTICA (el paquete pasa a GeoLogistics: Oscar
+// lo recoge en la oficina de administracion y lo lleva) → enviada a proyecto
+// (la marca GeoLogistics solo, al entregar; con Ficha de Entrega firmada).
 const ESTADOS = {
   pendiente: { label: "PENDIENTE",  color: BRAND.yellow, bg: BRAND.yellowSoft },
   aprobada:  { label: "APROBADA",   color: BRAND.blue,   bg: BRAND.blueSoft },
   envio:     { label: "PREPARANDO ENVÍO", color: "#7C3AED", bg: "rgba(124,58,237,0.10)" },
+  logistica: { label: "EN LOGÍSTICA", color: "#B45309", bg: "rgba(180,83,9,0.10)" },
   entregada: { label: "ENVIADA A PROYECTO", color: BRAND.green, bg: BRAND.greenSoft },
   rechazada: { label: "RECHAZADA",  color: BRAND.red,    bg: BRAND.redSoft },
+};
+// Estados de los despachos de GeoLogistics (lg-despachos) — solo para chips
+// informativos aca; el dueño de esos estados es LogisticsModule.
+const LG_ESTADOS = {
+  pendiente: { label: "Por hacer", icon: "📌", color: "#B45309" },
+  programado: { label: "Programado", icon: "📅", color: BRAND.blue },
+  en_ruta: { label: "En ruta", icon: "🚛", color: "#7C3AED" },
+  entregado: { label: "Entregado", icon: "✓", color: "#059669" },
+  cerrado: { label: "Cerrado", icon: "🔒", color: "#059669" },
+  cancelado: { label: "Cancelado", icon: "✕", color: BRAND.red },
 };
 
 const GREEN = "#059669";
@@ -300,6 +316,10 @@ const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("es-HN", { day:
 // Fecha ultra-corta ("03 ago") para lineas de historial — el detalle completo
 // va en el tooltip (title) para no llenar la card de texto.
 const fmtDia = (iso) => (iso ? new Date(iso).toLocaleDateString("es-HN", { day: "2-digit", month: "short" }) : "—");
+// Fechas date-only ("YYYY-MM-DD", ej. fechaProgramada de despachos): formatear
+// a mano — new Date() las parsea como medianoche UTC y en Honduras (UTC-6)
+// saldrían un día antes.
+const fmtFechaSolo = (d) => (d ? String(d).slice(0, 10).split("-").reverse().join("/") : "—");
 const coTag = (c) => (c === "subterra" ? "SUB" : c === "jornal" ? "JORNAL" : "GEO");
 
 // ── Avatar de empleado (foto o iniciales) ──
@@ -954,14 +974,13 @@ const EnvioFormImpl = ({ req, people, onSave, onCancel }) => {
       <div style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.25)", borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: BRAND.ink }}>
         🚚 La compra ya está en el almacén. Asigná quién la lleva a proyecto — la requisición <b>{req?.numero}</b> pasa a <b>PREPARANDO ENVÍO</b> y el stock sale del inventario.
       </div>
-      <Select label="Conductor / responsable del envío" placeholder="— Seleccionar —" value={conductorId} onChange={(e) => setConductorId(e.target.value)}
+      <Select label="Responsable de armar el paquete (opcional)" placeholder="— El conductor lo asigna logística —" value={conductorId} onChange={(e) => setConductorId(e.target.value)}
         options={activos.map((e) => ({ value: e.id, label: e.fullName }))} />
-      <Input label="Vehículo / placa (o quién vino por él)" placeholder="Ej: Hilux PDD-4521, moto del proveedor…" value={vehiculo} onChange={(e) => setVehiculo(e.target.value)} />
+      <Input label="Referencia de vehículo (opcional)" placeholder="Lo normal: lo programa Oscar en GeoLogistics" value={vehiculo} onChange={(e) => setVehiculo(e.target.value)} />
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
         <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
         <Btn variant="success" disabled={enviando} onClick={async () => {
           if (enviando) return;
-          if (!conductorId) return alert("Seleccioná el conductor / responsable del envío.");
           const emp = people.find((e) => e.id === conductorId);
           setEnviando(true);
           await onSave({ conductorId, conductorNombre: emp?.fullName || "", vehiculo: vehiculo.trim() });
@@ -972,62 +991,39 @@ const EnvioFormImpl = ({ req, people, onSave, onCancel }) => {
   );
 };
 
-// ── Despachar a proyecto (requisicion en "preparando envio") ──
-// Hora de salida + foto de comprobante (opcional, comprimida). Con esto la
-// requisicion queda ENVIADA A PROYECTO y ahi muere el proceso.
-const DespachoFormImpl = ({ req, people, onSave, onCancel }) => {
-  const [conductorId, setConductorId] = useState(req?.envioConductorId || "");
-  const [vehiculo, setVehiculo] = useState(req?.envioVehiculo || "");
-  // datetime-local pide hora LOCAL "YYYY-MM-DDTHH:mm" (toISOString es UTC)
-  const [hora, setHora] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16));
-  const [foto, setFoto] = useState(null);
-  const [subiendo, setSubiendo] = useState(false);
-  const activos = people.filter((e) => e.status === "active").sort((a, b) => String(a.fullName).localeCompare(b.fullName));
-  const subirFoto = async (f) => {
-    setSubiendo(true);
-    try {
-      const dataUrl = await compressImage(f);
-      const fileId = uid();
-      const ok = await withTimeout(store.set(`cp-file-${fileId}`, { name: f.name, type: "image/jpeg", size: dataUrl.length, dataUrl }), 30000, "subir foto de salida");
-      if (!ok) throw new Error("la nube no confirmó el guardado");
-      setFoto({ fileId, name: f.name });
-    } catch (e) { alert("⚠ No se subió la foto: " + e.message); }
-    setSubiendo(false);
-  };
+// ── Enviar a logística (requisicion en "preparando envio") ──
+// Reemplaza al despacho directo (pedido de Gerson ago 2026): el paquete pasa
+// a GeoLogistics como despacho(s) — UNO POR PROYECTO — para que Oscar lo
+// recoja en la oficina de administracion y lo lleve. Conductor, vehiculo y
+// fecha los pone logistica al programar; aca solo se manda la orden.
+const LogisticaFormImpl = ({ req, onSave, onCancel }) => {
+  const [fechaNecesaria, setFechaNecesaria] = useState("");
+  const [notas, setNotas] = useState("");
+  const [enviando, setEnviando] = useState(false); // anti doble-click: crearia despachos duplicados
+  const proys = [...new Set((req?.lineas || []).map((l) => l.proyecto).filter(Boolean))];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ background: BRAND.greenSoft, border: `1px solid ${BRAND.green}40`, borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: "#3D5F35" }}>
-        🚛 Registrá la salida de <b>{req?.numero}</b> hacia el proyecto. Llevá la 📋 Ficha de Entrega para las firmas — con esto el proceso queda <b>ENVIADA A PROYECTO</b> y se cierra.
+      <div style={{ background: "rgba(180,83,9,0.08)", border: "1px solid rgba(180,83,9,0.30)", borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: BRAND.ink }}>
+        🚚 <b>{req?.numero}</b> pasa a manos de <b>LOGÍSTICA</b>: se crea {proys.length > 1 ? `un despacho por proyecto (${proys.length})` : "un despacho"} en GeoLogistics con todo el detalle. Oscar recoge el paquete en la <b>oficina de administración</b>, lo lleva a proyecto y al marcarlo ENTREGADO la requisición se cierra sola como <b>ENVIADA A PROYECTO</b>.
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Select label="Conductor / responsable" placeholder="— Seleccionar —" value={conductorId} onChange={(e) => setConductorId(e.target.value)}
-          options={activos.map((e) => ({ value: e.id, label: e.fullName }))} />
-        <Input label="Vehículo / placa" placeholder="Ej: Hilux PDD-4521" value={vehiculo} onChange={(e) => setVehiculo(e.target.value)} />
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Input label="Hora de salida" type="datetime-local" value={hora} onChange={(e) => setHora(e.target.value)} />
-        <Field label="Foto de comprobante (opcional)">
-          {foto ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, background: BRAND.greenSoft, border: `1px solid ${BRAND.green}40`, borderRadius: R.sm, padding: "7px 10px", fontSize: 12.5, fontWeight: 700, color: "#3D5F35" }}>
-              📸 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{foto.name}</span>
-              <button onClick={() => setFoto(null)} style={{ background: "none", border: "none", color: BRAND.red, cursor: "pointer", fontWeight: 800 }}>×</button>
-            </div>
-          ) : subiendo ? (
-            <div style={{ fontSize: 12.5, color: BRAND.stone, padding: "8px 2px" }}>⏳ Subiendo…</div>
-          ) : (
-            <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) subirFoto(f); }} style={{ fontSize: 12 }} />
-          )}
-        </Field>
+      {proys.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontSize: 12 }}>
+          {proys.map((p) => <Chip key={p} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {p}</Chip>)}
+        </div>
+      )}
+      <Input label="Fecha necesaria en proyecto (opcional)" type="date" value={fechaNecesaria} onChange={(e) => setFechaNecesaria(e.target.value)} />
+      <TextArea label="Notas para logística (opcional)" placeholder="Ej: urgente para la cuadrilla de perforación, el paquete queda en recepción…" value={notas} onChange={(e) => setNotas(e.target.value)} />
+      <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}30`, borderRadius: R.md, padding: "8px 12px", fontSize: 12, color: BRAND.ink }}>
+        📋 Imprimí la <b>Ficha de Entrega</b> y metela al paquete — viaja con el EPP para que firmen al recibir.
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
         <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
-        <Btn variant="success" disabled={subiendo} onClick={() => {
-          if (subiendo) return;
-          if (!conductorId) return alert("Seleccioná el conductor / responsable del envío.");
-          if (!hora) return alert("Poné la hora de salida.");
-          const emp = people.find((e) => e.id === conductorId);
-          onSave({ conductorId, conductorNombre: emp?.fullName || "", vehiculo: vehiculo.trim(), salidaHora: new Date(hora).toISOString(), salidaFotoFile: foto });
-        }}>🚛 Despachar a proyecto</Btn>
+        <Btn variant="success" disabled={enviando} onClick={async () => {
+          if (enviando) return;
+          setEnviando(true);
+          await onSave({ fechaNecesaria, notas: notas.trim() });
+          setEnviando(false);
+        }}>{enviando ? "⏳ Enviando…" : "🚚 Enviar a logística"}</Btn>
       </div>
     </div>
   );
@@ -1291,6 +1287,10 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const [dotaMap, setDotaMap] = useState({});
   const dotaRef = useRef({});               // espejo de dotaMap para las ops encoladas
   const dotaQueue = useRef(Promise.resolve()); // serializa los guardados de ep-dota
+  // Despachos de GeoLogistics (lg-despachos, lectura + append al enviar a
+  // logística): los despachos EPP llevan sourceEppReqId → acá se muestran
+  // como chips de avance ("En ruta", "Entregado") en la requisición.
+  const [lgDesp, setLgDesp] = useState([]);
   // Ordenes "Por comprar" (PO): lo que falta en stock y se manda a cotizar
   // al proveedor. Key: ep-pos.
   const [pos, setPos] = useState([]);
@@ -1320,8 +1320,8 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
   useEffect(() => {
     (async () => {
-      const [pv, it, rq, em, pu, jr, po, at, cpp, dt] = await Promise.all([
-        store.get("ep-providers"), store.get("ep-items"), store.get("ep-reqs"), store.get("hr-emps5"), store.get("ep-puestos"), store.get("ep-jornaleros"), store.get("ep-pos"), store.get("hr-atts2"), store.get("cp-projects"), store.get("ep-dota"),
+      const [pv, it, rq, em, pu, jr, po, at, cpp, dt, ld] = await Promise.all([
+        store.get("ep-providers"), store.get("ep-items"), store.get("ep-reqs"), store.get("hr-emps5"), store.get("ep-puestos"), store.get("ep-jornaleros"), store.get("ep-pos"), store.get("hr-atts2"), store.get("cp-projects"), store.get("ep-dota"), store.get("lg-despachos"),
       ]);
       setProviders(Array.isArray(pv) ? pv : []);
       setItems(Array.isArray(it) ? it : []);
@@ -1330,6 +1330,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       setPuestosMap(pu && typeof pu === "object" && !Array.isArray(pu) ? pu : {});
       const dota0 = dt && typeof dt === "object" && !Array.isArray(dt) ? dt : {};
       setDotaMap(dota0); dotaRef.current = dota0;
+      setLgDesp(Array.isArray(ld) ? ld : []);
       setJornaleros(Array.isArray(jr) ? jr : []);
       setPos(Array.isArray(po) ? po : []);
       setCpProjects(Array.isArray(cpp) ? cpp : []);
@@ -1371,6 +1372,21 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       setPhotoCache((prev) => { const next = { ...prev }; let ch = false; for (const [fid, url] of res) if (url) { next[fid] = url; ch = true; } return ch ? next : prev; });
     })();
   }, [items, emps]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh ligero al volver a la pestaña: los despachos EPP avanzan en
+  // GeoLogistics (Oscar) y la req se cierra sola al entregarse — releer
+  // ep-reqs y lg-despachos para que los chips/columnas se actualicen.
+  useEffect(() => {
+    const refresh = async () => {
+      try {
+        const [rq, ld] = await Promise.all([store.get("ep-reqs"), store.get("lg-despachos")]);
+        if (Array.isArray(rq) && rq.length) setReqs(rq);
+        if (Array.isArray(ld)) setLgDesp(ld);
+      } catch { /* nube caída: se queda lo local */ }
+    };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
 
   const sProv = async (v) => { setProviders(v); const ok = await store.set("ep-providers", v); if (!ok) alert("⚠ No se guardó en la nube (ep-providers)."); return ok; };
   const sItems = async (v) => { setItems(v); const ok = await store.set("ep-items", v); if (!ok) alert("⚠ No se guardó en la nube (ep-items)."); return ok; };
@@ -1593,7 +1609,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     // El residente no tiene la pestaña Requisiciones: se queda en el catalogo.
     if (!esResidente) setSec("requisiciones");
     alert(esResidente
-      ? `✅ Requisición ${numero} enviada. Queda en revisión — te avisamos cuando el EPP salga hacia el proyecto.` + (tienePerdida ? "\n\n⚠ Incluye PÉRDIDA/EXTRAVÍO: se aplicará el descuento correspondiente en planilla." : "")
+      ? `✅ Requisición ${numero} enviada. Seguí su avance en la pestaña 📦 "Mis pedidos".` + (tienePerdida ? "\n\n⚠ Incluye PÉRDIDA/EXTRAVÍO: se aplicará el descuento correspondiente en planilla." : "")
       : `✅ Requisición ${numero} enviada.` + (tienePerdida ? "\n\n⚠ Incluye PÉRDIDA/EXTRAVÍO: quedó registrada en \"Descuentos planilla\"." : ""));
   };
 
@@ -1606,15 +1622,105 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   // La DOTACION tampoco se marca sola con la entrega (cambio ago 2026): la
   // entrega queda como HISTORIAL en la ficha, y el "tiene/falta" se marca a
   // mano en la ficha de cada colaborador (ep-dota).
+
+  // Despachos de GeoLogistics ligados a una requisicion EPP.
+  const despachosDeReq = (r) => lgDesp.filter((d) => d.sourceEppReqId === r.id && d.estado !== "cancelado");
+
+  // ── ENVIAR A LOGISTICA (pedido de Gerson ago 2026) ──
+  // Reemplaza el despacho directo: la req en "preparando envio" genera
+  // despachos en lg-despachos (UNO POR PROYECTO, para que caigan en la
+  // columna correcta del kanban de Oscar) y queda EN LOGISTICA. Cuando
+  // GeoLogistics marca TODOS sus despachos como entregados/cerrados, la req
+  // pasa sola a ENVIADA A PROYECTO (sync en LogisticsModule).
+  // IDEMPOTENTE: si los despachos ya existen (reintento tras un fallo a
+  // medias), no se duplican — solo se re-marca la requisicion.
+  // ⚠ Shape del despacho: LogisticsModule exige descripcion/origen/destino/
+  // motorista/notas como STRING (su form de editar hace .trim() sin guard).
+  const PICKUP_EPP = "Oficina administración (Lic. Gerson)";
+  const enviarALogistica = async (req, opts = {}) => {
+    let baseReqs = reqs;
+    try { const c = await store.getCloud("ep-reqs"); if (Array.isArray(c) && c.length) baseReqs = c; } catch { /* nube caída: memoria */ }
+    const fresca = baseReqs.find((x) => x.id === req.id);
+    if (!fresca) { alert("⚠ Esta requisición ya NO existe (otro usuario la eliminó)."); return { ok: false }; }
+    // "logistica" también es válido: reenvío cuando Oscar canceló los despachos.
+    if (fresca.estado !== "envio" && fresca.estado !== "logistica") { alert(`⚠ La requisición ya está "${(ESTADOS[fresca.estado] || {}).label || fresca.estado}" (otro usuario la movió). No se hizo nada.`); return { ok: false }; }
+
+    // lg-despachos SIEMPRE fresco de la nube: es una key compartida por 3
+    // módulos y acá se escribe el array completo — con la nube caída, usar el
+    // snapshot local pisaría despachos de Compras/Máquinas/Oscar. Sin nube,
+    // mejor no enviar (fix review).
+    let baseDesp;
+    try {
+      const c = await store.getCloud("lg-despachos");
+      baseDesp = Array.isArray(c) ? c : [];
+    } catch { alert("⚠ No hay conexión con la nube — no se puede enviar a logística ahora. Intentá de nuevo en un momento."); return { ok: false }; }
+    const existentes = baseDesp.filter((d) => d.sourceEppReqId === req.id && d.estado !== "cancelado");
+    const now = new Date().toISOString();
+    let nuevos = [];
+    if (!existentes.length) {
+      const porProy = {};
+      (fresca.lineas || []).forEach((l) => { const k = l.proyecto || ""; (porProy[k] = porProy[k] || []).push(l); });
+      nuevos = Object.entries(porProy).map(([proy, ls]) => {
+        const personas = [...new Set(ls.map((l) => l.paraNombre).filter(Boolean))];
+        const uds = ls.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+        const detalle = ls.map((l) => `• ${l.qty}× ${l.nombre}${l.talla ? ` (talla ${l.talla})` : ""} — para ${l.paraNombre || "?"}`).join("\n");
+        return {
+          id: uid(),
+          source: "epp", sourceEppReqId: req.id, sourceEppReqNumero: req.numero,
+          tipo: "material_plantel_proyecto",
+          descripcion: `EPP ${req.numero} · ${uds} pieza(s) para ${personas.length} colaborador(es)`,
+          origen: PICKUP_EPP,
+          destino: proy ? `Proyecto ${proy}` : "Proyecto por confirmar",
+          projectCode: proy,
+          vehicleId: "", motorista: "",
+          fechaNecesaria: opts.fechaNecesaria || "", fechaProgramada: "", fechaEjecutada: "",
+          estado: "pendiente",
+          notas: `${detalle}\n\n📦 Recoger en: ${PICKUP_EPP}.\n📋 El paquete lleva la Ficha de Entrega impresa — hacela firmar al entregar.${opts.notas ? `\n\n${opts.notas}` : ""}`,
+          createdAt: now, updatedAt: now,
+        };
+      });
+      const okDesp = await store.set("lg-despachos", [...baseDesp, ...nuevos]);
+      if (!okDesp) { alert("⚠ El despacho no se confirmó en la nube — revisá la conexión y volvé a intentar (los reintentos NO duplican despachos)."); return { ok: false }; }
+      setLgDesp([...baseDesp, ...nuevos]);
+    }
+    const ids = [...existentes, ...nuevos].map((d) => d.id);
+    // RE-leer ep-reqs pegado al write (fix review): entre la lectura de
+    // arriba y este punto pasaron 2 round-trips a lg-despachos — una req
+    // creada por un residente en esa ventana se perdería con la base vieja.
+    try { const c = await store.getCloud("ep-reqs"); if (Array.isArray(c) && c.length) baseReqs = c; } catch { /* nube caída: se usa la lectura previa */ }
+    const fresca2 = baseReqs.find((x) => x.id === req.id);
+    if (!fresca2) { alert("⚠ La requisición fue eliminada mientras se creaban los despachos — quedaron cancelables en GeoLogistics."); return { ok: false }; }
+    const okReq = await sReqs(baseReqs.map((x) => (x.id === req.id
+      ? { ...x, estado: "logistica", logisticaPor: userName, logisticaAt: now, lgDespachoIds: ids }
+      : x)));
+    if (!okReq) { alert("⚠ Los despachos quedaron creados en GeoLogistics pero la requisición no se marcó EN LOGÍSTICA — volvé a intentar (no se duplican)."); return { ok: false }; }
+    return { ok: true, n: ids.length, yaExistian: existentes.length > 0 };
+  };
+
   const setEstadoReq = async (req, estado) => {
     const verbo = { aprobada: "APROBAR", rechazada: "RECHAZAR", envio: "pasar a PREPARANDO ENVÍO", entregada: "marcar ENVIADA A PROYECTO" }[estado];
+    const despAbiertos = estado === "entregada" ? despachosDeReq(req).filter((d) => d.estado !== "entregado" && d.estado !== "cerrado") : [];
     const extra = estado === "entregada"
       ? "\n\nLa entrega queda en el HISTORIAL de cada colaborador. Acordate de marcar a mano su dotación (sí tiene / fecha) en la ficha, pestaña Dotación. (El stock del almacén NO se toca — las entradas reales se registran al recibir la orden Por Comprar.)"
+        + (despAbiertos.length ? `\n\n⚠ Tiene ${despAbiertos.length} despacho(s) ABIERTOS en GeoLogistics — avisale a Oscar que ya no los lleve, o cancelalos allá.` : "")
       : estado === "envio"
       ? "\n\nTip: imprimí la 📋 Ficha de Entrega para que cada colaborador FIRME al recibir su EPP en proyecto."
       : "";
     if (!confirm(`¿${verbo} la requisición ${req.numero}?` + extra)) return;
-    const upd = reqs.map((r) => (r.id === req.id ? { ...r, estado, [estado + "Por"]: userName, [estado + "At"]: new Date().toISOString() } : r));
+    // MERGE contra la nube (fix review ago 2026): antes se escribía el array
+    // COMPLETO desde el state local — con la pestaña abierta un rato, eso
+    // revertía cierres automáticos hechos por Oscar (syncEppReq) y hasta
+    // borraba requisiciones recién creadas por los residentes.
+    let base = reqs;
+    try { const c = await store.getCloud("ep-reqs"); if (Array.isArray(c) && c.length) base = c; } catch { /* nube caída: memoria */ }
+    const fresca = base.find((r) => r.id === req.id);
+    if (!fresca) { alert("⚠ Esta requisición ya NO existe (otro usuario la eliminó)."); return; }
+    // Guard: solo transicionar desde el estado que el usuario estaba VIENDO.
+    if ((fresca.estado || "pendiente") !== (req.estado || "pendiente")) {
+      alert(`⚠ La requisición ya está "${(ESTADOS[fresca.estado] || {}).label || fresca.estado}" (otro usuario la movió). Recargá la vista.`);
+      return;
+    }
+    const upd = base.map((r) => (r.id === req.id ? { ...r, estado, [estado + "Por"]: userName, [estado + "At"]: new Date().toISOString() } : r));
     await sReqs(upd);
   };
   // Marcar deducido con MERGE contra la nube y verificacion de identidad de
@@ -1841,8 +1947,10 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     const avisoDot = fresca.estado === "entregada" && personas ? `\n\n👷 La entrega sale del historial de ${personas} colaborador(es). Su dotación marcada a mano NO cambia — ajustala en la ficha si aplica.` : "";
     const avisoPerd = lineasPerdida.length ? `\n\n⚠ Salen de "Descuentos planilla" ${lineasPerdida.length} línea(s) por pérdida${yaDeducidas ? ` (${yaDeducidas} ya marcada(s) como deducida(s))` : ""}.` : "";
     const avisoPos = posLigadas.length ? `\n\n🧾 Sus órdenes de compra NO se borran (${posLigadas.map((p) => p.numero).join(", ")}) — quedan en "Por comprar" con su historial de pago.` : "";
+    const despLigados = lgDesp.filter((d) => d.sourceEppReqId === fresca.id && d.estado !== "cancelado");
+    const avisoLg = despLigados.length ? `\n\n🚚 Sus ${despLigados.length} despacho(s) en GeoLogistics quedan CANCELADOS (Oscar los ve tachados en su historial).` : "";
     const estadoLbl = (ESTADOS[fresca.estado] || {}).label || fresca.estado;
-    if (!confirm(`¿ELIMINAR la requisición ${r.numero} (${estadoLbl})?\n\nSe borra del historial. No se puede deshacer.${avisoStock}${avisoNo}${avisoDot}${avisoPerd}${avisoPos}`)) return;
+    if (!confirm(`¿ELIMINAR la requisición ${r.numero} (${estadoLbl})?\n\nSe borra del historial. No se puede deshacer.${avisoStock}${avisoNo}${avisoDot}${avisoPerd}${avisoPos}${avisoLg}`)) return;
     // Requisicion ENVIADA A PROYECTO: el EPP ya salio fisicamente (esta con
     // la gente). Devolver stock ahi solo tiene sentido si la entrega NO
     // ocurrio de verdad — lo decide el usuario, no el sistema.
@@ -1866,6 +1974,27 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         ? `🗑 ${r.numero} eliminada.\n📦 Stock devuelto al almacén:\n${lista}`
         : `🗑 ${r.numero} eliminada, pero el stock NO se pudo devolver. Ajustá a mano en Inventario:\n${lista}`);
     }
+    // CANCELAR (no borrar) sus despachos en GeoLogistics: el merge localOnly
+    // de ese módulo RESUCITARÍA un despacho borrado si Oscar tiene la app
+    // abierta con el registro en memoria — cancelado sobrevive el merge y
+    // además le queda de rastro en su historial (con nota del porqué).
+    // SIEMPRE contra la nube fresca (fix review): decidirlo con el lgDesp
+    // local dejaba huérfanos si OTRO admin la había enviado a logística; y si
+    // la nube no responde, NO se escribe con memoria (pisaría el tablero
+    // entero de Oscar con un snapshot viejo) — solo se avisa.
+    try {
+      const c = await store.getCloud("lg-despachos");
+      const baseDesp = Array.isArray(c) ? c : [];
+      const vivos = baseDesp.filter((d) => d.sourceEppReqId === r.id && d.estado !== "cancelado");
+      if (vivos.length) {
+        const next = baseDesp.map((d) => (d.sourceEppReqId === r.id && d.estado !== "cancelado"
+          ? { ...d, estado: "cancelado", notas: `${d.notas || ""}\n\n✕ Cancelado automáticamente: la requisición ${r.numero} fue eliminada en GeoSafety.`.trim(), updatedAt: new Date().toISOString() }
+          : d));
+        const okLg = await store.set("lg-despachos", next);
+        if (okLg) setLgDesp(next);
+        else alert("⚠ La requisición se eliminó pero sus despachos NO se pudieron cancelar en GeoLogistics — avisale a Oscar o cancelalos allá.");
+      }
+    } catch { if (despLigados.length) alert("⚠ La requisición se eliminó pero sus despachos NO se pudieron cancelar en GeoLogistics (sin conexión) — avisale a Oscar o cancelalos allá."); }
     if (reqOpen === r.id) setReqOpen(null);
   };
 
@@ -2522,6 +2651,12 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                     {proyectosReq.map((pr) => <Chip key={pr} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {pr}</Chip>)}
                     {(r.envioConductorNombre || r.envioVehiculo) && <Chip color="#7C3AED" bg="rgba(124,58,237,0.10)">🚗 {r.envioConductorNombre || "—"}{r.envioVehiculo ? ` · ${r.envioVehiculo}` : ""}</Chip>}
                     {r.salidaHora && <Chip color={GREEN} bg={BRAND.greenSoft}>🕒 Salió {fmtDia(r.salidaHora)} · {new Date(r.salidaHora).toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}</Chip>}
+                    {/* Avance del despacho en GeoLogistics (lo mueve Oscar) */}
+                    {(r.estado === "logistica" || r.estado === "entregada") && despachosDeReq(r).map((d) => {
+                      const le = LG_ESTADOS[d.estado] || LG_ESTADOS.pendiente;
+                      return <Chip key={d.id} color={le.color} bg={`${le.color}18`}>🚚 {d.projectCode || d.destino} · {le.icon} {le.label}{d.fechaProgramada ? ` · ${fmtFechaSolo(d.fechaProgramada)}` : ""}</Chip>;
+                    })}
+                    {r.estado === "logistica" && !despachosDeReq(r).length && <Chip color={BRAND.red} bg={BRAND.redSoft}>⚠ Sus despachos fueron cancelados en GeoLogistics — reenviala o marcala enviada</Chip>}
                     <span style={{ fontSize: 12, color: BRAND.stone }} title={`Solicitó ${r.solicitante} el ${fmtDate(r.fecha)}${r.editadoPor ? ` · editada por ${r.editadoPor}` : ""}`}>Solicitó <b>{r.solicitante}</b> · {fmtDia(r.fecha)}{r.editadoPor ? " · ✏️" : ""}</span>
                   </div>
                   {/* Acciones MINIMAS por estado (pedido de Gerson): pendiente =
@@ -2532,8 +2667,11 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                     <span style={{ fontWeight: 800, color: GREEN, fontSize: 14 }}>{fmtL(r.total)}</span>
                     {canManage && r.estado === "pendiente" && <><Btn small variant="success" onClick={() => setEstadoReq(r, "aprobada")}>✓ Aprobar</Btn><Btn small variant="danger" onClick={() => setEstadoReq(r, "rechazada")}>✕ Rechazar</Btn></>}
                     {canManage && r.estado === "aprobada" && <><Btn small variant="success" onClick={() => setModal({ t: "req-stock", req: r })}>📦 Chequear stock…</Btn><Btn small variant="success" onClick={() => crearPoDesdeReq(r)}>🧾 Enviar a PO</Btn></>}
-                    {canManage && r.estado === "envio" && <Btn small variant="success" onClick={() => setModal({ t: "req-despacho", req: r })}>🚛 Despachar a proyecto…</Btn>}
-                    {(r.estado === "envio" || r.estado === "entregada") && <Btn small variant="info" onClick={() => exportFichaEntregaPDF(r)} style={{ whiteSpace: "nowrap" }}>📋 Ficha de entrega</Btn>}
+                    {/* En "logistica" SIN despachos vivos (Oscar los canceló) se puede reenviar */}
+                    {canManage && (r.estado === "envio" || (r.estado === "logistica" && !despachosDeReq(r).length)) && <Btn small variant="success" onClick={() => setModal({ t: "req-logistica", req: r })}>🚚 Enviar a logística…</Btn>}
+                    {/* Escape: cierre manual si el paquete NO va con Oscar (se lo llevaron directo) */}
+                    {canManage && (r.estado === "envio" || r.estado === "logistica") && <Btn small variant="ghost" onClick={() => setEstadoReq(r, "entregada")}>✓ Marcar enviada{r.estado === "envio" ? " (sin logística)" : ""}</Btn>}
+                    {(r.estado === "envio" || r.estado === "logistica" || r.estado === "entregada") && <Btn small variant="info" onClick={() => exportFichaEntregaPDF(r)} style={{ whiteSpace: "nowrap" }}>📋 Ficha de entrega</Btn>}
                     {r.salidaFotoFile && <Btn small variant="ghost" onClick={() => verArchivo(r.salidaFotoFile)}>📸 Foto de salida</Btn>}
                     {userRole === "admin" && (r.estado === "pendiente" || r.estado === "aprobada") && <Btn small variant="ghost" onClick={() => setModal({ t: "req-edit", req: r })}>✏️ Editar</Btn>}
                     {userRole === "admin" && <Btn small variant="ghost" style={{ color: BRAND.red }} onClick={() => eliminarReq(r)}>🗑</Btn>}
@@ -2611,7 +2749,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     if (!reqs.length) return <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>Sin requisiciones todavía. Se crean desde el catálogo con el carrito 🛒.</div>;
     return (
       <div>
-        <div style={{ fontSize: 12.5, color: BRAND.stone, marginBottom: 12 }}>{reqs.length} requisición(es) · hacé clic en una tarjeta para ver el desglose completo y las acciones · flujo: pendiente → aprobada → preparando envío → enviada a proyecto (con 📋 ficha firmada)</div>
+        <div style={{ fontSize: 12.5, color: BRAND.stone, marginBottom: 12 }}>{reqs.length} requisición(es) · hacé clic en una tarjeta para ver el desglose completo y las acciones · flujo: pendiente → aprobada → preparando envío → en logística (Oscar la lleva) → enviada a proyecto (con 📋 ficha firmada)</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, alignItems: "start" }}>
           {Object.entries(ESTADOS).map(([est, def]) => {
             const arr = reqs.filter((r) => (r.estado || "pendiente") === est).sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
@@ -2651,13 +2789,15 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                             return <span key={t} title={tdef.label} style={{ fontSize: 11, fontWeight: 700, color: BRAND.graphite, background: BRAND.beigeLight, border: `1px solid ${BRAND.border}`, borderRadius: 999, padding: "2px 8px" }}>{tdef.icon} {uds}</span>;
                           })}
                         </div>
-                        {(proyectosReq.length > 0 || tienePerdida || (r.estado === "aprobada" && posReq.length > 0)) && (
+                        {(proyectosReq.length > 0 || tienePerdida || (r.estado === "aprobada" && posReq.length > 0) || r.estado === "logistica") && (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
                             {proyectosReq.map((pr) => <Chip key={pr} color={BRAND.orange} bg="rgba(232,118,45,0.10)">🏗 {pr}</Chip>)}
                             {/* El paso de la compra SOLO se muestra en APROBADA (ahi es
                                 donde se espera la PO) — en pendiente confundia: "¿como va
                                 a estar recibida si ni se ha aprobado?" */}
                             {r.estado === "aprobada" && posReq.map((p) => { const pe = ESTADOS_PO[poEstado(p)]; return <Chip key={p.id} color={pe.color} bg={pe.bg}>🧾 {p.numero} · {pe.label}</Chip>; })}
+                            {/* Avance del despacho en GeoLogistics (lo mueve Oscar) */}
+                            {r.estado === "logistica" && despachosDeReq(r).map((d) => { const le = LG_ESTADOS[d.estado] || LG_ESTADOS.pendiente; return <Chip key={d.id} color={le.color} bg={`${le.color}18`}>🚚 {d.projectCode || "?"} · {le.icon} {le.label}</Chip>; })}
                             {tienePerdida && <Chip color={BRAND.red} bg={BRAND.redSoft}>⚠ PÉRDIDA</Chip>}
                           </div>
                         )}
@@ -2678,6 +2818,82 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   };
 
   // ══════════════════════════ DOTACION (fichas visuales por puesto) ══════════════════════════
+  // ── MIS PEDIDOS (residentes: Oscar/Christian) ──
+  // El que pide desde el catalogo puede seguir el avance de sus requisiciones
+  // sin ver el resto del modulo: timeline de pasos + detalle + despachos.
+  const renderMisPedidos = () => {
+    const mias = reqs.filter((r) => r.solicitante === userName).sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
+    if (!mias.length) {
+      return <div style={{ textAlign: "center", padding: 50, color: BRAND.stone, background: "#fff", borderRadius: R.lg, border: `1px dashed ${BRAND.border}` }}>Todavía no has hecho pedidos. Andá al 🛒 <b>Catálogo</b>, armá tu carrito y enviá la requisición — acá vas a poder seguirle el rastro.</div>;
+    }
+    const PASOS = [
+      { id: "pendiente", label: "Enviada" },
+      { id: "aprobada", label: "Aprobada" },
+      { id: "envio", label: "Preparando" },
+      { id: "logistica", label: "En camino" },
+      { id: "entregada", label: "Entregada" },
+    ];
+    return (
+      <div>
+        <div style={{ fontSize: 12.5, color: BRAND.stone, marginBottom: 14 }}>{mias.length} pedido(s) tuyos · el estado avanza solo conforme se procesa tu requisición — no tenés que hacer nada más.</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {mias.map((r) => {
+            const e = ESTADOS[r.estado] || ESTADOS.pendiente;
+            const idx = PASOS.findIndex((p) => p.id === (r.estado || "pendiente"));
+            const desp = despachosDeReq(r);
+            return (
+              <div key={r.id} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${e.color}`, borderRadius: R.lg, padding: "14px 18px", boxShadow: BRAND.shadowSm }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 14, color: BRAND.orange }}>{r.numero}</span>
+                    <Chip color={e.color} bg={e.bg}>{e.label}</Chip>
+                    <span style={{ fontSize: 12, color: BRAND.stone }}>{fmtDate(r.fecha)}</span>
+                  </div>
+                  <span style={{ fontWeight: 800, color: GREEN, fontSize: 14 }}>{fmtL(r.total)}</span>
+                </div>
+                {/* Timeline de pasos (rechazada no lleva timeline) */}
+                {r.estado === "rechazada" ? (
+                  <div style={{ marginTop: 10, background: BRAND.redSoft, border: `1px solid ${BRAND.red}30`, borderRadius: R.md, padding: "8px 12px", fontSize: 12.5, color: BRAND.red, fontWeight: 700 }}>✕ Esta requisición fue rechazada{r.rechazadaPor ? ` por ${r.rechazadaPor}` : ""}. Si hace falta el EPP, volvé a pedirla desde el catálogo o consultá con administración.</div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 0, marginTop: 12, flexWrap: "wrap" }}>
+                    {PASOS.map((p, i) => {
+                      const done = i <= idx;
+                      const activo = i === idx;
+                      return (
+                        <div key={p.id} style={{ display: "flex", alignItems: "center" }}>
+                          {i > 0 && <div style={{ width: 26, height: 2, background: done ? e.color : BRAND.border }} />}
+                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            <span style={{ width: 13, height: 13, borderRadius: "50%", background: done ? e.color : "#fff", border: `2px solid ${done ? e.color : BRAND.border}`, display: "inline-block" }} />
+                            <span style={{ fontSize: 11, fontWeight: activo ? 800 : 600, color: activo ? e.color : done ? BRAND.graphite : BRAND.stone }}>{p.label}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {/* Despachos en GeoLogistics: dónde va el paquete */}
+                {desp.length > 0 && r.estado !== "entregada" && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+                    {desp.map((d) => { const le = LG_ESTADOS[d.estado] || LG_ESTADOS.pendiente; return <Chip key={d.id} color={le.color} bg={`${le.color}18`}>🚚 {d.projectCode || d.destino} · {le.icon} {le.label}{d.fechaProgramada ? ` · ${fmtFechaSolo(d.fechaProgramada)}` : ""}</Chip>; })}
+                  </div>
+                )}
+                {/* Detalle compacto de lo pedido */}
+                <div style={{ marginTop: 10, borderTop: `1px dashed ${BRAND.border}`, paddingTop: 8, display: "flex", flexDirection: "column", gap: 3 }}>
+                  {(r.lineas || []).map((l, i) => (
+                    <div key={i} style={{ fontSize: 12.5, color: BRAND.graphite, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 700 }}>{l.qty}× {l.nombre}{l.talla ? ` (talla ${l.talla})` : ""}</span>
+                      <span style={{ color: BRAND.stone }}>para <b>{l.paraNombre || "?"}</b>{l.proyecto ? ` · 🏗 ${l.proyecto}` : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const renderDotacion = () => {
     let list = activeEmps;
     if (fDotCo) list = list.filter((e) => e.company === fDotCo);
@@ -3328,7 +3544,13 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
   // ══════════════════════════ LAYOUT ══════════════════════════
   // El ingeniero residente SOLO ve el catalogo (pide y listo).
-  const TABS = esResidente ? [{ id: "catalogo", label: "🛒 Catálogo" }] : [
+  // Los residentes (Oscar/Christian) ven ademas SUS pedidos con su estado —
+  // antes mandaban la requisicion y quedaban a ciegas (pedido de Gerson ago 2026).
+  const misReqsActivas = reqs.filter((r) => r.solicitante === userName && !["entregada", "rechazada"].includes(r.estado)).length;
+  const TABS = esResidente ? [
+    { id: "catalogo", label: "🛒 Catálogo" },
+    { id: "mispedidos", label: "📦 Mis pedidos", badge: misReqsActivas },
+  ] : [
     { id: "catalogo", label: "🛒 Catálogo" },
     { id: "requisiciones", label: "📋 Requisiciones", badge: reqsPendientes },
     { id: "porcomprar", label: "🧾 Por comprar", badge: posAbiertas, badgeColor: "#B45309" },
@@ -3366,7 +3588,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       </div>
 
       <div style={{ padding: "20px 26px 40px", maxWidth: 1280, margin: "0 auto", width: "100%", boxSizing: "border-box", flex: 1 }}>
-        {!loaded ? <div style={{ textAlign: "center", padding: 60, color: BRAND.stone }}>Cargando GeoSafety…</div> : esResidente ? renderCatalogo() : (
+        {!loaded ? <div style={{ textAlign: "center", padding: 60, color: BRAND.stone }}>Cargando GeoSafety…</div> : esResidente ? (sec === "mispedidos" ? renderMisPedidos() : renderCatalogo()) : (
           <>
             {sec === "catalogo" && renderCatalogo()}
             {sec === "requisiciones" && renderRequisiciones()}
@@ -3404,27 +3626,20 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
                 const res = await despacharReq(reqO, { envioConductorId: conductorId, envioConductorNombre: conductorNombre, envioVehiculo: vehiculo });
                 if (!res.ok) return; // los alerts ya explicaron; el modal queda abierto para reintentar
                 setModal(null);
-                alert(`✅ ${reqO.numero} pasó a PREPARANDO ENVÍO${res.stockOk ? " — el stock salió del inventario" : ""}.\n🚗 ${conductorNombre}${vehiculo ? ` · ${vehiculo}` : ""}\n\nCuando salga hacia el proyecto: 🚛 Despachar (hora + foto) y llevá la 📋 Ficha de entrega para las firmas.`);
+                alert(`✅ ${reqO.numero} pasó a PREPARANDO ENVÍO${res.stockOk ? " — el stock salió del inventario" : ""}.${conductorNombre || vehiculo ? `\n🚗 ${conductorNombre || "—"}${vehiculo ? ` · ${vehiculo}` : ""}` : ""}\n\nCuando el paquete esté listo: 🚚 Enviar a logística — Oscar lo recoge en la oficina y lo lleva a proyecto con la 📋 Ficha de entrega impresa.`);
               }} />
           </Modal>
         );
       })()}
-      {modal?.t === "req-despacho" && (
-        <Modal title={`🚛 Despachar ${modal.req.numero} a proyecto`} onClose={() => setModal(null)} width={560}>
-          <DespachoFormImpl req={modal.req} people={people}
+      {modal?.t === "req-logistica" && (
+        <Modal title={`🚚 Enviar ${modal.req.numero} a logística`} onClose={() => setModal(null)} width={560}>
+          <LogisticaFormImpl req={modal.req}
             onCancel={() => setModal(null)}
-            onSave={async ({ conductorId, conductorNombre, vehiculo, salidaHora, salidaFotoFile }) => {
-              // Merge contra la nube: la req debe seguir en "envio" (otro
-              // usuario pudo despacharla o regresarla mientras tanto).
-              let base = reqs;
-              try { const c = await store.getCloud("ep-reqs"); if (Array.isArray(c) && c.length) base = c; } catch { /* nube caída: memoria */ }
-              const fresca = base.find((x) => x.id === modal.req.id);
-              if (!fresca) { alert("⚠ Esta requisición ya NO existe (otro usuario la eliminó)."); setModal(null); return; }
-              if (fresca.estado !== "envio") { alert(`⚠ La requisición ya está "${(ESTADOS[fresca.estado] || {}).label || fresca.estado}" (otro usuario la movió). No se hizo nada.`); setModal(null); return; }
-              const ok = await sReqs(base.map((x) => (x.id === modal.req.id
-                ? { ...x, estado: "entregada", entregadaPor: userName, entregadaAt: new Date().toISOString(), envioConductorId: conductorId || x.envioConductorId, envioConductorNombre: conductorNombre || x.envioConductorNombre, envioVehiculo: vehiculo || x.envioVehiculo, salidaHora, salidaFotoFile: salidaFotoFile || x.salidaFotoFile }
-                : x)));
-              if (ok) { setModal(null); alert(`✅ ${modal.req.numero} ENVIADA A PROYECTO — proceso cerrado. La entrega quedó en el historial de cada colaborador; acordate de marcar a mano su dotación (sí tiene / fecha) en la pestaña Dotación.`); }
+            onSave={async ({ fechaNecesaria, notas }) => {
+              const res = await enviarALogistica(modal.req, { fechaNecesaria, notas });
+              if (!res.ok) return; // los alerts ya explicaron; el modal queda abierto para reintentar
+              setModal(null);
+              alert(`✅ ${modal.req.numero} EN LOGÍSTICA — ${res.n} despacho(s) ${res.yaExistian ? "ya estaban" : "creados"} en GeoLogistics para Oscar.\n\n📦 Dejá el paquete listo en la oficina de administración con la 📋 Ficha de Entrega impresa adentro. Cuando Oscar lo entregue en proyecto, la requisición se cierra sola.`);
             }} />
         </Modal>
       )}

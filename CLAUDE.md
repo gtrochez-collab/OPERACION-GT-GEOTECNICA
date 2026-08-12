@@ -57,6 +57,17 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (listas DG/DP de Gerson) + keywords de position; override manual en
   `ep-puestos` (selector en la ficha). inferTipo(nombre) resuelve items/líneas
   viejas sin tipoEpp. KPIs solo personal de campo. Keys: `ep-*`.
+  **Flujo req → logística (ago 2026)**: estados pendiente→aprobada→envio→
+  `logistica`→entregada. "Enviar a logística" (enviarALogistica, idempotente)
+  crea despachos en `lg-despachos` (UNO POR PROYECTO, source:"epp",
+  sourceEppReqId, campos string obligatorios del form de GeoLogistics) para
+  el kanban de Oscar; recogida en oficina administración. LogisticsModule.
+  syncEppReq: al marcar entregado/cerrado TODOS los despachos de la req →
+  req pasa sola a entregada (guard estado==="logistica"). eliminarReq borra
+  también sus despachos. Escape "Marcar enviada (sin logística)".
+  Pestaña **Mis pedidos** (residentes Oscar/Christian): sus reqs
+  (solicitante===userName) con timeline + chips de despachos; refresh de
+  ep-reqs/lg-despachos en window focus.
   **Dotación MANUAL (`ep-dota`, ago 2026)**: {empId:{tipo:{tiene,fecha}}} —
   el tiene/falta se marca A MANO en la ficha (toggle + fecha de recepción
   opcional, input date uncontrolled a propósito); las reqs entregadas ya NO

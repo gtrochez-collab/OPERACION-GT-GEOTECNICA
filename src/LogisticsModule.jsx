@@ -1006,12 +1006,50 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
 
   const saveDespacho = async (rec, isEdit) => {
     // Upsert por id (replace si existe, append si no) — el flag isEdit es solo informativo.
+    // El modal de edicion tambien puede dejarlo entregado/cerrado: estampar
+    // fechaEjecutada (cuenta en "Entregados hoy") igual que updateDespachoEstado.
+    const rec2 = (rec.estado === "entregado" || rec.estado === "cerrado") && !rec.fechaEjecutada
+      ? { ...rec, fechaEjecutada: new Date().toISOString().slice(0, 10) } : rec;
     const ok = await saveDespachosWithMerge((base) => {
-      const existe = base.find(d => d.id === rec.id);
-      return existe ? base.map(d => d.id === rec.id ? rec : d) : [...base, rec];
-    }, { label: `saveDespacho ${isEdit ? "edit" : "new"} ${rec.id}` });
+      const existe = base.find(d => d.id === rec2.id);
+      return existe ? base.map(d => d.id === rec2.id ? rec2 : d) : [...base, rec2];
+    }, { label: `saveDespacho ${isEdit ? "edit" : "new"} ${rec2.id}` });
     if (!ok) alert("⚠️ Despacho guardado localmente pero no se sincronizo a la nube. Cuando recuperes conexion, volve a guardar.");
+    // Guardar desde el modal es OTRO camino a entregado/cerrado — sin esto la
+    // requisicion EPP de origen nunca se cerraria sola (hallazgo de review).
+    if (rec2.estado === "entregado" || rec2.estado === "cerrado") await syncEppReq(rec2.id);
     return true;
+  };
+
+  // ── Sync GeoSafety (ago 2026): los despachos EPP llevan sourceEppReqId ──
+  // Cuando TODOS los despachos vivos de una requisicion EPP quedan
+  // entregados/cerrados, la requisicion pasa sola a ENVIADA A PROYECTO en
+  // GeoSafety (merge getCloud + guard de estado: solo si sigue EN LOGISTICA).
+  // Best-effort: si la nube falla, GeoSafety tiene su cierre manual.
+  const syncEppReqPorReq = async (eppReqId, arrPrecargado) => {
+    try {
+      let arr = arrPrecargado;
+      if (!arr) { const all = await store.getCloud("lg-despachos"); arr = Array.isArray(all) ? all : despachos; }
+      const hermanos = arr.filter((x) => x.sourceEppReqId === eppReqId && x.estado !== "cancelado");
+      if (!hermanos.length || !hermanos.every((x) => x.estado === "entregado" || x.estado === "cerrado")) return;
+      const reqsArr = await store.getCloud("ep-reqs");
+      if (!Array.isArray(reqsArr)) return;
+      const req = reqsArr.find((r) => r.id === eppReqId);
+      if (!req || req.estado !== "logistica") return; // ya cerrada/movida en GeoSafety — no pisar
+      const ok = await store.set("ep-reqs", reqsArr.map((r) => (r.id === req.id
+        ? { ...r, estado: "entregada", entregadaPor: userName || "Logística", entregadaAt: new Date().toISOString() }
+        : r)));
+      if (ok) alert(`✅ Requisición ${req.numero} quedó ENVIADA A PROYECTO en GeoSafety — todos sus despachos EPP fueron entregados.`);
+    } catch { /* sin nube no hay sync; GeoSafety puede cerrarla a mano */ }
+  };
+  const syncEppReq = async (despachoId) => {
+    try {
+      const all = await store.getCloud("lg-despachos");
+      const arr = Array.isArray(all) ? all : despachos;
+      const d = arr.find((x) => x.id === despachoId);
+      if (!d || !d.sourceEppReqId) return;
+      await syncEppReqPorReq(d.sourceEppReqId, arr);
+    } catch { /* sin nube no hay sync */ }
   };
 
   const updateDespachoEstado = async (id, nuevoEstado) => {
@@ -1021,6 +1059,9 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       fechaEjecutada: (nuevoEstado === "entregado" || nuevoEstado === "cerrado") ? (d.fechaEjecutada || new Date().toISOString().slice(0, 10)) : d.fechaEjecutada,
       updatedAt: new Date().toISOString(),
     } : d), { label: `updateEstado ${id}->${nuevoEstado}` });
+    // "cancelado" tambien re-evalua (fix review): si el hermano cancelado era
+    // el ultimo abierto y los demas ya estaban entregados, la req EPP cierra.
+    if (nuevoEstado === "entregado" || nuevoEstado === "cerrado" || nuevoEstado === "cancelado") await syncEppReq(id);
   };
 
   const deleteDespacho = async (id) => {
@@ -1028,6 +1069,11 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       label: `deleteDespacho ${id}`,
       deletedIds: [id],
     });
+    // Si el despacho borrado era de una req EPP, re-evaluar a sus hermanos
+    // (fix review): borrar el ultimo abierto con los demas ya entregados
+    // debe cerrar la requisicion en GeoSafety igual que cancelarlo.
+    const reqIdEpp = despachos.find((d) => d.id === id)?.sourceEppReqId;
+    if (reqIdEpp) await syncEppReqPorReq(reqIdEpp);
   };
 
   // Quick action: crear un despacho desde una compra con un estado especifico
@@ -1657,11 +1703,12 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       const proj = allProjects.find(p => p.short === d.projectCode);
       const tCfg = tipoDespCfg(d.tipo);
       const eCfg = estadoDespCfg(d.estado);
-      return <tr key={d.id} onClick={() => setModal({ t: "desp-edit", d })} style={{ borderBottom: `1px solid ${BRAND.borderSoft}`, cursor: "pointer", background: d.source === "compra" ? BRAND.blueSoft + "40" : "transparent" }}>
+      return <tr key={d.id} onClick={() => setModal({ t: "desp-edit", d })} style={{ borderBottom: `1px solid ${BRAND.borderSoft}`, cursor: "pointer", background: d.source === "compra" ? BRAND.blueSoft + "40" : d.source === "epp" ? "rgba(180,83,9,0.07)" : "transparent" }}>
         <td style={td}><Badge color={tCfg.color}>{tCfg.label}</Badge></td>
         <td style={{ ...td, maxWidth: 280 }}>
           <div style={{ fontSize: 13, color: BRAND.ink }}>{d.descripcion}</div>
           {d.source === "compra" && <div style={{ fontSize: 10, color: BRAND.blue, fontStyle: "italic", marginTop: 2 }}>🛒 Desde Compras</div>}
+          {d.source === "epp" && <div style={{ fontSize: 10, color: "#B45309", fontStyle: "italic", marginTop: 2 }}>🦺 EPP · GeoSafety{d.sourceEppReqNumero ? ` · ${d.sourceEppReqNumero}` : ""} — recoger en oficina administración</div>}
         </td>
         <td style={td}><b>{d.origen}</b> → <b>{d.destino}</b></td>
         <td style={td}>{proj ? <Badge color={BRAND.blue}>{proj.short}</Badge> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
@@ -1981,6 +2028,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                 </div>;
               })()}
               <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4, lineHeight: 1.3 }}>{d.descripcion}</div>
+              {d.source === "epp" && <div style={{ fontSize: 9.5, color: "#B45309", fontWeight: 800, marginTop: 3 }}>🦺 EPP · GeoSafety{d.sourceEppReqNumero ? ` · ${d.sourceEppReqNumero}` : ""} — recoger en oficina administración</div>}
               <div style={{ fontSize: 10, color: BRAND.stone, marginTop: 4 }}>
                 <b>{d.origen}</b> → <b>{d.destino}</b>
               </div>
@@ -2111,6 +2159,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                 {d.fechaEjecutada && <span style={{ fontSize: 9, color: BRAND.green, fontWeight: 700 }}>📅 {fmtFecha(d.fechaEjecutada)}</span>}
               </div>
               {sourcePurchase && <div style={{ fontSize: 10, color: BRAND.blue, marginBottom: 4 }}>🛒 De compra · {sourcePurchase.provider}</div>}
+              {d.source === "epp" && <div style={{ fontSize: 10, color: "#B45309", fontWeight: 800, marginBottom: 4 }}>🦺 EPP · GeoSafety{d.sourceEppReqNumero ? ` · ${d.sourceEppReqNumero}` : ""}</div>}
               <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4, lineHeight: 1.3, ...strikeStyle }}>{d.descripcion}</div>
               <div style={{ fontSize: 10, color: BRAND.stone, marginTop: 4, ...strikeStyle }}>
                 <b>{d.origen}</b> → <b>{d.destino}</b>
