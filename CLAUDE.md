@@ -49,13 +49,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   ayudante_concreto (=ayudante+opcionales látex/KN95/overol), mecánico (casco
   azul+guantes_mecanica), soldador (kit especial: careta/delantal/polainas/
   mangas/capucha — Kevin Hernández y Norman SUB), tornero (carnaza/esmerilar/
-  lumbar/orejeras — Moisés SUB), oficina (sin EPP, excluido de KPIs). Jeans
-  default en todos. Avatar EppFigure SVG por puesto (color de casco + estilo
+  lumbar/orejeras — Moisés SUB), visita (casco verde neón + chaleco azul vía
+  chalecoColor, solo esos 2), oficina (sin EPP, excluido de KPIs). Jeans
+  default en todos. "Braga de cuello" = tipoEpp `cubrenucas` (solo cambió el
+  label). Avatar EppFigure SVG por puesto (color de casco + estilo
   de camisa; tiene=color, falta=punteado). autoPuesto: SEED_PUESTOS por nombre
   (listas DG/DP de Gerson) + keywords de position; override manual en
   `ep-puestos` (selector en la ficha). inferTipo(nombre) resuelve items/líneas
   viejas sin tipoEpp. KPIs solo personal de campo. Keys: `ep-*`.
-  Footer créditos "Lic. Gerson & Ing. Nanu · GAIB Services".
+  **Dotación MANUAL (`ep-dota`, ago 2026)**: {empId:{tipo:{tiene,fecha}}} —
+  el tiene/falta se marca A MANO en la ficha (toggle + fecha de recepción
+  opcional, input date uncontrolled a propósito); las reqs entregadas ya NO
+  marcan dotación, quedan como "Historial de entregas" en la ficha. Saver
+  sDota con merge profundo getCloud por persona+tipo.
+  Footer créditos "Lic. Gerson & Ing. Nanu · Capitel Group".
   ⚠ Forms (ItemFormImpl/ProvFormImpl) viven a NIVEL DE MÓDULO — definirlos
   dentro del componente causa remount y pérdida de estado al subir fotos.
   CartModal/FichaModal se renderizan como llamada `{CartModal()}`, no JSX.

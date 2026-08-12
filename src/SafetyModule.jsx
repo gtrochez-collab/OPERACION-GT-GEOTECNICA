@@ -10,9 +10,11 @@
 //   - danio       : dano/desgaste normal (sin cargo)
 //
 // Pestana DOTACION: ficha visual de cada colaborador (avatar EPP) que mapea
-// en tiempo real que equipo TIENE y que le FALTA respecto a la dotacion
-// base. Se alimenta de las requisiciones ENTREGADAS (amarrado a la solicitud
-// y a quien va asignado). El ideal: todos con su EPP completo.
+// que equipo TIENE y que le FALTA respecto a la dotacion base de su puesto.
+// El "tiene/falta" se marca A MANO en la ficha (ep-dota, con fecha de
+// recepcion opcional) — las requisiciones entregadas ya NO lo marcan solas
+// (cambio ago 2026: guantes/gafas rotan mucho y el automatico descuadraba);
+// quedan como HISTORIAL de entregas en la misma ficha.
 //
 // Storage keys (Supabase via store):
 //   - ep-providers : proveedores de EPP
@@ -20,6 +22,7 @@
 //   - ep-reqs      : requisiciones {numero, solicitante, lineas[], estado}
 //   - ep-jornaleros: personal por dia fuera de planilla {id, fullName, position, puesto, notas}
 //   - ep-puestos   : override de perfil EPP por persona {personaId: puestoKey}
+//   - ep-dota      : dotacion manual {empId: {tipoEpp: {tiene: true, fecha: "YYYY-MM-DD"|""}}}
 //   - cp-file-<id> : fotos de items (reutiliza el storage de archivos)
 //   Lee (NO escribe): hr-emps5 — empleados de GeoTeam (con sus fotos).
 // Las personas de Dotacion = empleados de GeoTeam + jornaleros (company:"jornal").
@@ -27,7 +30,7 @@
 // Flujo requisicion: pendiente → aprobada → entregada (descuenta stock).
 // =====================================================================
 
-import { useState, useEffect, useMemo, Fragment } from "react";
+import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { store } from "./supabase.js";
 import { BRAND, FONT, R } from "./theme.js";
 import { resolveShort, PROJECTS } from "./projects.js";
@@ -58,7 +61,7 @@ const EPP_TIPOS = [
   { value: "guantes_latex",          label: "Guantes de látex / nitrilo",       icon: "🧤" },
   { value: "auditiva",               label: "Tapones auditivos",                icon: "👂" },
   { value: "auditiva_orejera",       label: "Orejeras (auditiva)",              icon: "🎧" },
-  { value: "cubrenucas",             label: "Cubrenucas / Balaclava",           icon: "🧣" },
+  { value: "cubrenucas",             label: "Braga de cuello",                  icon: "🧣" },
   { value: "mascarilla",             label: "Mascarilla desechable KN95",       icon: "😷" },
   { value: "mascarilla_respiratoria",label: "Mascarilla respiratoria",          icon: "😷" },
   { value: "careta_soldar",          label: "Careta electrónica de soldar",     icon: "🛡️" },
@@ -105,7 +108,7 @@ const inferTipo = (nombre) => {
   if (n.includes("bota") || n.includes("burro")) return "botas";
   if (n.includes("tapon")) return "auditiva";
   if (n.includes("orejera")) return "auditiva_orejera";
-  if (n.includes("balaclava") || n.includes("cubrenuca") || n.includes("cubre nuca")) return "cubrenucas";
+  if (n.includes("balaclava") || n.includes("cubrenuca") || n.includes("cubre nuca") || n.includes("braga")) return "cubrenucas";
   if (n.includes("respirator")) return "mascarilla_respiratoria";
   if (n.includes("mascarilla") || n.includes("kn95")) return "mascarilla";
   if (n.includes("delantal")) return "delantal_soldador";
@@ -126,30 +129,31 @@ const PUESTOS = {
   ingeniero: {
     label: "Ingeniero",
     casco: "#F6F5F2", cascoName: "Casco blanco",
+    chalecoName: "Chaleco khaki",
     camisa: "blanca_default", camisaDefault: true,
     req: ["casco", "lentes", "chaleco", "guantes", "auditiva", "cubrenucas"],
-    notas: "Camisa y jeans por defecto (no los provee la empresa). El chaleco khaki sí lo puede solicitar. Protección auditiva de tapón + cubrenucas o balaclava.",
+    notas: "Camisa y jeans por defecto (no los provee la empresa). El chaleco khaki sí lo puede solicitar. Protección auditiva de tapón + braga de cuello.",
   },
   operador_dg: {
     label: "Operador Ø grande",
     casco: "#E8762D", cascoName: "Casco anaranjado",
     camisa: "polo_negra", camisaName: "Polo manga corta negra (líneas anaranjadas)",
     req: ["casco", "camisa", "pantalon_reflectivo", "botas", "lentes", "auditiva", "cubrenucas"],
-    notas: "Pantalón con cinta reflectiva: SÍ lo provee la empresa. Protección auditiva de tapón + cubrenucas o balaclava.",
+    notas: "Pantalón con cinta reflectiva: SÍ lo provee la empresa. Protección auditiva de tapón + braga de cuello.",
   },
   operador_dp: {
     label: "Operador Ø pequeño",
     casco: "#E8762D", cascoName: "Casco anaranjado",
     camisa: "amarilla", camisaName: "Camisa manga larga amarilla (líneas negras)",
     req: ["casco", "camisa", "pantalon_reflectivo", "botas", "lentes", "guantes", "auditiva", "cubrenucas"],
-    notas: "Pantalón con cinta reflectiva: SÍ lo provee la empresa. Protección auditiva de tapón + cubrenucas o balaclava.",
+    notas: "Pantalón con cinta reflectiva: SÍ lo provee la empresa. Protección auditiva de tapón + braga de cuello.",
   },
   ayudante: {
     label: "Ayudante / Técnico",
     casco: "#F2C40F", cascoName: "Casco amarillo",
     camisa: "anaranjada", camisaName: "Camisa anaranjada (líneas negras)",
     req: ["casco", "camisa", "botas", "lentes", "guantes", "auditiva", "cubrenucas"],
-    notas: "Jeans por defecto (no los provee la empresa). Protección auditiva de tapón + cubrenucas o balaclava.",
+    notas: "Jeans por defecto (no los provee la empresa). Protección auditiva de tapón + braga de cuello.",
   },
   ayudante_concreto: {
     label: "Ayudante Concreto",
@@ -178,6 +182,14 @@ const PUESTOS = {
     req: ["guantes_carnaza", "careta_esmerilar", "lentes", "soporte_lumbar", "auditiva_orejera"],
     notas: "Tornero actual: Moisés (Subterra). Protección auditiva de orejera.",
   },
+  visita: {
+    label: "Visita",
+    casco: "#39FF14", cascoName: "Casco verde neón",
+    chalecoColor: { fill: "#2B6CB0", stroke: "#1E4E79", pocket: "#245688" }, chalecoName: "Chaleco azul",
+    camisa: "blanca_default", camisaDefault: true,
+    req: ["casco", "chaleco"],
+    notas: "Visitas a proyecto: casco verde neón + chaleco azul. No se les dota más equipo.",
+  },
   oficina: {
     label: "Oficina / Admin",
     casco: null, camisa: "blanca_default", camisaDefault: true,
@@ -192,6 +204,7 @@ const reqLabel = (puestoKey, tipo) => {
   const P = PUESTOS[puestoKey] || {};
   if (tipo === "casco" && P.cascoName) return P.cascoName;
   if (tipo === "camisa" && P.camisaName) return P.camisaName;
+  if (tipo === "chaleco" && P.chalecoName) return P.chalecoName;
   return tipoDef(tipo).label;
 };
 
@@ -368,6 +381,7 @@ const EppFigure = ({ puesto = "ayudante", has, size = 120 }) => {
   const armUp = camisaOn ? cam.fill : "#EDE9E1";
   const armLo = shortSleeve ? SKIN : armUp;
   const caretaOn = on("careta_soldar");
+  const vest = P.chalecoColor || { fill: "#C7B287", stroke: "#A8926B", pocket: "#B7A276" };
   return (
     <svg viewBox="0 0 140 200" width={size} height={Math.round(size * 200 / 140)} style={{ display: "block" }}>
       {/* sombra */}
@@ -409,12 +423,12 @@ const EppFigure = ({ puesto = "ayudante", has, size = 120 }) => {
       {camisaOn && cam.stripes && (<g><rect x="47" y="77" width="46" height="6" fill={cam.trim} /><rect x="47" y="95" width="46" height="6" fill={cam.trim} /></g>)}
       {camisaOn && <path d="M61,64 l9,10 l9,-10" fill="none" stroke={cam.trim} strokeWidth="2" />}
       {miss("camisa") && <rect x="46" y="64" width="48" height="57" rx="9" {...DASH} />}
-      {/* chaleco khaki */}
+      {/* chaleco (khaki por defecto; color propio si el puesto lo define — ej. visita azul) */}
       {on("chaleco") ? (<g>
-        <rect x="48" y="64" width="17" height="48" rx="5" fill="#C7B287" stroke="#A8926B" />
-        <rect x="75" y="64" width="17" height="48" rx="5" fill="#C7B287" stroke="#A8926B" />
-        <rect x="51" y="93" width="11" height="9" rx="1.5" fill="#B7A276" stroke="#A8926B" />
-        <rect x="78" y="93" width="11" height="9" rx="1.5" fill="#B7A276" stroke="#A8926B" />
+        <rect x="48" y="64" width="17" height="48" rx="5" fill={vest.fill} stroke={vest.stroke} />
+        <rect x="75" y="64" width="17" height="48" rx="5" fill={vest.fill} stroke={vest.stroke} />
+        <rect x="51" y="93" width="11" height="9" rx="1.5" fill={vest.pocket} stroke={vest.stroke} />
+        <rect x="78" y="93" width="11" height="9" rx="1.5" fill={vest.pocket} stroke={vest.stroke} />
       </g>) : miss("chaleco") ? (
         <rect x="47" y="64" width="46" height="48" rx="6" {...DASH} />
       ) : null}
@@ -1270,6 +1284,13 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const [fDotPuesto, setFDotPuesto] = useState("");
   const [fDotFalta, setFDotFalta] = useState(false); // solo con faltantes
   const [puestosMap, setPuestosMap] = useState({}); // ep-puestos: {empId: puestoKey} — overrides manuales
+  // ep-dota: dotación MANUAL {empId: {tipoEpp: {tiene: true, fecha: "YYYY-MM-DD"|""}}}.
+  // Pedido de Gerson (ago 2026): la dotación ya NO se marca sola con las
+  // requisiciones entregadas (guantes/gafas rotan mucho y descuadraba) — el
+  // personal marca a mano "sí tiene / no tiene" + fecha de recepción opcional.
+  const [dotaMap, setDotaMap] = useState({});
+  const dotaRef = useRef({});               // espejo de dotaMap para las ops encoladas
+  const dotaQueue = useRef(Promise.resolve()); // serializa los guardados de ep-dota
   // Ordenes "Por comprar" (PO): lo que falta en stock y se manda a cotizar
   // al proveedor. Key: ep-pos.
   const [pos, setPos] = useState([]);
@@ -1299,14 +1320,16 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
   useEffect(() => {
     (async () => {
-      const [pv, it, rq, em, pu, jr, po, at, cpp] = await Promise.all([
-        store.get("ep-providers"), store.get("ep-items"), store.get("ep-reqs"), store.get("hr-emps5"), store.get("ep-puestos"), store.get("ep-jornaleros"), store.get("ep-pos"), store.get("hr-atts2"), store.get("cp-projects"),
+      const [pv, it, rq, em, pu, jr, po, at, cpp, dt] = await Promise.all([
+        store.get("ep-providers"), store.get("ep-items"), store.get("ep-reqs"), store.get("hr-emps5"), store.get("ep-puestos"), store.get("ep-jornaleros"), store.get("ep-pos"), store.get("hr-atts2"), store.get("cp-projects"), store.get("ep-dota"),
       ]);
       setProviders(Array.isArray(pv) ? pv : []);
       setItems(Array.isArray(it) ? it : []);
       setReqs(Array.isArray(rq) ? rq : []);
       setEmps(Array.isArray(em) ? em : []);
       setPuestosMap(pu && typeof pu === "object" && !Array.isArray(pu) ? pu : {});
+      const dota0 = dt && typeof dt === "object" && !Array.isArray(dt) ? dt : {};
+      setDotaMap(dota0); dotaRef.current = dota0;
       setJornaleros(Array.isArray(jr) ? jr : []);
       setPos(Array.isArray(po) ? po : []);
       setCpProjects(Array.isArray(cpp) ? cpp : []);
@@ -1364,6 +1387,34 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     const ok = await store.set("ep-puestos", next);
     if (!ok) alert("⚠ No se guardó en la nube (ep-puestos).");
     return ok;
+  };
+  // ep-dota (dotación manual): merge profundo por persona+tipo contra la nube
+  // — dos personas marcando fichas distintas (o tipos distintos de la misma
+  // ficha) no se pisan. val = {tiene:true, fecha} para marcar; null para quitar.
+  // Los guardados van por una COLA (dotaQueue): marcar un kit entero son
+  // varios clicks seguidos, y dos sDota en vuelo a la vez se pisarían (ambos
+  // leen la nube ANTES de que el otro escriba → gana el último y se pierde
+  // una marca). La UI se actualiza optimista al instante; cada op de la cola
+  // relee la nube fresca y aplica SOLO su cambio.
+  const sDota = (empId, tipo, val) => {
+    const apply = (m) => {
+      const per = { ...(m[empId] || {}) };
+      if (val == null) delete per[tipo]; else per[tipo] = val;
+      const next = { ...m };
+      if (Object.keys(per).length) next[empId] = per; else delete next[empId];
+      return next;
+    };
+    dotaRef.current = apply(dotaRef.current);
+    setDotaMap(dotaRef.current);
+    const p = dotaQueue.current.then(async () => {
+      let base = dotaRef.current;
+      try { const c = await store.getCloud("ep-dota"); if (c && typeof c === "object" && !Array.isArray(c)) base = c; } catch { /* nube caída: usar espejo local */ }
+      const ok = await store.set("ep-dota", apply(base));
+      if (!ok) alert("⚠ No se guardó en la nube (ep-dota).");
+      return ok;
+    });
+    dotaQueue.current = p.catch(() => {}); // un fallo no traba la cola
+    return p;
   };
   const rmPuesto = async (id) => {
     let base = puestosMap;
@@ -1439,8 +1490,10 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     return inferTipo(l?.nombre) || l?.tipoEpp || "otro";
   };
 
-  // ── Dotacion: que EPP tiene cada colaborador (de requisiciones ENTREGADAS),
-  // evaluado contra el KIT de su puesto (override ep-puestos > auto por posicion) ──
+  // ── Dotacion: que EPP tiene cada colaborador, evaluado contra el KIT de su
+  // puesto (override ep-puestos > auto por posicion). El check "tiene/falta"
+  // sale de la marca MANUAL en ep-dota (pedido de Gerson ago 2026); lo
+  // derivado de requisiciones entregadas queda solo como HISTORIAL informativo ──
   const dotacionDe = useMemo(() => {
     const map = {}; // empId -> {entregado:{}, pend:{}}
     for (const r of reqs) {
@@ -1467,13 +1520,14 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       const puesto = puestosMap[e.id] || e.puesto || autoPuesto(e);
       const kit = PUESTOS[puesto] || PUESTOS.ayudante;
       const m = map[e.id] || { entregado: {}, pend: {} };
-      const tiene = Object.values(m.entregado);
-      const tipos = new Set(tiene.map((x) => x.tipo));
+      const tiene = Object.values(m.entregado); // historial de entregas (informativo)
+      const manual = dotaMap[e.id] || {};       // marca manual: {tipo: {tiene, fecha}}
+      const tipos = new Set(Object.keys(manual).filter((t) => manual[t] && manual[t].tiene));
       const falta = kit.req.filter((t) => !tipos.has(t));
-      out[e.id] = { tiene, pend: Object.values(m.pend), tipos, falta, puesto, completo: kit.req.length > 0 && falta.length === 0 };
+      out[e.id] = { tiene, pend: Object.values(m.pend), tipos, falta, manual, puesto, completo: kit.req.length > 0 && falta.length === 0 };
     }
     return out;
-  }, [reqs, people, items, puestosMap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [reqs, people, items, puestosMap, dotaMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const perdidas = useMemo(() => {
     const o = [];
@@ -1549,12 +1603,13 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   // al proveedor y se repartian al instante). El stock ahora es:
   //   - ENTRADA: al marcar una PO "Recibida" (con cantidades/precios reales).
   //   - AJUSTE: manual desde Inventario (editar item).
-  // La ficha de Dotacion NO cambia: sigue leyendo las requisiciones
-  // entregadas (que EPP tiene cada colaborador), independiente del stock.
+  // La DOTACION tampoco se marca sola con la entrega (cambio ago 2026): la
+  // entrega queda como HISTORIAL en la ficha, y el "tiene/falta" se marca a
+  // mano en la ficha de cada colaborador (ep-dota).
   const setEstadoReq = async (req, estado) => {
     const verbo = { aprobada: "APROBAR", rechazada: "RECHAZAR", envio: "pasar a PREPARANDO ENVÍO", entregada: "marcar ENVIADA A PROYECTO" }[estado];
     const extra = estado === "entregada"
-      ? "\n\nEl EPP quedará asignado a cada colaborador en su ficha de dotación. (El stock del almacén NO se toca — las entradas reales se registran al recibir la orden Por Comprar.)"
+      ? "\n\nLa entrega queda en el HISTORIAL de cada colaborador. Acordate de marcar a mano su dotación (sí tiene / fecha) en la ficha, pestaña Dotación. (El stock del almacén NO se toca — las entradas reales se registran al recibir la orden Por Comprar.)"
       : estado === "envio"
       ? "\n\nTip: imprimí la 📋 Ficha de Entrega para que cada colaborador FIRME al recibir su EPP en proyecto."
       : "";
@@ -1783,7 +1838,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
       ? `\n\n📦 El stock que había salido del almacén REGRESA al inventario:\n${nombresDe(prev.devolver, baseItems)}`
       : fresca.stockDescontado ? "\n\n📦 (No hay stock que devolver: los ítems ya no están en el catálogo o quedó pendiente de ajuste manual.)" : "";
     const avisoNo = prev.noExisten.length ? `\n\n⚠ No se devuelven (ítems borrados del catálogo):\n${prev.noExisten.map((s) => "  " + s).join("\n")}` : "";
-    const avisoDot = fresca.estado === "entregada" && personas ? `\n\n👷 El EPP dejará de contar en la dotación de ${personas} colaborador(es).` : "";
+    const avisoDot = fresca.estado === "entregada" && personas ? `\n\n👷 La entrega sale del historial de ${personas} colaborador(es). Su dotación marcada a mano NO cambia — ajustala en la ficha si aplica.` : "";
     const avisoPerd = lineasPerdida.length ? `\n\n⚠ Salen de "Descuentos planilla" ${lineasPerdida.length} línea(s) por pérdida${yaDeducidas ? ` (${yaDeducidas} ya marcada(s) como deducida(s))` : ""}.` : "";
     const avisoPos = posLigadas.length ? `\n\n🧾 Sus órdenes de compra NO se borran (${posLigadas.map((p) => p.numero).join(", ")}) — quedan en "Por comprar" con su historial de pago.` : "";
     const estadoLbl = (ESTADOS[fresca.estado] || {}).label || fresca.estado;
@@ -2638,7 +2693,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
           <div style={{ flex: "1 1 190px", background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${GREEN}`, borderRadius: R.md, padding: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5 }}>Con EPP completo</div>
             <div style={{ fontSize: 24, fontWeight: 800, color: GREEN, marginTop: 4 }}>{completos} <span style={{ fontSize: 15, color: BRAND.stone, fontWeight: 700 }}>/ {campo.length}</span></div>
-            <div style={{ fontSize: 12, color: BRAND.stone }}>personal de campo, según el kit de su puesto</div>
+            <div style={{ fontSize: 12, color: BRAND.stone }}>personal de campo, según lo marcado a mano en su ficha</div>
           </div>
           <div style={{ flex: "1 1 190px", background: "#fff", border: `1px solid ${BRAND.border}`, borderLeft: `4px solid ${BRAND.red}`, borderRadius: R.md, padding: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5 }}>Con faltantes</div>
@@ -2659,7 +2714,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         {/* Leyenda de cascos por puesto */}
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 14, background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.md, padding: "9px 14px", fontSize: 11.5, color: BRAND.graphite }}>
           <b style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Cascos por puesto:</b>
-          {[["#F6F5F2", "Ingeniero"], ["#E8762D", "Operadores Ø grande y Ø pequeño"], ["#F2C40F", "Ayudantes / Técnicos"], ["#2F6FE0", "Mecánicos"]].map(([c, l]) => (
+          {[["#F6F5F2", "Ingeniero"], ["#E8762D", "Operadores Ø grande y Ø pequeño"], ["#F2C40F", "Ayudantes / Técnicos"], ["#2F6FE0", "Mecánicos"], ["#39FF14", "Visitas"]].map(([c, l]) => (
             <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 11, height: 11, borderRadius: "50%", background: c, border: "1px solid rgba(0,0,0,0.25)", display: "inline-block" }} />{l}</span>
           ))}
           <span style={{ color: BRAND.stone }}>· Soldador y tornero: kit especial · Jeans: por defecto en todos</span>
@@ -2680,7 +2735,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
           // asistencia de GeoTeam. Jornaleros van en su propio grupo JORNAL;
           // oficina y quienes no están en cuadrilla, al final.
           const card = (e) => {
-            const dot = dotacionDe[e.id] || { tiene: [], falta: [], tipos: new Set(), completo: false, pend: [], puesto: "ayudante" };
+            const dot = dotacionDe[e.id] || { tiene: [], falta: [], tipos: new Set(), completo: false, pend: [], manual: {}, puesto: "ayudante" };
             const kit = PUESTOS[dot.puesto] || PUESTOS.ayudante;
             return (
               <div key={e.id} onClick={() => setModal({ t: "ficha", empId: e.id })} style={{ background: "#fff", border: `1px solid ${dot.completo ? GREEN + "55" : BRAND.border}`, borderRadius: R.lg, padding: 14, cursor: "pointer", boxShadow: BRAND.shadowSm, transition: "transform .1s" }} onMouseEnter={(ev) => (ev.currentTarget.style.transform = "translateY(-2px)")} onMouseLeave={(ev) => (ev.currentTarget.style.transform = "none")}>
@@ -2743,7 +2798,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
 
   const FichaModal = ({ empId }) => {
     const e = empById(empId); if (!e) return null;
-    const dot = dotacionDe[empId] || { tiene: [], pend: [], falta: [], tipos: new Set(), completo: false, puesto: "ayudante" };
+    const dot = dotacionDe[empId] || { tiene: [], pend: [], falta: [], tipos: new Set(), completo: false, manual: {}, puesto: "ayudante" };
     const kit = PUESTOS[dot.puesto] || PUESTOS.ayudante;
     return (
       <Modal title="Ficha de dotación EPP" onClose={() => setModal(null)} width={760}>
@@ -2796,16 +2851,46 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
               : dot.completo
                 ? <Chip color={GREEN} bg={BRAND.greenSoft} style={{ fontSize: 12, padding: "5px 12px" }}>✓ KIT DE {kit.label.toUpperCase()} COMPLETO</Chip>
                 : <Chip color={BRAND.red} bg={BRAND.redSoft} style={{ fontSize: 12, padding: "5px 12px" }}>FALTAN {dot.falta.length} DEL KIT DE {kit.label.toUpperCase()}</Chip>}</div>
-            {/* Checklist del kit del puesto */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
-              {kit.req.map((t) => { const ok = dot.tipos.has(t); return (
-                <div key={t} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: ok ? BRAND.charcoal : BRAND.stone }}>
-                  <span style={{ fontSize: 16 }}>{tipoDef(t).icon}</span>
-                  <span style={{ flex: 1, fontWeight: ok ? 700 : 400 }}>{reqLabel(dot.puesto, t)}</span>
-                  {ok ? <span style={{ color: GREEN, fontWeight: 800 }}>✓ tiene</span> : <span style={{ color: BRAND.red, fontWeight: 800 }}>✗ falta</span>}
+            {/* Checklist del kit del puesto — se marca A MANO (ep-dota):
+                toggle "Sí tiene / No tiene" + fecha de recepción opcional.
+                El input de fecha va UNCONTROLLED (defaultValue) a propósito:
+                cada cambio guarda en la nube y un value controlado se
+                revertiría mientras el guardado async está en vuelo. */}
+            {(() => {
+              const fila = (t, opcional) => {
+                const reg = dot.manual?.[t];
+                const ok = !!(reg && reg.tiene);
+                return (
+                  <div key={t} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: ok ? BRAND.charcoal : BRAND.stone, opacity: opcional && !ok ? 0.75 : 1 }}>
+                    <span style={{ fontSize: 16 }}>{tipoDef(t).icon}</span>
+                    <span style={{ flex: 1, fontWeight: ok ? 700 : 400 }}>{reqLabel(dot.puesto, t)}{opcional && <span style={{ fontSize: 10, color: BRAND.stone, fontWeight: 400 }}> (opcional)</span>}</span>
+                    {ok && (canManage ? (
+                      <input type="date" key={`${empId}|${t}`} defaultValue={reg?.fecha || ""} title="Fecha en que lo recibió (dejar en blanco si no se sabe)"
+                        onChange={(ev) => sDota(empId, t, { tiene: true, fecha: ev.target.value })}
+                        style={{ padding: "3px 6px", borderRadius: 6, border: `1px solid ${BRAND.border}`, fontSize: 11.5, fontFamily: FONT.body, color: BRAND.graphite, background: "#fff" }} />
+                    ) : (reg?.fecha ? <span style={{ fontSize: 11, color: BRAND.stone }}>recibido {reg.fecha.split("-").reverse().join("/")}</span> : null))}
+                    {/* fecha date-only formateada a mano: new Date("YYYY-MM-DD") la parsea
+                        como medianoche UTC y en Honduras (UTC-6) saldría un día antes */}
+                    {canManage ? (
+                      <button onClick={() => sDota(empId, t, ok ? null : { tiene: true, fecha: "" })}
+                        title={ok ? "Clic para marcar que NO lo tiene" : "Clic para marcar que SÍ lo tiene"}
+                        style={{ padding: "4px 10px", borderRadius: 20, border: `1px solid ${ok ? GREEN : BRAND.red}55`, background: ok ? BRAND.greenSoft : BRAND.redSoft, color: ok ? GREEN : BRAND.red, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT.body, whiteSpace: "nowrap" }}>
+                        {ok ? "✓ Sí tiene" : "✗ No tiene"}
+                      </button>
+                    ) : (ok ? <span style={{ color: GREEN, fontWeight: 800 }}>✓ tiene</span> : (opcional ? <span style={{ color: BRAND.stone, fontWeight: 700 }}>—</span> : <span style={{ color: BRAND.red, fontWeight: 800 }}>✗ falta</span>))}
+                  </div>
+                );
+              };
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 2 }}>
+                  {kit.req.map((t) => fila(t, false))}
+                  {(kit.opcionales || []).map((t) => fila(t, true))}
+                  {canManage && kit.req.length > 0 && (
+                    <div style={{ fontSize: 10.5, color: BRAND.stone, marginTop: 2 }}>La dotación se marca a mano con el botón. La fecha es la de recepción — dejala en blanco si no se sabe.</div>
+                  )}
                 </div>
-              ); })}
-            </div>
+              );
+            })()}
           </div>
         </div>
         {kit.notas && <div style={{ background: BRAND.beigeLight, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.md, padding: "9px 13px", fontSize: 12.5, color: BRAND.ink, marginBottom: 10 }}>📌 {kit.notas}</div>}
@@ -2815,10 +2900,11 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
           </div>
         )}
 
-        {/* EPP entregado (amarrado a requisiciones) */}
-        <div style={{ fontSize: 12, fontWeight: 800, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>EPP asignado (entregado)</div>
+        {/* Historial de entregas por requisición — INFORMATIVO: ya no marca la
+            dotación (esa se pone a mano arriba), pero dice qué se le ha dado y cuándo */}
+        <div style={{ fontSize: 12, fontWeight: 800, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>Historial de entregas (requisiciones)</div>
         {!dot.tiene.length ? (
-          <div style={{ background: BRAND.beigeLight, borderRadius: R.md, padding: 16, fontSize: 13, color: BRAND.stone, textAlign: "center" }}>Todavía no se le ha entregado ningún EPP.</div>
+          <div style={{ background: BRAND.beigeLight, borderRadius: R.md, padding: 16, fontSize: 13, color: BRAND.stone, textAlign: "center" }}>Sin entregas por requisición registradas en el sistema.</div>
         ) : (
           <div style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: R.md, overflow: "hidden" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -3338,7 +3424,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
               const ok = await sReqs(base.map((x) => (x.id === modal.req.id
                 ? { ...x, estado: "entregada", entregadaPor: userName, entregadaAt: new Date().toISOString(), envioConductorId: conductorId || x.envioConductorId, envioConductorNombre: conductorNombre || x.envioConductorNombre, envioVehiculo: vehiculo || x.envioVehiculo, salidaHora, salidaFotoFile: salidaFotoFile || x.salidaFotoFile }
                 : x)));
-              if (ok) { setModal(null); alert(`✅ ${modal.req.numero} ENVIADA A PROYECTO — proceso cerrado. El EPP quedó asignado en la dotación de cada colaborador.`); }
+              if (ok) { setModal(null); alert(`✅ ${modal.req.numero} ENVIADA A PROYECTO — proceso cerrado. La entrega quedó en el historial de cada colaborador; acordate de marcar a mano su dotación (sí tiene / fecha) en la pestaña Dotación.`); }
             }} />
         </Modal>
       )}
