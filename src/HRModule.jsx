@@ -2247,10 +2247,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
     const inputStyle = (bg) => ({ width: 34, padding: "3px 2px", border: "1px solid #E2E8F0", borderRadius: 4, fontSize: 11, textAlign: "center", background: bg, outline: "none" });
 
-    // ── Reporte PDF para la Lic. Carolina (planilla) ──
-    // Tabla POR EMPLEADO (horas por banda, domingos x2, total L) — eso es lo
-    // que se mete a planilla — + desglose por proyecto (atribuido con
-    // reasignaciones). Ventana de impresion → "Guardar como PDF".
+    // ── Reporte PDF de Horas Extras ──
+    // ESTRUCTURA (pedido de Gerson/la Lic., ago 2026):
+    //   1) RESUMEN GENERAL POR COLABORADOR (PARA PLANILLA) — una fila por
+    //      persona con TODOS sus proyectos sumados, separado en PERMANENTES
+    //      y TEMPORALES. Eso es lo que se mete a planilla.
+    //   2) DETALLE POR PROYECTO (PARA COSTOS POR PROYECTO) — en pagina
+    //      nueva; el desglose de donde se trabajaron (reasignaciones incl.).
+    // Ventana de impresion → "Guardar como PDF".
     const exportHePDF = () => {
       const w = window.open("", "_blank");
       if (!w) { alert("Permite popups para generar el PDF"); return; }
@@ -2336,6 +2340,62 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         </div>`;
       };
 
+      // ── RESUMEN GENERAL POR COLABORADOR (para planilla) ──
+      // Una fila por persona sumando TODOS sus proyectos (ej: Henry Polanco
+      // con horas en 2 proyectos sale UNA vez con el total combinado),
+      // separado en PERMANENTES y TEMPORALES segun la ficha (contractType).
+      // Alfabetico: la Lic. busca por nombre al meter a planilla.
+      const perEmp = {}; // empId -> {e, hb, ajuste, b1, b2, b3, dom, hrs, total}
+      proyOrden.forEach(([, P]) => Object.values(P.emps).forEach((r) => {
+        if (!perEmp[r.e.id]) perEmp[r.e.id] = { e: r.e, hb: r.hb, ajuste: r.ajuste, b1: 0, b2: 0, b3: 0, dom: 0, hrs: 0, total: 0 };
+        const T = perEmp[r.e.id];
+        T.b1 += r.b1; T.b2 += r.b2; T.b3 += r.b3; T.dom += r.dom; T.hrs += r.hrs; T.total += r.total;
+      }));
+      const grupoDe = (e) => (e.contractType === "permanent" ? "PERMANENTES" : e.contractType === "temporary" ? "TEMPORALES" : "OTROS (HONORARIOS / SIN CONTRATO)");
+      const bloques = ["PERMANENTES", "TEMPORALES", "OTROS (HONORARIOS / SIN CONTRATO)"]
+        .map((g) => [g, Object.values(perEmp).filter((r) => grupoDe(r.e) === g).sort((a, b) => String(a.e.fullName).localeCompare(b.e.fullName))])
+        .filter(([, rows]) => rows.length);
+      const bloqueSection = ([g, rows]) => {
+        const hrsG = rows.reduce((s, r) => s + r.hrs, 0), totG = rows.reduce((s, r) => s + r.total, 0);
+        const color = g === "PERMANENTES" ? "#065F46" : g === "TEMPORALES" ? "#B45309" : "#475569";
+        const icon = g === "PERMANENTES" ? "🟢" : g === "TEMPORALES" ? "🟠" : "⚪";
+        return `<div style="margin-bottom:14px;border:1px solid #DBD4C8;border-radius:10px;overflow:hidden">
+          <div style="background:${color};color:#fff;padding:8px 13px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+            <span style="font-weight:800;font-size:13px">${icon} ${g} <span style="font-weight:400;color:rgba(255,255,255,0.75);font-size:11px">· ${rows.length} colaborador${rows.length !== 1 ? "es" : ""}</span></span>
+            <span style="font-size:12px;color:rgba(255,255,255,0.85)">${fH(hrsG)} hrs · <b style="color:#fff">${fL(totG)}</b></span>
+          </div>
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr>
+              <th style="${THc};text-align:left">COLABORADOR</th>
+              <th style="${THc};text-align:right">L/HORA</th>
+              <th style="${THc};text-align:right">+25%<div style="font-size:7.5px;font-weight:400">4-7pm·sáb11-7</div></th>
+              <th style="${THc};text-align:right">+50%<div style="font-size:7.5px;font-weight:400">7-10pm</div></th>
+              <th style="${THc};text-align:right">+75%<div style="font-size:7.5px;font-weight:400">10-12am</div></th>
+              <th style="${THc};text-align:right">×2<div style="font-size:7.5px;font-weight:400">domingo</div></th>
+              <th style="${THc};text-align:right">HRS</th>
+              <th style="${THc};text-align:right">TOTAL L</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map(r => `<tr>
+                <td style="${TD1};font-weight:700">${r.e.fullName}</td>
+                <td style="${TD1};text-align:right">${fL(r.hb)}${r.ajuste ? ' <span style="color:#B45309;font-weight:800">*</span>' : ''}</td>
+                <td style="${TD1};text-align:right">${r.b1 ? fH(r.b1) : "—"}</td>
+                <td style="${TD1};text-align:right">${r.b2 ? fH(r.b2) : "—"}</td>
+                <td style="${TD1};text-align:right">${r.b3 ? fH(r.b3) : "—"}</td>
+                <td style="${TD1};text-align:right">${r.dom ? fH(r.dom) : "—"}</td>
+                <td style="${TD1};text-align:right;font-weight:700">${fH(r.hrs)}</td>
+                <td style="${TD1};text-align:right;font-weight:800;color:#059669">${fL(r.total)}</td>
+              </tr>`).join("")}
+              <tr style="background:#FFFBF5;font-weight:800">
+                <td style="padding:7px 8px;font-size:11px" colspan="6">Subtotal ${g.toLowerCase()}</td>
+                <td style="padding:7px 8px;text-align:right;font-size:11px">${fH(hrsG)}</td>
+                <td style="padding:7px 8px;text-align:right;color:#059669;font-size:12px">${fL(totG)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>`;
+      };
+
       w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Horas Extras ${sheet.quincena} ${sheet.periodo}</title>
         <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#2C2A28}@media print{.np{display:none}}</style>
         </head><body>
@@ -2361,12 +2421,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <div style="border:1px solid #DBD4C8;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#7A7268;text-transform:uppercase">Proyectos</div><div style="font-size:20px;font-weight:800;color:#2C2A28">${proyOrden.length}</div></div>
         </div>
 
-        <div style="font-size:11px;font-weight:700;color:#7A7268;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Detalle por proyecto (para planilla)</div>
-        ${proyOrden.map(projSection).join("")}
+        <div style="font-size:11px;font-weight:700;color:#7A7268;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Resumen general por colaborador (para planilla)</div>
+        ${bloques.map(bloqueSection).join("")}
 
         <div style="background:#065F46;color:#fff;border-radius:10px;padding:11px 16px;display:flex;justify-content:space-between;align-items:center;margin:4px 0 16px">
           <span style="font-weight:800;font-size:13px">TOTAL GENERAL · ${sheet.quincena} ${sheet.periodo}</span>
           <span style="font-size:14px;font-weight:800">${fH(granH)} hrs · ${fL(granL)}</span>
+        </div>
+
+        <div style="page-break-before:always">
+          <div style="font-size:11px;font-weight:700;color:#7A7268;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;padding-top:10px">Detalle por proyecto (para costos por proyecto)</div>
+          ${proyOrden.map(projSection).join("")}
         </div>
 
         <div style="font-size:9.5px;color:#94A3B8;line-height:1.5">
