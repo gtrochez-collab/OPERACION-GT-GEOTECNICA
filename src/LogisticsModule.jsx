@@ -1178,19 +1178,30 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         return false;
       }
 
-      // 3) Pre-fetch cp-purchases + verificar (con retry corto tambien)
-      console.log("Pre-fetch cp-purchases...");
-      let cloudPurchases;
+      // 3) Pre-fetch cp-purchases DIRECTO de la nube (getCloud) + retry corto.
+      // Antes era store.get con fallback al state del render: ante un timeout
+      // se reescribia TODO cp-purchases desde una foto vieja y desaparecian
+      // solicitudes que otros habian creado (fix ago 2026). Sin nube se
+      // aborta: el archivo ya esta subido y el enlace se puede reintentar.
+      console.log("Pre-fetch cp-purchases (getCloud)...");
+      let cloudPurchases = null;
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          cloudPurchases = await store.get("cp-purchases");
+          cloudPurchases = await store.getCloud("cp-purchases");
           break;
         } catch (e) {
-          if (attempt === 3) throw e;
+          if (attempt === 3) {
+            alert("⚠️ No hay conexión con la nube.\n\nEl archivo se subió pero NO se enlazó a la compra (no se guardó nada más, para no arriesgar solicitudes de otros). Reintentá en un momento.");
+            return false;
+          }
           await new Promise(r => setTimeout(r, 500));
         }
       }
-      const arr = Array.isArray(cloudPurchases) ? cloudPurchases : purchases;
+      if (!Array.isArray(cloudPurchases)) {
+        alert("⚠️ No se pudo leer la lista de compras desde la nube. El archivo se subió pero no se enlazó — reintentá en un momento.");
+        return false;
+      }
+      const arr = cloudPurchases;
       const idx = arr.findIndex(p => p.id === despacho.sourcePurchaseId);
       if (idx === -1) {
         alert("⚠️ No se encontro la compra original. Puede haber sido borrada mientras subias la ficha.\n\nEl archivo ya se subio a la nube pero no se pudo enlazar. Contacta al admin.");
@@ -1251,7 +1262,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       // efectivamente tiene la ficha ahora en cloud.
       console.log("Verify post-save...");
       try {
-        const verify = await store.get("cp-purchases");
+        const verify = await store.getCloud("cp-purchases");
         const verifyArr = Array.isArray(verify) ? verify : [];
         const verified = verifyArr.find(p => p.id === despacho.sourcePurchaseId);
         if (!verified?.delivery?.fichaFile?.fileId) {

@@ -1528,9 +1528,20 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       setPurchases(d);
       console.log("📦 Local state actualizado:", d.length, "purchases");
 
-      // 1) PRE-FETCH cloud: si otro usuario/tab agrego solicitudes mientras estabamos
-      // editando, las traemos para no pisarlas.
-      const cloudPrevia = await store.get("cp-purchases");
+      // 1) PRE-FETCH cloud DIRECTO (fix ago 2026 — en GeoMachinery se borraban
+      // solicitudes de Fernando por este mismo agujero): store.get ante un
+      // timeout de Supabase cae al CACHE LOCAL de este navegador; con cache
+      // viejo el merge no ve solicitudes nuevas de otros y las escribe FUERA
+      // de la nube sin que la verificacion lo detecte. getCloud SIN cache —
+      // si la nube no responde, NO se guarda (mejor reintentar que borrar).
+      let cloudPrevia;
+      try {
+        cloudPrevia = await store.getCloud("cp-purchases");
+      } catch (e) {
+        console.error("⛔ Nube no responde en pre-fetch — abortando save para no pisar datos ajenos:", e?.message || e);
+        alert("⚠️ No hay conexión con la nube en este momento.\n\nNO se guardó nada para no arriesgar solicitudes de otros usuarios. Esperá unos segundos y volvé a intentar (tus cambios siguen en pantalla).");
+        return false;
+      }
       const cloudPreviaArr = Array.isArray(cloudPrevia) ? cloudPrevia : [];
       console.log("☁️ Cloud actual:", cloudPreviaArr.length, "purchases");
 
@@ -1543,6 +1554,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       previousIds.forEach(id => { if (!ourIds.has(id)) deletedIds.add(id); });
       if (deletedIds.size > 0) {
         console.log(`🗑 Borrados intencionales: ${deletedIds.size}`, [...deletedIds]);
+      }
+      // GUARDIA anti-borrado masivo: los flujos legitimos borran DE A UNA
+      // (removePurchase con confirm) — mas de una de golpe huele a state viejo.
+      if (deletedIds.size > 1) {
+        const nombres = cloudPreviaArr.filter(p => deletedIds.has(p.id)).map(p => `• ${p.description || p.id}`).join("\n");
+        if (!confirm(`⚠️ Este guardado ELIMINARÍA ${deletedIds.size} solicitudes de la nube:\n\n${nombres}\n\n¿Es intencional? (Si no borraste nada, tocá Cancelar y recargá la página.)`)) {
+          console.warn("⛔ Guardado cancelado por el usuario (guardia anti-borrado masivo).");
+          return false;
+        }
       }
 
       // 3) MERGE: tomar todo lo de cloud + agregar lo nuestro que no este en cloud
@@ -1589,12 +1609,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         console.log("☁️ Save cp-purchases →", purchasesOk ? "OK" : "FAIL");
       }
 
-      // 6) VERIFICACION: re-fetch desde cloud y comparar
+      // 6) VERIFICACION: re-fetch DIRECTO desde cloud y comparar (getCloud —
+      // store.get podia devolver el propio cache local y dar un falso OK)
       let verifiedOk = true;
       let verifiedCount = null;
       if (purchasesOk) {
         try {
-          const verify = await store.get("cp-purchases");
+          const verify = await store.getCloud("cp-purchases");
           verifiedCount = Array.isArray(verify) ? verify.length : null;
           if (verifiedCount !== light.length) {
             verifiedOk = false;
@@ -2049,9 +2070,23 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         return false;
       }
 
-      // 3) Pre-fetch cp-purchases para no pisar cambios concurrentes de Ana/Carolina
-      const cloudPurchases = await store.get("cp-purchases");
-      const arr = Array.isArray(cloudPurchases) ? cloudPurchases : purchases;
+      // 3) Pre-fetch cp-purchases DIRECTO de la nube para no pisar cambios
+      // concurrentes de Ana/Carolina. Antes usaba store.get con fallback al
+      // state del render: ante un timeout eso reescribia TODO el array desde
+      // una foto vieja y borraba solicitudes ajenas (fix ago 2026). Sin nube
+      // se aborta — el archivo ya subio y se puede reintentar el enlace.
+      let cloudPurchases;
+      try {
+        cloudPurchases = await store.getCloud("cp-purchases");
+      } catch (e) {
+        alert("⚠️ No hay conexión con la nube.\n\nEl archivo se subió pero NO se enlazó a la solicitud (no se guardó nada más, para no arriesgar solicitudes de otros). Reintentá en un momento.");
+        return false;
+      }
+      if (!Array.isArray(cloudPurchases)) {
+        alert("⚠️ No se pudo leer la lista de solicitudes desde la nube. Reintentá en un momento.");
+        return false;
+      }
+      const arr = cloudPurchases;
       const idx = arr.findIndex(p => p.id === purchase.id);
       if (idx === -1) {
         alert("⚠️ No se encontro la compra original. Recargar la pagina e intenta de nuevo.");

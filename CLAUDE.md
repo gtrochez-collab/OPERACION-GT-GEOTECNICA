@@ -89,6 +89,18 @@ logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 ## Convenciones críticas
 - **Guardado robusto**: nunca fire-and-forget en datos importantes. Patrón:
   `const ok = await store.set(...)` → si falla, alert + mantener modal abierto.
+- **Escrituras full-array SIEMPRE con `store.getCloud`** (ago 2026, así se
+  borraban solicitudes de pago de Fernando en GeoMachinery): `store.get` cae
+  al cache local en timeout, y el merge contra una foto vieja escribe el
+  array SIN lo que otros crearon — y el verify con `store.get` se auto-
+  confirma. Regla: pre-fetch y verify con `getCloud`; si la nube no responde
+  **abortar** con alert (no guardar). Aplicado en sP de GeoShopping/
+  GeoMachinery + guardia si el guardado borraría >1 unidad, mergeById
+  (cp-providers/cp-projects/mq-machines, clave `id||short`) y en los
+  uploadFicha de GeoShopping/GeoLogistics. En `supabase.js`, el re-sync
+  automático (cache local más nuevo) ya no sube el array tal cual: rescata
+  las filas de la nube **creadas después** del cache (createdAt/fecha/date)
+  — las más viejas que faltan son borrados propios pendientes y no reviven.
 - **Grids/forms críticos** (patrón anti-pérdida de HE, jul 2026): los
   componentes definidos DENTRO de un módulo se remontan con cualquier
   re-render del padre (fotos cargando, resize) y pierden el estado local —

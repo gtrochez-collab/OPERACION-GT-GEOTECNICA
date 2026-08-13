@@ -230,6 +230,37 @@ export const store = {
         const cloudDate = new Date(cloudTs);
         if (!isNaN(localDate) && !isNaN(cloudDate) && localDate > cloudDate) {
           console.warn(`[store] cache local mas reciente que nube para "${k}" (local=${localTs} vs nube=${cloudTs}). Usando local. Probable sync fallido previamente — intentando re-sincronizar en background.`);
+          // ARRAYS de objetos con id: el cache de este navegador puede no
+          // tener filas que OTROS crearon despues de nuestro ultimo set — un
+          // re-sync "tal cual" las BORRA de la nube (asi se perdian
+          // solicitudes de pago en GeoMachinery, ago 2026). Rescatamos esas
+          // filas, pero SOLO las que nacieron DESPUES de nuestra copia local:
+          // una fila mas vieja que falta en el local es un BORRADO nuestro
+          // que todavia no llego a la nube — resucitarla romperia el delete
+          // (y sin fecha utilizable no se puede distinguir, asi que no se
+          // rescata: se conserva el comportamiento anterior).
+          if (Array.isArray(localValue) && Array.isArray(cloudValue)
+            && localValue.every(x => x && x.id) && cloudValue.every(x => x && x.id)) {
+            const localMs = localDate.getTime();
+            const nacio = (x) => {
+              const t = Date.parse(x.createdAt || x.fecha || x.date || x.updatedAt || "");
+              return isNaN(t) ? null : t;
+            };
+            const ids = new Set(localValue.map(x => x.id));
+            const faltantes = cloudValue.filter(x => !ids.has(x.id));
+            // Solo las creadas despues de nuestro snapshot local.
+            const nuevasDeOtros = faltantes.filter(x => { const t = nacio(x); return t !== null && t > localMs; });
+            const noRescatadas = faltantes.length - nuevasDeOtros.length;
+            if (noRescatadas > 0) console.warn(`[store] "${k}": ${noRescatadas} fila(s) de la nube NO se rescatan (son previas a este cache — probablemente borradas acá y el borrado aún no había sincronizado).`);
+            if (nuevasDeOtros.length) {
+              // Van al final: por ser posteriores al snapshot, respeta el
+              // orden cronologico de los arrays que se guardan por append.
+              const union = [...localValue, ...nuevasDeOtros];
+              console.warn(`[store] re-sync de "${k}": rescatadas ${nuevasDeOtros.length} fila(s) creadas por otro usuario que este cache no tenia.`);
+              this.set(k, union).catch(() => {});
+              return union;
+            }
+          }
           // Disparar un re-sync en background (sin bloquear el get). Si la nube esta otra vez
           // disponible, se pondra al dia. No esperamos el resultado.
           this.set(k, localValue).catch(() => {});

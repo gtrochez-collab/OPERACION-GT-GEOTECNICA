@@ -1432,9 +1432,21 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       const finalProviders = [...existingProviders, ...importedFromPurchases];
       setProviders(finalProviders);
       if (importedFromPurchases.length > 0) {
-        // Solo guardar si hubo imports nuevos (no escribir si no hay cambios)
-        store.set("cp-providers", finalProviders);
-        console.info(`[Compras] Auto-importados ${importedFromPurchases.length} proveedores nuevos desde compras existentes.`);
+        // Solo guardar si hubo imports nuevos — y via mergeById contra la
+        // nube fresca: la base del mount puede ser cache local viejo y un
+        // write directo pisaria proveedores creados por otros (fix ago 2026).
+        (async () => {
+          const merged = await mergeById("cp-providers", finalProviders, existingProviders);
+          // Aplicar sobre el estado ACTUAL (el usuario pudo editar/crear un
+          // proveedor durante el round-trip): se agregan solo los que faltan.
+          setProviders((cur) => {
+            const k = new Set(cur.map(unitKey).filter(Boolean));
+            const add = merged.filter(x => { const u = unitKey(x); return u && !k.has(u); });
+            return add.length ? [...cur, ...add] : cur;
+          });
+          const ok = await store.set("cp-providers", merged);
+          console.info(`[Compras] Auto-importados ${importedFromPurchases.length} proveedores nuevos desde compras existentes.`, ok ? "" : "(no sincronizó a la nube)");
+        })();
       }
 
       setLoaded(true);
@@ -1499,9 +1511,21 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       setPurchases(d);
       console.log("📦 Local state actualizado:", d.length, "purchases");
 
-      // 1) PRE-FETCH cloud: si otro usuario/tab agrego solicitudes mientras estabamos
-      // editando, las traemos para no pisarlas.
-      const cloudPrevia = await store.get("mq-purchases");
+      // 1) PRE-FETCH cloud DIRECTO (fix ago 2026 — se borraban solicitudes de
+      // Fernando): antes se usaba store.get, que ante un timeout de Supabase
+      // cae al CACHE LOCAL de este navegador. Con cache viejo, el merge no
+      // veia las solicitudes nuevas de otros y las escribia FUERA de la nube
+      // (y la verificacion no lo detectaba porque comparaba contra lo recien
+      // escrito). Ahora: getCloud SIN cache — y si la nube no responde, NO se
+      // guarda (mejor reintentar que borrar lo ajeno en silencio).
+      let cloudPrevia;
+      try {
+        cloudPrevia = await store.getCloud("mq-purchases");
+      } catch (e) {
+        console.error("⛔ Nube no responde en pre-fetch — abortando save para no pisar datos ajenos:", e?.message || e);
+        alert("⚠️ No hay conexión con la nube en este momento.\n\nNO se guardó nada para no arriesgar solicitudes de otros usuarios. Esperá unos segundos y volvé a intentar (tus cambios siguen en pantalla).");
+        return false;
+      }
       const cloudPreviaArr = Array.isArray(cloudPrevia) ? cloudPrevia : [];
       console.log("☁️ Cloud actual:", cloudPreviaArr.length, "purchases");
 
@@ -1514,6 +1538,16 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       previousIds.forEach(id => { if (!ourIds.has(id)) deletedIds.add(id); });
       if (deletedIds.size > 0) {
         console.log(`🗑 Borrados intencionales: ${deletedIds.size}`, [...deletedIds]);
+      }
+      // GUARDIA anti-borrado masivo: los flujos legitimos borran DE A UNA
+      // (removePurchase con confirm). Mas de una de golpe huele a state
+      // corrupto/viejo — pedir confirmacion antes de borrarlas de la nube.
+      if (deletedIds.size > 1) {
+        const nombres = cloudPreviaArr.filter(p => deletedIds.has(p.id)).map(p => `• ${p.description || p.id}`).join("\n");
+        if (!confirm(`⚠️ Este guardado ELIMINARÍA ${deletedIds.size} solicitudes de la nube:\n\n${nombres}\n\n¿Es intencional? (Si no borraste nada, tocá Cancelar y recargá la página.)`)) {
+          console.warn("⛔ Guardado cancelado por el usuario (guardia anti-borrado masivo).");
+          return false;
+        }
       }
 
       // 3) MERGE: tomar todo lo de cloud + agregar lo nuestro que no este en cloud
@@ -1557,12 +1591,13 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
         console.log("☁️ Save mq-purchases →", purchasesOk ? "OK" : "FAIL");
       }
 
-      // 6) VERIFICACION: re-fetch desde cloud y comparar
+      // 6) VERIFICACION: re-fetch DIRECTO desde cloud y comparar (getCloud —
+      // store.get podia devolver el propio cache local y dar un falso OK)
       let verifiedOk = true;
       let verifiedCount = null;
       if (purchasesOk) {
         try {
-          const verify = await store.get("mq-purchases");
+          const verify = await store.getCloud("mq-purchases");
           verifiedCount = Array.isArray(verify) ? verify.length : null;
           if (verifiedCount !== light.length) {
             verifiedOk = false;
@@ -1610,12 +1645,42 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       console.groupEnd();
     }
   };
-  const sCP = d => { setCustomProjects(d); store.set("cp-projects", d); };
+  // Merge por id contra la NUBE fresca (fix ago 2026): estas keys las
+  // escriben varios modulos/usuarios y el saver viejo escribia el array
+  // completo desde el state local — una pestaña con datos viejos pisaba lo
+  // creado por otros. Base = local nuevo; se rescata lo del cloud que el
+  // caller no conoce, respetando lo que quito a proposito (vs state previo).
+  // Si la nube no responde, se escribe lo local tal cual (store.set guarda
+  // en localStorage y reintenta) — sin rescate, pero sin bloquear el CRUD.
+  // La identidad de la unidad NO siempre es `id`: cp-projects se lleva por
+  // `short` (sus registros nunca tuvieron id) — con la clave equivocada el
+  // merge no rescataba nada y seguia pisando lo ajeno.
+  const unitKey = (x) => (x && (x.id || x.short || x.name)) || null;
+  const mergeById = async (key, next, prevArr) => {
+    let cloudArr = null;
+    try { const c = await store.getCloud(key); if (Array.isArray(c)) cloudArr = c; } catch { /* nube caída */ }
+    if (!cloudArr) return next;
+    const nextK = new Set(next.map(unitKey).filter(Boolean));
+    const prevK = new Set((prevArr || []).map(unitKey).filter(Boolean));
+    const deleted = new Set([...prevK].filter(k => !nextK.has(k)));
+    const extras = cloudArr.filter(x => { const k = unitKey(x); return k && !nextK.has(k) && !deleted.has(k); });
+    return extras.length ? [...next, ...extras] : next;
+  };
+  // Los savers pintan PRIMERO lo local (la UI no espera el round-trip a la
+  // nube) y recien despues aplican el merge con lo que otros crearon.
+  const sCP = async (d) => {
+    setCustomProjects(d);
+    const merged = await mergeById("cp-projects", d, customProjects);
+    if (merged !== d) setCustomProjects(merged);
+    return await store.set("cp-projects", merged);
+  };
 
-  // ── CRUD de Proveedores ──
+  // ── CRUD de Proveedores (cp-providers es COMPARTIDA con GeoShopping) ──
   const saveProviders = async (next) => {
     setProviders(next);
-    return await store.set("cp-providers", next);
+    const merged = await mergeById("cp-providers", next, providers);
+    if (merged !== next) setProviders(merged);
+    return await store.set("cp-providers", merged);
   };
   const upsertProvider = async (p) => {
     const exists = providers.find(x => x.id === p.id);
@@ -1636,7 +1701,9 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   // ── CRUD de Maquinas (catalogo de maquinaria) ──
   const saveMachines = async (next) => {
     setMachines(next);
-    return await store.set("mq-machines", next);
+    const merged = await mergeById("mq-machines", next, machines);
+    if (merged !== next) setMachines(merged);
+    return await store.set("mq-machines", merged);
   };
   const upsertMachine = async (m) => {
     const exists = machines.find(x => x.id === m.id);
