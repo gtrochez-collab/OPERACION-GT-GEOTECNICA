@@ -291,9 +291,16 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // Jorge (recepcion) — acceso acotado: SOLO ve la lista de empleados y puede
   // subir/cambiar fotos. No ve planilla, salarios ni ningun otro dato sensible.
   const isPhotoOnly = userRole === "recepcion";
+  // Ana (asistente_compras) — acceso acotado de RRHH (pedido de Gerson, ago
+  // 2026): ficha COMPLETA de empleados con foto pero SIN salario ni
+  // bonificacion, contratos completo, vacaciones, permisos, asistencia,
+  // horas extras y constancias. NADA de planilla, movimientos ni costos.
+  const isAnaRH = userRole === "asistente_compras";
+  // Quien NO puede ver montos de salario/bonificacion en la ficha.
+  const hideSalary = isAnaRH || isPhotoOnly;
   const isReadOnly = userRole === "gerencia" || userRole === "costos";
   const [co, setCo] = useState("subterra");
-  const [sec, setSec] = useState(isAsistente ? "attendance" : isPhotoOnly ? "employees" : "dashboard");
+  const [sec, setSec] = useState(isAsistente ? "attendance" : (isPhotoOnly || isAnaRH) ? "employees" : "dashboard");
   const [emps, setEmps] = useState([]);
   const [vacs, setVacs] = useState([]);
   const [lvs, setLvs] = useState([]);
@@ -429,8 +436,198 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const sA = async d => { setAtts(d); return await store.set("hr-atts2", d); };
   const sC = async d => { setCons(d); return await store.set("hr-cons", d); };
   const sP = async d => { setPays(d); return await store.set("hr-pays", d); };
-  const sCq = async d => { setCuadrillas(d); return await store.set("hr-cuad", d); };
+  // hr-cuad: MERGE por unidad (company|periodo|quincena) contra la NUBE.
+  // Antes era un write full-array desde el state local — y así desapareció la
+  // cuadrilla de Subterra 1Q 2026-08 el 14-ago: al guardar la de Geotecnica
+  // 9 segundos después, el array subido no traía la de Subterra. Mismo
+  // patrón que ya protege la asistencia y las HE.
+  const sCq = async (d, opts = {}) => {
+    const keyOf = c => `${c.company}|${c.periodo}|${c.quincena}`;
+    let cloudArr = null;
+    try { const c = await store.getCloud("hr-cuad"); if (Array.isArray(c)) cloudArr = c; } catch { cloudArr = null; }
+    let next = d;
+    if (cloudArr) {
+      // Lo que estaba en memoria y ya no está en `d` = borrado intencional.
+      const prevIds = new Set((cuadrillas || []).map(c => c && c.id).filter(Boolean));
+      const nextIds = new Set(d.map(c => c && c.id).filter(Boolean));
+      const borrados = new Set([...prevIds].filter(id => !nextIds.has(id)));
+      const nextKeys = new Set(d.map(keyOf));
+      const rescatadas = cloudArr.filter(c => c && c.id && !borrados.has(c.id) && !nextKeys.has(keyOf(c)));
+      if (rescatadas.length) {
+        console.warn(`[sCq] rescatadas ${rescatadas.length} cuadrilla(s) de la nube que no estaban en memoria:`, rescatadas.map(keyOf));
+        next = [...d, ...rescatadas];
+      }
+      // Guardia anti-borrado masivo (los borrados legítimos son de a una).
+      if (borrados.size > 1 && !opts.permitirBorradoMultiple) {
+        if (!confirm(`⚠️ Este guardado ELIMINARÍA ${borrados.size} distribuciones de cuadrilla.\n\n¿Es intencional? Si no borraste nada, tocá Cancelar y recargá la página.`)) return false;
+      }
+    }
+    setCuadrillas(next);
+    const ok = await store.set("hr-cuad", next);
+    if (!ok) return false;
+    // VERIFY contra la nube: las cuadrillas de `next` deben estar todas.
+    try {
+      const back = await store.getCloud("hr-cuad");
+      if (Array.isArray(back)) {
+        const backKeys = new Set(back.map(keyOf));
+        const faltan = next.filter(c => !backKeys.has(keyOf(c)));
+        if (faltan.length) { console.error("[sCq] verify falló, faltan:", faltan.map(keyOf)); return false; }
+      }
+    } catch { /* sin nube no se puede verificar; store.set ya dijo OK */ }
+    return true;
+  };
   const sM = async d => { setMovs(d); return await store.set("hr-movs", d); };
+
+  // ═══════════════════════════════════════════════════════════════════
+  // VACACIONES / PERMISOS → ASISTENCIA (automático, ago 2026)
+  // ═══════════════════════════════════════════════════════════════════
+  // Pedido de Gerson: al registrar vacaciones (o un permiso) las celdas se
+  // marcan SOLAS en la hoja de asistencia de la quincena que corresponda.
+  // Reglas que respeta (las mismas del marcado a mano):
+  //   • Domingos y feriados NO se tocan: ya valen "1" (descanso pagado) y su
+  //     ciclo de celda no ofrece "V" — marcarlos rompería los cálculos.
+  //   • Días BLOQUEADOS por alta/baja se saltan (precedente Norman 30-jul).
+  //   • Solo pisa celdas vacías o con el valor que este mismo mecanismo pone;
+  //     nunca sobreescribe un 0/INC/DT que alguien marcó a mano.
+  //   • Al borrar/rechazar el registro, LIMPIA lo que había puesto.
+  //   • Si la hoja de esa quincena todavía no existe, no pasa nada: al
+  //     crearla, initialData siembra las vacaciones aprobadas (ver abajo).
+  // Guardado con merge por hoja contra getCloud + verify, igual que el botón
+  // "Guardar asistencia" — nunca con el sA plano.
+  const rangoDeFechas = (desde, hasta) => {
+    const out = [];
+    const a = String(desde || "").slice(0, 10), b = String(hasta || desde || "").slice(0, 10);
+    if (!a) return out;
+    const [y1, m1, d1] = a.split("-").map(Number);
+    const [y2, m2, d2] = (b || a).split("-").map(Number);
+    if (!y1 || !m1 || !d1) return out;
+    let cur = new Date(y1, m1 - 1, d1);
+    const fin = (y2 && m2 && d2) ? new Date(y2, m2 - 1, d2) : cur;
+    let guard = 0;
+    while (cur <= fin && guard++ < 400) {
+      out.push({ y: cur.getFullYear(), m: cur.getMonth() + 1, day: cur.getDate(), dow: cur.getDay() });
+      cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1);
+    }
+    return out;
+  };
+  // Escribe (o limpia) las celdas de un registro en las hojas de asistencia.
+  // valor: "V" (vacaciones) | "1" (permiso con goce) | "0" (permiso sin goce)
+  // modo: "aplicar" | "limpiar"
+  const marcarEnAsistencia = async (empId, desde, hasta, valor, modo = "aplicar") => {
+    const emp = (emps || []).find(e => e.id === empId);
+    if (!emp || !empId) return { ok: true, celdas: 0, hojas: [] };
+    const dias = rangoDeFechas(desde, hasta);
+    if (!dias.length) return { ok: true, celdas: 0, hojas: [] };
+
+    // La nube MANDA: si no responde, NO se escribe hr-atts2 (escribir el
+    // array completo desde memoria podría pisar hojas de la otra empresa o
+    // de otra quincena — así se perdió Subterra el 30-jul).
+    let cloudArr = null;
+    try { const c = await store.getCloud("hr-atts2"); if (Array.isArray(c)) cloudArr = c; } catch { cloudArr = null; }
+    if (!cloudArr) return { ok: false, celdas: 0, hojas: [], sinNube: true };
+    const keyOf = a => `${a.company}|${a.periodo}|${a.quincena}`;
+    const byKey = {};
+    [...(Array.isArray(atts) ? atts : []), ...(cloudArr || [])].forEach(a => {
+      if (!a || !a.id) return;
+      const kk = keyOf(a);
+      const cur = byKey[kk];
+      if (!cur || String(a.lastSaved || a.date || "") > String(cur.lastSaved || cur.date || "")) byKey[kk] = a;
+    });
+
+    let celdas = 0;
+    const hojasTocadas = new Set();
+    dias.forEach(({ y, m, day, dow }) => {
+      const periodo = `${y}-${String(m).padStart(2, "0")}`;
+      const quincena = day <= 15 ? "1Q" : "2Q";
+      const hoja = byKey[`${emp.company}|${periodo}|${quincena}`];
+      if (!hoja) return;                      // sin hoja de esa quincena: nada
+      if (dow === 0) return;                  // domingo: queda "1"
+      if (esFeriadoQuincena(periodo, day)) return; // feriado: queda "1"
+      // Bloqueo por alta/baja (mismas reglas que dayLockReason)
+      const dStr = `${periodo}-${String(day).padStart(2, "0")}`;
+      if (emp.startDate && dStr < emp.startDate) return;
+      if (emp.status === "inactive" && emp.endDate && dStr > emp.endDate) return;
+      const k = `${empId}-${day}`;
+      const grid = { ...(hoja.grid || {}) };
+      const actual = grid[k] || "";
+      if (modo === "limpiar") {
+        if (actual !== valor) return;         // lo cambiaron a mano: respetar
+        // Vuelve a "1": el día sigue siendo laborable y así no queda un hueco
+        // que baje el conteo de días pagados sin que nadie se dé cuenta.
+        grid[k] = "1";
+      } else {
+        if (actual === valor) return;         // ya estaba: idempotente
+        // Las vacaciones/permisos GANAN sobre vacío y sobre "1" (presencia
+        // genérica / autorrelleno), porque son el dato más específico. Pero
+        // NUNCA pisan una marca deliberada que diga otra cosa: 0 (no se
+        // presentó), INC (incapacidad) ni DT/DT2/TF (sí trabajó).
+        if (actual !== "" && actual !== "1") return;
+        grid[k] = valor;
+      }
+      byKey[keyOf(hoja)] = { ...hoja, grid, lastSaved: new Date().toISOString() };
+      hojasTocadas.add(`${quincena} ${periodo}`);
+      celdas++;
+    });
+    if (!celdas) return { ok: true, celdas: 0, hojas: [] };
+
+    const updated = Object.values(byKey);
+    setAtts(updated);
+    let ok = await store.set("hr-atts2", updated);
+    // VERIFY con lectura directa: las celdas deben estar en la nube (mismo
+    // contrato que el botón "Guardar asistencia").
+    if (ok) {
+      try {
+        const back = await store.getCloud("hr-atts2");
+        if (Array.isArray(back)) {
+          const falla = [...hojasTocadas].some(h => {
+            const [q, per] = h.split(" ");
+            const hoja = back.find(a => a.company === emp.company && a.periodo === per && a.quincena === q);
+            return !hoja;
+          });
+          if (falla) ok = false;
+        }
+      } catch { /* sin nube no se puede verificar; store.set ya dijo OK */ }
+    }
+    return { ok, celdas, hojas: [...hojasTocadas] };
+  };
+  // Traduce un registro de vacaciones/permiso al valor de celda que le toca.
+  const valorVac = () => "V";
+  const valorPermiso = (lv) => (String(lv?.type || "").toLowerCase().includes("sin goce") ? "0" : "1");
+  // Sincroniza un registro: aplica si cuenta, limpia si fue rechazado/borrado.
+  const syncVacacion = async (nuevo, viejo) => {
+    const msgs = [];
+    if (viejo) {
+      const r = await marcarEnAsistencia(viejo.employeeId, viejo.startDate, viejo.endDate, "V", "limpiar");
+      if (r.celdas) msgs.push(`− ${r.celdas} día(s) desmarcado(s) del registro anterior`);
+      if (r.sinNube) msgs.push("⚠️ Sin conexión: los días del registro anterior NO se desmarcaron en la asistencia — revisala a mano.");
+      else if (!r.ok) msgs.push("⚠️ Los días del registro anterior NO se pudieron desmarcar en la nube — revisá la asistencia.");
+    }
+    if (nuevo && nuevo.status !== "rejected") {
+      const r = await marcarEnAsistencia(nuevo.employeeId, nuevo.startDate, nuevo.endDate, "V", "aplicar");
+      if (r.sinNube) msgs.push("⚠️ Sin conexión con la nube: las vacaciones quedaron registradas pero NO se marcaron en la asistencia. Volvé a guardar este registro cuando tengas señal.");
+      else if (r.celdas) msgs.push(`✅ ${r.celdas} día(s) marcados como VACACIONES en la asistencia (${r.hojas.join(", ")})`);
+      else msgs.push("ℹ️ No se marcó nada en la asistencia: la hoja de esa quincena todavía no existe, o los días son domingos/feriados. Al crear la hoja se siembran solas.");
+      if (!r.ok && !r.sinNube) msgs.push("⚠️ La asistencia NO se sincronizó a la nube — revisá tu conexión.");
+    }
+    if (msgs.length) alert(msgs.join("\n"));
+  };
+  const syncPermiso = async (nuevo, viejo) => {
+    const msgs = [];
+    if (viejo) {
+      const r = await marcarEnAsistencia(viejo.employeeId, viejo.date, viejo.date, valorPermiso(viejo), "limpiar");
+      if (r.celdas) msgs.push(`− ${r.celdas} día(s) desmarcado(s) del permiso anterior`);
+      if (r.sinNube || !r.ok) msgs.push("⚠️ El día del permiso anterior NO se desmarcó en la asistencia — revisala a mano.");
+    }
+    if (nuevo && nuevo.status !== "rejected") {
+      const v = valorPermiso(nuevo);
+      const r = await marcarEnAsistencia(nuevo.employeeId, nuevo.date, nuevo.date, v, "aplicar");
+      if (r.sinNube) msgs.push("⚠️ Sin conexión con la nube: el permiso quedó registrado pero NO se marcó en la asistencia. Volvé a guardarlo cuando tengas señal.");
+      else if (r.celdas) msgs.push(`✅ Permiso marcado en la asistencia como "${v === "0" ? "0 (sin goce, no se paga)" : "1 (día pagado)"}" en ${r.hojas.join(", ")}`);
+      else msgs.push("ℹ️ No se marcó en la asistencia: la hoja de esa quincena no existe todavía, o el día es domingo/feriado.");
+      if (!r.ok && !r.sinNube) msgs.push("⚠️ La asistencia NO se sincronizó a la nube — revisá tu conexión.");
+    }
+    if (msgs.length) alert(msgs.join("\n"));
+  };
   const sCt = async d => { setContracts(d); return await store.set("hr-contracts", d); };
   const sBn = async d => { setBonifs(d); return await store.set("hr-bonuses", d); };
   const sHe = async d => { setHes(d); return await store.set("hr-he", d); };
@@ -508,8 +705,12 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     { id: "constancias", icon: "📄", label: "Constancias" },
     { id: "costos", icon: "💵", label: "Costos" },
   ];
+  // Pestañas que ve Ana (asistente_compras): todo lo operativo de personal,
+  // sin nada de dinero (planilla/costos) ni el reporte de altas y bajas.
+  const ANA_TABS = ["employees", "contracts", "vacations", "leaves", "attendance", "horasextras", "constancias"];
   const nav = isAsistente ? allNav.filter(n => n.id === "attendance")
     : isPhotoOnly ? allNav.filter(n => n.id === "employees")
+    : isAnaRH ? allNav.filter(n => ANA_TABS.includes(n.id))
     : allNav;
 
   if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "'Segoe UI', sans-serif", color: "#64748b" }}>Cargando RRHH...</div>;
@@ -667,8 +868,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <Select label="Estado" options={[{ value: "active", label: "Activo" }, { value: "inactive", label: "Inactivo" }]} value={f.status} onChange={e => u("status", e.target.value)} />
         <Input label="Fecha inicio" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
         {f.contractType === "temporary" && <Input label="Fecha fin" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />}
-        <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
-        <Input label="Bonificacion (L)" type="number" value={f.bonificacion || 0} onChange={e => u("bonificacion", e.target.value)} />
+        {/* Salario y bonificación: ocultos para roles sin acceso a montos
+            (Ana). Al no renderizar los inputs, `f` conserva los valores
+            originales del empleado y el guardado NO los pisa. */}
+        {hideSalary ? (
+          <div style={{ gridColumn: "1/-1", fontSize: 12, color: "#64748b", background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 8, padding: "9px 13px" }}>
+            🔒 El salario y la bonificación no se muestran con tu usuario — se conservan tal cual al guardar.
+          </div>
+        ) : (<>
+          <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
+          <Input label="Bonificacion (L)" type="number" value={f.bonificacion || 0} onChange={e => u("bonificacion", e.target.value)} />
+        </>)}
         <Input label="Telefono" value={f.phone || ""} onChange={e => u("phone", e.target.value)} placeholder="9999-9999" />
         <Input label="Email" type="email" value={f.email || ""} onChange={e => u("email", e.target.value)} placeholder="empleado@correo.com" />
         <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#92400E", cursor: "pointer" }}>
@@ -1099,8 +1309,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       if (!per) return alert("Seleccione periodo");
       const existing = cq.find(x => x.periodo === per && x.quincena === q);
       if (existing) { setAssignments(existing.assignments); setStep(2); return; }
-      const a = {}; ae.forEach(e => { a[e.id] = e.project || ""; });
+      // Quincena nueva: arrancar COPIANDO la distribución más reciente de la
+      // empresa (ago 2026) — antes sembraba desde e.project y había que
+      // re-asignar a todos. Los que no estaban en esa cuadrilla caen a su
+      // e.project. Igual se puede cambiar todo antes de guardar.
+      const previa = cq.slice().sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`))[0];
+      const a = {};
+      ae.forEach(e => { a[e.id] = (previa?.assignments || {})[e.id] || e.project || ""; });
       setAssignments(a); setStep(2);
+      if (previa) console.info(`[cuadrilla] ${q} ${per} sembrada desde ${previa.quincena} ${previa.periodo}`);
     };
 
     // projEmps: empleados asignados a un proyecto. Usa resolveShort para reconocer
@@ -1220,6 +1437,51 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           initial[k] = "1";
         });
       }
+      // SIEMBRA de VACACIONES y PERMISOS ya registrados (ago 2026): si Ana
+      // registró las vacaciones ANTES de que existiera esta hoja, acá se
+      // marcan solas. Mismas reglas: nada en domingos/feriados (ya son "1"),
+      // nada en días bloqueados por alta/baja, y NO se pisa lo ya marcado.
+      const enRango = (dStr) => {
+        const [yy, mm, dd] = dStr.split("-").map(Number);
+        return { yy, mm, dd };
+      };
+      (vacs || []).forEach(v => {
+        if (!v || !v.employeeId || v.status === "rejected" || !v.startDate) return;
+        const e = ae.find(x => x.id === v.employeeId);
+        if (!e) return;
+        for (let d = start; d <= end; d++) {
+          const dStr = `${sheet.periodo}-${String(d).padStart(2, "0")}`;
+          if (dStr < String(v.startDate).slice(0, 10)) continue;
+          if (dStr > String(v.endDate || v.startDate).slice(0, 10)) continue;
+          const dt = new Date(y, m - 1, d);
+          if (dt.getDay() === 0 || esFeriadoQuincena(sheet.periodo, d)) continue;
+          if (e.startDate && dStr < e.startDate) continue;
+          if (e.status === "inactive" && e.endDate && dStr > e.endDate) continue;
+          const k = `${e.id}-${d}`;
+          // RECONCILIA: hr-vacs es la fuente de verdad, así que también
+          // convierte un "1" (autorrelleno o pisado por un guardado con la
+          // hoja abierta) a "V". Nunca toca 0/INC/DT/DT2/TF.
+          const cur = initial[k] || "";
+          if (cur !== "" && cur !== "1") continue;
+          initial[k] = "V";
+        }
+      });
+      (lvs || []).forEach(l => {
+        if (!l || !l.employeeId || l.status === "rejected" || !l.date) return;
+        const e = ae.find(x => x.id === l.employeeId);
+        if (!e) return;
+        const dStr = String(l.date).slice(0, 10);
+        const { yy, mm, dd } = enRango(dStr);
+        if (`${yy}-${String(mm).padStart(2, "0")}` !== sheet.periodo) return;
+        if (dd < start || dd > end) return;
+        const dt = new Date(y, m - 1, dd);
+        if (dt.getDay() === 0 || esFeriadoQuincena(sheet.periodo, dd)) return;
+        if (e.startDate && dStr < e.startDate) return;
+        if (e.status === "inactive" && e.endDate && dStr > e.endDate) return;
+        const k = `${e.id}-${dd}`;
+        if (initial[k]) return;
+        initial[k] = String(l.type || "").toLowerCase().includes("sin goce") ? "0" : "1";
+      });
       return initial;
     })();
     const [data, setData] = useState(initialData);
@@ -2006,7 +2268,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     };
   };
 
-  const ConForm = () => { const [eid, setEid] = useState(""); const [tp, setTp] = useState("laboral"); const emp = emps.find(e => e.id === eid); const today = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" }); const txt = emp ? (tp === "laboral" ? `CONSTANCIA LABORAL\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, desde ${fmt(emp.startDate)} a la fecha.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos` : `CONSTANCIA DE INGRESOS\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, salario mensual: ${fmtL(emp.salary)}.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos`) : ""; return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}><Select label="Empleado" options={ae.map(e => ({ value: e.id, label: e.fullName }))} value={eid} onChange={e => setEid(e.target.value)} /><Select label="Tipo" options={[{ value: "laboral", label: "Laboral" }, { value: "ingresos", label: "Ingresos" }]} value={tp} onChange={e => setTp(e.target.value)} /></div>{txt && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: 18 }}><pre style={{ whiteSpace: "pre-wrap", fontFamily: "'Segoe UI'", fontSize: 13, lineHeight: 1.7, margin: 0 }}>{txt}</pre></div>}<div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>{txt && <Btn variant="success" onClick={() => { sC([...cons, { id: uid(), employeeId: eid, type: tp, date: new Date().toISOString(), text: txt }]); navigator.clipboard?.writeText(txt); alert("Copiado"); setModal(null); }}>Copiar y guardar</Btn>}</div></div>; };
+  const ConForm = () => { const [eid, setEid] = useState(""); const [tp, setTp] = useState("laboral"); const emp = emps.find(e => e.id === eid); const today = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" }); const txt = emp ? (tp === "laboral" ? `CONSTANCIA LABORAL\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, desde ${fmt(emp.startDate)} a la fecha.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos` : `CONSTANCIA DE INGRESOS\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, salario mensual: ${fmtL(emp.salary)}.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos`) : ""; return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}><Select label="Empleado" options={ae.map(e => ({ value: e.id, label: e.fullName }))} value={eid} onChange={e => setEid(e.target.value)} /><Select label="Tipo" options={hideSalary ? [{ value: "laboral", label: "Laboral" }] : [{ value: "laboral", label: "Laboral" }, { value: "ingresos", label: "Ingresos" }]} value={tp} onChange={e => setTp(e.target.value)} /></div>{txt && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: 18 }}><pre style={{ whiteSpace: "pre-wrap", fontFamily: "'Segoe UI'", fontSize: 13, lineHeight: 1.7, margin: 0 }}>{txt}</pre></div>}<div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>{txt && <Btn variant="success" onClick={() => { sC([...cons, { id: uid(), employeeId: eid, type: tp, date: new Date().toISOString(), text: txt }]); navigator.clipboard?.writeText(txt); alert("Copiado"); setModal(null); }}>Copiar y guardar</Btn>}</div></div>; };
 
   // ── SECTIONS ──
   // ── HORAS EXTRAS ──
@@ -2461,7 +2723,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div style={{ background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 10, padding: "9px 14px", fontSize: 12, color: "#9A3412", flex: 1, minWidth: 260 }}>
           💡 Pago quincena vencida: estas HE de <b>{sheet.quincena} {sheet.periodo}</b> {hePagoLabel(sheet.quincena)}. En el tab Costos aparecen en la quincena en que se pagan.
         </div>
-        <Btn small variant="ghost" onClick={() => setSalBaseOpen(true)}>⚙ Salario base de HE{nAjustes ? ` · ${nAjustes} ajustado${nAjustes > 1 ? "s" : ""}` : ""}</Btn>
+        {/* El overlay muestra salarios reales — solo para quien puede verlos */}
+        {!hideSalary && <Btn small variant="ghost" onClick={() => setSalBaseOpen(true)}>⚙ Salario base de HE{nAjustes ? ` · ${nAjustes} ajustado${nAjustes > 1 ? "s" : ""}` : ""}</Btn>}
       </div>
 
       {/* Overlay: ajustar el salario base sobre el que se paga la HORA EXTRA
@@ -2562,7 +2825,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                   <tr key={e.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
                     <td style={{ ...TD, position: "sticky", left: 0, background: "#fff", zIndex: 1, fontWeight: 600, fontSize: 11 }}>
                       <div>{e.fullName}</div>
-                      <div title={tieneAjuste(e) ? `Hora extra pactada sobre salario base especial de ${fmtL(Number(salBaseEdits[e.id]))} (arreglo), no su salario real` : "Hora base = salario ÷ 30 ÷ 8"} style={{ fontSize: 9, color: tieneAjuste(e) ? "#B45309" : "#94A3B8", fontWeight: tieneAjuste(e) ? 700 : 400, cursor: "pointer" }} onClick={() => setSalBaseOpen(true)}>hora: {fmtL(hbOf(e))}{tieneAjuste(e) ? " *" : ""}</div>
+                      {/* La hora base delata el salario (×240): oculta para roles sin acceso a montos */}
+                      {!hideSalary && <div title={tieneAjuste(e) ? `Hora extra pactada sobre salario base especial de ${fmtL(Number(salBaseEdits[e.id]))} (arreglo), no su salario real` : "Hora base = salario ÷ 30 ÷ 8"} style={{ fontSize: 9, color: tieneAjuste(e) ? "#B45309" : "#94A3B8", fontWeight: tieneAjuste(e) ? 700 : 400, cursor: "pointer" }} onClick={() => setSalBaseOpen(true)}>hora: {fmtL(hbOf(e))}{tieneAjuste(e) ? " *" : ""}</div>}
                     </td>
                     {days.map(d => HE_BANDAS.map((b, i) => {
                       const k = `${e.id}-${d.day}`;
@@ -3539,7 +3803,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           title="Click para editar"
         >
           {/* Botones flotantes (borrar) — oculto para visor de solo-fotos */}
-          {!isPhotoOnly && <button
+          {/* Borrar empleado: NO para Ana — entra a la ficha y sube fotos,
+              pero dar de baja gente sigue siendo de administración. */}
+          {!isPhotoOnly && !isAnaRH && <button
             onClick={(ev) => { ev.stopPropagation(); if (confirm(`Eliminar a ${r.fullName}?`)) sE(emps.filter(e => e.id !== r.id)); }}
             style={{ position: "absolute", top: 8, right: 8, width: 24, height: 24, borderRadius: 6, border: "none", background: "rgba(220,38,38,0.08)", color: "#DC2626", cursor: "pointer", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
             title="Eliminar empleado"
@@ -3696,9 +3962,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     <Table columns={[{ key: "p", label: "Periodo", render: r => <b>{r.quincena} {r.periodo}</b> }, { key: "count", label: "Empleados" }, { key: "total", label: "Total neto", render: r => <b style={{ color: "#059669" }}>{fmtL(r.total)}</b> }, { key: "date", label: "Fecha", render: r => fmt(r.date) }]} data={cp.slice().reverse()} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "pd", d: r })}>Detalle</Btn><Btn small variant="danger" onClick={() => sP(pays.filter(p => p.id !== r.id))}>×</Btn></div>} />
   </div>;
 
-  const renderVacs = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cv.length} solicitudes</span><Btn onClick={() => setModal({ t: "vn" })}>+ Nueva</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "s", label: "Desde", render: r => fmt(r.startDate) }, { key: "f", label: "Hasta", render: r => fmt(r.endDate) }, { key: "days", label: "Dias" }, { key: "st", label: "Estado", render: r => <Badge color={r.status === "approved" ? "#059669" : r.status === "rejected" ? "#DC2626" : "#D97706"}>{r.status === "approved" ? "Aprobado" : r.status === "rejected" ? "Rechazado" : "Pendiente"}</Badge> }]} data={cv} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "ve", d: r })}>Editar</Btn><Btn small variant="danger" onClick={() => sV(vacs.filter(v => v.id !== r.id))}>×</Btn></div>} /></div>;
+  const renderVacs = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cv.length} solicitudes</span><Btn onClick={() => setModal({ t: "vn" })}>+ Nueva</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "s", label: "Desde", render: r => fmt(r.startDate) }, { key: "f", label: "Hasta", render: r => fmt(r.endDate) }, { key: "days", label: "Dias" }, { key: "st", label: "Estado", render: r => <Badge color={r.status === "approved" ? "#059669" : r.status === "rejected" ? "#DC2626" : "#D97706"}>{r.status === "approved" ? "Aprobado" : r.status === "rejected" ? "Rechazado" : "Pendiente"}</Badge> }]} data={cv} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "ve", d: r })}>Editar</Btn><Btn small variant="danger" onClick={async () => { if (!confirm(`¿Eliminar las vacaciones de ${en(r.employeeId)} (${fmt(r.startDate)} → ${fmt(r.endDate)})?\n\nTambién se desmarcan los días "V" que puso en la asistencia.`)) return; await sV(vacs.filter(v => v.id !== r.id)); await syncVacacion(null, r); }}>×</Btn></div>} /></div>;
 
-  const renderLvs = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cl.length} permisos</span><Btn onClick={() => setModal({ t: "ln" })}>+ Nuevo</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "d", label: "Fecha", render: r => fmt(r.date) }, { key: "t", label: "Tipo", render: r => <Badge>{r.type}</Badge> }, { key: "r", label: "Motivo", render: r => r.reason }, { key: "s", label: "Estado", render: r => <Badge color={r.status === "approved" ? "#059669" : "#D97706"}>{r.status === "approved" ? "Aprobado" : "Pendiente"}</Badge> }]} data={cl} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "le", d: r })}>Editar</Btn><Btn small variant="danger" onClick={() => sL(lvs.filter(l => l.id !== r.id))}>×</Btn></div>} /></div>;
+  const renderLvs = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cl.length} permisos</span><Btn onClick={() => setModal({ t: "ln" })}>+ Nuevo</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "d", label: "Fecha", render: r => fmt(r.date) }, { key: "t", label: "Tipo", render: r => <Badge>{r.type}</Badge> }, { key: "r", label: "Motivo", render: r => r.reason }, { key: "s", label: "Estado", render: r => <Badge color={r.status === "approved" ? "#059669" : "#D97706"}>{r.status === "approved" ? "Aprobado" : "Pendiente"}</Badge> }]} data={cl} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "le", d: r })}>Editar</Btn><Btn small variant="danger" onClick={async () => { if (!confirm(`¿Eliminar el permiso de ${en(r.employeeId)} del ${fmt(r.date)}?\n\nTambién se desmarca el día en la asistencia.`)) return; await sL(lvs.filter(l => l.id !== r.id)); await syncPermiso(null, r); }}>×</Btn></div>} /></div>;
 
   const renderAtts = () => {
     const openGrid = (cuad) => {
@@ -3744,6 +4010,22 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <Btn small variant="primary" onClick={() => setModal({ t: "ag", d: { ...a } })}>Abrir asistencia</Btn>
+                  {/* Reconstruir la cuadrilla desde la propia hoja: sus
+                      assignments quedaron intactos, así que la distribución
+                      se recupera tal cual y vuelven a aparecer las HE. */}
+                  <Btn small variant="success" onClick={async () => {
+                    const asg = { ...(a.assignments || {}) };
+                    const n = Object.values(asg).filter(Boolean).length;
+                    if (!n) return alert("Esta hoja no tiene asignaciones de proyecto guardadas — hay que armar la cuadrilla a mano.");
+                    const proys = [...new Set(Object.values(asg).filter(Boolean))];
+                    if (!confirm(`¿Reconstruir la distribución de cuadrilla ${a.quincena} ${a.periodo} de ${cc.name} desde esta asistencia?\n\n${n} colaborador(es) en ${proys.length} proyecto(s):\n${proys.map(p => "  • " + p).join("\n")}\n\nLa asistencia NO se toca. Con esto vuelve a aparecer la hoja de Horas Extras de la quincena.`)) return;
+                    const record = { id: uid(), company: a.company, periodo: a.periodo, quincena: a.quincena, assignments: asg, date: new Date().toISOString() };
+                    const sinEsta = cuadrillas.filter(c => !(c.company === a.company && c.periodo === a.periodo && c.quincena === a.quincena));
+                    const ok = await sCq([...sinEsta, record]);
+                    alert(ok
+                      ? `✅ Cuadrilla ${a.quincena} ${a.periodo} reconstruida y verificada en la nube.\n\nYa podés generar sus Horas Extras y la distribución de la quincena siguiente.`
+                      : "⚠️ No se pudo guardar la cuadrilla en la nube. Revisá tu conexión y volvé a intentar.");
+                  }}>🔧 Reconstruir cuadrilla</Btn>
                   {userRole === "admin" && (
                     <Btn small variant="danger" onClick={async () => {
                       if (!confirm(`¿Borrar DEFINITIVAMENTE la asistencia ${a.quincena} ${a.periodo} de ${cc.name} (${Object.keys(a.grid || {}).length} celdas)?\n\nEsta accion NO se puede deshacer.`)) return;
@@ -3778,7 +4060,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
-  const renderCons = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cc2.length} emitidas</span><Btn onClick={() => setModal({ t: "cn" })}>+ Generar</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "t", label: "Tipo", render: r => <Badge color="#0891B2">{r.type === "laboral" ? "Laboral" : "Ingresos"}</Badge> }, { key: "d", label: "Fecha", render: r => fmt(r.date) }]} data={cc2} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => { navigator.clipboard?.writeText(r.text); alert("Copiado"); }}>Copiar</Btn><Btn small variant="danger" onClick={() => sC(cons.filter(c => c.id !== r.id))}>×</Btn></div>} /></div>;
+  const renderCons = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cc2.length} emitidas</span><Btn onClick={() => setModal({ t: "cn" })}>+ Generar</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "t", label: "Tipo", render: r => <Badge color="#0891B2">{r.type === "laboral" ? "Laboral" : "Ingresos"}</Badge> }, { key: "d", label: "Fecha", render: r => fmt(r.date) }]} data={cc2} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>{(!hideSalary || r.type !== "ingresos") && <Btn small variant="ghost" onClick={() => { navigator.clipboard?.writeText(r.text); alert("Copiado"); }}>Copiar</Btn>}<Btn small variant="danger" onClick={() => { if (!confirm(`¿Eliminar la constancia de ${en(r.employeeId)} del ${fmt(r.date)}?`)) return; sC(cons.filter(c => c.id !== r.id)); }}>×</Btn></div>} /></div>;
 
   const PayDetail = ({ p }) => {
     const [lines, setLn] = useState((p.lines || []).map(l => ({ ...l, bq: l.bq || 0, o1: l.o1 || 0, o2: l.o2 || 0, isr: l.isr || 0, amdc: l.amdc || 0, ihss: l.ihss || 0, rap: l.rap || 0, coop: l.coop || 0, aus: l.aus || 0, otros: l.otros || 0, nota: l.nota || "", diasPresente: l.diasPresente || 0, diasNSP: l.diasNSP || 0, descuentoNSP: l.descuentoNSP || 0, domTrab: l.domTrab || 0, bonoDomingo: l.bonoDomingo || 0, proj: l.proj || "", so: l.so || 0, sb: l.sb || 0, sd: l.sd || 0 })));
@@ -4636,8 +4918,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       <Select label="Tipo de contrato" options={typeOpts} value={f.contractType} onChange={e => u("contractType", e.target.value)} />
       <Input label="Fecha inicio" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
       {!isPermOrHon && <Input label="Fecha fin" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />}
-      <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
-      <Input label="Bonificacion (L)" type="number" value={f.bonificacion} onChange={e => u("bonificacion", e.target.value)} />
+      {/* Montos ocultos para roles sin acceso (Ana): puede crear y renovar
+          contratos, pero el salario/bonificación se HEREDAN del empleado y
+          NO se tocan al guardar (ver el sE de más abajo). */}
+      {hideSalary ? (
+        <div style={{ gridColumn: "1/-1", fontSize: 12, color: "#64748b", background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 8, padding: "9px 13px" }}>
+          🔒 El salario y la bonificación no se muestran con tu usuario — el contrato conserva los del colaborador.
+        </div>
+      ) : (<>
+        <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
+        <Input label="Bonificacion (L)" type="number" value={f.bonificacion} onChange={e => u("bonificacion", e.target.value)} />
+      </>)}
       {!isPermOrHon && days > 0 && (
         <div style={{ gridColumn: "1/-1", background: "#EFF6FF", padding: 10, borderRadius: 8, fontSize: 13, color: "#1E40AF" }}>
           Duración: <b>{days} días</b>{inheritFromParent && <> · Acumulado total proyectado: <b>{cumulativeDaysOf(parent) + days} días</b></>}
@@ -4649,7 +4940,19 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
         <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
         <Btn variant="success" onClick={() => {
-          if (!f.employeeId || !f.startDate || !f.salary) return alert("Complete empleado, fecha de inicio y salario");
+          // Con hideSalary el monto se hereda del contrato que se edita, del
+          // padre que se renueva o de la ficha del colaborador — el usuario
+          // sin acceso a montos NUNCA los digita ni los pisa.
+          const empDelForm = emps.find(x => x.id === f.employeeId);
+          const salarioEfectivo = hideSalary
+            ? Number(contract?.salary ?? parent?.salary ?? empDelForm?.salary ?? 0)
+            : Number(f.salary);
+          const bonifEfectiva = hideSalary
+            ? Number(contract?.bonificacion ?? parent?.bonificacion ?? empDelForm?.bonificacion ?? 0) || 0
+            : Number(f.bonificacion) || 0;
+          if (!f.employeeId || !f.startDate) return alert("Complete empleado y fecha de inicio");
+          if (!hideSalary && !f.salary) return alert("Complete el salario");
+          if (hideSalary && !salarioEfectivo) return alert("Este colaborador no tiene salario registrado en su ficha — pedile a administración que lo cargue antes de crear el contrato.");
           if (!isPermOrHon && !f.endDate) return alert("Indique fecha de fin del contrato");
           if (!isPermOrHon && f.endDate < f.startDate) return alert("La fecha de fin debe ser posterior a la fecha de inicio");
           const newC = {
@@ -4659,8 +4962,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             contractType: f.contractType,
             startDate: f.startDate,
             endDate: isPermOrHon ? "" : f.endDate,
-            salary: Number(f.salary),
-            bonificacion: Number(f.bonificacion) || 0,
+            salary: salarioEfectivo,
+            bonificacion: bonifEfectiva,
             status: "active",
             parentContractId: f.parentContractId || null,
             notes: f.notes || "",
@@ -4685,8 +4988,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             ...x,
             contractType: f.contractType,
             endDate: isPermOrHon ? "" : f.endDate,
-            salary: Number(f.salary),
-            bonificacion: Number(f.bonificacion) || 0,
+            // Sin acceso a montos: NO se tocan los del empleado.
+            ...(hideSalary ? {} : { salary: Number(f.salary), bonificacion: Number(f.bonificacion) || 0 }),
           } : x));
           setModal(null);
         }}>{contract ? "Guardar" : (inheritFromParent ? "Renovar contrato" : "Crear contrato")}</Btn>
@@ -4950,7 +5253,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <td style={td}><Badge color={GRUPO_COLOR[grupo]}>{grupo}</Badge></td>
           <td style={{ ...td, whiteSpace: "nowrap" }}>{active ? fmt(active.startDate) : "—"}</td>
           <td style={{ ...td, whiteSpace: "nowrap" }}>{active ? (active.endDate ? fmt(active.endDate) : "Indefinido") : "—"}</td>
-          <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap", fontWeight: 700, color: "#1E293B" }}>{active ? fmtL(active.salary) : "—"}</td>
+          <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap", fontWeight: 700, color: "#1E293B" }}>{hideSalary ? <span style={{ color: "#94A3B8", fontWeight: 400 }}>🔒</span> : (active ? fmtL(active.salary) : "—")}</td>
           <td style={{ ...td, whiteSpace: "nowrap" }}>
             {active && isTemp ? (
               <>
@@ -5054,7 +5357,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 <th style={th}>Grupo</th>
                 <th style={th}>Inicio</th>
                 <th style={th}>Fin</th>
-                <th style={{ ...th, textAlign: "right" }}>Salario</th>
+                <th style={{ ...th, textAlign: "right" }}>{hideSalary ? "" : "Salario"}</th>
                 <th style={th}>Días 180</th>
                 <th style={th}>Estado</th>
                 <th style={th}>Acción</th>
@@ -5257,17 +5560,27 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
-  const renderSec = () => { switch (sec) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); case "horasextras": return renderHE(); default: return renderDashboard(); } };
+  const renderSec = () => {
+    // Guardia por rol: el switch cae a Dashboard por default, así que sin
+    // esto un rol acotado podría ver planilla/costos si `sec` queda en un id
+    // que no está en su nav (o si el default lo manda al Dashboard).
+    const permitidas = nav.map(n => n.id);
+    if (!permitidas.includes(sec) && nav.length < allNav.length) return renderSec2(permitidas[0]);
+    return renderSec2(sec);
+  };
+  const renderSec2 = (s) => { switch (s) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); case "horasextras": return renderHE(); default: return renderDashboard(); } };
 
   const renderModal = () => { if (!modal) return null; const m = modal; switch (m.t) {
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;
     case "ee": return <Modal title="Editar empleado" onClose={() => setModal(null)} wide><EmpForm emp={m.d} onSave={e => sE(emps.map(x => x.id === e.id ? e : x))} /></Modal>;
     case "pn": return <Modal title={`Planilla — ${cc.name}`} onClose={() => setModal(null)} wide><PayrollGen /></Modal>;
     case "pd": return <Modal title={`Planilla ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><PayDetail p={m.d} /></Modal>;
-    case "vn": return <Modal title="Vacaciones" onClose={() => setModal(null)}><VacForm onSave={v => sV([...vacs, v])} /></Modal>;
-    case "ve": return <Modal title="Editar vacaciones" onClose={() => setModal(null)}><VacForm vac={m.d} onSave={v => sV(vacs.map(x => x.id === v.id ? v : x))} /></Modal>;
-    case "ln": return <Modal title="Permiso" onClose={() => setModal(null)}><LvForm onSave={l => sL([...lvs, l])} /></Modal>;
-    case "le": return <Modal title="Editar permiso" onClose={() => setModal(null)}><LvForm lv={m.d} onSave={l => sL(lvs.map(x => x.id === l.id ? l : x))} /></Modal>;
+    {/* Vacaciones y permisos marcan SOLOS la asistencia (syncVacacion /
+        syncPermiso) — al editar se limpia el rango viejo antes de aplicar. */}
+    case "vn": return <Modal title="Vacaciones" onClose={() => setModal(null)}><VacForm onSave={async v => { await sV([...vacs, v]); await syncVacacion(v, null); }} /></Modal>;
+    case "ve": return <Modal title="Editar vacaciones" onClose={() => setModal(null)}><VacForm vac={m.d} onSave={async v => { const viejo = vacs.find(x => x.id === v.id) || null; await sV(vacs.map(x => x.id === v.id ? v : x)); await syncVacacion(v, viejo); }} /></Modal>;
+    case "ln": return <Modal title="Permiso" onClose={() => setModal(null)}><LvForm onSave={async l => { await sL([...lvs, l]); await syncPermiso(l, null); }} /></Modal>;
+    case "le": return <Modal title="Editar permiso" onClose={() => setModal(null)}><LvForm lv={m.d} onSave={async l => { const viejo = lvs.find(x => x.id === l.id) || null; await sL(lvs.map(x => x.id === l.id ? l : x)); await syncPermiso(l, viejo); }} /></Modal>;
     case "cuad": return <Modal title={`Distribucion de cuadrilla — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm /></Modal>;
     case "cuad-edit": return <Modal title={`Editar cuadrilla ${m.d.quincena} ${m.d.periodo} — ${cc.name}`} onClose={() => setModal(null)} wide><CuadrillaForm cuad={m.d} /></Modal>;
     case "ag": return <Modal title={`Asistencia ${m.d.quincena} ${m.d.periodo}`} onClose={() => {
@@ -5299,7 +5612,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     default: return null;
   }};
 
-  const roleLabel = userRole === "admin" ? "Recursos Humanos" : userRole === "asistente" ? "Asistente RRHH" : userRole === "gerencia" ? "Gerencia (solo lectura)" : userRole === "costos" ? "Costos (solo lectura)" : userRole === "recepcion" ? "Fotos del personal" : (userRole || "Usuario");
+  const roleLabel = userRole === "admin" ? "Recursos Humanos" : userRole === "asistente" ? "Asistente RRHH" : userRole === "gerencia" ? "Gerencia (solo lectura)" : userRole === "costos" ? "Costos (solo lectura)" : userRole === "recepcion" ? "Fotos del personal" : userRole === "asistente_compras" ? "Personal y asistencia" : (userRole || "Usuario");
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
   // SVG cartoon team lineup — trabajadores del sector industrial

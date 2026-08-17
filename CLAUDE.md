@@ -27,6 +27,27 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
 - `HRModule.jsx` (GeoTeam) — Empleados (fotos), Contratos (tabla por urgencia),
   Planilla, Asistencia (cuadrillas → grid 1/0/INC/DT/DT2/TF + override 1*),
   Horas Extras, Costos MO, Dashboard. Bonificaciones oculto (código intacto).
+  **Acceso de Ana (`asistente_compras`, ago 2026)**: flag `isAnaRH` + `hideSalary`
+  (= isAnaRH||isPhotoOnly). Ve 7 pestañas (ANA_TABS): Empleados (ficha completa
+  + foto, SIN salario/bonificación, sin borrar gente), Contratos (crea/renueva
+  pero los montos se HEREDAN y su sE no los toca), Vacaciones, Permisos,
+  Asistencia, HE (sin overlay de salario base ni "hora:"), Constancias (solo
+  Laboral). Sin Dashboard/Planilla/Movimientos/Costos. `hideSalary` gatea TODOS
+  los montos: ficha, columna Salario de contratos, ContractForm/PermForm,
+  overlay HE y constancia de Ingresos.
+  **Vacaciones/permisos → asistencia (automático)**: `marcarEnAsistencia` +
+  `syncVacacion`/`syncPermiso` escriben "V" (vacaciones) o "1"/"0" (permiso
+  con/sin goce) en `hr-atts2`. Saltan domingos/feriados y días bloqueados por
+  alta/baja; pisan solo "" y "1" (nunca 0/INC/DT/DT2/TF); al borrar el registro
+  vuelven la celda a "1". ABORTAN si la nube no responde + verify. `initialData`
+  RECONCILIA en cada apertura desde `hr-vacs`/`hr-lvs` (fuente de verdad), así
+  que un guardado con la hoja abierta no pierde las V.
+  **Cuadrillas**: `sCq` (hr-cuad) con merge por company|periodo|quincena contra
+  getCloud + rescate + guardia anti-borrado múltiple + verify (antes era write
+  full-array: así desapareció la de Subterra 1Q 2026-08 al guardar la de
+  Geotecnica 9 s después). Botón **🔧 Reconstruir cuadrilla** en el aviso de
+  "Asistencias históricas sin cuadrilla" (la rearma desde los assignments de la
+  hoja). Una quincena nueva siembra copiando la cuadrilla más reciente.
 - `LogisticsModule.jsx` (GeoLogistics) — flota y despachos (kanban Oscar/Jorge).
 - `SafetyModule.jsx` (GeoSafety) — EPP: catálogo con carrito estilo Amazon
   (ítems con foto/tipoEpp/descripción; requisición reparte un ítem entre

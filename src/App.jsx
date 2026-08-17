@@ -25,7 +25,11 @@ const MODULES = [
     desc: "Empleados, planilla, asistencia, vacaciones, permisos",
     accent: "#2C5F5D", // verde acero industrial
     accentSoft: "rgba(44,95,93,0.10)",
-    roles: ["admin", "asistente", "costos", "recepcion"],
+    // Ana (asistente_compras) entra con acceso ACOTADO (ago 2026): empleados
+    // sin salarios, contratos, vacaciones, permisos, asistencia, HE y
+    // constancias — sin planilla, movimientos ni costos. El recorte fino de
+    // pestañas vive en HRModule (isAnaRH).
+    roles: ["admin", "asistente", "costos", "recepcion", "asistente_compras"],
   },
   {
     id: "compras-operaciones",
