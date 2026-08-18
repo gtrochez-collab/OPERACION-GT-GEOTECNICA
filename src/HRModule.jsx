@@ -88,7 +88,9 @@ const getQuincena = (dateStr) => {
 // Exportados: GeoClockModule usa EXACTAMENTE las mismas reglas para que la
 // tolerancia y el descuento nunca difieran entre el reloj y RRHH.
 export const HORARIOS = {
-  plantel:  { label: "Plantel (7:00 – 16:00)",  entrada: "7:00", salida: "16:00" },
+  // OJO: la key "plantel" se mantiene por compatibilidad de datos (fichas ya
+  // guardadas) — el NOMBRE del horario 7–4 es "Campo" (pedido 18-ago-2026).
+  plantel:  { label: "Campo (7:00 – 16:00)",    entrada: "7:00", salida: "16:00" },
   oficina:  { label: "Oficina (8:00 – 17:00)",  entrada: "8:00", salida: "17:00" },
   especial: { label: "Especial (9:00 – 18:00)", entrada: "9:00", salida: "18:00" },
 };
@@ -434,11 +436,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // bonificacion, contratos completo, vacaciones, permisos, asistencia,
   // horas extras y constancias. NADA de planilla, movimientos ni costos.
   const isAnaRH = userRole === "asistente_compras";
+  // Oscar (logistica, 18-ago-2026): entra a GeoTeam SOLO para el aprobador
+  // de Llegadas tardías — es el responsable de decidir las tardanzas que se
+  // marcan desde SU tablet (plantel/almacén). Sin montos (hideSalary).
+  const isOscarTardies = userRole === "logistica";
   // Quien NO puede ver montos de salario/bonificacion en la ficha.
-  const hideSalary = isAnaRH || isPhotoOnly;
+  const hideSalary = isAnaRH || isPhotoOnly || isOscarTardies;
   const isReadOnly = userRole === "gerencia" || userRole === "costos";
   const [co, setCo] = useState("subterra");
-  const [sec, setSec] = useState(isAsistente ? "attendance" : (isPhotoOnly || isAnaRH) ? "employees" : "dashboard");
+  const [sec, setSec] = useState(isAsistente ? "attendance" : (isPhotoOnly || isAnaRH) ? "employees" : isOscarTardies ? "tardanzas" : "dashboard");
   const [emps, setEmps] = useState([]);
   const [vacs, setVacs] = useState([]);
   const [lvs, setLvs] = useState([]);
@@ -514,6 +520,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // Firmas de marcajes GeoClock cargadas on-demand en Llegadas tardías:
   // { markId: dataUrl }. Se cargan solo al tocar "Ver firma".
   const [firmaCache, setFirmaCache] = useState({});
+  // Filtros de la pestaña Llegadas tardías (18-ago-2026).
+  const [tardEstado, setTardEstado] = useState("");   // "" | pendientes | aprobadas | denegadas
+  const [tardPersona, setTardPersona] = useState(""); // empId | ""
+  const [tardResp, setTardResp] = useState("");       // "" | Oscar Paz | Ana Vasquez | supers
   const [modal, setModal] = useState(null);
   const isMobile = useIsMobile();
 
@@ -998,6 +1008,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const ANA_TABS = ["employees", "contracts", "vacations", "leaves", "attendance", "tardanzas", "horasextras", "constancias"];
   const nav = isAsistente ? allNav.filter(n => n.id === "attendance")
     : isPhotoOnly ? allNav.filter(n => n.id === "employees")
+    : isOscarTardies ? allNav.filter(n => n.id === "tardanzas")
     : isAnaRH ? allNav.filter(n => ANA_TABS.includes(n.id))
     : allNav;
 
@@ -1172,7 +1183,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         {/* Sexo (KPI de estructura del personal) + Horario (GeoClock) — ago 2026 */}
         <Select label="Sexo" options={[{ value: "masculino", label: "Masculino" }, { value: "femenino", label: "Femenino" }]} value={f.sexo || ""} onChange={e => u("sexo", e.target.value)} />
         <Select label="Horario de trabajo" options={[
-          { value: "plantel", label: "Plantel (7:00 – 16:00)" },
+          { value: "plantel", label: "Campo (7:00 – 16:00)" },
           { value: "oficina", label: "Oficina (8:00 – 17:00)" },
           { value: "especial", label: "Especial (9:00 – 18:00)" },
           { value: "custom", label: "Personalizado" },
@@ -1182,7 +1193,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <Input label="Salida (personalizado)" type="time" value={f.horarioSalida || ""} onChange={e => u("horarioSalida", e.target.value)} />
         </>}
         <div style={{ gridColumn: "1/-1", fontSize: 11, color: "#64748b", background: "#F0F9FF", border: "1px solid #BAE6FD", borderRadius: 8, padding: "8px 12px" }}>
-          🕒 <b>GeoClock</b> usa el horario para la tolerancia de {TOLERANCIA_MIN} min al marcar entrada (ej. plantel: 7:00–7:15). Sin horario asignado se asume <b>Plantel (7:00–16:00)</b>. El descuento por llegada tarde denegada se calcula desde la hora de entrada de ESTE horario.
+          🕒 <b>GeoClock</b> usa el horario para la tolerancia de {TOLERANCIA_MIN} min al marcar entrada (ej. campo: 7:00–7:15). Sin horario asignado se asume <b>Campo (7:00–16:00)</b>. El descuento por llegada tarde denegada se calcula desde la hora de entrada de ESTE horario.
         </div>
         <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#92400E", cursor: "pointer" }}>
           <input type="checkbox" checked={!!f.payByHour} onChange={e => u("payByHour", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
@@ -4745,9 +4756,42 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const marcasTarde = Object.values(gcMarks).flat()
       .filter(mk => mk && mk.tipo === "entrada" && mk.tarde && mk.company === co)
       .sort((a, b) => String(b.ts || b.fecha).localeCompare(String(a.ts || a.fecha)));
-    const decisionDe = (mk) => (gcTardies || []).find(t => t && t.markId === mk.id) || null;
-    const pendientes = marcasTarde.filter(mk => !decisionDe(mk));
-    const decididas = marcasTarde.filter(mk => decisionDe(mk));
+    // Registro en gc-tardies (puede tener estado "pendiente" = decisión
+    // REVERTIDA que conserva el historial). Solo aprobada/denegada cuentan
+    // como DECIDIDAS.
+    const registroDe = (mk) => (gcTardies || []).find(t => t && t.markId === mk.id) || null;
+    const decisionDe = (mk) => {
+      const t = registroDe(mk);
+      return t && (t.estado === "aprobada" || t.estado === "denegada") ? t : null;
+    };
+    // ── Responsables de decisión (18-ago-2026) ──
+    // Gerson (admin/coordinador) y la Lic. Carolina (tesoreria) deciden y
+    // revierten TODAS. Oscar decide las marcadas desde SU cuenta (tablet de
+    // plantel/almacén); Ana las de su cuenta y las de la tablet de oficina
+    // (usuario "Marcaje de Asistencia"). El resto solo visualiza.
+    const esSuperTardies = userRole === "admin" || userRole === "coordinador" || userRole === "tesoreria";
+    const responsableDe = (mk) => {
+      const por = String(mk.registradoPor || "");
+      if (por === "Oscar Paz") return "Oscar Paz";
+      if (por === "Ana Vasquez" || por === "Marcaje de Asistencia") return "Ana Vasquez";
+      return null; // marcada por Gerson/otros → la deciden los supers
+    };
+    const puedeDecidir = (mk) => esSuperTardies || (!!userName && responsableDe(mk) === userName);
+    // ── Filtros (persona / responsable) — el de estado gatea las secciones ──
+    const filtrar = (lista) => lista.filter(mk => {
+      if (tardPersona && mk.empId !== tardPersona) return false;
+      if (tardResp && (responsableDe(mk) || "supers") !== tardResp) return false;
+      return true;
+    });
+    const pendientes = filtrar(marcasTarde.filter(mk => !decisionDe(mk)));
+    const decididasTodas = filtrar(marcasTarde.filter(mk => decisionDe(mk)));
+    const decididas = decididasTodas.filter(mk => {
+      if (tardEstado === "aprobadas") return decisionDe(mk).estado === "aprobada";
+      if (tardEstado === "denegadas") return decisionDe(mk).estado === "denegada";
+      return true;
+    });
+    const personasConTarde = [...new Map(marcasTarde.map(mk => [mk.empId, mk.empNombre || en(mk.empId)])).entries()]
+      .sort((a, b) => String(a[1]).localeCompare(String(b[1])));
     const empDe = (mk) => emps.find(e => e.id === mk.empId) || null;
     const descuentoDe = (mk, e) => {
       const [h, mm] = String(mk.hora || "0:00").split(":").map(Number);
@@ -4770,23 +4814,39 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       } catch { alert("No se pudo cargar la firma — revisá tu conexión."); }
     };
     const aprobar = async (mk) => {
+      if (!puedeDecidir(mk)) return alert(`Esta tardanza la decide ${responsableDe(mk) || "Gerson / Lic. Carolina"}.`);
       if (!confirm(`¿APROBAR la explicación de ${mk.empNombre || en(mk.empId)}?\n\nLlegó ${mk.minTarde || "?"} min tarde el ${fmt(mk.fecha)} (marcó ${mk.hora}).\n\nEl día se paga COMPLETO — no se aplica descuento.`)) return;
-      const dec = { markId: mk.id, empId: mk.empId, fecha: mk.fecha, estado: "aprobada", decididoPor: userName || "RRHH", decididoAt: new Date().toISOString(), fechaDecision: hoyTegus() };
+      const prev = registroDe(mk);
+      const nowIso = new Date().toISOString();
+      const dec = {
+        markId: mk.id, empId: mk.empId, fecha: mk.fecha, estado: "aprobada",
+        decididoPor: userName || "RRHH", decididoAt: nowIso, fechaDecision: hoyTegus(),
+        // HISTORIAL por tardanza: cada aprobación/denegación/reversión queda
+        // registrada con quién y cuándo (pedido 18-ago-2026).
+        historial: [...((prev && prev.historial) || []), { accion: "aprobada", por: userName || "RRHH", fecha: hoyTegus(), at: nowIso }],
+      };
       const ok = await sGcTardies({ upsert: dec });
       alert(ok ? "✅ Tardanza APROBADA — el día se paga completo." : "⚠️ La decisión NO se pudo guardar en la nube. Reintentá.");
     };
     const denegar = async (mk) => {
+      if (!puedeDecidir(mk)) return alert(`Esta tardanza la decide ${responsableDe(mk) || "Gerson / Lic. Carolina"}.`);
       const e = empDe(mk);
       if (!e) return alert("No se encontró al empleado de este marcaje.");
       const d = descuentoDe(mk, e);
       const montoTxt = hideSalary ? "" : `\n\nDescuento proporcional: ${fmtL(d.monto)} (${(d.horasTarde * 60).toFixed(0)} min tarde = ${(d.horasTarde / 8 * 100).toFixed(1)}% del día).`;
-      if (!confirm(`¿DENEGAR la explicación de ${mk.empNombre || en(mk.empId)}?\n\nLlegó tarde el ${fmt(mk.fecha)} — marcó ${mk.hora} (su horario entra ${horarioDe(e).entrada}).${montoTxt}\n\nLa hora real quedará fijada en su asistencia y el descuento se aplica solo en planilla y Costos MO.`)) return;
+      if (!confirm(`¿DENEGAR la explicación de ${mk.empNombre || en(mk.empId)}?\n\nLlegó tarde el ${fmt(mk.fecha)} — marcó ${mk.hora} (su horario entra ${horarioDe(e).entrada}).${montoTxt}\n\nLa hora real quedará fijada en su asistencia y el descuento proporcional se aplica solo en planilla y Costos MO.`)) return;
       // 1) Fijar la hora en la hoja de asistencia (aborta si la nube no responde)
       const r = await marcarTardanzaEnAsistencia(mk.empId, mk.fecha, mk.hora, "aplicar");
       if (r.sinNube) return alert("⚠️ No hay conexión con la nube — NO se aplicó nada. Reintentá cuando tengas señal.");
       if (!r.ok && !r.sinHoja) return alert("⚠️ No se pudo VERIFICAR la escritura en la asistencia. NO se guardó la decisión — reintentá.");
-      // 2) Guardar la decisión
-      const dec = { markId: mk.id, empId: mk.empId, fecha: mk.fecha, estado: "denegada", horaAplicada: mk.hora, decididoPor: userName || "RRHH", decididoAt: new Date().toISOString(), fechaDecision: hoyTegus() };
+      // 2) Guardar la decisión (con historial)
+      const prev = registroDe(mk);
+      const nowIso = new Date().toISOString();
+      const dec = {
+        markId: mk.id, empId: mk.empId, fecha: mk.fecha, estado: "denegada", horaAplicada: mk.hora,
+        decididoPor: userName || "RRHH", decididoAt: nowIso, fechaDecision: hoyTegus(),
+        historial: [...((prev && prev.historial) || []), { accion: "denegada", por: userName || "RRHH", fecha: hoyTegus(), at: nowIso }],
+      };
       const ok = await sGcTardies({ upsert: dec });
       if (!ok) return alert("⚠️ La hora quedó en la asistencia pero la decisión NO se guardó en la nube — volvé a DENEGAR para reintentarlo (es idempotente).");
       alert(r.sinHoja
@@ -4794,7 +4854,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         : `✅ Tardanza DENEGADA — hora ${mk.hora} fijada en la asistencia (${r.hoja}). El descuento sale solo en planilla y Costos.`);
     };
     const revertir = async (mk, dec) => {
-      if (!confirm(`¿Revertir la decisión (${dec.estado.toUpperCase()}) sobre la tardanza de ${mk.empNombre || en(mk.empId)} del ${fmt(mk.fecha)}?\n\nVuelve a PENDIENTE${dec.estado === "denegada" ? " y se quita la hora fijada en la asistencia" : ""}.`)) return;
+      if (!puedeDecidir(mk)) return alert(`Esta tardanza la decide ${responsableDe(mk) || "Gerson / Lic. Carolina"}.`);
+      if (!confirm(`¿Revertir la decisión (${dec.estado.toUpperCase()}) sobre la tardanza de ${mk.empNombre || en(mk.empId)} del ${fmt(mk.fecha)}?\n\nVuelve a PENDIENTE${dec.estado === "denegada" ? " y se quita la hora fijada en la asistencia" : ""}. El historial se conserva.`)) return;
       if (dec.estado === "denegada") {
         const r = await marcarTardanzaEnAsistencia(mk.empId, mk.fecha, dec.horaAplicada || mk.hora, "limpiar");
         if (r.sinNube) return alert("⚠️ Sin conexión con la nube — no se revirtió nada. Reintentá.");
@@ -4803,8 +4864,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         // en la hoja sin registro de por qué está ahí).
         if (!r.ok && !r.sinHoja) return alert("⚠️ No se pudo verificar la limpieza de la hora en la asistencia. NO se revirtió la decisión — reintentá.");
       }
-      const ok = await sGcTardies({ remove: mk.id });
-      alert(ok ? "↩️ Decisión revertida — la tardanza vuelve a Pendientes." : "⚠️ No se pudo guardar la reversión en la nube. Reintentá.");
+      // La reversión NO borra el registro: queda con estado "pendiente" y el
+      // historial completo (quién decidió y quién revirtió, con fechas).
+      const nowIso = new Date().toISOString();
+      const reg = {
+        markId: mk.id, empId: mk.empId, fecha: mk.fecha, estado: "pendiente",
+        historial: [...((dec && dec.historial) || []), { accion: "revertida", por: userName || "RRHH", fecha: hoyTegus(), at: nowIso }],
+      };
+      const ok = await sGcTardies({ upsert: reg });
+      alert(ok ? "↩️ Decisión revertida — la tardanza vuelve a Pendientes (el historial se conserva)." : "⚠️ No se pudo guardar la reversión en la nube. Reintentá.");
     };
     const chipMin = (mk) => <span style={{ background: "#FEE2E2", color: "#B91C1C", fontWeight: 800, borderRadius: 6, padding: "2px 8px", fontSize: 12 }}>+{mk.minTarde ?? "?"} min</span>;
     const cardTardanza = (mk, dec) => {
@@ -4822,6 +4890,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 800, fontSize: 15, color: "#B45309" }}>marcó {mk.hora}</span>
             {chipMin(mk)}
+            <span title={`Marcada desde: ${mk.registradoPor || "GeoClock"}`} style={{ fontSize: 10.5, background: "#EFF6FF", color: "#1E40AF", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>
+              Aprueba: {responsableDe(mk) ? responsableDe(mk).split(" ")[0] : "Gerson/Carolina"}
+            </span>
             {dec && <Badge color={dec.estado === "aprobada" ? "#059669" : "#DC2626"}>{dec.estado === "aprobada" ? "✓ Aprobada (día completo)" : "✕ Denegada (con descuento)"}</Badge>}
           </div>
         </div>
@@ -4835,13 +4906,24 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <img src={firmaCache[mk.id]} alt="Firma" style={{ maxHeight: 90, maxWidth: "100%" }} />
           <div style={{ fontSize: 10, color: "#94A3B8" }}>Firma del marcaje · registrado en {mk.registradoPor ? `la tablet de ${mk.registradoPor}` : "GeoClock"}</div>
         </div>}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+        {/* HISTORIAL del cuadrito: cada decisión y reversión con quién y cuándo */}
+        {(registroDe(mk)?.historial || []).length > 0 && <div style={{ fontSize: 11, color: "#64748b", background: "#F8FAFC", border: "1px solid #EEF2F7", borderRadius: 8, padding: "6px 10px", display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", color: "#94A3B8" }}>Historial</span>
+          {registroDe(mk).historial.map((h, i) => (
+            <span key={i}>
+              {h.accion === "aprobada" ? "✓" : h.accion === "denegada" ? "✕" : "↩"}{" "}
+              {h.accion.charAt(0).toUpperCase() + h.accion.slice(1)} por <b>{h.por}</b> · {fmt(h.fecha || String(h.at || "").slice(0, 10))}
+            </span>
+          ))}
+        </div>}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap" }}>
           <NavBtn onClick={() => verFirma(mk)}>{firmaCache[mk.id] ? "Ocultar firma" : "✍️ Ver firma"}</NavBtn>
-          {!dec && <>
+          {!dec && puedeDecidir(mk) && <>
             <Btn small variant="success" onClick={() => aprobar(mk)}>✓ Aprobar (día completo)</Btn>
             <Btn small variant="danger" onClick={() => denegar(mk)}>✕ Denegar (aplicar descuento)</Btn>
           </>}
-          {dec && <Btn small variant="ghost" onClick={() => revertir(mk, dec)}>↩ Revertir decisión</Btn>}
+          {!dec && !puedeDecidir(mk) && <span style={{ fontSize: 11.5, color: "#94A3B8", fontStyle: "italic" }}>Solo visualización — la decide {responsableDe(mk) || "Gerson / Lic. Carolina"}.</span>}
+          {dec && puedeDecidir(mk) && <Btn small variant="ghost" onClick={() => revertir(mk, dec)}>↩ Revertir decisión</Btn>}
         </div>
         {dec && <div style={{ fontSize: 10, color: "#94A3B8", textAlign: "right" }}>Decidido por {dec.decididoPor} · {fmt(dec.fechaDecision || String(dec.decididoAt || "").slice(0, 10))}</div>}
       </div>;
@@ -4854,10 +4936,29 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         </div>
         <NavBtn onClick={refrescar}>🔄 Actualizar</NavBtn>
       </div>
-      <div style={{ fontWeight: 700, fontSize: 13, color: "#92400E" }}>⏳ Pendientes de decisión ({pendientes.length})</div>
-      {pendientes.length === 0 && <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10, padding: 16, fontSize: 13, color: "#166534" }}>Sin llegadas tardías pendientes. 🎉 Las nuevas caen acá solas cuando alguien marca después de la tolerancia en GeoClock.</div>}
-      {pendientes.map(mk => cardTardanza(mk, null))}
-      {decididas.length > 0 && <>
+      {/* Filtros: estado (chips) + colaborador + responsable */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "10px 14px" }}>
+        {[["", "Todas"], ["pendientes", "⏳ Pendientes"], ["aprobadas", "✓ Aprobadas"], ["denegadas", "✕ Denegadas"]].map(([v, l]) => (
+          <span key={v} role="button" onClick={() => setTardEstado(v)}
+            style={{ padding: "5px 12px", borderRadius: 999, border: `1.5px solid ${tardEstado === v ? "#B45309" : "#DBD4C8"}`, background: tardEstado === v ? "#B45309" : "#fff", color: tardEstado === v ? "#fff" : "#5C5853", fontSize: 12, fontWeight: 700, cursor: "pointer", userSelect: "none" }}>{l}</span>
+        ))}
+        <select value={tardPersona} onChange={e => setTardPersona(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #DBD4C8", fontSize: 12, fontFamily: "inherit", outline: "none" }}>
+          <option value="">👥 Todos los colaboradores</option>
+          {personasConTarde.map(([id, nom]) => <option key={id} value={id}>{nom}</option>)}
+        </select>
+        <select value={tardResp} onChange={e => setTardResp(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #DBD4C8", fontSize: 12, fontFamily: "inherit", outline: "none" }}>
+          <option value="">🗂 Todos los responsables</option>
+          <option value="Oscar Paz">Aprueba Oscar (plantel/almacén)</option>
+          <option value="Ana Vasquez">Aprueba Ana (oficina)</option>
+          <option value="supers">Aprueban Gerson / Lic. Carolina</option>
+        </select>
+      </div>
+      {(!tardEstado || tardEstado === "pendientes") && <>
+        <div style={{ fontWeight: 700, fontSize: 13, color: "#92400E" }}>⏳ Pendientes de decisión ({pendientes.length})</div>
+        {pendientes.length === 0 && <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10, padding: 16, fontSize: 13, color: "#166534" }}>Sin llegadas tardías pendientes{tardPersona || tardResp ? " con este filtro" : ""}. 🎉 Las nuevas caen acá solas cuando alguien marca después de la tolerancia en GeoClock.</div>}
+        {pendientes.map(mk => cardTardanza(mk, null))}
+      </>}
+      {tardEstado !== "pendientes" && decididas.length > 0 && <>
         <div style={{ fontWeight: 700, fontSize: 13, color: "#64748b", marginTop: 8 }}>📋 Decididas ({decididas.length})</div>
         {decididas.map(mk => cardTardanza(mk, decisionDe(mk)))}
       </>}
@@ -6418,7 +6519,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     default: return null;
   }};
 
-  const roleLabel = userRole === "admin" ? "Recursos Humanos" : userRole === "asistente" ? "Asistente RRHH" : userRole === "gerencia" ? "Gerencia (solo lectura)" : userRole === "costos" ? "Costos (solo lectura)" : userRole === "recepcion" ? "Fotos del personal" : userRole === "asistente_compras" ? "Personal y asistencia" : (userRole || "Usuario");
+  const roleLabel = userRole === "admin" ? "Recursos Humanos" : userRole === "tesoreria" ? "Tesorería — acceso completo" : userRole === "asistente" ? "Asistente RRHH" : userRole === "gerencia" ? "Gerencia (solo lectura)" : userRole === "costos" ? "Costos (solo lectura)" : userRole === "recepcion" ? "Fotos del personal" : userRole === "asistente_compras" ? "Personal y asistencia" : userRole === "logistica" ? "Aprobador de llegadas tardías (plantel/almacén)" : (userRole || "Usuario");
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
   // SVG cartoon team lineup — trabajadores del sector industrial

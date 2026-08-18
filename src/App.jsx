@@ -30,7 +30,10 @@ const MODULES = [
     // sin salarios, contratos, vacaciones, permisos, asistencia, HE y
     // constancias — sin planilla, movimientos ni costos. El recorte fino de
     // pestañas vive en HRModule (isAnaRH).
-    roles: ["admin", "asistente", "costos", "recepcion", "asistente_compras"],
+    // Lic. Carolina (tesoreria): acceso COMPLETO igual que Gerson (18-ago).
+    // Oscar (logistica): SOLO el aprobador de Llegadas tardías — responsable
+    // de las tardanzas marcadas desde su tablet de plantel/almacén.
+    roles: ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica"],
   },
   {
     id: "compras-operaciones",
@@ -79,10 +82,11 @@ const MODULES = [
     desc: "Marcaje de entrada y salida del personal con firma — plantel central y oficina",
     accent: "#C75F1F", // naranja reloj
     accentSoft: "rgba(199,95,31,0.10)",
-    // Tablets de marcaje (ago 2026): Oscar (logistica) en el plantel central
-    // y Ana (asistente_compras) en oficina. Gerson (admin / coordinador)
-    // supervisa. Si funciona esta quincena, la siguiente se suma proyectos.
-    roles: ["admin", "coordinador", "asistente_compras", "logistica"],
+    // Tablets de marcaje (ago 2026): Oscar (logistica) en el plantel central,
+    // Ana (asistente_compras) en oficina y el usuario dedicado "marcaje"
+    // (tablet de administración — SOLO ve este módulo). Gerson supervisa.
+    // Si funciona esta quincena, la siguiente se suma proyectos.
+    roles: ["admin", "coordinador", "asistente_compras", "logistica", "marcaje"],
   },
   {
     id: "geodrill-vault",

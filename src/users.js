@@ -25,6 +25,10 @@ export const USERS = [
   // rol propio en vez de "costos" para NO abrirle GeoTeam (planilla/salarios).
   // En GeoMachinery sigue siendo solo lectura, como antes.
   { username: "arturo",        password: "arturo1234",     role: "compras_ops",          label: "Arturo Trochez" },
+  // Tablet de marcaje de OFICINA/ADMINISTRACIÓN (ago 2026): solo GeoClock.
+  // Sus marcajes los aprueba Ana en Llegadas tardías (GeoTeam). La clave
+  // también es el candado del modo kiosco para salir del reloj.
+  { username: "marcaje",       password: "marcaje1234",    role: "marcaje",              label: "Marcaje de Asistencia" },
 ];
 
 export const ROLE_LABEL = {
@@ -42,6 +46,7 @@ export const ROLE_LABEL = {
   almacen_visor:      "Visor de Almacen (solo lectura)",
   visor_compras:      "Visor de Compras (solo lectura)",
   compras_ops:        "Compras / Operaciones",
+  marcaje:            "Tablet de Marcaje (GeoClock)",
 };
 
 // Color para el avatar de cada usuario (rotativo segun el username)

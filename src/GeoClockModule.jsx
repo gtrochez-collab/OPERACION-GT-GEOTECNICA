@@ -291,7 +291,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       if (view === "done") idleTimer.current = setTimeout(() => reset(), 7000);
       // Kiosk: la vista Registros también vuelve sola al marcaje (si queda
       // abierta, la tablet no muestra el buscador y el polling se congela).
-      if (view === "registros" && (userRole === "logistica" || userRole === "asistente_compras")) {
+      if (view === "registros" && (userRole === "logistica" || userRole === "asistente_compras" || userRole === "marcaje")) {
         idleTimer.current = setTimeout(() => reset(), 180000);
       }
     };
@@ -587,7 +587,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   // los botones de salida piden la contraseña del encargado — sin esto,
   // cualquier colaborador podía tocar "← Módulos" y navegar GeoLogistics/
   // GeoSafety/GeoTeam con la sesión del encargado. Admin/coordinador salen libre.
-  const esKiosk = userRole === "logistica" || userRole === "asistente_compras";
+  const esKiosk = userRole === "logistica" || userRole === "asistente_compras" || userRole === "marcaje";
   const conClave = (accion) => {
     if (!esKiosk) return accion();
     const pass = prompt("🔒 Modo kiosco — contraseña del encargado para salir:");

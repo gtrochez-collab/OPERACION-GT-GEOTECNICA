@@ -56,9 +56,17 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   completo). Denegar → `marcarTardanzaEnAsistencia` fija la hora real en
   arrivalTimes de la hoja (merge getCloud + verify; ABORTA sinNube; sinHoja =
   ok, initialData la siembra al crearla) + decisión "denegada". Revertir
-  limpia ambas. `sGcTardies` merge por markId contra getCloud. Firmas se ven
-  on-demand (`firmaCache`). Ana SÍ ve la pestaña (ANA_TABS) pero hideSalary
-  oculta los montos del descuento.
+  limpia la hora pero CONSERVA el registro con estado "pendiente" +
+  `historial` (array de {accion, por, fecha, at} — cada aprobación/
+  denegación/reversión queda registrada en el cuadrito). `sGcTardies` opera
+  por DELTA ({upsert}|{remove}) contra getCloud. Firmas on-demand
+  (`firmaCache`). **Responsables (18-ago)**: `responsableDe(mk)` por
+  mark.registradoPor — "Oscar Paz" → Oscar decide; "Ana Vasquez"/"Marcaje de
+  Asistencia" → Ana; otros → solo supers (admin, coordinador, tesoreria =
+  Lic. Carolina). Todos visualizan; botones gateados por `puedeDecidir`.
+  Filtros: estado (chips) + colaborador + responsable (tardEstado/
+  tardPersona/tardResp). Ana y Oscar (`isOscarTardies`, rol logistica: SOLO
+  esta pestaña en GeoTeam) tienen hideSalary — no ven el monto del descuento.
   **Marcajes → asistencia**: initialData siembra "1" por cada ENTRADA de
   GeoClock (solo celdas vacías) y `initialArrivals` siembra la hora de
   tardanzas DENEGADAS; `openGrid` es async y refresca los marks
@@ -243,10 +251,14 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   (falta entregar por proyecto / Ana-Fernando sin coordinar / logística sin entregar).
 
 ## Usuarios (users.js — passwords en texto plano, deuda técnica conocida)
-admin=administrador/1234geo · tesorería=carolina · costos=christian ·
+admin=administrador/1234geo · tesorería=carolina (ago 2026: GeoTeam COMPLETO
+igual que admin + super de tardanzas) · costos=christian ·
 coordinador_maquinas=fernando · asistente_compras=ana · recepcion=jorge
-(GeoTeam solo-fotos + fichas) · visor_compras=arturo (solo lectura
-GeoShopping+GeoMachinery) · gerencia (solo lectura).
+(GeoTeam solo-fotos + fichas) · logistica=oscarpaz (GeoTeam: SOLO aprobador
+de llegadas tardías de su tablet) · marcaje="Marcaje de Asistencia" (tablet
+de oficina/administración: SOLO GeoClock, kiosco) · compras_ops=arturo ·
+gerencia (solo lectura). El horario 7–16 se llama "Campo" en UI (key
+interna sigue siendo "plantel" por compatibilidad de fichas guardadas).
 
 ## Pendientes conocidos
 - Duplicado Junior Josue Zambrano: RESUELTO (borrado por el usuario, ago 2026).
