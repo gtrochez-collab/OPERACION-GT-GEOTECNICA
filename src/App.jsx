@@ -5,6 +5,7 @@ import MachinesModule from "./MachinesModule.jsx";
 import LogisticsModule from "./LogisticsModule.jsx";
 import GeoDrillVault from "./GeoDrillVault.jsx";
 import SafetyModule from "./SafetyModule.jsx";
+import GeoClockModule from "./GeoClockModule.jsx";
 // GeoChat: desactivado temporalmente (jun 2026). El polling y los mensajes
 // en localStorage estaban presionando el cache. Cuando lo retomemos, sera
 // con Supabase Realtime + bypass de localStorage (ya esta listo).
@@ -72,6 +73,18 @@ const MODULES = [
     roles: ["admin", "logistica", "recepcion"],
   },
   {
+    id: "geoclock",
+    name: "GeoClock",
+    icon: "⏰",
+    desc: "Marcaje de entrada y salida del personal con firma — plantel central y oficina",
+    accent: "#C75F1F", // naranja reloj
+    accentSoft: "rgba(199,95,31,0.10)",
+    // Tablets de marcaje (ago 2026): Oscar (logistica) en el plantel central
+    // y Ana (asistente_compras) en oficina. Gerson (admin / coordinador)
+    // supervisa. Si funciona esta quincena, la siguiente se suma proyectos.
+    roles: ["admin", "coordinador", "asistente_compras", "logistica"],
+  },
+  {
     id: "geodrill-vault",
     name: "GeoDrill Vault",
     icon: "🗄️",
@@ -130,6 +143,7 @@ export default function App() {
   if (activeModule === "logistica") return <>{syncBanner}<LogisticsModule {...moduleProps} /></>;
   if (activeModule === "geodrill-vault") return <>{syncBanner}<GeoDrillVault {...moduleProps} /></>;
   if (activeModule === "geosafety") return <>{syncBanner}<SafetyModule {...moduleProps} /></>;
+  if (activeModule === "geoclock") return <>{syncBanner}<GeoClockModule {...moduleProps} /></>;
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
   // if (activeModule === "geochat") return <>{syncBanner}<ChatModule {...moduleProps} /></>;
 

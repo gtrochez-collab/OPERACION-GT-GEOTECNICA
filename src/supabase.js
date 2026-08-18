@@ -42,6 +42,13 @@ const SKIP_LOCAL_PREFIXES = [
   'cp-file-',       // archivos PDF/foto de compras (cloud es source of truth)
   'chat-channel-',  // mensajes de canales (cloud es source of truth)
   'chat-dm-',       // mensajes directos (cloud es source of truth)
+  // GeoClock (ago 2026): las firmas pesan ~10KB c/u y se acumulan (2 marcajes
+  // x 40 personas x dia llenan la quota de la tablet en semanas), y los
+  // marcajes NUNCA deben quedar en cache local: un set() fallido dejaria el
+  // array en localStorage y el proximo get() lo "resucitaria" a la nube,
+  // reviviendo marcajes que el usuario cree NO registrados (duplicados).
+  'gc-firma-',      // firmas de marcaje (cloud es source of truth, lectura on-demand)
+  'gc-marks-',      // marcajes por quincena (cloud es la UNICA fuente de verdad)
 ];
 
 // Orden de evicción cuando localStorage se llena. Items con estos prefijos se

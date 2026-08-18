@@ -79,6 +79,50 @@ const getQuincena = (dateStr) => {
   return { periodo, quincena };
 };
 
+// ═══════════════════════════════════════════════════════════════════
+// HORARIOS DE TRABAJO + GeoClock (ago 2026)
+// ═══════════════════════════════════════════════════════════════════
+// Cada empleado puede tener un horario en su ficha (emp.horario). Sin
+// horario asignado se asume PLANTEL (7:00–16:00) — es el default histórico
+// de la fórmula de pago proporcional (jornada de 8h desde las 7:00).
+// Exportados: GeoClockModule usa EXACTAMENTE las mismas reglas para que la
+// tolerancia y el descuento nunca difieran entre el reloj y RRHH.
+export const HORARIOS = {
+  plantel:  { label: "Plantel (7:00 – 16:00)",  entrada: "7:00", salida: "16:00" },
+  oficina:  { label: "Oficina (8:00 – 17:00)",  entrada: "8:00", salida: "17:00" },
+  especial: { label: "Especial (9:00 – 18:00)", entrada: "9:00", salida: "18:00" },
+};
+// Ventana de tolerancia para marcar entrada sin caer en llegada tarde
+// (pedido de Gerson: plantel 7:00–7:10). Aplica a todos los horarios.
+export const TOLERANCIA_MIN = 10;
+export const horarioDe = (e) => {
+  if (e?.horario === "custom" && e?.horarioEntrada) {
+    return { label: `Personalizado (${e.horarioEntrada} – ${e.horarioSalida || "?"})`, entrada: e.horarioEntrada, salida: e.horarioSalida || "" };
+  }
+  return HORARIOS[e?.horario] || HORARIOS.plantel;
+};
+// Hora de entrada oficial del empleado en horas decimales (7.0, 8.0, 9.5...).
+// Es la base del descuento proporcional: cada hora tarde resta 1/8 de la
+// jornada, contada desde SU hora oficial (no siempre las 7:00).
+export const horaEntradaH = (e) => {
+  const [h, mm] = String(horarioDe(e).entrada).split(":").map(Number);
+  return (Number.isFinite(h) ? h : 7) + (Number.isFinite(mm) ? mm : 0) / 60;
+};
+// Fecha de HOY en zona horaria de Honduras (America/Tegucigalpa, UTC-6 sin
+// DST). en-CA formatea YYYY-MM-DD directo. No usar new Date().toISOString()
+// para esto: de 6pm en adelante ya es "mañana" en UTC.
+export const hoyTegus = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Tegucigalpa", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+// Clave de la data de marcajes GeoClock: un array por quincena (chico y
+// acotado — nunca un array global gigante). GeoClock APPENDEA acá; RRHH
+// solo LEE (las decisiones de tardanzas viven aparte en gc-tardies).
+export const gcMarkKey = (periodo, quincena) => `gc-marks-${periodo}-${quincena}`;
+export const quincenaAnterior = (periodo, quincena) => {
+  if (quincena === "2Q") return { periodo, quincena: "1Q" };
+  const [y, m] = String(periodo).split("-").map(Number);
+  const d = new Date(y, m - 2, 1);
+  return { periodo: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, quincena: "2Q" };
+};
+
 // =====================================================================
 // SNAPSHOT CONTRACTUAL SUBTERRA — 2026-05-05
 // =====================================================================
@@ -285,6 +329,98 @@ const TH = { padding: "8px 10px", textAlign: "left", color: "#475569", fontWeigh
 const TD = { padding: "6px 10px", color: "#334155", whiteSpace: "nowrap" };
 const INP = { width: 75, padding: "4px 6px", border: "1px solid #E2E8F0", borderRadius: 6, fontSize: 12, textAlign: "right", background: "#F8FAFC" };
 
+// ═══════════════════════════════════════════════════════════════════
+// GRÁFICOS SVG (Dashboard gerencial + KPI's, ago 2026)
+// ═══════════════════════════════════════════════════════════════════
+// Componentes puros a nivel de módulo (sin hooks — seguros contra remount).
+// Tooltips nativos vía <title> para interactividad sin estado.
+const FONT_DISPLAY = '"Manrope", "Inter", -apple-system, BlinkMacSystemFont, sans-serif';
+
+// Línea/área de presencia diaria. series: [{ label, color, points: [{x, y}] }]
+// con y en 0..100 (%) y x = día del mes (1..lastDay). y === null = sin dato.
+const GTLineChart = ({ series = [], lastDay = 31, height = 190 }) => {
+  const W = 640, H = height, L = 34, R2 = 10, T = 12, B = 24;
+  const xOf = d => L + ((d - 1) / Math.max(1, lastDay - 1)) * (W - L - R2);
+  const yOf = v => T + (1 - Math.max(0, Math.min(100, v)) / 100) * (H - T - B);
+  const ticksX = [1, 5, 10, 15, 20, 25, lastDay].filter((v, i, a) => v <= lastDay && a.indexOf(v) === i);
+  return <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+    {[0, 50, 100].map(v => <g key={v}>
+      <line x1={L} y1={yOf(v)} x2={W - R2} y2={yOf(v)} stroke="#EDE5D5" strokeWidth="1" />
+      <text x={L - 6} y={yOf(v) + 3} textAnchor="end" fontSize="9" fill="#B8B0A4">{v}%</text>
+    </g>)}
+    {ticksX.map(d => <text key={d} x={xOf(d)} y={H - 8} textAnchor="middle" fontSize="9" fill="#B8B0A4">{d}</text>)}
+    {series.map((s, si) => {
+      const pts = (s.points || []).filter(p => p.y !== null && p.y !== undefined);
+      if (!pts.length) return null;
+      const poly = pts.map(p => `${xOf(p.x).toFixed(1)},${yOf(p.y).toFixed(1)}`).join(" ");
+      const area = `${xOf(pts[0].x).toFixed(1)},${yOf(0).toFixed(1)} ${poly} ${xOf(pts[pts.length - 1].x).toFixed(1)},${yOf(0).toFixed(1)}`;
+      return <g key={si}>
+        {si === 0 && <polygon points={area} fill={s.color} opacity="0.10" />}
+        <polyline points={poly} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+        {pts.map(p => <circle key={p.x} cx={xOf(p.x)} cy={yOf(p.y)} r="3.4" fill="#fff" stroke={s.color} strokeWidth="2">
+          <title>{`${s.label} · día ${p.x}: ${p.y}%${p.sub ? ` (${p.sub})` : ""}`}</title>
+        </circle>)}
+      </g>;
+    })}
+  </svg>;
+};
+
+// Dona simple. segments: [{ value, color, label }]. Tooltips nativos.
+const GTDonut = ({ segments = [], size = 132, thickness = 17, centerLabel = "", centerSub = "" }) => {
+  const total = segments.reduce((s, x) => s + (Number(x.value) || 0), 0);
+  const RAD = (size - thickness) / 2 - 2, C = size / 2, CIRC = 2 * Math.PI * RAD;
+  let acc = 0;
+  return <svg viewBox={`0 0 ${size} ${size}`} style={{ width: size, height: size, display: "block" }}>
+    <circle cx={C} cy={C} r={RAD} fill="none" stroke="#EDE5D5" strokeWidth={thickness} />
+    {total > 0 && segments.filter(s => s.value > 0).map((s, i) => {
+      const frac = s.value / total;
+      const dash = `${(frac * CIRC).toFixed(2)} ${(CIRC).toFixed(2)}`;
+      const rot = (acc / total) * 360 - 90;
+      acc += s.value;
+      return <circle key={i} cx={C} cy={C} r={RAD} fill="none" stroke={s.color} strokeWidth={thickness}
+        strokeDasharray={dash} transform={`rotate(${rot} ${C} ${C})`} strokeLinecap="butt">
+        <title>{`${s.label}: ${s.value} (${Math.round(frac * 100)}%)`}</title>
+      </circle>;
+    })}
+    <text x={C} y={C - 1} textAnchor="middle" fontSize="22" fontWeight="800" fill="#2C2A28">{centerLabel}</text>
+    <text x={C} y={C + 15} textAnchor="middle" fontSize="8.5" fill="#8B847C" style={{ textTransform: "uppercase", letterSpacing: 1 }}>{centerSub}</text>
+  </svg>;
+};
+
+// Barras verticales por mes (masa salarial anual estilo IsTeam):
+// data: [{ label, value, real }] — real=true pinta dorado (planilla generada),
+// false pinta azul (proyección con el roster actual).
+const GTMonthBars = ({ data = [], height = 180, fmtVal = v => v, selected = "", onPick = null }) => {
+  const W = 640, H = height, B = 26, T = 22;
+  const max = Math.max(1, ...data.map(d => d.value));
+  const bw = (W - 20) / Math.max(1, data.length);
+  return <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+    {data.map((d, i) => {
+      const h = Math.max(2, (d.value / max) * (H - B - T));
+      const x = 10 + i * bw + bw * 0.14, w = bw * 0.72;
+      const y = H - B - h;
+      const isSel = selected && d.key === selected;
+      return <g key={i} style={{ cursor: onPick ? "pointer" : "default" }} onClick={onPick ? () => onPick(d) : undefined}>
+        <rect x={x} y={y} width={w} height={h} rx="4"
+          fill={d.real ? "#D4A017" : "#3E6A99"} opacity={d.value ? (isSel ? 1 : 0.85) : 0.25}
+          stroke={isSel ? "#2C2A28" : "none"} strokeWidth={isSel ? 2 : 0}>
+          <title>{`${d.title || d.label}: ${fmtVal(d.value)}${d.real ? " (planilla real)" : " (proyección)"}`}</title>
+        </rect>
+        {d.value > 0 && <text x={x + w / 2} y={y - 5} textAnchor="middle" fontSize="8.5" fill="#8B847C">{d.top || ""}</text>}
+        <text x={x + w / 2} y={H - 10} textAnchor="middle" fontSize="9.5" fontWeight={isSel ? 800 : 400} fill={isSel ? "#2C2A28" : "#8B847C"}>{d.label}</text>
+      </g>;
+    })}
+  </svg>;
+};
+
+// Botón de NAVEGACIÓN pura (no muta datos): span clickeable que NO cae bajo
+// el <fieldset disabled> de los roles solo-lectura (gerencia/costos) — un
+// <button> ahí adentro queda deshabilitado aunque solo cambie la vista
+// (mes del dashboard, ‹› de KPI's, Ver firma, Actualizar).
+const NavBtn = ({ children, onClick, style: sx }) => (
+  <span role="button" onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8, border: "1px solid #DBD4C8", background: "#fff", color: "#5C5853", fontSize: 12, fontWeight: 700, cursor: "pointer", userSelect: "none", ...sx }}>{children}</span>
+);
+
 // ── APP ──
 export default function HRModule({ userRole = "admin", userName, onBack, onLogout }) {
   const isAsistente = userRole === "asistente";
@@ -342,6 +478,20 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // Mismo respaldo anti-remount para la grid de ASISTENCIA (30-jul-2026 se
   // perdio la asistencia de Subterra por la misma clase de bug que las HE).
   const attDraftRef = useRef(null);
+  // ── GeoClock (ago 2026) ──
+  // Marcajes del reloj por quincena: { "<periodo>|<quincena>": [marks] }.
+  // Se cargan la quincena actual y la anterior en loadAll, y se refrescan
+  // al abrir una hoja de asistencia (openGrid) para que initialData siembre
+  // los "1" de los marcajes. GeoClock es el UNICO que escribe esas keys.
+  const [gcMarks, setGcMarks] = useState({});
+  // Decisiones de RRHH sobre llegadas tarde (gc-tardies): [{ markId, estado:
+  // "aprobada"|"denegada", decididoPor, decididoAt, nota }]. Una marca tarde
+  // SIN decision esta "pendiente". RRHH es el UNICO que escribe esta key.
+  const [gcTardies, setGcTardies] = useState([]);
+  // Mes seleccionado en la pestaña KPI's ("" = mes actual).
+  const [kpisMes, setKpisMes] = useState("");
+  // Meses seleccionados en el Dashboard gerencial ([] = solo el mes actual).
+  const [dashMeses, setDashMeses] = useState([]);
   const [movs, setMovs] = useState([]);
   const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
   const [contracts, setContracts] = useState([]);
@@ -359,6 +509,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // en cloud (cp-file-<id>) despues del render inicial, para no bloquear el
   // primer paint del tab.
   const [photoCache, setPhotoCache] = useState({});
+  // Firmas de marcajes GeoClock cargadas on-demand en Llegadas tardías:
+  // { markId: dataUrl }. Se cargan solo al tocar "Ver firma".
+  const [firmaCache, setFirmaCache] = useState({});
   const [modal, setModal] = useState(null);
   const isMobile = useIsMobile();
 
@@ -391,6 +544,24 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     if (hsb && typeof hsb === "object" && !Array.isArray(hsb)) setHeSalBase(hsb);
     if (Array.isArray(cpProj)) setHrCustomProjects(cpProj);
     setLoaded(true);
+    // GeoClock: marcajes de la quincena actual + la anterior, y decisiones
+    // de tardanzas. Aparte del Promise.all principal para que un fallo aca
+    // nunca bloquee la carga del modulo.
+    try {
+      const q0 = getQuincena(hoyTegus());
+      const q1 = quincenaAnterior(q0.periodo, q0.quincena);
+      const [td, m0, m1] = await Promise.all([
+        store.get("gc-tardies"),
+        store.get(gcMarkKey(q0.periodo, q0.quincena)),
+        store.get(gcMarkKey(q1.periodo, q1.quincena)),
+      ]);
+      if (Array.isArray(td)) setGcTardies(td);
+      setGcMarks(prev => ({
+        ...prev,
+        [`${q0.periodo}|${q0.quincena}`]: Array.isArray(m0) ? m0 : [],
+        [`${q1.periodo}|${q1.quincena}`]: Array.isArray(m1) ? m1 : [],
+      }));
+    } catch { /* GeoClock es opcional para el resto del modulo */ }
   };
   useEffect(() => { loadAll(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
@@ -628,6 +799,117 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     }
     if (msgs.length) alert(msgs.join("\n"));
   };
+  // ═══════════════════════════════════════════════════════════════════
+  // LLEGADAS TARDÍAS GeoClock → ASISTENCIA (ago 2026)
+  // ═══════════════════════════════════════════════════════════════════
+  // Cuando RRHH DENIEGA la explicación de una llegada tarde, la hora real
+  // de llegada se fija en arrivalTimes de la hoja de esa quincena — el
+  // mismo mecanismo de pago proporcional de José Miguel: cada hora tarde
+  // (contada desde la hora de entrada del HORARIO del empleado) resta 1/8
+  // del día en planilla y en Costos MO. Merge por hoja contra getCloud +
+  // verify; si la nube no responde, ABORTA sin escribir (regla de oro).
+  const marcarTardanzaEnAsistencia = async (empId, fecha, hora, modo = "aplicar") => {
+    const emp = (emps || []).find(e => e.id === empId);
+    const dStr = String(fecha || "").slice(0, 10);
+    if (!emp || !dStr || !hora) return { ok: true, celdas: 0 };
+    const [y, m, day] = dStr.split("-").map(Number);
+    if (!y || !m || !day) return { ok: true, celdas: 0 };
+    const periodo = `${y}-${String(m).padStart(2, "0")}`;
+    const quincena = day <= 15 ? "1Q" : "2Q";
+    // Domingos/feriados se pagan por ley — no aplica descuento por hora.
+    if (new Date(y, m - 1, day).getDay() === 0 || esFeriadoQuincena(periodo, day)) return { ok: true, celdas: 0 };
+    if (emp.startDate && dStr < emp.startDate) return { ok: true, celdas: 0 };
+    if (emp.status === "inactive" && emp.endDate && dStr > emp.endDate) return { ok: true, celdas: 0 };
+    let cloudArr = null;
+    try { const c = await store.getCloud("hr-atts2"); if (Array.isArray(c)) cloudArr = c; } catch { cloudArr = null; }
+    if (!cloudArr) return { ok: false, celdas: 0, sinNube: true };
+    const keyOf = a => `${a.company}|${a.periodo}|${a.quincena}`;
+    const byKey = {};
+    [...(Array.isArray(atts) ? atts : []), ...cloudArr].forEach(a => {
+      if (!a || !a.id) return;
+      const kk = keyOf(a);
+      const cur = byKey[kk];
+      if (!cur || String(a.lastSaved || a.date || "") > String(cur.lastSaved || cur.date || "")) byKey[kk] = a;
+    });
+    const hoja = byKey[`${emp.company}|${periodo}|${quincena}`];
+    // Sin hoja todavía: no pasa nada — initialData siembra la hora al crearla.
+    if (!hoja) return { ok: true, celdas: 0, sinHoja: true };
+    const k = `${empId}-${day}`;
+    const at = { ...(hoja.arrivalTimes || {}) };
+    const grid = { ...(hoja.grid || {}) };
+    if (modo === "limpiar") {
+      if (at[k] !== hora) return { ok: true, celdas: 0 }; // la cambiaron a mano: respetar
+      delete at[k];
+    } else {
+      if (at[k] === hora) return { ok: true, celdas: 1, hoja: `${quincena} ${periodo}` }; // idempotente
+      at[k] = hora;
+      // El día SÍ se trabajó (lo dice el marcaje): si la celda está vacía,
+      // se marca "1". Nunca pisa 0/INC/V/DT — eso lo decide RRHH a mano.
+      if (!grid[k]) grid[k] = "1";
+    }
+    byKey[`${emp.company}|${periodo}|${quincena}`] = { ...hoja, grid, arrivalTimes: at, lastSaved: new Date().toISOString() };
+    const updated = Object.values(byKey);
+    setAtts(updated);
+    let ok = await store.set("hr-atts2", updated);
+    if (ok) {
+      try {
+        const back = await store.getCloud("hr-atts2");
+        const mine = Array.isArray(back) ? back.find(a => a.company === emp.company && a.periodo === periodo && a.quincena === quincena) : null;
+        if (!mine) ok = false;
+        else if (modo !== "limpiar" && (mine.arrivalTimes || {})[k] !== hora) ok = false;
+        else if (modo === "limpiar" && (mine.arrivalTimes || {})[k] === hora) ok = false;
+      } catch { /* sin nube no se puede verificar; store.set ya dijo OK */ }
+    }
+    return { ok, celdas: 1, hoja: `${quincena} ${periodo}` };
+  };
+  // Decisiones de tardanzas (gc-tardies): SIEMPRE un delta de UNA decisión
+  // ({ upsert: decision } o { remove: markId }) aplicado sobre la nube
+  // FRESCA. Antes recibía el array completo del estado local — una pestaña
+  // desactualizada podía pisar o revivir decisiones tomadas por otro usuario.
+  const sGcTardies = async (op) => {
+    let cloudArr;
+    try { const c = await store.getCloud("gc-tardies"); cloudArr = Array.isArray(c) ? c : []; }
+    catch {
+      alert("⚠️ No hay conexión con la nube — la decisión NO se guardó. Reintentá cuando tengas señal.");
+      return false;
+    }
+    const byId = {};
+    cloudArr.forEach(t => { if (t && t.markId) byId[t.markId] = t; });
+    if (op.remove) delete byId[op.remove];
+    if (op.upsert && op.upsert.markId) byId[op.upsert.markId] = op.upsert;
+    const next = Object.values(byId);
+    setGcTardies(next);
+    const ok = await store.set("gc-tardies", next);
+    if (!ok) return false;
+    try {
+      const back = await store.getCloud("gc-tardies");
+      if (Array.isArray(back)) {
+        if (op.upsert && !back.some(t => t && t.markId === op.upsert.markId && t.estado === op.upsert.estado)) return false;
+        if (op.remove && back.some(t => t && t.markId === op.remove)) return false;
+      }
+    } catch { /* sin nube no se puede verificar; store.set ya dijo OK */ }
+    return true;
+  };
+  // Refresca los marcajes GeoClock de una quincena (para abrir asistencia o
+  // actualizar el reporte de tardanzas con lo último del reloj). Lee DIRECTO
+  // de la nube (getCloud): la siembra de la hoja afecta dinero — cache viejo
+  // no sirve. Si la nube no responde, se queda con lo que había en memoria.
+  const refreshMarksFor = async (periodo, quincena) => {
+    try {
+      const mk = await store.getCloud(gcMarkKey(periodo, quincena));
+      setGcMarks(prev => ({ ...prev, [`${periodo}|${quincena}`]: Array.isArray(mk) ? mk : [] }));
+      return Array.isArray(mk) ? mk : [];
+    } catch { return gcMarks[`${periodo}|${quincena}`] || []; }
+  };
+  // Refresca también las DECISIONES (gc-tardies): las horas de denegadas se
+  // siembran en initialArrivals al abrir la hoja — deben venir de la nube.
+  const refreshTardies = async () => {
+    try {
+      const td = await store.getCloud("gc-tardies");
+      if (Array.isArray(td)) { setGcTardies(td); return td; }
+    } catch { /* se queda con lo local */ }
+    return gcTardies;
+  };
   const sCt = async d => { setContracts(d); return await store.set("hr-contracts", d); };
   const sBn = async d => { setBonifs(d); return await store.set("hr-bonuses", d); };
   const sHe = async d => { setHes(d); return await store.set("hr-he", d); };
@@ -692,6 +974,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
   const allNav = [
     { id: "dashboard", icon: "📊", label: "Dashboard" },
+    { id: "kpis", icon: "📈", label: "KPI's" },
     { id: "employees", icon: "👥", label: "Empleados" },
     { id: "contracts", icon: "📝", label: "Contratos" },
     // "bonuses" (Bonificaciones) oculto a pedido del usuario 21-jul-2026 —
@@ -700,6 +983,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     { id: "vacations", icon: "🏖️", label: "Vacaciones" },
     { id: "leaves", icon: "📋", label: "Permisos" },
     { id: "attendance", icon: "⏱️", label: "Asistencia" },
+    { id: "tardanzas", icon: "🕒", label: "Llegadas tardías" },
     { id: "horasextras", icon: "⏰", label: "Horas Extras" },
     { id: "movimientos", icon: "🔄", label: "Movimientos" },
     { id: "constancias", icon: "📄", label: "Constancias" },
@@ -707,7 +991,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   ];
   // Pestañas que ve Ana (asistente_compras): todo lo operativo de personal,
   // sin nada de dinero (planilla/costos) ni el reporte de altas y bajas.
-  const ANA_TABS = ["employees", "contracts", "vacations", "leaves", "attendance", "horasextras", "constancias"];
+  // "tardanzas" SÍ (ella gestiona las explicaciones), pero los montos del
+  // descuento van gateados por hideSalary dentro de la pestaña.
+  const ANA_TABS = ["employees", "contracts", "vacations", "leaves", "attendance", "tardanzas", "horasextras", "constancias"];
   const nav = isAsistente ? allNav.filter(n => n.id === "attendance")
     : isPhotoOnly ? allNav.filter(n => n.id === "employees")
     : isAnaRH ? allNav.filter(n => ANA_TABS.includes(n.id))
@@ -717,7 +1003,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
   // ── FORMS ──
   const EmpForm = ({ emp, onSave }) => {
-    const [f, setF] = useState(emp || { company: co, fullName: "", dni: "", position: "", department: "", contractType: "permanent", startDate: "", endDate: "", salary: "", bonificacion: 0, status: "active", phone: "", email: "" });
+    const [f, setF] = useState(emp || { company: co, fullName: "", dni: "", position: "", department: "", contractType: "permanent", startDate: "", endDate: "", salary: "", bonificacion: 0, status: "active", phone: "", email: "", sexo: "", horario: "" });
     const [uploading, setUploading] = useState(false);
     // Sync del form cuando el emp externo cambia (ej. sube foto y m.d se
     // actualizo desde afuera, o cambia el empleado seleccionado). Sin esto,
@@ -881,6 +1167,21 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         </>)}
         <Input label="Telefono" value={f.phone || ""} onChange={e => u("phone", e.target.value)} placeholder="9999-9999" />
         <Input label="Email" type="email" value={f.email || ""} onChange={e => u("email", e.target.value)} placeholder="empleado@correo.com" />
+        {/* Sexo (KPI de estructura del personal) + Horario (GeoClock) — ago 2026 */}
+        <Select label="Sexo" options={[{ value: "masculino", label: "Masculino" }, { value: "femenino", label: "Femenino" }]} value={f.sexo || ""} onChange={e => u("sexo", e.target.value)} />
+        <Select label="Horario de trabajo" options={[
+          { value: "plantel", label: "Plantel (7:00 – 16:00)" },
+          { value: "oficina", label: "Oficina (8:00 – 17:00)" },
+          { value: "especial", label: "Especial (9:00 – 18:00)" },
+          { value: "custom", label: "Personalizado" },
+        ]} value={f.horario || ""} onChange={e => u("horario", e.target.value)} />
+        {f.horario === "custom" && <>
+          <Input label="Entrada (personalizado)" type="time" value={f.horarioEntrada || ""} onChange={e => u("horarioEntrada", e.target.value)} />
+          <Input label="Salida (personalizado)" type="time" value={f.horarioSalida || ""} onChange={e => u("horarioSalida", e.target.value)} />
+        </>}
+        <div style={{ gridColumn: "1/-1", fontSize: 11, color: "#64748b", background: "#F0F9FF", border: "1px solid #BAE6FD", borderRadius: 8, padding: "8px 12px" }}>
+          🕒 <b>GeoClock</b> usa el horario para la tolerancia de {TOLERANCIA_MIN} min al marcar entrada (ej. plantel: 7:00–7:10). Sin horario asignado se asume <b>Plantel (7:00–16:00)</b>. El descuento por llegada tarde denegada se calcula desde la hora de entrada de ESTE horario.
+        </div>
         <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#92400E", cursor: "pointer" }}>
           <input type="checkbox" checked={!!f.payByHour} onChange={e => u("payByHour", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
           <span>
@@ -988,14 +1289,19 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         let diasPresente = 0, diasPresenteEfectivo = 0, diasNSP = 0, diasIncap = 0, diasVac = 0;
         let domTrab = 0, domTrabTriple = 0, ferTrab = 0;
         let diasFueraRango = 0;
-        // Descuento por hora de entrada tardia (solo aplica si emp.payByHour).
-        // Modelo: jornada de 8h empezando a las 7am. Si el empleado entra
-        // tarde, se le descuenta proporcionalmente por las horas perdidas.
-        // Ejemplo: 8:30 = 1.5h tarde → descuenta 1.5/8 del salario diario.
-        // Tambien acumulamos diasPresenteEfectivo: la suma proporcional de
-        // dias trabajados (ej: 13 dias marcados a las 8:30 = 10.56 efectivos).
+        // Descuento por hora de entrada tardia. Modelo: jornada de 8h desde
+        // la hora de entrada del HORARIO del empleado (default plantel 7am).
+        // Si entra tarde, se descuenta proporcional por las horas perdidas.
+        // Ejemplo: horario 7:00 y llega 8:30 = 1.5h tarde → 1.5/8 del diario.
+        // Aplica a CUALQUIER empleado con hora marcada en la celda: la marca
+        // la pone el pago proporcional (José Miguel, payByHour) o una llegada
+        // tarde de GeoClock DENEGADA por RRHH (ago 2026). Tambien acumulamos
+        // diasPresenteEfectivo: suma proporcional de dias trabajados.
+        // FIX ago 2026: decia `sheet?.arrivalTimes` pero la variable de este
+        // scope es `attSheet` — `sheet` no existe y la generacion reventaba
+        // con ReferenceError (nadie genero planilla desde may 2026).
         let descuentoHoras = 0;
-        const sheetArrivalTimes = sheet?.arrivalTimes || {};
+        const sheetArrivalTimes = attSheet?.arrivalTimes || {};
         const projDays = {}; // { proj_short: dias_trabajados }
         for (let d = start; d <= end; d++) {
           const dStr = `${per}-${String(d).padStart(2, "0")}`;
@@ -1028,12 +1334,14 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             // INC siempre cuenta como dia completo (incapacidad pagada).
             // Para empleados payByHour, aplicar proporcion segun hora de entrada.
             let dayFraction = 1;
-            if (emp.payByHour && v !== "INC" && v !== "V") {
+            if (v !== "INC" && v !== "V") {
               const arrival = sheetArrivalTimes[`${emp.id}-${d}`];
               if (arrival) {
                 const [h, mm] = arrival.split(":").map(Number);
                 const arrivalH = h + mm / 60;
-                const horasTarde = Math.max(0, arrivalH - 7);
+                // Tope 8h: el descuento nunca supera el valor del día (una
+                // llegada extrema de GeoClock no puede descontar MÁS que el día).
+                const horasTarde = Math.min(8, Math.max(0, arrivalH - horaEntradaH(emp)));
                 dayFraction = Math.max(0, (8 - horasTarde) / 8);
                 descuentoHoras += (horasTarde / 8) * sd;
               }
@@ -1197,7 +1505,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               <td style={TD}><Badge color={cc.color}>{l.proj || "—"}</Badge></td>
               <td style={TD}>{fmtL(l.sb)}</td>
               <td style={TD}>{fmtL(l.sd)}</td>
-              <td title={l.payByHour ? `${l.diasPresente} dias marcados · ${(l.diasPresenteEfectivo || l.diasPresente).toFixed(2)} efectivos (proporcional)` : ""} style={{ ...TD, color: "#059669", fontWeight: 600 }}>{l.payByHour ? (l.diasPresenteEfectivo || l.diasPresente).toFixed(2) : l.diasPresente}</td>
+              <td title={(l.diasPresenteEfectivo || 0) !== l.diasPresente ? `${l.diasPresente} dias marcados · ${(l.diasPresenteEfectivo || 0).toFixed(2)} efectivos (proporcional por hora de entrada)` : ""} style={{ ...TD, color: "#059669", fontWeight: 600 }}>{(l.diasPresenteEfectivo || 0) !== l.diasPresente && l.diasPresenteEfectivo != null ? l.diasPresenteEfectivo.toFixed(2) : l.diasPresente}</td>
               <td style={{ ...TD, color: l.diasNSP > 0 ? "#DC2626" : "#94A3B8", fontWeight: l.diasNSP > 0 ? 700 : 400 }}>{l.diasNSP}</td>
               <td style={{ ...TD, color: "#DC2626" }}>{l.descuentoNSP > 0 ? fmtL(l.descuentoNSP) : ""}</td>
               <td style={TD}>{fmtL(l.so)}</td>
@@ -1482,11 +1790,56 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         if (initial[k]) return;
         initial[k] = String(l.type || "").toLowerCase().includes("sin goce") ? "0" : "1";
       });
+      // SIEMBRA de MARCAJES GeoClock (ago 2026): cada ENTRADA registrada en
+      // el reloj marca "1" si la celda esta vacia — el marcaje ALIMENTA la
+      // asistencia de la quincena. Solo llena vacios: nunca pisa lo que RRHH
+      // marco a mano (0/INC/V/DT...), y los domingos/feriados ya valen "1".
+      ((gcMarks[`${sheet.periodo}|${sheet.quincena}`]) || []).forEach(mk => {
+        if (!mk || mk.tipo !== "entrada" || !mk.empId || !mk.fecha) return;
+        const e = ae.find(x => x.id === mk.empId);
+        if (!e) return;
+        const dStr = String(mk.fecha).slice(0, 10);
+        if (dStr.slice(0, 7) !== sheet.periodo) return;
+        const dd = Number(dStr.slice(8, 10));
+        if (!dd || dd < start || dd > end) return;
+        const dt = new Date(y, m - 1, dd);
+        if (dt.getDay() === 0 || esFeriadoQuincena(sheet.periodo, dd)) return;
+        if (e.startDate && dStr < e.startDate) return;
+        if (e.status === "inactive" && e.endDate && dStr > e.endDate) return;
+        const k = `${e.id}-${dd}`;
+        if (initial[k]) return;
+        initial[k] = "1";
+      });
       return initial;
+    })();
+    // Horas de entrada iniciales: las de la hoja + las de llegadas tarde
+    // DENEGADAS por RRHH (gc-tardies) que aun no esten fijadas — asi la hoja
+    // se auto-repara aunque la decision se haya tomado antes de crearla.
+    const initialArrivals = (() => {
+      if (attDraft) return attDraft.arrivalTimes;
+      const at = { ...(sheet?.arrivalTimes || {}) };
+      const _start = sheet.quincena === "1Q" ? 1 : 16;
+      const [_y, _m] = sheet.periodo.split("-").map(Number);
+      const _end = sheet.quincena === "1Q" ? 15 : new Date(_y, _m, 0).getDate();
+      ((gcMarks[`${sheet.periodo}|${sheet.quincena}`]) || []).forEach(mk => {
+        if (!mk || mk.tipo !== "entrada" || !mk.tarde || !mk.hora) return;
+        const dec = (gcTardies || []).find(t => t && t.markId === mk.id);
+        if (!dec || dec.estado !== "denegada") return;
+        const e = ae.find(x => x.id === mk.empId);
+        if (!e) return;
+        const dStr = String(mk.fecha).slice(0, 10);
+        if (dStr.slice(0, 7) !== sheet.periodo) return;
+        const dd = Number(dStr.slice(8, 10));
+        if (!dd || dd < _start || dd > _end) return;
+        if (new Date(_y, _m - 1, dd).getDay() === 0 || esFeriadoQuincena(sheet.periodo, dd)) return;
+        const k = `${e.id}-${dd}`;
+        if (!at[k]) at[k] = mk.hora;
+      });
+      return at;
     })();
     const [data, setData] = useState(initialData);
     const [overrides, setOverrides] = useState(() => attDraft ? attDraft.overrides : (sheet?.projOverrides || {}));
-    const [arrivalTimes, setArrivalTimes] = useState(() => attDraft ? attDraft.arrivalTimes : (sheet?.arrivalTimes || {}));
+    const [arrivalTimes, setArrivalTimes] = useState(initialArrivals);
     const [editingCell, setEditingCell] = useState(null);
     // Track de cambios sin guardar para advertir al cerrar.
     // Empieza limpio al abrir; cada edicion marca dirty=true.
@@ -1652,19 +2005,19 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const cellFontSize = v => (v === "TF" || v === "DT" || v === "DT2") ? 9 : 11;
 
     // Calcula la fraccion del dia trabajado (1.0 = dia completo) para un
-    // empleado segun su estado y la hora de entrada si es payByHour.
+    // empleado segun su estado y la hora de entrada marcada.
     //   - INC siempre cuenta como 1 (incapacidad pagada completa)
-    //   - Para empleados normales, cualquier dia pagado vale 1
-    //   - Para empleados payByHour con hora de entrada marcada, vale
-    //     (8 - horasTarde)/8. Jornada base 8h desde 7am.
+    //   - Sin hora de entrada marcada, cualquier dia pagado vale 1
+    //   - Con hora de entrada (payByHour manual o tardanza GeoClock
+    //     DENEGADA), vale (8 - horasTarde)/8. Jornada de 8h desde la hora
+    //     de entrada del HORARIO del empleado (default plantel 7am).
     const dayValueFor = (emp, day, val) => {
       if (val !== "1" && val !== "TF" && val !== "DT" && val !== "DT2") return (val === "INC" || val === "V") ? 1 : 0;
-      if (!emp?.payByHour) return 1;
-      const arr = arrivalTimes[`${emp.id}-${day}`];
+      const arr = arrivalTimes[`${emp?.id}-${day}`];
       if (!arr) return 1;
       const [h, mm] = arr.split(":").map(Number);
       const arrivalH = h + mm / 60;
-      const lateHours = Math.max(0, arrivalH - 7);
+      const lateHours = Math.max(0, arrivalH - horaEntradaH(emp));
       return Math.max(0, (8 - lateHours) / 8);
     };
 
@@ -1870,7 +2223,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                         {hrProjects.filter(p => p.short !== assignments[e.id]).map(p => (
                           <div key={p.short} style={{ padding: "4px 8px", fontSize: 11, cursor: "pointer", background: ovr === p.short ? "#DBEAFE" : "transparent" }} onClick={() => setOverride(e.id, d.day, p.short)}>{ovr === p.short ? "✓ " : ""}{p.short}</div>
                         ))}
-                        {e.payByHour && <>
+                        {(e.payByHour || arrivalTimes[k]) && <>
                           <div style={{ padding: "4px 8px", fontSize: 10, color: "#92400E", borderTop: "1px solid #F1F5F9", borderBottom: "1px solid #F1F5F9", marginTop: 4, background: "#FEF3C7", fontWeight: 700 }}>Hora de entrada (pago proporcional):</div>
                           <div style={{ padding: "4px 8px", fontSize: 11, cursor: "pointer", background: !arrivalTimes[k] ? "#FEF3C7" : "transparent" }} onClick={() => setArrivalTime(e.id, d.day, "")}>{!arrivalTimes[k] ? "✓ " : ""}Sin marcar (paga normal)</div>
                           {ARRIVAL_OPTIONS.map(t => (
@@ -1880,7 +2233,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                       </div>}
                     </td>;
                   })}
-                  <td title={e.payByHour ? `${st.present} dias marcados · ${st.presentEffective.toFixed(2)} dias efectivos (proporcional por hora de entrada)` : `${st.present} dias`} style={{ ...TD, textAlign: "center", fontWeight: 700, background: "#ECFDF5", color: "#059669" }}>{e.payByHour ? st.presentEffective.toFixed(2) : st.present}</td>
+                  <td title={st.presentEffective !== st.present ? `${st.present} dias marcados · ${st.presentEffective.toFixed(2)} dias efectivos (proporcional por hora de entrada)` : `${st.present} dias`} style={{ ...TD, textAlign: "center", fontWeight: 700, background: "#ECFDF5", color: "#059669" }}>{st.presentEffective !== st.present ? st.presentEffective.toFixed(2) : st.present}</td>
                   <td title={st.domTrabTriple > 0 ? `${st.domTrab} DT + ${st.domTrabTriple} DT2 (triple)` : `${st.domTrab} DT`} style={{ ...TD, textAlign: "center", fontWeight: 700, background: (st.domTrab + st.domTrabTriple) > 0 ? "#F3E8FF" : "transparent", color: "#7C3AED" }}>{(st.domTrab + st.domTrabTriple) || ""}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.ferTrab > 0 ? "#FED7AA" : "transparent", color: "#9A3412" }}>{st.ferTrab || ""}</td>
                   <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.absent > 0 ? "#FEE2E2" : "transparent", color: "#DC2626" }}>{st.absent || ""}</td>
@@ -1936,6 +2289,28 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               const cur = byKey[kk];
               if (!cur || String(a.lastSaved || a.date || "") > String(cur.lastSaved || cur.date || "")) byKey[kk] = a;
             });
+            // RE-APLICAR tardanzas DENEGADAS (GeoClock) antes de subir: si
+            // otro usuario denegó una tardanza mientras esta hoja estaba
+            // ABIERTA, el arrivalTimes local no la tiene y este guardado la
+            // pisaría en silencio (se perdería el descuento). gc-tardies es
+            // la fuente de verdad — se relee de la nube y se re-fija toda
+            // hora denegada de esta quincena que falte en la hoja.
+            try {
+              record.arrivalTimes = { ...(record.arrivalTimes || {}) }; // clon: no mutar el estado de React
+              const tds = await store.getCloud("gc-tardies").catch(() => gcTardies);
+              (Array.isArray(tds) ? tds : gcTardies || []).forEach(dec => {
+                if (!dec || dec.estado !== "denegada" || !dec.horaAplicada || !dec.fecha) return;
+                const dStr = String(dec.fecha).slice(0, 10);
+                if (dStr.slice(0, 7) !== record.periodo) return;
+                const dd = Number(dStr.slice(8, 10));
+                const enQ = record.quincena === "1Q" ? dd >= 1 && dd <= 15 : dd >= 16;
+                if (!enQ) return;
+                const emp = ae.find(x => x.id === dec.empId);
+                if (!emp || emp.company !== record.company) return;
+                const kk2 = `${dec.empId}-${dd}`;
+                if (!record.arrivalTimes[kk2]) record.arrivalTimes[kk2] = dec.horaAplicada;
+              });
+            } catch { /* mejor esfuerzo: initialArrivals re-siembra al reabrir */ }
             byKey[keyOf(record)] = record;
             const updated = Object.values(byKey);
             setAtts(updated);
@@ -2149,7 +2524,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                   ${e.fullName}<br><span style="font-family:monospace;color:${pc.main};font-size:8px">${code}</span>
                 </td>
                 ${cells}
-                <td style="text-align:center;background:#ECFDF5;color:#059669;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5" title="${e.payByHour ? `${st.present} marcados · ${st.presentEffective.toFixed(2)} efectivos` : ""}">${e.payByHour ? st.presentEffective.toFixed(2) : st.present}</td>
+                <td style="text-align:center;background:#ECFDF5;color:#059669;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5" title="${st.presentEffective !== st.present ? `${st.present} marcados · ${st.presentEffective.toFixed(2)} efectivos` : ""}">${st.presentEffective !== st.present ? st.presentEffective.toFixed(2) : st.present}</td>
                 <td style="text-align:center;background:${(st.domTrab + st.domTrabTriple) > 0 ? "#F3E8FF" : "transparent"};color:#7C3AED;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5">${(st.domTrab + st.domTrabTriple) || ""}</td>
                 <td style="text-align:center;background:${st.ferTrab > 0 ? "#FED7AA" : "transparent"};color:#9A3412;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5">${st.ferTrab || ""}</td>
                 <td style="text-align:center;background:${st.absent > 0 ? "#FEE2E2" : "transparent"};color:#DC2626;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5">${st.absent || ""}</td>
@@ -3055,9 +3430,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         } else {
           if (v === "1") {
             val = 1;
-            if (e.payByHour && at[k]) {
+            // Hora de entrada marcada (payByHour o tardanza GeoClock denegada):
+            // descuento proporcional desde la hora del HORARIO del empleado.
+            if (at[k]) {
               const [h, mm] = at[k].split(":").map(Number);
-              val = Math.max(0, (8 - Math.max(0, h + mm / 60 - 7)) / 8);
+              val = Math.max(0, (8 - Math.max(0, h + mm / 60 - horaEntradaH(e))) / 8);
             }
           } else if (v === "INC" || v === "V") val = 1; // incapacidad y vacaciones: dia pagado
         }
@@ -3640,108 +4017,398 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
+  // ═══════════════════════════════════════════════════════════════════
+  // DASHBOARD GERENCIAL (ago 2026) — data real del mes, con selector de
+  // mes(es): un mes o varios para comparar (ej. julio vs agosto).
+  // ═══════════════════════════════════════════════════════════════════
+  // Estadísticas de UN mes desde la data real: hojas de asistencia (hr-atts2),
+  // planillas (hr-pays), marcajes GeoClock y el roster de hr-emps5.
+  const statsDeMes = (periodo) => {
+    // Dedupe por quincena (gana la de lastSaved más reciente): si hr-atts2
+    // trae hojas duplicadas de una misma quincena, sin esto el costo MO y
+    // los conteos del mes se duplicarían.
+    const porQ = {};
+    ca.filter(a => a.periodo === periodo).forEach(a => {
+      const cur = porQ[a.quincena];
+      if (!cur || String(a.lastSaved || a.date || "") > String(cur.lastSaved || cur.date || "")) porQ[a.quincena] = a;
+    });
+    const sheets = Object.values(porQ);
+    const [y, m] = periodo.split("-").map(Number);
+    const lastDay = new Date(y, m, 0).getDate();
+    const porDia = [];
+    let nsp = 0, inc = 0, vac = 0, diasPagados = 0, costoMO = 0;
+    const proy = {};
+    sheets.forEach(sh => {
+      const c = calcCostoMO(sh);
+      costoMO += c.total || 0;
+      c.rows.forEach(r => { proy[r.short] = (proy[r.short] || 0) + r.costo; });
+    });
+    for (let d = 1; d <= lastDay; d++) {
+      const q = d <= 15 ? "1Q" : "2Q";
+      const sh = sheets.find(s => s.quincena === q);
+      const dt = new Date(y, m - 1, d);
+      if (!sh || dt.getDay() === 0 || esFeriadoQuincena(periodo, d)) { porDia.push({ x: d, y: null }); continue; }
+      const dStr = `${periodo}-${String(d).padStart(2, "0")}`;
+      let esperados = 0, presentes = 0, conDato = 0;
+      ae.forEach(e => {
+        if (e.startDate && dStr < e.startDate) return;
+        if (e.status === "inactive" && e.endDate && dStr > e.endDate) return;
+        esperados++;
+        const v = (sh.grid || {})[`${e.id}-${d}`] || "";
+        if (v) conDato++;
+        if (v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC" || v === "V") { presentes++; diasPagados++; }
+        if (v === "0") nsp++;
+        if (v === "INC") inc++;
+        if (v === "V") vac++;
+      });
+      // Días sin NINGUNA marca (aún no pasan asistencia) no grafican 0% falso.
+      porDia.push(conDato === 0 ? { x: d, y: null } : { x: d, y: esperados ? Math.round((presentes / esperados) * 100) : null, sub: `${presentes}/${esperados} presentes` });
+    }
+    const paysMes = cp.filter(p => p.periodo === periodo);
+    const planillaTotal = paysMes.reduce((s, p) => s + (Number(p.total) || 0), 0);
+    // Tardanzas GeoClock del mes (solo quincenas cargadas: actual + anterior)
+    const marcasMes = Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && String(mk.fecha || "").slice(0, 7) === periodo);
+    const tardes = marcasMes.filter(mk => mk.tipo === "entrada" && mk.tarde);
+    const minTardeDenegados = tardes.reduce((s, mk) => {
+      const dec = (gcTardies || []).find(t => t && t.markId === mk.id);
+      return dec && dec.estado === "denegada" ? s + (Number(mk.minTarde) || 0) : s;
+    }, 0);
+    const conDatos = porDia.filter(p => p.y !== null);
+    const presenciaProm = conDatos.length ? Math.round(conDatos.reduce((s, p) => s + p.y, 0) / conDatos.length) : null;
+    // Redondeo a 2 decimales: los acumuladores flotantes muestran polvo
+    // (L 277,751.378) si se pasan crudos a fmtL.
+    Object.keys(proy).forEach(k => { proy[k] = +proy[k].toFixed(2); });
+    return { periodo, lastDay, porDia, nsp, inc, vac, diasPagados, costoMO: +costoMO.toFixed(2), proy, paysMes, planillaTotal: +planillaTotal.toFixed(2), tardes, minTardeDenegados, presenciaProm, tieneAsistencia: sheets.length > 0 };
+  };
+  const mesLabel = (periodo) => {
+    const [y, m] = String(periodo).split("-").map(Number);
+    const n = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"][m - 1] || periodo;
+    return `${n.charAt(0).toUpperCase()}${n.slice(1)} ${y}`;
+  };
+
   const renderDashboard = () => {
     const tmp = ae.filter(e => e.contractType === "temporary"); const pm = ae.filter(e => e.contractType === "permanent"); const hon = ae.filter(e => e.contractType === "honorarios");
     const activos = ae.filter(e => e.status === "active");
-    // Masa salarial = salario + bonificacion mensual (lo que cuesta el
-    // personal por mes) — misma base que el costo diario del tab Costos.
     const masaSalarial = activos.reduce((s, e) => s + (Number(e.salary) || 0) + (Number(e.bonificacion) || 0), 0);
     const soon = tmp.filter(e => { if (!e.endDate) return false; const d = (new Date(e.endDate) - new Date()) / 86400000; return d >= 0 && d <= 30; });
-
-    // Ultima planilla guardada de la empresa
-    const lastPay = cp.length > 0 ? cp[cp.length - 1] : null;
-
-    // Costo por proyecto de la ultima planilla (resumido). Si no hay
-    // planillas todavia, se estima desde la ultima asistencia (calcCostoMO).
-    let costoProyRows = [];
-    let costoProySource = "";
-    if (lastPay?.lines?.length) {
-      const acc = {};
-      lastPay.lines.forEach(l => {
-        const pr = l.proj || "SIN ASIGNAR";
-        if (!acc[pr]) acc[pr] = { costo: 0, count: 0 };
-        acc[pr].costo += Number(l.neto) || 0;
-        acc[pr].count++;
-      });
-      costoProyRows = Object.entries(acc).map(([short, v]) => ({ short, ...v })).sort((a, b) => b.costo - a.costo);
-      costoProySource = `Última planilla · ${lastPay.quincena} ${lastPay.periodo} (neto)`;
-    } else {
-      const lastSheet = ca.slice().sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`))[0];
-      if (lastSheet) {
-        const c = calcCostoMO(lastSheet);
-        costoProyRows = c.rows.map(r => ({ short: r.short, costo: r.costo, count: r.emps.length }));
-        costoProySource = `Estimado por asistencia · ${lastSheet.quincena} ${lastSheet.periodo}`;
-      }
-    }
-    const maxCostoProy = Math.max(1, ...costoProyRows.map(r => r.costo));
-
-    // Empleados activos y masa salarial por departamento
-    const porDepto = {};
-    activos.forEach(e => {
-      const d = e.department || "Sin departamento";
-      if (!porDepto[d]) porDepto[d] = { count: 0, masa: 0 };
-      porDepto[d].count++;
-      porDepto[d].masa += (Number(e.salary) || 0) + (Number(e.bonificacion) || 0);
-    });
-    const deptoRows = Object.entries(porDepto).map(([dep, v]) => ({ dep, ...v })).sort((a, b) => b.masa - a.masa);
-    const maxDeptoCount = Math.max(1, ...deptoRows.map(r => r.count));
-    const maxDeptoMasa = Math.max(1, ...deptoRows.map(r => r.masa));
-
-    const BarRow = ({ label, value, max, display, color }) => (
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
-          <span style={{ fontWeight: 600, color: "#2C2A28" }}>{label}</span>
-          <span style={{ fontWeight: 800, color }}>{display}</span>
-        </div>
-        <div style={{ height: 8, borderRadius: 4, background: "#F1F5F9", overflow: "hidden" }}>
-          <div style={{ width: `${Math.min(100, (value / max) * 100)}%`, height: "100%", background: color, transition: "width .3s" }} />
-        </div>
+    const hoy = hoyTegus();
+    const mesActual = hoy.slice(0, 7);
+    // Meses disponibles: los que tienen asistencia o planilla + el actual.
+    const mesesDisponibles = [...new Set([mesActual, ...ca.map(a => a.periodo), ...cp.map(p => p.periodo)])]
+      .filter(Boolean).sort((a, b) => b.localeCompare(a)).slice(0, 8);
+    const mesesSel = (dashMeses.length ? dashMeses : [mesActual]).slice().sort((a, b) => a.localeCompare(b));
+    const multi = mesesSel.length > 1;
+    const stats = mesesSel.map(p => statsDeMes(p));
+    const MES_COLORS = [cc.accent || "#2C5F5D", "#E8762D", "#7C3AED", "#0891B2", "#D97706", "#BE185D"];
+    const toggleMes = (p) => {
+      const cur = dashMeses.length ? dashMeses : [mesActual];
+      const next = cur.includes(p) ? cur.filter(x => x !== p) : [...cur, p];
+      setDashMeses(next.length ? next : [mesActual]);
+    };
+    // Masa MO por proyecto (por mes seleccionado, para barras agrupadas)
+    const proyShorts = [...new Set(stats.flatMap(s => Object.keys(s.proy)))]
+      .sort((a, b) => Math.max(...stats.map(s => s.proy[b] || 0)) - Math.max(...stats.map(s => s.proy[a] || 0)));
+    const maxProy = Math.max(1, ...stats.flatMap(s => Object.values(s.proy)));
+    // Asistencia de HOY (GeoClock): marcajes del día en la quincena actual.
+    const qHoy = getQuincena(hoy);
+    const marksHoy = (gcMarks[`${qHoy.periodo}|${qHoy.quincena}`] || []).filter(mk => mk && mk.company === co && mk.fecha === hoy);
+    const entradasHoy = marksHoy.filter(mk => mk.tipo === "entrada");
+    const tardesHoy = entradasHoy.filter(mk => mk.tarde);
+    const sinMarcarHoy = Math.max(0, activos.length - entradasHoy.length);
+    // Sexo (para la dona de composición)
+    const mujeres = activos.filter(e => e.sexo === "femenino").length;
+    const hombres = activos.filter(e => e.sexo === "masculino").length;
+    const sinSexo = activos.length - mujeres - hombres;
+    // Focos del resumen ejecutivo
+    const sinFicha = activos.filter(e => !e.startDate || !e.sexo || !e.horario);
+    const tardesPend = Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.tarde && !(gcTardies || []).some(t => t && t.markId === mk.id));
+    const st0 = stats[stats.length - 1]; // el mes más reciente seleccionado
+    const panelStyle = { background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: 18, boxShadow: "0 1px 2px rgba(44,42,40,0.04)" };
+    const kpiCard = (label, value, sub, color = "#2C2A28") => (
+      <div style={{ ...panelStyle, padding: "14px 18px", minWidth: isMobile ? "100%" : 170, flex: 1 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.1, textTransform: "uppercase", color: "#8B847C" }}>{label}</div>
+        <div style={{ fontSize: 26, fontWeight: 800, color, marginTop: 4, fontFamily: FONT_DISPLAY }}>{value}</div>
+        {sub && <div style={{ fontSize: 11, color: "#8B847C", marginTop: 2 }}>{sub}</div>}
+        <div style={{ height: 3, borderRadius: 2, marginTop: 10, background: color, opacity: 0.65 }} />
       </div>
     );
 
-    const panelStyle = { background: "#fff", borderRadius: 12, border: "1px solid #E2E8F0", padding: 18 };
-
-    return <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      {/* KPIs */}
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <StatCard icon="👥" label="Empleados activos" value={activos.length} color={cc.color} />
-        <StatCard icon="📝" label="Permanentes" value={pm.length} color="#2563EB" />
-        {tmp.length > 0 && <StatCard icon="⏳" label="Temporales" value={tmp.length} color="#D97706" />}
-        {hon.length > 0 && <StatCard icon="📑" label="Honorarios" value={hon.length} color="#7C3AED" />}
-        <StatCard icon="💰" label="Masa salarial mensual (sal + bonif)" value={fmtL(masaSalarial)} color="#059669" />
-        {lastPay && <StatCard icon="🧾" label={`Última planilla · ${lastPay.quincena} ${lastPay.periodo}`} value={fmtL(lastPay.total)} color="#0891B2" />}
+    return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {/* Encabezado + selector de mes(es) */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 2, textTransform: "uppercase", color: cc.accent }}>{cc.name} · Grupo Geotecnica</div>
+          <h3 style={{ margin: "2px 0 0", fontSize: 20, color: "#2C2A28" }}>Dashboard Gerencial de Talento Humano</h3>
+          <div style={{ fontSize: 12, color: "#8B847C" }}>{mesesSel.map(mesLabel).join(" · ")} — data real de asistencia, planilla y GeoClock</div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 10, color: "#8B847C", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>Mes(es):</span>
+          {mesesDisponibles.map(p => {
+            const on = mesesSel.includes(p);
+            {/* span (no <button>): así los roles solo-lectura pueden navegar meses */}
+            return <span key={p} role="button" onClick={() => toggleMes(p)} title={on && mesesSel.length === 1 ? "Mes seleccionado" : on ? "Quitar de la comparación" : "Agregar a la comparación"}
+              style={{ padding: "5px 12px", borderRadius: 999, border: `1.5px solid ${on ? cc.accent : "#DBD4C8"}`, background: on ? cc.accent : "#fff", color: on ? "#fff" : "#5C5853", fontSize: 12, fontWeight: 700, cursor: "pointer", userSelect: "none" }}>
+              {mesLabel(p).split(" ")[0].slice(0, 3)} {p.slice(0, 4)}
+            </span>;
+          })}
+        </div>
       </div>
 
-      {soon.length > 0 && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 12, padding: 18 }}><div style={{ fontWeight: 700, color: "#92400E", marginBottom: 8 }}>⚠️ Contratos por vencer (30 dias)</div>{soon.map(e => <div key={e.id} style={{ fontSize: 13, color: "#78350F" }}><b>{e.fullName}</b> — Vence: {fmt(e.endDate)}</div>)}</div>}
+      {/* KPI cards del mes más reciente seleccionado */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {kpiCard("Colaboradores", activos.length, `${pm.length} perm · ${tmp.length} temp${hon.length ? ` · ${hon.length} hon` : ""}`, cc.color)}
+        {!hideSalary && kpiCard(`Masa salarial · ${mesLabel(st0.periodo).split(" ")[0]}`, fmtL(masaSalarial), "salario + bonificación del roster", "#D97706")}
+        {!hideSalary && kpiCard("Costo MO del mes", st0.costoMO > 0 ? fmtL(st0.costoMO) : "—", st0.tieneAsistencia ? "real, por asistencia" : "sin asistencia registrada", "#059669")}
+        {kpiCard("Presencia del mes", st0.presenciaProm !== null ? `${st0.presenciaProm}%` : "—", st0.tieneAsistencia ? `NSP ${st0.nsp} · INC ${st0.inc} · VAC ${st0.vac}` : "aún sin hojas de asistencia", "#3E6A99")}
+        {kpiCard("Tardanzas del mes", st0.tardes.length, st0.minTardeDenegados > 0 ? `${st0.minTardeDenegados} min a descontar (denegadas)` : "GeoClock — quincenas recientes", "#B45309")}
+      </div>
 
-      {/* Costo por proyecto (resumido) + Departamentos */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.2fr 1fr 1fr", gap: 16 }}>
+      {/* Comparación multi-mes */}
+      {multi && <div style={panelStyle}>
+        <h4 style={{ margin: "0 0 10px" }}>Comparación de meses</h4>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+            <thead><tr>
+              <th style={{ ...TH, textAlign: "left" }}>Mes</th>
+              <th style={TH}>Presencia</th><th style={TH}>Días pagados</th><th style={TH}>NSP</th><th style={TH}>INC</th><th style={TH}>VAC</th><th style={TH}>Tardanzas</th>
+              {!hideSalary && <th style={TH}>Costo MO</th>}{!hideSalary && <th style={TH}>Planilla</th>}
+            </tr></thead>
+            <tbody>{stats.map((s, i) => <tr key={s.periodo}>
+              <td style={{ ...TD, fontWeight: 800, color: MES_COLORS[i % MES_COLORS.length] }}>● {mesLabel(s.periodo)}</td>
+              <td style={{ ...TD, textAlign: "center", fontWeight: 700 }}>{s.presenciaProm !== null ? `${s.presenciaProm}%` : "—"}</td>
+              <td style={{ ...TD, textAlign: "center" }}>{s.diasPagados || "—"}</td>
+              <td style={{ ...TD, textAlign: "center", color: s.nsp ? "#DC2626" : "#94A3B8" }}>{s.nsp}</td>
+              <td style={{ ...TD, textAlign: "center", color: s.inc ? "#92400E" : "#94A3B8" }}>{s.inc}</td>
+              <td style={{ ...TD, textAlign: "center", color: s.vac ? "#0F766E" : "#94A3B8" }}>{s.vac}</td>
+              <td style={{ ...TD, textAlign: "center" }}>{s.tardes.length || "—"}</td>
+              {!hideSalary && <td style={{ ...TD, textAlign: "right", fontWeight: 700, color: "#059669" }}>{s.costoMO ? fmtL(s.costoMO) : "—"}</td>}
+              {!hideSalary && <td style={{ ...TD, textAlign: "right", color: "#0891B2" }}>{s.planillaTotal ? fmtL(s.planillaTotal) : "—"}</td>}
+            </tr>)}</tbody>
+          </table>
+        </div>
+      </div>}
+
+      {/* Presencia diaria + resumen ejecutivo */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.6fr 1fr", gap: 16 }}>
         <div style={panelStyle}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
-            <h4 style={{ margin: 0 }}>Costo por proyecto</h4>
-            <span style={{ fontSize: 10, color: "#94A3B8" }}>{costoProySource || "Sin datos aún"}</span>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+            <h4 style={{ margin: 0 }}>Presencia diaria {multi ? "por mes" : "del mes"}</h4>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {stats.map((s, i) => <span key={s.periodo} style={{ fontSize: 11, fontWeight: 700, color: MES_COLORS[i % MES_COLORS.length] }}>● {mesLabel(s.periodo)}</span>)}
+            </div>
           </div>
-          {costoProyRows.length === 0 && <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Registrá asistencia o guardá una planilla para ver esto. El detalle completo está en el tab <b>Costos</b>.</div>}
-          {costoProyRows.slice(0, 8).map(r => (
-            <BarRow key={r.short} label={r.short} value={r.costo} max={maxCostoProy} display={fmtL(r.costo)} color="#059669" />
-          ))}
+          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 6 }}>Porcentaje del equipo presente o justificado por día (domingos/feriados fuera). Pasá el mouse por los puntos.</div>
+          {stats.every(s => !s.tieneAsistencia)
+            ? <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "24px 0" }}>Sin hojas de asistencia en {mesesSel.map(mesLabel).join(" ni ")} todavía.</div>
+            : <GTLineChart lastDay={Math.max(...stats.map(s => s.lastDay))} series={stats.map((s, i) => ({ label: mesLabel(s.periodo), color: MES_COLORS[i % MES_COLORS.length], points: s.porDia }))} />}
         </div>
-        <div style={panelStyle}>
-          <h4 style={{ margin: "0 0 12px" }}>Activos por departamento</h4>
-          {deptoRows.length === 0 && <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Sin empleados activos.</div>}
-          {deptoRows.map(r => (
-            <BarRow key={r.dep} label={r.dep} value={r.count} max={maxDeptoCount} display={r.count} color="#2563EB" />
-          ))}
-        </div>
-        <div style={panelStyle}>
-          <h4 style={{ margin: "0 0 12px" }}>Masa salarial por departamento</h4>
-          {deptoRows.map(r => (
-            <BarRow key={r.dep} label={r.dep} value={r.masa} max={maxDeptoMasa} display={fmtL(r.masa)} color="#7C3AED" />
-          ))}
+        <div style={{ background: "#1F1B17", borderRadius: 14, padding: 18, color: "#F0EBE3", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 2, textTransform: "uppercase", color: "#E8762D" }}>Resumen ejecutivo</div>
+          <div style={{ fontSize: 19, fontWeight: 800, fontFamily: FONT_DISPLAY }}>{mesLabel(st0.periodo)}</div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.55, color: "#D8D2C8" }}>
+            {cc.name} opera con <b style={{ color: "#fff" }}>{activos.length} colaboradores</b>{!hideSalary && <> y una masa salarial de <b style={{ color: "#fff" }}>{fmtL(masaSalarial)}</b></>}.{" "}
+            {st0.tieneAsistencia ? <>La presencia del mes va en <b style={{ color: "#fff" }}>{st0.presenciaProm}%</b> con {st0.nsp} NSP.</> : <>Aún no hay asistencia registrada este mes.</>}{" "}
+            {hideSalary ? null : st0.paysMes.length ? <>Planilla del mes: <b style={{ color: "#fff" }}>{fmtL(st0.planillaTotal)}</b>{st0.paysMes.length === 1 ? " (1 quincena)" : ""}.</> : <>La planilla del mes aún no se genera en el sistema.</>}
+          </div>
+          {soon.length > 0 && <div style={{ background: "#2A2520", border: "1px solid #3D3530", borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: "#E8762D", textTransform: "uppercase" }}>Foco 1 · Contratos</div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, marginTop: 2 }}>{soon.length} contrato(s) vencen en 30 días</div>
+            <div style={{ fontSize: 11, color: "#A8A096" }}>{soon.slice(0, 3).map(e => e.fullName.split(" ").slice(0, 2).join(" ")).join(" · ")}{soon.length > 3 ? "…" : ""} — renovalos desde Contratos.</div>
+          </div>}
+          {tardesPend.length > 0 && <div style={{ background: "#2A2520", border: "1px solid #3D3530", borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: "#E8762D", textTransform: "uppercase" }}>Foco · GeoClock</div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, marginTop: 2 }}>{tardesPend.length} llegada(s) tardía(s) sin decidir</div>
+            <div style={{ fontSize: 11, color: "#A8A096" }}>Aprobá o denegá las explicaciones en Llegadas tardías.</div>
+          </div>}
+          {sinFicha.length > 0 && <div style={{ background: "#2A2520", border: "1px solid #3D3530", borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: "#E8762D", textTransform: "uppercase" }}>Foco · Expedientes</div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, marginTop: 2 }}>{sinFicha.length} ficha(s) incompletas</div>
+            <div style={{ fontSize: 11, color: "#A8A096" }}>Sin fecha de ingreso, sexo u horario — completalas para que KPIs y GeoClock calculen bien.</div>
+          </div>}
         </div>
       </div>
 
-      {cp.length > 0 && <div style={panelStyle}><h4 style={{ margin: "0 0 12px" }}>Ultimas planillas</h4><Table columns={[{ key: "p", label: "Periodo", render: r => `${r.quincena} ${r.periodo}` }, { key: "count", label: "Empleados" }, { key: "total", label: "Total", render: r => <b style={{ color: "#059669" }}>{fmtL(r.total)}</b> }, { key: "date", label: "Fecha", render: r => fmt(r.date) }]} data={cp.slice(-3).reverse()} /></div>}
+      {/* Costo MO por proyecto + Asistencia de hoy + Composición */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.35fr 1fr 1fr", gap: 16 }}>
+        <div style={panelStyle}>
+          <h4 style={{ margin: "0 0 2px" }}>Costo de mano de obra por proyecto</h4>
+          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 10 }}>{hideSalary ? "Días pagados por proyecto (montos ocultos para tu usuario)" : "Real, desde la asistencia del mes (salario + bonif / 30 × días)"}{multi ? " — por mes" : ""}</div>
+          {proyShorts.length === 0 && <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Sin asistencia registrada en {mesesSel.map(mesLabel).join(" / ")}.</div>}
+          {proyShorts.slice(0, 9).map(shrt => <div key={shrt} style={{ marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+              <span style={{ fontWeight: 700, color: "#2C2A28" }}>{shrt}</span>
+              {!hideSalary && <span style={{ fontWeight: 800, color: "#059669" }}>{stats.map((s) => s.proy[shrt] ? fmtL(s.proy[shrt]) : "—").join("  ·  ")}</span>}
+            </div>
+            {stats.map((s, i) => <div key={s.periodo} title={`${mesLabel(s.periodo)} · ${shrt}: ${hideSalary ? "" : fmtL(s.proy[shrt] || 0)}`} style={{ height: multi ? 6 : 9, borderRadius: 4, background: "#F1F5F9", overflow: "hidden", marginTop: 2 }}>
+              <div style={{ width: `${Math.min(100, ((s.proy[shrt] || 0) / maxProy) * 100)}%`, height: "100%", background: MES_COLORS[i % MES_COLORS.length], transition: "width .3s" }} />
+            </div>)}
+          </div>)}
+        </div>
+        <div style={panelStyle}>
+          <h4 style={{ margin: "0 0 2px" }}>Asistencia de hoy</h4>
+          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 8 }}>{fmt(hoy)} · marcajes GeoClock</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <GTDonut size={120} centerLabel={String(entradasHoy.length)} centerSub="marcaron"
+              segments={[
+                { value: entradasHoy.length - tardesHoy.length, color: "#5A8A4F", label: "A tiempo" },
+                { value: tardesHoy.length, color: "#D4A017", label: "Tarde" },
+                { value: sinMarcarHoy, color: "#DBD4C8", label: "Sin marcar" },
+              ]} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5 }}>
+              <span><span style={{ color: "#5A8A4F" }}>●</span> A tiempo <b>{entradasHoy.length - tardesHoy.length}</b></span>
+              <span><span style={{ color: "#D4A017" }}>●</span> Tardanzas <b>{tardesHoy.length}</b></span>
+              <span><span style={{ color: "#B8B0A4" }}>●</span> Sin marcar <b>{sinMarcarHoy}</b></span>
+              <span style={{ fontSize: 10.5, color: "#94A3B8" }}>Salidas registradas: {marksHoy.filter(mk => mk.tipo === "salida").length}</span>
+            </div>
+          </div>
+          {entradasHoy.length === 0 && <div style={{ fontSize: 11, color: "#94A3B8", fontStyle: "italic", marginTop: 8 }}>Nadie ha marcado hoy — el marcaje vive en el módulo GeoClock (tablet de Oscar en plantel y de Ana en oficina).</div>}
+        </div>
+        <div style={panelStyle}>
+          <h4 style={{ margin: "0 0 2px" }}>Composición del equipo</h4>
+          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 8 }}>{activos.length} personas activas</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <GTDonut size={120} centerLabel={String(activos.length)} centerSub="personas"
+              segments={[
+                { value: pm.length, color: cc.accent, label: "Permanentes" },
+                { value: tmp.length, color: "#D4A017", label: "Temporales" },
+                { value: hon.length, color: "#7B5FA8", label: "Honorarios" },
+              ]} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5 }}>
+              <span><span style={{ color: cc.accent }}>●</span> Permanentes <b>{pm.length}</b></span>
+              <span><span style={{ color: "#D4A017" }}>●</span> Temporales <b>{tmp.length}</b></span>
+              {hon.length > 0 && <span><span style={{ color: "#7B5FA8" }}>●</span> Honorarios <b>{hon.length}</b></span>}
+              <span style={{ fontSize: 10.5, color: "#94A3B8", marginTop: 4 }}>♀ {mujeres} · ♂ {hombres}{sinSexo ? ` · ${sinSexo} sin registrar` : ""}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {cp.length > 0 && <div style={panelStyle}><h4 style={{ margin: "0 0 12px" }}>Últimas planillas</h4><Table columns={[{ key: "p", label: "Periodo", render: r => `${r.quincena} ${r.periodo}` }, { key: "count", label: "Empleados" }, { key: "total", label: "Total", render: r => <b style={{ color: "#059669" }}>{fmtL(r.total)}</b> }, { key: "date", label: "Fecha", render: r => fmt(r.date) }]} data={cp.slice(-3).reverse()} /></div>}
+    </div>;
+  };
+
+  // ═══════════════════════════════════════════════════════════════════
+  // KPI's DE RECURSOS HUMANOS (ago 2026) — indicadores generales por
+  // empresa, con navegación de mes. Estilo IsTeam del cliente de Gerson.
+  // ═══════════════════════════════════════════════════════════════════
+  const renderKpis = () => {
+    const hoy = hoyTegus();
+    const mesActual = hoy.slice(0, 7);
+    const mes = kpisMes || mesActual;
+    const [ky, km] = mes.split("-").map(Number);
+    const moverMes = (delta) => {
+      const d = new Date(ky, km - 1 + delta, 1);
+      setKpisMes(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    };
+    const activos = ae.filter(e => e.status === "active");
+    const st = statsDeMes(mes);
+    const masaRoster = activos.reduce((s, e) => s + (Number(e.salary) || 0) + (Number(e.bonificacion) || 0), 0);
+    const bonifTotal = activos.reduce((s, e) => s + (Number(e.bonificacion) || 0), 0);
+    const masaMes = st.planillaTotal > 0 ? st.planillaTotal : masaRoster;
+    const masaEsReal = st.planillaTotal > 0;
+    // Delta vs mes anterior (solo si ambos tienen planilla real)
+    const prevD = new Date(ky, km - 2, 1);
+    const mesPrev = `${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, "0")}`;
+    const planillaPrev = cp.filter(p => p.periodo === mesPrev).reduce((s, p) => s + (Number(p.total) || 0), 0);
+    const deltaMasa = masaEsReal && planillaPrev > 0 ? ((st.planillaTotal - planillaPrev) / planillaPrev) * 100 : null;
+    // HE del mes (hojas de HE cuyo periodo es este mes — costo estimado)
+    const heMes = che.filter(h => h.periodo === mes);
+    const heCosto = heMes.reduce((s, h) => s + (heTotalsOf(h)?.costo || 0), 0);
+    const heHrs = heMes.reduce((s, h) => s + (heTotalsOf(h)?.hrs || 0), 0);
+    // Ausentismo: NSP sobre días esperados marcados
+    const ausentismo = (st.nsp + st.diasPagados) > 0 ? (st.nsp / (st.nsp + st.diasPagados)) * 100 : 0;
+    // Rotación del año: bajas registradas en movimientos / headcount
+    const anio = String(ky);
+    const bajasAnio = cmov.filter(mv => mv.tipo === "baja" && String(mv.date || "").slice(0, 4) === anio);
+    const rotacion = activos.length > 0 ? (bajasAnio.length / activos.length) * 100 : 0;
+    // Vacaciones del año (registros hr-vacs de esta empresa)
+    const vacsAnio = cv.filter(v => v.status !== "rejected" && String(v.startDate || "").slice(0, 4) === anio);
+    const diasVacAnio = vacsAnio.reduce((s, v) => s + (Number(v.days) || 0), 0);
+    // Antigüedad promedio
+    const conIngreso = activos.filter(e => e.startDate);
+    const antProm = conIngreso.length ? conIngreso.reduce((s, e) => s + (Date.now() - new Date(e.startDate).getTime()), 0) / conIngreso.length / (365.25 * 86400000) : null;
+    // Género
+    const mujeres = activos.filter(e => e.sexo === "femenino").length;
+    const hombres = activos.filter(e => e.sexo === "masculino").length;
+    const conSexo = mujeres + hombres;
+    // Masa salarial por mes del año (real = planilla; si no, proyección roster)
+    const mesesAnio = Array.from({ length: 12 }, (_, i) => `${anio}-${String(i + 1).padStart(2, "0")}`);
+    const barsAnio = mesesAnio.map(p => {
+      const real = cp.filter(x => x.periodo === p).reduce((s, x) => s + (Number(x.total) || 0), 0);
+      return { key: p, label: "EFMAMJJASOND"[Number(p.slice(5, 7)) - 1], title: mesLabel(p), value: real > 0 ? real : masaRoster, real: real > 0, top: `${Math.round((real > 0 ? real : masaRoster) / 1000)}k` };
+    });
+    // Composición por departamento (barra apilada)
+    const porDepto = {};
+    activos.forEach(e => { const d = e.department || "Sin depto"; porDepto[d] = (porDepto[d] || 0) + 1; });
+    const deptoRows = Object.entries(porDepto).sort((a, b) => b[1] - a[1]);
+    const DEPTO_COLORS = ["#D4A017", "#3E6A99", "#1F2A44", "#5A8A4F", "#7B5FA8", "#C0392B", "#0891B2", "#8B847C"];
+    const card = (label, value, sub, hi = false) => (
+      <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${hi ? "#E8762D" : "#E2E8F0"}`, borderTop: hi ? "3px solid #E8762D" : undefined, padding: "14px 18px", flex: "1 1 180px", minWidth: 170 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.1, textTransform: "uppercase", color: "#8B847C" }}>{label}</div>
+        <div style={{ fontSize: 24, fontWeight: 800, color: "#2C2A28", marginTop: 4, fontFamily: FONT_DISPLAY }}>{value}</div>
+        <div style={{ fontSize: 11, color: "#8B847C", marginTop: 2 }}>{sub}</div>
+      </div>
+    );
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 20, color: "#2C2A28" }}>KPI's de Recursos Humanos</h3>
+          <div style={{ fontSize: 12, color: "#8B847C" }}>Indicadores clave de {cc.name} — los meses con planilla generada usan el dato real</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <NavBtn onClick={() => moverMes(-1)}>‹</NavBtn>
+          <span style={{ fontWeight: 800, fontSize: 15, color: "#2C2A28", minWidth: 130, textAlign: "center" }}>{mesLabel(mes)}</span>
+          <NavBtn onClick={() => moverMes(1)}>›</NavBtn>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {card("Headcount", activos.length, `${activos.filter(e => e.contractType === "permanent").length} permanentes · ${activos.filter(e => e.contractType === "temporary").length} temporales`)}
+        {!hideSalary && card(`Masa salarial (${mesLabel(mes).split(" ")[0].toLowerCase()})`, fmtL(masaMes), masaEsReal ? (st.paysMes.length === 1 ? "planilla real de 1 QUINCENA (falta la otra)" : deltaMasa !== null ? `planilla real · vs mes anterior: ${deltaMasa >= 0 ? "+" : ""}${deltaMasa.toFixed(1)}%` : "planilla real del mes") : "proyección con roster (generá la planilla)", true)}
+        {!hideSalary && card("Salario promedio", activos.length ? fmtL(masaRoster / activos.length) : "—", "base mensual por colaborador")}
+        {!hideSalary && card("Costo por empleado", activos.length ? fmtL((masaRoster + heCosto) / activos.length) : "—", heCosto > 0 ? `incluye ${fmtL(heCosto)} de HE del mes` : "sin horas extras este mes")}
+        {card("Tasa de expediente", activos.length ? `${Math.round(activos.filter(e => e.startDate && e.sexo && e.horario).length / activos.length * 100)}%` : "—", `${activos.filter(e => !e.startDate || !e.sexo || !e.horario).length} fichas por completar`)}
+      </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {card("Ausentismo del mes", `${ausentismo.toFixed(1)}%`, `${st.nsp} inasistencias injustificadas (NSP)`)}
+        {card("Tardanzas del mes", `${st.minTardeDenegados} min`, `${st.tardes.length} llegada(s) tarde · minutos a descontar (denegadas)`, st.tardes.length > 0)}
+        {card(`Rotación ${anio}`, `${rotacion.toFixed(1)}%`, `${bajasAnio.length} baja(s) en el año`)}
+        {card("Vacaciones tomadas", `${diasVacAnio} días`, `acumulado ${anio} (${vacsAnio.length} registro(s))`)}
+        {card("Antigüedad promedio", antProm !== null ? `${antProm.toFixed(1)} años` : "—", conIngreso.length < activos.length ? `${activos.length - conIngreso.length} sin fecha de ingreso` : "de todo el equipo activo")}
+        {!hideSalary && card("Horas extras del mes", heHrs > 0 ? `${heHrs.toFixed(1)} h` : "0 h", heCosto > 0 ? `${fmtL(heCosto)} estimado` : "sin hojas de HE este mes")}
+        {!hideSalary && card("Bonificaciones activas", fmtL(bonifTotal), "suma mensual vigente en fichas")}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.5fr 1fr", gap: 16 }}>
+        {!hideSalary && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: 18 }}>
+          <h4 style={{ margin: "0 0 2px" }}>Masa salarial por mes · {anio}</h4>
+          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 10 }}>Barras <b style={{ color: "#D4A017" }}>doradas</b> = planilla generada (dato real) · barras <b style={{ color: "#3E6A99" }}>azules</b> = proyección con el roster actual. Click en una barra para ver ese mes.</div>
+          <GTMonthBars data={barsAnio} fmtVal={fmtL} selected={mes} onPick={(d) => setKpisMes(d.key)} />
+        </div>}
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: 18 }}>
+          <h4 style={{ margin: "0 0 2px" }}>Estructura del personal</h4>
+          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 10 }}>{conSexo} de {activos.length} con sexo registrado{conSexo < activos.length ? " — completá las fichas" : ""}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div style={{ background: "#FDF2F0", borderRadius: 12, padding: "16px 10px", textAlign: "center" }}>
+              <div style={{ fontSize: 30 }}>👩‍🦱</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#BE185D" }}>{conSexo ? Math.round(mujeres / conSexo * 100) : 0}%</div>
+              <div style={{ fontSize: 11, color: "#8B847C" }}>Mujeres · {mujeres}</div>
+            </div>
+            <div style={{ background: "#EFF6F4", borderRadius: 12, padding: "16px 10px", textAlign: "center" }}>
+              <div style={{ fontSize: 30 }}>👷</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#1F2A44" }}>{conSexo ? Math.round(hombres / conSexo * 100) : 0}%</div>
+              <div style={{ fontSize: 11, color: "#8B847C" }}>Hombres · {hombres}</div>
+            </div>
+          </div>
+          {deptoRows.length > 0 && <>
+            <div style={{ display: "flex", height: 12, borderRadius: 6, overflow: "hidden", marginTop: 14 }}>
+              {deptoRows.map(([dep, n], i) => <div key={dep} title={`${dep}: ${n}`} style={{ width: `${(n / activos.length) * 100}%`, background: DEPTO_COLORS[i % DEPTO_COLORS.length] }} />)}
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+              {deptoRows.map(([dep, n], i) => <span key={dep} style={{ fontSize: 11, color: "#5C5853" }}><span style={{ color: DEPTO_COLORS[i % DEPTO_COLORS.length] }}>●</span> {dep} <b>{n}</b> ({Math.round(n / activos.length * 100)}%)</span>)}
+            </div>
+          </>}
+        </div>
+      </div>
     </div>;
   };
 
@@ -3967,7 +4634,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const renderLvs = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cl.length} permisos</span><Btn onClick={() => setModal({ t: "ln" })}>+ Nuevo</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "d", label: "Fecha", render: r => fmt(r.date) }, { key: "t", label: "Tipo", render: r => <Badge>{r.type}</Badge> }, { key: "r", label: "Motivo", render: r => r.reason }, { key: "s", label: "Estado", render: r => <Badge color={r.status === "approved" ? "#059669" : "#D97706"}>{r.status === "approved" ? "Aprobado" : "Pendiente"}</Badge> }]} data={cl} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "le", d: r })}>Editar</Btn><Btn small variant="danger" onClick={async () => { if (!confirm(`¿Eliminar el permiso de ${en(r.employeeId)} del ${fmt(r.date)}?\n\nTambién se desmarca el día en la asistencia.`)) return; await sL(lvs.filter(l => l.id !== r.id)); await syncPermiso(null, r); }}>×</Btn></div>} /></div>;
 
   const renderAtts = () => {
-    const openGrid = (cuad) => {
+    const openGrid = async (cuad) => {
+      // Refresca los marcajes GeoClock de esta quincena Y las decisiones de
+      // tardanzas ANTES de montar la grid, para que initialData siembre los
+      // "1" y las horas de denegadas con lo ultimo que hay en la nube.
+      await Promise.all([refreshMarksFor(cuad.periodo, cuad.quincena), refreshTardies()]);
       const existing = ca.find(a => a.periodo === cuad.periodo && a.quincena === cuad.quincena);
       // La cuadrilla es la fuente de verdad de las asignaciones empleado→proyecto.
       // Si la asistencia ya existe, refrescamos sus assignments con los de la cuadrilla
@@ -4009,7 +4680,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                   {a.lastSaved && <span style={{ fontSize: 10, color: "#94A3B8" }}>guardada {fmt(a.lastSaved.slice(0, 10))}</span>}
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <Btn small variant="primary" onClick={() => setModal({ t: "ag", d: { ...a } })}>Abrir asistencia</Btn>
+                  <Btn small variant="primary" onClick={async () => { await Promise.all([refreshMarksFor(a.periodo, a.quincena), refreshTardies()]); setModal({ t: "ag", d: { ...a } }); }}>Abrir asistencia</Btn>
                   {/* Reconstruir la cuadrilla desde la propia hoja: sus
                       assignments quedaron intactos, así que la distribución
                       se recupera tal cual y vuelven a aparecer las HE. */}
@@ -4057,6 +4728,138 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           if (!ok) alert("⚠️ Se elimino en este dispositivo pero NO se sincronizo a la nube. Reintenta cuando tengas conexion.");
         }}>×</Btn>
       </div>} />
+    </div>;
+  };
+
+  // ═══════════════════════════════════════════════════════════════════
+  // REPORTE DE LLEGADAS TARDÍAS (GeoClock → RRHH, ago 2026)
+  // ═══════════════════════════════════════════════════════════════════
+  // Marcajes de entrada DESPUÉS de la tolerancia (10 min sobre el horario
+  // del empleado). RRHH decide: APROBAR = permiso, día completo pagado;
+  // DENEGAR = descuento proporcional en la asistencia (mismo mecanismo de
+  // José Miguel: la hora real de llegada va a arrivalTimes de la hoja).
+  const renderTardanzas = () => {
+    // Marcas tarde de las quincenas cargadas (actual + anterior), empresa activa.
+    const marcasTarde = Object.values(gcMarks).flat()
+      .filter(mk => mk && mk.tipo === "entrada" && mk.tarde && mk.company === co)
+      .sort((a, b) => String(b.ts || b.fecha).localeCompare(String(a.ts || a.fecha)));
+    const decisionDe = (mk) => (gcTardies || []).find(t => t && t.markId === mk.id) || null;
+    const pendientes = marcasTarde.filter(mk => !decisionDe(mk));
+    const decididas = marcasTarde.filter(mk => decisionDe(mk));
+    const empDe = (mk) => emps.find(e => e.id === mk.empId) || null;
+    const descuentoDe = (mk, e) => {
+      const [h, mm] = String(mk.hora || "0:00").split(":").map(Number);
+      // Tope 8h: nunca se descuenta más que el valor del día completo.
+      const horasTarde = Math.min(8, Math.max(0, (h || 0) + (mm || 0) / 60 - horaEntradaH(e)));
+      const sd = ((Number(e?.salary) || 0)) / 30;
+      return { horasTarde, monto: (horasTarde / 8) * sd };
+    };
+    const refrescar = async () => {
+      const q0 = getQuincena(hoyTegus());
+      const q1 = quincenaAnterior(q0.periodo, q0.quincena);
+      await Promise.all([refreshMarksFor(q0.periodo, q0.quincena), refreshMarksFor(q1.periodo, q1.quincena), refreshTardies()]);
+    };
+    const verFirma = async (mk) => {
+      if (firmaCache[mk.id]) { setFirmaCache(p => { const n = { ...p }; delete n[mk.id]; return n; }); return; }
+      try {
+        const f = await store.get(`gc-firma-${mk.firmaId || mk.id}`);
+        if (f?.dataUrl) setFirmaCache(p => ({ ...p, [mk.id]: f.dataUrl }));
+        else alert("No se encontró la firma de este marcaje.");
+      } catch { alert("No se pudo cargar la firma — revisá tu conexión."); }
+    };
+    const aprobar = async (mk) => {
+      if (!confirm(`¿APROBAR la explicación de ${mk.empNombre || en(mk.empId)}?\n\nLlegó ${mk.minTarde || "?"} min tarde el ${fmt(mk.fecha)} (marcó ${mk.hora}).\n\nEl día se paga COMPLETO — no se aplica descuento.`)) return;
+      const dec = { markId: mk.id, empId: mk.empId, fecha: mk.fecha, estado: "aprobada", decididoPor: userName || "RRHH", decididoAt: new Date().toISOString(), fechaDecision: hoyTegus() };
+      const ok = await sGcTardies({ upsert: dec });
+      alert(ok ? "✅ Tardanza APROBADA — el día se paga completo." : "⚠️ La decisión NO se pudo guardar en la nube. Reintentá.");
+    };
+    const denegar = async (mk) => {
+      const e = empDe(mk);
+      if (!e) return alert("No se encontró al empleado de este marcaje.");
+      const d = descuentoDe(mk, e);
+      const montoTxt = hideSalary ? "" : `\n\nDescuento proporcional: ${fmtL(d.monto)} (${(d.horasTarde * 60).toFixed(0)} min tarde = ${(d.horasTarde / 8 * 100).toFixed(1)}% del día).`;
+      if (!confirm(`¿DENEGAR la explicación de ${mk.empNombre || en(mk.empId)}?\n\nLlegó tarde el ${fmt(mk.fecha)} — marcó ${mk.hora} (su horario entra ${horarioDe(e).entrada}).${montoTxt}\n\nLa hora real quedará fijada en su asistencia y el descuento se aplica solo en planilla y Costos MO.`)) return;
+      // 1) Fijar la hora en la hoja de asistencia (aborta si la nube no responde)
+      const r = await marcarTardanzaEnAsistencia(mk.empId, mk.fecha, mk.hora, "aplicar");
+      if (r.sinNube) return alert("⚠️ No hay conexión con la nube — NO se aplicó nada. Reintentá cuando tengas señal.");
+      if (!r.ok && !r.sinHoja) return alert("⚠️ No se pudo VERIFICAR la escritura en la asistencia. NO se guardó la decisión — reintentá.");
+      // 2) Guardar la decisión
+      const dec = { markId: mk.id, empId: mk.empId, fecha: mk.fecha, estado: "denegada", horaAplicada: mk.hora, decididoPor: userName || "RRHH", decididoAt: new Date().toISOString(), fechaDecision: hoyTegus() };
+      const ok = await sGcTardies({ upsert: dec });
+      if (!ok) return alert("⚠️ La hora quedó en la asistencia pero la decisión NO se guardó en la nube — volvé a DENEGAR para reintentarlo (es idempotente).");
+      alert(r.sinHoja
+        ? "✅ Tardanza DENEGADA. La hoja de esa quincena aún no existe: la hora se fijará SOLA al crearla (queda sembrada)."
+        : `✅ Tardanza DENEGADA — hora ${mk.hora} fijada en la asistencia (${r.hoja}). El descuento sale solo en planilla y Costos.`);
+    };
+    const revertir = async (mk, dec) => {
+      if (!confirm(`¿Revertir la decisión (${dec.estado.toUpperCase()}) sobre la tardanza de ${mk.empNombre || en(mk.empId)} del ${fmt(mk.fecha)}?\n\nVuelve a PENDIENTE${dec.estado === "denegada" ? " y se quita la hora fijada en la asistencia" : ""}.`)) return;
+      if (dec.estado === "denegada") {
+        const r = await marcarTardanzaEnAsistencia(mk.empId, mk.fecha, dec.horaAplicada || mk.hora, "limpiar");
+        if (r.sinNube) return alert("⚠️ Sin conexión con la nube — no se revirtió nada. Reintentá.");
+        // Mismo guard que denegar: si la limpieza de la hora NO se pudo
+        // VERIFICAR, no borrar la decisión (quedaría un descuento fantasma
+        // en la hoja sin registro de por qué está ahí).
+        if (!r.ok && !r.sinHoja) return alert("⚠️ No se pudo verificar la limpieza de la hora en la asistencia. NO se revirtió la decisión — reintentá.");
+      }
+      const ok = await sGcTardies({ remove: mk.id });
+      alert(ok ? "↩️ Decisión revertida — la tardanza vuelve a Pendientes." : "⚠️ No se pudo guardar la reversión en la nube. Reintentá.");
+    };
+    const chipMin = (mk) => <span style={{ background: "#FEE2E2", color: "#B91C1C", fontWeight: 800, borderRadius: 6, padding: "2px 8px", fontSize: 12 }}>+{mk.minTarde ?? "?"} min</span>;
+    const cardTardanza = (mk, dec) => {
+      const e = empDe(mk);
+      const d = e ? descuentoDe(mk, e) : null;
+      return <div key={mk.id} style={{ background: "#fff", border: `1px solid ${dec ? "#E2E8F0" : "#FCD34D"}`, borderLeft: `4px solid ${dec ? (dec.estado === "aprobada" ? "#059669" : "#DC2626") : "#F59E0B"}`, borderRadius: 12, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <EmpAvatar name={mk.empNombre || en(mk.empId)} dataUrl={e?.photo?.fileId ? photoCache[e.photo.fileId] : null} size={38} />
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 14, color: "#2C2A28" }}>{mk.empNombre || en(mk.empId)}</div>
+              <div style={{ fontSize: 11, color: "#8B847C" }}>{e?.position || ""} · horario {e ? horarioDe(e).entrada : "7:00"} · {fmt(mk.fecha)}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 800, fontSize: 15, color: "#B45309" }}>marcó {mk.hora}</span>
+            {chipMin(mk)}
+            {dec && <Badge color={dec.estado === "aprobada" ? "#059669" : "#DC2626"}>{dec.estado === "aprobada" ? "✓ Aprobada (día completo)" : "✕ Denegada (con descuento)"}</Badge>}
+          </div>
+        </div>
+        <div style={{ background: "#FFFBEB", border: "1px dashed #FDE68A", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#78350F" }}>
+          😞 <i>{mk.explicacion || "(sin explicación)"}</i>
+        </div>
+        {!hideSalary && d && <div style={{ fontSize: 12, color: dec?.estado === "aprobada" ? "#94A3B8" : "#B91C1C" }}>
+          Descuento proporcional{dec?.estado === "aprobada" ? " (NO aplicado)" : dec?.estado === "denegada" ? " APLICADO" : " si se deniega"}: <b>{fmtL(d.monto)}</b> — {(d.horasTarde * 60).toFixed(0)} min tarde = {(d.horasTarde / 8 * 100).toFixed(1)}% del día ({fmtL((Number(e?.salary) || 0) / 30)} diario).
+        </div>}
+        {firmaCache[mk.id] && <div style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, padding: 8, textAlign: "center" }}>
+          <img src={firmaCache[mk.id]} alt="Firma" style={{ maxHeight: 90, maxWidth: "100%" }} />
+          <div style={{ fontSize: 10, color: "#94A3B8" }}>Firma del marcaje · registrado en {mk.registradoPor ? `la tablet de ${mk.registradoPor}` : "GeoClock"}</div>
+        </div>}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          <NavBtn onClick={() => verFirma(mk)}>{firmaCache[mk.id] ? "Ocultar firma" : "✍️ Ver firma"}</NavBtn>
+          {!dec && <>
+            <Btn small variant="success" onClick={() => aprobar(mk)}>✓ Aprobar (día completo)</Btn>
+            <Btn small variant="danger" onClick={() => denegar(mk)}>✕ Denegar (aplicar descuento)</Btn>
+          </>}
+          {dec && <Btn small variant="ghost" onClick={() => revertir(mk, dec)}>↩ Revertir decisión</Btn>}
+        </div>
+        {dec && <div style={{ fontSize: 10, color: "#94A3B8", textAlign: "right" }}>Decidido por {dec.decididoPor} · {fmt(dec.fechaDecision || String(dec.decididoAt || "").slice(0, 10))}</div>}
+      </div>;
+    };
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 16, color: "#2C2A28" }}>Reporte de llegadas tardías — {cc.name}</div>
+          <div style={{ fontSize: 12, color: "#8B847C" }}>Marcajes de GeoClock después de la tolerancia ({TOLERANCIA_MIN} min sobre el horario de cada quien). Aprobá la explicación (día completo) o denegala (descuento proporcional, como José Miguel).</div>
+        </div>
+        <NavBtn onClick={refrescar}>🔄 Actualizar</NavBtn>
+      </div>
+      <div style={{ fontWeight: 700, fontSize: 13, color: "#92400E" }}>⏳ Pendientes de decisión ({pendientes.length})</div>
+      {pendientes.length === 0 && <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10, padding: 16, fontSize: 13, color: "#166534" }}>Sin llegadas tardías pendientes. 🎉 Las nuevas caen acá solas cuando alguien marca después de la tolerancia en GeoClock.</div>}
+      {pendientes.map(mk => cardTardanza(mk, null))}
+      {decididas.length > 0 && <>
+        <div style={{ fontWeight: 700, fontSize: 13, color: "#64748b", marginTop: 8 }}>📋 Decididas ({decididas.length})</div>
+        {decididas.map(mk => cardTardanza(mk, decisionDe(mk)))}
+      </>}
+      <div style={{ fontSize: 11, color: "#94A3B8" }}>Se muestran la quincena actual y la anterior. El descuento denegado se fija como hora de entrada en la hoja de asistencia y se aplica automáticamente en Planilla y Costos MO.</div>
     </div>;
   };
 
@@ -4113,7 +4916,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
               </td>
               <td style={TD}><Badge color={cc.color}>{l.proj || "—"}</Badge></td>
               <td style={TD}>{fmtL(l.sb)}</td>
-              <td title={l.payByHour ? `${l.diasPresente || 0} dias marcados · ${(l.diasPresenteEfectivo || l.diasPresente || 0).toFixed(2)} efectivos (proporcional)` : ""} style={{ ...TD, color: "#059669", fontWeight: 600 }}>{l.payByHour ? (l.diasPresenteEfectivo || l.diasPresente || 0).toFixed(2) : (l.diasPresente || 0)}</td>
+              <td title={l.diasPresenteEfectivo != null && l.diasPresenteEfectivo !== l.diasPresente ? `${l.diasPresente || 0} dias marcados · ${l.diasPresenteEfectivo.toFixed(2)} efectivos (proporcional por hora de entrada)` : ""} style={{ ...TD, color: "#059669", fontWeight: 600 }}>{l.diasPresenteEfectivo != null && l.diasPresenteEfectivo !== l.diasPresente ? l.diasPresenteEfectivo.toFixed(2) : (l.diasPresente || 0)}</td>
               <td style={{ ...TD, color: (l.diasNSP || 0) > 0 ? "#DC2626" : "#94A3B8" }}>{l.diasNSP || 0}</td>
               <td style={{ ...TD, color: "#DC2626" }}>{(l.descuentoNSP || 0) > 0 ? fmtL(l.descuentoNSP) : ""}</td>
               <td style={TD}>{fmtL(l.so)}</td>
@@ -4341,6 +5144,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             department: f.department, contractType: f.contractType, startDate: f.startDate,
             endDate: f.endDate || "", salary: Number(f.salary), bonificacion: Number(f.bonificacion) || 0,
             cooperativa: 0, gastosMedicos: 40000, status: "active", phone: "", email: "",
+            sexo: "", horario: "",
             ...(usaExcepcional ? { payrollEffectiveDate: f.payrollEffectiveDate } : {}),
           };
           sE([...emps, newEmp]);
@@ -5568,7 +6372,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     if (!permitidas.includes(sec) && nav.length < allNav.length) return renderSec2(permitidas[0]);
     return renderSec2(sec);
   };
-  const renderSec2 = (s) => { switch (s) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); case "horasextras": return renderHE(); default: return renderDashboard(); } };
+  const renderSec2 = (s) => { switch (s) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "tardanzas": return renderTardanzas(); case "kpis": return renderKpis(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); case "horasextras": return renderHE(); default: return renderDashboard(); } };
 
   const renderModal = () => { if (!modal) return null; const m = modal; switch (m.t) {
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;

@@ -26,7 +26,44 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (coordinador: Fernando). Mismo flujo completo incl. "Cerrar sin logística".
 - `HRModule.jsx` (GeoTeam) — Empleados (fotos), Contratos (tabla por urgencia),
   Planilla, Asistencia (cuadrillas → grid 1/0/INC/DT/DT2/TF + override 1*),
-  Horas Extras, Costos MO, Dashboard. Bonificaciones oculto (código intacto).
+  Horas Extras, Costos MO, Dashboard, KPI's, Llegadas tardías. Bonificaciones
+  oculto (código intacto).
+  **Dashboard gerencial + KPI's (ago 2026, estilo IsTeam)**: `renderDashboard`
+  reescrito — `statsDeMes(periodo)` calcula presencia diaria/NSP/INC/VAC/costo
+  MO por proyecto desde hr-atts2 (calcCostoMO) + planilla real (hr-pays) +
+  tardanzas GeoClock. Selector multi-mes (`dashMeses`, chips toggle → tabla
+  comparativa + líneas superpuestas). Gráficos SVG puros a nivel de módulo:
+  `GTLineChart`/`GTDonut`/`GTMonthBars` (tooltips nativos `<title>`). Pestaña
+  KPI's (`renderKpis`, `kpisMes` con ‹›): headcount, masa (planilla real
+  dorada vs proyección roster azul en GTMonthBars, click en barra = ver mes),
+  ausentismo, tardanzas, rotación (hr-movs bajas), vacaciones año, antigüedad,
+  estructura por género (campo `sexo`) + stacked por depto. Ana NO ve
+  dashboard/kpis; hideSalary gatea montos por si acaso.
+  **Ficha: sexo + horario (ago 2026)**: `emp.sexo` (masculino/femenino, KPI
+  estructura) y `emp.horario` (plantel 7-16 / oficina 8-17 / especial 9-18 /
+  custom con horarioEntrada/horarioSalida). Helpers exportados: `HORARIOS`,
+  `TOLERANCIA_MIN` (10), `horarioDe(e)`, `horaEntradaH(e)` (default plantel
+  7:00), `hoyTegus()`, `gcMarkKey`, `quincenaAnterior` — GeoClock los importa.
+  **Fórmula proporcional GENERALIZADA (ago 2026)**: se quitó el gate
+  `payByHour` en planilla y calcCostoMO — cualquier `arrivalTimes[k]`
+  descuenta, con base `horaEntradaH(emp)` (antes 7 fijo) y TOPE 8h (nunca más
+  que el día). dayValueFor de la grid igual (piso 0). FIX crítico: PayrollGen
+  L~1010 usaba `sheet?.arrivalTimes` (variable inexistente — ReferenceError
+  desde may 2026; generar planilla estaba roto y nadie lo notó porque hr-pays
+  está vacío) → `attSheet?.arrivalTimes`.
+  **Llegadas tardías (`renderTardanzas`)**: marca tarde de GeoClock sin
+  decisión = pendiente. Aprobar → gc-tardies {estado:"aprobada"} (día
+  completo). Denegar → `marcarTardanzaEnAsistencia` fija la hora real en
+  arrivalTimes de la hoja (merge getCloud + verify; ABORTA sinNube; sinHoja =
+  ok, initialData la siembra al crearla) + decisión "denegada". Revertir
+  limpia ambas. `sGcTardies` merge por markId contra getCloud. Firmas se ven
+  on-demand (`firmaCache`). Ana SÍ ve la pestaña (ANA_TABS) pero hideSalary
+  oculta los montos del descuento.
+  **Marcajes → asistencia**: initialData siembra "1" por cada ENTRADA de
+  GeoClock (solo celdas vacías) y `initialArrivals` siembra la hora de
+  tardanzas DENEGADAS; `openGrid` es async y refresca los marks
+  (`refreshMarksFor`) antes de abrir. loadAll carga gc-tardies + marks de la
+  quincena actual y la anterior (`gcMarks` {periodo|Q: [...]}).
   **Acceso de Ana (`asistente_compras`, ago 2026)**: flag `isAnaRH` + `hideSalary`
   (= isAnaRH||isPhotoOnly). Ve 7 pestañas (ANA_TABS): Empleados (ficha completa
   + foto, SIN salario/bonificación, sin borrar gente), Contratos (crea/renueva
@@ -49,6 +86,26 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   "Asistencias históricas sin cuadrilla" (la rearma desde los assignments de la
   hoja). Una quincena nueva siembra copiando la cuadrilla más reciente.
 - `LogisticsModule.jsx` (GeoLogistics) — flota y despachos (kanban Oscar/Jorge).
+- `GeoClockModule.jsx` (GeoClock, ago 2026) — marcaje entrada/salida en tablet
+  (Oscar plantel central, Ana oficina; roles: admin, coordinador,
+  asistente_compras, logistica). Reloj vivo TZ **America/Tegucigalpa** vía
+  Intl (`ahoraTegus()` — NUNCA hora local del dispositivo). El colaborador
+  busca su nombre (activos de ambas empresas), firma en canvas
+  (`SignaturePad` a NIVEL DE MÓDULO, export JPEG ~10KB — PNG pesaba 180KB y
+  llenaba localStorage) y registra ENTRADA/SALIDA. Tolerancia
+  `TOLERANCIA_MIN` sobre `horarioDe(emp).entrada`; pasado eso: "Llegaste
+  tarde 😞" + explicación OBLIGATORIA → pendiente en gc-tardies (la decide
+  RRHH). Domingos/feriados NUNCA son "tarde" (se pagan por ley). **CANDADO**:
+  sin cuadrilla hr-cuad de company|periodo|quincena ACTUAL no se marca
+  (obliga a armar la cuadrilla el día antes de la quincena). Guardado:
+  firma primero (`gc-firma-<id>`), luego mark a `gc-marks-<periodo>-<Q>` con
+  getCloud (throw → abort con alert) + union por id + verify + 1 retry
+  (carrera de 2 tablets). Anti doble-marcaje por día. Kiosk: reset a
+  búsqueda tras 120s (persona) / 7s (confirmación); refresh en window focus.
+  Shape mark: {id, empId, empNombre, company, fecha, hora "H:MM" 24h SIN
+  cero inicial (= formato arrivalTimes), min, tipo, tarde, minTarde,
+  horarioEntrada, explicacion, firmaId, registradoPor, ts, createdAt}.
+  Si funciona en plantel esta quincena, la siguiente se agrega a proyectos.
 - `SafetyModule.jsx` (GeoSafety) — EPP: catálogo con carrito estilo Amazon
   (ítems con foto/tipoEpp/descripción; requisición reparte un ítem entre
   VARIOS colaboradores de hr-emps5 con cant+motivo c/u: primera_vez/perdida/
@@ -106,6 +163,10 @@ los lee vía resolveShortHR), `cp-providers`, `cp-file-<id>` (archivos),
 `mq-purchases`, `mq-machines`, `lg-despachos` (compartido compras/máquinas/
 logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 `hr-he` (horas extras), `hr-pays`, `hr-contracts`, etc.
+GeoClock (ago 2026): `gc-marks-<periodo>-<quincena>` (marcajes, ÚNICO
+escritor GeoClock), `gc-firma-<markId>` (firma JPEG), `gc-tardies`
+(decisiones de RRHH sobre tardanzas, ÚNICO escritor HRModule) — ownership
+separado a propósito para que tablet y RRHH nunca compitan por una key.
 
 ## Convenciones críticas
 - **Guardado robusto**: nunca fire-and-forget en datos importantes. Patrón:
@@ -176,9 +237,12 @@ coordinador_maquinas=fernando · asistente_compras=ana · recepcion=jorge
 GeoShopping+GeoMachinery) · gerencia (solo lectura).
 
 ## Pendientes conocidos
-- Duplicado de empleado "Junior Josue Zambrano Zambrano" en Subterra
-  (DNI 0801-2000-15434 vs 0801-2001-15434) — usuario decide cuál borrar.
-- Última planilla/asistencia real: arrancando 2Q julio 2026 (cuadrillas listas,
-  hoja HE 1Q 2026-07 creada con distribución copiada de la 2Q).
-- Ideas futuras: clock in/out plantel, reasignación por día en grid HE,
-  workflow Node 24 en deploy.yml, mover auth a Supabase.
+- Duplicado Junior Josue Zambrano: RESUELTO (borrado por el usuario, ago 2026).
+- GeoClock arrancó en plantel central (ago 2026) — falta cuadrilla 2Q 2026-08
+  (el candado bloquea el marcaje hasta que RRHH la genere) y llenar sexo/
+  horario en las fichas (KPI de género marca 0/32). Si funciona esta
+  quincena, la siguiente se agrega a los proyectos.
+- hr-pays vacío en producción: nunca han GENERADO planilla desde el sistema
+  (por eso el ReferenceError de PayrollGen vivió inadvertido desde mayo).
+- Ideas futuras: reasignación por día en grid HE, workflow Node 24 en
+  deploy.yml, mover auth a Supabase, GeoClock como app móvil.
