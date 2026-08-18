@@ -92,9 +92,11 @@ export const HORARIOS = {
   oficina:  { label: "Oficina (8:00 – 17:00)",  entrada: "8:00", salida: "17:00" },
   especial: { label: "Especial (9:00 – 18:00)", entrada: "9:00", salida: "18:00" },
 };
-// Ventana de tolerancia para marcar entrada sin caer en llegada tarde
-// (pedido de Gerson: plantel 7:00–7:10). Aplica a todos los horarios.
-export const TOLERANCIA_MIN = 10;
+// Ventana de tolerancia para marcar entrada sin caer en llegada tarde.
+// Aplica a todos los horarios sobre SU hora de entrada (plantel 7:00–7:15,
+// oficina 8:00–8:15, etc). Subida de 10 → 15 min (pedido de Gerson,
+// 18-ago-2026, tras el arranque en plantel).
+export const TOLERANCIA_MIN = 15;
 export const horarioDe = (e) => {
   if (e?.horario === "custom" && e?.horarioEntrada) {
     return { label: `Personalizado (${e.horarioEntrada} – ${e.horarioSalida || "?"})`, entrada: e.horarioEntrada, salida: e.horarioSalida || "" };
@@ -1180,7 +1182,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <Input label="Salida (personalizado)" type="time" value={f.horarioSalida || ""} onChange={e => u("horarioSalida", e.target.value)} />
         </>}
         <div style={{ gridColumn: "1/-1", fontSize: 11, color: "#64748b", background: "#F0F9FF", border: "1px solid #BAE6FD", borderRadius: 8, padding: "8px 12px" }}>
-          🕒 <b>GeoClock</b> usa el horario para la tolerancia de {TOLERANCIA_MIN} min al marcar entrada (ej. plantel: 7:00–7:10). Sin horario asignado se asume <b>Plantel (7:00–16:00)</b>. El descuento por llegada tarde denegada se calcula desde la hora de entrada de ESTE horario.
+          🕒 <b>GeoClock</b> usa el horario para la tolerancia de {TOLERANCIA_MIN} min al marcar entrada (ej. plantel: 7:00–7:15). Sin horario asignado se asume <b>Plantel (7:00–16:00)</b>. El descuento por llegada tarde denegada se calcula desde la hora de entrada de ESTE horario.
         </div>
         <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#92400E", cursor: "pointer" }}>
           <input type="checkbox" checked={!!f.payByHour} onChange={e => u("payByHour", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />

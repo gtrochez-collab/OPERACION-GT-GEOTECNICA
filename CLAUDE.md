@@ -104,7 +104,19 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   búsqueda tras 120s (persona) / 7s (confirmación); refresh en window focus.
   Shape mark: {id, empId, empNombre, company, fecha, hora "H:MM" 24h SIN
   cero inicial (= formato arrivalTimes), min, tipo, tarde, minTarde,
-  horarioEntrada, explicacion, firmaId, registradoPor, ts, createdAt}.
+  horarioEntrada, explicacion, comentario (opcional, solo salidas — ej.
+  "salgo del plantel a proyecto"), firmaId, registradoPor, ts, createdAt}.
+  **Vista Registros (18-ago-2026)**: reporte de entradas/salidas dentro de
+  GeoClock (botón 📋 en el header, visible a todos los roles del módulo).
+  Filas por colaborador+día agrupadas por proyecto (asignación de la
+  cuadrilla de esa quincena, fallback emp.project); entrada = primera del
+  día, salida = última; brutas = salida−entrada; ALMUERZO 1h se descuenta
+  SOLO si la jornada cruza el mediodía (entrada ≤12:00 y salida ≥13:00);
+  laboradas = brutas − almuerzo. Filtros: presets Hoy/Semana/Mes + rango
+  libre (tope 120 días), persona y proyecto. Export CSV (BOM, Excel) y
+  PDF imprimible sin emojis. Carga por getCloud de todas las quincenas del
+  rango (quincenasDeRango). Tolerancia subida a 15 min (TOLERANCIA_MIN en
+  HRModule — aplica a reloj, ficha y tardanzas a la vez).
   Si funciona en plantel esta quincena, la siguiente se agrega a proyectos.
 - `SafetyModule.jsx` (GeoSafety) — EPP: catálogo con carrito estilo Amazon
   (ítems con foto/tipoEpp/descripción; requisición reparte un ítem entre
