@@ -524,6 +524,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [tardEstado, setTardEstado] = useState("");   // "" | pendientes | aprobadas | denegadas
   const [tardPersona, setTardPersona] = useState(""); // empId | ""
   const [tardResp, setTardResp] = useState("");       // "" | Oscar Paz | Ana Vasquez | supers
+  // Archivo por mes / fecha exacta: "" = recientes (quincena actual + la
+  // anterior). Elegir un mes o una fecha carga esas quincenas de la nube.
+  const [tardMes, setTardMes] = useState("");         // "" | "YYYY-MM"
+  const [tardFecha, setTardFecha] = useState("");     // "" | "YYYY-MM-DD"
   const [modal, setModal] = useState(null);
   const isMobile = useIsMobile();
 
@@ -922,6 +926,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     } catch { /* se queda con lo local */ }
     return gcTardies;
   };
+  // ARCHIVO de tardanzas: al elegir un mes o fecha exacta en los filtros de
+  // Llegadas tardías, se cargan de la nube las quincenas de ese mes (por
+  // default solo viven en memoria la actual y la anterior).
+  useEffect(() => {
+    const per = tardFecha ? String(tardFecha).slice(0, 7) : tardMes;
+    if (!per) return;
+    (async () => {
+      await Promise.all([refreshMarksFor(per, "1Q"), refreshMarksFor(per, "2Q"), refreshTardies()]);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tardMes, tardFecha]);
   const sCt = async d => { setContracts(d); return await store.set("hr-contracts", d); };
   const sBn = async d => { setBonifs(d); return await store.set("hr-bonuses", d); };
   const sHe = async d => { setHes(d); return await store.set("hr-he", d); };
@@ -4752,9 +4767,20 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // DENEGAR = descuento proporcional en la asistencia (mismo mecanismo de
   // José Miguel: la hora real de llegada va a arrivalTimes de la hoja).
   const renderTardanzas = () => {
-    // Marcas tarde de las quincenas cargadas (actual + anterior), empresa activa.
+    // Rango temporal: por default se ven las quincenas RECIENTES (actual +
+    // anterior). Con el filtro de mes o fecha exacta se ve el ARCHIVO de ese
+    // período (el useEffect de tardMes/tardFecha ya cargó esas quincenas).
+    const q0 = getQuincena(hoyTegus());
+    const q1 = quincenaAnterior(q0.periodo, q0.quincena);
+    const enRangoTard = (mk) => {
+      if (tardFecha) return mk.fecha === tardFecha;
+      if (tardMes) return String(mk.fecha || "").slice(0, 7) === tardMes;
+      const qm = getQuincena(mk.fecha);
+      return (qm.periodo === q0.periodo && qm.quincena === q0.quincena)
+        || (qm.periodo === q1.periodo && qm.quincena === q1.quincena);
+    };
     const marcasTarde = Object.values(gcMarks).flat()
-      .filter(mk => mk && mk.tipo === "entrada" && mk.tarde && mk.company === co)
+      .filter(mk => mk && mk.tipo === "entrada" && mk.tarde && mk.company === co && enRangoTard(mk))
       .sort((a, b) => String(b.ts || b.fecha).localeCompare(String(a.ts || a.fecha)));
     // Registro en gc-tardies (puede tener estado "pendiente" = decisión
     // REVERTIDA que conserva el historial). Solo aprobada/denegada cuentan
@@ -4777,6 +4803,35 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       return null; // marcada por Gerson/otros → la deciden los supers
     };
     const puedeDecidir = (mk) => esSuperTardies || (!!userName && responsableDe(mk) === userName);
+    // BORRAR marcajes tarde (pruebas / errores): SOLO Gerson (pedido 18-ago
+    // — "que me des a mí nada más la opción"). Elimina el marcaje del reloj,
+    // su firma y la decisión; si estaba denegada, limpia la hora aplicada.
+    const puedeBorrarTardanza = userName === "Lic. Gerson Trochez";
+    const borrarTardanza = async (mk, dec) => {
+      if (!puedeBorrarTardanza) return;
+      if (!confirm(`🗑 ¿Borrar DEFINITIVAMENTE la llegada tarde de ${mk.empNombre || en(mk.empId)} del ${fmt(mk.fecha)} (marcó ${mk.hora})?\n\nSe elimina el marcaje del reloj (también desaparece de Registros de GeoClock), su firma y la decisión${dec && dec.estado === "denegada" ? ", y se quita la hora fijada en la asistencia" : ""}.\n\nEs para PRUEBAS o marcajes erróneos — NO se puede deshacer. Si la asistencia ya se guardó con el "1" sembrado por este marcaje, revisala a mano.`)) return;
+      // 1) Si estaba denegada, limpiar la hora aplicada en la hoja.
+      if (dec && dec.estado === "denegada") {
+        const r = await marcarTardanzaEnAsistencia(mk.empId, mk.fecha, dec.horaAplicada || mk.hora, "limpiar");
+        if (r.sinNube) return alert("⚠️ Sin conexión con la nube — no se borró nada. Reintentá.");
+      }
+      // 2) Quitar el marcaje de su key de quincena (getCloud → filtrar → verify).
+      const { periodo, quincena } = getQuincena(mk.fecha);
+      const key = gcMarkKey(periodo, quincena);
+      let cloudArr;
+      try { const c = await store.getCloud(key); cloudArr = Array.isArray(c) ? c : []; }
+      catch { return alert("⚠️ Sin conexión con la nube — no se borró nada. Reintentá."); }
+      const next = cloudArr.filter(x => x && x.id !== mk.id);
+      const ok = await store.set(key, next);
+      let verified = false;
+      try { const back = await store.getCloud(key); verified = Array.isArray(back) && !back.some(x => x && x.id === mk.id); } catch { verified = false; }
+      if (!ok || !verified) return alert("⚠️ No se pudo VERIFICAR el borrado en la nube — reintentá.");
+      setGcMarks(prev => ({ ...prev, [`${periodo}|${quincena}`]: next }));
+      // 3) Borrar la decisión (si había) y vaciar la firma (best effort).
+      if (registroDe(mk)) await sGcTardies({ remove: mk.id });
+      try { await store.set(`gc-firma-${mk.firmaId || mk.id}`, null); } catch { /* best effort */ }
+      alert("🗑 Marcaje tarde eliminado por completo.");
+    };
     // ── Filtros (persona / responsable) — el de estado gatea las secciones ──
     const filtrar = (lista) => lista.filter(mk => {
       if (tardPersona && mk.empId !== tardPersona) return false;
@@ -4924,6 +4979,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           </>}
           {!dec && !puedeDecidir(mk) && <span style={{ fontSize: 11.5, color: "#94A3B8", fontStyle: "italic" }}>Solo visualización — la decide {responsableDe(mk) || "Gerson / Lic. Carolina"}.</span>}
           {dec && puedeDecidir(mk) && <Btn small variant="ghost" onClick={() => revertir(mk, dec)}>↩ Revertir decisión</Btn>}
+          {puedeBorrarTardanza && <Btn small variant="danger" onClick={() => borrarTardanza(mk, dec)} style={{ opacity: 0.85 }}>🗑 Borrar</Btn>}
         </div>
         {dec && <div style={{ fontSize: 10, color: "#94A3B8", textAlign: "right" }}>Decidido por {dec.decididoPor} · {fmt(dec.fechaDecision || String(dec.decididoAt || "").slice(0, 10))}</div>}
       </div>;
@@ -4952,6 +5008,16 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <option value="Ana Vasquez">Aprueba Ana (oficina)</option>
           <option value="supers">Aprueban Gerson / Lic. Carolina</option>
         </select>
+        {/* Archivo: mes o fecha exacta (carga esas quincenas de la nube) */}
+        <span style={{ fontSize: 11, color: "#8B847C", marginLeft: 4 }}>📁 Archivo:</span>
+        <span role="button" onClick={() => { setTardMes(""); setTardFecha(""); }}
+          style={{ padding: "5px 12px", borderRadius: 999, border: `1.5px solid ${!tardMes && !tardFecha ? "#2C5F5D" : "#DBD4C8"}`, background: !tardMes && !tardFecha ? "#2C5F5D" : "#fff", color: !tardMes && !tardFecha ? "#fff" : "#5C5853", fontSize: 12, fontWeight: 700, cursor: "pointer", userSelect: "none" }}>Recientes</span>
+        <input type="month" value={tardMes} onChange={e => { setTardMes(e.target.value); setTardFecha(""); }}
+          title="Ver el archivo de un mes completo"
+          style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${tardMes ? "#2C5F5D" : "#DBD4C8"}`, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
+        <input type="date" value={tardFecha} onChange={e => { setTardFecha(e.target.value); setTardMes(""); }}
+          title="Ver una fecha exacta"
+          style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${tardFecha ? "#2C5F5D" : "#DBD4C8"}`, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
       </div>
       {(!tardEstado || tardEstado === "pendientes") && <>
         <div style={{ fontWeight: 700, fontSize: 13, color: "#92400E" }}>⏳ Pendientes de decisión ({pendientes.length})</div>
@@ -4960,7 +5026,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       </>}
       {tardEstado !== "pendientes" && decididas.length > 0 && <>
         <div style={{ fontWeight: 700, fontSize: 13, color: "#64748b", marginTop: 8 }}>📋 Decididas ({decididas.length})</div>
-        {decididas.map(mk => cardTardanza(mk, decisionDe(mk)))}
+        {/* ARCHIVO por mes: las decididas se agrupan en carpetas mensuales */}
+        {(() => {
+          const porMes = {};
+          decididas.forEach(mk => { const m2 = String(mk.fecha || "").slice(0, 7); (porMes[m2] = porMes[m2] || []).push(mk); });
+          return Object.keys(porMes).sort((a, b) => b.localeCompare(a)).map(m2 => <div key={m2} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#8B847C", background: "#F8F2E6", borderRadius: 8, padding: "6px 12px", borderLeft: "3px solid #E8762D" }}>📁 {mesLabel(m2)} ({porMes[m2].length})</div>
+            {porMes[m2].map(mk => cardTardanza(mk, decisionDe(mk)))}
+          </div>);
+        })()}
       </>}
       <div style={{ fontSize: 11, color: "#94A3B8" }}>Se muestran la quincena actual y la anterior. El descuento denegado se fija como hora de entrada en la hoja de asistencia y se aplica automáticamente en Planilla y Costos MO.</div>
     </div>;

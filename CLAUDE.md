@@ -65,8 +65,15 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Asistencia" → Ana; otros → solo supers (admin, coordinador, tesoreria =
   Lic. Carolina). Todos visualizan; botones gateados por `puedeDecidir`.
   Filtros: estado (chips) + colaborador + responsable (tardEstado/
-  tardPersona/tardResp). Ana y Oscar (`isOscarTardies`, rol logistica: SOLO
-  esta pestaña en GeoTeam) tienen hideSalary — no ven el monto del descuento.
+  tardPersona/tardResp) + ARCHIVO por mes o fecha exacta (tardMes/tardFecha
+  — un useEffect carga de la nube las quincenas del período elegido; default
+  "Recientes" = quincena actual + anterior). Las Decididas se agrupan en
+  carpetas mensuales (📁 mesLabel). Botón 🗑 Borrar SOLO para Gerson
+  (`puedeBorrarTardanza` por userName): elimina el marcaje de su key
+  gc-marks, vacía la firma, borra la decisión y limpia la hora si estaba
+  denegada (para pruebas/errores). Ana y Oscar (`isOscarTardies`, rol
+  logistica: SOLO esta pestaña en GeoTeam) tienen hideSalary — no ven el
+  monto del descuento.
   **Marcajes → asistencia**: initialData siembra "1" por cada ENTRADA de
   GeoClock (solo celdas vacías) y `initialArrivals` siembra la hora de
   tardanzas DENEGADAS; `openGrid` es async y refresca los marks
