@@ -85,8 +85,9 @@ const MODULES = [
     // Tablets de marcaje (ago 2026): Oscar (logistica) en el plantel central,
     // Ana (asistente_compras) en oficina y el usuario dedicado "marcaje"
     // (tablet de administración — SOLO ve este módulo). Gerson supervisa.
+    // Lic. Carolina (tesoreria) entra para corregir marcajes manuales.
     // Si funciona esta quincena, la siguiente se suma proyectos.
-    roles: ["admin", "coordinador", "asistente_compras", "logistica", "marcaje"],
+    roles: ["admin", "coordinador", "tesoreria", "asistente_compras", "logistica", "marcaje"],
   },
   {
     id: "geodrill-vault",

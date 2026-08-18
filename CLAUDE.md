@@ -103,7 +103,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
 - `LogisticsModule.jsx` (GeoLogistics) — flota y despachos (kanban Oscar/Jorge).
 - `GeoClockModule.jsx` (GeoClock, ago 2026) — marcaje entrada/salida en tablet
   (Oscar plantel central, Ana oficina; roles: admin, coordinador,
-  asistente_compras, logistica). Reloj vivo TZ **America/Tegucigalpa** vía
+  tesoreria, asistente_compras, logistica, marcaje). Reloj vivo TZ **America/Tegucigalpa** vía
   Intl (`ahoraTegus()` — NUNCA hora local del dispositivo). El colaborador
   busca su nombre (activos de ambas empresas), firma en canvas
   (`SignaturePad` a NIVEL DE MÓDULO, export JPEG ~10KB — PNG pesaba 180KB y
@@ -132,6 +132,22 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   PDF imprimible sin emojis. Carga por getCloud de todas las quincenas del
   rango (quincenasDeRango). Tolerancia subida a 15 min (TOLERANCIA_MIN en
   HRModule — aplica a reloj, ficha y tardanzas a la vez).
+  **Corrección manual + NO MARCÓ (18-ago-2026, caso Ariel)**: el día cierra
+  11:59 PM — en días CERRADOS la celda sin marca muestra badge rojo
+  "NO MARCÓ"; regla de negocio: día cerrado SIN ENTRADA = NO SE PRESENTÓ
+  (el reloj no fabrica filas de ausentes; el NSP se marca en la hoja de
+  GeoTeam). `puedeCorregir` (admin/coordinador/tesoreria/asistente_compras =
+  Gerson, Carolina y Ana; Oscar y marcaje NO) habilita: ➕ en la celda
+  NO MARCÓ (modal precargado), botón global "✍️ Marcaje manual" (morado) y
+  🗑 SOLO sobre marcas manuales (confirm con la justificación original).
+  Mark manual: {manual:true, tarde:false, firmaId:null, justificacion,
+  editadoPor, historial:[{accion:"entrada/salida colocada MANUALMENTE (el
+  colaborador no marcó)", por, justificacion, fecha, at}]} — justificación
+  OBLIGATORIA (≥3 chars), dup-check empId+fecha+tipo contra getCloud, badge
+  morado "MANUAL" en Registros (tooltip: quién + por qué), la justificación
+  sale en CSV (columna "Manual / Justificacion") y PDF ("(manual)" + nota).
+  Los manuales siembran asistencia igual que un marcaje normal (initialData
+  filtra por tipo==="entrada") y al ser tarde:false jamás generan tardanza.
   Si funciona en plantel esta quincena, la siguiente se agrega a proyectos.
 - `SafetyModule.jsx` (GeoSafety) — EPP: catálogo con carrito estilo Amazon
   (ítems con foto/tipoEpp/descripción; requisición reparte un ítem entre

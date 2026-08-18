@@ -242,6 +242,12 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   // Quincenas que NO se pudieron leer de la nube (el reporte estaría
   // incompleto): se muestra banner y se advierte antes de exportar.
   const [regErr, setRegErr] = useState([]);
+  // Corrección MANUAL de marcajes olvidados (18-ago, caso de Ariel): Ana,
+  // Gerson y la Lic. Carolina pueden colocar la entrada/salida que el
+  // colaborador no marcó, con justificación OBLIGATORIA e historial.
+  // corr = { empId, fecha, tipo, hora, justif } | null (modal cerrado).
+  const [corr, setCorr] = useState(null);
+  const [corrSaving, setCorrSaving] = useState(false);
   const [verHoy, setVerHoy] = useState(false);
   const padRef = useRef(null);
   const idleTimer = useRef(null);
@@ -412,11 +418,15 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         // Estado HONESTO cuando no hay total: "en curso" SOLO hoy; un día
         // pasado sin salida es "sin salida"; entrada+salida incoherentes
         // (mismo minuto, o turno que cruzó medianoche) = "marcas inválidas".
+        // Día CERRADO = ya pasó (el reloj solo marca el día en curso, tope
+        // 11:59 PM). En un día cerrado: sin salida = "NO MARCÓ"; sin entrada
+        // = "NO MARCÓ" (la regla de negocio: sin entrada al cierre de la
+        // jornada se entiende como NO SE PRESENTÓ — el NSP va en GeoTeam).
+        const cerrado = fecha < hoyF;
         const estado = netas != null ? null
           : sal && ent ? "marcas inválidas"
-          : sal && !ent ? "—"
-          : fecha === hoyF ? "en curso" : "sin salida";
-        rowsAll.push({ fecha, emp, proy: proyectoDe(emp, fecha), ent, sal, brutas, almuerzo, netas, estado });
+          : !sal && ent ? (fecha === hoyF ? "en curso" : "—") : "—";
+        rowsAll.push({ fecha, emp, proy: proyectoDe(emp, fecha), ent, sal, brutas, almuerzo, netas, estado, cerrado });
       });
     });
     // El filtro de proyecto activo SIEMPRE está en las opciones (si no, al
@@ -580,6 +590,72 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
     } finally {
       setSaving(false);
     }
+  };
+
+  // ── Corrección MANUAL de marcajes (18-ago-2026, caso de Ariel) ──
+  // Solo Ana (asistente_compras), Gerson (admin/coordinador) y la Lic.
+  // Carolina (tesoreria). Coloca la ENTRADA o SALIDA que el colaborador no
+  // marcó, con justificación OBLIGATORIA; el mark queda manual:true con
+  // historial (quién, cuándo, por qué, y que el colaborador NO marcó).
+  const puedeCorregir = userRole === "admin" || userRole === "coordinador" || userRole === "tesoreria" || userRole === "asistente_compras";
+  const guardarMarcaManual = async () => {
+    if (corrSaving || !corr) return;
+    const emp = emps.find(e => e.id === corr.empId);
+    if (!emp) return alert("Elegí al colaborador.");
+    const hoyF = ahoraTegus().fecha;
+    if (!corr.fecha || corr.fecha > hoyF) return alert("La fecha no puede ser futura.");
+    const [hh, mm] = String(corr.hora || "").split(":").map(Number);
+    if (!Number.isFinite(hh) || !Number.isFinite(mm)) return alert("Poné la hora (ej. 16:00).");
+    if (String(corr.justif || "").trim().length < 3) return alert("La justificación es OBLIGATORIA — queda en el historial del marcaje.");
+    setCorrSaving(true);
+    try {
+      const q2 = quincenaDe(corr.fecha);
+      const key = gcMarkKey(q2.periodo, q2.quincena);
+      let cloudArr;
+      try { const c = await store.getCloud(key); cloudArr = Array.isArray(c) ? c : []; }
+      catch { alert("⚠️ No hay conexión con la nube — no se guardó nada. Reintentá."); return; }
+      const dup = cloudArr.find(x => x && x.empId === corr.empId && x.fecha === corr.fecha && x.tipo === corr.tipo);
+      if (dup) { alert(`Ya existe una ${corr.tipo.toUpperCase()} de ${emp.fullName} ese día (${dup.hora}${dup.manual ? ", manual" : ""}). Quitala primero si está mal.`); return; }
+      const nowIso = new Date().toISOString();
+      const id = uid();
+      const hora = `${hh}:${String(mm).padStart(2, "0")}`;
+      const mark = {
+        id, empId: emp.id, empNombre: emp.fullName, company: emp.company,
+        fecha: corr.fecha, hora, min: hh * 60 + mm, tipo: corr.tipo,
+        // Manual NUNCA genera tardanza: es una corrección administrativa con
+        // justificación de RRHH, no un marcaje del colaborador.
+        tarde: false, minTarde: 0, horarioEntrada: horarioDe(emp).entrada,
+        explicacion: "", comentario: "",
+        manual: true, justificacion: String(corr.justif).trim(), editadoPor: userName || "RRHH",
+        historial: [{ accion: `${corr.tipo} colocada MANUALMENTE (el colaborador no marcó)`, por: userName || "RRHH", justificacion: String(corr.justif).trim(), fecha: hoyF, at: nowIso }],
+        firmaId: null, registradoPor: userName || "RRHH", ts: nowIso, createdAt: nowIso,
+      };
+      let next = [...unionById(cloudArr, [mark])];
+      const ok = await store.set(key, next);
+      let verified = false;
+      try { const back = await store.getCloud(key); if (Array.isArray(back) && back.some(x => x && x.id === id)) { verified = true; next = back; } } catch { verified = false; }
+      if (!ok || !verified) { alert("⚠️ No se pudo VERIFICAR el guardado en la nube — reintentá."); return; }
+      setRegMarks(prev => ({ ...prev, [`${q2.periodo}|${q2.quincena}`]: next }));
+      if (key === marksKey) setMarks(next);
+      setCorr(null);
+      alert(`✍️ ${corr.tipo === "entrada" ? "ENTRADA" : "SALIDA"} manual guardada para ${emp.fullName} — ${corr.fecha} a las ${hora}. Quedó en el historial con tu justificación.`);
+    } finally { setCorrSaving(false); }
+  };
+  const borrarMarcaManual = async (mk) => {
+    if (!puedeCorregir || !mk.manual) return;
+    if (!confirm(`¿Quitar la ${mk.tipo.toUpperCase()} MANUAL de ${mk.empNombre} (${mk.fecha} · ${mk.hora})?\n\nJustificación original: "${mk.justificacion || "—"}"\n\nPodés volver a colocarla con la hora correcta (queda nuevo historial).`)) return;
+    const q2 = quincenaDe(mk.fecha);
+    const key = gcMarkKey(q2.periodo, q2.quincena);
+    let cloudArr;
+    try { const c = await store.getCloud(key); cloudArr = Array.isArray(c) ? c : []; }
+    catch { return alert("⚠️ Sin conexión con la nube — no se quitó nada."); }
+    const next = cloudArr.filter(x => x && x.id !== mk.id);
+    const ok = await store.set(key, next);
+    let verified = false;
+    try { const back = await store.getCloud(key); verified = Array.isArray(back) && !back.some(x => x && x.id === mk.id); } catch { verified = false; }
+    if (!ok || !verified) return alert("⚠️ No se pudo verificar — reintentá.");
+    setRegMarks(prev => ({ ...prev, [`${q2.periodo}|${q2.quincena}`]: next }));
+    if (key === marksKey) setMarks(next);
   };
 
   // ── UI ──
@@ -835,12 +911,13 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             const safe = /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
             return `"${safe.replace(/"/g, '""')}"`;
           };
-          const head = ["Fecha", "Dia", "Colaborador", "Empresa", "Proyecto", "Entrada", "Min tarde", "Salida", "Comentario salida", "Horas brutas", "Almuerzo (h)", "Horas laboradas"];
+          const head = ["Fecha", "Dia", "Colaborador", "Empresa", "Proyecto", "Entrada", "Min tarde", "Salida", "Comentario salida", "Manual / Justificacion", "Horas brutas", "Almuerzo (h)", "Horas laboradas"];
           const lines = [head.map(enc).join(",")];
           rows.forEach(r => lines.push([
             r.fecha, fmtDiaCorto(r.fecha), r.emp.fullName, (COMPANIES[r.emp.company] || {}).name || r.emp.company, r.proy,
-            r.ent ? r.ent.hora : "", r.ent && r.ent.tarde ? r.ent.minTarde : "",
-            r.sal ? r.sal.hora : "", (r.sal && r.sal.comentario) || "",
+            r.ent ? r.ent.hora : (r.cerrado ? "NO MARCO" : ""), r.ent && r.ent.tarde ? r.ent.minTarde : "",
+            r.sal ? r.sal.hora : (r.cerrado ? "NO MARCO" : ""), (r.sal && r.sal.comentario) || "",
+            [r.ent && r.ent.manual ? `ENTRADA manual por ${r.ent.editadoPor}: ${r.ent.justificacion || ""}` : "", r.sal && r.sal.manual ? `SALIDA manual por ${r.sal.editadoPor}: ${r.sal.justificacion || ""}` : ""].filter(Boolean).join(" | "),
             r.brutas != null ? r.brutas.toFixed(2) : "", r.brutas != null ? r.almuerzo.toFixed(2) : "",
             r.netas != null ? r.netas.toFixed(2) : "",
           ].map(enc).join(",")));
@@ -869,9 +946,11 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             cuerpo += `<h3 style='margin:18px 0 6px;color:#C75F1F;font-size:13px'>${esc(proy)} <span style='color:#8B847C;font-weight:400'>&mdash; ${rs.length} registro(s) &middot; ${fmtHoras(sub)} laboradas</span></h3>`;
             cuerpo += "<table><thead><tr><th>Fecha</th><th>Colaborador</th><th>Entrada</th><th>Salida</th><th>Comentario</th><th style='text-align:right'>Brutas</th><th style='text-align:right'>Almuerzo</th><th style='text-align:right'>Laboradas</th></tr></thead><tbody>";
             rs.forEach(r => {
+              const noMarco = "<span style='color:#C0392B;font-weight:bold'>NO MARCO</span>";
+              const justifs = [r.ent && r.ent.manual ? `Entrada manual por ${r.ent.editadoPor}: ${r.ent.justificacion || ""}` : "", r.sal && r.sal.manual ? `Salida manual por ${r.sal.editadoPor}: ${r.sal.justificacion || ""}` : "", (r.sal && r.sal.comentario) || ""].filter(Boolean).join(" | ");
               cuerpo += `<tr><td>${fmtDiaCorto(r.fecha)} ${r.fecha.slice(0, 4)}</td><td>${esc(r.emp.fullName)}</td>` +
-                `<td>${r.ent ? esc(r.ent.hora) + (r.ent.tarde ? ` <span style='color:#C0392B;font-weight:bold'>(+${r.ent.minTarde} min)</span>` : "") : "&mdash;"}</td>` +
-                `<td>${r.sal ? esc(r.sal.hora) : "&mdash;"}</td><td style='font-size:9px;color:#555'>${esc((r.sal && r.sal.comentario) || "")}</td>` +
+                `<td>${r.ent ? esc(r.ent.hora) + (r.ent.manual ? " <b>(manual)</b>" : "") + (r.ent.tarde ? ` <span style='color:#C0392B;font-weight:bold'>(+${r.ent.minTarde} min)</span>` : "") : (r.cerrado ? noMarco : "&mdash;")}</td>` +
+                `<td>${r.sal ? esc(r.sal.hora) + (r.sal.manual ? " <b>(manual)</b>" : "") : (r.cerrado ? noMarco : "&mdash;")}</td><td style='font-size:9px;color:#555'>${esc(justifs)}</td>` +
                 `<td style='text-align:right'>${r.brutas != null ? fmtHoras(r.brutas) : "&mdash;"}</td>` +
                 `<td style='text-align:right'>${r.brutas != null ? (r.almuerzo ? "1h 00m" : "&mdash;") : "&mdash;"}</td>` +
                 `<td style='text-align:right;font-weight:bold;color:#166534'>${r.netas != null ? fmtHoras(r.netas) : esc(r.estado || "—")}</td></tr>`;
@@ -888,7 +967,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
             <div style={{ fontSize: 22, fontWeight: 900 }}>📋 Registros de entradas y salidas</div>
-            <div style={{ fontSize: 13, color: STONE, marginTop: 2 }}>Marcajes del reloj por día, agrupados por proyecto. El total laborado descuenta 1h de almuerzo cuando la jornada cruza el mediodía (12:00–13:00).</div>
+            <div style={{ fontSize: 13, color: STONE, marginTop: 2 }}>Marcajes del reloj por día, agrupados por proyecto. El total laborado descuenta 1h de almuerzo cuando la jornada cruza el mediodía (12:00–13:00). El día cierra a las 11:59 PM: lo no marcado queda como <b style={{ color: "#B91C1C" }}>NO MARCÓ</b> (sin entrada = no se presentó; el NSP se maneja en la asistencia de GeoTeam){puedeCorregir ? " — vos podés colocar la hora faltante con justificación (queda en el historial)" : ""}.</div>
           </div>
           {/* Filtros */}
           <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 16, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -911,6 +990,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
                 {proyOpciones.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
               <span style={{ flex: 1 }} />
+              {puedeCorregir && <span role="button" onClick={() => setCorr({ empId: "", fecha: ahoraTegus().fecha, tipo: "entrada", hora: "", justif: "" })} style={{ padding: "9px 16px", borderRadius: 10, border: "1.5px solid #6D28D9", background: "#fff", color: "#6D28D9", fontSize: 13, fontWeight: 800, cursor: "pointer", userSelect: "none" }}>✍️ Marcaje manual</span>}
               <span role="button" onClick={bajarCSV} style={{ padding: "9px 16px", borderRadius: 10, border: `1.5px solid ${GREEN}`, background: "#fff", color: "#166534", fontSize: 13, fontWeight: 800, cursor: "pointer", userSelect: "none" }}>⬇ Descargar CSV</span>
               <span role="button" onClick={imprimirPDF} style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: ORANGE, color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer", userSelect: "none" }}>🖨 Imprimir / PDF</span>
             </div>
@@ -959,11 +1039,31 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
                       <td style={{ padding: "9px 14px", whiteSpace: "nowrap", color: "#5C5853" }}>{fmtDiaCorto(r.fecha)}</td>
                       <td style={{ padding: "9px 10px", fontWeight: 700 }}>{nombreCorto(r.emp.fullName)}</td>
                       <td style={{ padding: "9px 10px", textAlign: "center", whiteSpace: "nowrap" }}>
-                        {r.ent ? <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700, color: r.ent.tarde ? "#B45309" : "#166534" }}>{r.ent.hora}{r.ent.tarde && <span style={{ fontSize: 10, background: "#FEE2E2", color: "#B91C1C", borderRadius: 5, padding: "1px 5px", marginLeft: 5 }}>+{r.ent.minTarde}m</span>}</span> : <span style={{ color: "#B8B0A4" }}>—</span>}
+                        {r.ent ? <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700, color: r.ent.tarde ? "#B45309" : "#166534" }}>
+                          {r.ent.hora}
+                          {r.ent.tarde && <span style={{ fontSize: 10, background: "#FEE2E2", color: "#B91C1C", borderRadius: 5, padding: "1px 5px", marginLeft: 5 }}>+{r.ent.minTarde}m</span>}
+                          {r.ent.manual && <span title={`MANUAL — colocada por ${r.ent.editadoPor}. Justificación: ${r.ent.justificacion || "—"}`} style={{ fontSize: 9, background: "#EDE9FE", color: "#6D28D9", borderRadius: 5, padding: "1px 5px", marginLeft: 5, fontWeight: 800, cursor: "help" }}>MANUAL</span>}
+                          {r.ent.manual && puedeCorregir && <span role="button" title="Quitar esta marca manual" onClick={() => borrarMarcaManual(r.ent)} style={{ marginLeft: 4, cursor: "pointer", fontSize: 11 }}>🗑</span>}
+                        </span> : r.cerrado
+                          ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                              <span style={{ fontSize: 10.5, fontWeight: 800, color: "#B91C1C", background: "#FEE2E2", borderRadius: 5, padding: "2px 7px" }} title="Día cerrado sin entrada: se entiende como NO SE PRESENTÓ (el NSP se marca en la asistencia de GeoTeam)">NO MARCÓ</span>
+                              {puedeCorregir && <span role="button" title="Colocar la entrada manualmente (con justificación)" onClick={() => setCorr({ empId: r.emp.id, fecha: r.fecha, tipo: "entrada", hora: "", justif: "" })} style={{ cursor: "pointer", fontSize: 13, color: ORANGE_DARK, fontWeight: 900 }}>➕</span>}
+                            </span>
+                          : <span style={{ color: "#B8B0A4" }}>—</span>}
                       </td>
                       <td style={{ padding: "9px 10px", textAlign: "center" }}>
-                        {r.sal ? <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700, color: "#3E6A99" }}>{r.sal.hora}</span> : <span style={{ color: "#B8B0A4" }}>—</span>}
+                        {r.sal ? <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700, color: "#3E6A99" }}>
+                          {r.sal.hora}
+                          {r.sal.manual && <span title={`MANUAL — colocada por ${r.sal.editadoPor}. Justificación: ${r.sal.justificacion || "—"}`} style={{ fontSize: 9, background: "#EDE9FE", color: "#6D28D9", borderRadius: 5, padding: "1px 5px", marginLeft: 5, fontWeight: 800, cursor: "help" }}>MANUAL</span>}
+                          {r.sal.manual && puedeCorregir && <span role="button" title="Quitar esta marca manual" onClick={() => borrarMarcaManual(r.sal)} style={{ marginLeft: 4, cursor: "pointer", fontSize: 11 }}>🗑</span>}
+                        </span> : r.cerrado
+                          ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                              <span style={{ fontSize: 10.5, fontWeight: 800, color: "#B91C1C", background: "#FEE2E2", borderRadius: 5, padding: "2px 7px" }} title="El colaborador no marcó su salida ese día (el día cierra 11:59 PM)">NO MARCÓ</span>
+                              {puedeCorregir && <span role="button" title="Colocar la salida manualmente (con justificación)" onClick={() => setCorr({ empId: r.emp.id, fecha: r.fecha, tipo: "salida", hora: "", justif: "" })} style={{ cursor: "pointer", fontSize: 13, color: ORANGE_DARK, fontWeight: 900 }}>➕</span>}
+                            </span>
+                          : <span style={{ color: "#B8B0A4" }}>—</span>}
                         {r.sal && r.sal.comentario && <div title={r.sal.comentario} style={{ fontSize: 10.5, color: "#3E6A99", maxWidth: 200, margin: "2px auto 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>💬 {r.sal.comentario}</div>}
+                        {r.sal && r.sal.manual && r.sal.justificacion && <div title={r.sal.justificacion} style={{ fontSize: 10, color: "#6D28D9", maxWidth: 200, margin: "2px auto 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>✍️ {r.sal.justificacion}</div>}
                       </td>
                       <td style={{ padding: "9px 10px", textAlign: "right", color: "#5C5853", whiteSpace: "nowrap" }}>{r.brutas != null ? fmtHoras(r.brutas) : "—"}</td>
                       <td style={{ padding: "9px 10px", textAlign: "right", color: r.almuerzo ? "#B45309" : "#B8B0A4", whiteSpace: "nowrap" }}>{r.brutas != null ? (r.almuerzo ? "−1h 00m" : "—") : "—"}</td>
@@ -976,6 +1076,44 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
           })}
           {rows.length > 0 && <div style={{ background: "#F8F2E6", borderLeft: `4px solid ${ORANGE}`, borderRadius: 12, padding: "12px 16px", fontSize: 13.5 }}>
             <b>TOTAL GENERAL:</b> {rows.length} registro(s) · <b style={{ color: "#166534" }}>{fmtHoras(totNetas)}</b> laboradas · {totTardes} llegada(s) tarde
+          </div>}
+          {/* ── Modal de MARCAJE MANUAL (justificación obligatoria) ── */}
+          {corr && <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }} onClick={() => !corrSaving && setCorr(null)}>
+            <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 22px", width: "100%", maxWidth: 460, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 20px 60px rgba(44,42,40,0.3)" }}>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: 17 }}>✍️ Marcaje manual</div>
+                <div style={{ fontSize: 12, color: STONE, marginTop: 2 }}>Para cuando el colaborador NO marcó. Queda en el historial: quién lo colocó, cuándo y por qué.</div>
+              </div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "#5C5853" }}>Colaborador
+                <select value={corr.empId} onChange={e => setCorr(c => ({ ...c, empId: e.target.value }))} style={{ width: "100%", marginTop: 4, padding: "9px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14, fontFamily: "inherit", outline: "none" }}>
+                  <option value="">— Elegí —</option>
+                  {activos.slice().sort((a, b) => String(a.fullName).localeCompare(String(b.fullName))).map(e => <option key={e.id} value={e.id}>{e.fullName}</option>)}
+                </select>
+              </label>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#5C5853", flex: 1 }}>Fecha
+                  <input type="date" max={ahoraTegus().fecha} value={corr.fecha} onChange={e => setCorr(c => ({ ...c, fecha: e.target.value }))} style={{ width: "100%", marginTop: 4, padding: "8px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }} />
+                </label>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#5C5853" }}>Tipo
+                  <select value={corr.tipo} onChange={e => setCorr(c => ({ ...c, tipo: e.target.value }))} style={{ display: "block", marginTop: 4, padding: "8px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14, fontFamily: "inherit", outline: "none" }}>
+                    <option value="entrada">Entrada</option>
+                    <option value="salida">Salida</option>
+                  </select>
+                </label>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#5C5853" }}>Hora
+                  <input type="time" value={corr.hora} onChange={e => setCorr(c => ({ ...c, hora: e.target.value }))} style={{ display: "block", marginTop: 4, padding: "8px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
+                </label>
+              </div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "#5C5853" }}>Justificación (obligatoria)
+                <textarea rows={2} value={corr.justif} onChange={e => setCorr(c => ({ ...c, justif: e.target.value }))}
+                  placeholder='Ej: "Salió a las 4 pero se le olvidó marcar — confirmado con Oscar"'
+                  style={{ width: "100%", boxSizing: "border-box", marginTop: 4, padding: "9px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 13.5, fontFamily: "inherit", resize: "vertical", outline: "none" }} />
+              </label>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button disabled={corrSaving} onClick={() => setCorr(null)} style={{ padding: "10px 18px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", color: STONE, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                <button disabled={corrSaving} onClick={guardarMarcaManual} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: corrSaving ? "#D8D2C8" : "#6D28D9", color: "#fff", fontSize: 13, fontWeight: 800, cursor: corrSaving ? "wait" : "pointer" }}>{corrSaving ? "Guardando…" : "Guardar marcaje manual"}</button>
+              </div>
+            </div>
           </div>}
         </div>;
       })()}
