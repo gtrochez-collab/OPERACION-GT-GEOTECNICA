@@ -181,7 +181,11 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   const [tieneFirma, setTieneFirma] = useState(false);
   const [saving, setSaving] = useState(false);
   const [doneInfo, setDoneInfo] = useState(null);
-  const [selPhoto, setSelPhoto] = useState(null);
+  // Cache de fotos { fileId: dataUrl } — las mismas fotos de la ficha de
+  // GeoTeam (cp-file-<id>). Se cargan en segundo plano DESPUÉS del primer
+  // paint (patrón de HRModule) para no frenar la lista en la tablet; quedan
+  // en memoria todo el día (la key cp-file- no cachea en localStorage).
+  const [fotos, setFotos] = useState({});
   const [verHoy, setVerHoy] = useState(false);
   const padRef = useRef(null);
   const idleTimer = useRef(null);
@@ -249,10 +253,35 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, marksKey]);
+  // Fotos de los ACTIVOS en segundo plano, una vez cargada la lista — solo
+  // las que falten en el cache (mismo patrón que HRModule). No bloquea el
+  // primer paint: la card muestra iniciales y la foto aparece al llegar.
+  useEffect(() => {
+    const faltan = [];
+    const vistos = new Set();
+    for (const e of emps) {
+      const fid = e.status === "active" ? e.photo?.fileId : null;
+      if (fid && !fotos[fid] && !vistos.has(fid)) { vistos.add(fid); faltan.push(fid); }
+    }
+    if (!faltan.length) return;
+    (async () => {
+      const results = await Promise.all(faltan.map(async (fid) => {
+        try { const f = await store.get(`cp-file-${fid}`); return [fid, f?.dataUrl || null]; }
+        catch { return [fid, null]; }
+      }));
+      setFotos(prev => {
+        const next = { ...prev };
+        let changed = false;
+        for (const [fid, url] of results) if (url && !next[fid]) { next[fid] = url; changed = true; }
+        return changed ? next : prev;
+      });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emps]);
 
   const reset = () => {
     setView("search"); setSel(null); setSearch(""); setExplicacion("");
-    setTieneFirma(false); setDoneInfo(null); setSelPhoto(null); setTipoAccion("entrada");
+    setTieneFirma(false); setDoneInfo(null); setTipoAccion("entrada");
   };
 
   const activos = emps.filter(e => e.status === "active");
@@ -280,7 +309,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   const esTarde = tipoAccion === "entrada" && !esDomFer && now.min > entradaMin + TOLERANCIA_MIN;
 
   const seleccionar = async (e) => {
-    setSel(e); setView("person"); setExplicacion(""); setTieneFirma(false); setSelPhoto(null);
+    setSel(e); setView("person"); setExplicacion(""); setTieneFirma(false);
     setTipoAccion(entradaDe(e.id) ? "salida" : "entrada");
     // Si el candado está cerrado según el estado local, re-chequear con la
     // NUBE antes de bloquear: RRHH pudo haber creado la cuadrilla hace un
@@ -292,7 +321,10 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       } catch { /* sin nube: se queda con lo local */ }
     }
     if (e.photo?.fileId) {
-      try { const f = await store.get(`cp-file-${e.photo.fileId}`); if (f?.dataUrl) setSelPhoto(f.dataUrl); } catch { /* sin foto */ }
+      // Prioridad: si la foto del seleccionado aún no llegó del bulk, traerla ya.
+      if (!fotos[e.photo.fileId]) {
+        try { const f = await store.get(`cp-file-${e.photo.fileId}`); if (f?.dataUrl) setFotos(prev => ({ ...prev, [e.photo.fileId]: f.dataUrl })); } catch { /* sin foto */ }
+      }
     }
   };
 
@@ -464,7 +496,9 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             const co = COMPANIES[e.company] || { name: e.company, color: STONE };
             return <button key={e.id} onClick={() => seleccionar(e)}
               style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 14, border: `1px solid ${BORDER}`, background: "#fff", cursor: "pointer", textAlign: "left", minHeight: 64, boxShadow: "0 1px 4px rgba(44,42,40,0.05)" }}>
-              <div style={{ width: 44, height: 44, borderRadius: 12, background: co.color, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 15, flexShrink: 0 }}>{iniciales(e.fullName)}</div>
+              {fotos[e.photo?.fileId]
+                ? <img src={fotos[e.photo.fileId]} alt="" style={{ width: 44, height: 44, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} />
+                : <div style={{ width: 44, height: 44, borderRadius: 12, background: co.color, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 15, flexShrink: 0 }}>{iniciales(e.fullName)}</div>}
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 800, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.fullName}</div>
                 <div style={{ fontSize: 11, color: STONE, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.position || co.name}</div>
@@ -509,8 +543,8 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
           <button onClick={reset} style={{ alignSelf: "flex-start", padding: "8px 16px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", color: STONE, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>← No soy yo / buscar otro</button>
           {/* Tarjeta de identidad */}
           <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18, padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, boxShadow: "0 2px 10px rgba(44,42,40,0.06)" }}>
-            {selPhoto
-              ? <img src={selPhoto} alt="" style={{ width: 72, height: 72, borderRadius: 16, objectFit: "cover" }} />
+            {fotos[selEmp.photo?.fileId]
+              ? <img src={fotos[selEmp.photo.fileId]} alt="" style={{ width: 72, height: 72, borderRadius: 16, objectFit: "cover" }} />
               : <div style={{ width: 72, height: 72, borderRadius: 16, background: co.color, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 24 }}>{iniciales(selEmp.fullName)}</div>}
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 900, fontSize: 20 }}>{selEmp.fullName}</div>
