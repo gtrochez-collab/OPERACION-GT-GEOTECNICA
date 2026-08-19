@@ -334,6 +334,30 @@ export const store = {
     return false;
   },
 
+  // BORRAR una key: elimina la fila de app_data y limpia el cache local.
+  //
+  // Para datos que deben DESAPARECER (ej: la firma de un marcaje eliminado).
+  // NUNCA usar `set(k, null)` para esto: la columna `value` es NOT NULL, el
+  // upsert revienta con 400 y el banner rojo "No se sincronizo a la nube"
+  // le aparece al usuario aunque el borrado real haya funcionado (asi salia
+  // al borrar una llegada tarde con firma — ago 2026).
+  //
+  // quiet: true → no dispara el banner global si falla (para borrados
+  // best-effort donde la operacion principal ya se completo y verifico).
+  async remove(k, { quiet = false } = {}) {
+    try { localStorage.removeItem(k); localStorage.removeItem(k + TS_SUFFIX); } catch { /* quota/privado */ }
+    try {
+      const { error } = await supabase.from('app_data').delete().eq('key', k);
+      if (error) throw error;
+      return true;
+    } catch (e) {
+      const errMsg = e?.message || String(e);
+      console.warn(`[store] no se pudo borrar ${k}:`, errMsg);
+      if (!quiet) notifySync({ ok: false, error: { key: k, message: errMsg }, lastKey: k });
+      return false;
+    }
+  },
+
   // Exponer el ultimo error para que la UI pueda mostrarlo
   getLastError: () => lastSyncState.error,
 };

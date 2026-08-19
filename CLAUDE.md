@@ -149,6 +149,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Los manuales siembran asistencia igual que un marcaje normal (initialData
   filtra por tipo==="entrada") y al ser tarde:false jamás generan tardanza.
   Si funciona en plantel esta quincena, la siguiente se agrega a proyectos.
+  **EN USO REAL desde el 19-ago-2026** (10+ marcajes/día en plantel y oficina).
 - `SafetyModule.jsx` (GeoSafety) — EPP: catálogo con carrito estilo Amazon
   (ítems con foto/tipoEpp/descripción; requisición reparte un ítem entre
   VARIOS colaboradores de hr-emps5 con cant+motivo c/u: primera_vez/perdida/
@@ -236,6 +237,12 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   contra `store.getCloud()` (lectura directa a nube, sin cache) + verify
   releyendo la nube + guardia anti-vaciado con confirm. No usar `store.get`
   para merges (puede devolver cache local viejo y dispara re-syncs).
+- **NUNCA `store.set(k, null)`** — la columna `value` de app_data es NOT NULL:
+  el upsert revienta con 400 y le sale al usuario el banner rojo "No se
+  sincronizó a la nube" aunque la operación real haya funcionado (pasó al
+  borrar una llegada tarde con firma, 19-ago-2026). Para borrar de verdad:
+  `store.remove(k, { quiet })` (DELETE de la fila + limpia cache local;
+  `quiet: true` no dispara el banner en borrados best-effort).
 - **Borrar siempre con confirm()** (las cuadrillas se perdieron una vez por un × sin confirm).
 - **Proyectos**: lista unificada base+custom con `resolveShortHR` en HR
   (los shorts de compras GANAN sobre aliases legacy de projects.js — caso PLANTEL).
@@ -250,6 +257,24 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
 - Flujo compra: borrador → validado → pagado (solo Carolina/tesorería; admin+costos
   emergencia) → finalizado (comprobante) → coordinar (Ana/Fernando) → logística →
   entregado → ficha (Jorge) → lista. Máquinas puede "Cerrar sin logística".
+- **Regla del "1 verde" (ago 2026, aprobada por Gerson)**: (1) ENTRADA marcada
+  en GeoClock = "1" al abrir la hoja (la siembra es al ABRIR, no al marcar —
+  ownership por key: la tablet nunca escribe hr-atts2). La SALIDA no gatea el
+  "1" a propósito (se olvida seguido; sirve para horas laboradas en Registros).
+  (2) Tarde = "1" sujeto a decisión de RRHH: aprobada día completo, denegada
+  proporcional; **pendiente cuenta día COMPLETO** → PayrollGen avisa con
+  confirm si hay pendientes de la quincena (getCloud fresco; si la nube no
+  responde avisa "no se pudo verificar" y genera igual). Guard `chk`/`chkRef`:
+  bloquea botón e inputs de periodo/quincena durante el chequeo (si no, cambiar
+  el periodo a mitad del await guardaba líneas de la quincena vieja con el
+  periodo nuevo). (3) Día cerrado sin entrada = el HUMANO confirma el 0 —
+  banner "⏰ Posibles NSP según GeoClock" en el grid (`nspSugeridos`): solo
+  asignados a PLANTEL/ADMINISTRACIÓN (`esProjClock`), solo días < hoyTegus()
+  donde la tablet SÍ registró alguna entrada (`diasConMarcaje` — si nadie marcó
+  no sugiere nada), celda vacía y día no bloqueado por alta/baja. El botón
+  aplica los 0 al BORRADOR (setData); nada persiste hasta "Guardar asistencia".
+  Se decide a mano porque una ausencia puede ser permiso, vacación, INC o que
+  andaba en proyecto.
 - Asistencia: cuadrilla por quincena es la fuente de asignaciones; domingos/feriados
   auto "1" (descanso pagado). Ciclo día regular: ""→1→0→INC→V→"" (V=vacaciones,
   día pagado, teal). Días BLOQUEADOS por alta/baja NO cuentan en totales/costos

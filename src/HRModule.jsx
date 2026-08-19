@@ -1259,11 +1259,51 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const [q, setQ] = useState("2Q");
     const [lines, setLines] = useState([]);
     const [gen, setGen] = useState(false);
+    // Chequeo de tardanzas en curso: bloquea el botón y los selectores de
+    // periodo/quincena mientras se consulta la nube (getCloud tarda hasta 15 s
+    // si la red está mala). Sin esto, cambiar el periodo a mitad del await
+    // dejaba las líneas de la quincena VIEJA etiquetadas con el periodo NUEVO
+    // al guardar la planilla — y un doble click generaba dos corridas.
+    const [chk, setChk] = useState(false);
+    const chkRef = useRef(false);
 
     const is2Q = q === "2Q";
 
-    const generate = () => {
+    const generate = async () => {
       if (!per) return alert("Seleccione periodo");
+      if (chkRef.current) return; // ya hay una generación en curso
+      chkRef.current = true; setChk(true);
+      try { await generateInner(); } finally { chkRef.current = false; setChk(false); }
+    };
+
+    const generateInner = async () => {
+      // AVISO de tardanzas pendientes (ago 2026, regla del "1 verde"): una
+      // llegada tarde SIN DECIDIR cuenta día completo en planilla — hay que
+      // aprobarla o denegarla ANTES de generar. Chequeo directo a la nube
+      // (getCloud) para no depender de lo cargado; un registro revertido
+      // (estado "pendiente") también cuenta como pendiente, igual que en la
+      // pestaña de Llegadas tardías. Si la nube no responde, se genera igual
+      // (la generación no escribe nada por sí sola).
+      try {
+        const [mks, tds] = await Promise.all([
+          store.getCloud(gcMarkKey(per, q)),
+          store.getCloud("gc-tardies"),
+        ]);
+        const decididas = new Set((Array.isArray(tds) ? tds : [])
+          .filter(t => t && (t.estado === "aprobada" || t.estado === "denegada"))
+          .map(t => t.markId));
+        const pend = (Array.isArray(mks) ? mks : []).filter(mk =>
+          mk && mk.company === co && mk.tipo === "entrada" && mk.tarde && !decididas.has(mk.id));
+        if (pend.length) {
+          const lista = pend.map(mk => `• ${mk.empNombre || "?"} — ${fmt(mk.fecha)} (marcó ${mk.hora})`).join("\n");
+          if (!confirm(`⚠ Hay ${pend.length} llegada(s) tarde SIN DECIDIR en esta quincena:\n\n${lista}\n\nMientras estén pendientes, el día se paga COMPLETO. Lo correcto es aprobarlas o denegarlas en "Llegadas tardías" antes de generar la planilla.\n\n¿Generar de todas formas?`)) return;
+        }
+      } catch (e) {
+        // Sin nube no bloqueamos la generación (no escribe nada por sí sola),
+        // pero SÍ avisamos: "no se pudo verificar" ≠ "no hay pendientes".
+        console.warn("[planilla] no se pudo verificar tardanzas pendientes:", e?.message || e);
+        alert("⚠ No se pudo verificar si hay llegadas tarde sin decidir (la nube no respondió).\n\nLa planilla se genera igual, pero revisá la pestaña \"Llegadas tardías\" a mano antes de guardarla: una tardanza pendiente se paga como día completo.");
+      }
       const attSheet = ca.find(a => a.periodo === per && a.quincena === q);
       const grid = attSheet?.grid || {};
       const projOvr = attSheet?.projOverrides || {};
@@ -1585,9 +1625,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 14, alignItems: "end" }}>
-        <Input label="Periodo" type="month" value={per} onChange={e => setPer(e.target.value)} />
-        <Select label="Quincena" options={[{ value: "1Q", label: "1Q (1-15)" }, { value: "2Q", label: "2Q (16-31)" }]} value={q} onChange={e => setQ(e.target.value)} />
-        <Btn onClick={generate} disabled={gen}>Generar</Btn>
+        <Input label="Periodo" type="month" value={per} onChange={e => setPer(e.target.value)} disabled={chk} />
+        <Select label="Quincena" options={[{ value: "1Q", label: "1Q (1-15)" }, { value: "2Q", label: "2Q (16-31)" }]} value={q} onChange={e => setQ(e.target.value)} disabled={chk} />
+        <Btn onClick={generate} disabled={gen || chk}>{chk ? "Verificando tardanzas…" : "Generar"}</Btn>
       </div>
       {gen && <>
         {!hasAttendance && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: 12, fontSize: 13, color: "#92400E" }}>⚠️ No hay asistencia registrada para {q} {per}. Registre asistencia primero.</div>}
@@ -1940,6 +1980,54 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const getVal = (eid, day) => data[cellKey(eid, day)] || "";
     const getProj = (eid, day) => overrides[cellKey(eid, day)] || null;
 
+    // SUGERENCIA de NSP (ago 2026, regla del "1 verde"): en los proyectos
+    // donde opera GeoClock (PLANTEL / ADMINISTRACIÓN), un día ya CERRADO en
+    // el que la tablet SÍ registró entradas pero un asignado no marcó la suya
+    // y su celda sigue vacía = probable NO SE PRESENTÓ. El sistema solo
+    // SUGIERE: el 0 lo confirma RRHH con el botón, se aplica al BORRADOR y
+    // nada se persiste hasta tocar "Guardar asistencia". Días sin ningún
+    // marcaje (tablet apagada / antes de GeoClock) no generan sugerencias.
+    const esProjClock = (short) => /PLANTEL|ADMINISTRA/i.test(String(short || ""));
+    const nspSugeridos = (() => {
+      const marks = (gcMarks[`${sheet.periodo}|${sheet.quincena}`]) || [];
+      if (!marks.length) return [];
+      const hoy = hoyTegus();
+      const diasConMarcaje = new Set(marks
+        .filter(mk => mk && mk.tipo === "entrada" && mk.fecha)
+        .map(mk => String(mk.fecha).slice(0, 10)));
+      const marcoEntrada = (eid, dStr) => marks.some(mk =>
+        mk && mk.tipo === "entrada" && mk.empId === eid && String(mk.fecha).slice(0, 10) === dStr);
+      const out = [];
+      ae.forEach(e => {
+        const short = resolveShortHR(assignments[e.id]) || assignments[e.id];
+        if (!esProjClock(short)) return;
+        const dias = [];
+        days.forEach(d => {
+          if (d.isSun || d.isHoliday) return;
+          const dStr = `${sheet.periodo}-${String(d.day).padStart(2, "0")}`;
+          if (dStr >= hoy) return;
+          if (!diasConMarcaje.has(dStr)) return;
+          if (dayLockReason(e, d)) return;
+          if (getVal(e.id, d.day) !== "") return;
+          if (marcoEntrada(e.id, dStr)) return;
+          dias.push(d.day);
+        });
+        if (dias.length) out.push({ e, dias });
+      });
+      return out;
+    })();
+    const aplicarNsp = () => {
+      if (!nspSugeridos.length) return;
+      const n = nspSugeridos.reduce((s, r) => s + r.dias.length, 0);
+      if (!confirm(`¿Marcar 0 (NSP) en ${n} día(s) de ${nspSugeridos.length} colaborador(es)?\n\nSe aplican al borrador de la hoja — revisá y tocá "Guardar asistencia" para confirmarlos. Si alguien tenía permiso, vacación o andaba en proyecto, corregí esa celda a mano.`)) return;
+      setData(prev => {
+        const nx = { ...prev };
+        nspSugeridos.forEach(({ e, dias }) => dias.forEach(dd => { nx[`${e.id}-${dd}`] = "0"; }));
+        return nx;
+      });
+      setDirty(true);
+    };
+
     // Cycle de la celda al hacer click. Cambia segun el tipo de dia:
     //   - Dia regular (Lun-Sab no feriado): "" -> 1 -> 0 -> INC -> V -> ""
     //       (V = vacaciones, dia pagado — agregado 30-jul-2026)
@@ -2097,6 +2185,29 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <span style={{ background: "#E5E7EB", padding: "2px 8px", borderRadius: 4, color: "#6B7280" }}>—  = Bloqueado (alta/baja)</span>
         </span>
       </div>
+
+      {/* Posibles NSP según GeoClock — el humano confirma el 0 */}
+      {nspSugeridos.length > 0 && (
+        <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 10, padding: "12px 16px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 260 }}>
+            <div style={{ fontWeight: 800, color: "#B91C1C", fontSize: 13 }}>⏰ Posibles NSP según GeoClock</div>
+            <div style={{ fontSize: 12, color: "#7F1D1D", marginTop: 4 }}>
+              Hubo marcaje en la tablet esos días, pero estas personas de PLANTEL/ADMINISTRACIÓN no marcaron entrada y su celda sigue vacía:
+            </div>
+            <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {nspSugeridos.map(({ e, dias }) => (
+                <span key={e.id} style={{ background: "#FEE2E2", borderRadius: 6, padding: "2px 8px", fontSize: 12, color: "#7F1D1D" }}>
+                  <strong>{e.fullName}</strong> · día{dias.length > 1 ? "s" : ""} {dias.join(", ")}
+                </span>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: "#991B1B", marginTop: 6 }}>
+              Vos decidís: aplicá los 0 y corregí a mano si alguien tenía permiso, vacación o andaba en proyecto. Nada se guarda hasta tocar "Guardar asistencia".
+            </div>
+          </div>
+          <Btn small variant="danger" onClick={aplicarNsp}>Marcar 0 (NSP)</Btn>
+        </div>
+      )}
 
       {/* Resumen por proyecto — sin valores monetarios */}
       <div style={{ background: "#FFFBF5", border: "1px solid #DBD4C8", borderRadius: 10, padding: "14px 16px" }}>
@@ -4149,7 +4260,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const sinSexo = activos.length - mujeres - hombres;
     // Focos del resumen ejecutivo
     const sinFicha = activos.filter(e => !e.startDate || !e.sexo || !e.horario);
-    const tardesPend = Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.tarde && !(gcTardies || []).some(t => t && t.markId === mk.id));
+    const tardesPend = Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.tarde && !(gcTardies || []).some(t => t && t.markId === mk.id && (t.estado === "aprobada" || t.estado === "denegada")));
     const st0 = stats[stats.length - 1]; // el mes más reciente seleccionado
     const panelStyle = { background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: 18, boxShadow: "0 1px 2px rgba(44,42,40,0.04)" };
     const kpiCard = (label, value, sub, color = "#2C2A28") => (
@@ -4829,7 +4940,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       setGcMarks(prev => ({ ...prev, [`${periodo}|${quincena}`]: next }));
       // 3) Borrar la decisión (si había) y vaciar la firma (best effort).
       if (registroDe(mk)) await sGcTardies({ remove: mk.id });
-      try { await store.set(`gc-firma-${mk.firmaId || mk.id}`, null); } catch { /* best effort */ }
+      // Firma: se BORRA la fila (store.remove). Antes se hacia set(..., null)
+      // y la columna `value` es NOT NULL → 400 + banner rojo falso, aunque el
+      // marcaje ya se habia borrado y verificado arriba. quiet: si el borrado
+      // de la firma falla, es basura huerfana — no vale asustar al usuario.
+      if (mk.firmaId) await store.remove(`gc-firma-${mk.firmaId}`, { quiet: true });
       alert("🗑 Marcaje tarde eliminado por completo.");
     };
     // ── Filtros (persona / responsable) — el de estado gatea las secciones ──
