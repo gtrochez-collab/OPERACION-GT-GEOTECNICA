@@ -804,6 +804,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   const [f, setF] = useState(purchase || {
     company: co, projectCode: "", provider: "", description: "",
     amount: "", quoteNumber: "", opsResponsible: userName || "",
+    cierreResponsable: "", detalleMateriales: "",
     opsNotes: "", bacAccount: "", providerBank: "", providerAccountType: "", providerAccountHolder: "", providerRTN: "", quoteFile: null, receiptFile: null,
     status: "borrador", createdAt: new Date().toISOString(), audit: [],
     paymentMethod: "Transferencia BAC", paymentReference: "", paymentDate: "", treasuryNotes: "",
@@ -870,6 +871,10 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       </div>
       <Input label="Monto total (Lempiras)" type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
       <Input label="Responsable de Operaciones" value={f.opsResponsible} onChange={e => u("opsResponsible", e.target.value)} placeholder="Quien valida por Operaciones" />
+      <Input label="Responsable de cierre contable" value={f.cierreResponsable || ""} onChange={e => u("cierreResponsable", e.target.value)} placeholder="Quien cierra esta compra con Contabilidad" />
+      <div style={{ gridColumn: "1/-1" }}>
+        <Textarea label="Detalle de materiales (según cotización)" value={f.detalleMateriales || ""} onChange={e => u("detalleMateriales", e.target.value)} placeholder={"Qué se está comprando, tal cual la cotización. Un renglón por ítem:\n2 × Sacos de cemento 42.5 kg\n10 × Varilla 3/8 grado 60"} />
+      </div>
 
       <div style={{ gridColumn: "1/-1", background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 12 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>
@@ -1374,6 +1379,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         ? "dashboard"
         : "list";
   const [sec, setSec] = useState(defaultSec);
+  // Filtro de mes de "Por cerrar contablemente" (por fecha de PAGO).
+  // Default: mes actual — el histórico viejo no se le viene encima a nadie,
+  // pero queda accesible eligiendo el mes o "Todos".
+  const [contaMes, setContaMes] = useState(() => new Date().toISOString().slice(0, 7));
   const [filter, setFilter] = useState({ status: "", project: "", provider: "", from: "", to: "" });
   // Estado de expansion/colapso de sub-secciones en el Kanban de Ana.
   // Keys: `${projectKey}-enlog`, `${projectKey}-cierre`, `${projectKey}-cerradas`.
@@ -2133,6 +2142,140 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     }
   };
   const removePurchase = (id) => sP(purchases.filter(p => p.id !== id));
+
+  // ── CIERRE CONTABLE (ago 2026, flujo de Ana) ──
+  // El "paquete" físico (ficha firmada + factura + comprobante) se entrega a
+  // Contabilidad; cuando conta lo devuelve procesado, Ana sube el paquete
+  // completo DIGITALIZADO acá. Ese upload es LA regla del cierre: sin paquete
+  // subido la compra sigue "por cerrar contablemente". Mismo patrón atómico
+  // que uploadFichaFromCard (archivo a row propia + getCloud + enlace).
+  // El campo `conta` es ortogonal a deliveryStatus — no toca ningún flujo
+  // existente (Resumen/Dashboard/Recepción siguen leyendo deliveryStatus).
+  const uploadPaqueteConta = async (purchase, fileObj) => {
+    if (!fileObj) return false;
+    if (fileObj.size > 2 * 1024 * 1024) {
+      alert(`❌ El archivo pesa ${(fileObj.size / 1024 / 1024).toFixed(2)} MB.\n\nLimite maximo: 2 MB por archivo.\n\nReduci antes de subir:\n• PDFs: https://smallpdf.com/compress-pdf\n• Fotos: exportar como JPG calidad media`);
+      return false;
+    }
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(fileObj);
+      });
+      const fileId = uid();
+      const okFile = await store.set(fileKey(fileId), { name: fileObj.name, type: fileObj.type, size: fileObj.size, dataUrl });
+      if (!okFile) { alert("⚠️ No se pudo subir el archivo a la nube. Reintentá."); return false; }
+      let cloudPurchases;
+      try { cloudPurchases = await store.getCloud("cp-purchases"); }
+      catch { alert("⚠️ Sin conexión con la nube. El archivo subió pero NO se enlazó — reintentá en un momento."); return false; }
+      if (!Array.isArray(cloudPurchases)) { alert("⚠️ No se pudo leer la lista de solicitudes. Reintentá."); return false; }
+      const idx = cloudPurchases.findIndex(p => p.id === purchase.id);
+      if (idx === -1) { alert("⚠️ No se encontró la compra. Recargá la página."); return false; }
+      const orig = cloudPurchases[idx];
+      const updated = {
+        ...orig,
+        conta: {
+          fileId, name: fileObj.name, type: fileObj.type, size: fileObj.size,
+          cerradoPor: userName, cerradoAt: new Date().toISOString(),
+        },
+        audit: [...(orig.audit || []), {
+          action: "cierre_contable", by: userName || userRole, role: userRole,
+          at: new Date().toISOString(),
+          note: `Cerrada contablemente — paquete digitalizado subido: ${fileObj.name}`,
+        }],
+      };
+      const next = [...cloudPurchases];
+      next[idx] = updated;
+      const okSave = await store.set("cp-purchases", next);
+      if (!okSave) { alert("⚠️ El archivo subió pero no se enlazó. Reintentá el upload."); return false; }
+      setPurchases(next);
+      return true;
+    } catch (err) {
+      console.error("uploadPaqueteConta error:", err);
+      alert("Error subiendo el paquete: " + (err?.message || err));
+      return false;
+    }
+  };
+
+  // Reabrir un cierre contable hecho por error (solo admin y Ana).
+  const reabrirCierreConta = async (purchase) => {
+    if (!confirm(`¿REABRIR el cierre contable de ${purchase.provider} — ${purchase.description}?\n\nVuelve a "Por cerrar contablemente". El paquete subido queda en el historial.`)) return false;
+    let cloudPurchases;
+    try { cloudPurchases = await store.getCloud("cp-purchases"); }
+    catch { alert("⚠️ Sin conexión con la nube — no se reabrió."); return false; }
+    const idx = (cloudPurchases || []).findIndex(p => p.id === purchase.id);
+    if (idx === -1) { alert("⚠️ No se encontró la compra."); return false; }
+    const orig = cloudPurchases[idx];
+    const updated = {
+      ...orig,
+      conta: null,
+      contaAnterior: orig.conta || null,
+      audit: [...(orig.audit || []), { action: "cierre_contable_reabierto", by: userName || userRole, role: userRole, at: new Date().toISOString(), note: "Cierre contable reabierto" }],
+    };
+    const next = [...cloudPurchases]; next[idx] = updated;
+    const ok = await store.set("cp-purchases", next);
+    if (ok) setPurchases(next);
+    else alert("⚠️ No se sincronizó — reintentá.");
+    return ok;
+  };
+
+  // Paquete imprimible para conta: portada con los datos de la compra +
+  // los documentos adjuntos (imágenes embebidas a página; los PDF se listan
+  // con aviso porque el navegador no los imprime embebidos de forma fiable).
+  const imprimirPaqueteConta = async (p) => {
+    const cargar = async (fileRef) => {
+      if (!fileRef?.fileId) return null;
+      try { const f = await store.get(fileKey(fileRef.fileId)); return f?.dataUrl ? { ...fileRef, dataUrl: f.dataUrl } : null; }
+      catch { return null; }
+    };
+    const [comp, ficha, quote] = await Promise.all([cargar(p.receiptFile), cargar(p.delivery?.fichaFile), cargar(p.quoteFile)]);
+    const esc = (t) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const docHtml = (titulo, d) => {
+      if (!d) return `<div class='doc'><h2>${titulo}</h2><p class='falta'>— No adjunto en el sistema —</p></div>`;
+      if (String(d.type || "").startsWith("image/")) return `<div class='doc salto'><h2>${titulo}</h2><img src='${d.dataUrl}' /></div>`;
+      return `<div class='doc'><h2>${titulo}</h2><p class='falta'>Archivo PDF: <b>${esc(d.name)}</b> — imprimilo desde su descarga (los PDF no se imprimen embebidos).</p></div>`;
+    };
+    const w = window.open("", "_blank");
+    if (!w) return alert("El navegador bloqueó la ventana — permití pop-ups.");
+    w.document.write(`<html><head><title>Paquete de cierre — ${esc(p.provider)}</title><style>
+      body{font-family:Helvetica,Arial,sans-serif;color:#2C2A28;margin:28px}
+      h1{font-size:20px;border-bottom:3px solid #E8762D;padding-bottom:8px}
+      h2{font-size:14px;color:#E8762D;margin:0 0 8px}
+      table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:10px}
+      td{border:1px solid #DBD4C8;padding:7px 10px}td:first-child{background:#FFFBF5;font-weight:bold;width:220px}
+      .doc{margin-top:26px}.salto{page-break-before:always}.doc img{max-width:100%;max-height:88vh;border:1px solid #DBD4C8}
+      .falta{color:#8B847C;font-style:italic;font-size:12px}
+      .np{margin-top:20px}@media print{.np{display:none}}
+      .chk{margin-top:12px;font-size:12.5px}.chk li{margin:3px 0}
+      .pre{white-space:pre-wrap;font-size:12px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px;padding:8px}
+    </style></head><body>
+      <h1>PAQUETE DE CIERRE CONTABLE</h1>
+      <table>
+        <tr><td>Empresa</td><td>${esc(COMPANIES[p.company]?.name || p.company)}</td></tr>
+        <tr><td>Proyecto</td><td>${esc(p.projectCode || "—")}</td></tr>
+        <tr><td>Proveedor</td><td>${esc(p.provider)}</td></tr>
+        <tr><td>Descripción</td><td>${esc(p.description)}</td></tr>
+        <tr><td>Monto</td><td><b>L ${Number(p.amount || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</b></td></tr>
+        <tr><td>N° Cotización</td><td>${esc(p.quoteNumber || "—")}</td></tr>
+        <tr><td>Referencia de pago</td><td>${esc(p.paymentReference || "—")} · ${esc(p.paymentDate || "")}</td></tr>
+        <tr><td>Responsable de cierre contable</td><td><b>${esc(p.cierreResponsable || "— sin asignar —")}</b></td></tr>
+      </table>
+      ${p.detalleMateriales ? `<div class='doc'><h2>DETALLE DE MATERIALES (según cotización)</h2><div class='pre'>${esc(p.detalleMateriales)}</div></div>` : ""}
+      <ul class='chk'>
+        <li>${comp ? "✔" : "✘"} Comprobante de pago ${comp ? "" : "(no adjunto)"}</li>
+        <li>${ficha ? "✔" : "✘"} Ficha de recibido firmada ${ficha ? "" : (p.delivery?.cerradaSinFicha ? "(cerrada sin ficha: " + esc(p.delivery?.closingNotes || "servicio/renta") + ")" : "(no adjunta)")}</li>
+        <li>${quote ? "✔" : "✘"} Cotización ${quote ? "" : "(no adjunta)"}</li>
+        <li>◻ Factura original (se adjunta FÍSICAMENTE a este paquete)</li>
+      </ul>
+      ${docHtml("COMPROBANTE DE PAGO", comp)}
+      ${docHtml("FICHA DE RECIBIDO FIRMADA", ficha)}
+      ${docHtml("COTIZACIÓN", quote)}
+      <button class='np' onclick='window.print()' style='padding:10px 24px;font-size:13px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px'>Imprimir paquete</button>
+    </body></html>`);
+    w.document.close();
+  };
   // Helper: guarda y retorna true/false segun exito. Para los botones que
   // quieren cerrar el modal solo si el guardado fue exitoso.
   const saveOrAlert = async (newPurchases) => {
@@ -2337,6 +2480,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             <div style={{ fontSize: 11, color: "#64748b" }}>Descripcion</div>
             <div style={{ fontWeight: 500, lineHeight: 1.5 }}>{p.description}</div>
           </div>
+          {p.cierreResponsable && <div>
+            <div style={{ fontSize: 11, color: "#64748b" }}>Responsable de cierre contable</div>
+            <div style={{ fontWeight: 700, color: "#0F766E" }}>🧾 {p.cierreResponsable}</div>
+          </div>}
+          {p.detalleMateriales && <div style={{ gridColumn: "1/-1" }}>
+            <div style={{ fontSize: 11, color: "#64748b" }}>Detalle de materiales (según cotización)</div>
+            <div style={{ whiteSpace: "pre-wrap", color: "#334155", background: "#F8FAFC", border: "1px solid #E2E8F0", padding: 10, borderRadius: 8, fontSize: 12.5 }}>{p.detalleMateriales}</div>
+          </div>}
           {p.opsNotes && <div style={{ gridColumn: "1/-1" }}>
             <div style={{ fontSize: 11, color: "#64748b" }}>Notas de Operaciones</div>
             <div style={{ fontStyle: "italic", color: "#334155", background: "#F1F5F9", padding: 10, borderRadius: 8 }}>{p.opsNotes}</div>
@@ -3717,8 +3868,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       totales[bucket]++;
     });
 
-    // Proyectos a mostrar: los que tienen al menos una compra en cualquiera de las 3 sub-secciones
-    const projKeys = Object.keys(grupos).sort((a, b) => {
+    // Proyectos a mostrar: SOLO los que tienen compras POR COORDINAR.
+    // Lo demás vive en sus propias pestañas (ago 2026, pedido de Gerson):
+    // "Entregas de proveedor" y "Por cerrar contablemente" — así este
+    // tablero queda limpio: solo lo que Ana tiene que accionar YA.
+    const projKeys = Object.keys(grupos).filter(k => grupos[k].por_coordinar.length > 0).sort((a, b) => {
       if (a === "__sin__") return 1;
       if (b === "__sin__") return -1;
       // Ordenar primero por cantidad de items activos (por_coordinar es donde Ana debe actuar)
@@ -3795,25 +3949,20 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           <div style={{ fontSize: 26, fontWeight: 800, color: "#E8762D", marginTop: 4 }}>{totales.por_coordinar}</div>
           <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Por coordinar</div>
         </div>
-        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
+        <div onClick={() => setSec("entregas")} style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150, cursor: "pointer" }} title="Ver la pestaña Entregas de proveedor">
           <div style={{ fontSize: 22 }}>🏪</div>
           <div style={{ fontSize: 26, fontWeight: 800, color: "#0F766E", marginTop: 4 }}>{totales.entrega_directa}</div>
-          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Entrega proveedor</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Entregas de proveedor →</div>
         </div>
-        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
-          <div style={{ fontSize: 22 }}>🚛</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: "#0891B2", marginTop: 4 }}>{totales.en_logistica}</div>
-          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>En Logistica</div>
-        </div>
-        <div style={{ background: "#fff", border: totales.listas > 0 ? "1px solid #6EE7B7" : "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
-          <div style={{ fontSize: 22 }}>✓</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: "#059669", marginTop: 4 }}>{totales.listas}</div>
-          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Listas — pasar a contabilidad</div>
+        <div onClick={() => setSec("conta")} style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150, cursor: "pointer" }} title="Ver la pestaña Por cerrar contablemente">
+          <div style={{ fontSize: 22 }}>🧾</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#B45309", marginTop: 4 }}>{totales.en_logistica + totales.listas}</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Por cerrar contablemente →</div>
         </div>
       </div>
 
       <div style={{ background: "#FFFBEB", border: "1px solid #F59E0B", borderRadius: 12, padding: 14, fontSize: 13, color: "#78350F" }}>
-        💼 <b>Flujo:</b> 📦 Por coordinar con proveedor → 🚛 En Logistica → ✓ Lista para contabilidad (cuando Jorge sube la ficha). El cierre contable lo manejas vos directamente con conta.
+        💼 <b>Flujo:</b> Lic. Carolina paga → cae acá 📦. Vos coordinás y elegís la salida: 🚛 <b>Enviar a Logística</b> o 🏪 <b>La entrega el proveedor</b> (o 🔒 cerrar sin ficha si es servicio/renta). Al elegir, la compra SALE de este tablero y sigue su camino en las pestañas <b>Entregas de proveedor</b> y <b>Por cerrar contablemente</b>.
       </div>
 
       {/* Kanban por proyecto — cada columna tiene 4 sub-secciones colapsables */}
@@ -3829,17 +3978,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
               const proj = (customProjects || []).find(p => p.short === key);
               const projDisplay = key === "__sin__" ? "SIN PROYECTO" : key;
               const projName = proj?.name || "";
-              const colTotal = items.por_coordinar.length + items.entrega_directa.length + items.en_logistica.length + items.listas.length;
-              const headerColor = items.listas.length > 0 && items.por_coordinar.length === 0 && items.entrega_directa.length === 0 && items.en_logistica.length === 0
-                ? "#059669"
-                : items.por_coordinar.length > 0 ? "#E8762D"
-                : items.entrega_directa.length > 0 && items.en_logistica.length === 0 ? "#0F766E"
-                : "#0891B2";
-
-              const expandedEnLog = anaExpand[`${key}-enlog`] !== false; // default visible
-              const expandedCierre = anaExpand[`${key}-cierre`] !== false; // default visible
-
-              const toggleSec = (subkey) => setAnaExpand(s => ({ ...s, [subkey]: !(s[subkey] !== false) }));
+              // Solo cuenta lo accionable acá: las demás fases viven en sus pestañas.
+              const colTotal = items.por_coordinar.length;
+              const headerColor = "#E8762D";
 
               return <div key={key} style={{
                 minWidth: 310,
@@ -3875,158 +4016,195 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                     </div>
                   </div>}
 
-                  {/* Sub-seccion: ENTREGA DIRECTA DEL PROVEEDOR (llega solo, con dia y hora) */}
-                  {items.entrega_directa.length > 0 && <div>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#0F766E", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, padding: "4px 8px", background: "#CCFBF1", borderRadius: 4 }}>
-                      🏪 La entrega el proveedor ({items.entrega_directa.length})
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {items.entrega_directa
-                        .sort((a, b) => (a.delivery?.arrivalAt || "").localeCompare(b.delivery?.arrivalAt || ""))
-                        .map(p => {
-                          const llega = p.delivery?.arrivalAt ? new Date(p.delivery.arrivalAt) : null;
-                          // Se compara contra AHORA (no contra medianoche): la
-                          // hora se pidio justamente para saber el mismo dia
-                          // si el proveedor ya se paso de la hora pactada.
-                          const atrasada = llega && llega < new Date();
-                          return renderCardCompacta(p, {
-                            badge: atrasada ? "⚠ Debió llegar" : "🏪 Llega directo",
-                            accentColor: atrasada ? "#B45309" : "#0F766E",
-                            borderColor: atrasada ? "#FCD34D" : "#5EEAD4",
-                            dateRight: llega ? `📅 ${llega.toLocaleDateString("es-HN", { day: "2-digit", month: "short" })} · ${llega.toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}` : "",
-                            subline: [p.delivery?.arrivalContacto ? `👤 ${p.delivery.arrivalContacto}` : "", p.delivery?.arrivalNotas || ""].filter(Boolean).join(" · ") || "El proveedor lo lleva al proyecto",
-                            actions: <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }} onClick={e => e.stopPropagation()}>
-                              <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { if (!e?.isStaleChunk) alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: CHARCOAL, border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>📄 Ficha en blanco</button>
-                              {canEditDelivery && <>
-                                <input
-                                  type="file"
-                                  accept=".pdf,image/*"
-                                  id={`upload-ficha-directa-${p.id}`}
-                                  style={{ display: "none" }}
-                                  onChange={async (e) => {
-                                    const f = e.target.files?.[0];
-                                    if (!f) return;
-                                    e.target.value = "";
-                                    const ok = await uploadFichaFromCard(p, f);
-                                    if (ok) alert("✓ Ficha firmada subida.\nLa compra paso a 'Listas para contabilidad'.");
-                                  }}
-                                />
-                                <label htmlFor={`upload-ficha-directa-${p.id}`} style={{ background: "#0F766E", color: "#fff", padding: "6px 8px", borderRadius: 4, fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", width: "100%", boxSizing: "border-box", display: "block" }} title="Subir la ficha que firmaron al recibir en proyecto">📎 Subir ficha firmada</label>
-                              </>}
-                              {canSendToLogistics && <button onClick={() => cerrarSinFicha(p)} style={{ background: "transparent", color: "#64748b", border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>🔒 Cerrar sin ficha</button>}
-                              <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
-                                {canSendToLogistics && <button onClick={() => setModal({ t: "entrega-directa", d: p })} style={{ background: "none", border: "none", color: "#0891B2", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: 0 }}>✏️ Cambiar fecha/hora</button>}
-                                {/* Salida si el proveedor no cumple: vuelve a coordinacion para mandar el camion */}
-                                {canSendToLogistics && <button onClick={() => revertirEntregaDirecta(p)} style={{ background: "none", border: "none", color: "#B45309", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: 0 }} title="El proveedor no la entrega — volver a Por coordinar para mandar logistica">🚛 No la entrega</button>}
-                              </div>
-                            </div>,
-                          });
-                        })}
-                    </div>
-                  </div>}
-
-                  {/* Sub-seccion: EN LOGISTICA (colapsable, default abierto) */}
-                  {items.en_logistica.length > 0 && <>
-                    <button onClick={() => toggleSec(`${key}-enlog`)} style={{ background: "#DBEAFE", color: "#1E3A8A", border: "1px solid #93C5FD", padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span>🚛 En Logistica ({items.en_logistica.length})</span>
-                      <span style={{ fontSize: 10 }}>{expandedEnLog ? "▾" : "▸"}</span>
-                    </button>
-                    {expandedEnLog && <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
-                      {items.en_logistica
-                        .sort((a, b) => (a.paidAt || "").localeCompare(b.paidAt || ""))
-                        .map(p => {
-                          const d = despachoDe(p.id);
-                          const estCfg = { pendiente: { c: "#E8762D", l: "📌 Pendiente" }, programado: { c: "#3E6A99", l: "📅 Programado" }, en_ruta: { c: "#D4A017", l: "🚛 En ruta" }, entregado: { c: "#059669", l: "✓ Entregado (esperando ficha)" } }[d?.estado] || { c: "#64748b", l: d?.estado };
-                          return renderCardCompacta(p, {
-                            badge: estCfg.l,
-                            accentColor: estCfg.c,
-                            borderColor: "#BFDBFE",
-                            dateRight: d?.fechaProgramada ? `📅 ${new Date(d.fechaProgramada + "T00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "",
-                            subline: d?.motorista ? `🚛 ${d.motorista}` : null,
-                            actions: <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }} onClick={e => e.stopPropagation()}>
-                              <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { if (!e?.isStaleChunk) alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: CHARCOAL, border: "1px solid #CBD5E1", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>📄 Ficha en blanco</button>
-                              {canEditDelivery && <>
-                                <input
-                                  type="file"
-                                  accept=".pdf,image/*"
-                                  id={`upload-ficha-kanban-${p.id}`}
-                                  style={{ display: "none" }}
-                                  onChange={async (e) => {
-                                    const f = e.target.files?.[0];
-                                    if (!f) return;
-                                    e.target.value = "";
-                                    const ok = await uploadFichaFromCard(p, f);
-                                    if (ok) alert("✓ Ficha firmada subida y enlazada a la compra.\nLa compra paso a 'Listas para contabilidad'.");
-                                  }}
-                                />
-                                <label
-                                  htmlFor={`upload-ficha-kanban-${p.id}`}
-                                  style={{ background: "#E8762D", color: "#fff", padding: "6px 8px", borderRadius: 4, fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", width: "100%", boxSizing: "border-box", display: "block" }}
-                                  title="Subir el PDF/foto de la ficha que el residente firmo en obra"
-                                >📎 Subir ficha firmada</label>
-                              </>}
-                            </div>,
-                          });
-                        })}
-                    </div>}
-                  </>}
-
-                  {/* Sub-seccion: LISTAS PARA CONTABILIDAD (verde — informativo, sin accion) */}
-                  {items.listas.length > 0 && <>
-                    <button onClick={() => toggleSec(`${key}-cierre`)} style={{ background: "#DCFCE7", color: "#065F46", border: "2px solid #059669", padding: "8px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span>✓ Listas para contabilidad ({items.listas.length})</span>
-                      <span style={{ fontSize: 10 }}>{expandedCierre ? "▾" : "▸"}</span>
-                    </button>
-                    {expandedCierre && <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
-                      {items.listas.map(p => {
-                        const tieneFichaFirmada = !!p.delivery?.fichaFile?.fileId;
-                        // Las cerradas sin ficha (servicios/rentas) NO tienen
-                        // ficha: la card lo dice tal cual en vez de prometer una.
-                        const sinFicha = !tieneFichaFirmada && p.deliveryStatus === "cerrado";
-                        return renderCardCompacta(p, {
-                          badge: sinFicha ? "🔒 Cerrada sin ficha" : "✓ Lista — pasar a conta",
-                          accentColor: sinFicha ? "#64748b" : "#059669",
-                          borderColor: sinFicha ? "#CBD5E1" : "#6EE7B7",
-                          dateRight: sinFicha
-                            ? (p.delivery?.closedAt ? `Cerrada ${new Date(p.delivery.closedAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : "")
-                            : (p.delivery?.fichaUploadedAt ? `Ficha ${new Date(p.delivery.fichaUploadedAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}` : ""),
-                          subline: sinFicha
-                            ? (p.delivery?.closingNotes || "Cerrada sin ficha de recibido")
-                            : (p.delivery?.fichaFile?.name || "Ficha de recibido subida por Jorge"),
-                          actions: sinFicha ? (isAdmin ? <div style={{ marginTop: 6 }}>
-                            <button onClick={() => reabrirCerrada(p)} style={{ background: "transparent", color: "#B45309", border: "1px solid #FCD34D", padding: "5px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>↩ Reabrir (se cerró por error)</button>
-                          </div> : null) : <div style={{ marginTop: 6 }}>
-                            <button onClick={async () => {
-                              // Si Jorge subio la ficha firmada, abrirla. Sino fallback al template (deberia ser raro).
-                              if (tieneFichaFirmada) {
-                                try {
-                                  const ref = p.delivery.fichaFile;
-                                  const full = await store.get(`cp-file-${ref.fileId}`);
-                                  if (!full?.dataUrl) { alert("No se pudo cargar la ficha firmada desde la nube."); return; }
-                                  const w = window.open();
-                                  if (w) {
-                                    w.document.write(
-                                      full.type === "application/pdf"
-                                        ? `<iframe src='${full.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>`
-                                        : `<img src='${full.dataUrl}' style='max-width:100vw;max-height:100vh'/>`
-                                    );
-                                  }
-                                } catch (e) { alert("Error abriendo ficha firmada: " + e.message); }
-                              } else {
-                                try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { if (!e?.isStaleChunk) alert("No se pudo: " + e.message); }
-                              }
-                            }} style={{ background: "#059669", color: "#fff", border: "none", padding: "7px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>
-                              👁 Ver ficha firmada
-                            </button>
-                          </div>,
-                        });
-                      })}
-                    </div>}
-                  </>}
                 </div>
               </div>;
             })}
           </div>}
+    </div>;
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ENTREGAS DE PROVEEDOR (ago 2026) — compras que el PROVEEDOR lleva directo
+  // al proyecto. Viven acá entre "Por coordinar" y "Por cerrar contablemente":
+  // Ana descarga la ficha, se la manda al ingeniero que recibe, y cuando
+  // vuelve firmada la adjunta — con eso la compra migra sola a conta.
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderEntregasProveedor = () => {
+    const activas = cp.filter(p => (p.status === "pagado" || p.status === "finalizado") && p.deliveryStatus === "entrega_proveedor");
+    const grupos = {};
+    activas.forEach(p => { const k = p.projectCode || "__sin__"; (grupos[k] = grupos[k] || []).push(p); });
+    const keys = Object.keys(grupos).sort((a, b) => (a === "__sin__" ? 1 : b === "__sin__" ? -1 : a.localeCompare(b)));
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ background: "#CCFBF1", border: "1px solid #5EEAD4", borderRadius: 12, padding: 14, fontSize: 13, color: "#134E4A" }}>
+        🏪 <b>Entregas de proveedor:</b> el proveedor lleva el producto directo al proyecto. Tu responsabilidad: descargá la <b>ficha en blanco</b>, mandásela al ingeniero que recibe, y cuando te la devuelva <b>firmada</b> la subís acá — la compra pasa sola a <b>Por cerrar contablemente</b>. Si el proveedor no cumple, "🚛 No la entrega" la devuelve a Por coordinar.
+      </div>
+      {keys.length === 0
+        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 60, textAlign: "center", color: "#94A3B8" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🏪</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: CHARCOAL, marginBottom: 4 }}>Sin entregas de proveedor pendientes</div>
+            <div style={{ fontSize: 13 }}>Cuando marqués "La entrega el proveedor" en Por coordinar, la compra aparece acá hasta que subás la ficha firmada.</div>
+          </div>
+        : keys.map(key => <div key={key} style={{ background: "#F8F2E6", borderRadius: 12, padding: 14, border: "1px solid #E8E1D3" }}>
+            <div style={{ fontWeight: 800, fontSize: 14, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.5, borderBottom: "3px solid #0F766E", paddingBottom: 8, marginBottom: 10, display: "flex", justifyContent: "space-between" }}>
+              <span>{key === "__sin__" ? "SIN PROYECTO" : key}</span><Badge color="#0F766E">{grupos[key].length}</Badge>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 10 }}>
+              {grupos[key]
+                .sort((a, b) => (a.delivery?.arrivalAt || "").localeCompare(b.delivery?.arrivalAt || ""))
+                .map(p => {
+                  const llega = p.delivery?.arrivalAt ? new Date(p.delivery.arrivalAt) : null;
+                  const atrasada = llega && llega < new Date();
+                  return <div key={p.id} style={{ background: "#fff", border: `1px solid ${atrasada ? "#FCD34D" : "#5EEAD4"}`, borderLeft: `3px solid ${atrasada ? "#B45309" : "#0F766E"}`, borderRadius: 8, padding: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <Badge color={atrasada ? "#B45309" : "#0F766E"}>{atrasada ? "⚠ Debió llegar" : "🏪 Llega directo"}</Badge>
+                      {llega && <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>📅 {llega.toLocaleDateString("es-HN", { day: "2-digit", month: "short" })} · {llega.toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}</span>}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 6 }}>{p.provider}</div>
+                    <div style={{ fontSize: 11.5, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
+                    {p.amount && <div style={{ fontSize: 11, color: "#059669", fontWeight: 700, marginTop: 4 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</div>}
+                    {p.cierreResponsable && <div style={{ fontSize: 10.5, color: "#0F766E", marginTop: 3 }}>🧾 Cierra con conta: <b>{p.cierreResponsable}</b></div>}
+                    {(p.delivery?.arrivalContacto || p.delivery?.arrivalNotas) && <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 4, paddingTop: 4, borderTop: "1px dashed #E2E8F0" }}>{[p.delivery?.arrivalContacto ? `👤 ${p.delivery.arrivalContacto}` : "", p.delivery?.arrivalNotas || ""].filter(Boolean).join(" · ")}</div>}
+                    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                      <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { if (!e?.isStaleChunk) alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: CHARCOAL, border: "1px solid #CBD5E1", padding: "6px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Descargar ficha en blanco (mandala al ingeniero)</button>
+                      {canSendToLogistics && <>
+                        <input type="file" accept=".pdf,image/*" id={`entrega-ficha-${p.id}`} style={{ display: "none" }}
+                          onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ""; const ok = await uploadFichaFromCard(p, f); if (ok) alert("✓ Ficha firmada subida.\nLa compra pasó a Por cerrar contablemente."); }} />
+                        <label htmlFor={`entrega-ficha-${p.id}`} style={{ background: "#0F766E", color: "#fff", padding: "7px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", display: "block" }}>📎 Subir ficha FIRMADA por el ingeniero</label>
+                        <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+                          <button onClick={() => setModal({ t: "entrega-directa", d: p })} style={{ background: "none", border: "none", color: "#0891B2", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: 0 }}>✏️ Cambiar fecha/hora</button>
+                          <button onClick={() => revertirEntregaDirecta(p)} style={{ background: "none", border: "none", color: "#B45309", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: 0 }}>🚛 No la entrega</button>
+                        </div>
+                      </>}
+                    </div>
+                  </div>;
+                })}
+            </div>
+          </div>)}
+    </div>;
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // POR CERRAR CONTABLEMENTE (ago 2026) — todo lo que ya salió de coordinación
+  // y todavía no tiene el paquete de cierre subido. La regla del cierre: se
+  // considera cerrada SOLO cuando Ana sube el paquete digitalizado que le
+  // devuelve Contabilidad. Los badges dicen exactamente qué falta y de quién.
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderConta = () => {
+    const despachoDe = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
+    // Entra a esta vista: pagada/finalizada que ya tiene un CAMINO decidido
+    // (despacho de logística, entrega del proveedor, ficha adjunta o cerrada
+    // sin ficha). Las que siguen sin decidir viven en Por coordinar.
+    const clasificar = (p) => {
+      if (p.status !== "pagado" && p.status !== "finalizado") return null;
+      if (p.conta?.fileId) return "cerrada";
+      if (p.deliveryStatus === "ficha_adjunta") return "lista";
+      if (p.deliveryStatus === "cerrado") return "lista"; // sin ficha (servicio/renta)
+      if (p.deliveryStatus === "entrega_proveedor") return "falta_proveedor";
+      const d = despachoDe(p.id);
+      if (d) return (d.estado === "entregado" || d.estado === "cerrado") ? "falta_logistica" : "en_camino";
+      return null; // sin camino decidido → sigue en Por coordinar
+    };
+    // Meses disponibles (con algo por cerrar o cerrado), para el selector.
+    const mesDe = (x) => String(x.paidAt || x.createdAt || "").slice(0, 7);
+    const mesesDisponibles = [...new Set(cp.filter(x => clasificar(x)).map(mesDe).filter(Boolean))].sort().reverse();
+    const enMes = (x) => !contaMes || mesDe(x) === contaMes;
+    const grupos = {}; const totales = { lista: 0, falta_logistica: 0, falta_proveedor: 0, en_camino: 0, cerrada: 0 };
+    cp.filter(enMes).forEach(p => { const b = clasificar(p); if (!b) return; const k = p.projectCode || "__sin__"; (grupos[k] = grupos[k] || { lista: [], falta_logistica: [], falta_proveedor: [], en_camino: [], cerrada: [] })[b].push(p); totales[b]++; });
+    const abiertas = totales.lista + totales.falta_logistica + totales.falta_proveedor + totales.en_camino;
+    const keys = Object.keys(grupos).filter(k => grupos[k].lista.length + grupos[k].falta_logistica.length + grupos[k].falta_proveedor.length + grupos[k].en_camino.length > 0)
+      .sort((a, b) => (a === "__sin__" ? 1 : b === "__sin__" ? -1 : a.localeCompare(b)));
+    const cerradas = cp.filter(enMes).filter(p => clasificar(p) === "cerrada").sort((a, b) => String(b.conta?.cerradoAt || "").localeCompare(String(a.conta?.cerradoAt || "")));
+    const verCerradas = anaExpand["conta-cerradas"] === true;
+    const puedeCerrarConta = isAdmin || isAsistenteCompras || isCostos;
+
+    const cardConta = (p, tipo) => {
+      const d = despachoDe(p.id);
+      const cfg = {
+        lista:           { badge: p.deliveryStatus === "cerrado" && !p.delivery?.fichaFile ? "🔒 Sin ficha (servicio/renta) — lista" : "✓ Ficha lista — armar paquete", c: "#059669", border: "#6EE7B7" },
+        falta_logistica: { badge: "⚠ SIN FICHA de recibido — LOGÍSTICA debe subirla", c: "#DC2626", border: "#FCA5A5" },
+        falta_proveedor: { badge: "🏪 Falta ficha firmada (la entrega el proveedor)", c: "#B45309", border: "#FCD34D" },
+        en_camino:       { badge: `🚚 Con Logística (${d?.estado || "pendiente"})`, c: "#0891B2", border: "#BAE6FD" },
+      }[tipo];
+      return <div key={p.id} style={{ background: "#fff", border: `1px solid ${cfg.border}`, borderLeft: `3px solid ${cfg.c}`, borderRadius: 8, padding: 12 }}>
+        <Badge color={cfg.c}>{cfg.badge}</Badge>
+        <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 6 }}>{p.provider}</div>
+        <div style={{ fontSize: 11.5, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
+        {p.amount && <div style={{ fontSize: 11, color: "#059669", fontWeight: 700, marginTop: 4 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</div>}
+        <div style={{ fontSize: 10.5, color: p.cierreResponsable ? "#0F766E" : "#B45309", marginTop: 3 }}>🧾 Cierra con conta: <b>{p.cierreResponsable || "sin asignar"}</b></div>
+        {tipo === "falta_logistica" && d?.motorista && <div style={{ fontSize: 10.5, color: "#B91C1C", marginTop: 3 }}>Entregada por {d.motorista}{d.fechaEjecutada ? ` el ${d.fechaEjecutada}` : ""} — la ficha firmada la tiene Logística.</div>}
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+          {tipo === "falta_proveedor" && <button onClick={() => setSec("entregas")} style={{ background: "transparent", color: "#0F766E", border: "1px solid #5EEAD4", padding: "6px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>→ Gestionarla en Entregas de proveedor</button>}
+          {tipo === "lista" && <>
+            <button onClick={() => imprimirPaqueteConta(p)} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🖨 Imprimir paquete de cierre</button>
+            {puedeCerrarConta && <>
+              <input type="file" accept=".pdf,image/*" id={`conta-paquete-${p.id}`} style={{ display: "none" }}
+                onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ""; const ok = await uploadPaqueteConta(p, f); if (ok) alert("✅ Paquete subido — la compra quedó CERRADA CONTABLEMENTE."); }} />
+              <label htmlFor={`conta-paquete-${p.id}`} style={{ background: "#059669", color: "#fff", padding: "7px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", display: "block" }} title="El paquete completo que devuelve Contabilidad, digitalizado — con esto se cierra">📎 Subir paquete digitalizado (CIERRA la compra)</label>
+            </>}
+          </>}
+        </div>
+      </div>;
+    };
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>📅 Mes de pago:</span>
+        <select value={contaMes} onChange={e => setContaMes(e.target.value)} style={{ padding: "7px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", fontFamily: "inherit" }}>
+          <option value="">Todos los meses</option>
+          {mesesDisponibles.map(m => <option key={m} value={m}>{(() => { const [y, mm] = m.split("-").map(Number); return new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); })()}</option>)}
+        </select>
+        {contaMes && !mesesDisponibles.includes(contaMes) && <span style={{ fontSize: 11, color: "#94A3B8", fontStyle: "italic" }}>sin compras pagadas este mes — elegí otro</span>}
+      </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {[["🧾", abiertas, "Por cerrar", "#B45309"], ["✓", totales.lista, "Con documentos listos", "#059669"], ["⚠", totales.falta_logistica, "Sin ficha de Logística", "#DC2626"], ["🏪", totales.falta_proveedor, "Falta ficha del proveedor", "#B45309"], ["✅", totales.cerrada, "Cerradas contablemente", "#64748b"]].map(([ic, n, lbl, c]) => (
+          <div key={lbl} style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "12px 16px", minWidth: 140 }}>
+            <div style={{ fontSize: 18 }}>{ic}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: c, marginTop: 2 }}>{n}</div>
+            <div style={{ fontSize: 9.5, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>{lbl}</div>
+          </div>))}
+      </div>
+      <div style={{ background: "#FFFBEB", border: "1px solid #F59E0B", borderRadius: 12, padding: 14, fontSize: 13, color: "#78350F" }}>
+        🧾 <b>La regla del cierre:</b> con la ficha de recibido adjunta, imprimí el <b>paquete de cierre</b>, agregale la factura física y entregáselo a Contabilidad. Cuando conta te devuelva el paquete procesado, <b>subilo digitalizado acá</b> — solo eso cierra la compra. Las que dicen <b style={{ color: "#DC2626" }}>SIN FICHA de Logística</b> son responsabilidad de Logística: el motorista volvió con la ficha firmada y no la han subido.
+      </div>
+      {keys.length === 0
+        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 60, textAlign: "center", color: "#94A3B8" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: CHARCOAL, marginBottom: 4 }}>Nada por cerrar contablemente</div>
+            <div style={{ fontSize: 13 }}>Cuando envíes una compra a Logística o al proveedor, aparece acá hasta que subás el paquete de cierre.</div>
+          </div>
+        : keys.map(key => { const g = grupos[key]; const nAct = g.lista.length + g.falta_logistica.length + g.falta_proveedor.length + g.en_camino.length; return (
+          <div key={key} style={{ background: "#F8F2E6", borderRadius: 12, padding: 14, border: "1px solid #E8E1D3" }}>
+            <div style={{ fontWeight: 800, fontSize: 14, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.5, borderBottom: "3px solid #B45309", paddingBottom: 8, marginBottom: 10, display: "flex", justifyContent: "space-between" }}>
+              <span>{key === "__sin__" ? "SIN PROYECTO" : key}</span><Badge color="#B45309">{nAct}</Badge>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 10 }}>
+              {g.lista.map(p => cardConta(p, "lista"))}
+              {g.falta_logistica.map(p => cardConta(p, "falta_logistica"))}
+              {g.falta_proveedor.map(p => cardConta(p, "falta_proveedor"))}
+              {g.en_camino.map(p => cardConta(p, "en_camino"))}
+            </div>
+          </div>); })}
+      {/* Cerradas contablemente — colapsable, para consulta y auditoría */}
+      {cerradas.length > 0 && <div>
+        <button onClick={() => setAnaExpand(s => ({ ...s, "conta-cerradas": !verCerradas }))} style={{ background: "#DCFCE7", color: "#065F46", border: "2px solid #059669", padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", width: "100%", textAlign: "left" }}>
+          {verCerradas ? "▾" : "▸"} ✅ Cerradas contablemente ({cerradas.length})
+        </button>
+        {verCerradas && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 10, marginTop: 10 }}>
+          {cerradas.map(p => <div key={p.id} style={{ background: "#fff", border: "1px solid #6EE7B7", borderLeft: "3px solid #059669", borderRadius: 8, padding: 12, opacity: 0.9 }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <Badge color="#059669">✅ Cerrada</Badge>
+              <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>{p.conta?.cerradoAt ? new Date(p.conta.cerradoAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : ""}</span>
+            </div>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: CHARCOAL, marginTop: 6 }}>{p.provider}</div>
+            <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>{p.description}</div>
+            <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 4 }}>Cerrada por <b>{p.conta?.cerradoPor || "?"}</b> · {p.projectCode || "sin proyecto"}</div>
+            <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+              <button onClick={async () => { try { const full = await store.get(fileKey(p.conta.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el paquete."); const w = window.open(); if (w) w.document.write(full.type === "application/pdf" ? `<iframe src='${full.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>` : `<img src='${full.dataUrl}' style='max-width:100vw'/>`); } catch (e) { alert("Error: " + e.message); } }} style={{ background: "#059669", color: "#fff", border: "none", padding: "6px 10px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flex: 1 }}>👁 Ver paquete</button>
+              {(isAdmin || isAsistenteCompras) && <button onClick={() => reabrirCierreConta(p)} style={{ background: "transparent", color: "#B45309", border: "1px solid #FCD34D", padding: "6px 10px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>↩ Reabrir</button>}
+            </div>
+          </div>)}
+        </div>}
+      </div>}
     </div>;
   };
 
@@ -4149,6 +4327,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     { id: "list", icon: "📋", label: "Solicitudes" },
     { id: "projects", icon: "🏗️", label: "Proyectos" },
     { id: "ana", icon: "📦", label: "Por coordinar" },
+    { id: "entregas", icon: "🏪", label: "Entregas de proveedor" },
+    { id: "conta", icon: "🧾", label: "Por cerrar contable" },
     { id: "providers", icon: "🏢", label: "Proveedores" },
   ];
   // Dashboard y Resumen (command center) solo para admin/gerencia/costos —
@@ -4156,7 +4336,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const canSeeResumen = isAdmin || isGerencia || isCostos || isVisorCompras;
   const canSeeDashboard = canSeeResumen;
   const visibleNav = isAsistenteCompras
-    ? allNav.filter(n => n.id === "ana" || n.id === "providers")
+    ? allNav.filter(n => n.id === "ana" || n.id === "entregas" || n.id === "conta" || n.id === "providers")
     : allNav.filter(n => {
         if (n.id === "resumen") return canSeeResumen;
         if (n.id === "dashboard") return canSeeDashboard;
@@ -4347,6 +4527,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
               : sec === "projects" ? "Proyectos"
               : sec === "providers" ? "Proveedores"
               : sec === "ana" ? "Por coordinar con proveedores"
+              : sec === "entregas" ? "Entregas de proveedor"
+              : sec === "conta" ? "Por cerrar contablemente"
               : "Solicitudes de compra validadas"}
           </h2>
           <span style={{ fontSize: 13, color: cc.accent, fontWeight: 600, letterSpacing: 0.3 }}>{cc.name}</span>
@@ -4360,6 +4542,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
           : sec === "ana" ? renderAnaKanban()
+          : sec === "entregas" ? renderEntregasProveedor()
+          : sec === "conta" ? renderConta()
           : renderList()
       }</div>
     </div>

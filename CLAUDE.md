@@ -22,8 +22,33 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
 - `PurchasesModule.jsx` (GeoShopping) — compras: Dashboard mensual, Costos,
   Resumen (filtro mes + colapsable + chips entrega), Solicitudes, Proyectos,
   Por coordinar (kanban Ana → logística), Proveedores. Exporta `generateFichaPDF`.
+  **Flujo de cierre contable (19-ago-2026, pedido de Gerson)**: el form de
+  solicitud lleva `cierreResponsable` (quién cierra con conta) y
+  `detalleMateriales` (qué se compra, según cotización — opcional). El kanban
+  "Por coordinar" de Ana quedó LIMPIO: solo lo accionable (pagadas sin camino);
+  al elegir salida la compra se va a su pestaña. Pestañas nuevas (Ana las ve):
+  **🏪 Entregas de proveedor** (deliveryStatus entrega_proveedor, por proyecto:
+  descargar ficha en blanco → el ingeniero la firma → Ana la sube →
+  ficha_adjunta) y **🧾 Por cerrar contable** (todo lo pagado con camino
+  decidido y sin `conta`; filtro por MES de pago, default mes actual — el
+  backlog histórico no se viene encima). Badges de responsabilidad: "SIN FICHA
+  de Logística" (despacho entregado sin ficha — presión a logística),
+  "Falta ficha del proveedor", "Con Logística", "Ficha lista". Cierre = subir
+  el paquete digitalizado que devuelve conta (`p.conta = {fileId, cerradoPor,
+  cerradoAt}`, ortogonal a deliveryStatus — no toca Resumen/Recepción);
+  `imprimirPaqueteConta` genera portada + checklist + docs embebidos (imágenes
+  a página; PDFs se listan). `uploadPaqueteConta`/`reabrirCierreConta` con el
+  patrón atómico de uploadFichaFromCard. Futuro: módulo GeoAccounting para
+  que conta vea estas compras (aún NO se hace).
 - `MachinesModule.jsx` (GeoMachinery) — espejo de GeoShopping para repuestos
   (coordinador: Fernando). Mismo flujo completo incl. "Cerrar sin logística".
+  **19-ago-2026**: mismo flujo de cierre contable que GeoShopping (pestañas
+  Entregas de proveedor + Por cerrar contable, entrega_proveedor agregado a
+  sus DELIVERY_STATUSES, EntregaDirectaFormImpl a nivel de módulo, helpers
+  con key "mq-purchases" vía `subirYEnlazar`). Dashboard: sección **⚙️ Gasto
+  por máquina** del mes seleccionado (por paidAt, machineId → mq-machines,
+  desglose por proyecto, export CSV, aviso de pagos sin máquina vinculada) —
+  para el reporte mensual de costos de Gerson.
 - `HRModule.jsx` (GeoTeam) — Empleados (fotos), Contratos (tabla por urgencia),
   Planilla, Asistencia (cuadrillas → grid 1/0/INC/DT/DT2/TF + override 1*),
   Horas Extras, Costos MO, Dashboard, KPI's, Llegadas tardías. Bonificaciones
