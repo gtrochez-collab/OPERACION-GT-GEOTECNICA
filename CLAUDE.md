@@ -50,7 +50,9 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   viejas por createdAt con getCloud + verify. Sale en la tabla, en las cards
   y en el paquete de cierre.
   **Constancia de pagos a cuenta (19-ago-2026)**: `provider.constanciaFile`
-  — se sube UNA vez en la ficha del proveedor (`subirConstanciaProveedor`) y
+  — se sube UNA vez en la ficha del proveedor (`subirConstanciaProveedor`,
+  disponible en el form de proveedores de AMBOS módulos: cp-providers es
+  compartida, así que subirla en uno sirve para los dos) y
   el paquete de cierre la adjunta sola en todas sus compras (conta la exige
   en cada paquete; antes Ana y Fernando la buscaban a mano).
   **Paquete de cierre = PDF REAL (19-ago-2026)**: `imprimirPaqueteConta` ya no

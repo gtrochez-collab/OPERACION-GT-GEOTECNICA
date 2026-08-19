@@ -1074,7 +1074,7 @@ function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
 // ─────────────────────────────────────────────────────────────────────────
 // ProviderFormImpl: form de proveedor (CRUD)
 // ─────────────────────────────────────────────────────────────────────────
-function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider }) {
+function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider, subirConstanciaProveedor }) {
   const [f, setF] = useState(provider || {
     id: "",
     name: "",
@@ -1149,6 +1149,33 @@ function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider }
         ))}
         <Btn small variant="ghost" onClick={addBank}>+ Agregar otra cuenta bancaria</Btn>
       </div>
+    </div>
+
+    {/* CONSTANCIA DE PAGOS A CUENTA — cp-providers es compartida con
+        GeoShopping, así que subirla desde cualquiera de los dos módulos la
+        deja disponible para los paquetes de cierre de ambos. */}
+    <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10, padding: 14 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: "#065F46", marginBottom: 4 }}>🏦 Constancia de pagos a cuenta (PDF)</div>
+      <div style={{ fontSize: 11.5, color: "#047857", marginBottom: 8 }}>
+        Se adjunta AUTOMÁTICAMENTE al paquete de cierre contable de todas las compras de este proveedor (GeoMachinery y GeoShopping). Subila una sola vez.
+      </div>
+      {f.constanciaFile?.fileId
+        ? <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#065F46" }}>✓ {f.constanciaFile.name}</span>
+            <Btn small variant="ghost" onClick={async () => {
+              try { const full = await store.get(fileKey(f.constanciaFile.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar."); const w = window.open(); if (w) w.document.write(full.type === "application/pdf" ? `<iframe src='${full.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>` : `<img src='${full.dataUrl}' style='max-width:100vw'/>`); } catch (e) { alert("Error: " + e.message); }
+            }}>👁 Ver</Btn>
+            <Btn small variant="danger" onClick={() => { if (confirm("¿Quitar la constancia de este proveedor?\n\nDejará de adjuntarse a los paquetes de cierre.")) u("constanciaFile", null); }}>× Quitar</Btn>
+          </div>
+        : <div>
+            <input type="file" accept=".pdf,image/*" id="mq-prov-constancia" style={{ display: "none" }}
+              onChange={async (e) => {
+                const file = e.target.files?.[0]; if (!file) return; e.target.value = "";
+                const ref = await subirConstanciaProveedor(file);
+                if (ref) u("constanciaFile", ref);
+              }} />
+            <label htmlFor="mq-prov-constancia" style={{ display: "inline-block", background: "#059669", color: "#fff", padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>📎 Subir constancia (PDF)</label>
+          </div>}
     </div>
 
     <Textarea label="Notas internas" value={f.notes} onChange={e => u("notes", e.target.value)} placeholder="Cualquier observacion: horarios, persona de planta, condiciones especiales..." />
@@ -1755,6 +1782,19 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     if (merged !== next) setProviders(merged);
     return await store.set("cp-providers", merged);
   };
+  // Sube la constancia de pagos a cuenta a su propia row y devuelve la ref.
+  const subirConstanciaProveedor = async (fileObj) => {
+    if (!fileObj) return null;
+    if (fileObj.size > 2 * 1024 * 1024) { alert(`❌ El archivo pesa ${(fileObj.size / 1024 / 1024).toFixed(2)} MB (límite 2 MB). Comprimilo antes de subir.`); return null; }
+    try {
+      const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(fileObj); });
+      const fileId = uid();
+      const ok = await store.set(fileKey(fileId), { name: fileObj.name, type: fileObj.type, size: fileObj.size, dataUrl });
+      if (!ok) { alert("⚠️ No se pudo subir el archivo a la nube. Reintentá."); return null; }
+      return { fileId, name: fileObj.name, type: fileObj.type, size: fileObj.size, subidaAt: new Date().toISOString() };
+    } catch (e) { alert("Error subiendo la constancia: " + (e?.message || e)); return null; }
+  };
+
   const upsertProvider = async (p) => {
     const exists = providers.find(x => x.id === p.id);
     const updated = { ...p, updatedAt: new Date().toISOString() };
@@ -4302,8 +4342,8 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
       case "edit-project": return <Modal title={`Editar proyecto — ${m.d.short}`} onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} project={m.d} /></Modal>;
-      case "provider-new":  return <Modal title="Nuevo proveedor" onClose={() => setModal(null)} wide><ProviderFormImpl setModal={setModal} upsertProvider={upsertProvider} /></Modal>;
-      case "provider-edit": return <Modal title={`Editar proveedor — ${m.d.name}`} onClose={() => setModal(null)} wide><ProviderFormImpl provider={m.d} setModal={setModal} upsertProvider={upsertProvider} deleteProvider={deleteProvider} /></Modal>;
+      case "provider-new":  return <Modal title="Nuevo proveedor" onClose={() => setModal(null)} wide><ProviderFormImpl setModal={setModal} upsertProvider={upsertProvider} subirConstanciaProveedor={subirConstanciaProveedor} /></Modal>;
+      case "provider-edit": return <Modal title={`Editar proveedor — ${m.d.name}`} onClose={() => setModal(null)} wide><ProviderFormImpl provider={m.d} setModal={setModal} upsertProvider={upsertProvider} deleteProvider={deleteProvider} subirConstanciaProveedor={subirConstanciaProveedor} /></Modal>;
       case "machine-new":   return <Modal title="Nueva maquina" onClose={() => setModal(null)}><MachineFormImpl setModal={setModal} upsertMachine={upsertMachine} /></Modal>;
       case "machine-edit":  return <Modal title={`Editar maquina — ${m.d.nombre}`} onClose={() => setModal(null)}><MachineFormImpl machine={m.d} setModal={setModal} upsertMachine={upsertMachine} deleteMachine={deleteMachine} /></Modal>;
       case "send-pickup":   return <Modal title={`🚛 Enviar a Logistica — ${m.d.provider}`} onClose={() => setModal(null)}><SendPickupFormImpl purchase={m.d} provider={findProviderByName(m.d.provider)} setModal={setModal} enviarAOrdenRecogida={enviarAOrdenRecogida} /></Modal>;
