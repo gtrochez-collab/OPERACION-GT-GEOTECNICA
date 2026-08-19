@@ -85,6 +85,22 @@ const FILE_FIELD_PATHS = [
 ];
 const fileKey = (fileId) => `cp-file-${fileId}`;
 
+// ── CÓDIGO DE SOLICITUD (19-ago-2026) — espejo de GeoShopping ────────────
+// MAQ-2026-0001 = repuestos/mantenimiento de maquinaria (vs MAT-… de
+// materiales en GeoShopping). Ver el comentario largo en PurchasesModule.
+const PREFIJO_CODIGO = "MAQ";
+const siguienteCodigo = (lista, anio) => {
+  const yy = anio || new Date().getFullYear();
+  const re = new RegExp(`^${PREFIJO_CODIGO}-${yy}-(\\d+)$`);
+  let max = 0;
+  (lista || []).forEach(p => {
+    const m = re.exec(String(p?.codigo || ""));
+    if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; }
+  });
+  return `${PREFIJO_CODIGO}-${yy}-${String(max + 1).padStart(4, "0")}`;
+};
+
+
 // Form de "La entrega el proveedor" — A NIVEL DE MÓDULO (regla del proyecto:
 // definirlo adentro causa remount y pérdida de estado). Espejo del de
 // GeoShopping: el proveedor lleva el repuesto directo al proyecto/plantel.
@@ -933,7 +949,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           if (!f.projectCode || !f.provider || !f.description || !f.amount) return alert("Complete proyecto, proveedor, descripcion y monto");
           setSaving(true);
           try {
-            const rec = { ...f, id: f.id || uid(), status: "borrador", treasuryStatus: null };
+            const rec = { ...f, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "borrador", treasuryStatus: null };
             const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
             const next = purchase
               ? purchases.map(p => p.id === saved.id ? saved : p)
@@ -949,7 +965,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
           setSaving(true);
           try {
-            const rec = { ...f, id: f.id || uid(), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
+            const rec = { ...f, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
             const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
             const next = purchase
               ? purchases.map(p => p.id === saved.id ? saved : p)
@@ -1398,6 +1414,10 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   // Default: mes actual — el histórico viejo no se le viene encima a nadie,
   // pero queda accesible eligiendo el mes o "Todos".
   const [contaMes, setContaMes] = useState(() => new Date().toISOString().slice(0, 7));
+  // Filtros del archivo de cerradas contablemente (mes de cierre / proyecto / texto)
+  const [cerrMes, setCerrMes] = useState("");
+  const [cerrProy, setCerrProy] = useState("");
+  const [cerrQ, setCerrQ] = useState("");
   // Mes del reporte ejecutivo de costos de maquinaria (pestaña Costos —
   // SOLO admin/gerencia/costos: Fernando no la ve ni exporta).
   const [costosMesEjec, setCostosMesEjec] = useState(() => new Date().toISOString().slice(0, 7));
@@ -2038,10 +2058,15 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     delivery: { ...(orig.delivery || {}), fichaFile: ref, fichaScanned: true, fichaUploadedAt: new Date().toISOString() },
     audit: [...(orig.audit || []), { action: "ficha_uploaded_from_kanban", by: userName || userRole, role: userRole, at: new Date().toISOString(), note: `Ficha firmada subida: ${ref.name}` }],
   }));
-  const uploadPaqueteConta = (purchase, fileObj) => subirYEnlazar(purchase, fileObj, (orig, ref) => ({
+  // tipo "factura" = solo la factura escaneada (lo normal); "paquete" = todo
+  // el paquete digitalizado. Cualquiera de los dos CIERRA la compra.
+  const uploadPaqueteConta = (purchase, fileObj, tipo = "paquete") => subirYEnlazar(purchase, fileObj, (orig, ref) => ({
     ...orig,
-    conta: { ...ref, cerradoPor: userName, cerradoAt: new Date().toISOString() },
-    audit: [...(orig.audit || []), { action: "cierre_contable", by: userName || userRole, role: userRole, at: new Date().toISOString(), note: `Cerrada contablemente — paquete digitalizado: ${ref.name}` }],
+    conta: {
+      ...(tipo === "factura" ? { facturaFile: ref } : ref),
+      tipo, cerradoPor: userName, cerradoAt: new Date().toISOString(),
+    },
+    audit: [...(orig.audit || []), { action: "cierre_contable", by: userName || userRole, role: userRole, at: new Date().toISOString(), note: `Cerrada contablemente — ${tipo === "factura" ? "factura escaneada" : "paquete digitalizado"}: ${ref.name}` }],
   }));
   const reabrirCierreConta = async (purchase) => {
     if (!confirm(`¿REABRIR el cierre contable de ${purchase.provider} — ${purchase.description}?`)) return false;
@@ -2056,60 +2081,216 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     if (ok) setPurchases(next); else alert("⚠️ No se sincronizó — reintentá.");
     return ok;
   };
+  // ── PAQUETE DE CIERRE CONTABLE (19-ago-2026) ─────────────────────────────
+  // UN solo PDF descargable con TODO adentro: portada con logo + checklist de
+  // Contabilidad, y a continuación los documentos anexos (PDFs mergeados con
+  // pdf-lib, imágenes embebidas a página). Antes era una página HTML que solo
+  // listaba los PDFs "imprimilos aparte" — conta necesita el paquete completo
+  // de una para engrapar la factura física y archivarlo.
+  //
+  // Checklist que exige conta: ficha de recibido (si aplica), comprobante de
+  // pago, cotización, constancia de pagos a cuenta del proveedor y factura.
   const imprimirPaqueteConta = async (pr) => {
-    const cargar = async (fileRef) => {
-      if (!fileRef?.fileId) return null;
-      try { const f = await store.get(fileKey(fileRef.fileId)); return f?.dataUrl ? { ...fileRef, dataUrl: f.dataUrl } : null; } catch { return null; }
-    };
-    const [comp, ficha, quote] = await Promise.all([cargar(pr.receiptFile), cargar(pr.delivery?.fichaFile), cargar(pr.quoteFile)]);
-    const esc = (t) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const docHtml = (titulo, d) => {
-      if (!d) return `<div class='doc'><h2>${titulo}</h2><p class='falta'>— No adjunto en el sistema —</p></div>`;
-      if (String(d.type || "").startsWith("image/")) return `<div class='doc salto'><h2>${titulo}</h2><img src='${d.dataUrl}' /></div>`;
-      return `<div class='doc'><h2>${titulo}</h2><p class='falta'>Archivo PDF: <b>${esc(d.name)}</b> — imprimilo desde su descarga.</p></div>`;
-    };
-    const w = window.open("", "_blank");
-    if (!w) return alert("El navegador bloqueó la ventana — permití pop-ups.");
-    const maquina = machines.find(m => m.id === pr.machineId);
-    w.document.write(`<html><head><title>Paquete de cierre — ${esc(pr.provider)}</title><style>
-      body{font-family:Helvetica,Arial,sans-serif;color:#2C2A28;margin:28px}
-      h1{font-size:20px;border-bottom:3px solid #E8762D;padding-bottom:8px}
-      h2{font-size:14px;color:#E8762D;margin:0 0 8px}
-      table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:10px}
-      td{border:1px solid #DBD4C8;padding:7px 10px}td:first-child{background:#FFFBF5;font-weight:bold;width:220px}
-      .doc{margin-top:26px}.salto{page-break-before:always}.doc img{max-width:100%;max-height:88vh;border:1px solid #DBD4C8}
-      .falta{color:#8B847C;font-style:italic;font-size:12px}
-      .np{margin-top:20px}@media print{.np{display:none}}
-      .chk{margin-top:12px;font-size:12.5px}.chk li{margin:3px 0}
-      .pre{white-space:pre-wrap;font-size:12px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px;padding:8px}
-    </style></head><body>
-      <h1>PAQUETE DE CIERRE CONTABLE — GEOMACHINERY</h1>
-      <table>
-        <tr><td>Empresa</td><td>${esc(COMPANIES[pr.company]?.name || pr.company)}</td></tr>
-        <tr><td>Proyecto</td><td>${esc(pr.projectCode || "—")}</td></tr>
-        ${maquina ? `<tr><td>Máquina</td><td>${esc(maquina.nombre)}</td></tr>` : ""}
-        <tr><td>Proveedor</td><td>${esc(pr.provider)}</td></tr>
-        <tr><td>Descripción</td><td>${esc(pr.description)}</td></tr>
-        <tr><td>Monto</td><td><b>L ${Number(pr.amount || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</b></td></tr>
-        <tr><td>N° Cotización</td><td>${esc(pr.quoteNumber || "—")}</td></tr>
-        <tr><td>Referencia de pago</td><td>${esc(pr.paymentReference || "—")} · ${esc(pr.paymentDate || "")}</td></tr>
-        <tr><td>Responsable de cierre contable</td><td><b>${esc(pr.cierreResponsable || "— sin asignar —")}</b></td></tr>
-      </table>
-      ${pr.detalleMateriales ? `<div class='doc'><h2>DETALLE (según cotización)</h2><div class='pre'>${esc(pr.detalleMateriales)}</div></div>` : ""}
-      <ul class='chk'>
-        <li>${comp ? "✔" : "✘"} Comprobante de pago ${comp ? "" : "(no adjunto)"}</li>
-        <li>${ficha ? "✔" : "✘"} Ficha de recibido firmada ${ficha ? "" : (pr.delivery?.closingNotes ? "(" + esc(pr.delivery.closingNotes) + ")" : "(no adjunta)")}</li>
-        <li>${quote ? "✔" : "✘"} Cotización ${quote ? "" : "(no adjunta)"}</li>
-        <li>◻ Factura original (se adjunta FÍSICAMENTE a este paquete)</li>
-      </ul>
-      ${docHtml("COMPROBANTE DE PAGO", comp)}
-      ${docHtml("FICHA DE RECIBIDO FIRMADA", ficha)}
-      ${docHtml("COTIZACIÓN", quote)}
-      <button class='np' onclick='window.print()' style='padding:10px 24px;font-size:13px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px'>Imprimir paquete</button>
-    </body></html>`);
-    w.document.close();
+    const pu = pr;
+    try {
+      const cargar = async (ref) => {
+        if (!ref?.fileId) return null;
+        try { const f = await store.get(fileKey(ref.fileId)); return f?.dataUrl ? { ...ref, dataUrl: f.dataUrl, type: ref.type || f.type, name: ref.name || f.name } : null; }
+        catch { return null; }
+      };
+      const prov = findProviderByName(pu.provider);
+      const [comp, ficha, quote, constancia, factura] = await Promise.all([
+        cargar(pu.receiptFile), cargar(pu.delivery?.fichaFile), cargar(pu.quoteFile),
+        cargar(prov?.constanciaFile), cargar(pu.conta?.facturaFile),
+      ]);
+
+      const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const PW = 210, PH = 297, M = 16;
+      const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 });
+      const ORANGE = [232, 118, 45], CARBON = [44, 42, 40], GRAY = [110, 105, 100], GREEN = [5, 150, 105], RED = [185, 28, 28];
+      const tc = (c) => doc.setTextColor(c[0], c[1], c[2]);
+      const fs = (n, st) => doc.setFont("helvetica", st || "normal").setFontSize(n);
+
+      // Logo (con fallback al monograma si no carga)
+      let logo = null;
+      try {
+        const resp = await fetch(`${import.meta.env.BASE_URL}brand/logo-color.png`);
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const du = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+          const dims = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight }); im.onerror = rej; im.src = du; });
+          const hMM = 15;
+          logo = { du, h: hMM, w: (dims.w / dims.h) * hMM };
+        }
+      } catch { /* sin logo */ }
+
+      // ── PORTADA ──
+      let y = M;
+      if (logo) { try { doc.addImage(logo.du, "PNG", M, y, logo.w, logo.h); } catch { /* noop */ } }
+      else { fs(20, "bold"); tc(ORANGE); doc.text("GT", M, y + 11); }
+      const xTxt = M + (logo ? logo.w + 6 : 16);
+      fs(7.5, "bold"); tc(ORANGE); doc.text("GRUPO GEOTECNICA · GEOMACHINERY", xTxt, y + 4);
+      fs(16, "bold"); tc(CARBON); doc.text("PAQUETE DE CIERRE CONTABLE", xTxt, y + 11.5);
+      fs(9, "normal"); tc(GRAY);
+      doc.text(String(pu.codigo || "sin código") + "  ·  " + (COMPANIES[pu.company]?.name || pu.company || ""), xTxt, y + 16.5);
+      fs(7.5, "normal"); tc(GRAY);
+      doc.text("Generado " + new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" }), PW - M, y + 5, { align: "right" });
+      y += logo ? logo.h + 5 : 22;
+      doc.setFillColor(ORANGE[0], ORANGE[1], ORANGE[2]); doc.rect(M, y, PW - 2 * M, 1.6, "F");
+      y += 9;
+
+      // Datos de la compra
+      const filas = [
+        ["Código de solicitud", String(pu.codigo || "— sin asignar —")],
+        ["Empresa", COMPANIES[pu.company]?.name || pu.company || "—"],
+        ["Proyecto", pu.projectCode || "—"],
+      ];
+      const maquina = machines.find(m => m.id === pu.machineId);
+      if (maquina) filas.push(["Máquina", maquina.nombre]);
+      filas.push(
+        ["Proveedor", pu.provider || "—"],
+        ["RTN del proveedor", prov?.rtn || pu.providerRTN || "—"],
+        ["Descripción", pu.description || "—"],
+        ["Monto", fL(pu.amount)],
+        ["N° de cotización", pu.quoteNumber || "—"],
+        ["Forma / referencia de pago", [pu.paymentMethod, pu.paymentReference].filter(Boolean).join(" · ") || "—"],
+        ["Fecha de pago", pu.paidAt ? new Date(pu.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "long", year: "numeric", timeZone: "UTC" }) : "—"],
+        ["Responsable de cierre contable", pu.cierreResponsable || "— sin asignar —"],
+      );
+      filas.forEach(([k, v]) => {
+        doc.setFillColor(255, 251, 245); doc.rect(M, y, 62, 8, "F");
+        doc.setDrawColor(219, 212, 200); doc.setLineWidth(0.2);
+        doc.rect(M, y, 62, 8); doc.rect(M + 62, y, PW - 2 * M - 62, 8);
+        fs(8, "bold"); tc(CARBON); doc.text(String(k), M + 2.5, y + 5.3);
+        fs(8.5, "normal"); tc([60, 58, 56]);
+        doc.text(doc.splitTextToSize(String(v), PW - 2 * M - 68)[0] || "", M + 64.5, y + 5.3);
+        y += 8;
+      });
+      y += 7;
+
+      // Detalle de materiales (si lo registraron)
+      if (pu.detalleMateriales) {
+        fs(8, "bold"); tc(ORANGE); doc.text("DETALLE SEGÚN COTIZACIÓN", M, y); y += 4.5;
+        fs(8, "normal"); tc([60, 58, 56]);
+        const lineas = doc.splitTextToSize(String(pu.detalleMateriales), PW - 2 * M - 4).slice(0, 12);
+        lineas.forEach(l => { doc.text(l, M + 2, y); y += 4; });
+        y += 4;
+      }
+
+      // Checklist de Contabilidad
+      fs(9, "bold"); tc(CARBON); doc.text("DOCUMENTOS DEL PAQUETE", M, y); y += 2;
+      doc.setDrawColor(219, 212, 200); doc.line(M, y, PW - M, y); y += 6;
+      const sinFichaOk = pu.deliveryStatus === "cerrado" && !ficha;
+      const items = [
+        ["Ficha de recibido firmada", !!ficha, sinFichaOk ? "No aplica — " + (pu.delivery?.closingNotes || "servicio / renta") : (ficha ? ficha.name : "PENDIENTE"), sinFichaOk],
+        ["Comprobante de pago", !!comp, comp ? comp.name : "PENDIENTE", false],
+        ["Cotización", !!quote, quote ? quote.name : "PENDIENTE", false],
+        ["Constancia de pagos a cuenta", !!constancia, constancia ? constancia.name : "PENDIENTE — subila en la ficha del proveedor", false],
+        ["Factura del proveedor", !!factura, factura ? factura.name : "SE ENGRAPA FÍSICAMENTE a este paquete", false],
+      ];
+      items.forEach(([label, ok, nota, na]) => {
+        fs(11, "bold"); tc(ok ? GREEN : (na ? GRAY : RED));
+        doc.text(ok ? "\u2713" : (na ? "\u2014" : "\u2717"), M + 1, y);
+        fs(9, "bold"); tc(CARBON); doc.text(String(label), M + 8, y);
+        fs(7.5, "normal"); tc(GRAY); doc.text(String(nota).slice(0, 70), M + 78, y);
+        y += 6.5;
+      });
+      y += 3;
+      doc.setFillColor(248, 242, 230); doc.rect(M, y, PW - 2 * M, 13, "F");
+      fs(7.5, "normal"); tc([90, 85, 80]);
+      doc.text("Los documentos digitalizados van en las páginas siguientes. Engrape la FACTURA ORIGINAL a este paquete", M + 3, y + 5);
+      doc.text("y súbalo escaneado en \"Por cerrar contable\" para dejar la compra cerrada en el sistema.", M + 3, y + 9.5);
+
+      // Pie de portada
+      fs(7, "normal"); tc(GRAY);
+      doc.text("GeoMachinery — Sistema de Operaciones · Grupo Geotecnica", M, PH - 10);
+      doc.text("Preparado por " + (userName || "Operaciones"), PW - M, PH - 10, { align: "right" });
+
+      // ── ANEXOS ──
+      const anexos = [
+        ["FICHA DE RECIBIDO FIRMADA", ficha],
+        ["COMPROBANTE DE PAGO", comp],
+        ["COTIZACIÓN", quote],
+        ["CONSTANCIA DE PAGOS A CUENTA", constancia],
+        ["FACTURA DEL PROVEEDOR", factura],
+      ].filter(([, f]) => !!f);
+
+      // Imágenes → página propia con encabezado
+      anexos.filter(([, f]) => String(f.type || "").startsWith("image/")).forEach(([titulo, f]) => {
+        doc.addPage();
+        fs(10, "bold"); tc(ORANGE); doc.text(titulo, PW / 2, 14, { align: "center" });
+        fs(7.5, "normal"); tc(GRAY); doc.text(String(pu.codigo || "") + " · " + (pu.provider || ""), PW / 2, 19, { align: "center" });
+        doc.setDrawColor(232, 118, 45); doc.setLineWidth(0.4); doc.line(M, 22, PW - M, 22);
+        try { doc.addImage(f.dataUrl, String(f.type).includes("png") ? "PNG" : "JPEG", M, 26, PW - 2 * M, PH - 42, undefined, "FAST"); }
+        catch { fs(9, "normal"); tc(GRAY); doc.text("(imagen no incrustable)", PW / 2, PH / 2, { align: "center" }); }
+      });
+
+      const pdfAnexos = anexos.filter(([, f]) => String(f.type || "") === "application/pdf");
+      const fileName = `PAQUETE-${String(pu.codigo || pu.id).replace(/[^A-Za-z0-9-]/g, "")}.pdf`;
+      if (!pdfAnexos.length) { doc.save(fileName); return; }
+
+      // PDFs → mergear de verdad con pdf-lib
+      const { PDFDocument } = await safeDynamicImport(() => import("pdf-lib"), "pdf-lib");
+      const out = await PDFDocument.load(doc.output("arraybuffer"));
+      const fallidos = [];
+      for (const [titulo, f] of pdfAnexos) {
+        try {
+          const b64 = String(f.dataUrl).split(",")[1];
+          const bin = atob(b64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const inDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+          const pages = await out.copyPages(inDoc, inDoc.getPageIndices());
+          pages.forEach(pg => out.addPage(pg));
+        } catch (e) { console.warn("No se pudo incrustar " + titulo, e); fallidos.push(titulo); }
+      }
+      const merged = await out.save();
+      const blob = new Blob([merged], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = fileName;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      if (fallidos.length) alert("El paquete se descargó, pero no se pudieron incrustar: " + fallidos.join(", ") + ".\nImprimilos aparte desde la solicitud.");
+    } catch (e) {
+      if (!e?.isStaleChunk) alert("No se pudo armar el paquete: " + (e?.message || e));
+    }
   };
   const removePurchase = (id) => sP(purchases.filter(p => p.id !== id));
+
+  // ── MIGRACIÓN: asignar código a las solicitudes viejas (19-ago-2026) ──
+  // Solo admin. Numera por orden de CREACIÓN (createdAt) dentro de cada año,
+  // respetando los códigos que ya existan. getCloud + verify, como todo lo
+  // que reescribe el array completo.
+  const asignarCodigosFaltantes = async () => {
+    const sinCodigo = purchases.filter(p => p && !p.codigo);
+    if (!sinCodigo.length) return alert("Todas las solicitudes ya tienen código. ✔");
+    if (!confirm(`¿Asignar código a ${sinCodigo.length} solicitud(es) sin código?\n\nSe numeran por fecha de creación con el formato MAQ-AÑO-0000. Las que ya tienen código NO se tocan.`)) return;
+    let cloud;
+    try { cloud = await store.getCloud("mq-purchases"); }
+    catch { return alert("⚠️ Sin conexión con la nube — no se asignó nada. Reintentá."); }
+    if (!Array.isArray(cloud)) return alert("⚠️ No se pudo leer la lista desde la nube.");
+    const contadores = {};
+    cloud.forEach(p => {
+      const m = /^MAQ-(\d{4})-(\d+)$/.exec(String(p?.codigo || ""));
+      if (m) { const y = m[1], n = parseInt(m[2], 10); contadores[y] = Math.max(contadores[y] || 0, n); }
+    });
+    const orden = cloud.map((p, i) => ({ p, i })).filter(x => x.p && !x.p.codigo)
+      .sort((a, b) => String(a.p.createdAt || "").localeCompare(String(b.p.createdAt || "")) || a.i - b.i);
+    const next = [...cloud];
+    orden.forEach(({ p, i }) => {
+      const y = String(p.createdAt || new Date().toISOString()).slice(0, 4);
+      contadores[y] = (contadores[y] || 0) + 1;
+      next[i] = { ...p, codigo: `MAQ-${y}-${String(contadores[y]).padStart(4, "0")}` };
+    });
+    const ok = await store.set("mq-purchases", next);
+    let verified = false;
+    try { const back = await store.getCloud("mq-purchases"); verified = Array.isArray(back) && back.filter(p => p && !p.codigo).length === 0; } catch { verified = false; }
+    if (!ok || !verified) return alert("⚠️ No se pudo VERIFICAR la asignación en la nube — reintentá.");
+    setPurchases(next);
+    alert(`✅ Listo: ${orden.length} solicitud(es) numeradas.`);
+  };
   // Helper: guarda y retorna true/false segun exito. Para los botones que
   // quieren cerrar el modal solo si el guardado fue exitoso.
   const saveOrAlert = async (newPurchases) => {
@@ -3562,11 +3743,113 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     </div>;
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // CERRADAS CONTABLEMENTE (19-ago-2026) — archivo ordenado de todo lo que ya
+  // cerró, con filtros por MES de cierre y por PROYECTO. Se separó de "Por
+  // cerrar" para que ese tablero quede solo con lo pendiente.
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderCerradas = () => {
+    const esCerrada = (x) => !!(x?.conta?.fileId || x?.conta?.facturaFile?.fileId);
+    const todas = cp.filter(esCerrada);
+    const mesDeCierre = (x) => String(x.conta?.cerradoAt || "").slice(0, 7);
+    const meses = [...new Set(todas.map(mesDeCierre).filter(Boolean))].sort().reverse();
+    const proyectos = [...new Set(todas.map(x => x.projectCode || "SIN PROYECTO"))].sort();
+    const lista = todas
+      .filter(x => !cerrMes || mesDeCierre(x) === cerrMes)
+      .filter(x => !cerrProy || (x.projectCode || "SIN PROYECTO") === cerrProy)
+      .filter(x => {
+        if (!cerrQ.trim()) return true;
+        const t = cerrQ.trim().toLowerCase();
+        return [x.codigo, x.provider, x.description, x.projectCode].some(v => String(v || "").toLowerCase().includes(t));
+      })
+      .sort((a, b) => String(b.conta?.cerradoAt || "").localeCompare(String(a.conta?.cerradoAt || "")));
+    const total = lista.reduce((sm, x) => sm + (Number(x.amount) || 0), 0);
+    const verArchivo = async (ref) => {
+      if (!ref?.fileId) return alert("Sin archivo adjunto.");
+      try {
+        const full = await store.get(fileKey(ref.fileId));
+        if (!full?.dataUrl) return alert("No se pudo cargar el archivo.");
+        const w = window.open();
+        if (w) w.document.write(full.type === "application/pdf" ? `<iframe src='${full.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>` : `<img src='${full.dataUrl}' style='max-width:100vw'/>`);
+      } catch (e) { alert("Error: " + e.message); }
+    };
+    const mesLabel = (m) => { const [y2, m2] = m.split("-").map(Number); const t = new Date(y2, m2 - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ background: "#DCFCE7", border: "1px solid #6EE7B7", borderRadius: 12, padding: 14, fontSize: 13, color: "#065F46" }}>
+        ✅ <b>Archivo de compras cerradas contablemente.</b> Acá queda todo lo que ya se entregó a Contabilidad con su factura. Filtrá por mes de cierre o por proyecto para consultarlas.
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 14px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4 }}>Mes de cierre</label>
+          <select value={cerrMes} onChange={e => setCerrMes(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", fontFamily: "inherit" }}>
+            <option value="">Todos los meses</option>
+            {meses.map(m => <option key={m} value={m}>{mesLabel(m)}</option>)}
+          </select>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4 }}>Proyecto</label>
+          <select value={cerrProy} onChange={e => setCerrProy(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", fontFamily: "inherit", minWidth: 180 }}>
+            <option value="">Todos los proyectos</option>
+            {proyectos.map(pr2 => <option key={pr2} value={pr2}>{pr2}</option>)}
+          </select>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 200 }}>
+          <label style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4 }}>Buscar</label>
+          <input value={cerrQ} onChange={e => setCerrQ(e.target.value)} placeholder="Código, proveedor o descripción…" style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }} />
+        </div>
+        {(cerrMes || cerrProy || cerrQ) && <Btn small variant="ghost" onClick={() => { setCerrMes(""); setCerrProy(""); setCerrQ(""); }}>Limpiar</Btn>}
+      </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 18px", minWidth: 160 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#059669" }}>{lista.length}</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>Compras cerradas</div>
+        </div>
+        <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 18px", minWidth: 180 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: CHARCOAL }}>{fmtL(total)}</div>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>Monto cerrado</div>
+        </div>
+      </div>
+      {lista.length === 0
+        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 50, textAlign: "center", color: "#94A3B8" }}>
+            <div style={{ fontSize: 36, marginBottom: 10 }}>🗂️</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: CHARCOAL }}>{todas.length === 0 ? "Todavía no hay compras cerradas contablemente" : "Ninguna coincide con el filtro"}</div>
+          </div>
+        : <div style={{ overflowX: "auto", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#F1F5F9" }}>
+                {["Código", "Cerrada", "Proyecto", "Proveedor", "Descripción", "Monto", "Cerró", "Documentos"].map(h => (
+                  <th key={h} style={{ textAlign: h === "Monto" ? "right" : "left", padding: "9px 12px", fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>))}
+              </tr></thead>
+              <tbody>
+                {lista.map(x => (
+                  <tr key={x.id} style={{ borderTop: "1px solid #F1F5F9" }}>
+                    <td style={{ padding: "8px 12px", fontWeight: 800, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11.5, color: CHARCOAL, whiteSpace: "nowrap" }}>{x.codigo || "—"}</td>
+                    <td style={{ padding: "8px 12px", color: "#64748b", whiteSpace: "nowrap" }}>{x.conta?.cerradoAt ? new Date(x.conta.cerradoAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</td>
+                    <td style={{ padding: "8px 12px", fontWeight: 600 }}>{x.projectCode || "—"}</td>
+                    <td style={{ padding: "8px 12px" }}>{x.provider}</td>
+                    <td style={{ padding: "8px 12px", color: "#475569", maxWidth: 300 }}>{String(x.description || "").slice(0, 90)}</td>
+                    <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(x.amount)}</td>
+                    <td style={{ padding: "8px 12px", fontSize: 11, color: "#64748b", whiteSpace: "nowrap" }}>{x.conta?.cerradoPor || "—"}</td>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
+                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                        {x.conta?.facturaFile?.fileId && <Btn small variant="ghost" onClick={() => verArchivo(x.conta.facturaFile)}>🧾 Factura</Btn>}
+                        {x.conta?.fileId && <Btn small variant="ghost" onClick={() => verArchivo({ fileId: x.conta.fileId, type: x.conta.type })}>📦 Paquete</Btn>}
+                        <Btn small variant="ghost" onClick={() => imprimirPaqueteConta(x)}>📥 PDF</Btn>
+                        {(isAdmin || isCoordinadorMaquinas) && <Btn small variant="danger" onClick={() => reabrirCierreConta(x)}>↩</Btn>}
+                      </div>
+                    </td>
+                  </tr>))}
+              </tbody>
+            </table>
+          </div>}
+    </div>;
+  };
+
   const renderConta = () => {
     const despachoDe = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
     const clasificar = (x) => {
       if (x.status !== "pagado" && x.status !== "finalizado") return null;
-      if (x.conta?.fileId) return "cerrada";
+      if (x.conta?.fileId || x.conta?.facturaFile?.fileId) return "cerrada";
       if (x.deliveryStatus === "ficha_adjunta" || x.deliveryStatus === "cerrado") return "lista";
       if (x.deliveryStatus === "entrega_proveedor") return "falta_proveedor";
       const d = despachoDe(x.id);
@@ -3594,7 +3877,8 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       const maquina = machines.find(m => m.id === x.machineId);
       return <div key={x.id} style={{ background: "#fff", border: `1px solid ${cfg.border}`, borderLeft: `3px solid ${cfg.c}`, borderRadius: 8, padding: 12 }}>
         <span style={{ display: "inline-block", background: cfg.c + "18", color: cfg.c, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, lineHeight: 1.35 }}>{cfg.badge}</span>
-        <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 6 }}>{x.provider}</div>
+        {x.codigo && <div style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", fontFamily: "ui-monospace, Menlo, monospace", marginTop: 5 }}>{x.codigo}</div>}
+        <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 2 }}>{x.provider}</div>
         <div style={{ fontSize: 11.5, color: "#475569", marginTop: 2 }}>{x.description}</div>
         {maquina && <div style={{ fontSize: 10.5, color: "#7C3AED", marginTop: 3 }}>⚙️ {maquina.nombre}</div>}
         {x.amount && <div style={{ fontSize: 11, color: "#059669", fontWeight: 700, marginTop: 4 }}>{fmtL(x.amount)}</div>}
@@ -3602,11 +3886,14 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
         <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
           {tipo === "falta_proveedor" && <button onClick={() => setSec("entregas")} style={{ background: "transparent", color: "#0F766E", border: "1px solid #5EEAD4", padding: "6px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>→ Gestionarla en Entregas de proveedor</button>}
           {tipo === "lista" && <>
-            <button onClick={() => imprimirPaqueteConta(x)} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🖨 Imprimir paquete de cierre</button>
+            <button onClick={() => imprimirPaqueteConta(x)} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }} title="Descarga UN PDF con portada, checklist y todos los documentos adjuntos">📥 Descargar paquete de cierre (PDF)</button>
             {puedeCerrarConta && <>
-              <input type="file" accept=".pdf,image/*" id={`mq-conta-${x.id}`} style={{ display: "none" }}
-                onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ""; const ok = await uploadPaqueteConta(x, f); if (ok) alert("✅ Paquete subido — la compra quedó CERRADA CONTABLEMENTE."); }} />
-              <label htmlFor={`mq-conta-${x.id}`} style={{ background: "#059669", color: "#fff", padding: "7px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", display: "block" }}>📎 Subir paquete digitalizado (CIERRA la compra)</label>
+              <input type="file" accept=".pdf,image/*" id={`mq-conta-fact-${x.id}`} style={{ display: "none" }}
+                onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ""; const ok = await uploadPaqueteConta(x, f, "factura"); if (ok) alert("✅ Factura subida — la compra quedó CERRADA CONTABLEMENTE.\n\nPasó al apartado \"Cerradas contablemente\"."); }} />
+              <label htmlFor={`mq-conta-fact-${x.id}`} style={{ background: "#059669", color: "#fff", padding: "8px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", display: "block" }} title="Escaneá SOLO la factura que trajo el proveedor — con eso la compra se cierra">🧾 Subir FACTURA escaneada (CIERRA la compra)</label>
+              <input type="file" accept=".pdf,image/*" id={`mq-conta-paq-${x.id}`} style={{ display: "none" }}
+                onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ""; const ok = await uploadPaqueteConta(x, f, "paquete"); if (ok) alert("✅ Paquete completo subido — la compra quedó CERRADA CONTABLEMENTE."); }} />
+              <label htmlFor={`mq-conta-paq-${x.id}`} style={{ background: "transparent", color: "#059669", border: "1px solid #6EE7B7", padding: "5px 8px", borderRadius: 4, fontSize: 9.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textAlign: "center", display: "block" }} title="Alternativa: subir el paquete entero ya escaneado con todo adentro">…o el paquete completo escaneado</label>
             </>}
           </>}
         </div>
@@ -3649,24 +3936,6 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
               {g.en_camino.map(x => cardConta(x, "en_camino"))}
             </div>
           </div>); })}
-      {cerradas.length > 0 && <details style={{ background: "#DCFCE7", border: "2px solid #059669", borderRadius: 8, padding: "10px 14px" }}>
-        <summary style={{ fontWeight: 800, color: "#065F46", cursor: "pointer", fontSize: 13 }}>✅ Cerradas contablemente ({cerradas.length})</summary>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 10, marginTop: 10 }}>
-          {cerradas.map(x => <div key={x.id} style={{ background: "#fff", border: "1px solid #6EE7B7", borderLeft: "3px solid #059669", borderRadius: 8, padding: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <Badge color="#059669">✅ Cerrada</Badge>
-              <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>{x.conta?.cerradoAt ? new Date(x.conta.cerradoAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : ""}</span>
-            </div>
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: CHARCOAL, marginTop: 6 }}>{x.provider}</div>
-            <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>{x.description}</div>
-            <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 4 }}>Cerrada por <b>{x.conta?.cerradoPor || "?"}</b> · {x.projectCode || "sin proyecto"}</div>
-            <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
-              <button onClick={async () => { try { const full = await store.get(fileKey(x.conta.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el paquete."); const w = window.open(); if (w) w.document.write(full.type === "application/pdf" ? `<iframe src='${full.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>` : `<img src='${full.dataUrl}' style='max-width:100vw'/>`); } catch (e) { alert("Error: " + e.message); } }} style={{ background: "#059669", color: "#fff", border: "none", padding: "6px 10px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flex: 1 }}>👁 Ver paquete</button>
-              {(isAdmin || isCoordinadorMaquinas) && <button onClick={() => reabrirCierreConta(x)} style={{ background: "transparent", color: "#B45309", border: "1px solid #FCD34D", padding: "6px 10px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>↩ Reabrir</button>}
-            </div>
-          </div>)}
-        </div>
-      </details>}
     </div>;
   };
 
@@ -3968,6 +4237,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ color: "#64748b", fontSize: 13 }}>{filtered.length} de {cp.length} solicitudes</span>
+        {isAdmin && cp.some(p => p && !p.codigo) && <Btn variant="ghost" onClick={asignarCodigosFaltantes} title="Numera las solicitudes viejas que todavía no tienen código">🔢 Asignar códigos faltantes ({purchases.filter(p => p && !p.codigo).length})</Btn>}
         {canCreate && <Btn variant="primary" onClick={() => setModal({ t: "new" })}>+ Nueva solicitud</Btn>}
         {!canCreate && canPay && <div style={{ fontSize: 12, color: "#64748b" }}>Click en una fila para revisar y gestionar el pago →</div>}
       </div>
@@ -3976,6 +4246,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       <div style={{ overflowX: "auto", borderRadius: 12, border: "1px solid #E2E8F0", background: "#fff" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead><tr style={{ background: "#F1F5F9" }}>
+            <th style={TH}>Código</th>
             <th style={TH}>Estado</th>
             <th style={TH}>Proyecto</th>
             <th style={TH}>Proveedor</th>
@@ -3989,10 +4260,11 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
             <th style={{ ...TH, textAlign: "right" }}></th>
           </tr></thead>
           <tbody>
-            {dataSorted.length === 0 && <tr><td colSpan={11} style={{ padding: 40, textAlign: "center", color: "#94A3B8" }}>
+            {dataSorted.length === 0 && <tr><td colSpan={12} style={{ padding: 40, textAlign: "center", color: "#94A3B8" }}>
               {cp.length === 0 ? "Aun no hay solicitudes registradas para esta empresa." : "No hay resultados con los filtros aplicados."}
             </td></tr>}
             {dataSorted.map(p => <tr key={p.id} style={{ borderBottom: "1px solid #F1F5F9", cursor: "pointer" }} onClick={() => setModal({ t: "detail", d: p })}>
+              <td style={{ ...TD, fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 800, fontSize: 11.5, color: CHARCOAL, whiteSpace: "nowrap" }}>{p.codigo || <span style={{ color: "#CBD5E1", fontWeight: 400 }}>—</span>}</td>
               <td style={TD}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
                   <StatusBadge status={p.status} />
@@ -4051,6 +4323,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     { id: "coordinar", icon: "📦", label: "Por coordinar" },
     { id: "entregas", icon: "🏪", label: "Entregas de proveedor" },
     { id: "conta", icon: "🧾", label: "Por cerrar contable" },
+    { id: "cerradas", icon: "✅", label: "Cerradas" },
     { id: "providers", icon: "🏢", label: "Proveedores" },
   ];
   const canSeeResumen = isAdmin || isGerencia || isCostos || isCoordinadorMaquinas || isVisorCompras;
@@ -4248,6 +4521,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
               : sec === "coordinar" ? "Por coordinar con proveedores"
               : sec === "entregas" ? "Entregas de proveedor"
               : sec === "conta" ? "Por cerrar contablemente"
+              : sec === "cerradas" ? "Cerradas contablemente"
               : "Solicitudes de pago — Maquinas"}
           </h2>
           <span style={{ fontSize: 13, color: cc.accent, fontWeight: 600, letterSpacing: 0.3 }}>{cc.name}</span>
@@ -4264,6 +4538,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
           : sec === "coordinar" ? renderCoordinar()
           : sec === "entregas" ? renderEntregasProveedor()
           : sec === "conta" ? renderConta()
+          : sec === "cerradas" ? renderCerradas()
           : renderList()
       }</div>
     </div>

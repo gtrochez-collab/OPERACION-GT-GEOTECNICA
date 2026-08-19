@@ -40,6 +40,34 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   a página; PDFs se listan). `uploadPaqueteConta`/`reabrirCierreConta` con el
   patrón atómico de uploadFichaFromCard. Futuro: módulo GeoAccounting para
   que conta vea estas compras (aún NO se hace).
+  **Código de solicitud (19-ago-2026)**: `codigo` correlativo por tipo y año —
+  `MAT-2026-0001` en GeoShopping vs `MAQ-2026-0001` en GeoMachinery, para que
+  conta distinga el módulo de origen. Numeración GLOBAL del año (no por
+  proyecto: dos proyectos pueden compartir prefijo, ej. RETENCIÓN-AUREA y
+  RETENCIÓN-CC EL CAMINO); el proyecto se muestra siempre al lado.
+  `siguienteCodigo(lista)` lo asigna al crear (borrador o aprobada);
+  `asignarCodigosFaltantes` (botón solo-admin en Solicitudes) numera las
+  viejas por createdAt con getCloud + verify. Sale en la tabla, en las cards
+  y en el paquete de cierre.
+  **Constancia de pagos a cuenta (19-ago-2026)**: `provider.constanciaFile`
+  — se sube UNA vez en la ficha del proveedor (`subirConstanciaProveedor`) y
+  el paquete de cierre la adjunta sola en todas sus compras (conta la exige
+  en cada paquete; antes Ana y Fernando la buscaban a mano).
+  **Paquete de cierre = PDF REAL (19-ago-2026)**: `imprimirPaqueteConta` ya no
+  genera HTML imprimible sino un PDF descargable con jsPDF + merge de pdf-lib:
+  portada con logo/branding + datos + checklist de conta (ficha si aplica,
+  comprobante, cotización, constancia de pagos a cuenta, factura) y a
+  continuación TODOS los anexos (PDFs mergeados de verdad, imágenes a página).
+  Nombre: `PAQUETE-<codigo>.pdf`.
+  **Cierre por FACTURA (19-ago-2026)**: `uploadPaqueteConta(purchase, file, tipo)`
+  — tipo "factura" (el camino corto: conta escanea solo la factura que trajo el
+  proveedor) o "paquete" (todo digitalizado). Cualquiera CIERRA la compra:
+  `conta.facturaFile` o `conta.fileId`.
+  **Pestaña ✅ Cerradas (19-ago-2026)**: `renderCerradas` — archivo con filtros
+  por MES de cierre, PROYECTO y búsqueda libre; tabla con código, fecha, monto,
+  quién cerró, y botones para ver la factura/paquete, re-descargar el PDF y
+  reabrir (admin/Ana). Se sacó de "Por cerrar" para que ese tablero quede solo
+  con lo pendiente.
   **Reporte ejecutivo de MATERIALES (19-ago-2026)**: `exportComprasEjecutivoPDF(mes)`
   en la pestaña Costos (botón + input month) — clon del "Costo de Mano de Obra"
   de GeoTeam: portada con KPIs + dona SVG por proyecto + gasto/mezcla por
