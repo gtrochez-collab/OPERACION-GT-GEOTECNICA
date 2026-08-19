@@ -150,6 +150,24 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   filtra por tipo==="entrada") y al ser tarde:false jamás generan tardanza.
   Si funciona en plantel esta quincena, la siguiente se agrega a proyectos.
   **EN USO REAL desde el 19-ago-2026** (10+ marcajes/día en plantel y oficina).
+  **Minutos tarde desde la TOLERANCIA (19-ago-2026, pedido de Gerson)**: el
+  atraso se cuenta desde que VENCE la tolerancia, no desde la hora de entrada
+  — horario 8:00 + 15 min → marcar 8:20 son **5 min tarde** (antes decía 20).
+  Helpers en HRModule: `horaLimiteH(e)` (= horaEntradaH + TOLERANCIA_MIN/60) y
+  `minTardeDe(hora, horarioEntrada)`. Aplicado en TODO lo que cuenta atraso:
+  reloj (mensaje + mark.minTarde), Registros, descuentoDe de tardanzas,
+  PayrollGen, dayValueFor y calcCostoMO. Los marcajes viejos se RECALCULAN al
+  vuelo desde hora+horarioEntrada (no se migran datos).
+  **Detalle/edición de marcaje (19-ago-2026)**: en Registros la hora es
+  clickeable → modal con datos, puntualidad, explicación, decisión de RRHH,
+  firma e HISTORIAL. `puedeCorregir` habilita "✏️ Corregir este marcaje":
+  cambia hora (y comentario en salidas) con justificación OBLIGATORIA, recalcula
+  tarde/minTarde, avisa si el marcaje deja de ser (o pasa a ser) tardanza, y
+  todo queda en `historial` [{accion, por, justificacion, fecha, at, antes}].
+  Guardado con getCloud + verify. Chips: tarde APROBADA verde / DENEGADA rojo /
+  pendiente ámbar (GeoClock LEE gc-tardies, sigue sin escribirla), MANUAL morado,
+  ✎ con cambios. Leyenda "CÓMO LEER" arriba de la tabla; CSV con columna
+  "Estado tardanza" y PDF con el estado en color.
 - `SafetyModule.jsx` (GeoSafety) — EPP: catálogo con carrito estilo Amazon
   (ítems con foto/tipoEpp/descripción; requisición reparte un ítem entre
   VARIOS colaboradores de hr-emps5 con cant+motivo c/u: primera_vez/perdida/
@@ -283,7 +301,11 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   PDF: "1" regular sin color; celdas con * llevan el color del proyecto donde
   trabajó ese día; al final "RESUMEN PARA PLANILLA" (NSP/INC/V con días y total).
 - Costos MO (HR): costo diario = (salario + bonificación) / 30 × días pagados
-  (DT×2, DT2/TF×3, INC=1, NSP=0). Reporte PDF/CSV por proyecto/quincena.
+  (DT×2, DT2/TF×3, INC=1, NSP=0). **calcCostoMO SUMA TAMBIÉN LAS HORAS EXTRAS**
+  pagadas en esa quincena (quincena vencida) — auditado 19-ago-2026 contra la
+  data cruda: Subterra ago-2026 = L 334,703.68 asistencia + L 29,308.00 HE (de
+  2Q julio) = L 364,011.68 exacto. La tarjeta del Dashboard decía "real, por
+  asistencia" (incompleto) → ahora "asistencia + horas extras pagadas". Reporte PDF/CSV por proyecto/quincena.
 - Horas extras: hora base = salario/30/8 (SIN bonificación); 4-7pm +25%,
   7-10pm +50%, 10pm-12am +75%, domingo ×2 todas. SÁBADO: jornada hasta 11am,
   la 1ª banda (+25%) corre 11am-7pm (grid muestra "11-7"; mult 25/50/75 igual,

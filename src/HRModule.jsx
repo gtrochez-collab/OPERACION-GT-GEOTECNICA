@@ -112,6 +112,25 @@ export const horaEntradaH = (e) => {
   const [h, mm] = String(horarioDe(e).entrada).split(":").map(Number);
   return (Number.isFinite(h) ? h : 7) + (Number.isFinite(mm) ? mm : 0) / 60;
 };
+// Hora LÍMITE (fin de la tolerancia) en horas decimales: 8:00 + 15 min = 8.25.
+// El atraso se cuenta DESDE ACÁ, no desde la hora de entrada (fix 19-ago-2026
+// pedido por Gerson): si el horario es 8:00 y la tolerancia 15 min, quien
+// marca 8:20 llegó 5 minutos tarde — no 20. Eso es lo que se le avisa al
+// colaborador, lo que sale en Registros y lo que se descuenta si RRHH deniega.
+export const horaLimiteH = (e) => horaEntradaH(e) + TOLERANCIA_MIN / 60;
+// Minutos de atraso efectivos a partir de la hora marcada ("8:20") y la hora
+// de entrada del horario ("8:00"). Se calcula SIEMPRE desde estos dos campos
+// —que van guardados en cada marcaje— y no desde el `minTarde` persistido:
+// así los marcajes viejos (guardados con la fórmula anterior) se muestran y
+// descuentan bien sin migrar datos.
+export const minTardeDe = (horaStr, horarioEntradaStr) => {
+  const [h, m] = String(horaStr || "").split(":").map(Number);
+  const [eh, em] = String(horarioEntradaStr || "7:00").split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(eh)) return 0;
+  const marcado = h * 60 + (Number.isFinite(m) ? m : 0);
+  const limite = eh * 60 + (Number.isFinite(em) ? em : 0) + TOLERANCIA_MIN;
+  return Math.max(0, marcado - limite);
+};
 // Fecha de HOY en zona horaria de Honduras (America/Tegucigalpa, UTC-6 sin
 // DST). en-CA formatea YYYY-MM-DD directo. No usar new Date().toISOString()
 // para esto: de 6pm en adelante ya es "mañana" en UTC.
@@ -243,7 +262,9 @@ const fmt = (d) => {
   if (!y || !mo || !day) return d;
   return new Date(y, mo - 1, day).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" });
 };
-const fmtL = n => n != null && n !== "" && n !== 0 ? `L ${Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2 })}` : "L 0.00";
+// maximumFractionDigits: sin esto los acumuladores flotantes mostraban
+// montos con 3 decimales (ej. "L 86,154.893" en Costos MO).
+const fmtL = n => n != null && n !== "" && n !== 0 ? `L ${Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "L 0.00";
 const daysBetween = (a, b) => Math.ceil((new Date(b) - new Date(a)) / 86400000) + 1;
 
 // ── Seed data from real planillas 2Q Marzo 2026 ──
@@ -1409,7 +1430,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 const arrivalH = h + mm / 60;
                 // Tope 8h: el descuento nunca supera el valor del día (una
                 // llegada extrema de GeoClock no puede descontar MÁS que el día).
-                const horasTarde = Math.min(8, Math.max(0, arrivalH - horaEntradaH(emp)));
+                const horasTarde = Math.min(8, Math.max(0, arrivalH - horaLimiteH(emp)));
                 dayFraction = Math.max(0, (8 - horasTarde) / 8);
                 descuentoHoras += (horasTarde / 8) * sd;
               }
@@ -2133,7 +2154,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       if (!arr) return 1;
       const [h, mm] = arr.split(":").map(Number);
       const arrivalH = h + mm / 60;
-      const lateHours = Math.max(0, arrivalH - horaEntradaH(emp));
+      const lateHours = Math.max(0, arrivalH - horaLimiteH(emp));
       return Math.max(0, (8 - lateHours) / 8);
     };
 
@@ -3570,10 +3591,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           if (v === "1") {
             val = 1;
             // Hora de entrada marcada (payByHour o tardanza GeoClock denegada):
-            // descuento proporcional desde la hora del HORARIO del empleado.
+            // descuento proporcional desde que VENCE LA TOLERANCIA del
+            // horario del empleado (8:00 + 15 min → marcar 8:20 = 5 min).
             if (at[k]) {
               const [h, mm] = at[k].split(":").map(Number);
-              val = Math.max(0, (8 - Math.max(0, h + mm / 60 - horaEntradaH(e))) / 8);
+              val = Math.max(0, (8 - Math.max(0, h + mm / 60 - horaLimiteH(e))) / 8);
             }
           } else if (v === "INC" || v === "V") val = 1; // incapacidad y vacaciones: dia pagado
         }
@@ -4208,9 +4230,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     // Tardanzas GeoClock del mes (solo quincenas cargadas: actual + anterior)
     const marcasMes = Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && String(mk.fecha || "").slice(0, 7) === periodo);
     const tardes = marcasMes.filter(mk => mk.tipo === "entrada" && mk.tarde);
+    // Minutos a descontar: contados desde el fin de la tolerancia y desde los
+    // campos base del marcaje (no del minTarde viejo guardado en la nube).
     const minTardeDenegados = tardes.reduce((s, mk) => {
       const dec = (gcTardies || []).find(t => t && t.markId === mk.id);
-      return dec && dec.estado === "denegada" ? s + (Number(mk.minTarde) || 0) : s;
+      return dec && dec.estado === "denegada" ? s + minTardeDe(mk.hora, mk.horarioEntrada) : s;
     }, 0);
     const conDatos = porDia.filter(p => p.y !== null);
     const presenciaProm = conDatos.length ? Math.round(conDatos.reduce((s, p) => s + p.y, 0) / conDatos.length) : null;
@@ -4297,7 +4321,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         {kpiCard("Colaboradores", activos.length, `${pm.length} perm · ${tmp.length} temp${hon.length ? ` · ${hon.length} hon` : ""}`, cc.color)}
         {!hideSalary && kpiCard(`Masa salarial · ${mesLabel(st0.periodo).split(" ")[0]}`, fmtL(masaSalarial), "salario + bonificación del roster", "#D97706")}
-        {!hideSalary && kpiCard("Costo MO del mes", st0.costoMO > 0 ? fmtL(st0.costoMO) : "—", st0.tieneAsistencia ? "real, por asistencia" : "sin asistencia registrada", "#059669")}
+        {!hideSalary && kpiCard("Costo MO del mes", st0.costoMO > 0 ? fmtL(st0.costoMO) : "—", st0.tieneAsistencia ? "asistencia + horas extras pagadas" : "sin asistencia registrada", "#059669")}
         {kpiCard("Presencia del mes", st0.presenciaProm !== null ? `${st0.presenciaProm}%` : "—", st0.tieneAsistencia ? `NSP ${st0.nsp} · INC ${st0.inc} · VAC ${st0.vac}` : "aún sin hojas de asistencia", "#3E6A99")}
         {kpiCard("Tardanzas del mes", st0.tardes.length, st0.minTardeDenegados > 0 ? `${st0.minTardeDenegados} min a descontar (denegadas)` : "GeoClock — quincenas recientes", "#B45309")}
       </div>
@@ -4964,12 +4988,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       .sort((a, b) => String(a[1]).localeCompare(String(b[1])));
     const empDe = (mk) => emps.find(e => e.id === mk.empId) || null;
     const descuentoDe = (mk, e) => {
+      // El atraso se cuenta desde que VENCE LA TOLERANCIA (horaLimiteH), no
+      // desde la hora de entrada: marcar 8:20 con horario 8:00 y 15 min de
+      // gracia = 5 min de descuento. Tope 8h: nunca más que el día completo.
       const [h, mm] = String(mk.hora || "0:00").split(":").map(Number);
-      // Tope 8h: nunca se descuenta más que el valor del día completo.
-      const horasTarde = Math.min(8, Math.max(0, (h || 0) + (mm || 0) / 60 - horaEntradaH(e)));
+      const horasTarde = Math.min(8, Math.max(0, (h || 0) + (mm || 0) / 60 - horaLimiteH(e)));
       const sd = ((Number(e?.salary) || 0)) / 30;
       return { horasTarde, monto: (horasTarde / 8) * sd };
     };
+    // Minutos tarde a mostrar: recalculados desde hora + horarioEntrada del
+    // propio marcaje (los guardados antes del 19-ago traen la cuenta vieja).
+    const minTardeMk = (mk) => minTardeDe(mk?.hora, mk?.horarioEntrada || horarioDe(empDe(mk)).entrada);
     const refrescar = async () => {
       const q0 = getQuincena(hoyTegus());
       const q1 = quincenaAnterior(q0.periodo, q0.quincena);

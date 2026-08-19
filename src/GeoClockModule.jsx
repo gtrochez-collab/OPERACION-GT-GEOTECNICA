@@ -29,7 +29,7 @@ import { store } from "./supabase.js";
 import { USERS } from "./users.js";
 import Logo from "./Logo.jsx";
 import { esFeriadoQuincena } from "./holidays.js";
-import { HORARIOS, horarioDe, TOLERANCIA_MIN, gcMarkKey } from "./HRModule.jsx";
+import { HORARIOS, horarioDe, TOLERANCIA_MIN, gcMarkKey, minTardeDe } from "./HRModule.jsx";
 
 const ORANGE = "#E8762D";
 const ORANGE_DARK = "#C75F1F";
@@ -248,6 +248,13 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   // corr = { empId, fecha, tipo, hora, justif } | null (modal cerrado).
   const [corr, setCorr] = useState(null);
   const [corrSaving, setCorrSaving] = useState(false);
+  // Decisiones de RRHH sobre llegadas tarde (gc-tardies). GeoClock SOLO LEE
+  // esta key (el único escritor es HRModule): sirve para pintar en Registros
+  // si la tardanza fue aprobada (verde) o denegada (rojo).
+  const [regTardies, setRegTardies] = useState([]);
+  // Marcaje abierto en el modal de detalle/edición (con su historial).
+  const [det, setDet] = useState(null);
+  const [detSaving, setDetSaving] = useState(false);
   const [verHoy, setVerHoy] = useState(false);
   const padRef = useRef(null);
   const idleTimer = useRef(null);
@@ -370,8 +377,13 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             return [k, regMarks[k] || (esActual ? marks : [])];
           }
         }));
+        // Decisiones de RRHH (aprobada/denegada) para colorear las tardanzas.
+        let tds = [];
+        try { const t = await store.getCloud("gc-tardies"); tds = Array.isArray(t) ? t : []; }
+        catch { tds = []; }
         if (vivo) {
           setRegMarks(prev => ({ ...prev, ...Object.fromEntries(entries) }));
+          setRegTardies(tds);
           setRegErr(fallas);
         }
       } finally { if (vivo) setRegLoading(false); }
@@ -465,7 +477,10 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   const selEmp = sel ? emps.find(e => e.id === sel.id) || sel : null;
   const horario = selEmp ? horarioDe(selEmp) : HORARIOS.plantel;
   const entradaMin = selEmp ? minDe(horario.entrada) : minDe("7:00");
-  const minTarde = Math.max(0, now.min - entradaMin);
+  // Atraso EFECTIVO: se cuenta desde que vence la tolerancia, no desde la
+  // hora de entrada (fix 19-ago-2026). Horario 8:00 + 15 min de gracia →
+  // quien marca 8:20 llegó 5 min tarde, y eso es lo que se le descuenta.
+  const minTarde = Math.max(0, now.min - (entradaMin + TOLERANCIA_MIN));
   // Domingos y feriados NO tienen "llegada tarde": son días pagados por ley
   // (trabajarlos es DT/TF, decidido por RRHH) — el reloj solo deja constancia.
   const esDomFer = now.dow === 0 || esFeriadoQuincena(q.periodo, Number(now.fecha.slice(8, 10)));
@@ -556,7 +571,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         min: t.min,
         tipo: tipoAccion,
         tarde,
-        minTarde: tarde ? t.min - entradaMin : 0,
+        minTarde: tarde ? Math.max(0, t.min - (entradaMin + TOLERANCIA_MIN)) : 0,
         horarioEntrada: horario.entrada,
         explicacion: tarde ? explicacion.trim() : "",
         // Comentario opcional de la SALIDA (ej. "salgo del plantel a proyecto")
@@ -656,6 +671,111 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
     if (!ok || !verified) return alert("⚠️ No se pudo verificar — reintentá.");
     setRegMarks(prev => ({ ...prev, [`${q2.periodo}|${q2.quincena}`]: next }));
     if (key === marksKey) setMarks(next);
+    setDet(null);
+  };
+
+  // ── Tardanzas: decisión de RRHH y minutos EFECTIVOS ──
+  // La decisión vive en gc-tardies (la escribe GeoTeam). Un registro en
+  // estado "pendiente" (o sin registro) sigue sin decidir.
+  const decisionDe = (mk) => {
+    if (!mk || !mk.tarde) return null;
+    const t = (regTardies || []).find(x => x && x.markId === mk.id);
+    return t && (t.estado === "aprobada" || t.estado === "denegada") ? t : null;
+  };
+  // Minutos tarde recalculados desde la hora marcada y el horario del propio
+  // marcaje: los guardados antes del 19-ago-2026 traen la cuenta vieja (desde
+  // la hora de entrada en vez de desde el fin de la tolerancia).
+  const minTardeMk = (mk) => {
+    if (!mk || !mk.tarde) return 0;
+    const emp = emps.find(e => e.id === mk.empId);
+    return minTardeDe(mk.hora, mk.horarioEntrada || horarioDe(emp).entrada);
+  };
+  // Estado visual de una entrada tarde: verde si RRHH la aprobó (justificada,
+  // día completo), rojo si la denegó (se descuenta), ámbar si está pendiente.
+  const estiloTarde = (mk) => {
+    const dec = decisionDe(mk);
+    if (!dec) return { bg: "#FEF3C7", fg: "#92400E", txt: "pendiente", hora: "#B45309" };
+    if (dec.estado === "aprobada") return { bg: "#DCFCE7", fg: "#166534", txt: "justificada", hora: "#166534" };
+    return { bg: "#FEE2E2", fg: "#B91C1C", txt: "se descuenta", hora: "#B91C1C" };
+  };
+
+  // Abre el detalle de un marcaje (lo ven TODOS los roles; editar solo
+  // quienes pueden corregir). Trae la firma bajo demanda si tiene.
+  const abrirDetalle = (mk) => {
+    if (!mk) return;
+    setDet({ mk, hora: mk.hora || "", comentario: mk.comentario || "", justif: "", firma: undefined });
+    if (mk.firmaId) {
+      (async () => {
+        try { const f = await store.get(`gc-firma-${mk.firmaId}`); setDet(d => (d && d.mk.id === mk.id ? { ...d, firma: f?.dataUrl || null } : d)); }
+        catch { setDet(d => (d && d.mk.id === mk.id ? { ...d, firma: null } : d)); }
+      })();
+    }
+  };
+
+  // ── Editar un marcaje existente (hora / comentario) con historial ──
+  // Cualquier cambio queda registrado en mk.historial: quién, cuándo, qué
+  // cambió y por qué. Al mover la hora de una ENTRADA se recalcula si sigue
+  // siendo tarde y cuántos minutos, con el horario del colaborador.
+  const guardarEdicion = async () => {
+    if (!det || !puedeCorregir) return;
+    const mk = det.mk;
+    const nuevaHora = String(det.hora || "").trim();
+    const justif = String(det.justif || "").trim();
+    if (!/^\d{1,2}:\d{2}$/.test(nuevaHora)) return alert("Poné una hora válida (formato 24 h, ej. 7:05 o 16:30).");
+    const [nh, nm] = nuevaHora.split(":").map(Number);
+    if (!(nh >= 0 && nh <= 23 && nm >= 0 && nm <= 59)) return alert("Hora fuera de rango.");
+    const nuevoComent = mk.tipo === "salida" ? String(det.comentario || "").trim() : (mk.comentario || "");
+    const cambioHora = nuevaHora !== mk.hora;
+    const cambioComent = nuevoComent !== (mk.comentario || "");
+    if (!cambioHora && !cambioComent) return alert("No cambiaste nada.");
+    if (justif.length < 3) return alert("Escribí la justificación del cambio (queda en el historial).");
+    setDetSaving(true);
+    try {
+      const q2 = quincenaDe(mk.fecha);
+      const key = gcMarkKey(q2.periodo, q2.quincena);
+      let cloudArr;
+      try { const c = await store.getCloud(key); cloudArr = Array.isArray(c) ? c : []; }
+      catch { setDetSaving(false); return alert("⚠️ Sin conexión con la nube — no se guardó nada. Reintentá."); }
+      const actual = cloudArr.find(x => x && x.id === mk.id);
+      if (!actual) { setDetSaving(false); return alert("Ese marcaje ya no existe en la nube (alguien lo borró). Cerrá y volvé a abrir Registros."); }
+      const emp = emps.find(e => e.id === mk.empId);
+      const horarioEnt = actual.horarioEntrada || horarioDe(emp).entrada;
+      const esDomFer = (() => {
+        const d = new Date(`${mk.fecha}T12:00:00`);
+        return d.getDay() === 0 || esFeriadoQuincena(mk.fecha.slice(0, 7), Number(mk.fecha.slice(8, 10)));
+      })();
+      const minNuevo = nh * 60 + nm;
+      // Una marca MANUAL nunca genera tardanza (la colocó RRHH, no el reloj).
+      const tardeNuevo = actual.tipo === "entrada" && !actual.manual && !esDomFer
+        && minNuevo > (minDe(horarioEnt) + TOLERANCIA_MIN);
+      const acciones = [];
+      if (cambioHora) acciones.push(`hora ${actual.tipo} corregida: ${actual.hora} → ${nuevaHora}`);
+      if (cambioComent) acciones.push(`comentario de salida ${actual.comentario ? "modificado" : "agregado"}`);
+      const entrada = {
+        accion: acciones.join(" · "), por: userName, justificacion: justif,
+        fecha: ahoraTegus().fecha, at: new Date().toISOString(),
+        antes: { hora: actual.hora, comentario: actual.comentario || "" },
+      };
+      const editado = {
+        ...actual, hora: nuevaHora, min: minNuevo, comentario: nuevoComent,
+        tarde: tardeNuevo, minTarde: tardeNuevo ? minTardeDe(nuevaHora, horarioEnt) : 0,
+        editadoPor: userName, editadoAt: entrada.at,
+        historial: [...(Array.isArray(actual.historial) ? actual.historial : []), entrada],
+      };
+      const next = cloudArr.map(x => (x && x.id === mk.id ? editado : x));
+      const ok = await store.set(key, next);
+      let verified = false;
+      try {
+        const back = await store.getCloud(key);
+        verified = Array.isArray(back) && back.some(x => x && x.id === mk.id && x.hora === nuevaHora);
+        if (verified) { setRegMarks(prev => ({ ...prev, [`${q2.periodo}|${q2.quincena}`]: back })); if (key === marksKey) setMarks(back); }
+      } catch { verified = false; }
+      if (!ok || !verified) { setDetSaving(false); return alert("⚠️ No se pudo VERIFICAR el cambio en la nube — reintentá."); }
+      const avisoTarde = mk.tarde && !tardeNuevo ? "\n\nOJO: con la hora nueva ya NO es llegada tarde. Si tenía decisión de RRHH, revisá la pestaña Llegadas tardías de GeoTeam."
+        : (!mk.tarde && tardeNuevo ? "\n\nOJO: con la hora nueva SÍ es llegada tarde — cae en Llegadas tardías de GeoTeam para decidirla." : "");
+      setDet(null);
+      alert(`✅ Marcaje actualizado. El cambio quedó en el historial.${avisoTarde}`);
+    } finally { setDetSaving(false); }
   };
 
   // ── UI ──
@@ -823,7 +943,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
 
             {/* Aviso de tarde + explicación */}
             {esTarde && <div style={{ background: "#FEF3C7", border: "2px solid #F59E0B", borderRadius: 16, padding: "16px 18px" }}>
-              <div style={{ fontWeight: 900, fontSize: 18, color: "#92400E" }}>Llegaste tarde 😞 <span style={{ fontSize: 14 }}>(+{minTarde} min después de las {horario.entrada})</span></div>
+              <div style={{ fontWeight: 900, fontSize: 18, color: "#92400E" }}>Llegaste tarde 😞 <span style={{ fontSize: 14 }}>(+{minTarde} min después de tu tolerancia de las {(() => { const t = entradaMin + TOLERANCIA_MIN; return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; })()})</span></div>
               <div style={{ fontSize: 12.5, color: "#78350F", margin: "6px 0 8px" }}>Contanos por qué — tu explicación va al <b>Reporte de llegadas tardías</b> de RRHH, donde deciden si se otorga el permiso o se aplica el descuento proporcional.</div>
               <textarea value={explicacion} onChange={e => setExplicacion(e.target.value)} rows={2}
                 placeholder="Ej: se accidentó el bus, cita médica, tráfico en la salida al sur…"
@@ -911,11 +1031,12 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             const safe = /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
             return `"${safe.replace(/"/g, '""')}"`;
           };
-          const head = ["Fecha", "Dia", "Colaborador", "Empresa", "Proyecto", "Entrada", "Min tarde", "Salida", "Comentario salida", "Manual / Justificacion", "Horas brutas", "Almuerzo (h)", "Horas laboradas"];
+          const head = ["Fecha", "Dia", "Colaborador", "Empresa", "Proyecto", "Entrada", "Min tarde", "Estado tardanza", "Salida", "Comentario salida", "Manual / Justificacion", "Horas brutas", "Almuerzo (h)", "Horas laboradas"];
           const lines = [head.map(enc).join(",")];
           rows.forEach(r => lines.push([
             r.fecha, fmtDiaCorto(r.fecha), r.emp.fullName, (COMPANIES[r.emp.company] || {}).name || r.emp.company, r.proy,
-            r.ent ? r.ent.hora : (r.cerrado ? "NO MARCO" : ""), r.ent && r.ent.tarde ? r.ent.minTarde : "",
+            r.ent ? r.ent.hora : (r.cerrado ? "NO MARCO" : ""), r.ent && r.ent.tarde ? minTardeMk(r.ent) : "",
+            r.ent && r.ent.tarde ? (decisionDe(r.ent) ? (decisionDe(r.ent).estado === "aprobada" ? "Justificada (aprobada)" : "Se descuenta (denegada)") : "Pendiente de decision") : "",
             r.sal ? r.sal.hora : (r.cerrado ? "NO MARCO" : ""), (r.sal && r.sal.comentario) || "",
             [r.ent && r.ent.manual ? `ENTRADA manual por ${r.ent.editadoPor}: ${r.ent.justificacion || ""}` : "", r.sal && r.sal.manual ? `SALIDA manual por ${r.sal.editadoPor}: ${r.sal.justificacion || ""}` : ""].filter(Boolean).join(" | "),
             r.brutas != null ? r.brutas.toFixed(2) : "", r.brutas != null ? r.almuerzo.toFixed(2) : "",
@@ -949,7 +1070,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
               const noMarco = "<span style='color:#C0392B;font-weight:bold'>NO MARCO</span>";
               const justifs = [r.ent && r.ent.manual ? `Entrada manual por ${r.ent.editadoPor}: ${r.ent.justificacion || ""}` : "", r.sal && r.sal.manual ? `Salida manual por ${r.sal.editadoPor}: ${r.sal.justificacion || ""}` : "", (r.sal && r.sal.comentario) || ""].filter(Boolean).join(" | ");
               cuerpo += `<tr><td>${fmtDiaCorto(r.fecha)} ${r.fecha.slice(0, 4)}</td><td>${esc(r.emp.fullName)}</td>` +
-                `<td>${r.ent ? esc(r.ent.hora) + (r.ent.manual ? " <b>(manual)</b>" : "") + (r.ent.tarde ? ` <span style='color:#C0392B;font-weight:bold'>(+${r.ent.minTarde} min)</span>` : "") : (r.cerrado ? noMarco : "&mdash;")}</td>` +
+                `<td>${r.ent ? esc(r.ent.hora) + (r.ent.manual ? " <b>(manual)</b>" : "") + (r.ent.tarde ? (() => { const d = decisionDe(r.ent); const c = d ? (d.estado === "aprobada" ? "#166534" : "#B91C1C") : "#92400E"; const t = d ? (d.estado === "aprobada" ? "justificada" : "se descuenta") : "pendiente"; return ` <span style='color:${c};font-weight:bold'>(+${minTardeMk(r.ent)} min ${t})</span>`; })() : "") : (r.cerrado ? noMarco : "&mdash;")}</td>` +
                 `<td>${r.sal ? esc(r.sal.hora) + (r.sal.manual ? " <b>(manual)</b>" : "") : (r.cerrado ? noMarco : "&mdash;")}</td><td style='font-size:9px;color:#555'>${esc(justifs)}</td>` +
                 `<td style='text-align:right'>${r.brutas != null ? fmtHoras(r.brutas) : "&mdash;"}</td>` +
                 `<td style='text-align:right'>${r.brutas != null ? (r.almuerzo ? "1h 00m" : "&mdash;") : "&mdash;"}</td>` +
@@ -968,6 +1089,22 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
           <div>
             <div style={{ fontSize: 22, fontWeight: 900 }}>📋 Registros de entradas y salidas</div>
             <div style={{ fontSize: 13, color: STONE, marginTop: 2 }}>Marcajes del reloj por día, agrupados por proyecto. El total laborado descuenta 1h de almuerzo cuando la jornada cruza el mediodía (12:00–13:00). El día cierra a las 11:59 PM: lo no marcado queda como <b style={{ color: "#B91C1C" }}>NO MARCÓ</b> (sin entrada = no se presentó; el NSP se maneja en la asistencia de GeoTeam){puedeCorregir ? " — vos podés colocar la hora faltante con justificación (queda en el historial)" : ""}.</div>
+            {/* Leyenda de colores: qué significa cada chip de la tabla */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8, fontSize: 11 }}>
+              <span style={{ color: STONE, fontWeight: 700, letterSpacing: 0.4 }}>CÓMO LEER:</span>
+              <span style={{ background: "#DCFCE7", color: "#166534", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>+Xm justificada</span>
+              <span style={{ color: STONE }}>tarde APROBADA por RRHH — día completo, sin descuento</span>
+              <span style={{ background: "#FEE2E2", color: "#B91C1C", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>+Xm se descuenta</span>
+              <span style={{ color: STONE }}>DENEGADA — descuento proporcional</span>
+              <span style={{ background: "#FEF3C7", color: "#92400E", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>+Xm pendiente</span>
+              <span style={{ color: STONE }}>sin decidir en GeoTeam</span>
+              <span style={{ background: "#EDE9FE", color: "#6D28D9", borderRadius: 6, padding: "2px 8px", fontWeight: 800 }}>MANUAL</span>
+              <span style={{ background: "#E0E7FF", color: "#3730A3", borderRadius: 6, padding: "2px 8px", fontWeight: 800 }}>✎</span>
+              <span style={{ color: STONE }}>con cambios — tocá la hora para ver el historial</span>
+            </div>
+            <div style={{ fontSize: 11, color: STONE, marginTop: 4 }}>
+              Los minutos tarde se cuentan desde que <b>vence la tolerancia</b> ({TOLERANCIA_MIN} min): con horario 8:00, marcar 8:20 son <b>5 minutos</b> tarde.
+            </div>
           </div>
           {/* Filtros */}
           <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 16, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1039,12 +1176,13 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
                       <td style={{ padding: "9px 14px", whiteSpace: "nowrap", color: "#5C5853" }}>{fmtDiaCorto(r.fecha)}</td>
                       <td style={{ padding: "9px 10px", fontWeight: 700 }}>{nombreCorto(r.emp.fullName)}</td>
                       <td style={{ padding: "9px 10px", textAlign: "center", whiteSpace: "nowrap" }}>
-                        {r.ent ? <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700, color: r.ent.tarde ? "#B45309" : "#166534" }}>
+                        {r.ent ? (() => { const st = r.ent.tarde ? estiloTarde(r.ent) : null; return (
+                          <span role="button" title="Ver detalle e historial de este marcaje" onClick={() => abrirDetalle(r.ent)} style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700, color: st ? st.hora : "#166534", cursor: "pointer", borderBottom: "1px dotted #C9C1B4" }}>
                           {r.ent.hora}
-                          {r.ent.tarde && <span style={{ fontSize: 10, background: "#FEE2E2", color: "#B91C1C", borderRadius: 5, padding: "1px 5px", marginLeft: 5 }}>+{r.ent.minTarde}m</span>}
-                          {r.ent.manual && <span title={`MANUAL — colocada por ${r.ent.editadoPor}. Justificación: ${r.ent.justificacion || "—"}`} style={{ fontSize: 9, background: "#EDE9FE", color: "#6D28D9", borderRadius: 5, padding: "1px 5px", marginLeft: 5, fontWeight: 800, cursor: "help" }}>MANUAL</span>}
-                          {r.ent.manual && puedeCorregir && <span role="button" title="Quitar esta marca manual" onClick={() => borrarMarcaManual(r.ent)} style={{ marginLeft: 4, cursor: "pointer", fontSize: 11 }}>🗑</span>}
-                        </span> : r.cerrado
+                          {st && <span title={`Llegó ${minTardeMk(r.ent)} min después de su tolerancia — ${st.txt}`} style={{ fontSize: 10, background: st.bg, color: st.fg, borderRadius: 5, padding: "1px 5px", marginLeft: 5, fontWeight: 800 }}>+{minTardeMk(r.ent)}m</span>}
+                          {r.ent.manual && <span title={`MANUAL — colocada por ${r.ent.editadoPor}. Justificación: ${r.ent.justificacion || "—"}`} style={{ fontSize: 9, background: "#EDE9FE", color: "#6D28D9", borderRadius: 5, padding: "1px 5px", marginLeft: 5, fontWeight: 800 }}>MANUAL</span>}
+                          {(r.ent.historial || []).length > 0 && !r.ent.manual && <span title="Este marcaje tiene cambios registrados" style={{ fontSize: 9, background: "#E0E7FF", color: "#3730A3", borderRadius: 5, padding: "1px 5px", marginLeft: 4, fontWeight: 800 }}>✎</span>}
+                        </span>); })() : r.cerrado
                           ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                               <span style={{ fontSize: 10.5, fontWeight: 800, color: "#B91C1C", background: "#FEE2E2", borderRadius: 5, padding: "2px 7px" }} title="Día cerrado sin entrada: se entiende como NO SE PRESENTÓ (el NSP se marca en la asistencia de GeoTeam)">NO MARCÓ</span>
                               {puedeCorregir && <span role="button" title="Colocar la entrada manualmente (con justificación)" onClick={() => setCorr({ empId: r.emp.id, fecha: r.fecha, tipo: "entrada", hora: "", justif: "" })} style={{ cursor: "pointer", fontSize: 13, color: ORANGE_DARK, fontWeight: 900 }}>➕</span>}
@@ -1052,10 +1190,10 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
                           : <span style={{ color: "#B8B0A4" }}>—</span>}
                       </td>
                       <td style={{ padding: "9px 10px", textAlign: "center" }}>
-                        {r.sal ? <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700, color: "#3E6A99" }}>
+                        {r.sal ? <span role="button" title="Ver detalle e historial de este marcaje" onClick={() => abrirDetalle(r.sal)} style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700, color: "#3E6A99", cursor: "pointer", borderBottom: "1px dotted #C9C1B4" }}>
                           {r.sal.hora}
-                          {r.sal.manual && <span title={`MANUAL — colocada por ${r.sal.editadoPor}. Justificación: ${r.sal.justificacion || "—"}`} style={{ fontSize: 9, background: "#EDE9FE", color: "#6D28D9", borderRadius: 5, padding: "1px 5px", marginLeft: 5, fontWeight: 800, cursor: "help" }}>MANUAL</span>}
-                          {r.sal.manual && puedeCorregir && <span role="button" title="Quitar esta marca manual" onClick={() => borrarMarcaManual(r.sal)} style={{ marginLeft: 4, cursor: "pointer", fontSize: 11 }}>🗑</span>}
+                          {r.sal.manual && <span title={`MANUAL — colocada por ${r.sal.editadoPor}. Justificación: ${r.sal.justificacion || "—"}`} style={{ fontSize: 9, background: "#EDE9FE", color: "#6D28D9", borderRadius: 5, padding: "1px 5px", marginLeft: 5, fontWeight: 800 }}>MANUAL</span>}
+                          {(r.sal.historial || []).length > 0 && !r.sal.manual && <span title="Este marcaje tiene cambios registrados" style={{ fontSize: 9, background: "#E0E7FF", color: "#3730A3", borderRadius: 5, padding: "1px 5px", marginLeft: 4, fontWeight: 800 }}>✎</span>}
                         </span> : r.cerrado
                           ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                               <span style={{ fontSize: 10.5, fontWeight: 800, color: "#B91C1C", background: "#FEE2E2", borderRadius: 5, padding: "2px 7px" }} title="El colaborador no marcó su salida ese día (el día cierra 11:59 PM)">NO MARCÓ</span>
@@ -1115,6 +1253,106 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
               </div>
             </div>
           </div>}
+
+          {/* ── DETALLE DE UN MARCAJE: datos, firma, historial y edición ── */}
+          {det && (() => {
+            const mk = det.mk;
+            const emp = emps.find(e => e.id === mk.empId);
+            const dec = decisionDe(mk);
+            const st = mk.tarde ? estiloTarde(mk) : null;
+            const hist = Array.isArray(mk.historial) ? mk.historial : [];
+            const lbl = { fontSize: 11, fontWeight: 800, color: STONE, letterSpacing: 0.5, textTransform: "uppercase" };
+            const dato = (k, v) => <div><div style={lbl}>{k}</div><div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL, marginTop: 1 }}>{v}</div></div>;
+            return <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }} onClick={() => !detSaving && setDet(null)}>
+              <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: 22, width: 560, maxWidth: "96vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 70px rgba(0,0,0,.25)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: CHARCOAL }}>{mk.tipo === "entrada" ? "🟢 Entrada" : "🔵 Salida"} · {mk.empNombre}</div>
+                    <div style={{ fontSize: 12, color: STONE, marginTop: 2 }}>{fmtDiaCorto(mk.fecha)} de {mk.fecha.slice(0, 4)} · {(COMPANIES[mk.company] || {}).name || mk.company}</div>
+                  </div>
+                  <button onClick={() => !detSaving && setDet(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: STONE }}>✕</button>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginTop: 14, background: CREAM, borderRadius: 12, padding: "12px 14px" }}>
+                  {dato("Hora marcada", mk.hora)}
+                  {dato("Horario", `${mk.horarioEntrada || horarioDe(emp).entrada} (tolerancia ${TOLERANCIA_MIN} min)`)}
+                  {mk.tipo === "entrada" && dato("Puntualidad", mk.tarde
+                    ? <span style={{ color: st.hora }}>{minTardeMk(mk)} min tarde · {st.txt}</span>
+                    : <span style={{ color: "#166534" }}>A tiempo ✓</span>)}
+                  {dato("Registrado en", mk.registradoPor || "—")}
+                </div>
+
+                {mk.tarde && <div style={{ marginTop: 12, background: st.bg, border: `1px solid ${st.fg}33`, borderRadius: 12, padding: "10px 14px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: st.fg }}>
+                    {dec ? (dec.estado === "aprobada" ? "✓ Tardanza APROBADA por RRHH — el día se paga completo" : "✕ Tardanza DENEGADA — se aplica descuento proporcional") : "⏳ Tardanza PENDIENTE de decisión en GeoTeam"}
+                  </div>
+                  {mk.explicacion && <div style={{ fontSize: 12.5, color: CHARCOAL, marginTop: 4, fontStyle: "italic" }}>😞 "{mk.explicacion}"</div>}
+                  <div style={{ fontSize: 11, color: st.fg, marginTop: 4 }}>Llegó {minTardeMk(mk)} min después de su tolerancia (marcó {mk.hora}, límite {(() => { const t = minDe(mk.horarioEntrada || horarioDe(emp).entrada) + TOLERANCIA_MIN; return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; })()}).</div>
+                </div>}
+
+                {mk.manual && <div style={{ marginTop: 12, background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 12, padding: "10px 14px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#6D28D9" }}>✍️ Marcaje colocado MANUALMENTE por {mk.editadoPor || "—"}</div>
+                  <div style={{ fontSize: 12.5, color: CHARCOAL, marginTop: 3 }}>{mk.justificacion || "—"}</div>
+                </div>}
+
+                {mk.comentario && !det.editando && <div style={{ marginTop: 12, fontSize: 12.5, color: "#3E6A99" }}>💬 {mk.comentario}</div>}
+
+                {mk.firmaId && <div style={{ marginTop: 12 }}>
+                  <div style={lbl}>Firma</div>
+                  {det.firma === undefined ? <div style={{ fontSize: 12, color: STONE }}>Cargando…</div>
+                    : det.firma ? <img src={det.firma} alt="firma" style={{ maxWidth: 240, border: `1px solid ${BORDER}`, borderRadius: 8, background: "#fff", marginTop: 4 }} />
+                      : <div style={{ fontSize: 12, color: STONE }}>No se pudo cargar la firma.</div>}
+                </div>}
+
+                {/* HISTORIAL de cambios del marcaje */}
+                <div style={{ marginTop: 16 }}>
+                  <div style={lbl}>Historial de cambios</div>
+                  {hist.length === 0
+                    ? <div style={{ fontSize: 12.5, color: STONE, marginTop: 4 }}>Sin cambios — el marcaje está tal como se registró en el reloj.</div>
+                    : <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+                        {hist.map((h, i) => <div key={i} style={{ background: "#F8FAFC", borderLeft: "3px solid #94A3B8", borderRadius: 8, padding: "8px 12px" }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 700, color: CHARCOAL }}>{h.accion}</div>
+                          {h.justificacion && <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>Motivo: {h.justificacion}</div>}
+                          <div style={{ fontSize: 11, color: STONE, marginTop: 2 }}>{h.por} · {h.fecha ? fmtDiaCorto(h.fecha) : ""} {h.at ? new Date(h.at).toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit", timeZone: "America/Tegucigalpa" }) : ""}</div>
+                        </div>)}
+                      </div>}
+                </div>
+
+                {/* EDICIÓN (solo autorizados) */}
+                {puedeCorregir && <div style={{ marginTop: 16, borderTop: `1px solid ${BORDER}`, paddingTop: 14 }}>
+                  {!det.editando
+                    ? <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button onClick={() => setDet(d => ({ ...d, editando: true }))} style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: "#6D28D9", color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>✏️ Corregir este marcaje</button>
+                        {mk.manual && <button onClick={() => borrarMarcaManual(mk)} style={{ padding: "9px 16px", borderRadius: 10, border: "1px solid #FCA5A5", background: "#fff", color: "#B91C1C", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>🗑 Quitar marca manual</button>}
+                      </div>
+                    : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                          <div style={{ flex: "1 1 140px" }}>
+                            <div style={lbl}>Hora corregida</div>
+                            <input type="time" value={(() => { const [h, m] = String(det.hora || "0:00").split(":"); return `${String(h).padStart(2, "0")}:${m || "00"}`; })()}
+                              onChange={e => { const v = e.target.value; if (!v) return; const [h, m] = v.split(":"); setDet(d => ({ ...d, hora: `${Number(h)}:${m}` })); }}
+                              style={{ ...selSt, width: "100%", marginTop: 3 }} />
+                          </div>
+                          {mk.tipo === "salida" && <div style={{ flex: "2 1 200px" }}>
+                            <div style={lbl}>Comentario de la salida</div>
+                            <input value={det.comentario} onChange={e => setDet(d => ({ ...d, comentario: e.target.value }))} placeholder="ej. salió a proyecto" style={{ ...selSt, width: "100%", marginTop: 3 }} />
+                          </div>}
+                        </div>
+                        <div>
+                          <div style={lbl}>Justificación del cambio (obligatoria)</div>
+                          <textarea value={det.justif} onChange={e => setDet(d => ({ ...d, justif: e.target.value }))} rows={2}
+                            placeholder="ej. el colaborador marcó tarde por fila en el reloj; hora real confirmada con el residente"
+                            style={{ width: "100%", marginTop: 3, padding: "8px 10px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit", resize: "vertical" }} />
+                        </div>
+                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                          <button disabled={detSaving} onClick={() => setDet(d => ({ ...d, editando: false, hora: mk.hora, comentario: mk.comentario || "", justif: "" }))} style={{ padding: "9px 16px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", color: STONE, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                          <button disabled={detSaving} onClick={guardarEdicion} style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: detSaving ? "#D8D2C8" : "#6D28D9", color: "#fff", fontSize: 13, fontWeight: 800, cursor: detSaving ? "wait" : "pointer" }}>{detSaving ? "Guardando…" : "Guardar cambio"}</button>
+                        </div>
+                      </div>}
+                </div>}
+              </div>
+            </div>;
+          })()}
         </div>;
       })()}
     </div>
