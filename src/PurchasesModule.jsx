@@ -26,6 +26,7 @@ function useIsMobile(breakpoint = 768) {
 // ── Constantes ──
 const COMPANIES = {
   geotecnica: { name: "Geotecnica Soluciones", color: ORANGE, accent: ORANGE_DARK },
+  subterra:   { name: "Subterra Honduras",     color: "#2C5F5D", accent: "#1F4644" },
 };
 // Lista canonica unificada con RRHH y Operations CC (src/projects.js).
 const PROJECTS = CANONICAL_PROJECTS;
@@ -1383,6 +1384,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // Default: mes actual — el histórico viejo no se le viene encima a nadie,
   // pero queda accesible eligiendo el mes o "Todos".
   const [contaMes, setContaMes] = useState(() => new Date().toISOString().slice(0, 7));
+  // Mes del reporte ejecutivo de materiales (pestaña Costos).
+  const [costosMesEjec, setCostosMesEjec] = useState(() => new Date().toISOString().slice(0, 7));
   const [filter, setFilter] = useState({ status: "", project: "", provider: "", from: "", to: "" });
   // Estado de expansion/colapso de sub-secciones en el Kanban de Ana.
   // Keys: `${projectKey}-enlog`, `${projectKey}-cierre`, `${projectKey}-cerradas`.
@@ -3455,6 +3458,186 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   };
 
   // ── Pestaña COSTOS — vista ejecutiva de costos por proyecto ──
+  // ─────────────────────────────────────────────────────────────────────────
+  // REPORTE EJECUTIVO MENSUAL DE MATERIALES (19-ago-2026, pedido de Gerson)
+  // Espejo del "Costo de Mano de Obra" de GeoTeam: portada con KPIs + dona
+  // por proyecto + mezcla por empresa, y detalle por proyecto con CADA compra
+  // (incluido su detalle de materiales según cotización). AMBAS empresas.
+  // Mes por fecha de PAGO (paidAt) — mismo criterio que el Dashboard.
+  // ─────────────────────────────────────────────────────────────────────────
+  const exportComprasEjecutivoPDF = (mesEjec) => {
+    if (!mesEjec) return alert("Elegí el mes del reporte.");
+    const [yy, mmn] = mesEjec.split("-").map(Number);
+    const mesNombreRaw = new Date(yy, mmn - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
+    const mesTitulo = mesNombreRaw.charAt(0).toUpperCase() + mesNombreRaw.slice(1);
+    const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const esc = (t) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const TAG = { geotecnica: "GEO", subterra: "SUB" };
+    const delMes = purchases.filter(x => (x.status === "pagado" || x.status === "finalizado") && String(x.paidAt || "").slice(0, 7) === mesEjec);
+    if (!delMes.length) return alert(`No hay compras pagadas en ${mesTitulo}.`);
+    const proy = {};
+    const porEmp = { geotecnica: { total: 0, n: 0 }, subterra: { total: 0, n: 0 } };
+    delMes.forEach(x => {
+      const k = x.projectCode || "SIN PROYECTO";
+      if (!proy[k]) proy[k] = { short: k, name: getProject(x.projectCode)?.name || "", total: 0, n: 0, porCo: { geotecnica: 0, subterra: 0 }, items: [] };
+      const amt = Number(x.amount) || 0;
+      proy[k].total += amt; proy[k].n++;
+      const co2 = x.company === "subterra" ? "subterra" : "geotecnica";
+      proy[k].porCo[co2] += amt;
+      if (porEmp[co2]) { porEmp[co2].total += amt; porEmp[co2].n++; }
+      proy[k].items.push(x);
+    });
+    const rowsG = Object.values(proy).map(r => ({ ...r, items: r.items.sort((a, b) => String(a.paidAt || "").localeCompare(String(b.paidAt || ""))) })).sort((a, b) => b.total - a.total);
+    const totalG = rowsG.reduce((sm, r) => sm + r.total, 0);
+    const w = window.open("", "_blank");
+    if (!w) return alert("Permití pop-ups para generar el PDF.");
+    const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+    const genFecha = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" });
+    const PALETA = ["#E8762D", "#2C5F5D", "#3E6A99", "#B45309", "#6D28D9", "#0E7490", "#BE3455", "#15803D"];
+    const top = rowsG.slice(0, 8), otros = rowsG.slice(8);
+    const segs = [
+      ...top.map((r, i) => ({ label: r.short, val: r.total, color: PALETA[i % PALETA.length] })),
+      ...(otros.length ? [{ label: `Otros (${otros.length})`, val: otros.reduce((sm, r) => sm + r.total, 0), color: "#94A3B8" }] : []),
+    ];
+    const RAD = 62, CIRC = 2 * Math.PI * RAD;
+    let acum = 0;
+    const donaSegs = segs.map(sg => {
+      const frac = totalG > 0 ? sg.val / totalG : 0;
+      const el = `<circle r="${RAD}" cx="90" cy="90" fill="transparent" stroke="${sg.color}" stroke-width="34" stroke-dasharray="${(frac * CIRC).toFixed(2)} ${CIRC.toFixed(2)}" stroke-dashoffset="${(-acum * CIRC).toFixed(2)}" transform="rotate(-90 90 90)"/>`;
+      acum += frac; return el;
+    }).join("");
+    const donaLeyenda = segs.map(sg => `<div style="display:flex;align-items:center;gap:7px;font-size:10.5px;margin-bottom:5px">
+      <span style="width:10px;height:10px;border-radius:3px;background:${sg.color};flex-shrink:0"></span>
+      <span style="font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sg.label)}</span>
+      <span style="color:#64748b;min-width:42px;text-align:right">${totalG > 0 ? ((sg.val / totalG) * 100).toFixed(1) : "0"}%</span>
+      <span style="font-weight:700;min-width:96px;text-align:right">${fL(sg.val)}</span>
+    </div>`).join("");
+    const maxEmp = Math.max(porEmp.geotecnica.total, porEmp.subterra.total, 1);
+    const empresasConGasto = ["geotecnica", "subterra"].filter(c2 => porEmp[c2].total > 0);
+    const barrasEmp = empresasConGasto.map(c2 => {
+      const d = porEmp[c2];
+      const pct = totalG > 0 ? (d.total / totalG) * 100 : 0;
+      return `<div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
+          <span style="font-weight:800;color:${COMPANIES[c2].color}">${esc(COMPANIES[c2].name)}</span>
+          <span style="color:#64748b">${d.n} compra${d.n !== 1 ? "s" : ""} · ${pct.toFixed(1)}% del grupo</span>
+        </div>
+        <div style="background:#F1F5F9;border-radius:6px;height:26px;position:relative;overflow:hidden">
+          <div style="width:${Math.max(2, (d.total / maxEmp) * 100).toFixed(1)}%;height:100%;background:${COMPANIES[c2].color};border-radius:6px"></div>
+          <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11.5px;font-weight:800;color:#1E293B">${fL(d.total)}</span>
+        </div>
+      </div>`;
+    }).join("");
+    const topMix = rowsG.slice(0, 10);
+    const maxProy = Math.max(...topMix.map(r => r.total), 1);
+    const barrasProy = topMix.map(r => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:10px">
+      <span style="width:118px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">${esc(r.short)}</span>
+      <div style="flex:1;display:flex;height:16px;background:#F8FAFC;border-radius:4px;overflow:hidden">
+        ${r.porCo.geotecnica > 0 ? `<div style="width:${((r.porCo.geotecnica / maxProy) * 100).toFixed(1)}%;background:${COMPANIES.geotecnica.color}"></div>` : ""}
+        ${r.porCo.subterra > 0 ? `<div style="width:${((r.porCo.subterra / maxProy) * 100).toFixed(1)}%;background:${COMPANIES.subterra.color}"></div>` : ""}
+      </div>
+      <span style="width:92px;text-align:right;font-weight:700;flex-shrink:0">${fL(r.total)}</span>
+    </div>`).join("");
+    const kpi = (label, val, color, sub) => `<div style="flex:1;min-width:130px;border:1px solid #E2E8F0;border-radius:10px;padding:11px 14px">
+      <div style="font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:0.6px;font-weight:700">${label}</div>
+      <div style="font-size:17px;font-weight:800;color:${color};margin-top:3px;letter-spacing:-0.3px">${val}</div>
+      ${sub ? `<div style="font-size:9px;color:#94A3B8;margin-top:1px">${sub}</div>` : ""}
+    </div>`;
+    const chipCo = (c2) => `<span style="display:inline-block;background:${COMPANIES[c2]?.color || "#64748b"};color:#fff;border-radius:4px;padding:1px 6px;font-size:8px;font-weight:800;letter-spacing:0.5px;vertical-align:1px">${TAG[c2] || "?"}</span>`;
+    const projBlocks = rowsG.map(r => `
+    <div style="margin-bottom:16px;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
+      <div style="background:#2C2A28;color:#fff;padding:8px 14px;font-weight:700;font-size:12.5px;display:flex;justify-content:space-between;align-items:center">
+        <span>${esc(r.short)}${r.name ? ` <span style="font-weight:400;font-size:10px;opacity:.7">${esc(r.name)}</span>` : ""}</span>
+        <span style="font-size:10px;font-weight:600;opacity:.85">${r.n} compra${r.n !== 1 ? "s" : ""} &nbsp;<span style="font-size:13px;font-weight:800;opacity:1">${fL(r.total)}</span></span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:10.5px">
+        <thead><tr style="background:#F1F5F9">
+          <th style="text-align:left;padding:6px 12px;font-size:8.5px;color:#64748b;letter-spacing:0.4px">PROVEEDOR</th>
+          <th style="text-align:left;padding:6px 8px;font-size:8.5px;color:#64748b;letter-spacing:0.4px">DESCRIPCIÓN / MATERIALES</th>
+          <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">PAGADA</th>
+          <th style="text-align:right;padding:6px 12px;font-size:8.5px;color:#64748b">MONTO</th>
+        </tr></thead>
+        <tbody>
+          ${r.items.map(x => `<tr style="border-top:1px solid #F1F5F9;vertical-align:top">
+            <td style="padding:5px 12px;font-weight:600;white-space:nowrap">${chipCo(x.company === "subterra" ? "subterra" : "geotecnica")} ${esc(x.provider || "—")}</td>
+            <td style="padding:5px 8px;color:#334155">${esc(x.description || "—")}${x.detalleMateriales ? `<div style="color:#64748b;font-size:9px;white-space:pre-wrap;margin-top:2px;border-left:2px solid #E2E8F0;padding-left:6px">${esc(x.detalleMateriales)}</div>` : ""}</td>
+            <td style="padding:5px 8px;text-align:right;white-space:nowrap;color:#64748b">${x.paidAt ? new Date(x.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", timeZone: "UTC" }) : "—"}</td>
+            <td style="padding:5px 12px;text-align:right;font-weight:700;white-space:nowrap">${fL(x.amount)}</td>
+          </tr>`).join("")}
+          <tr style="background:#F8FAFC;font-weight:700;border-top:1px solid #E2E8F0">
+            <td colspan="3" style="padding:6px 12px">Subtotal ${esc(r.short)} · ${r.n} compra${r.n !== 1 ? "s" : ""}${r.porCo.geotecnica > 0 ? ` · GEO ${fL(r.porCo.geotecnica)}` : ""}${r.porCo.subterra > 0 ? ` · SUB ${fL(r.porCo.subterra)}` : ""}</td>
+            <td style="padding:6px 12px;text-align:right;color:#059669">${fL(r.total)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>`).join("");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costo de Materiales — ${mesTitulo} · Grupo Geotecnica</title>
+    <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#1E293B;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{.np{display:none}}thead{display:table-header-group}tr{page-break-inside:avoid}</style>
+    </head><body>
+    <div style="page-break-after:always">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px">
+        <div style="display:flex;align-items:center;gap:14px">
+          <img src="${logoUrl}" style="height:52px" onerror="this.style.display='none'" />
+          <div>
+            <div style="font-size:9px;color:#E8762D;font-weight:800;letter-spacing:1.8px;text-transform:uppercase">Grupo Geotecnica · Compras</div>
+            <div style="font-size:23px;font-weight:800;letter-spacing:-0.4px;color:#2C2A28">Costo de Materiales</div>
+            <div style="font-size:13px;color:#64748b">Reporte ejecutivo mensual — <b style="color:#2C2A28">${mesTitulo}</b></div>
+          </div>
+        </div>
+        <div style="text-align:right;font-size:10px;color:#64748b">
+          <div style="font-weight:800;color:${COMPANIES.geotecnica.color}">Geotecnica Soluciones</div>
+          <div style="font-weight:800;color:${COMPANIES.subterra.color}">Subterra Honduras</div>
+          <div style="margin-top:3px">Generado ${genFecha}</div>
+        </div>
+      </div>
+      <div style="height:4px;background:linear-gradient(90deg,#E8762D,${COMPANIES.geotecnica.color},${COMPANIES.subterra.color});border-radius:2px;margin:13px 0 16px"></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
+        ${kpi("Gasto total del grupo", fL(totalG), "#059669", `${delMes.length} compras · ${rowsG.length} proyectos`)}
+        ${empresasConGasto.map(c2 => kpi(COMPANIES[c2].name, fL(porEmp[c2].total), COMPANIES[c2].color, `${porEmp[c2].n} compras`)).join("")}
+        ${kpi("Ticket promedio", fL(delMes.length ? totalG / delMes.length : 0), "#3E6A99", "por compra pagada")}
+      </div>
+      <div style="display:flex;gap:14px;align-items:flex-start">
+        <div style="flex:1.15;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
+          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Distribución del gasto por proyecto</div>
+          <div style="display:flex;gap:14px;align-items:center">
+            <svg width="140" height="140" viewBox="0 0 180 180" style="flex-shrink:0">
+              ${donaSegs}
+              <text x="90" y="86" text-anchor="middle" style="font-size:11px;font-weight:800;fill:#2C2A28">${rowsG.length}</text>
+              <text x="90" y="100" text-anchor="middle" style="font-size:8px;fill:#64748b">proyectos</text>
+            </svg>
+            <div style="flex:1">${donaLeyenda}</div>
+          </div>
+        </div>
+        <div style="flex:1;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
+          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:9px">Gasto por empresa</div>
+          ${barrasEmp}
+          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin:11px 0 7px">Mezcla por proyecto</div>
+          <div style="display:flex;gap:12px;font-size:9px;color:#64748b;margin-bottom:6px">
+            <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${COMPANIES.geotecnica.color};vertical-align:-1px"></span> Geotecnica</span>
+            <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${COMPANIES.subterra.color};vertical-align:-1px"></span> Subterra</span>
+          </div>
+          ${barrasProy}
+        </div>
+      </div>
+    </div>
+    <div style="border-left:4px solid #E8762D;padding-left:12px;margin-bottom:14px">
+      <div style="font-size:9px;color:#E8762D;font-weight:800;letter-spacing:1.5px;text-transform:uppercase">Detalle por proyecto · ${mesTitulo}</div>
+      <div style="font-size:11px;color:#64748b">Cada compra con su empresa: ${chipCo("geotecnica")} Geotecnica Soluciones · ${chipCo("subterra")} Subterra Honduras. El detalle de materiales sale tal cual la cotización cuando fue registrado.</div>
+    </div>
+    ${projBlocks}
+    <div style="background:#2C2A28;color:#fff;border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;page-break-inside:avoid">
+      <span style="font-size:12px;font-weight:700">GASTO TOTAL EN MATERIALES DEL GRUPO — ${mesTitulo}</span>
+      <span style="font-size:17px;font-weight:800;color:#6EE7B7">${fL(totalG)}</span>
+    </div>
+    <div style="font-size:9px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:8px;margin-top:12px;line-height:1.5;page-break-inside:avoid">
+      <b>Metodología:</b> se incluyen las solicitudes de compra con pago realizado (estado pagado o finalizado) cuya fecha de pago cae en ${mesTitulo}, de ambas empresas. Los montos son los de la solicitud aprobada. No incluye compras de repuestos de maquinaria (ver el reporte de GeoMachinery).
+      Preparado por ${esc(userName || "Operaciones")} · GeoShopping — Sistema de Operaciones.
+    </div>
+    <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
+    </body></html>`);
+    w.document.close();
+  };
+
   const renderCostos = () => {
     const cardStyle = {
       background: "#fff",
@@ -3500,8 +3683,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             </div>
             <div style={{ fontSize: 12, color: STONE, marginTop: 4 }}>Desglose de pagos y saldos pendientes por proyecto</div>
           </div>
-          <div style={{ fontSize: 11, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>
-            {new Date().toLocaleDateString("es-HN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <label style={{ fontSize: 10, fontWeight: 700, color: STONE, textTransform: "uppercase", letterSpacing: 0.5 }}>Mes del reporte</label>
+              <input type="month" value={costosMesEjec} onChange={e => e.target.value && setCostosMesEjec(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", fontFamily: "inherit" }} />
+            </div>
+            <Btn onClick={() => exportComprasEjecutivoPDF(costosMesEjec)}>🏢 Reporte ejecutivo PDF</Btn>
           </div>
         </div>
 
@@ -4126,7 +4313,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         en_camino:       { badge: `🚚 Con Logística (${d?.estado || "pendiente"})`, c: "#0891B2", border: "#BAE6FD" },
       }[tipo];
       return <div key={p.id} style={{ background: "#fff", border: `1px solid ${cfg.border}`, borderLeft: `3px solid ${cfg.c}`, borderRadius: 8, padding: 12 }}>
-        <Badge color={cfg.c}>{cfg.badge}</Badge>
+        <span style={{ display: "inline-block", background: cfg.c + "18", color: cfg.c, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, lineHeight: 1.35 }}>{cfg.badge}</span>
         <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 6 }}>{p.provider}</div>
         <div style={{ fontSize: 11.5, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
         {p.amount && <div style={{ fontSize: 11, color: "#059669", fontWeight: 700, marginTop: 4 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</div>}

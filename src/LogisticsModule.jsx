@@ -815,6 +815,10 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const [maintenances, setMaintenances] = useState([]);
   const [despachos, setDespachos] = useState([]);
   const [purchases, setPurchases] = useState([]); // shared con Compras
+  // Compras de GeoMachinery (mq-purchases): los despachos source "maquinas"
+  // enlazan acá — sin esto el botón de subir ficha no aparecía para máquinas
+  // y el candado de "entregado sin ficha" los dejaba sin salida (19-ago-2026).
+  const [mqPurchases, setMqPurchases] = useState([]);
   const [customProjects, setCustomProjects] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
@@ -831,18 +835,20 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   // ── Carga inicial ──
   useEffect(() => {
     (async () => {
-      const [v, m, d, p, cps] = await Promise.all([
+      const [v, m, d, p, cps, mqp] = await Promise.all([
         store.get("lg-vehicles"),
         store.get("lg-maintenances"),
         store.get("lg-despachos"),
         store.get("cp-purchases"),
         store.get("cp-projects"),
+        store.get("mq-purchases"),
       ]);
       if (Array.isArray(v)) setVehicles(v);
       if (Array.isArray(m)) setMaintenances(m);
       if (Array.isArray(d)) setDespachos(d);
       if (Array.isArray(p)) setPurchases(p);
       if (Array.isArray(cps)) setCustomProjects(cps);
+      if (Array.isArray(mqp)) setMqPurchases(mqp);
       setLoaded(true);
     })();
   }, []);
@@ -853,12 +859,14 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   useEffect(() => {
     const refreshFromCloud = async () => {
       try {
-        const [d, p] = await Promise.all([
+        const [d, p, mqp] = await Promise.all([
           store.get("lg-despachos"),
           store.get("cp-purchases"),
+          store.get("mq-purchases"),
         ]);
         if (Array.isArray(d)) setDespachos(d);
         if (Array.isArray(p)) setPurchases(p);
+        if (Array.isArray(mqp)) setMqPurchases(mqp);
       } catch (e) {
         console.warn("Auto-refresh fallo:", e?.message || e);
       }
@@ -1006,6 +1014,11 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
 
   const saveDespacho = async (rec, isEdit) => {
     // Upsert por id (replace si existe, append si no) — el flag isEdit es solo informativo.
+    // El modal es OTRO camino a entregado/cerrado: mismo candado de ficha.
+    if (rec.estado === "entregado" || rec.estado === "cerrado") {
+      const antes = despachos.find(x => x.id === rec.id);
+      if ((!antes || (antes.estado !== "entregado" && antes.estado !== "cerrado")) && await fichaBloqueaEntrega(rec)) return false;
+    }
     // El modal de edicion tambien puede dejarlo entregado/cerrado: estampar
     // fechaEjecutada (cuenta en "Entregados hoy") igual que updateDespachoEstado.
     const rec2 = (rec.estado === "entregado" || rec.estado === "cerrado") && !rec.fechaEjecutada
@@ -1052,7 +1065,37 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     } catch { /* sin nube no hay sync */ }
   };
 
+  // REGLA (19-ago-2026, pedido de Gerson): un despacho que viene de una
+  // COMPRA no se marca "entregado" (ni "cerrado") si la ficha de recibido
+  // firmada no está subida. El motorista vuelve con la ficha — subirla es
+  // obligación de Logística; sin eso, la compra queda trabada en el cierre
+  // contable de Ana/Fernando marcada "SIN FICHA de Logística".
+  const fichaBloqueaEntrega = async (d) => {
+    if (!d || !d.sourcePurchaseId) return false;                 // manuales / EPP: no aplica
+    if (d.source !== "compra" && d.source !== "maquinas") return false;
+    const key = d.source === "maquinas" ? "mq-purchases" : "cp-purchases";
+    let arr = key === "cp-purchases"
+      ? (Array.isArray(purchases) && purchases.length ? purchases : null)
+      : (Array.isArray(mqPurchases) && mqPurchases.length ? mqPurchases : null);
+    if (!arr) { try { arr = await store.getCloud(key); } catch { arr = null; } }
+    if (!Array.isArray(arr)) {
+      alert("⚠️ No se pudo verificar la ficha de recibido (la nube no respondió). Reintentá en un momento.");
+      return true;
+    }
+    const compra = arr.find(x => x && x.id === d.sourcePurchaseId);
+    if (!compra) return false;                                    // compra borrada: no trabar
+    const tieneFicha = !!compra.delivery?.fichaFile?.fileId;
+    const cerradaSinFicha = compra.deliveryStatus === "cerrado";  // servicios/renta
+    if (tieneFicha || cerradaSinFicha) return false;
+    alert(`🚫 NO se puede marcar como entregado: falta la FICHA DE RECIBIDO firmada.\n\n${compra.provider || ""} — ${(compra.description || "").slice(0, 80)}\n\nSubí primero la ficha que trajo el motorista (botón 📎 del despacho) y después marcá la entrega. Es la regla del cierre contable: sin ficha, la compra queda trabada como "SIN FICHA de Logística".`);
+    return true;
+  };
+
   const updateDespachoEstado = async (id, nuevoEstado) => {
+    if (nuevoEstado === "entregado" || nuevoEstado === "cerrado") {
+      const d = despachos.find(x => x.id === id);
+      if (await fichaBloqueaEntrega(d)) return;
+    }
     await saveDespachosWithMerge((base) => base.map(d => d.id === id ? {
       ...d,
       estado: nuevoEstado,
@@ -1140,8 +1183,13 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       return false;
     }
 
+    // Los despachos de GeoMachinery (source "maquinas") enlazan su compra en
+    // mq-purchases; los de GeoShopping en cp-purchases (19-ago-2026 — antes
+    // esta función solo servía para compras y las fichas de máquinas no se
+    // podían subir desde Logística).
+    const purchKey = despacho.source === "maquinas" ? "mq-purchases" : "cp-purchases";
     const tStart = Date.now();
-    console.group(`[uploadFichaFirmada] ${despacho.id} - ${fileObj.name}`);
+    console.group(`[uploadFichaFirmada] ${despacho.id} - ${fileObj.name} (${purchKey})`);
     try {
       // 1) Leer archivo como dataUrl
       console.log(`Leyendo archivo (${(fileObj.size / 1024 / 1024).toFixed(2)} MB)...`);
@@ -1183,11 +1231,11 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       // se reescribia TODO cp-purchases desde una foto vieja y desaparecian
       // solicitudes que otros habian creado (fix ago 2026). Sin nube se
       // aborta: el archivo ya esta subido y el enlace se puede reintentar.
-      console.log("Pre-fetch cp-purchases (getCloud)...");
+      console.log(`Pre-fetch ${purchKey} (getCloud)...`);
       let cloudPurchases = null;
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          cloudPurchases = await store.getCloud("cp-purchases");
+          cloudPurchases = await store.getCloud(purchKey);
           break;
         } catch (e) {
           if (attempt === 3) {
@@ -1240,14 +1288,14 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       };
       const nextPurchases = [...arr];
       nextPurchases[idx] = updated;
-      console.log(`Guardando cp-purchases (total ${nextPurchases.length} compras)...`);
+      console.log(`Guardando ${purchKey} (total ${nextPurchases.length} compras)...`);
 
       // 5) Save cp-purchases con retry
       let okSave = false;
       let saveErr = null;
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          okSave = await store.set("cp-purchases", nextPurchases);
+          okSave = await store.set(purchKey, nextPurchases);
           if (okSave) break;
           saveErr = new Error("store.set devolvio false");
         } catch (e) { saveErr = e; }
@@ -1258,15 +1306,18 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         return false;
       }
 
-      // 6) VERIFY post-save: re-fetch cp-purchases y confirmar que la compra
-      // efectivamente tiene la ficha ahora en cloud.
+      // 6) VERIFY post-save: re-fetch la MISMA key donde se guardó (purchKey)
+      // y confirmar que la compra efectivamente tiene la ficha en cloud.
+      // OJO: acá estaba hardcodeado "cp-purchases" — con un despacho de
+      // maquinaria el verify leía la lista equivocada y SIEMPRE reportaba
+      // fallo aunque la ficha sí se hubiera guardado (fix 19-ago-2026).
       console.log("Verify post-save...");
       try {
-        const verify = await store.getCloud("cp-purchases");
+        const verify = await store.getCloud(purchKey);
         const verifyArr = Array.isArray(verify) ? verify : [];
         const verified = verifyArr.find(p => p.id === despacho.sourcePurchaseId);
         if (!verified?.delivery?.fichaFile?.fileId) {
-          alert("⚠️ VERIFICACION FALLO: cp-purchases se guardo pero la compra no muestra la ficha en cloud. Esto indica un problema de sincronizacion.\n\nRecarga la pagina y verifica manualmente. Si el problema persiste, contacta al admin.");
+          alert(`⚠️ VERIFICACION FALLO: ${purchKey} se guardo pero la compra no muestra la ficha en cloud. Esto indica un problema de sincronizacion.\n\nRecarga la pagina y verifica manualmente. Si el problema persiste, contacta al admin.`);
           console.error("Verify fallo. Enviado:", updated, "| Cloud devolvio:", verified);
           return false;
         }
@@ -1280,7 +1331,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       }
 
       // 7) Actualizar state local
-      setPurchases(nextPurchases);
+      if (purchKey === "cp-purchases") setPurchases(nextPurchases); else setMqPurchases(nextPurchases);
 
       // 8) Marcar despacho como ficha subida (con el helper existente)
       await saveDespachosWithMerge((base) => base.map(d => d.id === despacho.id ? {
@@ -2008,7 +2059,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
           const v = vehicles.find(x => x.id === d.vehicleId);
           // Si el despacho vino de una compra, buscar el purchase original
           // para poder descargar la Ficha de Entrega (cotizacion + comprobante).
-          const sourcePurchase = d.sourcePurchaseId ? purchases.find(p => p.id === d.sourcePurchaseId) : null;
+          const sourcePurchase = d.sourcePurchaseId ? (purchases.find(p => p.id === d.sourcePurchaseId) || mqPurchases.find(p => p.id === d.sourcePurchaseId)) : null;
           return (
             <div
               key={`d-${d.id}`}
@@ -2147,7 +2198,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         const renderCardEntregado = (d) => {
           const tCfg = tipoDespCfg(d.tipo);
           const v = vehicles.find(x => x.id === d.vehicleId);
-          const sourcePurchase = d.sourcePurchaseId ? purchases.find(p => p.id === d.sourcePurchaseId) : null;
+          const sourcePurchase = d.sourcePurchaseId ? (purchases.find(p => p.id === d.sourcePurchaseId) || mqPurchases.find(p => p.id === d.sourcePurchaseId)) : null;
           const strikeStyle = { textDecoration: "line-through", textDecorationColor: BRAND.green, textDecorationThickness: "2px" };
           return (
             <div

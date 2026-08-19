@@ -1398,6 +1398,9 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   // Default: mes actual — el histórico viejo no se le viene encima a nadie,
   // pero queda accesible eligiendo el mes o "Todos".
   const [contaMes, setContaMes] = useState(() => new Date().toISOString().slice(0, 7));
+  // Mes del reporte ejecutivo de costos de maquinaria (pestaña Costos —
+  // SOLO admin/gerencia/costos: Fernando no la ve ni exporta).
+  const [costosMesEjec, setCostosMesEjec] = useState(() => new Date().toISOString().slice(0, 7));
   const [filter, setFilter] = useState({ status: "", project: "", provider: "", from: "", to: "" });
   // Estado del Command Center (Resumen). showCompleted: incluir completas.
   // projectCode: filtrar a un solo proyecto. month: mes de carga (default
@@ -3035,7 +3038,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
           <div style={cardStyle}>
             <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12, letterSpacing: -0.2, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span>⚙️ Gasto por máquina — {mesSelLabel}</span>
-              <button onClick={csvMaquinas} disabled={gastoMaq.length === 0} style={{ background: "transparent", color: gastoMaq.length ? "#059669" : "#CBD5E1", border: `1px solid ${gastoMaq.length ? "#6EE7B7" : "#E2E8F0"}`, padding: "5px 10px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: gastoMaq.length ? "pointer" : "default", fontFamily: "inherit" }}>📊 CSV</button>
+              {(canSeeCostosMaq || isVisorCompras) && <button onClick={csvMaquinas} disabled={gastoMaq.length === 0} style={{ background: "transparent", color: gastoMaq.length ? "#059669" : "#CBD5E1", border: `1px solid ${gastoMaq.length ? "#6EE7B7" : "#E2E8F0"}`, padding: "5px 10px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: gastoMaq.length ? "pointer" : "default", fontFamily: "inherit" }}>📊 CSV</button>}
             </div>
             {gastoMaq.length === 0 ? (
               <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "20px 4px" }}>Ningún pago de repuestos/mantenimiento en {mesSelLabel}.</div>
@@ -3282,6 +3285,233 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   // ENTREGAS DE PROVEEDOR + POR CERRAR CONTABLEMENTE (ago 2026) — espejo del
   // flujo de GeoShopping, para Fernando. Ver comentarios en PurchasesModule.
   // ─────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // COSTOS DE MAQUINARIA (19-ago-2026) — reporte ejecutivo mensual estilo
+  // GeoTeam: por PROYECTO y por MÁQUINA (cada máquina va asignada a un
+  // proyecto). SOLO admin/gerencia/costos — Fernando no ve esta pestaña.
+  // Mes por fecha de PAGO (paidAt), ambas empresas.
+  // ─────────────────────────────────────────────────────────────────────────
+  const datosCostosMes = (mesEjec) => {
+    const delMes = purchases.filter(x => (x.status === "pagado" || x.status === "finalizado") && String(x.paidAt || "").slice(0, 7) === mesEjec);
+    const proy = {}; const maq = {}; const porEmp = { geotecnica: { total: 0, n: 0 }, subterra: { total: 0, n: 0 } };
+    delMes.forEach(x => {
+      const amt = Number(x.amount) || 0;
+      const pk = x.projectCode || "SIN PROYECTO";
+      const mk = x.machineId || "__sin__";
+      const co2 = x.company === "subterra" ? "subterra" : "geotecnica";
+      if (!proy[pk]) proy[pk] = { short: pk, total: 0, n: 0, maqs: {} };
+      proy[pk].total += amt; proy[pk].n++;
+      if (!proy[pk].maqs[mk]) proy[pk].maqs[mk] = { total: 0, items: [] };
+      proy[pk].maqs[mk].total += amt; proy[pk].maqs[mk].items.push(x);
+      if (!maq[mk]) maq[mk] = { total: 0, n: 0 };
+      maq[mk].total += amt; maq[mk].n++;
+      porEmp[co2].total += amt; porEmp[co2].n++;
+    });
+    const nombreMaq = (mk) => mk === "__sin__" ? "Sin máquina asignada" : (machines.find(m => m.id === mk)?.nombre || "Máquina eliminada");
+    return { delMes, proy, maq, porEmp, nombreMaq };
+  };
+
+  const exportMaquinasEjecutivoPDF = (mesEjec) => {
+    if (!mesEjec) return alert("Elegí el mes del reporte.");
+    const [yy, mmn] = mesEjec.split("-").map(Number);
+    const mesNombreRaw = new Date(yy, mmn - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
+    const mesTitulo = mesNombreRaw.charAt(0).toUpperCase() + mesNombreRaw.slice(1);
+    const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const esc = (t) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const TAG = { geotecnica: "GEO", subterra: "SUB" };
+    const { delMes, proy, maq, porEmp, nombreMaq } = datosCostosMes(mesEjec);
+    if (!delMes.length) return alert(`No hay pagos de maquinaria en ${mesTitulo}.`);
+    const rowsProy = Object.values(proy).sort((a, b) => b.total - a.total);
+    const rowsMaq = Object.entries(maq).map(([k, v]) => ({ key: k, nombre: nombreMaq(k), ...v })).sort((a, b) => b.total - a.total);
+    const totalG = rowsProy.reduce((sm, r) => sm + r.total, 0);
+    const w = window.open("", "_blank");
+    if (!w) return alert("Permití pop-ups para generar el PDF.");
+    const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+    const genFecha = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" });
+    const PALETA = ["#7C3AED", "#E8762D", "#2C5F5D", "#3E6A99", "#B45309", "#0E7490", "#BE3455", "#15803D"];
+    const top = rowsProy.slice(0, 8), otros = rowsProy.slice(8);
+    const segs = [
+      ...top.map((r, i) => ({ label: r.short, val: r.total, color: PALETA[i % PALETA.length] })),
+      ...(otros.length ? [{ label: `Otros (${otros.length})`, val: otros.reduce((sm, r) => sm + r.total, 0), color: "#94A3B8" }] : []),
+    ];
+    const RAD = 62, CIRC = 2 * Math.PI * RAD;
+    let acum = 0;
+    const donaSegs = segs.map(sg => {
+      const frac = totalG > 0 ? sg.val / totalG : 0;
+      const el = `<circle r="${RAD}" cx="90" cy="90" fill="transparent" stroke="${sg.color}" stroke-width="34" stroke-dasharray="${(frac * CIRC).toFixed(2)} ${CIRC.toFixed(2)}" stroke-dashoffset="${(-acum * CIRC).toFixed(2)}" transform="rotate(-90 90 90)"/>`;
+      acum += frac; return el;
+    }).join("");
+    const donaLeyenda = segs.map(sg => `<div style="display:flex;align-items:center;gap:7px;font-size:10.5px;margin-bottom:5px">
+      <span style="width:10px;height:10px;border-radius:3px;background:${sg.color};flex-shrink:0"></span>
+      <span style="font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sg.label)}</span>
+      <span style="color:#64748b;min-width:42px;text-align:right">${totalG > 0 ? ((sg.val / totalG) * 100).toFixed(1) : "0"}%</span>
+      <span style="font-weight:700;min-width:96px;text-align:right">${fL(sg.val)}</span>
+    </div>`).join("");
+    const maxMaq = Math.max(...rowsMaq.map(r => r.total), 1);
+    const barrasMaq = rowsMaq.slice(0, 12).map(r => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:10px">
+      <span style="width:130px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;color:${r.key === "__sin__" ? "#B45309" : "#1E293B"}">${esc(r.nombre)}</span>
+      <div style="flex:1;height:16px;background:#F8FAFC;border-radius:4px;overflow:hidden">
+        <div style="width:${Math.max(2, (r.total / maxMaq) * 100).toFixed(1)}%;height:100%;background:${r.key === "__sin__" ? "#F59E0B" : "#7C3AED"}"></div>
+      </div>
+      <span style="width:92px;text-align:right;font-weight:700;flex-shrink:0">${fL(r.total)}</span>
+    </div>`).join("");
+    const kpi = (label, val, color, sub) => `<div style="flex:1;min-width:130px;border:1px solid #E2E8F0;border-radius:10px;padding:11px 14px">
+      <div style="font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:0.6px;font-weight:700">${label}</div>
+      <div style="font-size:17px;font-weight:800;color:${color};margin-top:3px;letter-spacing:-0.3px">${val}</div>
+      ${sub ? `<div style="font-size:9px;color:#94A3B8;margin-top:1px">${sub}</div>` : ""}
+    </div>`;
+    const chipCo = (c2) => `<span style="display:inline-block;background:${c2 === "subterra" ? "#2C5F5D" : "#E8762D"};color:#fff;border-radius:4px;padding:1px 6px;font-size:8px;font-weight:800;letter-spacing:0.5px;vertical-align:1px">${TAG[c2] || "GEO"}</span>`;
+    const projBlocks = rowsProy.map(r => {
+      const maqsOrd = Object.entries(r.maqs).map(([mk, v]) => ({ mk, nombre: nombreMaq(mk), ...v })).sort((a, b) => b.total - a.total);
+      return `
+    <div style="margin-bottom:16px;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
+      <div style="background:#2C2A28;color:#fff;padding:8px 14px;font-weight:700;font-size:12.5px;display:flex;justify-content:space-between;align-items:center">
+        <span>${esc(r.short)}</span>
+        <span style="font-size:10px;font-weight:600;opacity:.85">${maqsOrd.length} máquina${maqsOrd.length !== 1 ? "s" : ""} · ${r.n} pago${r.n !== 1 ? "s" : ""} &nbsp;<span style="font-size:13px;font-weight:800;opacity:1">${fL(r.total)}</span></span>
+      </div>
+      ${maqsOrd.map(mq2 => `
+        <div style="background:#F3E8FF;padding:6px 14px;font-size:11px;font-weight:800;color:#5B21B6;display:flex;justify-content:space-between;border-top:1px solid #E9D5FF">
+          <span>⚙ ${esc(mq2.nombre)}</span><span>${fL(mq2.total)}</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:10.5px">
+          <tbody>
+            ${mq2.items.map(x => `<tr style="border-top:1px solid #F1F5F9;vertical-align:top">
+              <td style="padding:5px 14px;font-weight:600;white-space:nowrap;width:190px">${chipCo(x.company === "subterra" ? "subterra" : "geotecnica")} ${esc(x.provider || "—")}</td>
+              <td style="padding:5px 8px;color:#334155">${esc(x.description || "—")}${x.detalleMateriales ? `<div style="color:#64748b;font-size:9px;white-space:pre-wrap;margin-top:2px;border-left:2px solid #E2E8F0;padding-left:6px">${esc(x.detalleMateriales)}</div>` : ""}</td>
+              <td style="padding:5px 8px;text-align:right;white-space:nowrap;color:#64748b;width:64px">${x.paidAt ? new Date(x.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", timeZone: "UTC" }) : "—"}</td>
+              <td style="padding:5px 14px;text-align:right;font-weight:700;white-space:nowrap;width:110px">${fL(x.amount)}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>`).join("")}
+      <div style="background:#F8FAFC;font-weight:700;border-top:1px solid #E2E8F0;padding:6px 14px;display:flex;justify-content:space-between;font-size:11px">
+        <span>Subtotal ${esc(r.short)}</span><span style="color:#059669">${fL(r.total)}</span>
+      </div>
+    </div>`;
+    }).join("");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costo de Maquinaria — ${mesTitulo} · Grupo Geotecnica</title>
+    <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#1E293B;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{.np{display:none}}thead{display:table-header-group}tr{page-break-inside:avoid}</style>
+    </head><body>
+    <div style="page-break-after:always">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px">
+        <div style="display:flex;align-items:center;gap:14px">
+          <img src="${logoUrl}" style="height:52px" onerror="this.style.display='none'" />
+          <div>
+            <div style="font-size:9px;color:#7C3AED;font-weight:800;letter-spacing:1.8px;text-transform:uppercase">Grupo Geotecnica · Maquinaria</div>
+            <div style="font-size:23px;font-weight:800;letter-spacing:-0.4px;color:#2C2A28">Costo de Maquinaria</div>
+            <div style="font-size:13px;color:#64748b">Reporte ejecutivo mensual — <b style="color:#2C2A28">${mesTitulo}</b> · repuestos y mantenimiento</div>
+          </div>
+        </div>
+        <div style="text-align:right;font-size:10px;color:#64748b">
+          <div style="font-weight:800;color:#E8762D">Geotecnica Soluciones</div>
+          <div style="font-weight:800;color:#2C5F5D">Subterra Honduras</div>
+          <div style="margin-top:3px">Generado ${genFecha}</div>
+        </div>
+      </div>
+      <div style="height:4px;background:linear-gradient(90deg,#7C3AED,#E8762D,#2C5F5D);border-radius:2px;margin:13px 0 16px"></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
+        ${kpi("Gasto total en maquinaria", fL(totalG), "#059669", `${delMes.length} pagos · ${rowsMaq.length} máquinas · ${rowsProy.length} proyectos`)}
+        ${["geotecnica", "subterra"].filter(c2 => porEmp[c2].total > 0).map(c2 => kpi(c2 === "subterra" ? "Subterra Honduras" : "Geotecnica Soluciones", fL(porEmp[c2].total), c2 === "subterra" ? "#2C5F5D" : "#E8762D", `${porEmp[c2].n} pagos`)).join("")}
+        ${kpi("Máquina más costosa", rowsMaq.length ? esc(rowsMaq[0].nombre) : "—", "#7C3AED", rowsMaq.length ? fL(rowsMaq[0].total) : "")}
+      </div>
+      <div style="display:flex;gap:14px;align-items:flex-start">
+        <div style="flex:1.15;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
+          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Distribución del gasto por proyecto</div>
+          <div style="display:flex;gap:14px;align-items:center">
+            <svg width="140" height="140" viewBox="0 0 180 180" style="flex-shrink:0">
+              ${donaSegs}
+              <text x="90" y="86" text-anchor="middle" style="font-size:11px;font-weight:800;fill:#2C2A28">${rowsProy.length}</text>
+              <text x="90" y="100" text-anchor="middle" style="font-size:8px;fill:#64748b">proyectos</text>
+            </svg>
+            <div style="flex:1">${donaLeyenda}</div>
+          </div>
+        </div>
+        <div style="flex:1;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
+          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:9px">Gasto por máquina</div>
+          ${barrasMaq}
+        </div>
+      </div>
+    </div>
+    <div style="border-left:4px solid #7C3AED;padding-left:12px;margin-bottom:14px">
+      <div style="font-size:9px;color:#7C3AED;font-weight:800;letter-spacing:1.5px;text-transform:uppercase">Detalle por proyecto y máquina · ${mesTitulo}</div>
+      <div style="font-size:11px;color:#64748b">Cada pago con su empresa: ${chipCo("geotecnica")} Geotecnica Soluciones · ${chipCo("subterra")} Subterra Honduras. Cada máquina bajo el proyecto al que está asignada.</div>
+    </div>
+    ${projBlocks}
+    <div style="background:#2C2A28;color:#fff;border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;page-break-inside:avoid">
+      <span style="font-size:12px;font-weight:700">GASTO TOTAL EN MAQUINARIA DEL GRUPO — ${mesTitulo}</span>
+      <span style="font-size:17px;font-weight:800;color:#6EE7B7">${fL(totalG)}</span>
+    </div>
+    <div style="font-size:9px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:8px;margin-top:12px;line-height:1.5;page-break-inside:avoid">
+      <b>Metodología:</b> se incluyen las solicitudes de pago de repuestos/mantenimiento con pago realizado cuya fecha de pago cae en ${mesTitulo}, de ambas empresas, agrupadas por el proyecto de la solicitud y la máquina vinculada. No incluye materiales de construcción (ver el reporte de GeoShopping).
+      Preparado por ${esc(userName || "Operaciones")} · GeoMachinery — Sistema de Operaciones.
+    </div>
+    <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#7C3AED;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
+    </body></html>`);
+    w.document.close();
+  };
+
+  const renderCostosMaq = () => {
+    const mesNombreRaw = (() => { const [y2, m2] = costosMesEjec.split("-").map(Number); return new Date(y2, m2 - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); })();
+    const { delMes, proy, maq, nombreMaq } = datosCostosMes(costosMesEjec);
+    const rowsMaq = Object.entries(maq).map(([k, v]) => ({ key: k, nombre: nombreMaq(k), ...v })).sort((a, b) => b.total - a.total);
+    const rowsProy = Object.values(proy).sort((a, b) => b.total - a.total);
+    const totalG = rowsProy.reduce((sm, r) => sm + r.total, 0);
+    const maxM = Math.max(...rowsMaq.map(r => r.total), 1);
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: CHARCOAL }}>💵 Costo de Maquinaria</div>
+          <div style={{ fontSize: 12, color: STONE, marginTop: 2 }}>Repuestos y mantenimiento por máquina y por proyecto — {mesNombreRaw}</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={{ fontSize: 10, fontWeight: 700, color: STONE, textTransform: "uppercase", letterSpacing: 0.5 }}>Mes del reporte</label>
+            <input type="month" value={costosMesEjec} onChange={e => e.target.value && setCostosMesEjec(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", fontFamily: "inherit" }} />
+          </div>
+          <Btn onClick={() => exportMaquinasEjecutivoPDF(costosMesEjec)}>🏢 Reporte ejecutivo PDF</Btn>
+        </div>
+      </div>
+      {delMes.length === 0
+        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 50, textAlign: "center", color: "#94A3B8" }}>Sin pagos de maquinaria en {mesNombreRaw}.</div>
+        : <>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {[["💰", fmtL(totalG), "Gasto total del mes", "#059669"], ["⚙️", rowsMaq.length, "Máquinas con gasto", "#7C3AED"], ["🏗️", rowsProy.length, "Proyectos", "#3E6A99"], ["🧾", delMes.length, "Pagos", "#B45309"]].map(([ic, v, l, c]) => (
+              <div key={l} style={{ flex: 1, minWidth: 150, background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 18px" }}>
+                <div style={{ fontSize: 20 }}>{ic}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: c, marginTop: 4 }}>{v}</div>
+                <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>{l}</div>
+              </div>))}
+          </div>
+          <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12 }}>⚙️ Por máquina</div>
+            {rowsMaq.map(r => <div key={r.key} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, color: r.key === "__sin__" ? "#B45309" : CHARCOAL }}>
+                <span>{r.key === "__sin__" ? "⚠ " : "⚙️ "}{r.nombre} <span style={{ color: STONE, fontWeight: 400 }}>({r.n})</span></span>
+                <span style={{ color: "#059669" }}>{fmtL(r.total)}</span>
+              </div>
+              <div style={{ height: 8, borderRadius: 4, background: "#F1F5F9", overflow: "hidden", marginTop: 4 }}>
+                <div style={{ width: `${(r.total / maxM) * 100}%`, height: "100%", background: r.key === "__sin__" ? "#F59E0B" : "#7C3AED" }} />
+              </div>
+            </div>)}
+          </div>
+          <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12 }}>🏗️ Por proyecto (máquinas adentro)</div>
+            {rowsProy.map(r => <details key={r.short} style={{ borderBottom: "1px solid #F1F5F9", padding: "8px 0" }}>
+              <summary style={{ cursor: "pointer", display: "flex", justifyContent: "space-between", fontSize: 12.5, fontWeight: 800, color: CHARCOAL, listStyle: "none" }}>
+                <span>{r.short} <span style={{ color: STONE, fontWeight: 400 }}>({r.n} pago{r.n !== 1 ? "s" : ""})</span></span>
+                <span style={{ color: "#059669" }}>{fmtL(r.total)}</span>
+              </summary>
+              <div style={{ marginTop: 6, paddingLeft: 12 }}>
+                {Object.entries(r.maqs).map(([mk2, v]) => <div key={mk2} style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, padding: "3px 0", color: "#475569" }}>
+                  <span>⚙ {nombreMaq(mk2)} <span style={{ color: "#94A3B8" }}>({v.items.length})</span></span>
+                  <span style={{ fontWeight: 700 }}>{fmtL(v.total)}</span>
+                </div>)}
+              </div>
+            </details>)}
+          </div>
+        </>}
+    </div>;
+  };
+
   const renderEntregasProveedor = () => {
     const activas = cp.filter(x => (x.status === "pagado" || x.status === "finalizado") && x.deliveryStatus === "entrega_proveedor");
     const grupos = {};
@@ -3363,7 +3593,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       }[tipo];
       const maquina = machines.find(m => m.id === x.machineId);
       return <div key={x.id} style={{ background: "#fff", border: `1px solid ${cfg.border}`, borderLeft: `3px solid ${cfg.c}`, borderRadius: 8, padding: 12 }}>
-        <Badge color={cfg.c}>{cfg.badge}</Badge>
+        <span style={{ display: "inline-block", background: cfg.c + "18", color: cfg.c, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, lineHeight: 1.35 }}>{cfg.badge}</span>
         <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 6 }}>{x.provider}</div>
         <div style={{ fontSize: 11.5, color: "#475569", marginTop: 2 }}>{x.description}</div>
         {maquina && <div style={{ fontSize: 10.5, color: "#7C3AED", marginTop: 3 }}>⚙️ {maquina.nombre}</div>}
@@ -3817,13 +4047,19 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     { id: "list", icon: "📋", label: "Solicitudes" },
     { id: "projects", icon: "🏗️", label: "Proyectos" },
     { id: "machines", icon: "⚙️", label: "Maquinas" },
+    { id: "costos", icon: "💵", label: "Costos" },
     { id: "coordinar", icon: "📦", label: "Por coordinar" },
     { id: "entregas", icon: "🏪", label: "Entregas de proveedor" },
     { id: "conta", icon: "🧾", label: "Por cerrar contable" },
     { id: "providers", icon: "🏢", label: "Proveedores" },
   ];
   const canSeeResumen = isAdmin || isGerencia || isCostos || isCoordinadorMaquinas || isVisorCompras;
+  // Costos de maquinaria: SOLO admin / gerencia / costos. Fernando
+  // (coordinador_maquinas) NO la ve ni exporta — pedido de Gerson 19-ago-2026
+  // (él sí ve el Dashboard y elige el mes, pero sin descargar nada).
+  const canSeeCostosMaq = isAdmin || isGerencia || isCostos;
   const visibleNav = allNav.filter(n => {
+    if (n.id === "costos") return canSeeCostosMaq;
     if (n.id === "resumen" || n.id === "dashboard") return canSeeResumen;
     return true;
   });
@@ -4008,6 +4244,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
               : sec === "projects" ? "Proyectos"
               : sec === "providers" ? "Proveedores"
               : sec === "machines" ? "Maquinas registradas"
+              : sec === "costos" ? "Costos de maquinaria"
               : sec === "coordinar" ? "Por coordinar con proveedores"
               : sec === "entregas" ? "Entregas de proveedor"
               : sec === "conta" ? "Por cerrar contablemente"
@@ -4023,6 +4260,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
           : sec === "machines" ? renderMachines()
+          : sec === "costos" ? (canSeeCostosMaq ? renderCostosMaq() : null)
           : sec === "coordinar" ? renderCoordinar()
           : sec === "entregas" ? renderEntregasProveedor()
           : sec === "conta" ? renderConta()
