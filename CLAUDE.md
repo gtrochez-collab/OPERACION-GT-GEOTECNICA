@@ -40,6 +40,13 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   a página; PDFs se listan). `uploadPaqueteConta`/`reabrirCierreConta` con el
   patrón atómico de uploadFichaFromCard. Futuro: módulo GeoAccounting para
   que conta vea estas compras (aún NO se hace).
+  **Reporte ejecutivo de MATERIALES (19-ago-2026)**: `exportComprasEjecutivoPDF(mes)`
+  en la pestaña Costos (botón + input month) — clon del "Costo de Mano de Obra"
+  de GeoTeam: portada con KPIs + dona SVG por proyecto + gasto/mezcla por
+  empresa (las empresas sin gasto NO se pintan), y detalle por proyecto con
+  CADA compra y su `detalleMateriales`. Mes por `paidAt`; las fechas se
+  formatean con `timeZone:"UTC"` porque paidAt se guarda como medianoche UTC
+  (sin eso mostraba el día anterior en Honduras).
 - `MachinesModule.jsx` (GeoMachinery) — espejo de GeoShopping para repuestos
   (coordinador: Fernando). Mismo flujo completo incl. "Cerrar sin logística".
   **19-ago-2026**: mismo flujo de cierre contable que GeoShopping (pestañas
@@ -49,6 +56,13 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   por máquina** del mes seleccionado (por paidAt, machineId → mq-machines,
   desglose por proyecto, export CSV, aviso de pagos sin máquina vinculada) —
   para el reporte mensual de costos de Gerson.
+  **Pestaña Costos + reporte ejecutivo (19-ago-2026)**: `renderCostosMaq` +
+  `exportMaquinasEjecutivoPDF` + `datosCostosMes` — por PROYECTO y por MÁQUINA
+  (cada máquina bajo el proyecto al que está asignada, con el detalle de cada
+  pago). **PERMISOS**: `canSeeCostosMaq` = admin/gerencia/costos — **Fernando
+  (coordinador_maquinas) NO ve la pestaña ni exporta**; sí ve el Dashboard y
+  elige el mes, pero el CSV de "Gasto por máquina" está gateado
+  (`canSeeCostosMaq || isVisorCompras` — a Arturo no se le quitó).
 - `HRModule.jsx` (GeoTeam) — Empleados (fotos), Contratos (tabla por urgencia),
   Planilla, Asistencia (cuadrillas → grid 1/0/INC/DT/DT2/TF + override 1*),
   Horas Extras, Costos MO, Dashboard, KPI's, Llegadas tardías. Bonificaciones
@@ -126,6 +140,19 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   "Asistencias históricas sin cuadrilla" (la rearma desde los assignments de la
   hoja). Una quincena nueva siembra copiando la cuadrilla más reciente.
 - `LogisticsModule.jsx` (GeoLogistics) — flota y despachos (kanban Oscar/Jorge).
+  **Candado de ficha (19-ago-2026)**: `fichaBloqueaEntrega` — un despacho con
+  `sourcePurchaseId` (source "compra" o "maquinas") NO se puede marcar
+  entregado/cerrado sin la ficha de recibido subida (o la compra cerrada sin
+  ficha: servicios/renta). Aplica en `updateDespachoEstado` y en `saveDespacho`
+  (solo si el estado anterior no era ya entregado). EPP y manuales no se tocan.
+  Si la nube no responde, BLOQUEA (no se asume que hay ficha). Logística ahora
+  carga también `mq-purchases` (state `mqPurchases`, load + focus-refresh) y
+  `sourcePurchase` se resuelve de ambas listas — sin eso los despachos de
+  GeoMachinery no mostraban el botón de subir ficha y el candado los dejaba sin
+  salida. `uploadFichaFirmada` usa `purchKey` dinámico en pre-fetch, save Y
+  **verify** (el verify quedó hardcodeado a cp-purchases en el primer intento:
+  toda ficha de maquinaria reportaba "VERIFICACION FALLO" aunque sí se
+  guardaba — lo cazó la revisión adversarial).
 - `GeoClockModule.jsx` (GeoClock, ago 2026) — marcaje entrada/salida en tablet
   (Oscar plantel central, Ana oficina; roles: admin, coordinador,
   tesoreria, asistente_compras, logistica, marcaje). Reloj vivo TZ **America/Tegucigalpa** vía
