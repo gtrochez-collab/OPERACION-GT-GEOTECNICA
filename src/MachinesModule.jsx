@@ -1706,16 +1706,30 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
         try {
           const verify = await store.getCloud("mq-purchases");
           verifiedCount = Array.isArray(verify) ? verify.length : null;
-          if (verifiedCount !== light.length) {
+          // VERIFICACION SEMANTICA (20-ago-2026). Antes se comparaba el COUNT
+          // exacto: si otro usuario creaba una solicitud durante los ~2s que
+          // dura el guardado, los numeros no cuadraban y salia un error FALSO
+          // ("VERIFICACION POST-SAVE FALLO") que ademas dejaba el modal
+          // abierto — la compra parecia "trabada" aunque si se habia guardado.
+          // Con 5 personas trabajando a la vez eso pasaba seguido.
+          // Ahora lo que importa es: ¿esta TODO lo nuestro en la nube?
+          if (!Array.isArray(verify)) {
             verifiedOk = false;
-            console.error("❌ VERIFICACION FALLO. Enviado:", light.length, "Cloud devolvio:", verifiedCount);
+            console.error("❌ VERIFICACION: la nube no devolvio una lista.");
           } else {
-            // Tambien verificar que los IDs coinciden
-            const verifyIds = new Set(verify.map(p => p.id));
+            const verifyIds = new Set(verify.map(p => p && p.id));
             const missing = light.filter(p => !verifyIds.has(p.id));
             if (missing.length > 0) {
               verifiedOk = false;
-              console.error("❌ Cloud devolvio el count correcto pero le faltan IDs:", missing.map(p => p.id));
+              console.error("❌ VERIFICACION FALLO — faltan en la nube:", missing.map(p => p.id));
+            } else if (verifiedCount > light.length) {
+              // La nube tiene MAS: alguien creo algo mientras guardabamos. No
+              // es un error — se incorpora a la pantalla para no trabajar con
+              // una lista incompleta.
+              const nuestros = new Set(light.map(p => p.id));
+              const ajenas = verify.filter(p => p && !nuestros.has(p.id));
+              console.warn(`ℹ️ ${ajenas.length} solicitud(es) creadas por otro usuario durante el guardado — incorporadas a la vista.`);
+              setPurchases([...d, ...ajenas]);
             }
           }
         } catch (e) {

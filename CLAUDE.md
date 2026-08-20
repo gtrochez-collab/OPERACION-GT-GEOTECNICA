@@ -361,6 +361,13 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
 ## Convenciones críticas
 - **Guardado robusto**: nunca fire-and-forget en datos importantes. Patrón:
   `const ok = await store.set(...)` → si falla, alert + mantener modal abierto.
+- **Verify SEMÁNTICO, no por count** (20-ago-2026): comparar
+  `cloud.length !== light.length` post-save daba error FALSO cada vez que otro
+  usuario creaba una solicitud durante los ~2 s del guardado — y el modal
+  quedaba abierto, así que la compra parecía "trabada" aunque sí se había
+  guardado (con 5 personas trabajando pasaba seguido). Ahora se verifica que
+  TODOS los ids propios estén en la nube; si la nube trae de más, son de otro
+  usuario y se incorporan al state (`setPurchases([...d, ...ajenas])`).
 - **Escrituras full-array SIEMPRE con `store.getCloud`** (ago 2026, así se
   borraban solicitudes de pago de Fernando en GeoMachinery): `store.get` cae
   al cache local en timeout, y el merge contra una foto vieja escribe el
