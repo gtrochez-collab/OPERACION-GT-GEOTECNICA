@@ -76,6 +76,15 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   — tipo "factura" (el camino corto: conta escanea solo la factura que trajo el
   proveedor) o "paquete" (todo digitalizado). Cualquiera CIERRA la compra:
   `conta.facturaFile` o `conta.fileId`.
+  **Borrado total de una solicitud (20-ago-2026)**: `borrarSolicitudCompleta`
+  + `puedeBorrarSolicitud` (= `userName === "Lic. Gerson Trochez"`, pedido
+  explícito: "solo a mi porfa"). Papelera 🗑 en las cards de Por coordinar,
+  Por cerrar contable y en la tabla de Cerradas. Doble confirm (el segundo
+  solo si ya tiene documentos), y limpia TODO el rastro: la solicitud
+  (getCloud + verify), los despachos de `lg-despachos` con ese
+  `sourcePurchaseId` y los `cp-file-*` adjuntos (cotización, comprobante,
+  ficha, factura/paquete de conta) con `store.remove(quiet)`. Es para pruebas
+  y solicitudes creadas por error que ya avanzaron en el flujo.
   **Pestaña ✅ Cerradas (19-ago-2026)**: `renderCerradas` — archivo con filtros
   por MES de cierre, PROYECTO y búsqueda libre; tabla con código, fecha, monto,
   quién cerró, y botones para ver la factura/paquete, re-descargar el PDF y

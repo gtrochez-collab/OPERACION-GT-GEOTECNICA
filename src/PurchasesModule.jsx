@@ -2215,6 +2215,65 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   };
   const removePurchase = (id) => sP(purchases.filter(p => p.id !== id));
 
+  // ── BORRADO TOTAL DE UNA SOLICITUD (20-ago-2026) ─────────────────────────
+  // SOLO Gerson (pedido explícito: "solo a mi porfa"). Es para pruebas y
+  // solicitudes creadas por error que ya avanzaron en el flujo — las demás
+  // opciones de borrado no llegan a los pasos de logística / cierre contable.
+  // Limpia TODO el rastro: la solicitud, los despachos que generó en
+  // GeoLogistics y los archivos adjuntos (que si no quedan huérfanos en la
+  // base). Patrón robusto: getCloud + verify; sin nube, no borra nada.
+  const puedeBorrarSolicitud = userName === "Lic. Gerson Trochez";
+  const borrarSolicitudCompleta = async (p) => {
+    if (!puedeBorrarSolicitud) return;
+    const docs = [
+      p.quoteFile && "cotización",
+      p.receiptFile && "comprobante de pago",
+      p.delivery?.fichaFile && "ficha de recibido",
+      (p.conta?.facturaFile || p.conta?.fileId) && "cierre contable",
+    ].filter(Boolean);
+    const desps = despachos.filter(d => d && d.sourcePurchaseId === p.id);
+    if (!confirm(`🗑 ¿BORRAR DEFINITIVAMENTE esta solicitud?\n\n${p.codigo || "sin código"} — ${p.provider || ""}\n${(p.description || "").slice(0, 90)}\n${fmtL(p.amount)}\n\nSe elimina la solicitud${desps.length ? `, ${desps.length} despacho(s) en GeoLogistics` : ""}${docs.length ? ` y sus archivos (${docs.join(", ")})` : ""}.\n\nNO se puede deshacer. Es para pruebas o solicitudes creadas por error.`)) return;
+    if (docs.length && !confirm(`Última confirmación: esta solicitud YA tiene ${docs.join(", ")}.\n\n¿Seguro que la borrás?`)) return;
+
+    // 1) Solicitud (getCloud + verify)
+    let cloud;
+    try { cloud = await store.getCloud("cp-purchases"); }
+    catch { return alert("⚠️ Sin conexión con la nube — no se borró nada. Reintentá."); }
+    if (!Array.isArray(cloud)) return alert("⚠️ No se pudo leer la lista desde la nube — no se borró nada.");
+    const next = cloud.filter(z => z && z.id !== p.id);
+    if (next.length === cloud.length) {
+      alert("Esa solicitud ya no existe en la nube (alguien la borró antes). Se refresca la vista.");
+      setPurchases(next); return;
+    }
+    const ok = await store.set("cp-purchases", next);
+    let verified = false;
+    try { const back = await store.getCloud("cp-purchases"); verified = Array.isArray(back) && !back.some(z => z && z.id === p.id); } catch { verified = false; }
+    if (!ok || !verified) return alert("⚠️ No se pudo VERIFICAR el borrado en la nube — reintentá.");
+    setPurchases(next);
+
+    // 2) Despachos vinculados (best effort: la compra ya se fue)
+    if (desps.length) {
+      try {
+        const cd = await store.getCloud("lg-despachos");
+        if (Array.isArray(cd)) {
+          const nd = cd.filter(d => !(d && d.sourcePurchaseId === p.id));
+          if (nd.length !== cd.length) await store.set("lg-despachos", nd);
+        }
+      } catch { alert("La solicitud se borró, pero no se pudieron quitar sus despachos de GeoLogistics. Borralos a mano desde ese módulo."); }
+    }
+
+    // 3) Archivos adjuntos (quiet: si alguno falla es basura huérfana, no vale asustar)
+    const fileIds = [
+      p.quoteFile?.fileId, p.receiptFile?.fileId,
+      p.delivery?.fichaFile?.fileId,
+      p.conta?.facturaFile?.fileId, p.conta?.fileId,
+    ].filter(Boolean);
+    for (const fid of fileIds) {
+      try { await store.remove(fileKey(fid), { quiet: true }); } catch { /* huérfano */ }
+    }
+    alert(`🗑 Solicitud ${p.codigo || ""} eliminada por completo.`);
+  };
+
   // ── MIGRACIÓN: asignar código a las solicitudes viejas (19-ago-2026) ──
   // Solo admin. Numera por orden de CREACIÓN (createdAt) dentro de cada año,
   // respetando los códigos que ya existan. getCloud + verify, como todo lo
@@ -4414,6 +4473,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
           <Badge color="#E8762D">📦 Por coordinar</Badge>
+          {puedeBorrarSolicitud && <span role="button" title="Borrar esta solicitud por completo (solo vos)" onClick={() => borrarSolicitudCompleta(p)} style={{ cursor: "pointer", fontSize: 12, opacity: 0.45, marginLeft: "auto", marginRight: 6 }}>🗑</span>}
           {p.paidAt && <span style={{ fontSize: 9, color: "#64748b", fontWeight: 700 }}>Pagado {new Date(p.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}</span>}
         </div>
         <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 4 }}>{p.provider}</div>
@@ -4691,6 +4751,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                         {p.conta?.fileId && <Btn small variant="ghost" onClick={() => verArchivo({ fileId: p.conta.fileId, type: p.conta.type })}>📦 Paquete</Btn>}
                         <Btn small variant="ghost" onClick={() => imprimirPaqueteConta(p)}>📥 PDF</Btn>
                         {(isAdmin || isAsistenteCompras) && <Btn small variant="danger" onClick={() => reabrirCierreConta(p)}>↩</Btn>}
+                        {puedeBorrarSolicitud && <Btn small variant="danger" onClick={() => borrarSolicitudCompleta(p)}>🗑</Btn>}
                       </div>
                     </td>
                   </tr>))}
@@ -4736,7 +4797,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         falta_proveedor: { badge: "🏪 Falta ficha firmada (la entrega el proveedor)", c: "#B45309", border: "#FCD34D" },
         en_camino:       { badge: `🚚 Con Logística (${d?.estado || "pendiente"})`, c: "#0891B2", border: "#BAE6FD" },
       }[tipo];
-      return <div key={p.id} style={{ background: "#fff", border: `1px solid ${cfg.border}`, borderLeft: `3px solid ${cfg.c}`, borderRadius: 8, padding: 12 }}>
+      return <div key={p.id} style={{ background: "#fff", border: `1px solid ${cfg.border}`, borderLeft: `3px solid ${cfg.c}`, borderRadius: 8, padding: 12, position: "relative" }}>
+        {puedeBorrarSolicitud && <span role="button" title="Borrar esta solicitud por completo (solo vos)" onClick={() => borrarSolicitudCompleta(p)} style={{ position: "absolute", top: 8, right: 8, cursor: "pointer", fontSize: 12, opacity: 0.45, lineHeight: 1 }}>🗑</span>}
         <span style={{ display: "inline-block", background: cfg.c + "18", color: cfg.c, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, lineHeight: 1.35 }}>{cfg.badge}</span>
         {p.codigo && <div style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", fontFamily: "ui-monospace, Menlo, monospace", marginTop: 5 }}>{p.codigo}</div>}
         <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 2 }}>{p.provider}</div>
