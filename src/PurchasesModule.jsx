@@ -822,18 +822,64 @@ function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, ren
 // ── PurchaseFormImpl: nivel de modulo ──
 // Mismo razonamiento que ProjectFormImpl: vive aqui para que React mantenga la
 // identidad del componente estable entre renders del padre. Recibe deps por props.
-function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, providers, addAudit, saveOrAlert }) {
+function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, providers, addAudit, saveOrAlert, upsertProvider}) {
   const [saving, setSaving] = useState(false);
   const [f, setF] = useState(purchase || {
     company: co, projectCode: "", provider: "", description: "",
     amount: "", quoteNumber: "", opsResponsible: userName || "",
     cierreResponsable: "", detalleMateriales: "",
     opsNotes: "", bacAccount: "", providerBank: "", providerAccountType: "", providerAccountHolder: "", providerRTN: "", quoteFile: null, receiptFile: null,
+    // Ficha de proveedor NUEVO (20-ago-2026): si el proveedor no existe en la
+    // base, se puede completar su ficha acá mismo y queda guardado en
+    // cp-providers — que es COMPARTIDA por GeoShopping y GeoMachinery.
+    provNuevo: false, provTelefono: "", provContacto: "", provEmail: "", provNotas: "",
     status: "borrador", createdAt: new Date().toISOString(), audit: [],
     paymentMethod: "Transferencia BAC", paymentReference: "", paymentDate: "", treasuryNotes: "",
   });
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const linkedProject = getProject(f.projectCode);
+
+  // Registra el proveedor de la solicitud en cp-providers (base COMPARTIDA por
+  // los dos módulos). Si ya existe, solo completa los huecos — nunca pisa lo
+  // que alguien ya cargó a mano. Best effort: si falla, la solicitud igual se
+  // guarda (el auto-import de la próxima carga lo recupera).
+  const registrarProveedorSiNuevo = async (rec) => {
+    try {
+      if (!upsertProvider) return;
+      const nombre = String(rec.provider || "").trim();
+      if (!nombre) return;
+      const existente = (providers || []).find(pv => String(pv.name || "").trim().toLowerCase() === nombre.toLowerCase());
+      const cuenta = { bank: rec.providerBank || "", type: rec.providerAccountType || "", number: rec.bacAccount || "", holder: rec.providerAccountHolder || nombre };
+      const tieneCuenta = !!(cuenta.bank || cuenta.number || cuenta.type);
+      if (existente) {
+        // Completar solo lo que falte (RTN, cuenta, teléfono, contacto).
+        const parche = {};
+        if (!existente.rtn && rec.providerRTN) parche.rtn = rec.providerRTN;
+        if (tieneCuenta && !(existente.bankAccounts || []).some(b => (b.number || "") === cuenta.number && cuenta.number)) {
+          parche.bankAccounts = [...(existente.bankAccounts || []), cuenta];
+        }
+        if (rec.provNuevo) {
+          if (!existente.contactName && rec.provContacto) parche.contactName = rec.provContacto;
+          if (!existente.contactEmail && rec.provEmail) parche.contactEmail = rec.provEmail;
+          if (rec.provTelefono && !(existente.phones || []).includes(rec.provTelefono)) parche.phones = [...(existente.phones || []).filter(Boolean), rec.provTelefono];
+        }
+        if (Object.keys(parche).length) await upsertProvider({ ...existente, ...parche, autoImported: false });
+        return;
+      }
+      await upsertProvider({
+        id: uid(), name: nombre,
+        rtn: rec.providerRTN || "",
+        phones: rec.provTelefono ? [rec.provTelefono] : [],
+        bankAccounts: tieneCuenta ? [cuenta] : [],
+        contactName: rec.provContacto || "",
+        contactEmail: rec.provEmail || "",
+        notes: rec.provNotas || (rec.provNuevo ? "" : "Creado desde una solicitud de compra — completar datos."),
+        autoImported: !rec.provNuevo,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      });
+    } catch (e) { console.warn("No se pudo registrar el proveedor:", e?.message || e); }
+  };
+
 
   return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -909,20 +955,49 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         <Textarea label="Qué se está comprando (tal cual la cotización) *" value={f.description} onChange={e => u("description", e.target.value)} placeholder={"Un renglón por ítem, como viene en la cotización:\n2 × Sacos de cemento 42.5 kg\n10 × Varilla 3/8 grado 60"} />
       </div>
 
-      <div style={{ gridColumn: "1/-1", background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 12 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>
-          💳 Datos bancarios del proveedor (opcional)
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <Input label="Banco" value={f.providerBank || ""} onChange={e => u("providerBank", e.target.value)} placeholder="Ej: BAC, Banpais, Atlantida" />
-          <Input label="Tipo de cuenta" value={f.providerAccountType || ""} onChange={e => u("providerAccountType", e.target.value)} placeholder="Ahorro / Cheques" />
-          <Input label="Titular de la cuenta" value={f.providerAccountHolder || ""} onChange={e => u("providerAccountHolder", e.target.value)} placeholder="Nombre del titular" />
-          <Input label="RTN" value={f.providerRTN || ""} onChange={e => u("providerRTN", e.target.value)} placeholder="0801-1990-12345" />
-          <div style={{ gridColumn: "1/-1" }}>
-            <Input label="Numero de cuenta" value={f.bacAccount} onChange={e => u("bacAccount", e.target.value)} placeholder="Ej: 10-251-000123" />
+      {/* FICHA DEL PROVEEDOR (20-ago-2026, pedido de Gerson) ─────────────────
+          Si el nombre escrito no está en la base, se avisa y con un check se
+          expanden los campos para dejar la ficha completa. Al guardar la
+          solicitud el proveedor queda registrado en cp-providers, que es la
+          MISMA base de GeoShopping y GeoMachinery: no hay que volver a
+          crearlo en el otro módulo. */}
+      {(() => {
+        const nombre = String(f.provider || "").trim();
+        const yaExiste = !!nombre && (providers || []).some(pv => String(pv.name || "").trim().toLowerCase() === nombre.toLowerCase());
+        const esNuevo = !!nombre && !yaExiste;
+        return <div style={{ gridColumn: "1/-1", background: esNuevo ? "#F0FDF4" : "#F8FAFC", border: `1px solid ${esNuevo ? "#86EFAC" : "#E2E8F0"}`, borderRadius: 10, padding: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: esNuevo ? "#065F46" : "#475569", textTransform: "uppercase", letterSpacing: 0.5 }}>
+              {esNuevo ? "🆕 Proveedor nuevo — no está en la base" : "💳 Datos bancarios del proveedor (opcional)"}
+            </div>
+            {esNuevo && <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 800, color: "#065F46", cursor: "pointer", background: "#fff", border: "1px solid #86EFAC", borderRadius: 8, padding: "5px 10px" }}>
+              <input type="checkbox" checked={!!f.provNuevo} onChange={e => u("provNuevo", e.target.checked)} style={{ width: 15, height: 15, cursor: "pointer", accentColor: "#059669" }} />
+              Guardar su ficha completa
+            </label>}
           </div>
-        </div>
-      </div>
+          {esNuevo && !f.provNuevo && <div style={{ fontSize: 11.5, color: "#047857", marginBottom: 10 }}>
+            “{nombre}” se va a agregar a la lista de proveedores igual, pero sin datos. Marcá la casilla para completar su ficha (teléfono, contacto, cuenta) y dejarla lista para Tesorería.
+          </div>}
+          {esNuevo && f.provNuevo && <div style={{ fontSize: 11.5, color: "#065F46", marginBottom: 10, fontWeight: 600 }}>
+            Al guardar la solicitud, <b>{nombre}</b> queda registrado en la base de proveedores — disponible en GeoShopping y en GeoMachinery.
+          </div>}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Input label="Banco" value={f.providerBank || ""} onChange={e => u("providerBank", e.target.value)} placeholder="Ej: BAC, Banpais, Atlantida" />
+            <Input label="Tipo de cuenta" value={f.providerAccountType || ""} onChange={e => u("providerAccountType", e.target.value)} placeholder="Ahorro / Cheques" />
+            <Input label="Titular de la cuenta" value={f.providerAccountHolder || ""} onChange={e => u("providerAccountHolder", e.target.value)} placeholder="Nombre del titular" />
+            <Input label="RTN" value={f.providerRTN || ""} onChange={e => u("providerRTN", e.target.value)} placeholder="0801-1990-12345" />
+            <div style={{ gridColumn: "1/-1" }}>
+              <Input label="Numero de cuenta" value={f.bacAccount} onChange={e => u("bacAccount", e.target.value)} placeholder="Ej: 10-251-000123" />
+            </div>
+            {esNuevo && f.provNuevo && <>
+              <Input label="Teléfono" value={f.provTelefono || ""} onChange={e => u("provTelefono", e.target.value)} placeholder="+504 9999-9999" />
+              <Input label="Persona de contacto" value={f.provContacto || ""} onChange={e => u("provContacto", e.target.value)} placeholder="Nombre de quien atiende" />
+              <Input label="Correo" value={f.provEmail || ""} onChange={e => u("provEmail", e.target.value)} placeholder="ventas@proveedor.hn" />
+              <Input label="Nota interna" value={f.provNotas || ""} onChange={e => u("provNotas", e.target.value)} placeholder="Horarios, condiciones, quién lo atiende…" />
+            </>}
+          </div>
+        </div>;
+      })()}
 
       <div style={{ gridColumn: "1/-1" }}>
         <Textarea label="Notas de Operaciones para Tesoreria" value={f.opsNotes} onChange={e => u("opsNotes", e.target.value)} placeholder="Urgencia, condiciones de pago, referencias al proyecto, etc." />
@@ -964,6 +1039,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           setSaving(true);
           try {
             const rec = { ...f, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "borrador", treasuryStatus: null };
+            await registrarProveedorSiNuevo(rec);
             const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
             const next = purchase
               ? purchases.map(p => p.id === saved.id ? saved : p)
@@ -980,6 +1056,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           setSaving(true);
           try {
             const rec = { ...f, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
+            await registrarProveedorSiNuevo(rec);
             const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
             const next = purchase
               ? purchases.map(p => p.id === saved.id ? saved : p)
@@ -5115,8 +5192,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     if (!modal) return null;
     const m = modal;
     switch (m.t) {
-      case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} /></Modal>;
-      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} /></Modal>;
+      case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} /></Modal>;
+      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;

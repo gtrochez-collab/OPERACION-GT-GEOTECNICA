@@ -56,6 +56,15 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   `asignarCodigosFaltantes` (botón solo-admin en Solicitudes) numera las
   viejas por createdAt con getCloud + verify. Sale en la tabla, en las cards
   y en el paquete de cierre.
+  **Proveedor nuevo desde la solicitud (20-ago-2026)**: si el nombre tipeado
+  en el form no está en cp-providers, aparece el aviso "🆕 Proveedor nuevo" +
+  checkbox "Guardar su ficha completa" que expande teléfono/contacto/correo/
+  nota (los bancarios y RTN ya estaban en el form). `registrarProveedorSiNuevo`
+  corre al guardar la solicitud (borrador o aprobada): crea el proveedor con
+  ficha completa (autoImported:false) o, si ya existe, solo RELLENA huecos
+  (nunca pisa datos cargados a mano). cp-providers es compartida: queda
+  disponible en ambos módulos al instante. Best effort: si falla, la
+  solicitud igual se guarda y el auto-import del load lo recupera.
   **Constancia de pagos a cuenta (19-ago-2026)**: `provider.constanciaFile`
   — se sube UNA vez en la ficha del proveedor (`subirConstanciaProveedor`,
   disponible en el form de proveedores de AMBOS módulos: cp-providers es
