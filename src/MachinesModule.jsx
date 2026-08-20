@@ -3626,9 +3626,13 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     const Card = ({ p, bucket }) => {
       const d = despachoDe(p.id);
       return (
-        <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8, position: "relative" }}>
+          {puedeBorrarSolicitud && <span style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6, lineHeight: 1, zIndex: 2 }}>
+            <span role="button" title="Cerrar contablemente (rezagada del flujo anterior)" onClick={(e) => { e.stopPropagation(); setRez({ modo: "una", purchase: p, quien: "", otro: "", nota: "" }); }} style={{ cursor: "pointer", fontSize: 12, opacity: 0.6 }}>✅</span>
+            <span role="button" title="Borrar esta solicitud por completo (solo vos)" onClick={(e) => { e.stopPropagation(); borrarSolicitudCompleta(p); }} style={{ cursor: "pointer", fontSize: 12, opacity: 0.45 }}>🗑</span>
+          </span>}
           <div onClick={() => setModal({ t: "detail", d: p })} style={{ cursor: "pointer" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL }}>{p.provider || "—"}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, paddingRight: 42 }}>{p.provider || "—"}</div>
             <div style={{ fontSize: 11, color: "#64748b", marginTop: 2, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: "#059669" }}>{fmtL(p.amount)}</span>
@@ -3968,6 +3972,10 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
                 return <div key={x.id} style={{ background: "#fff", border: `1px solid ${atrasada ? "#FCD34D" : "#5EEAD4"}`, borderLeft: `3px solid ${atrasada ? "#B45309" : "#0F766E"}`, borderRadius: 8, padding: 12 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <Badge color={atrasada ? "#B45309" : "#0F766E"}>{atrasada ? "⚠ Debió llegar" : "🏪 Llega directo"}</Badge>
+                    {puedeBorrarSolicitud && <span style={{ display: "flex", gap: 6, marginLeft: "auto", marginRight: 6 }}>
+                      <span role="button" title="Cerrar contablemente (rezagada del flujo anterior)" onClick={() => setRez({ modo: "una", purchase: x, quien: "", otro: "", nota: "" })} style={{ cursor: "pointer", fontSize: 12, opacity: 0.6 }}>✅</span>
+                      <span role="button" title="Borrar esta solicitud por completo (solo vos)" onClick={() => borrarSolicitudCompleta(x)} style={{ cursor: "pointer", fontSize: 12, opacity: 0.45 }}>🗑</span>
+                    </span>}
                     {llega && <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>📅 {llega.toLocaleDateString("es-HN", { day: "2-digit", month: "short" })} · {llega.toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}</span>}
                   </div>
                   <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 6 }}>{x.provider}</div>

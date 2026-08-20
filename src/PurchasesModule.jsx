@@ -4690,6 +4690,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                   return <div key={p.id} style={{ background: "#fff", border: `1px solid ${atrasada ? "#FCD34D" : "#5EEAD4"}`, borderLeft: `3px solid ${atrasada ? "#B45309" : "#0F766E"}`, borderRadius: 8, padding: 12 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <Badge color={atrasada ? "#B45309" : "#0F766E"}>{atrasada ? "⚠ Debió llegar" : "🏪 Llega directo"}</Badge>
+                      {puedeBorrarSolicitud && <span style={{ display: "flex", gap: 6, marginLeft: "auto", marginRight: 6 }}>
+                        <span role="button" title="Cerrar contablemente (rezagada del flujo anterior)" onClick={() => setRez({ modo: "una", purchase: p, quien: "", otro: "", nota: "" })} style={{ cursor: "pointer", fontSize: 12, opacity: 0.6 }}>✅</span>
+                        <span role="button" title="Borrar esta solicitud por completo (solo vos)" onClick={() => borrarSolicitudCompleta(p)} style={{ cursor: "pointer", fontSize: 12, opacity: 0.45 }}>🗑</span>
+                      </span>}
                       {llega && <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>📅 {llega.toLocaleDateString("es-HN", { day: "2-digit", month: "short" })} · {llega.toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}</span>}
                     </div>
                     {p.codigo && <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", fontFamily: "ui-monospace, Menlo, monospace", marginTop: 5 }}>{p.codigo}</div>}

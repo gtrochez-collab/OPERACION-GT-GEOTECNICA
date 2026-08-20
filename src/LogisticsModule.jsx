@@ -1086,7 +1086,11 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     if (!compra) return false;                                    // compra borrada: no trabar
     const tieneFicha = !!compra.delivery?.fichaFile?.fileId;
     const cerradaSinFicha = compra.deliveryStatus === "cerrado";  // servicios/renta
-    if (tieneFicha || cerradaSinFicha) return false;
+    // Cerrada contablemente (con factura, con paquete, o rezagada del flujo
+    // viejo cerrada a mano): ya no tiene sentido exigir la ficha — el
+    // despacho quedaría trabado para siempre pidiendo un papel que no existe.
+    const cerradaConta = !!(compra.conta?.fileId || compra.conta?.facturaFile?.fileId || compra.conta?.legacy);
+    if (tieneFicha || cerradaSinFicha || cerradaConta) return false;
     alert(`🚫 NO se puede marcar como entregado: falta la FICHA DE RECIBIDO firmada.\n\n${compra.provider || ""} — ${(compra.description || "").slice(0, 80)}\n\nSubí primero la ficha que trajo el motorista con el botón naranja "📎 Subir ficha firmada" de esta misma tarjeta, y después marcá la entrega. Es la regla del cierre contable: sin ficha, la compra queda trabada como "SIN FICHA de Logística".`);
     return true;
   };
