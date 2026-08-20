@@ -361,6 +361,24 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
 ## Convenciones críticas
 - **Guardado robusto**: nunca fire-and-forget en datos importantes. Patrón:
   `const ok = await store.set(...)` → si falla, alert + mantener modal abierto.
+- **Guardia anti-pisada del auto-refresh (20-ago-2026)** — la VERDADERA causa
+  de "se confirma pero la tarjeta sigue ahí / se va a la segunda": los diálogos
+  nativos (confirm/prompt) hacen blur+focus de la ventana; el focus dispara el
+  auto-refresh EN PARALELO con el guardado, que lee la nube de ANTES del save
+  y pisa el estado local con la foto vieja. Fix en los 3 módulos con despachos/
+  compras: `lastLocalMutAtRef` se estampa en cada setPurchases/setDespachos
+  (wrappers sobre `_setXRaw`); refreshFromCloud se salta (pre y post fetch) si
+  hubo mutación local hace <8 s. OJO en tests E2E: interceptar confirm() oculta
+  este bug — reproducirlo despachando `window.dispatchEvent(new Event("focus"))`
+  tras el click.
+- **Responsable de cierre contable con filtro (20-ago-2026)**: el campo
+  `cierreResponsable` ahora es dropdown de USERS (form + select inline en las
+  cards de "Por cerrar contable", guardado con updatePurchase + audit). El
+  tablero conta se FILTRA: no-supervisores ven SUS compras + las sin asignar;
+  supervisores (Purchases: admin/gerencia/visor_compras; Machines:
+  admin/gerencia) ven todas + selector por responsable (`contaResp`,
+  "__sin__" = sin asignar). Asignarle otra persona a una card la saca de tu
+  vista al instante.
 - **Verify SEMÁNTICO, no por count** (20-ago-2026): comparar
   `cloud.length !== light.length` post-save daba error FALSO cada vez que otro
   usuario creaba una solicitud durante los ~2 s del guardado — y el modal

@@ -813,7 +813,18 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const isMobile = useIsMobile();
   const [vehicles, setVehicles] = useState([]);
   const [maintenances, setMaintenances] = useState([]);
-  const [despachos, setDespachos] = useState([]);
+  // ── GUARDIA ANTI-PISADA DEL AUTO-REFRESH (20-ago-2026) ──────────────────
+  // El bug de "se confirma pero la tarjeta sigue ahí / se va a la segunda":
+  // los diálogos nativos (confirm/prompt/alert) le quitan el foco a la
+  // ventana; al cerrarse se dispara el evento `focus`, que corre el
+  // auto-refresh EN PARALELO con el guardado. Ese refresh lee la nube de
+  // ANTES del save y pisa el estado local con la foto vieja — el dato sí se
+  // guardó, pero la pantalla mostraba lo anterior. Regla: toda mutación
+  // local estampa `lastLocalMutAtRef`; el refresh se salta si hubo una
+  // mutación hace menos de 8 s (para cuando el save termina, ya pasó).
+  const lastLocalMutAtRef = useRef(0);
+  const [despachos, _setDespachosRaw] = useState([]);
+  const setDespachos = (v) => { lastLocalMutAtRef.current = Date.now(); _setDespachosRaw(v); };
   const [purchases, setPurchases] = useState([]); // shared con Compras
   // Compras de GeoMachinery (mq-purchases): los despachos source "maquinas"
   // enlazan acá — sin esto el botón de subir ficha no aparecía para máquinas
@@ -858,13 +869,15 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   // recargar manualmente. Mucho mas barato que polling.
   useEffect(() => {
     const refreshFromCloud = async () => {
+      if (Date.now() - lastLocalMutAtRef.current < 8000) { console.log("[refresh] omitido: guardado local reciente"); return; }
       try {
         const [d, p, mqp] = await Promise.all([
           store.get("lg-despachos"),
           store.get("cp-purchases"),
           store.get("mq-purchases"),
         ]);
-        if (Array.isArray(d)) setDespachos(d);
+        if (Date.now() - lastLocalMutAtRef.current < 8000) { console.log("[refresh] descartado post-fetch: guardado en curso"); return; }
+        if (Array.isArray(d)) _setDespachosRaw(d);
         if (Array.isArray(p)) setPurchases(p);
         if (Array.isArray(mqp)) setMqPurchases(mqp);
       } catch (e) {

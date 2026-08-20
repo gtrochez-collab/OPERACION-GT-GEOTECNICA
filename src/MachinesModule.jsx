@@ -893,7 +893,14 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       </div>
       <Input label="Monto total (Lempiras)" type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
       <Input label="Responsable de Operaciones" value={f.opsResponsible} onChange={e => u("opsResponsible", e.target.value)} placeholder="Quien valida por Operaciones" />
-      <Input label="Responsable de cierre contable" value={f.cierreResponsable || ""} onChange={e => u("cierreResponsable", e.target.value)} placeholder="Quien cierra esta compra con Contabilidad" />
+      {/* Dropdown de usuarios (20-ago-2026): el responsable de cierre ahora
+          filtra el tablero "Por cerrar contable" — cada quien ve las suyas —
+          así que tiene que ser un usuario del sistema, no texto libre. Si la
+          solicitud vieja traía un nombre escrito a mano, se conserva como
+          opción para no perderlo. */}
+      <Select label="Responsable de cierre contable" emptyLabel="— Sin asignar —"
+        options={[...new Set([...USERS.map(u2 => u2.label), ...(f.cierreResponsable ? [f.cierreResponsable] : [])])].sort()}
+        value={f.cierreResponsable || ""} onChange={e => u("cierreResponsable", e.target.value)} />
       <div style={{ gridColumn: "1/-1" }}>
         <Textarea label="Detalle de repuestos / materiales (según cotización)" value={f.detalleMateriales || ""} onChange={e => u("detalleMateriales", e.target.value)} placeholder={"Qué se está comprando, tal cual la cotización. Un renglón por ítem:\n2 × Filtro hidráulico BAUER BG-28\n1 × Manguera 3/4 alta presión"} />
       </div>
@@ -1420,14 +1427,26 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   const canSendToLogistics = isAdmin || isCostos || isCoordinadorMaquinas || isAsistenteCompras;
 
   const [co, setCo] = useState("geotecnica");
-  const [purchases, setPurchases] = useState([]);
+  // ── GUARDIA ANTI-PISADA DEL AUTO-REFRESH (20-ago-2026) ──────────────────
+  // El bug de "se confirma pero la tarjeta sigue ahí / se va a la segunda":
+  // los diálogos nativos (confirm/prompt/alert) le quitan el foco a la
+  // ventana; al cerrarse se dispara el evento `focus`, que corre el
+  // auto-refresh EN PARALELO con el guardado. Ese refresh lee la nube de
+  // ANTES del save y pisa el estado local con la foto vieja — el dato sí se
+  // guardó, pero la pantalla mostraba lo anterior. Regla: toda mutación
+  // local estampa `lastLocalMutAtRef`; el refresh se salta si hubo una
+  // mutación hace menos de 8 s (para cuando el save termina, ya pasó).
+  const lastLocalMutAtRef = useRef(0);
+  const [purchases, _setPurchasesRaw] = useState([]);
+  const setPurchases = (v) => { lastLocalMutAtRef.current = Date.now(); _setPurchasesRaw(v); };
   const [customProjects, setCustomProjects] = useState([]);
   const [providers, setProviders] = useState([]);
   const [machines, setMachines] = useState([]);
   // Despachos compartidos con GeoLogistics (lg-despachos) — mismas ordenes de
   // recogida que usa GeoShopping. Una orden de Maquinas cae en el mismo Kanban
   // de Oscar/Jorge.
-  const [despachos, setDespachos] = useState([]);
+  const [despachos, _setDespachosRaw] = useState([]);
+  const setDespachos = (v) => { lastLocalMutAtRef.current = Date.now(); _setDespachosRaw(v); };
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
   const isMobile = useIsMobile();
@@ -1444,6 +1463,8 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   // Default: mes actual — el histórico viejo no se le viene encima a nadie,
   // pero queda accesible eligiendo el mes o "Todos".
   const [contaMes, setContaMes] = useState(() => new Date().toISOString().slice(0, 7));
+  // Filtro por responsable de cierre en "Por cerrar contable" (supervisores)
+  const [contaResp, setContaResp] = useState("");
   // Filtros del archivo de cerradas contablemente (mes de cierre / proyecto / texto)
   const [provQ, setProvQ] = useState("");   // buscador de proveedores
   const [coordMes, setCoordMes] = useState("");  // filtro por mes de pago en Por coordinar
@@ -1564,11 +1585,14 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   // admin/Christian/Ana estaban en otra tab, al volver ven el cambio sin recargar.
   useEffect(() => {
     const refreshFromCloud = async () => {
+      // Cambios locales recientes → no arriesgar pisarlos con una foto vieja.
+      if (Date.now() - lastLocalMutAtRef.current < 8000) { console.log("[refresh] omitido: guardado local reciente"); return; }
       try {
         const [p, mach] = await Promise.all([
           store.get("mq-purchases"),
           store.get("mq-machines"),
         ]);
+        if (Date.now() - lastLocalMutAtRef.current < 8000) { console.log("[refresh] descartado post-fetch: hubo un guardado mientras se leía la nube"); return; }
         if (Array.isArray(p)) {
           const migrated = p.map(x => ({
             ...x,
@@ -1576,7 +1600,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
             deliveryStatus: deriveDelivery(x),
             delivery: x.delivery || {},
           }));
-          setPurchases(migrated);
+          _setPurchasesRaw(migrated);
           // NO bulk-hidratar archivos en focus tampoco — load on-demand evita
           // saturar Supabase. Archivos se cargan al abrir detalle/generar PDF.
         }
@@ -4134,15 +4158,24 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       if (d) return (d.estado === "entregado" || d.estado === "cerrado") ? "falta_logistica" : "en_camino";
       return null;
     };
+    // ── FILTRO POR RESPONSABLE (20-ago-2026, pedido de Gerson) ──
+    // Cada quien ve SUS compras por cerrar (cierreResponsable === su nombre)
+    // más las SIN ASIGNAR (para que nada quede invisible hasta asignarlas).
+    // Los supervisores ven todas, con un selector para filtrar.
+    const esSupervisorConta = isAdmin || isGerencia;
+    const paraMi = (z) => esSupervisorConta
+      ? (!contaResp || (contaResp === "__sin__" ? !z.cierreResponsable : z.cierreResponsable === contaResp))
+      : (!z.cierreResponsable || z.cierreResponsable === userName);
+    const RESP_OPCIONES = [...new Set(USERS.map(u2 => u2.label))].sort();
     // Meses disponibles (con algo por cerrar o cerrado), para el selector.
     const mesDe = (x) => String(x.paidAt || x.createdAt || "").slice(0, 7);
     const mesesDisponibles = [...new Set(cp.filter(x => clasificar(x)).map(mesDe).filter(Boolean))].sort().reverse();
     const enMes = (x) => !contaMes || mesDe(x) === contaMes;
     const grupos = {}; const totales = { lista: 0, falta_logistica: 0, falta_proveedor: 0, en_camino: 0, cerrada: 0 };
-    cp.filter(enMes).forEach(x => { const b = clasificar(x); if (!b) return; const k = x.projectCode || "__sin__"; (grupos[k] = grupos[k] || { lista: [], falta_logistica: [], falta_proveedor: [], en_camino: [], cerrada: [] })[b].push(x); totales[b]++; });
+    cp.filter(enMes).filter(paraMi).forEach(x => { const b = clasificar(x); if (!b) return; const k = x.projectCode || "__sin__"; (grupos[k] = grupos[k] || { lista: [], falta_logistica: [], falta_proveedor: [], en_camino: [], cerrada: [] })[b].push(x); totales[b]++; });
     const keys = Object.keys(grupos).filter(k => grupos[k].lista.length + grupos[k].falta_logistica.length + grupos[k].falta_proveedor.length + grupos[k].en_camino.length > 0)
       .sort((a, b) => (a === "__sin__" ? 1 : b === "__sin__" ? -1 : a.localeCompare(b)));
-    const cerradas = cp.filter(enMes).filter(x => clasificar(x) === "cerrada").sort((a, b) => String(b.conta?.cerradoAt || "").localeCompare(String(a.conta?.cerradoAt || "")));
+    const cerradas = cp.filter(enMes).filter(paraMi).filter(x => clasificar(x) === "cerrada").sort((a, b) => String(b.conta?.cerradoAt || "").localeCompare(String(a.conta?.cerradoAt || "")));
     const puedeCerrarConta = isAdmin || isCoordinadorMaquinas || isCostos || isAsistenteCompras;
     const cardConta = (x, tipo) => {
       const d = despachoDe(x.id);
@@ -4164,7 +4197,20 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
         <div style={{ fontSize: 11.5, color: "#475569", marginTop: 2 }}>{x.description}</div>
         {maquina && <div style={{ fontSize: 10.5, color: "#7C3AED", marginTop: 3 }}>⚙️ {maquina.nombre}</div>}
         {x.amount && <div style={{ fontSize: 11, color: "#059669", fontWeight: 700, marginTop: 4 }}>{fmtL(x.amount)}</div>}
-        <div style={{ fontSize: 10.5, color: x.cierreResponsable ? "#0F766E" : "#B45309", marginTop: 3 }}>🧾 Cierra con conta: <b>{x.cierreResponsable || "sin asignar"}</b></div>
+        <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 5 }}>
+          <span style={{ fontSize: 10.5, color: "#64748b", whiteSpace: "nowrap" }}>🧾 Cierra:</span>
+          <select value={x.cierreResponsable || ""}
+            onChange={async (e) => {
+              const v = e.target.value;
+              const saved = addAudit({ ...x, cierreResponsable: v }, "cierre_responsable", v ? `Responsable de cierre contable: ${v}` : "Responsable de cierre contable quitado");
+              const ok = await updatePurchase(saved);
+              if (!ok) alert("⚠️ No se pudo guardar el responsable — reintentá.");
+            }}
+            style={{ flex: 1, minWidth: 0, padding: "3px 6px", border: `1px solid ${x.cierreResponsable ? "#5EEAD4" : "#FCD34D"}`, borderRadius: 6, fontSize: 10.5, fontWeight: 700, color: x.cierreResponsable ? "#0F766E" : "#B45309", background: "#fff", fontFamily: "inherit", cursor: "pointer" }}>
+            <option value="">— sin asignar —</option>
+            {[...new Set([...USERS.map(u2 => u2.label), ...(x.cierreResponsable ? [x.cierreResponsable] : [])])].sort().map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
         <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
           {tipo === "falta_proveedor" && <button onClick={() => setSec("entregas")} style={{ background: "transparent", color: "#0F766E", border: "1px solid #5EEAD4", padding: "6px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>→ Gestionarla en Entregas de proveedor</button>}
           {tipo === "lista" && <>
@@ -4189,6 +4235,13 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
           {mesesDisponibles.map(m => <option key={m} value={m}>{(() => { const [y, mm] = m.split("-").map(Number); return new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); })()}</option>)}
         </select>
         {contaMes && !mesesDisponibles.includes(contaMes) && <span style={{ fontSize: 11, color: "#94A3B8", fontStyle: "italic" }}>sin compras pagadas este mes — elegí otro</span>}
+        {esSupervisorConta
+          ? <select value={contaResp} onChange={e => setContaResp(e.target.value)} style={{ padding: "7px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: contaResp ? "#F0FDF4" : "#fff", fontFamily: "inherit", fontWeight: contaResp ? 700 : 400 }}>
+              <option value="">👤 Responsable: todos</option>
+              <option value="__sin__">⚠ Sin asignar</option>
+              {RESP_OPCIONES.map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          : <span style={{ fontSize: 11.5, color: "#0F766E", fontWeight: 700 }}>👤 Ves tus compras por cerrar y las sin asignar</span>}
         {puedeBorrarSolicitud && <Btn small variant="success" style={{ marginLeft: "auto" }} onClick={() => setRez({ modo: "lote", hasta: "", quien: "", otro: "", nota: "cerradas con conta antes del nuevo flujo" })}
           title="Cerrar de un golpe todas las compras viejas que ya cerraron con conta pero quedaron varadas en el sistema">✅ Cerrar rezagadas en lote</Btn>}
       </div>
