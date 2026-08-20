@@ -61,6 +61,17 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   comprobante, cotización, constancia de pagos a cuenta, factura) y a
   continuación TODOS los anexos (PDFs mergeados de verdad, imágenes a página).
   Nombre: `PAQUETE-<codigo>.pdf`.
+  **ORDEN y anti-duplicado (20-ago-2026)**: los anexos se ensamblan TODOS con
+  pdf-lib (antes las imágenes iban primero con jsPDF `addImage` estiradas a la
+  fuerza — salían "pandas" — y los PDFs después, así que el orden se perdía).
+  Orden: portada → **FACTURA escaneada** → ficha de recibido → comprobante y
+  cotización → constancia. Las imágenes van en hoja horizontal o vertical
+  según su forma, escaladas proporcionalmente, y se normalizan a PNG con un
+  canvas (pdf-lib NO acepta webp/gif: el comprobante de prueba era `image/webp`
+  y se habría perdido). **Duplicado**: la ficha que sube Logística suele ser el
+  PDF completo de la Ficha de Entrega, que YA lleva cotización y comprobante
+  adentro; si ese PDF trae 3+ páginas (`fichaTraeAnexos`) esos dos no se
+  vuelven a adjuntar.
   **Cierre por FACTURA (19-ago-2026)**: `uploadPaqueteConta(purchase, file, tipo)`
   — tipo "factura" (el camino corto: conta escanea solo la factura que trajo el
   proveedor) o "paquete" (todo digitalizado). Cualquiera CIERRA la compra:

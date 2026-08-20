@@ -2249,42 +2249,95 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       doc.text("GeoMachinery — Sistema de Operaciones · Grupo Geotecnica", M, PH - 10);
       doc.text("Preparado por " + (userName || "Operaciones"), PW - M, PH - 10, { align: "right" });
 
-      // ── ANEXOS ──
+      // ── ANEXOS ─────────────────────────────────────────────────────────
+      // Se ensamblan TODOS con pdf-lib para respetar el ORDEN exacto y el
+      // aspect ratio de las imágenes (antes las imágenes iban primero con
+      // jsPDF estiradas a fuerza — salían "pandas" — y los PDFs después,
+      // así que el orden y la proporción se perdían).
+      //
+      // Orden pedido por Gerson (19-ago-2026):
+      //   portada → FACTURA escaneada → ficha de recibido → comprobante y
+      //   cotización (solo si la ficha no los trae) → constancia.
+      //
+      // OJO con el duplicado: la ficha que sube Logística suele ser el PDF
+      // completo de la Ficha de Entrega, que YA lleva la cotización y el
+      // comprobante adjuntos. Si ese PDF trae 3+ páginas se asume que los
+      // incluye y no se vuelven a adjuntar — así el paquete no repite el
+      // mismo documento dos veces.
+      const { PDFDocument, StandardFonts, rgb } = await safeDynamicImport(() => import("pdf-lib"), "pdf-lib");
+      const out = await PDFDocument.load(doc.output("arraybuffer"));
+      const helv = await out.embedFont(StandardFonts.Helvetica);
+      const helvB = await out.embedFont(StandardFonts.HelveticaBold);
+      const bytesDe = (dataUrl) => {
+        const b64 = String(dataUrl).split(",")[1] || "";
+        const bin = atob(b64);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return arr;
+      };
+
+      // ¿La ficha ya trae comprobante y cotización adentro?
+      let fichaTraeAnexos = false;
+      if (ficha && String(ficha.type || "") === "application/pdf") {
+        try {
+          const fDoc = await PDFDocument.load(bytesDe(ficha.dataUrl), { ignoreEncryption: true });
+          fichaTraeAnexos = fDoc.getPageCount() >= 3;
+        } catch { /* si no se puede leer, mejor adjuntar todo */ }
+      }
+
       const anexos = [
-        ["FICHA DE RECIBIDO FIRMADA", ficha],
-        ["COMPROBANTE DE PAGO", comp],
-        ["COTIZACIÓN", quote],
-        ["CONSTANCIA DE PAGOS A CUENTA", constancia],
         ["FACTURA DEL PROVEEDOR", factura],
+        ["FICHA DE RECIBIDO FIRMADA", ficha],
+        ...(fichaTraeAnexos ? [] : [["COMPROBANTE DE PAGO", comp], ["COTIZACIÓN", quote]]),
+        ["CONSTANCIA DE PAGOS A CUENTA", constancia],
       ].filter(([, f]) => !!f);
 
-      // Imágenes → página propia con encabezado
-      anexos.filter(([, f]) => String(f.type || "").startsWith("image/")).forEach(([titulo, f]) => {
-        doc.addPage();
-        fs(10, "bold"); tc(ORANGE); doc.text(titulo, PW / 2, 14, { align: "center" });
-        fs(7.5, "normal"); tc(GRAY); doc.text(String(pu.codigo || "") + " · " + (pu.provider || ""), PW / 2, 19, { align: "center" });
-        doc.setDrawColor(232, 118, 45); doc.setLineWidth(0.4); doc.line(M, 22, PW - M, 22);
-        try { doc.addImage(f.dataUrl, String(f.type).includes("png") ? "PNG" : "JPEG", M, 26, PW - 2 * M, PH - 42, undefined, "FAST"); }
-        catch { fs(9, "normal"); tc(GRAY); doc.text("(imagen no incrustable)", PW / 2, PH / 2, { align: "center" }); }
-      });
-
-      const pdfAnexos = anexos.filter(([, f]) => String(f.type || "") === "application/pdf");
       const fileName = `PAQUETE-${String(pu.codigo || pu.id).replace(/[^A-Za-z0-9-]/g, "")}.pdf`;
-      if (!pdfAnexos.length) { doc.save(fileName); return; }
-
-      // PDFs → mergear de verdad con pdf-lib
-      const { PDFDocument } = await safeDynamicImport(() => import("pdf-lib"), "pdf-lib");
-      const out = await PDFDocument.load(doc.output("arraybuffer"));
       const fallidos = [];
-      for (const [titulo, f] of pdfAnexos) {
+      for (const [titulo, f] of anexos) {
+        const tipo = String(f.type || "");
         try {
-          const b64 = String(f.dataUrl).split(",")[1];
-          const bin = atob(b64);
-          const bytes = new Uint8Array(bin.length);
-          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-          const inDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-          const pages = await out.copyPages(inDoc, inDoc.getPageIndices());
-          pages.forEach(pg => out.addPage(pg));
+          if (tipo === "application/pdf") {
+            const inDoc = await PDFDocument.load(bytesDe(f.dataUrl), { ignoreEncryption: true });
+            const pages = await out.copyPages(inDoc, inDoc.getPageIndices());
+            pages.forEach(pg => out.addPage(pg));
+          } else if (tipo.startsWith("image/")) {
+            // pdf-lib solo embebe PNG y JPEG. Las fotos que sube la gente
+            // vienen en cualquier formato (webp, heic convertido, gif…), así
+            // que se normalizan a PNG con un canvas: lo que el navegador
+            // pueda mostrar, entra al paquete.
+            const aPng = async (dataUrl) => {
+              const im = await new Promise((res, rej) => { const x = new Image(); x.onload = () => res(x); x.onerror = () => rej(new Error("imagen ilegible")); x.src = dataUrl; });
+              const cv = document.createElement("canvas");
+              cv.width = im.naturalWidth || im.width; cv.height = im.naturalHeight || im.height;
+              if (!cv.width || !cv.height) throw new Error("imagen sin dimensiones");
+              cv.getContext("2d").drawImage(im, 0, 0);
+              return bytesDe(cv.toDataURL("image/png"));
+            };
+            let img = null;
+            const directo = tipo.includes("png") || tipo.includes("jpeg") || tipo.includes("jpg");
+            if (directo) {
+              const bytes = bytesDe(f.dataUrl);
+              try { img = tipo.includes("png") ? await out.embedPng(bytes) : await out.embedJpg(bytes); }
+              catch { img = await out.embedPng(await aPng(f.dataUrl)); }
+            } else {
+              img = await out.embedPng(await aPng(f.dataUrl));
+            }
+            // Hoja en la orientación que le calce a la imagen (una foto
+            // horizontal ya no se aplasta dentro de una hoja vertical).
+            const horizontal = img.width > img.height;
+            const [PWp, PHp] = horizontal ? [841.89, 595.28] : [595.28, 841.89]; // A4 en puntos
+            const page = out.addPage([PWp, PHp]);
+            const mm = 34, topBar = 62;
+            page.drawText(titulo, { x: mm, y: PHp - 30, size: 11, font: helvB, color: rgb(0.909, 0.463, 0.176) });
+            page.drawText(`${pu.codigo || ""} · ${pu.provider || ""}`.slice(0, 90), { x: mm, y: PHp - 44, size: 8, font: helv, color: rgb(0.43, 0.41, 0.39) });
+            page.drawLine({ start: { x: mm, y: PHp - 52 }, end: { x: PWp - mm, y: PHp - 52 }, thickness: 1, color: rgb(0.909, 0.463, 0.176) });
+            // Escalado PROPORCIONAL dentro del área útil
+            const maxW = PWp - 2 * mm, maxH = PHp - topBar - mm;
+            const esc2 = Math.min(maxW / img.width, maxH / img.height);
+            const w = img.width * esc2, h = img.height * esc2;
+            page.drawImage(img, { x: (PWp - w) / 2, y: mm + (maxH - h) / 2, width: w, height: h });
+          }
         } catch (e) { console.warn("No se pudo incrustar " + titulo, e); fallidos.push(titulo); }
       }
       const merged = await out.save();
