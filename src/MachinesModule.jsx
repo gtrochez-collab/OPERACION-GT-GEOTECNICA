@@ -887,7 +887,9 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         />
       </div>
       <div style={{ gridColumn: "1/-1" }}>
-        <Textarea label="Descripcion de la solicitud (repuesto, mantenimiento, etc.)" value={f.description} onChange={e => u("description", e.target.value)} placeholder="Detalle del repuesto, servicio o mantenimiento a pagar" />
+        {/* Campo ÚNICO (20-ago-2026): el detalle según cotización ES la
+            descripción — no se escribe lo mismo dos veces. */}
+        <Textarea label="Qué se está pagando (tal cual la cotización) *" value={f.description} onChange={e => u("description", e.target.value)} placeholder={"Un renglón por ítem, como viene en la cotización:\n1 × Filtro de aceite\n6 LTS × Aceite 5W40"} />
       </div>
       <Input label="Monto total (Lempiras)" type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
       <Input label="Responsable de Operaciones" value={f.opsResponsible} onChange={e => u("opsResponsible", e.target.value)} placeholder="Quien valida por Operaciones" />
@@ -2215,7 +2217,10 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       y += 7;
 
       // Detalle de materiales (si lo registraron)
-      if (pu.detalleMateriales) {
+      // Solo si aporta algo DISTINTO de la descripción: desde el 20-ago-2026 el
+      // detalle según cotización y la descripción son el mismo campo, así que
+      // en las solicitudes nuevas esto no se repite.
+      if (pu.detalleMateriales && String(pu.detalleMateriales).trim() !== String(pu.description || "").trim()) {
         fs(8, "bold"); tc(ORANGE); doc.text("DETALLE SEGÚN COTIZACIÓN", M, y); y += 4.5;
         fs(8, "normal"); tc([60, 58, 56]);
         const lineas = doc.splitTextToSize(String(pu.detalleMateriales), PW - 2 * M - 4).slice(0, 12);
@@ -3812,7 +3817,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
           <tbody>
             ${mq2.items.map(x => `<tr style="border-top:1px solid #F1F5F9;vertical-align:top">
               <td style="padding:5px 14px;font-weight:600;white-space:nowrap;width:190px">${chipCo(x.company === "subterra" ? "subterra" : "geotecnica")} ${esc(x.provider || "—")}</td>
-              <td style="padding:5px 8px;color:#334155">${esc(x.description || "—")}${x.detalleMateriales ? `<div style="color:#64748b;font-size:9px;white-space:pre-wrap;margin-top:2px;border-left:2px solid #E2E8F0;padding-left:6px">${esc(x.detalleMateriales)}</div>` : ""}</td>
+              <td style="padding:5px 8px;color:#334155">${esc(x.description || "—")}${x.detalleMateriales && String(x.detalleMateriales).trim() !== String(x.description || "").trim() ? `<div style="color:#64748b;font-size:9px;white-space:pre-wrap;margin-top:2px;border-left:2px solid #E2E8F0;padding-left:6px">${esc(x.detalleMateriales)}</div>` : ""}</td>
               <td style="padding:5px 8px;text-align:right;white-space:nowrap;color:#64748b;width:64px">${x.paidAt ? new Date(x.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", timeZone: "UTC" }) : "—"}</td>
               <td style="padding:5px 14px;text-align:right;font-weight:700;white-space:nowrap;width:110px">${fL(x.amount)}</td>
             </tr>`).join("")}

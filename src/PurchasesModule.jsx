@@ -889,14 +889,17 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         </datalist>
       </div>
       <Input label="N° de Cotizacion" value={f.quoteNumber} onChange={e => u("quoteNumber", e.target.value)} placeholder="Ej: COT-2026-0123" />
-      <div style={{ gridColumn: "1/-1" }}>
-        <Textarea label="Descripcion de la compra" value={f.description} onChange={e => u("description", e.target.value)} placeholder="Detalle del bien o servicio a adquirir" />
-      </div>
       <Input label="Monto total (Lempiras)" type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
       <Input label="Responsable de Operaciones" value={f.opsResponsible} onChange={e => u("opsResponsible", e.target.value)} placeholder="Quien valida por Operaciones" />
       <Input label="Responsable de cierre contable" value={f.cierreResponsable || ""} onChange={e => u("cierreResponsable", e.target.value)} placeholder="Quien cierra esta compra con Contabilidad" />
+      {/* CAMPO ÚNICO (20-ago-2026): antes había "Descripción de la compra" y
+          además "Detalle de materiales" — lo mismo escrito dos veces. Ahora
+          este es el único, y alimenta `description` (que es lo que ven la
+          tabla, las cards, la ficha de entrega, los despachos y los
+          reportes). `detalleMateriales` queda solo en las solicitudes viejas
+          que ya lo tenían. */}
       <div style={{ gridColumn: "1/-1" }}>
-        <Textarea label="Detalle de materiales (según cotización)" value={f.detalleMateriales || ""} onChange={e => u("detalleMateriales", e.target.value)} placeholder={"Qué se está comprando, tal cual la cotización. Un renglón por ítem:\n2 × Sacos de cemento 42.5 kg\n10 × Varilla 3/8 grado 60"} />
+        <Textarea label="Qué se está comprando (tal cual la cotización) *" value={f.description} onChange={e => u("description", e.target.value)} placeholder={"Un renglón por ítem, como viene en la cotización:\n2 × Sacos de cemento 42.5 kg\n10 × Varilla 3/8 grado 60"} />
       </div>
 
       <div style={{ gridColumn: "1/-1", background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 12 }}>
@@ -2540,7 +2543,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       y += 7;
 
       // Detalle de materiales (si lo registraron)
-      if (pu.detalleMateriales) {
+      // Solo si aporta algo DISTINTO de la descripción: desde el 20-ago-2026 el
+      // detalle según cotización y la descripción son el mismo campo, así que
+      // en las solicitudes nuevas esto no se repite.
+      if (pu.detalleMateriales && String(pu.detalleMateriales).trim() !== String(pu.description || "").trim()) {
         fs(8, "bold"); tc(ORANGE); doc.text("DETALLE SEGÚN COTIZACIÓN", M, y); y += 4.5;
         fs(8, "normal"); tc([60, 58, 56]);
         const lineas = doc.splitTextToSize(String(pu.detalleMateriales), PW - 2 * M - 4).slice(0, 12);
@@ -2888,7 +2894,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             <div style={{ fontSize: 11, color: "#64748b" }}>Responsable de cierre contable</div>
             <div style={{ fontWeight: 700, color: "#0F766E" }}>🧾 {p.cierreResponsable}</div>
           </div>}
-          {p.detalleMateriales && <div style={{ gridColumn: "1/-1" }}>
+          {p.detalleMateriales && String(p.detalleMateriales).trim() !== String(p.description || "").trim() && <div style={{ gridColumn: "1/-1" }}>
             <div style={{ fontSize: 11, color: "#64748b" }}>Detalle de materiales (según cotización)</div>
             <div style={{ whiteSpace: "pre-wrap", color: "#334155", background: "#F8FAFC", border: "1px solid #E2E8F0", padding: 10, borderRadius: 8, fontSize: 12.5 }}>{p.detalleMateriales}</div>
           </div>}
@@ -3982,7 +3988,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <tbody>
           ${r.items.map(x => `<tr style="border-top:1px solid #F1F5F9;vertical-align:top">
             <td style="padding:5px 12px;font-weight:600;white-space:nowrap">${chipCo(x.company === "subterra" ? "subterra" : "geotecnica")} ${esc(x.provider || "—")}</td>
-            <td style="padding:5px 8px;color:#334155">${esc(x.description || "—")}${x.detalleMateriales ? `<div style="color:#64748b;font-size:9px;white-space:pre-wrap;margin-top:2px;border-left:2px solid #E2E8F0;padding-left:6px">${esc(x.detalleMateriales)}</div>` : ""}</td>
+            <td style="padding:5px 8px;color:#334155">${esc(x.description || "—")}${x.detalleMateriales && String(x.detalleMateriales).trim() !== String(x.description || "").trim() ? `<div style="color:#64748b;font-size:9px;white-space:pre-wrap;margin-top:2px;border-left:2px solid #E2E8F0;padding-left:6px">${esc(x.detalleMateriales)}</div>` : ""}</td>
             <td style="padding:5px 8px;text-align:right;white-space:nowrap;color:#64748b">${x.paidAt ? new Date(x.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", timeZone: "UTC" }) : "—"}</td>
             <td style="padding:5px 12px;text-align:right;font-weight:700;white-space:nowrap">${fL(x.amount)}</td>
           </tr>`).join("")}

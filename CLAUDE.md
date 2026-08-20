@@ -24,7 +24,14 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Por coordinar (kanban Ana → logística), Proveedores. Exporta `generateFichaPDF`.
   **Flujo de cierre contable (19-ago-2026, pedido de Gerson)**: el form de
   solicitud lleva `cierreResponsable` (quién cierra con conta) y
-  `detalleMateriales` (qué se compra, según cotización — opcional). El kanban
+  `detalleMateriales` (qué se compra, según cotización — opcional).
+  **Campo único (20-ago-2026)**: el form tenía "Descripción de la compra" Y
+  "Detalle de materiales" — lo mismo tipeado dos veces. Ahora hay UN solo
+  textarea ("Qué se está comprando, tal cual la cotización") que escribe en
+  `description`, que es lo que leen la tabla, las cards, la ficha de entrega,
+  los despachos y los reportes. `detalleMateriales` sobrevive solo en las
+  solicitudes viejas, y el paquete/reportes/modal lo muestran únicamente si
+  DIFIERE de `description` (si no, saldría duplicado). El kanban
   "Por coordinar" de Ana quedó LIMPIO: solo lo accionable (pagadas sin camino);
   al elegir salida la compra se va a su pestaña. Pestañas nuevas (Ana las ve):
   **🏪 Entregas de proveedor** (deliveryStatus entrega_proveedor, por proyecto:
