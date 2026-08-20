@@ -76,6 +76,19 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   — tipo "factura" (el camino corto: conta escanea solo la factura que trajo el
   proveedor) o "paquete" (todo digitalizado). Cualquiera CIERRA la compra:
   `conta.facturaFile` o `conta.fileId`.
+  **Cierre de REZAGADAS (20-ago-2026, solo Gerson)**: las compras anteriores a
+  este flujo ya cerraron con conta en la vida real pero quedaron varadas en
+  cualquier fase. `aplicarCierreRezagadas(lista, responsable, nota)` las manda
+  a Cerradas SIN pedir archivo: `conta = {legacy:true, tipo:"rezagada",
+  cerradoPor, cerradoAt, nota}` + audit con quién lo hizo, y cierra también sus
+  despachos abiertos en `lg-despachos` (si no quedan trabados pidiendo una
+  ficha que nunca va a llegar). El modal (`rez` / `modalRezagadas`) pide el
+  RESPONSABLE — selector con los labels de USERS + "Otro (escribir)" — en dos
+  modos: **una** (✅ en la card, junto al 🗑) o **lote** (botón en la barra de
+  "Por cerrar contable", con fecha de corte: cierra todo lo pagado hasta esa
+  fecha). Helper `yaCerradaConta(z)` = fileId || facturaFile || legacy — TODAS
+  las clasificaciones lo usan, así una cerrada desaparece de Por coordinar,
+  Entregas de proveedor y Por cerrar a la vez.
   **Borrado total de una solicitud (20-ago-2026)**: `borrarSolicitudCompleta`
   + `puedeBorrarSolicitud` (= `userName === "Lic. Gerson Trochez"`, pedido
   explícito: "solo a mi porfa"). Papelera 🗑 en las cards de Por coordinar,

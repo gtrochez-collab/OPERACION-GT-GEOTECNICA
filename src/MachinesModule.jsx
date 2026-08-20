@@ -3,6 +3,7 @@ import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 import { safeDynamicImport } from "./lazyLoad.js";
+import { USERS } from "./users.js";
 
 // Marca Geotecnica
 const ORANGE = "#E8762D";
@@ -237,7 +238,7 @@ const readFileAsDataUrl = file => new Promise((resolve, reject) => {
 // ── UI primitives ──
 const Badge = ({ children, color = "#64748b" }) => <span style={{ background: color + "18", color, padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>{children}</span>;
 
-const Btn = ({ children, onClick, variant = "primary", small, style: sx, disabled, type }) => {
+const Btn = ({ children, onClick, variant = "primary", small, style: sx, disabled, type, title }) => {
   const b = { border: "none", borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer", fontWeight: 600, fontSize: small ? 12 : 14, padding: small ? "5px 12px" : "9px 20px", opacity: disabled ? 0.5 : 1, fontFamily: "inherit", letterSpacing: 0.2 };
   const v = {
     primary: { ...b, background: ORANGE, color: "#fff", boxShadow: "0 2px 6px rgba(232,118,45,0.20)" },
@@ -247,7 +248,7 @@ const Btn = ({ children, onClick, variant = "primary", small, style: sx, disable
     danger: { ...b, background: "#C0392B", color: "#fff" },
     ghost: { ...b, background: "transparent", color: "#5C5853", border: "1px solid #DBD4C8" },
   };
-  return <button type={type || "button"} style={{ ...(v[variant] || v.primary), ...sx }} onClick={onClick} disabled={disabled}>{children}</button>;
+  return <button type={type || "button"} title={title} style={{ ...(v[variant] || v.primary), ...sx }} onClick={onClick} disabled={disabled}>{children}</button>;
 };
 
 const Input = ({ label, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<input style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, outline: "none", background: "#F8FAFC" }} {...p} /></div>;
@@ -1444,6 +1445,8 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   // Filtros del archivo de cerradas contablemente (mes de cierre / proyecto / texto)
   const [provQ, setProvQ] = useState("");   // buscador de proveedores
   const [coordMes, setCoordMes] = useState("");  // filtro por mes de pago en Por coordinar
+  const [rez, setRez] = useState(null);       // modal de cierre de rezagadas
+  const [rezSaving, setRezSaving] = useState(false);
   const [cerrMes, setCerrMes] = useState("");
   const [cerrProy, setCerrProy] = useState("");
   const [cerrQ, setCerrQ] = useState("");
@@ -2361,7 +2364,63 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   // Limpia TODO el rastro: la solicitud, los despachos que generó en
   // GeoLogistics y los archivos adjuntos (que si no quedan huérfanos en la
   // base). Patrón robusto: getCloud + verify; sin nube, no borra nada.
+  // Una compra está CERRADA contablemente si conta trae la factura, el paquete
+  // digitalizado, o si se cerró a mano por ser REZAGADA del flujo viejo
+  // (conta.legacy — 20-ago-2026: cientos de compras anteriores a este flujo ya
+  // habían cerrado con conta en la vida real pero quedaron varadas acá).
+  const yaCerradaConta = (z) => !!(z?.conta?.fileId || z?.conta?.facturaFile?.fileId || z?.conta?.legacy);
   const puedeBorrarSolicitud = userName === "Lic. Gerson Trochez";
+  // ── CIERRE DE REZAGADAS (20-ago-2026, solo Gerson) ───────────────────────
+  // Las compras anteriores a este flujo ya cerraron con Contabilidad en la
+  // vida real, pero en el sistema quedaron varadas en cualquier fase. Esto
+  // las manda a "Cerradas contablemente" registrando QUIÉN las cerró, sin
+  // pedir archivo (no existe digitalizado de las viejas).
+  const aplicarCierreRezagadas = async (lista, responsable, nota) => {
+    if (!lista.length) return alert("No hay solicitudes que cerrar con ese criterio.");
+    const ids = new Set(lista.map(z => z.id));
+    let cloud;
+    try { cloud = await store.getCloud("mq-purchases"); }
+    catch { alert("⚠️ Sin conexión con la nube — no se cerró nada. Reintentá."); return false; }
+    if (!Array.isArray(cloud)) { alert("⚠️ No se pudo leer la lista desde la nube."); return false; }
+    const at = new Date().toISOString();
+    const next = cloud.map(z => {
+      if (!z || !ids.has(z.id) || yaCerradaConta(z)) return z;
+      return {
+        ...z,
+        conta: { legacy: true, tipo: "rezagada", cerradoPor: responsable, cerradoAt: at, nota: nota || "" },
+        audit: [...(z.audit || []), {
+          ts: at, action: "cierre_contable_rezagada", by: userName || userRole, role: userRole,
+          note: `Cerrada contablemente (rezagada del flujo anterior) — responsable: ${responsable}${nota ? ` · ${nota}` : ""}`,
+        }],
+      };
+    });
+    const ok = await store.set("mq-purchases", next);
+    let verified = false;
+    try {
+      const back = await store.getCloud("mq-purchases");
+      verified = Array.isArray(back) && lista.every(z => { const f = back.find(y => y && y.id === z.id); return f && yaCerradaConta(f); });
+    } catch { verified = false; }
+    if (!ok || !verified) { alert("⚠️ No se pudo VERIFICAR el cierre en la nube — reintentá."); return false; }
+    setPurchases(next);
+
+    // Cerrar también los despachos abiertos de esas compras: si no, quedan
+    // trabados en el kanban de Logística pidiendo una ficha que nunca va a
+    // llegar (son del flujo viejo).
+    try {
+      const cd = await store.getCloud("lg-despachos");
+      if (Array.isArray(cd)) {
+        let tocados = 0;
+        const nd = cd.map(d => {
+          if (!d || !ids.has(d.sourcePurchaseId) || d.estado === "cerrado" || d.estado === "cancelado") return d;
+          tocados++;
+          return { ...d, estado: "cerrado", fechaEjecutada: d.fechaEjecutada || at.slice(0, 10), updatedAt: at };
+        });
+        if (tocados) await store.set("lg-despachos", nd);
+      }
+    } catch { /* best effort: la compra ya quedó cerrada */ }
+    return true;
+  };
+
   const borrarSolicitudCompleta = async (x) => {
     if (!puedeBorrarSolicitud) return;
     const docs = [
@@ -3526,6 +3585,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     const despachoDe = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
     const clasificar = (p) => {
       if (p.status !== "pagado" && p.status !== "finalizado") return null;
+      if (yaCerradaConta(p)) return null;   // cerrada (incluye rezagadas) → pestaña Cerradas
       if (p.deliveryStatus === "ficha_adjunta" || p.deliveryStatus === "cerrado") return "listas";
       if (p.deliveryStatus === "entrega_proveedor") return null; // vive en la pestaña Entregas de proveedor
       const d = despachoDe(p.id);
@@ -3939,7 +3999,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   // cerrar" para que ese tablero quede solo con lo pendiente.
   // ─────────────────────────────────────────────────────────────────────────
   const renderCerradas = () => {
-    const esCerrada = (x) => !!(x?.conta?.fileId || x?.conta?.facturaFile?.fileId);
+    const esCerrada = (x) => yaCerradaConta(x);
     const todas = cp.filter(esCerrada);
     const mesDeCierre = (x) => String(x.conta?.cerradoAt || "").slice(0, 7);
     const meses = [...new Set(todas.map(mesDeCierre).filter(Boolean))].sort().reverse();
@@ -4040,7 +4100,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     const despachoDe = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
     const clasificar = (x) => {
       if (x.status !== "pagado" && x.status !== "finalizado") return null;
-      if (x.conta?.fileId || x.conta?.facturaFile?.fileId) return "cerrada";
+      if (yaCerradaConta(x)) return "cerrada";
       if (x.deliveryStatus === "ficha_adjunta" || x.deliveryStatus === "cerrado") return "lista";
       if (x.deliveryStatus === "entrega_proveedor") return "falta_proveedor";
       const d = despachoDe(x.id);
@@ -4067,7 +4127,10 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       }[tipo];
       const maquina = machines.find(m => m.id === x.machineId);
       return <div key={x.id} style={{ background: "#fff", border: `1px solid ${cfg.border}`, borderLeft: `3px solid ${cfg.c}`, borderRadius: 8, padding: 12, position: "relative" }}>
-        {puedeBorrarSolicitud && <span role="button" title="Borrar esta solicitud por completo (solo vos)" onClick={() => borrarSolicitudCompleta(x)} style={{ position: "absolute", top: 8, right: 8, cursor: "pointer", fontSize: 12, opacity: 0.45, lineHeight: 1 }}>🗑</span>}
+        {puedeBorrarSolicitud && <span style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6, lineHeight: 1 }}>
+          <span role="button" title="Cerrar contablemente esta rezagada del flujo anterior (solo vos)" onClick={() => setRez({ modo: "una", purchase: x, quien: "", otro: "", nota: "" })} style={{ cursor: "pointer", fontSize: 12, opacity: 0.6 }}>✅</span>
+          <span role="button" title="Borrar esta solicitud por completo (solo vos)" onClick={() => borrarSolicitudCompleta(x)} style={{ cursor: "pointer", fontSize: 12, opacity: 0.45 }}>🗑</span>
+        </span>}
         <span style={{ display: "inline-block", background: cfg.c + "18", color: cfg.c, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, lineHeight: 1.35 }}>{cfg.badge}</span>
         {x.codigo && <div style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", fontFamily: "ui-monospace, Menlo, monospace", marginTop: 5 }}>{x.codigo}</div>}
         <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 2 }}>{x.provider}</div>
@@ -4099,6 +4162,8 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
           {mesesDisponibles.map(m => <option key={m} value={m}>{(() => { const [y, mm] = m.split("-").map(Number); return new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); })()}</option>)}
         </select>
         {contaMes && !mesesDisponibles.includes(contaMes) && <span style={{ fontSize: 11, color: "#94A3B8", fontStyle: "italic" }}>sin compras pagadas este mes — elegí otro</span>}
+        {puedeBorrarSolicitud && <Btn small variant="success" style={{ marginLeft: "auto" }} onClick={() => setRez({ modo: "lote", hasta: "", quien: "", otro: "", nota: "cerradas con conta antes del nuevo flujo" })}
+          title="Cerrar de un golpe todas las compras viejas que ya cerraron con conta pero quedaron varadas en el sistema">✅ Cerrar rezagadas en lote</Btn>}
       </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         {[["🧾", totales.lista + totales.falta_logistica + totales.falta_proveedor + totales.en_camino, "Por cerrar", "#B45309"], ["✓", totales.lista, "Documentos listos", "#059669"], ["⚠", totales.falta_logistica, "Sin ficha de Logística", "#DC2626"], ["✅", totales.cerrada, "Cerradas", "#64748b"]].map(([ic, n, lbl, c]) => (
@@ -4504,6 +4569,76 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     }
   };
 
+
+  // ── MODAL: cerrar rezagadas del flujo anterior (solo Gerson) ──
+  const modalRezagadas = () => {
+    if (!rez) return null;
+    const enLote = rez.modo === "lote";
+    const candidatas = enLote
+      ? cp.filter(z => (z.status === "pagado" || z.status === "finalizado") && !yaCerradaConta(z)
+          && (!rez.hasta || String(z.paidAt || z.paymentDate || "").slice(0, 10) <= rez.hasta))
+      : [rez.purchase];
+    const responsable = (rez.quien === "__otro__" ? rez.otro : rez.quien).trim();
+    const gente = [...new Set(USERS.map(u => u.label).filter(Boolean))].sort();
+    return <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1200, padding: 16 }} onClick={() => !rezSaving && setRez(null)}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: 22, width: 520, maxWidth: "96vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 70px rgba(0,0,0,.25)" }}>
+        <div style={{ fontSize: 17, fontWeight: 900, color: CHARCOAL }}>✅ Cerrar contablemente {enLote ? "en lote" : "esta solicitud"}</div>
+        <div style={{ fontSize: 12.5, color: "#64748b", marginTop: 4, lineHeight: 1.5 }}>
+          Para las compras <b>rezagadas del flujo anterior</b>: las que ya cerraron con Contabilidad en la vida real pero quedaron varadas en el sistema. No pide archivo — solo queda registrado quién las cerró.
+        </div>
+
+        {enLote
+          ? <div style={{ marginTop: 14, background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: 12 }}>
+              <label style={{ fontSize: 10.5, fontWeight: 800, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5 }}>Cerrar todo lo pagado HASTA esta fecha</label>
+              <input type="date" value={rez.hasta || ""} onChange={e => setRez(r => ({ ...r, hasta: e.target.value }))}
+                style={{ display: "block", marginTop: 6, padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, fontFamily: "inherit", width: "100%" }} />
+              <div style={{ fontSize: 12, color: "#78350F", marginTop: 8, fontWeight: 700 }}>
+                {rez.hasta ? `Se van a cerrar ${candidatas.length} solicitud(es) pagadas hasta el ${rez.hasta}.` : `Sin fecha: se cerrarían TODAS las ${candidatas.length} abiertas. Poné la fecha de corte del flujo viejo.`}
+              </div>
+            </div>
+          : <div style={{ marginTop: 14, background: "#F8F2E6", borderRadius: 10, padding: 12, fontSize: 13 }}>
+              <div style={{ fontWeight: 800, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11.5, color: "#64748b" }}>{rez.purchase.codigo || "sin código"}</div>
+              <div style={{ fontWeight: 800, color: CHARCOAL, marginTop: 2 }}>{rez.purchase.provider}</div>
+              <div style={{ color: "#475569", fontSize: 12 }}>{String(rez.purchase.description || "").slice(0, 100)}</div>
+              <div style={{ color: "#059669", fontWeight: 800, marginTop: 3 }}>{fmtL(rez.purchase.amount)}</div>
+            </div>}
+
+        <div style={{ marginTop: 14 }}>
+          <label style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>¿Quién la cerró con Contabilidad? *</label>
+          <select value={rez.quien} onChange={e => setRez(r => ({ ...r, quien: e.target.value }))}
+            style={{ display: "block", width: "100%", marginTop: 6, padding: "9px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+            <option value="">— Elegí —</option>
+            {gente.map(g => <option key={g} value={g}>{g}</option>)}
+            <option value="__otro__">✏️ Otro (escribir)…</option>
+          </select>
+          {rez.quien === "__otro__" && <input value={rez.otro} onChange={e => setRez(r => ({ ...r, otro: e.target.value }))}
+            placeholder="Nombre de quien cerró" autoFocus
+            style={{ display: "block", width: "100%", marginTop: 8, padding: "9px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }} />}
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <label style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>Nota (opcional)</label>
+          <input value={rez.nota} onChange={e => setRez(r => ({ ...r, nota: e.target.value }))}
+            placeholder="ej. cerradas con conta antes del nuevo flujo"
+            style={{ display: "block", width: "100%", marginTop: 6, padding: "9px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }} />
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+          <Btn variant="ghost" disabled={rezSaving} onClick={() => setRez(null)}>Cancelar</Btn>
+          <Btn variant="success" disabled={rezSaving || !responsable || candidatas.length === 0} onClick={async () => {
+            if (!responsable) return alert("Elegí o escribí quién la cerró.");
+            if (enLote && !confirm(`¿Cerrar ${candidatas.length} solicitud(es) como rezagadas?\n\nResponsable: ${responsable}\n\nPasan directo a "Cerradas contablemente" y sus despachos abiertos en Logística también se cierran.`)) return;
+            setRezSaving(true);
+            try {
+              const ok = await aplicarCierreRezagadas(candidatas, responsable, rez.nota);
+              if (ok) { setRez(null); alert(`✅ ${candidatas.length} solicitud(es) cerradas contablemente a nombre de ${responsable}.`); }
+            } finally { setRezSaving(false); }
+          }}>{rezSaving ? "Cerrando…" : `Cerrar ${enLote ? candidatas.length + " solicitud(es)" : "esta compra"}`}</Btn>
+        </div>
+      </div>
+    </div>;
+  };
+
   // ── LAYOUT ──
   const allNav = [
     { id: "dashboard", icon: "🎯", label: "Dashboard" },
@@ -4738,6 +4873,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
         modal de detalle — es de solo lectura (sin botones de mutacion). El
         resto de modales (nuevo/editar/pagar/etc.) sigue bloqueado para ellos. */}
     {(!canViewOnly || modal?.t === "detail") && renderModal()}
+    {modalRezagadas()}
   </div>;
 }
 
