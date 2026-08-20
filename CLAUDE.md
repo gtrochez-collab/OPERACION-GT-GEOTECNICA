@@ -170,6 +170,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   "Asistencias históricas sin cuadrilla" (la rearma desde los assignments de la
   hoja). Una quincena nueva siembra copiando la cuadrilla más reciente.
 - `LogisticsModule.jsx` (GeoLogistics) — flota y despachos (kanban Oscar/Jorge).
+  **Botón de ficha en el KANBAN (19-ago-2026)**: el bloque de subir ficha
+  firmada vivía SOLO en la card de "Entregados" (`renderCardEntregado`), así
+  que Oscar no tenía cómo subirla antes de marcar entregado y el candado lo
+  dejaba trabado. Ahora `renderCardDespacho` (la card del kanban) lleva
+  "📎 Ficha de recibido (obligatoria)" con ids `kf-ficha-<id>` + aviso rojo,
+  y muestra "✓ Ficha subida" cuando ya está.
   **Candado de ficha (19-ago-2026)**: `fichaBloqueaEntrega` — un despacho con
   `sourcePurchaseId` (source "compra" o "maquinas") NO se puede marcar
   entregado/cerrado sin la ficha de recibido subida (o la compra cerrada sin

@@ -1434,6 +1434,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // pero queda accesible eligiendo el mes o "Todos".
   const [contaMes, setContaMes] = useState(() => new Date().toISOString().slice(0, 7));
   // Filtros del archivo de cerradas contablemente (mes de cierre / proyecto / texto)
+  const [provQ, setProvQ] = useState("");   // buscador de proveedores
+  const [coordMes, setCoordMes] = useState("");  // filtro por mes de pago en Por coordinar
   const [cerrMes, setCerrMes] = useState("");
   const [cerrProy, setCerrProy] = useState("");
   const [cerrQ, setCerrQ] = useState("");
@@ -3093,20 +3095,41 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // PROVEEDORES — CRUD compartido entre admin/costos/Ana
   // ─────────────────────────────────────────────────────────────────────────
   const renderProviders = () => {
-    const sorted = providers.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    // Buscador (19-ago-2026): con 114 proveedores la grilla era imposible de
+    // recorrer a ojo. Busca por nombre, RTN, contacto, teléfono o banco.
+    const q = provQ.trim().toLowerCase();
+    const sorted = providers.slice()
+      .filter(p => {
+        if (!q) return true;
+        const campos = [p.name, p.rtn, p.contactName, p.contactEmail, ...(p.phones || []),
+          ...(p.bankAccounts || []).flatMap(b => [b.bank, b.number, b.holder])];
+        return campos.some(v => String(v || "").toLowerCase().includes(q));
+      })
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 14, fontSize: 13, color: "#1E40AF" }}>
         🏢 <b>{providers.length} proveedores registrados.</b> Cada compra que se crea con un proveedor nuevo se agrega aqui automaticamente para que <b>{isAsistenteCompras ? "vos completes" : "Ana complete"}</b> los datos (telefonos, cuentas bancarias, contacto). En la nueva solicitud aparecen como dropdown.
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 240 }}>
+          <input
+            value={provQ}
+            onChange={e => setProvQ(e.target.value)}
+            placeholder="🔍 Buscar proveedor por nombre, RTN, contacto o banco…"
+            style={{ flex: 1, minWidth: 200, padding: "9px 14px", border: "1px solid #CBD5E1", borderRadius: 10, fontSize: 13, fontFamily: "inherit" }}
+          />
+          {provQ && <Btn small variant="ghost" onClick={() => setProvQ("")}>× Limpiar</Btn>}
+        </div>
         <span style={{ fontSize: 13, color: "#64748b" }}>
-          {providers.filter(p => p.autoImported && !p.phones?.length && !p.bankAccounts?.length).length} sin datos completos
+          {provQ
+            ? `${sorted.length} de ${providers.length} proveedores`
+            : `${providers.filter(p => p.autoImported && !p.phones?.length && !p.bankAccounts?.length).length} sin datos completos`}
         </span>
         {canManageProviders && <Btn variant="primary" onClick={() => setModal({ t: "provider-new" })}>+ Agregar proveedor</Btn>}
       </div>
       {sorted.length === 0
         ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 40, textAlign: "center", color: "#94A3B8" }}>
-            Aun no hay proveedores. Click en + Agregar proveedor.
+            {provQ ? `Ningún proveedor coincide con "${provQ}".` : "Aun no hay proveedores. Click en + Agregar proveedor."}
           </div>
         : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 14 }}>
             {sorted.map(p => {
@@ -4274,9 +4297,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const grupos = {};
     const ensure = (key) => { if (!grupos[key]) grupos[key] = { por_coordinar: [], entrega_directa: [], en_logistica: [], listas: [] }; };
     let totales = { por_coordinar: 0, entrega_directa: 0, en_logistica: 0, listas: 0 };
+    // Filtro por MES DE PAGO (19-ago-2026): con 34 compras por coordinar el
+    // tablero se hacía largo. Default: TODOS (nada se esconde por accidente).
+    const mesesDisponibles = [...new Set(cp.filter(p => clasificar(p)).map(p => String(p.paidAt || p.paymentDate || "").slice(0, 7)).filter(Boolean))].sort().reverse();
+    const pasaMes = (p) => !coordMes || String(p.paidAt || p.paymentDate || "").slice(0, 7) === coordMes;
     cp.forEach(p => {
       const bucket = clasificar(p);
       if (!bucket) return;
+      if (!pasaMes(p)) return;
       const key = p.projectCode || "__sin__";
       ensure(key);
       grupos[key][bucket].push(p);
@@ -4380,6 +4408,18 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         💼 <b>Flujo:</b> Lic. Carolina paga → cae acá 📦. Vos coordinás y elegís la salida: 🚛 <b>Enviar a Logística</b> o 🏪 <b>La entrega el proveedor</b> (o 🔒 cerrar sin ficha si es servicio/renta). Al elegir, la compra SALE de este tablero y sigue su camino en las pestañas <b>Entregas de proveedor</b> y <b>Por cerrar contablemente</b>.
       </div>
 
+
+      {/* Filtro por MES DE PAGO — el tablero se hacía largo con todo junto */}
+      {mesesDisponibles.length > 1 && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "10px 14px" }}>
+        <span style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>📅 Mes de pago:</span>
+        <button onClick={() => setCoordMes("")} style={{ padding: "5px 12px", borderRadius: 20, border: "none", background: !coordMes ? "#E8762D" : "#F1F5F9", color: !coordMes ? "#fff" : "#475569", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Todos</button>
+        {mesesDisponibles.map(m => {
+          const [yy2, mm2] = m.split("-").map(Number);
+          const lbl = new Date(yy2, mm2 - 1, 1).toLocaleDateString("es-HN", { month: "short", year: "2-digit" });
+          return <button key={m} onClick={() => setCoordMes(m === coordMes ? "" : m)} style={{ padding: "5px 12px", borderRadius: 20, border: "none", background: coordMes === m ? "#E8762D" : "#F1F5F9", color: coordMes === m ? "#fff" : "#475569", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{lbl}</button>;
+        })}
+        {coordMes && <span style={{ fontSize: 11, color: "#64748b" }}>mostrando solo lo pagado en ese mes</span>}
+      </div>}
       {/* Kanban por proyecto — cada columna tiene 4 sub-secciones colapsables */}
       {projKeys.length === 0
         ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 60, textAlign: "center", color: "#94A3B8" }}>

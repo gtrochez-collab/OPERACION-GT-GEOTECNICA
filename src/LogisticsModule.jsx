@@ -1087,7 +1087,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     const tieneFicha = !!compra.delivery?.fichaFile?.fileId;
     const cerradaSinFicha = compra.deliveryStatus === "cerrado";  // servicios/renta
     if (tieneFicha || cerradaSinFicha) return false;
-    alert(`🚫 NO se puede marcar como entregado: falta la FICHA DE RECIBIDO firmada.\n\n${compra.provider || ""} — ${(compra.description || "").slice(0, 80)}\n\nSubí primero la ficha que trajo el motorista (botón 📎 del despacho) y después marcá la entrega. Es la regla del cierre contable: sin ficha, la compra queda trabada como "SIN FICHA de Logística".`);
+    alert(`🚫 NO se puede marcar como entregado: falta la FICHA DE RECIBIDO firmada.\n\n${compra.provider || ""} — ${(compra.description || "").slice(0, 80)}\n\nSubí primero la ficha que trajo el motorista con el botón naranja "📎 Subir ficha firmada" de esta misma tarjeta, y después marcá la entrega. Es la regla del cierre contable: sin ficha, la compra queda trabada como "SIN FICHA de Logística".`);
     return true;
   };
 
@@ -2145,6 +2145,60 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                     color: BRAND.charcoal,
                   }}
                 />
+              </div>}
+
+              {/* SUBIR FICHA FIRMADA — en la card del kanban, donde Logística
+                  trabaja (19-ago-2026). Antes solo estaba en la card de
+                  "Entregados", así que Oscar no tenía cómo subirla ANTES de
+                  marcar entregado — y el candado se lo impedía. Sin ficha no
+                  se puede cerrar: el aviso lo dice y el botón está acá mismo. */}
+              {canEdit && sourcePurchase && !sourcePurchase.delivery?.fichaFile && (() => {
+                const isUploading = uploadingFichaId === d.id;
+                const anyUploading = uploadingFichaId !== null;
+                return <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.orange}50` }}>
+                  <label style={{ display: "block", fontSize: 9, color: BRAND.orange, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+                    📎 Ficha de recibido (obligatoria)
+                  </label>
+                  <input
+                    type="file"
+                    accept=".pdf,image/*"
+                    id={`kf-ficha-${d.id}`}
+                    style={{ display: "none" }}
+                    disabled={anyUploading}
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) { e.target.value = ""; return; }
+                      setUploadingFichaId(d.id);
+                      try {
+                        const ok = await uploadFichaFirmada(d, f);
+                        if (ok) alert("✓ Ficha firmada subida y enlazada a la compra.\n\nYa podés marcar el despacho como ENTREGADO.");
+                      } finally {
+                        setUploadingFichaId(null);
+                        e.target.value = "";
+                      }
+                    }}
+                  />
+                  <label
+                    htmlFor={anyUploading ? undefined : `kf-ficha-${d.id}`}
+                    style={{
+                      display: "block", width: "100%",
+                      background: isUploading ? BRAND.stone : BRAND.orange,
+                      color: "#fff", border: "none", padding: "8px 10px", borderRadius: R.sm,
+                      fontSize: 11, fontWeight: 800, cursor: anyUploading ? "not-allowed" : "pointer",
+                      fontFamily: "inherit", textAlign: "center", boxSizing: "border-box",
+                      opacity: anyUploading && !isUploading ? 0.5 : 1,
+                    }}
+                    title="Subí la ficha que el residente firmó en obra. Sin esto no se puede marcar entregado."
+                  >{isUploading ? "⏳ Subiendo ficha…" : "📎 Subir ficha firmada"}</label>
+                  <div style={{ fontSize: 9, color: BRAND.red, marginTop: 4, fontWeight: 700 }}>
+                    ⚠ Sin la ficha firmada NO se puede marcar como entregado.
+                  </div>
+                </div>;
+              })()}
+
+              {/* Ficha ya subida: constancia visible */}
+              {sourcePurchase?.delivery?.fichaFile && <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.borderSoft}`, fontSize: 10, color: BRAND.green, fontWeight: 800 }}>
+                ✓ Ficha de recibido subida — {sourcePurchase.delivery.fichaFile.name}
               </div>}
 
               {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
