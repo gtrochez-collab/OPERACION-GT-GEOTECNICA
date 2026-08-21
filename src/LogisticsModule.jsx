@@ -16,7 +16,7 @@
 // - cp-projects → compartido con Compras y RRHH (proyectos)
 // =====================================================================
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import { BRAND, FONT, R } from "./theme.js";
 import Logo from "./Logo.jsx";
