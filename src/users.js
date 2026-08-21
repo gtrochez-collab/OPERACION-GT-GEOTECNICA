@@ -14,7 +14,12 @@ export const USERS = [
   { username: "gerencia",      password: "gerencia1234",   role: "gerencia",           label: "Gerencia" },
   { username: "gerson",        password: "gerson1234",     role: "coordinador",        label: "Lic. Gerson Trochez" },
   { username: "christian",     password: "christian1234",  role: "costos",             label: "Lic. Christian Gallo" },
-  { username: "oscarpaz",      password: "oscarpaz1234",   role: "logistica",          label: "Oscar Paz" },
+  // ubicacion: la "sede" de la tablet de marcaje de este usuario. GeoClock la
+  // estampa en cada marcaje y Registros la usa para listar como NO MARCÓ a
+  // los asignados de esa sede que no marcaron. Para sumar la tablet de un
+  // ingeniero en proyecto: crear su usuario con role "marcaje" y su
+  // ubicacion = short del proyecto (ej. "PILOTES-EBENEZER").
+  { username: "oscarpaz",      password: "oscarpaz1234",   role: "logistica",          label: "Oscar Paz", ubicacion: "PLANTEL" },
   { username: "jorge",         password: "jorge1234",      role: "recepcion",          label: "Jorge Castellanos" },
   { username: "ana",           password: "ana1234",        role: "asistente_compras",  label: "Ana Vasquez" },
   { username: "fernando",      password: "fernando1234",   role: "coordinador_maquinas", label: "Lic. Fernando Diaz" },
@@ -28,7 +33,7 @@ export const USERS = [
   // Tablet de marcaje de OFICINA/ADMINISTRACIÓN (ago 2026): solo GeoClock.
   // Sus marcajes los aprueba Ana en Llegadas tardías (GeoTeam). La clave
   // también es el candado del modo kiosco para salir del reloj.
-  { username: "marcaje",       password: "marcaje1234",    role: "marcaje",              label: "Marcaje de Asistencia" },
+  { username: "marcaje",       password: "marcaje1234",    role: "marcaje",              label: "Marcaje de Asistencia", ubicacion: "ADMINISTRACIÓN" },
 ];
 
 export const ROLE_LABEL = {

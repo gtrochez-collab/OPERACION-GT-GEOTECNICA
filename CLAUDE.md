@@ -269,6 +269,15 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   PDF imprimible sin emojis. Carga por getCloud de todas las quincenas del
   rango (quincenasDeRango). Tolerancia subida a 15 min (TOLERANCIA_MIN en
   HRModule — aplica a reloj, ficha y tardanzas a la vez).
+  **Tablets con UBICACIÓN + ausentes en Registros (21-ago-2026, caso José
+  Miguel)**: cada tablet es una sede — `ubicacion` en users.js (oscarpaz =
+  PLANTEL, marcaje = ADMINISTRACIÓN; una tablet de proyecto futuro = usuario
+  role "marcaje" con ubicacion = short del proyecto). GeoClock estampa
+  `mark.ubicacion` al marcar. En Registros, los ACTIVOS asignados por
+  cuadrilla a una sede con tablet que no marcaron en un día CERRADO donde la
+  tablet sí operó aparecen como fila NO MARCÓ/NO MARCÓ con sus ➕ de marcaje
+  manual (`proyectoConTablet`, matching sin acentos por `includes`). Si nadie
+  marcó ese día, no se inventa nada.
   **Corrección manual + NO MARCÓ (18-ago-2026, caso Ariel)**: el día cierra
   11:59 PM — en días CERRADOS la celda sin marca muestra badge rojo
   "NO MARCÓ"; regla de negocio: día cerrado SIN ENTRADA = NO SE PRESENTÓ

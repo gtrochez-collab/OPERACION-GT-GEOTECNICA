@@ -81,6 +81,23 @@ const hora12 = (h, m, s) => {
   return { txt: `${h12}:${String(m).padStart(2, "0")}`, seg: String(s).padStart(2, "0"), ampm };
 };
 // Minutos desde medianoche de un "H:MM" / "HH:MM".
+// ── UBICACIONES DE TABLET (21-ago-2026) ─────────────────────────────────
+// Cada tablet de marcaje "es" una sede: la de administración marca en
+// ADMINISTRACIÓN, la de Oscar en PLANTEL, y a futuro las de los ingenieros
+// en su proyecto (se define en users.js con el campo `ubicacion`). GeoClock
+// estampa la ubicación en cada marcaje, y Registros usa la lista de sedes
+// con tablet para mostrar como NO MARCÓ a los asignados que no marcaron.
+const sinAcentos = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+const UBICACIONES_TABLET = [...new Set(USERS.map(u => u.ubicacion).filter(Boolean))];
+// ¿El proyecto asignado (short) pertenece a una sede con tablet?
+const proyectoConTablet = (short) => {
+  const p = sinAcentos(short);
+  if (!p || p === "SIN PROYECTO") return false;
+  return UBICACIONES_TABLET.some(u => p.includes(sinAcentos(u)));
+};
+// Ubicación de la tablet del usuario logueado (por su label en users.js).
+const ubicacionDeUsuario = (label) => (USERS.find(u => u.label === label) || {}).ubicacion || "";
+
 const minDe = (hhmm) => {
   const [h, m] = String(hhmm || "0:0").split(":").map(Number);
   return (h || 0) * 60 + (m || 0);
@@ -440,6 +457,27 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
           : !sal && ent ? (fecha === hoyF ? "en curso" : "—") : "—";
         rowsAll.push({ fecha, emp, proy: proyectoDe(emp, fecha), ent, sal, brutas, almuerzo, netas, estado, cerrado });
       });
+      // ── AUSENTES DE LAS SEDES CON TABLET (21-ago-2026, caso José Miguel) ──
+      // Antes el reporte solo listaba a quienes marcaron: el que no vino era
+      // invisible y no había cómo ponerle marcaje manual desde acá. Ahora, en
+      // días CERRADOS donde la tablet SÍ operó (hubo entradas), los activos
+      // asignados por cuadrilla a una sede con tablet (PLANTEL,
+      // ADMINISTRACIÓN, y los proyectos que se sumen en users.js) que no
+      // tienen ningún marcaje aparecen con NO MARCÓ en entrada y salida —
+      // listos para el ➕ de marcaje manual, o para confirmar el NSP en la
+      // hoja de GeoTeam. Si nadie marcó ese día (tablet apagada), no se
+      // inventa nada.
+      const cerradoDia = fecha < hoyF;
+      if (cerradoDia && delDia.some(mk => mk && mk.tipo === "entrada")) {
+        const marcaron = new Set(delDia.map(mk => mk.empId));
+        emps.forEach(e => {
+          if (e.status !== "active" || marcaron.has(e.id)) return;
+          if (regPersona && e.id !== regPersona) return;
+          const proy = proyectoDe(e, fecha);
+          if (!proyectoConTablet(proy)) return;
+          rowsAll.push({ fecha, emp: e, proy, ent: null, sal: null, brutas: null, almuerzo: 0, netas: null, estado: "—", cerrado: true, ausente: true });
+        });
+      }
     });
     // El filtro de proyecto activo SIEMPRE está en las opciones (si no, al
     // cambiar el rango el select quedaba "huérfano" en blanco).
@@ -578,6 +616,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         comentario: tipoAccion === "salida" ? comentSalida.trim() : "",
         firmaId: id,
         registradoPor: userName || "GeoClock",
+        ubicacion: ubicacionDeUsuario(userName),
         ts: nowIso,
         createdAt: nowIso,
       };
