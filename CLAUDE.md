@@ -131,14 +131,27 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   desde la fecha elegida) / rango; más proyecto, responsable, texto y etapa
   (click en la tarjeta). OJO: las tarjetas y el ranking se calculan sobre
   `base` (todos los filtros MENOS etapa) para poder saltar entre etapas; la
-  tabla usa `filas` (base + etapa). "esperando_pago" se exceptúa del filtro de
-  fecha a propósito: no tiene fecha de pago todavía. Índice `despPorCompra`
-  para no hacer O(n·m) por render. Ranking "a quién apurar" = suma de días de
-  las paradas >3d por responsable. Auditado con data real: las 321 compras
-  quedan clasificadas, ninguna invisible.
+  tabla usa `filas` (base + etapa). Índice `despPorCompra`: ignora CANCELADOS
+  (esa compra volvió a Compras) y gana el despacho MÁS RECIENTE. Ranking "a
+  quién apurar" = suma de días de las paradas >3d por responsable CANÓNICO
+  (`quien` agrupa, `detalle` muestra el motorista — antes "Logística" se
+  fragmentaba en 3 etiquetas y el ranking mentía). Auditado con data real: las
+  321 compras quedan clasificadas, ninguna invisible.
+  **Revisión adversarial aplicada (24-ago-2026)**: eje de tiempo `fEje` cae a
+  validatedAt/createdAt (había compras pagadas viejas sin paidAt que quedaban
+  invisibles con el filtro de mes Y sin contar como atrasadas); esperando_pago
+  ya NO se cuela en los filtros de fecha (antes contaminaba el dinero total con
+  todo lo no pagado de la historia); `diasDesde` compara SOLO fechas (paidAt es
+  medianoche UTC: de las 18:00 en adelante contaba un día de más y cruzaba el
+  semáforo); `scMes` default con partes LOCALES y el mes elegido siempre en el
+  select; deliveryStatus "recibido" sin despacho → falta_ficha (el material ya
+  está en obra, el pendiente es de Logística); MAQUINAS se atribuye a Fernando
+  igual que en el kanban; el orden por atraso deja las cerradas al final;
+  destildar "ver cerradas" limpia el filtro de esa etapa.
   **Orden de Solicitudes por FECHA DE PAGO (24-ago-2026)**: `listOrden`
-  (pago_desc default | pago_asc | estado) con selector en la barra; las sin
-  pagar van al final.
+  (pago_desc | pago_asc | estado) con selector en la barra; las sin pagar van
+  al final. OJO: para `tesoreria` el default es "estado" — Solicitudes ES la
+  pantalla de Carolina y su cola de pago quedaba al fondo de 321 filas.
   **Reporte ejecutivo de MATERIALES (19-ago-2026)**: `exportComprasEjecutivoPDF(mes)`
   en la pestaña Costos (botón + input month) — clon del "Costo de Mano de Obra"
   de GeoTeam: portada con KPIs + dona SVG por proyecto + gasto/mezcla por
