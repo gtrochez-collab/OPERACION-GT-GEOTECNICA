@@ -1552,13 +1552,20 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const [anaExpand, setAnaExpand] = useState({});
   // Estado del Command Center (Resumen). showCompleted: incluir cerradas.
   // projectCode: filtrar a un solo proyecto.
-  const [resumenFilter, setResumenFilter] = useState({
-    showCompleted: false,
-    projectCode: "",
-    // Filtro por mes (fecha de carga). Default: mes actual — el coordinador
-    // ve solo lo del mes y el Resumen no se hace kilometrico. "" = todos.
-    month: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
-  });
+  // Orden de la tabla de Solicitudes: pago_desc (default) | pago_asc | estado
+  const [listOrden, setListOrden] = useState("pago_desc");
+  // ── Filtros de Supply Chain (24-ago-2026) ──
+  const [scModo, setScModo] = useState("mes");          // todo | mes | semana | rango
+  const [scMes, setScMes] = useState(() => new Date().toISOString().slice(0, 7));
+  const [scSemana, setScSemana] = useState("");
+  const [scDesde, setScDesde] = useState("");
+  const [scHasta, setScHasta] = useState("");
+  const [scEtapa, setScEtapa] = useState("");
+  const [scProy, setScProy] = useState("");
+  const [scQuien, setScQuien] = useState("");
+  const [scQ, setScQ] = useState("");
+  const [scOrden, setScOrden] = useState("pago");       // pago | atraso
+  const [scVerCerradas, setScVerCerradas] = useState(false);
   // Mes de las metricas mensuales del Dashboard ("" = mes actual).
   const [dashMonth, setDashMonth] = useState("");
 
@@ -4359,200 +4366,266 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     );
   };
 
-  const renderResumen = () => {
-    // Filtros del Command Center
-    // - showCompleted: incluir las "listas" (ficha subida o cerradas).
-    //   Por default ocultas — el coordinador solo ve lo que tiene accion pendiente.
-    const showCompleted = resumenFilter.showCompleted;
-    const projFilter = resumenFilter.projectCode;
-    const monthFilter = resumenFilter.month;
-    const monthLabel = monthFilter ? (() => {
-      const [y, m] = monthFilter.split("-").map(Number);
-      return new Date(y, m - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
-    })() : "";
+  // ═══════════════════════════════════════════════════════════════════════
+  // SUPPLY CHAIN (24-ago-2026) — reemplaza el viejo "Resumen".
+  // Para qué sirve: ver en 5 segundos DÓNDE está parada cada compra, DESDE
+  // CUÁNDO, y DE QUIÉN es la pelota. El eje del tiempo es la FECHA DE PAGO
+  // (paidAt): es el momento desde el que Gerson tiene que estar encima.
+  //
+  // Una compra vive en UNA sola etapa. El orden de las reglas define la
+  // prioridad (la primera que calza gana):
+  //   esperando_pago → por_coordinar → en_logistica → con_proveedor
+  //   → falta_ficha → por_cerrar → cerrada
+  // ═══════════════════════════════════════════════════════════════════════
+  const ETAPAS = [
+    { k: "esperando_pago", label: "Esperando pago",     icon: "🟡", color: "#B45309", quien: "Lic. Carolina" },
+    { k: "por_coordinar",  label: "Por coordinar",      icon: "🟠", color: "#E8762D", quien: "Ana / Compras" },
+    { k: "en_logistica",   label: "En logística",       icon: "🚚", color: "#0891B2", quien: "Logística" },
+    { k: "con_proveedor",  label: "Con el proveedor",   icon: "🏪", color: "#0F766E", quien: "Ana / Compras" },
+    { k: "falta_ficha",    label: "Falta ficha firmada", icon: "📋", color: "#DC2626", quien: "Logística" },
+    { k: "por_cerrar",     label: "Por cerrar con conta", icon: "🧾", color: "#7C3AED", quien: "Responsable de cierre" },
+    { k: "cerrada",        label: "Cerrada",            icon: "✅", color: "#059669", quien: "—" },
+  ];
+  const ETAPA = Object.fromEntries(ETAPAS.map(e => [e.k, e]));
 
-    // Agrupar compras por proyecto, filtrando segun company actual
-    const grupos = {};
-    cp.forEach(p => {
-      // Una compra esta "lista" cuando Jorge subio la ficha o cuando Ana cerro.
-      // De ahi en adelante no necesita visibilidad del coordinador.
-      const lista = !!p.delivery?.fichaFile || p.deliveryStatus === "cerrado";
-      if (!showCompleted && lista) return;
-      if (projFilter && p.projectCode !== projFilter) return;
-      // Filtro por mes de carga (createdAt). "" = todos los meses.
-      if (monthFilter && String(p.createdAt || "").slice(0, 7) !== monthFilter) return;
-      const key = p.projectCode || "_sin_proyecto";
-      (grupos[key] = grupos[key] || []).push(p);
+  const renderSupplyChain = () => {
+    const hoy = new Date();
+    const diasDesde = (iso) => {
+      if (!iso) return null;
+      const d = new Date(iso);
+      if (isNaN(d)) return null;
+      return Math.max(0, Math.floor((hoy - d) / 86400000));
+    };
+    // Índice por compra: con 321 compras × 185 despachos, buscar con .find()
+    // en cada fila era O(n·m) en cada render.
+    const despPorCompra = {};
+    despachos.forEach(d => { if (d && d.sourcePurchaseId && !despPorCompra[d.sourcePurchaseId]) despPorCompra[d.sourcePurchaseId] = d; });
+    const despachoDe = (id) => despPorCompra[id];
+
+    // Etapa + "desde cuándo" + responsable concreto de esa etapa.
+    const etapaDe = (x) => {
+      const d = despachoDe(x.id);
+      if (x.status === "borrador") return null;                       // aún no aprobada: no es supply chain
+      if (x.status === "validado") return { k: "esperando_pago", desde: x.validatedAt || x.createdAt, quien: "Lic. Carolina" };
+      if (yaCerradaConta(x)) return { k: "cerrada", desde: x.conta?.cerradoAt, quien: x.conta?.cerradoPor || "—" };
+      const respCierre = x.cierreResponsable || "sin asignar";
+      if (x.deliveryStatus === "ficha_adjunta" || x.deliveryStatus === "cerrado") return { k: "por_cerrar", desde: x.delivery?.fichaUploadedAt || x.delivery?.closedAt || x.paidAt, quien: respCierre };
+      if (d && (d.estado === "entregado" || d.estado === "cerrado")) return { k: "falta_ficha", desde: d.fechaEjecutada || d.updatedAt, quien: d.motorista ? `Logística (${d.motorista})` : "Logística" };
+      // Un despacho CANCELADO no cuenta: la compra vuelve a estar sin camino,
+      // o sea de nuevo en manos de Compras (si no, desaparecía del radar).
+      if (d && d.estado !== "cancelado") return { k: "en_logistica", desde: d.createdAt || x.paidAt, quien: d.motorista || "Logística" };
+      if (x.deliveryStatus === "entrega_proveedor") return { k: "con_proveedor", desde: x.delivery?.arrivalAt || x.paidAt, quien: x.provider };
+      return { k: "por_coordinar", desde: x.paidAt || x.paymentDate || x.createdAt, quien: isAsistenteCompras ? "vos" : "Ana / Compras" };
+    };
+
+    // ── Filtros: mes / semana / rango libre sobre la FECHA DE PAGO ──
+    const fpago = (x) => String(x.paidAt || x.paymentDate || "").slice(0, 10);
+    const enRango = (x) => {
+      const f = fpago(x);
+      if (scModo === "mes") return !scMes || f.slice(0, 7) === scMes;
+      if (scModo === "semana") {
+        if (!scSemana) return true;
+        const ini = scSemana, fin = new Date(new Date(scSemana + "T12:00:00").getTime() + 6 * 86400000).toISOString().slice(0, 10);
+        return f >= ini && f <= fin;
+      }
+      if (scModo === "rango") return (!scDesde || f >= scDesde) && (!scHasta || f <= scHasta);
+      return true;   // "todo"
+    };
+
+    // `base`: todo lo que pasa los filtros MENOS el de etapa. Las tarjetas y el
+    // ranking se calculan sobre esto, así al filtrar por una etapa las demás
+    // siguen mostrando su conteo y se puede saltar entre ellas.
+    const base = cp.map(x => {
+      const e = etapaDe(x);
+      if (!e) return null;
+      return { x, ...e, dias: diasDesde(e.desde), cfg: ETAPA[e.k] };
+    }).filter(Boolean)
+      .filter(r => scVerCerradas || r.k !== "cerrada" || scEtapa === "cerrada")
+      .filter(r => !scProy || (r.x.projectCode || "SIN PROYECTO") === scProy)
+      .filter(r => !scQuien || String(r.quien).toLowerCase().includes(scQuien.toLowerCase()))
+      .filter(r => {
+        // Las que esperan pago no tienen fecha de pago: se muestran siempre
+        // (son el inicio de la cadena y hay que verlas), salvo filtro de etapa.
+        if (r.k === "esperando_pago") return true;
+        return enRango(r.x);
+      })
+      .filter(r => {
+        if (!scQ.trim()) return true;
+        const t = scQ.trim().toLowerCase();
+        return [r.x.codigo, r.x.provider, r.x.description, r.x.projectCode].some(v => String(v || "").toLowerCase().includes(t));
+      });
+    // La TABLA sí respeta el filtro de etapa.
+    const filas = scEtapa ? base.filter(r => r.k === scEtapa) : base;
+
+    // Semáforo de atraso: verde ≤3 días, ámbar 4-7, rojo >7 en la MISMA etapa.
+    const sem = (dias, k) => {
+      if (k === "cerrada" || dias == null) return { c: "#94A3B8", bg: "#F1F5F9", txt: dias == null ? "—" : `${dias}d` };
+      if (dias <= 3) return { c: "#059669", bg: "#DCFCE7", txt: `${dias}d` };
+      if (dias <= 7) return { c: "#B45309", bg: "#FEF3C7", txt: `${dias}d` };
+      return { c: "#B91C1C", bg: "#FEE2E2", txt: `${dias}d` };
+    };
+
+    const ordenadas = filas.slice().sort((a, b) => {
+      if (scOrden === "atraso") return (b.dias ?? -1) - (a.dias ?? -1);
+      // Default: por FECHA DE PAGO, lo más reciente arriba (lo que Gerson
+      // tiene que perseguir ahora). Las sin pago van al final.
+      const fa = fpago(a.x), fb = fpago(b.x);
+      if (!fa && !fb) return 0;
+      if (!fa) return 1;
+      if (!fb) return -1;
+      return fb.localeCompare(fa);
     });
 
-    const proyectosConCompras = Object.keys(grupos).sort();
+    // ── Tarjetas por etapa: cuántas y CUÁNTO DINERO hay atascado ──
+    const porEtapa = {};
+    base.forEach(r => {
+      const t = (porEtapa[r.k] = porEtapa[r.k] || { n: 0, monto: 0, atrasadas: 0 });
+      t.n++; t.monto += Number(r.x.amount) || 0;
+      if (r.k !== "cerrada" && (r.dias ?? 0) > 7) t.atrasadas++;
+    });
 
-    if (proyectosConCompras.length === 0) {
-      return (
-        <div style={{ textAlign: "center", padding: 60, color: "#94A3B8" }}>
-          <div style={{ fontSize: 56, marginBottom: 16 }}>📊</div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "#475569" }}>
-            {monthFilter ? `Nada pendiente cargado en ${monthLabel}` : showCompleted ? "No hay compras para mostrar" : "✓ Todo al dia — no hay acciones pendientes"}
-          </div>
-          {!showCompleted && <div style={{ marginTop: 8, fontSize: 13 }}>Activa "Mostrar listas" para ver las compras donde Jorge ya subio la ficha.</div>}
-          {monthFilter && (
-            <div style={{ marginTop: 12 }}>
-              <Btn small variant="ghost" onClick={() => setResumenFilter(s => ({ ...s, month: "" }))}>Ver todos los meses</Btn>
-            </div>
-          )}
+    // ── Ranking de atraso por responsable (el "jalar orejas") ──
+    const porQuien = {};
+    base.filter(r => r.k !== "cerrada" && (r.dias ?? 0) > 3).forEach(r => {
+      const q = (porQuien[r.quien] = porQuien[r.quien] || { n: 0, dias: 0, monto: 0 });
+      q.n++; q.dias += r.dias || 0; q.monto += Number(r.x.amount) || 0;
+    });
+    const ranking = Object.entries(porQuien).map(([quien, v]) => ({ quien, ...v })).sort((a, b) => b.dias - a.dias).slice(0, 5);
+
+    const proyOpts = [...new Set(cp.map(x => x.projectCode || "SIN PROYECTO"))].sort();
+    const mesesOpts = [...new Set(cp.map(x => fpago(x).slice(0, 7)).filter(Boolean))].sort().reverse();
+    const mesLabel = (m) => { const [y, mm] = m.split("-").map(Number); const t = new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
+    const totalAtascado = base.filter(r => r.k !== "cerrada").reduce((sm, r) => sm + (Number(r.x.amount) || 0), 0);
+    const chip = (txt, activo, onClick) => <button onClick={onClick} style={{ padding: "5px 12px", borderRadius: 20, border: "none", background: activo ? "#E8762D" : "#F1F5F9", color: activo ? "#fff" : "#475569", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{txt}</button>;
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Encabezado */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: CHARCOAL }}>🔗 Supply Chain</div>
+          <div style={{ fontSize: 12, color: STONE, marginTop: 2 }}>Dónde está parada cada compra, desde cuándo y de quién es la pelota. El reloj arranca en la <b>fecha de pago</b>.</div>
         </div>
-      );
-    }
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10.5, fontWeight: 800, color: STONE, textTransform: "uppercase", letterSpacing: 0.5 }}>Ordenar:</span>
+          {chip("📅 Fecha de pago", scOrden === "pago", () => setScOrden("pago"))}
+          {chip("🔥 Más atrasadas", scOrden === "atraso", () => setScOrden("atraso"))}
+        </div>
+      </div>
 
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        {/* Filtros */}
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 10, padding: 12 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, color: CHARCOAL }}>
-            <input type="checkbox" checked={showCompleted} onChange={e => setResumenFilter(s => ({ ...s, showCompleted: e.target.checked }))} />
-            Mostrar listas (ya con ficha)
+      {/* Filtros de tiempo */}
+      <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10.5, fontWeight: 800, color: STONE, textTransform: "uppercase", letterSpacing: 0.5 }}>Pagadas en:</span>
+          {chip("Todo", scModo === "todo", () => setScModo("todo"))}
+          {chip("Por mes", scModo === "mes", () => setScModo("mes"))}
+          {chip("Por semana", scModo === "semana", () => setScModo("semana"))}
+          {chip("Rango libre", scModo === "rango", () => setScModo("rango"))}
+          {scModo === "mes" && <select value={scMes} onChange={e => setScMes(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }}>
+            <option value="">Todos los meses</option>
+            {mesesOpts.map(m => <option key={m} value={m}>{mesLabel(m)}</option>)}
+          </select>}
+          {scModo === "semana" && <>
+            <input type="date" value={scSemana} onChange={e => setScSemana(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }} />
+            <span style={{ fontSize: 11, color: STONE }}>semana que arranca ese día (7 días)</span>
+          </>}
+          {scModo === "rango" && <>
+            <input type="date" value={scDesde} onChange={e => setScDesde(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }} />
+            <span style={{ color: STONE }}>→</span>
+            <input type="date" value={scHasta} onChange={e => setScHasta(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }} />
+          </>}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select value={scProy} onChange={e => setScProy(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }}>
+            <option value="">📍 Todos los proyectos</option>
+            {proyOpts.map(p2 => <option key={p2} value={p2}>{p2}</option>)}
+          </select>
+          <input value={scQuien} onChange={e => setScQuien(e.target.value)} placeholder="👤 Responsable…" style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", width: 150 }} />
+          <input value={scQ} onChange={e => setScQ(e.target.value)} placeholder="🔍 Código, proveedor, material…" style={{ flex: 1, minWidth: 180, padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }} />
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: STONE, cursor: "pointer", whiteSpace: "nowrap" }}>
+            <input type="checkbox" checked={scVerCerradas} onChange={e => setScVerCerradas(e.target.checked)} style={{ cursor: "pointer", accentColor: "#059669" }} />
+            ver cerradas
           </label>
-          <div style={{ height: 20, width: 1, background: "#E2E8F0" }} />
-          <Select
-            label=""
-            options={[{ value: "", label: "Todos los proyectos" }, ...allProjects.map(p => ({ value: p.short, label: p.short }))]}
-            value={projFilter}
-            onChange={e => setResumenFilter(s => ({ ...s, projectCode: e.target.value }))}
-            emptyLabel="Todos los proyectos"
-          />
-          <div style={{ height: 20, width: 1, background: "#E2E8F0" }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: CHARCOAL }}>Mes:</span>
-            <input type="month" value={monthFilter} onChange={e => setResumenFilter(s => ({ ...s, month: e.target.value }))}
-              title="Filtra por mes de carga de la solicitud"
-              style={{ padding: "6px 10px", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12, background: "#fff", fontFamily: "inherit" }} />
-            {monthFilter
-              ? <button onClick={() => setResumenFilter(s => ({ ...s, month: "" }))} style={{ background: "transparent", border: `1px solid ${BORDER}`, borderRadius: 6, padding: "5px 10px", fontSize: 11, cursor: "pointer", color: "#64748b", fontFamily: "inherit" }}>Todos</button>
-              : <span style={{ fontSize: 11, color: "#94A3B8", fontStyle: "italic" }}>todos los meses</span>}
-          </div>
-          <div style={{ marginLeft: "auto", fontSize: 12, color: "#64748b", fontWeight: 600 }}>
-            {monthFilter ? `${monthLabel} · ` : ""}{proyectosConCompras.length} proyectos · {Object.values(grupos).reduce((a, l) => a + l.length, 0)} compras
-          </div>
+          {(scEtapa || scProy || scQuien || scQ || scModo !== "todo") && <Btn small variant="ghost" onClick={() => { setScEtapa(""); setScProy(""); setScQuien(""); setScQ(""); setScModo("todo"); }} title="Quita todos los filtros, incluido el de fecha">Limpiar todo</Btn>}
         </div>
+      </div>
 
-        {/* Leyenda */}
-        <div style={{ background: "#F8FAFC", border: `1px solid ${BORDER}`, borderRadius: 8, padding: "8px 12px", display: "flex", gap: 16, fontSize: 11, color: "#64748b", flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontWeight: 700, color: CHARCOAL }}>Leyenda:</span>
-          <span><span style={{ display: "inline-block", width: 12, height: 12, background: "#059669", borderRadius: 2, verticalAlign: "middle", marginRight: 4 }} />Completado</span>
-          <span><span style={{ display: "inline-block", width: 12, height: 12, background: "#F59E0B", borderRadius: 2, verticalAlign: "middle", marginRight: 4, border: "2px solid #D97706" }} />Siguiente accion</span>
-          <span><span style={{ display: "inline-block", width: 12, height: 12, background: "#E2E8F0", borderRadius: 2, verticalAlign: "middle", marginRight: 4 }} />Pendiente</span>
-          <span style={{ marginLeft: "auto", fontStyle: "italic" }}>Click una compra para abrir el detalle completo</span>
-        </div>
-
-        {/* Proyectos */}
-        {proyectosConCompras.map(key => {
-          const items = grupos[key];
-          const proj = allProjects.find(p => p.short === key);
-          const projName = proj?.name || "";
-          const projColor = proj?.color || "#475569";
-          const totalMonto = items.reduce((a, p) => a + Number(p.amount || 0), 0);
-          // Stats de fases — solo compras que tienen accion pendiente (no listas)
-          const pendingByOwner = {};
-          items.forEach(p => {
-            const lc = computeLifecycle(p);
-            if (lc.nextOwner && lc.nextOwner !== "" && !lc.lista) {
-              pendingByOwner[lc.nextOwner] = (pendingByOwner[lc.nextOwner] || 0) + 1;
-            }
-          });
-
-          return (
-            <details key={key} open style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "hidden" }}>
-              {/* Header del proyecto — click para plegar/desplegar */}
-              <summary style={{ padding: "14px 18px", background: projColor + "15", borderBottom: `2px solid ${projColor}40`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, cursor: "pointer", listStyle: "none" }}>
-                <div>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: projColor, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.3 }}>{key}</div>
-                  {projName && <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{projName}</div>}
-                </div>
-                <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{fmtL(totalMonto)}</div>
-                    <div style={{ fontSize: 10, color: "#94A3B8", textTransform: "uppercase", letterSpacing: 0.5 }}>{items.length} compras</div>
-                  </div>
-                  <span title="Plegar / desplegar" style={{ fontSize: 12, color: projColor, fontWeight: 700 }}>▾</span>
-                </div>
-              </summary>
-
-              {/* Resumen de acciones pendientes por owner */}
-              {Object.keys(pendingByOwner).length > 0 && (
-                <div style={{ padding: "8px 18px", background: "#FFFBEB", borderBottom: `1px solid #FCD34D`, fontSize: 12, color: "#92400E", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-                  <span style={{ fontWeight: 700 }}>⚠️ Pendiente:</span>
-                  {Object.entries(pendingByOwner).map(([owner, count]) => (
-                    <span key={owner} style={{ background: "#FCD34D40", padding: "3px 10px", borderRadius: 12, fontWeight: 600 }}>{owner}: {count}</span>
-                  ))}
-                </div>
-              )}
-
-              {/* Tabla de compras */}
-              <div>
-                {items.map((p, idx) => {
-                  const lc = computeLifecycle(p);
-                  return (
-                    <div
-                      key={p.id}
-                      onClick={() => setModal({ t: "detail", d: p })}
-                      style={{
-                        padding: "12px 18px",
-                        borderTop: idx === 0 ? "none" : `1px solid #F1F5F9`,
-                        display: "grid",
-                        gridTemplateColumns: "minmax(0, 1.5fr) 1fr auto minmax(0, 1.3fr)",
-                        gap: 16,
-                        alignItems: "center",
-                        cursor: "pointer",
-                        transition: "background .12s",
-                      }}
-                      onMouseEnter={e => e.currentTarget.style.background = "#FAFAFB"}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                    >
-                      {/* Provider + descripcion */}
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider || "—"}</div>
-                        <div style={{ fontSize: 11, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>{p.description}</div>
-                      </div>
-
-                      {/* Lifecycle bar */}
-                      <div>{renderLifecycleBar(p, lc)}</div>
-
-                      {/* Monto */}
-                      <div style={{ textAlign: "right", minWidth: 100 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: "#059669" }}>{fmtL(p.amount)}</div>
-                      </div>
-
-                      {/* Siguiente accion + estado de entrega (lo que importa:
-                          suministrar el proyecto — se ve de un vistazo que
-                          esta entregado y que no) */}
-                      <div style={{ minWidth: 0 }}>
-                        {lc.lista ? (
-                          <div style={{ fontSize: 11, color: "#059669", fontWeight: 700 }}>🚚 Entregado · ✓ Lista — pasar a contabilidad</div>
-                        ) : (
-                          <>
-                            {lc.isPaid && (
-                              <span style={{
-                                display: "inline-block", fontSize: 9, fontWeight: 800, padding: "2px 8px", borderRadius: 8, marginBottom: 3, letterSpacing: 0.3,
-                                background: lc.entregado ? "#DCFCE7" : lc.hasDesp ? "#DBEAFE" : "#EDE9FE",
-                                color: lc.entregado ? "#166534" : lc.hasDesp ? "#1E40AF" : "#6B21A8",
-                              }}>
-                                {lc.entregado ? "🚚 ENTREGADO" : lc.hasDesp ? "🚛 EN LOGÍSTICA" : "🕐 SIN COORDINAR"}
-                              </span>
-                            )}
-                            <div style={{ fontSize: 11, fontWeight: 700, color: lc.entregado ? "#166534" : "#9A4F1D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lc.nextAction}</div>
-                            {lc.nextOwner && <div style={{ fontSize: 10, color: "#64748b", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>→ {lc.nextOwner}</div>}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </details>
-          );
+      {/* Etapas: click para filtrar */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {ETAPAS.filter(e => e.k !== "cerrada" || scVerCerradas).map(e => {
+          const t = porEtapa[e.k] || { n: 0, monto: 0, atrasadas: 0 };
+          const activo = scEtapa === e.k;
+          return <div key={e.k} onClick={() => setScEtapa(activo ? "" : e.k)}
+            style={{ flex: 1, minWidth: 148, background: activo ? e.color + "12" : "#fff", border: `1px solid ${activo ? e.color : BORDER}`, borderTop: `3px solid ${e.color}`, borderRadius: 12, padding: "11px 13px", cursor: "pointer" }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: STONE, textTransform: "uppercase", letterSpacing: 0.4 }}>{e.icon} {e.label}</div>
+            <div style={{ fontSize: 23, fontWeight: 800, color: e.color, marginTop: 3 }}>{t.n}</div>
+            <div style={{ fontSize: 11, color: "#475569", fontWeight: 700 }}>{fmtL(t.monto)}</div>
+            <div style={{ fontSize: 10, color: t.atrasadas ? "#B91C1C" : "#94A3B8", fontWeight: t.atrasadas ? 800 : 400, marginTop: 2 }}>
+              {t.atrasadas ? `⚠ ${t.atrasadas} con más de 7 días` : "al día"}
+            </div>
+          </div>;
         })}
       </div>
-    );
+
+      {/* Dinero atascado + ranking de atraso */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 240, background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: "13px 16px" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 800, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5 }}>💰 Dinero en la cadena (sin cerrar)</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#B45309", marginTop: 3 }}>{fmtL(totalAtascado)}</div>
+          <div style={{ fontSize: 11.5, color: "#78350F" }}>{base.filter(r => r.k !== "cerrada").length} compra(s) en proceso</div>
+        </div>
+        <div style={{ flex: 2, minWidth: 300, background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "13px 16px" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 800, color: STONE, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>🔔 A quién hay que apurar (más de 3 días parado)</div>
+          {ranking.length === 0
+            ? <div style={{ fontSize: 12.5, color: "#059669", fontWeight: 700 }}>✓ Nadie con atrasos — la cadena va al día.</div>
+            : ranking.map(r => <div key={r.quien} onClick={() => setScQuien(r.quien)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #F1F5F9", cursor: "pointer", fontSize: 12.5 }}>
+                <span style={{ fontWeight: 700, color: CHARCOAL }}>{r.quien}</span>
+                <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <span style={{ color: "#64748b" }}>{r.n} compra{r.n !== 1 ? "s" : ""}</span>
+                  <span style={{ color: "#059669", fontWeight: 700 }}>{fmtL(r.monto)}</span>
+                  <span style={{ background: "#FEE2E2", color: "#B91C1C", fontWeight: 800, borderRadius: 6, padding: "1px 8px" }}>{r.dias}d acum.</span>
+                </span>
+              </div>)}
+        </div>
+      </div>
+
+      {/* Tabla */}
+      {ordenadas.length === 0
+        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 50, textAlign: "center", color: "#94A3B8" }}>
+            <div style={{ fontSize: 34, marginBottom: 8 }}>🔗</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: CHARCOAL }}>Nada que mostrar con estos filtros</div>
+          </div>
+        : <div style={{ overflowX: "auto", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#F1F5F9" }}>
+                {["Etapa", "Días", "Código", "Proyecto", "Proveedor", "Qué se compró", "Monto", "Pagada", "De quién depende"].map(h => (
+                  <th key={h} style={{ textAlign: h === "Monto" ? "right" : "left", padding: "9px 12px", fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>))}
+              </tr></thead>
+              <tbody>
+                {ordenadas.map(r => {
+                  const sm = sem(r.dias, r.k);
+                  return <tr key={r.x.id} onClick={() => setModal({ t: "detail", d: r.x })} style={{ borderTop: "1px solid #F1F5F9", cursor: "pointer" }}>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
+                      <span style={{ background: r.cfg.color + "18", color: r.cfg.color, borderRadius: 7, padding: "3px 9px", fontSize: 11, fontWeight: 800 }}>{r.cfg.icon} {r.cfg.label}</span>
+                    </td>
+                    <td style={{ padding: "8px 12px" }}>
+                      <span style={{ background: sm.bg, color: sm.c, borderRadius: 6, padding: "2px 8px", fontWeight: 800, fontSize: 11.5 }}>{sm.txt}</span>
+                    </td>
+                    <td style={{ padding: "8px 12px", fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 800, fontSize: 11, color: CHARCOAL, whiteSpace: "nowrap" }}>{r.x.codigo || "—"}</td>
+                    <td style={{ padding: "8px 12px", fontWeight: 600, whiteSpace: "nowrap" }}>{r.x.projectCode || "—"}</td>
+                    <td style={{ padding: "8px 12px", fontWeight: 700 }}>{r.x.provider}</td>
+                    <td style={{ padding: "8px 12px", color: "#475569", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(r.x.description || "").slice(0, 70)}</td>
+                    <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(r.x.amount)}</td>
+                    <td style={{ padding: "8px 12px", color: "#64748b", whiteSpace: "nowrap" }}>{fpago(r.x) ? new Date(fpago(r.x) + "T12:00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short" }) : "sin pagar"}</td>
+                    <td style={{ padding: "8px 12px", fontWeight: 700, color: r.k === "cerrada" ? "#94A3B8" : CHARCOAL, whiteSpace: "nowrap" }}>{r.quien}</td>
+                  </tr>;
+                })}
+              </tbody>
+            </table>
+          </div>}
+      <div style={{ fontSize: 11, color: STONE, textAlign: "center" }}>
+        {ordenadas.length} compra(s) · semáforo por días en la MISMA etapa: <b style={{ color: "#059669" }}>≤3 al día</b> · <b style={{ color: "#B45309" }}>4-7 ojo</b> · <b style={{ color: "#B91C1C" }}>+7 hay que apurar</b> · click en una fila para ver el detalle completo
+      </div>
+    </div>;
   };
 
   // ANA KANBAN — Compras pagadas pendientes de coordinar retiro con proveedor
@@ -5093,12 +5166,22 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   };
 
   const renderList = () => {
+    // ORDEN (24-ago-2026, pedido de Gerson): por defecto por FECHA DE PAGO
+    // (lo más reciente arriba) — es el dato con el que él persigue la cadena.
+    // Con el selector se puede volver al orden por estado o invertir.
+    const fpagoOrd = (x) => String(x.paidAt || x.paymentDate || "");
     const dataSorted = filtered.slice().sort((a, b) => {
-      // Orden: primero validados (pendientes de pago), luego pagados sin comprobante, luego borradores, al final finalizados
-      const ord = { validado: 1, pagado: 2, borrador: 3, finalizado: 4 };
-      const da = ord[a.status] || 9, db = ord[b.status] || 9;
-      if (da !== db) return da - db;
-      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      if (listOrden === "estado") {
+        const ord = { validado: 1, pagado: 2, borrador: 3, finalizado: 4 };
+        const da = ord[a.status] || 9, db = ord[b.status] || 9;
+        if (da !== db) return da - db;
+        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      }
+      const fa = fpagoOrd(a), fb = fpagoOrd(b);
+      if (!fa && !fb) return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      if (!fa) return 1;          // sin pagar al final
+      if (!fb) return -1;
+      return listOrden === "pago_asc" ? fa.localeCompare(fb) : fb.localeCompare(fa);
     });
 
     const providers = [...new Set(cp.map(p => p.provider).filter(Boolean))].sort();
@@ -5132,7 +5215,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       </div>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ color: "#64748b", fontSize: 13 }}>{filtered.length} de {cp.length} solicitudes</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ color: "#64748b", fontSize: 13 }}>{filtered.length} de {cp.length} solicitudes</span>
+          <select value={listOrden} onChange={e => setListOrden(e.target.value)} title="Orden de la tabla"
+            style={{ padding: "5px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12, fontFamily: "inherit", background: "#fff" }}>
+            <option value="pago_desc">📅 Pago: más reciente primero</option>
+            <option value="pago_asc">📅 Pago: más antiguo primero</option>
+            <option value="estado">🏷 Por estado (pendientes primero)</option>
+          </select>
+        </span>
         {isAdmin && cp.some(p => p && !p.codigo) && <Btn variant="ghost" onClick={asignarCodigosFaltantes} title="Numera las solicitudes viejas que todavía no tienen código">🔢 Asignar códigos faltantes ({purchases.filter(p => p && !p.codigo).length})</Btn>}
         {canCreate && <Btn variant="primary" onClick={() => setModal({ t: "new" })}>+ Nueva solicitud</Btn>}
         {!canCreate && canPay && <div style={{ fontSize: 12, color: "#64748b" }}>Click en una fila para revisar y gestionar el pago →</div>}
@@ -5280,7 +5371,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const allNav = [
     { id: "dashboard", icon: "🎯", label: "Dashboard" },
     { id: "costos", icon: "💵", label: "Costos" },
-    { id: "resumen", icon: "📊", label: "Resumen" },
+    { id: "resumen", icon: "🔗", label: "Supply Chain" },
     { id: "list", icon: "📋", label: "Solicitudes" },
     { id: "projects", icon: "🏗️", label: "Proyectos" },
     { id: "ana", icon: "📦", label: "Por coordinar" },
@@ -5481,7 +5572,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
             {sec === "dashboard" ? "Dashboard gerencial"
               : sec === "costos" ? "Costos por proyecto"
-              : sec === "resumen" ? "Command Center — Seguimiento por proyecto"
+              : sec === "resumen" ? "Supply Chain — dónde está cada compra"
               : sec === "projects" ? "Proyectos"
               : sec === "providers" ? "Proveedores"
               : sec === "ana" ? "Por coordinar con proveedores"
@@ -5497,7 +5588,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{
         sec === "dashboard" ? renderDashboard()
           : sec === "costos" ? renderCostos()
-          : sec === "resumen" ? renderResumen()
+          : sec === "resumen" ? renderSupplyChain()
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
           : sec === "ana" ? renderAnaKanban()

@@ -20,7 +20,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
 ## Módulos (src/)
 - `App.jsx` — login (usuarios en `users.js`, roles por módulo en array MODULES).
 - `PurchasesModule.jsx` (GeoShopping) — compras: Dashboard mensual, Costos,
-  Resumen (filtro mes + colapsable + chips entrega), Solicitudes, Proyectos,
+  **Supply Chain** (reemplazó al viejo "Resumen" el 24-ago-2026), Solicitudes, Proyectos,
   Por coordinar (kanban Ana → logística), Proveedores. Exporta `generateFichaPDF`.
   **Flujo de cierre contable (19-ago-2026, pedido de Gerson)**: el form de
   solicitud lleva `cierreResponsable` (quién cierra con conta) y
@@ -119,6 +119,26 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   quién cerró, y botones para ver la factura/paquete, re-descargar el PDF y
   reabrir (admin/Ana). Se sacó de "Por cerrar" para que ese tablero quede solo
   con lo pendiente.
+  **SUPPLY CHAIN (24-ago-2026, reemplaza "Resumen")**: `renderSupplyChain` —
+  para ver en 5 s dónde está parada cada compra, desde cuándo y de quién es la
+  pelota. `ETAPAS`/`ETAPA` a nivel de módulo; `etapaDe(x)` clasifica en UNA
+  etapa por orden de prioridad: esperando_pago (status validado) → cerrada
+  (yaCerradaConta) → por_cerrar (ficha_adjunta/cerrado) → falta_ficha (despacho
+  entregado/cerrado) → en_logistica (despacho vivo, NO cancelado) →
+  con_proveedor (entrega_proveedor) → por_coordinar. El reloj de cada etapa
+  corre desde su hito (`desde`) y el semáforo es ≤3d verde / 4-7 ámbar / +7
+  rojo. Filtros de tiempo sobre la FECHA DE PAGO: todo / mes / semana (7 días
+  desde la fecha elegida) / rango; más proyecto, responsable, texto y etapa
+  (click en la tarjeta). OJO: las tarjetas y el ranking se calculan sobre
+  `base` (todos los filtros MENOS etapa) para poder saltar entre etapas; la
+  tabla usa `filas` (base + etapa). "esperando_pago" se exceptúa del filtro de
+  fecha a propósito: no tiene fecha de pago todavía. Índice `despPorCompra`
+  para no hacer O(n·m) por render. Ranking "a quién apurar" = suma de días de
+  las paradas >3d por responsable. Auditado con data real: las 321 compras
+  quedan clasificadas, ninguna invisible.
+  **Orden de Solicitudes por FECHA DE PAGO (24-ago-2026)**: `listOrden`
+  (pago_desc default | pago_asc | estado) con selector en la barra; las sin
+  pagar van al final.
   **Reporte ejecutivo de MATERIALES (19-ago-2026)**: `exportComprasEjecutivoPDF(mes)`
   en la pestaña Costos (botón + input month) — clon del "Costo de Mano de Obra"
   de GeoTeam: portada con KPIs + dona SVG por proyecto + gasto/mezcla por
