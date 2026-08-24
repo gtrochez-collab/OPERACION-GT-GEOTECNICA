@@ -1553,10 +1553,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // Estado del Command Center (Resumen). showCompleted: incluir cerradas.
   // projectCode: filtrar a un solo proyecto.
   // Orden de la tabla de Solicitudes: pago_desc (default) | pago_asc | estado
-  const [listOrden, setListOrden] = useState("pago_desc");
+  // Default por rol: para Tesorería, "Solicitudes" ES su pantalla de trabajo y
+  // su cola de pago (validadas, sin fecha de pago) tiene que ir arriba — con
+  // el orden por fecha de pago quedaba al fondo de 321 filas.
+  const [listOrden, setListOrden] = useState(() => (userRole === "tesoreria" ? "estado" : "pago_desc"));
   // ── Filtros de Supply Chain (24-ago-2026) ──
   const [scModo, setScModo] = useState("mes");          // todo | mes | semana | rango
-  const [scMes, setScMes] = useState(() => new Date().toISOString().slice(0, 7));
+  // Default con partes LOCALES: toISOString() es UTC y las últimas 6 h del mes
+  // saltaba al mes siguiente.
+  const [scMes, setScMes] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
   const [scSemana, setScSemana] = useState("");
   const [scDesde, setScDesde] = useState("");
   const [scHasta, setScHasta] = useState("");
@@ -4389,18 +4394,32 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const ETAPA = Object.fromEntries(ETAPAS.map(e => [e.k, e]));
 
   const renderSupplyChain = () => {
-    const hoy = new Date();
+    // Días entre dos FECHAS (sin horas): paidAt se guarda como medianoche UTC y
+    // `new Date()` es hora local, así que comparar timestamps daba un día de
+    // más de las 18:00 en adelante — y eso cruzaba los umbrales del semáforo.
+    const hoyYMD = new Date().toLocaleDateString("en-CA");   // YYYY-MM-DD local
     const diasDesde = (iso) => {
-      if (!iso) return null;
-      const d = new Date(iso);
-      if (isNaN(d)) return null;
-      return Math.max(0, Math.floor((hoy - d) / 86400000));
+      const ymd = String(iso || "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+      const ms = Date.parse(hoyYMD + "T00:00:00Z") - Date.parse(ymd + "T00:00:00Z");
+      return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86400000)) : null;
     };
     // Índice por compra: con 321 compras × 185 despachos, buscar con .find()
-    // en cada fila era O(n·m) en cada render.
+    // en cada fila era O(n·m) en cada render. Se ignoran los CANCELADOS (esa
+    // compra volvió a manos de Compras) y, si hay varios, gana el más
+    // reciente — antes .find() devolvía el primero del array.
     const despPorCompra = {};
-    despachos.forEach(d => { if (d && d.sourcePurchaseId && !despPorCompra[d.sourcePurchaseId]) despPorCompra[d.sourcePurchaseId] = d; });
+    despachos.forEach(d => {
+      if (!d || !d.sourcePurchaseId || d.estado === "cancelado") return;
+      const prev = despPorCompra[d.sourcePurchaseId];
+      const ts = String(d.updatedAt || d.createdAt || "");
+      if (!prev || ts > String(prev.updatedAt || prev.createdAt || "")) despPorCompra[d.sourcePurchaseId] = d;
+    });
     const despachoDe = (id) => despPorCompra[id];
+
+    // Quién coordina esta compra: el proyecto MAQUINAS lo lleva Fernando desde
+    // GeoMachinery (el kanban de Ana lo excluye), el resto es Compras/Ana.
+    const coordinaCompra = (x) => /MAQUINA/i.test(String(x.projectCode || "")) ? "Fernando / Máquinas" : "Ana / Compras";
 
     // Etapa + "desde cuándo" + responsable concreto de esa etapa.
     const etapaDe = (x) => {
@@ -4410,18 +4429,26 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       if (yaCerradaConta(x)) return { k: "cerrada", desde: x.conta?.cerradoAt, quien: x.conta?.cerradoPor || "—" };
       const respCierre = x.cierreResponsable || "sin asignar";
       if (x.deliveryStatus === "ficha_adjunta" || x.deliveryStatus === "cerrado") return { k: "por_cerrar", desde: x.delivery?.fichaUploadedAt || x.delivery?.closedAt || x.paidAt, quien: respCierre };
-      if (d && (d.estado === "entregado" || d.estado === "cerrado")) return { k: "falta_ficha", desde: d.fechaEjecutada || d.updatedAt, quien: d.motorista ? `Logística (${d.motorista})` : "Logística" };
-      // Un despacho CANCELADO no cuenta: la compra vuelve a estar sin camino,
-      // o sea de nuevo en manos de Compras (si no, desaparecía del radar).
-      if (d && d.estado !== "cancelado") return { k: "en_logistica", desde: d.createdAt || x.paidAt, quien: d.motorista || "Logística" };
-      if (x.deliveryStatus === "entrega_proveedor") return { k: "con_proveedor", desde: x.delivery?.arrivalAt || x.paidAt, quien: x.provider };
-      return { k: "por_coordinar", desde: x.paidAt || x.paymentDate || x.createdAt, quien: isAsistenteCompras ? "vos" : "Ana / Compras" };
+      if (d && (d.estado === "entregado" || d.estado === "cerrado")) return { k: "falta_ficha", desde: d.fechaEjecutada || d.updatedAt, quien: "Logística", detalle: d.motorista || "" };
+      if (d) return { k: "en_logistica", desde: d.createdAt || x.paidAt, quien: "Logística", detalle: d.motorista || "" };
+      // Materiales ya recibidos en proyecto (o ficha quitada): el pendiente es
+      // la ficha, no coordinar de nuevo — si no, el atraso se le cargaba a
+      // Compras cuando el material ya está en obra.
+      if (x.deliveryStatus === "recibido") return { k: "falta_ficha", desde: x.delivery?.actualDate || x.paidAt, quien: "Logística", detalle: "recibido en proyecto" };
+      if (x.deliveryStatus === "entrega_proveedor") return { k: "con_proveedor", desde: x.delivery?.arrivalAt || x.paidAt, quien: coordinaCompra(x), detalle: x.provider };
+      return { k: "por_coordinar", desde: x.paidAt || x.paymentDate || x.createdAt, quien: coordinaCompra(x) };
     };
 
-    // ── Filtros: mes / semana / rango libre sobre la FECHA DE PAGO ──
+    // ── Filtros: mes / semana / rango libre ──
+    // fpago: solo para MOSTRAR (vacío = "sin pagar").
+    // fEje: la fecha con la que se FILTRA. Cae a validatedAt/createdAt porque
+    // hay compras pagadas viejas sin paidAt: con el filtro por mes quedaban
+    // invisibles Y sin contar como atrasadas — justo las más propensas a estar
+    // trabadas. Y las que esperan pago se filtran por cuándo se aprobaron.
     const fpago = (x) => String(x.paidAt || x.paymentDate || "").slice(0, 10);
+    const fEje = (x) => String(x.paidAt || x.paymentDate || x.validatedAt || x.createdAt || "").slice(0, 10);
     const enRango = (x) => {
-      const f = fpago(x);
+      const f = fEje(x);
       if (scModo === "mes") return !scMes || f.slice(0, 7) === scMes;
       if (scModo === "semana") {
         if (!scSemana) return true;
@@ -4443,12 +4470,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       .filter(r => scVerCerradas || r.k !== "cerrada" || scEtapa === "cerrada")
       .filter(r => !scProy || (r.x.projectCode || "SIN PROYECTO") === scProy)
       .filter(r => !scQuien || String(r.quien).toLowerCase().includes(scQuien.toLowerCase()))
-      .filter(r => {
-        // Las que esperan pago no tienen fecha de pago: se muestran siempre
-        // (son el inicio de la cadena y hay que verlas), salvo filtro de etapa.
-        if (r.k === "esperando_pago") return true;
-        return enRango(r.x);
-      })
+      .filter(r => enRango(r.x))
       .filter(r => {
         if (!scQ.trim()) return true;
         const t = scQ.trim().toLowerCase();
@@ -4466,7 +4488,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     };
 
     const ordenadas = filas.slice().sort((a, b) => {
-      if (scOrden === "atraso") return (b.dias ?? -1) - (a.dias ?? -1);
+      // Las cerradas nunca encabezan el ranking de atraso (sus "días" son
+      // días-desde-el-cierre, que no es un atraso).
+      if (scOrden === "atraso") {
+        const kk = (r) => r.k === "cerrada" ? -1 : (r.dias ?? -1);
+        return kk(b) - kk(a);
+      }
       // Default: por FECHA DE PAGO, lo más reciente arriba (lo que Gerson
       // tiene que perseguir ahora). Las sin pago van al final.
       const fa = fpago(a.x), fb = fpago(b.x);
@@ -4493,7 +4520,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const ranking = Object.entries(porQuien).map(([quien, v]) => ({ quien, ...v })).sort((a, b) => b.dias - a.dias).slice(0, 5);
 
     const proyOpts = [...new Set(cp.map(x => x.projectCode || "SIN PROYECTO"))].sort();
-    const mesesOpts = [...new Set(cp.map(x => fpago(x).slice(0, 7)).filter(Boolean))].sort().reverse();
+    // El mes seleccionado SIEMPRE está entre las opciones: si no, el <select>
+    // se veía en "Todos los meses" mientras filtraba a un mes vacío.
+    const mesesOpts = [...new Set([...cp.map(x => fEje(x).slice(0, 7)).filter(Boolean), ...(scMes ? [scMes] : [])])].sort().reverse();
     const mesLabel = (m) => { const [y, mm] = m.split("-").map(Number); const t = new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
     const totalAtascado = base.filter(r => r.k !== "cerrada").reduce((sm, r) => sm + (Number(r.x.amount) || 0), 0);
     const chip = (txt, activo, onClick) => <button onClick={onClick} style={{ padding: "5px 12px", borderRadius: 20, border: "none", background: activo ? "#E8762D" : "#F1F5F9", color: activo ? "#fff" : "#475569", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{txt}</button>;
@@ -4542,7 +4571,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           <input value={scQuien} onChange={e => setScQuien(e.target.value)} placeholder="👤 Responsable…" style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", width: 150 }} />
           <input value={scQ} onChange={e => setScQ(e.target.value)} placeholder="🔍 Código, proveedor, material…" style={{ flex: 1, minWidth: 180, padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }} />
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: STONE, cursor: "pointer", whiteSpace: "nowrap" }}>
-            <input type="checkbox" checked={scVerCerradas} onChange={e => setScVerCerradas(e.target.checked)} style={{ cursor: "pointer", accentColor: "#059669" }} />
+            <input type="checkbox" checked={scVerCerradas} onChange={e => { setScVerCerradas(e.target.checked); if (!e.target.checked && scEtapa === "cerrada") setScEtapa(""); }} style={{ cursor: "pointer", accentColor: "#059669" }} />
             ver cerradas
           </label>
           {(scEtapa || scProy || scQuien || scQ || scModo !== "todo") && <Btn small variant="ghost" onClick={() => { setScEtapa(""); setScProy(""); setScQuien(""); setScQ(""); setScModo("todo"); }} title="Quita todos los filtros, incluido el de fecha">Limpiar todo</Btn>}
@@ -4616,7 +4645,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                     <td style={{ padding: "8px 12px", color: "#475569", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(r.x.description || "").slice(0, 70)}</td>
                     <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(r.x.amount)}</td>
                     <td style={{ padding: "8px 12px", color: "#64748b", whiteSpace: "nowrap" }}>{fpago(r.x) ? new Date(fpago(r.x) + "T12:00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short" }) : "sin pagar"}</td>
-                    <td style={{ padding: "8px 12px", fontWeight: 700, color: r.k === "cerrada" ? "#94A3B8" : CHARCOAL, whiteSpace: "nowrap" }}>{r.quien}</td>
+                    <td style={{ padding: "8px 12px", fontWeight: 700, color: r.k === "cerrada" ? "#94A3B8" : CHARCOAL, whiteSpace: "nowrap" }}>
+                      {r.quien}
+                      {r.detalle && <div style={{ fontSize: 10, fontWeight: 400, color: "#94A3B8" }}>{String(r.detalle).slice(0, 26)}</div>}
+                    </td>
                   </tr>;
                 })}
               </tbody>
