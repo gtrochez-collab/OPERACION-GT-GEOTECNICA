@@ -1545,7 +1545,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const [cerrQ, setCerrQ] = useState("");
   // Mes del reporte ejecutivo de materiales (pestaña Costos).
   const [costosMesEjec, setCostosMesEjec] = useState(() => new Date().toISOString().slice(0, 7));
-  const [filter, setFilter] = useState({ status: "", project: "", provider: "", from: "", to: "" });
+  // Filtros de Solicitudes (24-ago-2026, rediseño pedido por Gerson):
+  //   ver: "pendientes" (default — la cola de pago de Carolina) | "pagadas" | "todas"
+  //   mes: "" = todos. Aplica sobre la fecha que corresponde a lo que se ve
+  //        (solicitud si son pendientes, pago si son pagadas).
+  // Reemplazó el rango Desde/Hasta: nadie lo usaba y confundía.
+  const [filter, setFilter] = useState({ ver: "pendientes", project: "", provider: "", mes: "" });
   // Estado de expansion/colapso de sub-secciones en el Kanban de Ana.
   // Keys: `${projectKey}-enlog`, `${projectKey}-cierre`, `${projectKey}-cerradas`.
   // Default: enlog y cierre abiertas (undefined → tratado como true), cerradas oculto.
@@ -1556,7 +1561,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // Default por rol: para Tesorería, "Solicitudes" ES su pantalla de trabajo y
   // su cola de pago (validadas, sin fecha de pago) tiene que ir arriba — con
   // el orden por fecha de pago quedaba al fondo de 321 filas.
-  const [listOrden, setListOrden] = useState(() => (userRole === "tesoreria" ? "estado" : "pago_desc"));
+  // Orden de la tabla. Default para TODOS: "estado" = pendientes de pago
+  // arriba (pedido de Gerson: que Carolina entre y vea su cola primero, sin
+  // confundirse). Los otros modos se eligen con botones.
+  // Coherente con el default de arriba (ver: "pendientes"): la que MÁS lleva
+  // esperando el pago va primero, para que a nadie se le quede colgada.
+  const [listOrden, setListOrden] = useState("solicitud_asc");
   // ── Filtros de Supply Chain (24-ago-2026) ──
   const [scModo, setScModo] = useState("mes");          // todo | mes | semana | rango
   // Default con partes LOCALES: toISOString() es UTC y las últimas 6 h del mes
@@ -2823,12 +2833,17 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const cc = COMPANIES[co];
 
   // ── Filtros aplicados ──
+  // Una compra está PAGADA si tesorería ya la pagó (pagado o finalizado).
+  const esPagada = (p) => p.status === "pagado" || p.status === "finalizado";
+  // Fecha con la que se filtra por mes: la de PAGO si ya se pagó, si no la de
+  // carga — así "agosto" significa lo natural en cada caso.
+  const fechaFiltro = (p) => String((esPagada(p) ? (p.paidAt || p.paymentDate) : null) || p.createdAt || "").slice(0, 7);
   const filtered = cp.filter(p => {
-    if (filter.status && p.status !== filter.status) return false;
+    if (filter.ver === "pendientes" && esPagada(p)) return false;
+    if (filter.ver === "pagadas" && !esPagada(p)) return false;
     if (filter.project && p.projectCode !== filter.project) return false;
     if (filter.provider && !(p.provider || "").toLowerCase().includes(filter.provider.toLowerCase())) return false;
-    if (filter.from && p.createdAt && new Date(p.createdAt) < new Date(filter.from)) return false;
-    if (filter.to && p.createdAt && new Date(p.createdAt) > new Date(filter.to + "T23:59:59")) return false;
+    if (filter.mes && fechaFiltro(p) !== filter.mes) return false;
     return true;
   });
 
@@ -5203,6 +5218,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     // Con el selector se puede volver al orden por estado o invertir.
     const fpagoOrd = (x) => String(x.paidAt || x.paymentDate || "");
     const dataSorted = filtered.slice().sort((a, b) => {
+      // Por fecha de SOLICITUD: útil viendo pendientes (la más vieja es la que
+      // más lleva esperando el pago).
+      if (listOrden === "solicitud_asc") return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+      if (listOrden === "solicitud_desc") return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
       if (listOrden === "estado") {
         const ord = { validado: 1, pagado: 2, borrador: 3, finalizado: 4 };
         const da = ord[a.status] || 9, db = ord[b.status] || 9;
@@ -5236,25 +5255,76 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       </div>}
 
       {/* Filtros + acciones */}
-      <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14, display: "grid", gridTemplateColumns: "1.2fr 1.2fr 1.5fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
-        <Select label="Estado" emptyLabel="Todas" options={Object.entries(STATUSES).map(([k, v]) => ({ value: k, label: v.label }))} value={filter.status} onChange={e => setFilter(s => ({ ...s, status: e.target.value }))} />
-        <Select label="Proyecto" options={allProjects.map(p => ({ value: p.short, label: p.short }))} value={filter.project} onChange={e => setFilter(s => ({ ...s, project: e.target.value }))} />
-        <Input label="Proveedor" value={filter.provider} onChange={e => setFilter(s => ({ ...s, provider: e.target.value }))} placeholder="Buscar..." list="providers-list" />
-        <datalist id="providers-list">{providers.map(pv => <option key={pv} value={pv} />)}</datalist>
-        <Input label="Desde" type="date" value={filter.from} onChange={e => setFilter(s => ({ ...s, from: e.target.value }))} />
-        <Input label="Hasta" type="date" value={filter.to} onChange={e => setFilter(s => ({ ...s, to: e.target.value }))} />
-        <Btn small variant="ghost" onClick={() => setFilter({ status: "", project: "", provider: "", from: "", to: "" })}>Limpiar</Btn>
-      </div>
+      {/* BARRA DE FILTROS (24-ago-2026) — botones en vez de menús: se elige QUÉ
+          ver, de QUÉ mes y en qué ORDEN. Los órdenes cambian según lo que se
+          está viendo: mirando pendientes importa la fecha de solicitud (quién
+          lleva más esperando), mirando pagadas importa la fecha de pago. */}
+      {(() => {
+        const btn = (txt, activo, onClick, title) => (
+          <button onClick={onClick} title={title} style={{ padding: "6px 13px", borderRadius: 20, border: "none", background: activo ? "#E8762D" : "#F1F5F9", color: activo ? "#fff" : "#475569", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
+        );
+        const nPend = cp.filter(x => !esPagada(x)).length;
+        const nPag = cp.filter(x => esPagada(x)).length;
+        // Meses con algo, según lo que se está viendo.
+        const mesesOpts = [...new Set(cp
+          .filter(x => filter.ver === "todas" || (filter.ver === "pagadas" ? esPagada(x) : !esPagada(x)))
+          .map(fechaFiltro).filter(Boolean))].sort().reverse();
+        const mesLbl = (m) => { const [y, mm] = m.split("-").map(Number); const t = new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
+        // Al cambiar de vista, un orden que ya no aplica se reajusta solo.
+        const setVer = (v) => {
+          setFilter(f2 => ({ ...f2, ver: v, mes: "" }));
+          if (v === "pendientes" && !["solicitud_asc", "solicitud_desc"].includes(listOrden)) setListOrden("solicitud_asc");
+          if (v === "pagadas" && !["pago_desc", "pago_asc"].includes(listOrden)) setListOrden("pago_desc");
+          if (v === "todas") setListOrden("estado");
+        };
+        return <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+          {/* Qué ver */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Ver</span>
+            {btn(`⏳ Pendientes de pago (${nPend})`, filter.ver === "pendientes", () => setVer("pendientes"), "Lo que Tesorería tiene por pagar")}
+            {btn(`✅ Pagadas (${nPag})`, filter.ver === "pagadas", () => setVer("pagadas"), "Las que ya pagó Tesorería")}
+            {btn("Ambas", filter.ver === "todas", () => setVer("todas"), "Todas, con las pendientes arriba")}
+          </div>
+          {/* Orden */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Orden</span>
+            {filter.ver !== "pagadas" && <>
+              {btn("📄 Solicitud: la que más espera", listOrden === "solicitud_asc", () => setListOrden("solicitud_asc"), "Por fecha de solicitud, la más antigua primero")}
+              {btn("📄 Solicitud: la más nueva", listOrden === "solicitud_desc", () => setListOrden("solicitud_desc"))}
+            </>}
+            {filter.ver !== "pendientes" && <>
+              {btn("💰 Pago: más reciente", listOrden === "pago_desc", () => setListOrden("pago_desc"), "Por fecha de pago, lo último pagado primero")}
+              {btn("💰 Pago: más antiguo", listOrden === "pago_asc", () => setListOrden("pago_asc"))}
+            </>}
+            {filter.ver === "todas" && btn("🏷 Pendientes primero", listOrden === "estado", () => setListOrden("estado"))}
+          </div>
+          {/* Mes + proyecto + proveedor */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Mes</span>
+            <select value={filter.mes} onChange={e => setFilter(f2 => ({ ...f2, mes: e.target.value }))}
+              title={filter.ver === "pagadas" ? "Mes en que se pagó" : "Mes de la solicitud"}
+              style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", background: filter.mes ? "#FFF7ED" : "#fff", fontWeight: filter.mes ? 700 : 400 }}>
+              <option value="">Todos los meses</option>
+              {mesesOpts.map(m => <option key={m} value={m}>{mesLbl(m)}</option>)}
+            </select>
+            <span style={{ fontSize: 10.5, color: "#94A3B8" }}>{filter.ver === "pagadas" ? "(mes de pago)" : filter.ver === "pendientes" ? "(mes de la solicitud)" : "(pago si ya pagó, si no la carga)"}</span>
+            <select value={filter.project} onChange={e => setFilter(f2 => ({ ...f2, project: e.target.value }))}
+              style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", background: filter.project ? "#FFF7ED" : "#fff" }}>
+              <option value="">📍 Todos los proyectos</option>
+              {allProjects.map(p2 => <option key={p2.short} value={p2.short}>{p2.short}</option>)}
+            </select>
+            <input value={filter.provider} onChange={e => setFilter(f2 => ({ ...f2, provider: e.target.value }))} placeholder="🔍 Proveedor…" list="providers-list"
+              style={{ flex: 1, minWidth: 150, padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }} />
+            <datalist id="providers-list">{providers.map(pv => <option key={pv} value={pv} />)}</datalist>
+            {(filter.mes || filter.project || filter.provider || filter.ver !== "pendientes") &&
+              <Btn small variant="ghost" onClick={() => { setFilter({ ver: "pendientes", project: "", provider: "", mes: "" }); setListOrden("solicitud_asc"); }}>Limpiar</Btn>}
+          </div>
+        </div>;
+      })()}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ color: "#64748b", fontSize: 13 }}>{filtered.length} de {cp.length} solicitudes</span>
-          <select value={listOrden} onChange={e => setListOrden(e.target.value)} title="Orden de la tabla"
-            style={{ padding: "5px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12, fontFamily: "inherit", background: "#fff" }}>
-            <option value="pago_desc">📅 Pago: más reciente primero</option>
-            <option value="pago_asc">📅 Pago: más antiguo primero</option>
-            <option value="estado">🏷 Por estado (pendientes primero)</option>
-          </select>
         </span>
         {isAdmin && cp.some(p => p && !p.codigo) && <Btn variant="ghost" onClick={asignarCodigosFaltantes} title="Numera las solicitudes viejas que todavía no tienen código">🔢 Asignar códigos faltantes ({purchases.filter(p => p && !p.codigo).length})</Btn>}
         {canCreate && <Btn variant="primary" onClick={() => setModal({ t: "new" })}>+ Nueva solicitud</Btn>}

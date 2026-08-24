@@ -148,6 +148,16 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   está en obra, el pendiente es de Logística); MAQUINAS se atribuye a Fernando
   igual que en el kanban; el orden por atraso deja las cerradas al final;
   destildar "ver cerradas" limpia el filtro de esa etapa.
+  **Barra de filtros de Solicitudes rediseñada (24-ago-2026)**: botones en vez
+  de menús. `filter = {ver, project, provider, mes}` — `ver` es
+  "pendientes" (DEFAULT, la cola de pago de Carolina) | "pagadas" | "todas";
+  el rango Desde/Hasta se reemplazó por un selector de MES que aplica sobre la
+  fecha que corresponde (`fechaFiltro`: pago si ya se pagó, carga si no). Los
+  botones de ORDEN son contextuales: viendo pendientes salen solicitud_asc
+  ("la que más espera", default) / solicitud_desc; viendo pagadas, pago_desc /
+  pago_asc; en "ambas" se suma "pendientes primero" (estado). `setVer` reajusta
+  el orden solo si el activo no aplica a la vista nueva — si no, quedaba un
+  orden sin botón activo. Antes: `listOrden` con select y default por rol.
   **Orden de Solicitudes por FECHA DE PAGO (24-ago-2026)**: `listOrden`
   (pago_desc | pago_asc | estado) con selector en la barra; las sin pagar van
   al final. OJO: para `tesoreria` el default es "estado" — Solicitudes ES la
