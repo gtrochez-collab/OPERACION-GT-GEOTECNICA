@@ -312,6 +312,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   PDF imprimible sin emojis. Carga por getCloud de todas las quincenas del
   rango (quincenasDeRango). Tolerancia subida a 15 min (TOLERANCIA_MIN en
   HRModule — aplica a reloj, ficha y tardanzas a la vez).
+  **NO REQUIERE MARCAJE (24-ago-2026)**: `emp.noMarca` (checkbox en la ficha,
+  bloque azul junto a payByHour) — para jefaturas y personal que no marca en la
+  tablet. Efectos: NO sale en la lista del reloj (`activos` lo filtra), NO
+  genera fila de ausente "NO MARCÓ" en Registros, y NO se le sugiere NSP en el
+  banner de la hoja de asistencia (`nspSugeridos`). Su día se maneja normal en
+  la hoja de GeoTeam.
   **Tablets con UBICACIÓN + ausentes en Registros (21-ago-2026, caso José
   Miguel)**: cada tablet es una sede — `ubicacion` en users.js (oscarpaz =
   PLANTEL, marcaje = ADMINISTRACIÓN; una tablet de proyecto futuro = usuario

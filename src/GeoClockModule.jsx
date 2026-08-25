@@ -472,6 +472,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         const marcaron = new Set(delDia.map(mk => mk.empId));
         emps.forEach(e => {
           if (e.status !== "active" || marcaron.has(e.id)) return;
+          if (e.noMarca) return;   // no requiere marcaje: no es un ausente
           if (regPersona && e.id !== regPersona) return;
           const proy = proyectoDe(e, fecha);
           if (!proyectoConTablet(proy)) return;
@@ -497,7 +498,9 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
     setTieneFirma(false); setDoneInfo(null); setTipoAccion("entrada"); setComentSalida("");
   };
 
-  const activos = emps.filter(e => e.status === "active");
+  // Los que no requieren marcaje (jefaturas) no salen en el reloj: no tienen
+  // por qué marcar y solo estorbaban en la búsqueda.
+  const activos = emps.filter(e => e.status === "active" && !e.noMarca);
   const resultados = (search.trim().length >= 1
     ? activos.filter(e => normaliza(e.fullName).includes(normaliza(search)))
     : activos

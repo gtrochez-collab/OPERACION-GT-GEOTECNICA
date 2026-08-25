@@ -1231,6 +1231,18 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div style={{ gridColumn: "1/-1", fontSize: 11, color: "#64748b", background: "#F0F9FF", border: "1px solid #BAE6FD", borderRadius: 8, padding: "8px 12px" }}>
           🕒 <b>GeoClock</b> usa el horario para la tolerancia de {TOLERANCIA_MIN} min al marcar entrada (ej. campo: 7:00–7:15). Sin horario asignado se asume <b>Campo (7:00–16:00)</b>. El descuento por llegada tarde denegada se calcula desde la hora de entrada de ESTE horario.
         </div>
+        {/* NO REQUIERE MARCAJE (24-ago-2026, pedido de Gerson): jefaturas y
+            personal que no marca en la tablet. Sin esto aparecían todos los
+            días como ausentes en Registros y en las sugerencias de NSP. */}
+        <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#EEF2FF", border: "1px solid #C7D2FE", borderRadius: 10, fontSize: 13, color: "#3730A3", cursor: "pointer" }}>
+          <input type="checkbox" checked={!!f.noMarca} onChange={e => u("noMarca", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer", accentColor: "#4F46E5" }} />
+          <span>
+            <b>No requiere marcaje en GeoClock</b>
+            <div style={{ fontSize: 11, color: "#4338CA", marginTop: 2 }}>
+              Para jefaturas y personal que no marca entrada/salida en la tablet. No aparece en el reloj, no sale como "NO MARCÓ" en Registros y no se le sugiere NSP en la asistencia. Su día se maneja normal en la hoja.
+            </div>
+          </span>
+        </label>
         <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#92400E", cursor: "pointer" }}>
           <input type="checkbox" checked={!!f.payByHour} onChange={e => u("payByHour", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
           <span>
@@ -2020,6 +2032,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         mk && mk.tipo === "entrada" && mk.empId === eid && String(mk.fecha).slice(0, 10) === dStr);
       const out = [];
       ae.forEach(e => {
+        if (e.noMarca) return;   // jefaturas: no marcan, no se les sugiere NSP
         const short = resolveShortHR(assignments[e.id]) || assignments[e.id];
         if (!esProjClock(short)) return;
         const dias = [];
