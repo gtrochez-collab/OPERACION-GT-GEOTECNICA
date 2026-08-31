@@ -82,6 +82,28 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
 - `PurchasesModule.jsx` (GeoShopping) — compras: Dashboard mensual, Costos,
   **Supply Chain** (reemplazó al viejo "Resumen" el 24-ago-2026), Solicitudes, Proyectos,
   Por coordinar (kanban Ana → logística), Proveedores. Exporta `generateFichaPDF`.
+  **Rediseño estético (31-ago-2026, SOLO presentación)**: el módulo monta
+  `<style>{GT_CSS}</style>` de `gt-ui.js` (tokens + clases gt-* compartidos
+  con App; ⚠ sin `precedence`) + manchas `.gt-brillo` en el root (sin ellas
+  el backdrop-filter del vidrio no difumina nada). Header compacto estilo
+  IST (se retiró el hero con CarritoSVG): [← gt-circulo][logo][GeoShopping]
+  + usuario + Cerrar sesión. Pestañas SIN emojis. Se quitó el strip de
+  título por pestaña ("Dashboard gerencial / N solicitudes" — repetitivo).
+  **Dashboard**: SOLO 3 tarjetas `.gt-vidrio` — Resumen (pagado grande +
+  por pagar/activas/pendientes), dona "Gasto por proyecto" y tabla "Por
+  proyecto" — con selector Por mes / **Global** (dashMonth==="global" es
+  valor mágico, solo lo lee renderDashboard; Global incluye pagadas viejas
+  SIN paidAt — por mes sigue exigiéndolo). Se eliminaron la fila de 7
+  KPIs, las alertas y "Suministro pendiente". **Solicitudes**: las 7
+  StatCard → UNA tira resumen en vidrio, banner de Carolina sobrio, barra
+  de filtros y tabla en `.gt-vidrio`, TreasuryBadge/DeliveryBadge sin
+  emoji, ✓ en cotización/comprobante. La lógica (filtros, orden, permisos,
+  modales) quedó INTACTA. Fixes de la revisión adversarial: grid móvil con
+  minmax(0,1fr)+minWidth:0 (la tabla nowrap inflaba el track y la pestaña
+  entera paneaba); stats.montoPagadoMes clasifica por slice(0,7) UTC
+  (getMonth() local corría al mes anterior los pagos del día 1 y el mismo
+  número salía distinto que en el Dashboard); subrayado de pestaña con
+  inset boxShadow (el marginBottom:-1 se recortaba en el overflow).
   **Flujo de cierre contable (19-ago-2026, pedido de Gerson)**: el form de
   solicitud lleva `cierreResponsable` (quién cierra con conta) y
   `detalleMateriales` (qué se compra, según cotización — opcional).
