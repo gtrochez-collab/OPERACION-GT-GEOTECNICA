@@ -36,26 +36,44 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
     sostiene. Proyectos que avanzan.", form vidrio, versículo del día, dots
     clickeables. Fuentes nuevas en index.html: Plus Jakarta Sans + IBM Plex
     Mono (Inter y Manrope siguen para los módulos).
-  - `WelcomeScreen`: tras login, saludo XL ("Buenos días, Gerson.") que
-    transiciona smooth a 3 tarjetas — TO-DOS (persisten en Supabase
-    `gt-todos-<username>`, best-effort), BANDEJA (contadores reales por rol:
-    por pagar / por cerrar contable / tardanzas pendientes, cada ítem
-    clickeable a su módulo). Revisión adversarial aplicada: la bandeja lee
-    con `store.getCloud` (NUNCA store.get — su re-sync de cache viejo puede
-    ESCRIBIR cp-purchases desde una pantalla decorativa), estado "error" si
-    la nube no responde (jamás afirmar "todo al día"), tardanzas de quincena
-    actual + anterior (quincenaAnterior/gcMarkKey importados de HRModule) y
-    con la regla responsableDe replicada (Oscar/Ana solo las suyas), porCerrar
-    con el filtro de cierreResponsable, "coordinador" fuera de rolesTardies
-    (no entra a rrhh), y el input de to-dos deshabilitado mientras carga (un
-    add con todos===null pisaba la lista en la nube). ⚠ React 19: no ponerle
-    `precedence` al <style> de UI_CSS (lo izaría al <head> para siempre y el
-    CSS se filtraría a los módulos). Tercera tarjeta:
-    VERSÍCULO (`VERSICULOS` RVR1960, rota por día del año). Botón "Empezar
-    el día". Se muestra UNA vez por login (`gt-welcome-done` en
-    sessionStorage — F5 no la repite); el rol "marcaje" (kiosk) la SALTA.
-  - Panel: header minimal, label mono, H1 "Panel de Control", `PanelCard`
-    con entrada escalonada (90+i*60ms), footer con estado de sync.
+  - `WelcomeScreen`: tras login, saludo XL ("Buenos días, Gerson.", hero de
+    2.6 s) + `fraseDeHoy()` (FRASES neutras en género, rotan por día) que
+    transiciona smooth a 3 tarjetas `.gt-vidrio` — TO-DOS (persisten en
+    Supabase `gt-todos-<username>`, best-effort; input deshabilitado mientras
+    carga: un add con todos===null pisaba la lista en la nube), BANDEJA
+    (**EN BLANCO a propósito, 31-ago**: va a estar amarrada al mail de cada
+    usuario; la versión con contadores de cp-purchases/gc-tardies vivió unas
+    horas — si se retoma, leer SOLO con `store.getCloud`, NUNCA store.get:
+    su re-sync de cache viejo puede ESCRIBIR cp-purchases desde una pantalla
+    decorativa) y VERSÍCULO (`VERSICULOS` RVR1960, rota por día). Header:
+    tuerquita `MenuUsuario` (popover con Cerrar sesión) + logo a la
+    izquierda, "Saltar" a la derecha. Botón "Empezar el día". Se muestra UNA
+    vez por login (`gt-welcome-done` en sessionStorage — F5 no la repite);
+    el rol "marcaje" (kiosk) la SALTA. ⚠ React 19: no ponerle `precedence`
+    al <style> de UI_CSS (lo izaría al <head> para siempre y el CSS se
+    filtraría a los módulos).
+  - `TituloHero` (FLIP invertido): el bloque del título se renderiza SIEMPRE
+    en su posición final y, durante el hero, un transform MEDIDO
+    (useLayoutEffect pre-paint) lo centra y agranda; al asentar, transform →
+    none con transición y "aterriza". textAlign nunca cambia (animar
+    textAlign/padding hacía SALTAR el texto — hallazgo adversarial). Escala
+    con TOPE al ancho del viewport (en tablet el 1.4 sacaba el título de
+    pantalla). `prefiereMenosMovimiento()` salta ambos heroes; la flag
+    `gt-panel-hero-done` se estampa al ARRANCAR (irse a mitad no lo repite);
+    los contenedores ocultos usan visibility+inert, NO opacity (un padre con
+    opacity<1 apaga el backdrop-filter del vidrio y opacity 0 dejaba
+    tarjetas alcanzables con Tab+Enter).
+  - `PanelControl` (componente propio, v2 31-ago): el H1 "Panel de Control"
+    nace centrado XL y viaja a su lugar (una vez por login,
+    `gt-panel-hero-done`; login/logout limpian ambos flags de hero). Header
+    estilo IST: [← `volverBienvenida` (borra gt-welcome-done; oculto para
+    marcaje)] [tuerquita MenuUsuario] [logo] + usuario a la derecha.
+    `PanelCard` en `.gt-vidrio` con iconos SVG de LÍNEA monocromos
+    (`IconoModulo` por id, fallback al emoji de MODULES): cajita gris igual
+    para todos, hover pinta cajita+dibujo+flecha de naranja; entrada
+    escalonada al asentarse el hero (prop `animar`). Ambas pantallas hacen
+    scrollTo(0,0) al montar (el botón "Empezar el día" queda al fondo en
+    pantallas chicas y el hero no se veía). Footer con estado de sync.
 - `PurchasesModule.jsx` (GeoShopping) — compras: Dashboard mensual, Costos,
   **Supply Chain** (reemplazó al viejo "Resumen" el 24-ago-2026), Solicitudes, Proyectos,
   Por coordinar (kanban Ana → logística), Proveedores. Exporta `generateFichaPDF`.
