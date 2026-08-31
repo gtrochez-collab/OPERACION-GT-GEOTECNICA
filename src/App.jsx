@@ -426,8 +426,9 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
       <div className="gt-brillo gt-brillo-a" aria-hidden />
       <div className="gt-brillo gt-brillo-b" aria-hidden />
 
-      {/* Header estilo IST: [← bienvenida] [tuerquita] [logo] · usuario a la derecha */}
-      <header style={{ position: "relative", zIndex: 2, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "18px 28px", maxWidth: 1240, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+      {/* Header estilo IST: [← bienvenida] [tuerquita] [logo] · usuario a la derecha.
+          A todo el ancho (SIN maxWidth): Gerson lo quiere pegado a la esquina. */}
+      <header style={{ position: "relative", zIndex: 2, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "18px 24px", width: "100%", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {user.role !== "marcaje" && (
             <button className="gt-circulo" onClick={onVolverBienvenida} title="Volver a la bienvenida" aria-label="Volver a la bienvenida"><IconoFlecha /></button>
@@ -745,7 +746,14 @@ function WelcomeScreen({ user, onStart, onLogout }) {
 // crossfade + Ken Burns sutil), branding grande a la izquierda y tarjeta de
 // acceso a la derecha. Credenciales y flujo: EXACTAMENTE los de siempre.
 // ═══════════════════════════════════════════════════════════════════════════
-const FOTOS_LOGIN = ["obra-1.jpg", "obra-2.jpg", "obra-3.jpg", "obra-4.jpg", "obra-5.jpg"];
+// Solo las 2 fotos que aprobó Gerson (31-ago), regeneradas desde los
+// originales en alta resolución (antes eran 1200×1600 y el cover las
+// estiraba pixeladas). `pos` = encuadre para pantallas horizontales:
+// son fotos verticales y el corte decide qué banda se ve.
+const FOTOS_LOGIN = [
+  { f: "obra-1.jpg", pos: "center 30%" },   // piladora Geotecnica con montañas
+  { f: "obra-2.jpg", pos: "center 62%" },   // perforadora en el río, entre rocas
+];
 
 function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState("");
@@ -784,15 +792,15 @@ function LoginScreen({ onLogin }) {
       <style>{UI_CSS}</style>
 
       {/* Fotos de obra — crossfade; la activa lleva Ken Burns lento */}
-      {FOTOS_LOGIN.map((f, i) => (
+      {FOTOS_LOGIN.map((p, i) => (
         <div
-          key={f}
+          key={p.f}
           aria-hidden
           className={i === foto && !reduceMotion ? "gt-kenburns" : undefined}
           style={{
             position: "absolute", inset: 0,
-            backgroundImage: `url(${base}brand/login/${f})`,
-            backgroundSize: "cover", backgroundPosition: "center 40%",
+            backgroundImage: `url(${base}brand/login/${p.f})`,
+            backgroundSize: "cover", backgroundPosition: p.pos,
             opacity: i === foto ? 1 : 0,
             transition: "opacity 1600ms var(--curva), transform 1600ms var(--curva)",
             animation: i === foto && !reduceMotion ? "gtKenBurns 11s linear forwards" : "none",
@@ -874,9 +882,9 @@ function LoginScreen({ onLogin }) {
             Tegucigalpa · San Pedro Sula — Honduras
           </div>
           <div style={{ display: "flex", gap: 2 }}>
-            {FOTOS_LOGIN.map((f, i) => (
+            {FOTOS_LOGIN.map((p, i) => (
               <button
-                key={f}
+                key={p.f}
                 onClick={() => setFoto(i)}
                 aria-label={`Foto ${i + 1}`}
                 style={{ height: 34, padding: "0 6px", display: "flex", alignItems: "center", background: "transparent", border: "none", cursor: "pointer" }}

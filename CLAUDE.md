@@ -31,8 +31,13 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
     `fill-mode: backwards`, manchas de brillo 47s/59s (primos), vidrio
     `--v-fondo-foto`, `prefers-reduced-motion` respetado.
   - `LoginScreen`: slideshow crossfade 9s de fotos reales de obra
-    (`public/brand/login/obra-1..5.jpg`, ~2MB total; la 5 vino de un ARW de
-    Gerson vía sips) + Ken Burns en la activa, tagline "Ingeniería que
+    (`public/brand/login/obra-1..2.jpg`, ~2.5MB total). **Solo 2 fotos
+    (31-ago, pedido de Gerson)**: piladora con montañas y perforadora en el
+    río — regeneradas desde los ORIGINALES de Downloads (image (3).jpg
+    2691×3600 y 7C98965D...jpeg 1536×2048; las 5 anteriores eran 1200×1600
+    verticales y el cover las estiraba pixeladas en desktop). FOTOS_LOGIN es
+    [{f, pos}]: `pos` = banda visible del cover por foto (30% piladora, 62%
+    río). Ken Burns en la activa, tagline "Ingeniería que
     sostiene. Proyectos que avanzan.", form vidrio, versículo del día, dots
     clickeables. Fuentes nuevas en index.html: Plus Jakarta Sans + IBM Plex
     Mono (Inter y Manrope siguen para los módulos).
