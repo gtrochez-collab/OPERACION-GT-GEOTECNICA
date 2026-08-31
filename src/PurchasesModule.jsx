@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
+import { GT_CSS } from "./gt-ui.js";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { USERS } from "./users.js";
@@ -376,7 +377,7 @@ const TreasuryBadge = ({ status }) => {
   if (!status) return null;
   const s = TREASURY_STATUSES[status];
   if (!s) return null;
-  return <span style={{ background: s.bg, color: s.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", border: `1px solid ${s.color}30` }}>💼 {s.label}</span>;
+  return <span style={{ background: s.bg, color: s.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", border: `1px solid ${s.color}30` }}>{s.label}</span>;
 };
 
 // Delivery badge (estado de recepcion de materiales)
@@ -384,7 +385,7 @@ const DeliveryBadge = ({ status }) => {
   if (!status) return null;
   const s = DELIVERY_STATUSES[status];
   if (!s) return null;
-  return <span style={{ background: s.bg, color: s.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", border: `1px solid ${s.color}30` }}>{s.icon} {s.label}</span>;
+  return <span style={{ background: s.bg, color: s.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", border: `1px solid ${s.color}30` }}>{s.label}</span>;
 };
 
 // Deriva el treasuryStatus para registros legacy que no lo tengan
@@ -2855,7 +2856,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     pagado: cp.filter(p => p.status === "pagado").length,
     finalizado: cp.filter(p => p.status === "finalizado").length,
     montoPendiente: cp.filter(p => p.status === "validado").reduce((s, p) => s + (Number(p.amount) || 0), 0),
-    montoPagadoMes: cp.filter(p => (p.status === "pagado" || p.status === "finalizado") && p.paidAt && new Date(p.paidAt).getMonth() === new Date().getMonth() && new Date(p.paidAt).getFullYear() === new Date().getFullYear()).reduce((s, p) => s + (Number(p.amount) || 0), 0),
+    // Mismo criterio del Dashboard: slice(0,7) sobre el string UTC de paidAt
+    // (getMonth() en hora local corría al mes anterior los pagos del día 1 —
+    // el mismo número salía distinto en la tira de Solicitudes y el Dashboard).
+    montoPagadoMes: (() => {
+      const h = new Date();
+      const mesStr = `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, "0")}`;
+      return cp.filter(p => (p.status === "pagado" || p.status === "finalizado") && p.paidAt && String(p.paidAt).slice(0, 7) === mesStr).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    })(),
     sinRecibido: cp.filter(p => (p.status === "pagado" || p.status === "finalizado") && p.deliveryStatus !== "cerrado").length,
   };
 
@@ -3499,98 +3507,58 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // ─────────────────────────────────────────────────────────────────────────
   // Solo admin/gerencia/costos. Enfoque en "que falta pagar, que falta llegar,
   // que falta ficha". KPIs + donut de estados + top 5 proyectos + alertas.
+  // ── DASHBOARD (rediseño 31-ago-2026, pedido de Gerson) ──
+  // Estilo IST: SOLO 3 tarjetas en vidrio — Resumen, Gasto por proyecto
+  // (dona) y Por proyecto — con selector de mes + vista GLOBAL (histórico).
+  // Se quitaron el header repetido, la fila de 7 KPIs, las alertas y todo
+  // "Suministro pendiente" ("es repetitivo, cansa la vista"). Sin emojis.
   const renderDashboard = () => {
-    const now = Date.now();
     const hoy = new Date();
     const mesActual = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}`;
-    // Mes seleccionado para las metricas mensuales (pagado, gasto por proyecto)
-    const mesSel = dashMonth || mesActual;
-    const mesSelLabel = (() => {
+    const esGlobal = dashMonth === "global";
+    const mesSel = esGlobal ? mesActual : (dashMonth || mesActual);
+    const mesSelLabel = esGlobal ? "histórico global" : (() => {
       const [y, m] = mesSel.split("-").map(Number);
       return new Date(y, m - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
     })();
+    const mesCorto = esGlobal ? "GLOBAL" : mesSelLabel.split(" ")[0].toUpperCase();
 
-    // ── Datasets base ──
-    const activas = cp.filter(p => p.deliveryStatus !== "cerrado");
-    const validadas = cp.filter(p => p.status === "validado");
-    const montoPorPagar = validadas.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-    // Pagado en el MES SELECCIONADO (paidAt es ISO — slice(0,7) = "YYYY-MM")
-    const pagadoMes = cp
-      .filter(p => (p.status === "pagado" || p.status === "finalizado") && p.paidAt)
-      .filter(p => String(p.paidAt).slice(0, 7) === mesSel)
-      .reduce((s, p) => s + (Number(p.amount) || 0), 0);
-
-    // Helpers de estado logistico
-    const despachoOf = (p) => despachos.find(d => d.sourcePurchaseId === p.id);
     const isPaid = (p) => p.status === "pagado" || p.status === "finalizado";
+    // ¿El pago entra en la vista? Global = todo lo pagado; si no, el mes elegido.
+    // Global = TODO lo pagado (hay compras pagadas viejas SIN paidAt — no
+    // pueden quedar invisibles en el "histórico completo"); por mes exige
+    // paidAt igual que el dashboard viejo.
+    const enVista = (p) => isPaid(p) && (esGlobal || (!!p.paidAt && String(p.paidAt).slice(0, 7) === mesSel));
 
-    // Pendiente entrega: pagadas, no cerradas, sin ficha adjunta
-    const pendienteEntrega = cp.filter(p => {
-      if (!isPaid(p)) return false;
-      if (p.deliveryStatus === "cerrado") return false;
-      if (p.deliveryStatus === "ficha_adjunta") return false;
-      return true;
-    });
-
-    // Pendiente ficha: entregado (deliveryStatus recibido/entregado o despacho entregado) sin fichaFile
+    // ── Resumen ──
+    const activas = cp.filter(p => p.deliveryStatus !== "cerrado");
+    const montoPorPagar = cp.filter(p => p.status === "validado").reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const pagadoVista = cp.filter(enVista).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const despachoOf = (p) => despachos.find(d => d.sourcePurchaseId === p.id);
+    const pendienteEntrega = cp.filter(p => isPaid(p) && p.deliveryStatus !== "cerrado" && p.deliveryStatus !== "ficha_adjunta").length;
     const pendienteFicha = cp.filter(p => {
-      if (p.delivery?.fichaFile) return false;
-      if (p.deliveryStatus === "cerrado") return false;
+      if (p.delivery?.fichaFile || p.deliveryStatus === "cerrado") return false;
       const desp = despachoOf(p);
-      const entregado = desp?.estado === "entregado" || p.deliveryStatus === "recibido";
-      return isPaid(p) && entregado;
-    });
+      return isPaid(p) && (desp?.estado === "entregado" || p.deliveryStatus === "recibido");
+    }).length;
 
-    // Por enviar a logistica (Ana): pagadas, sin orden de recogida creada,
-    // sin ficha y no cerradas — lo que a Ana le falta coordinar con el
-    // proveedor y mandar a logistica. Las que YA resolvio marcando "la entrega
-    // el proveedor" salen de aqui: no le falta hacer nada con ellas.
-    const porEnviarLogistica = cp.filter(p => {
-      if (!isPaid(p)) return false;
-      if (p.deliveryStatus === "cerrado" || p.deliveryStatus === "ficha_adjunta") return false;
-      if (p.deliveryStatus === "entrega_proveedor") return false;
-      if (p.delivery?.fichaFile) return false;
-      return !despachoOf(p);
-    });
-
-    // Entrega directa del proveedor: pendientes de que lleguen a proyecto.
-    const entregaProveedor = cp.filter(p => isPaid(p) && p.deliveryStatus === "entrega_proveedor");
-
-    // ── KPI cards ──
-    const kpis = [
-      { icon: "📋", label: "Solicitudes activas",          value: activas.length,            color: "#2563EB", tint: "#DBEAFE", fmt: (v) => v },
-      { icon: "💰", label: "Por pagar (Lic. Carolina)",    value: montoPorPagar,             color: "#D97706", tint: "#FEF3C7", fmt: (v) => fmtL(v) },
-      { icon: "✅", label: `Pagado en ${mesSelLabel}`,      value: pagadoMes,                 color: "#059669", tint: "#D1FAE5", fmt: (v) => fmtL(v) },
-      { icon: "📦", label: "Por enviar a logística (Ana)", value: porEnviarLogistica.length, color: "#7C3AED", tint: "#EDE9FE", fmt: (v) => v },
-      { icon: "🏪", label: "La entrega el proveedor",      value: entregaProveedor.length,   color: "#0F766E", tint: "#CCFBF1", fmt: (v) => v },
-      { icon: "🚛", label: "Pendiente entrega",            value: pendienteEntrega.length,   color: "#B45309", tint: "#FDE68A", fmt: (v) => v },
-      { icon: "📋", label: "Pendiente ficha",              value: pendienteFicha.length,     color: "#DC2626", tint: "#FEE2E2", fmt: (v) => v },
-    ];
-
-    // ── Donut: % del gasto del MES por proyecto ──
-    // (antes era distribucion por estado — cambiado a pedido del usuario:
-    // "que la dona me diga el porcentaje de lo que vamos gastando por
-    // proyecto mensual"). Top 6 proyectos + "Otros".
+    // ── Dona: gasto por proyecto (mes elegido o global). Paleta original. ──
     const DONUT_COLORS = ["#059669", "#2563EB", "#D97706", "#7C3AED", "#DC2626", "#0891B2", "#BE185D", "#65A30D"];
-    const gastoMesProy = {};
+    const gastoProy = {};
     cp.forEach(p => {
-      if (!isPaid(p) || String(p.paidAt || "").slice(0, 7) !== mesSel) return;
+      if (!enVista(p)) return;
       const key = p.projectCode || "Sin proyecto";
-      gastoMesProy[key] = (gastoMesProy[key] || 0) + (Number(p.amount) || 0);
+      gastoProy[key] = (gastoProy[key] || 0) + (Number(p.amount) || 0);
     });
-    const gastoSorted = Object.entries(gastoMesProy).sort((a, b) => b[1] - a[1]);
+    const gastoSorted = Object.entries(gastoProy).sort((a, b) => b[1] - a[1]);
     const otrosGasto = gastoSorted.slice(6).reduce((s, [, v]) => s + v, 0);
     const donutCats = [
       ...gastoSorted.slice(0, 6).map(([k, v], i) => ({ key: k, label: k, count: v, color: DONUT_COLORS[i % DONUT_COLORS.length] })),
       ...(otrosGasto > 0 ? [{ key: "_otros", label: "Otros", count: otrosGasto, color: "#94A3B8" }] : []),
     ];
     const donutTotal = donutCats.reduce((s, c) => s + c.count, 0);
-    // Formato corto para el centro de la dona (L 1.66M / L 263k)
     const shortL = (v) => v >= 1e6 ? `L ${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `L ${Math.round(v / 1e3)}k` : `L ${Math.round(v)}`;
-
-    // Construir arcos del donut (SVG puro)
-    const donutR = 60;
-    const donutInner = 42;
+    const donutR = 60, donutInner = 42;
     const donutCircum = 2 * Math.PI * donutR;
     let accAngle = 0;
     const donutArcs = donutCats.map(c => {
@@ -3601,16 +3569,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       return seg;
     });
 
-    // ── Por proyecto: pendiente de pago (Lic. Carolina) + pagado en el mes ──
-    // Lo que pidio el usuario: ver de un vistazo cuanto le falta pagar a
-    // Carolina por proyecto y cuanto se ha gastado en materiales ese mes.
+    // ── Por proyecto: pendiente de pago (Lic. Carolina) + pagado en la vista ──
     const proyRows = (() => {
       const acc = {};
       cp.forEach(p => {
         const key = p.projectCode || "_sin_proyecto";
         if (!acc[key]) acc[key] = { porPagar: 0, nPorPagar: 0, pagadoMes: 0, nPagadoMes: 0 };
         if (p.status === "validado") { acc[key].porPagar += Number(p.amount) || 0; acc[key].nPorPagar++; }
-        if (isPaid(p) && String(p.paidAt || "").slice(0, 7) === mesSel) { acc[key].pagadoMes += Number(p.amount) || 0; acc[key].nPagadoMes++; }
+        if (enVista(p)) { acc[key].pagadoMes += Number(p.amount) || 0; acc[key].nPagadoMes++; }
       });
       return Object.entries(acc)
         .map(([key, v]) => ({ key, name: allProjects.find(pr => pr.short === key)?.name || key, ...v }))
@@ -3621,205 +3587,57 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const totPagadoMesProy = proyRows.reduce((s, r) => s + r.pagadoMes, 0);
     const maxPagadoMesProy = Math.max(1, ...proyRows.map(r => r.pagadoMes));
 
-    // ── Alertas de accion ──
-    const daysSince = (iso) => {
-      if (!iso) return 0;
-      return Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86400000));
-    };
-    // Enfoque pedido por el usuario: lo que importa es SUMINISTRAR el
-    // proyecto. Dos listas accionables + resumen por proyecto:
-    // a) Ana NO ha coordinado: pagadas sin orden de recogida (mismo criterio
-    //    que el KPI "Por enviar a logistica") — para preguntarle a Ana.
-    const alertaAna = porEnviarLogistica
-      .map(p => ({ p, dias: daysSince(p.paidAt || p.createdAt) }))
-      .sort((a, b) => b.dias - a.dias);
-    // b) Ya coordinadas pero NO han llegado al proyecto. Dos casos:
-    //    - despacho vivo (pendiente/programado/en_ruta) → preguntarle a Oscar.
-    //    - entrega directa del proveedor con la fecha/hora ya vencida →
-    //      preguntarle al proveedor (sin esto se volvian invisibles al salir
-    //      de la lista de Ana).
-    const alertaEntrega = cp
-      .filter(p => {
-        if (p.delivery?.fichaFile || p.deliveryStatus === "cerrado" || p.deliveryStatus === "ficha_adjunta") return false;
-        if (p.deliveryStatus === "entrega_proveedor") {
-          const at = p.delivery?.arrivalAt;
-          return !!at && new Date(at).getTime() < now;   // solo si ya se paso la hora
-        }
-        const desp = despachoOf(p);
-        if (!desp) return false;
-        return desp.estado !== "entregado" && desp.estado !== "cerrado";
-      })
-      .map(p => {
-        const desp = despachoOf(p);
-        const directa = p.deliveryStatus === "entrega_proveedor";
-        return { p, directa, dias: daysSince(directa ? p.delivery?.arrivalAt : (desp?.createdAt || p.paidAt)) };
-      })
-      .sort((a, b) => b.dias - a.dias);
-    // c) Falta entregar POR PROYECTO — que proyecto esta mas desabastecido
-    //    (suma de a + b, con monto pendiente de entrega).
-    const faltaProy = {};
-    alertaAna.forEach(({ p }) => {
-      const k = p.projectCode || "—";
-      if (!faltaProy[k]) faltaProy[k] = { ana: 0, log: 0, monto: 0 };
-      faltaProy[k].ana++; faltaProy[k].monto += Number(p.amount) || 0;
-    });
-    alertaEntrega.forEach(({ p }) => {
-      const k = p.projectCode || "—";
-      if (!faltaProy[k]) faltaProy[k] = { ana: 0, log: 0, monto: 0 };
-      faltaProy[k].log++; faltaProy[k].monto += Number(p.amount) || 0;
-    });
-    const faltaProyRows = Object.entries(faltaProy)
-      .map(([k, v]) => ({ key: k, ...v, total: v.ana + v.log }))
-      .sort((a, b) => b.total - a.total || b.monto - a.monto);
-
-    // Estilos comunes
-    const cardStyle = {
-      background: "#fff",
-      border: `1px solid ${BORDER}`,
-      borderRadius: 12,
-      padding: 16,
-      boxShadow: "0 1px 3px rgba(15,23,42,0.05)",
-    };
-
-    // Sub-render: item de una alerta
-    const AlertItem = ({ item, days_color }) => {
-      const proj = allProjects.find(pr => pr.short === item.p.projectCode);
-      return (
-        <div
-          onClick={() => setModal({ t: "detail", d: item.p })}
-          style={{
-            display: "grid",
-            gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1.4fr) minmax(0,1.6fr) auto auto",
-            gap: 10,
-            alignItems: "center",
-            padding: "8px 10px",
-            borderRadius: 8,
-            background: "#F8FAFC",
-            border: "1px solid #E2E8F0",
-            cursor: "pointer",
-            fontSize: 12,
-          }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.p.provider || "—"}</div>
-            <div style={{ fontSize: 10, color: "#64748b", fontFamily: "ui-monospace, Menlo, monospace" }}>{proj?.short || item.p.projectCode || "—"}</div>
-          </div>
-          <div style={{ fontSize: 11, color: "#475569", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {item.p.description || item.p.items?.[0]?.description || "Compra"}
-          </div>
-          <div style={{ fontWeight: 800, color: "#059669", fontSize: 12, whiteSpace: "nowrap" }}>{fmtL(item.p.amount)}</div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: days_color, background: days_color + "18", padding: "3px 8px", borderRadius: 10, whiteSpace: "nowrap" }}>
-            {item.dias}d
-          </div>
-        </div>
-      );
-    };
-
-    const AlertBlock = ({ icon, title, color, items, emptyMsg }) => (
-      <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ fontSize: 22 }}>{icon}</div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, lineHeight: 1.2 }}>{title}</div>
-              <div style={{ fontSize: 11, color: STONE, marginTop: 2 }}>{items.length} pendientes</div>
-            </div>
-          </div>
-          <div style={{
-            background: color, color: "#fff", fontWeight: 800, fontSize: 14,
-            width: 32, height: 32, borderRadius: 8,
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>{items.length}</div>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
-          {items.length === 0 && (
-            <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "12px 4px" }}>{emptyMsg}</div>
-          )}
-          {items.slice(0, 5).map((it, i) => (
-            <AlertItem key={it.p.id || i} item={it} days_color={color} />
-          ))}
-        </div>
-        {items.length > 0 && (
-          <button
-            onClick={() => setSec("resumen")}
-            style={{
-              marginTop: 4, background: "transparent", border: `1px solid ${color}`, color: color,
-              padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer",
-              fontFamily: "inherit", alignSelf: "flex-start",
-            }}
-          >Ver todos en Resumen →</button>
-        )}
+    // ── UI ──
+    const tituloCard = (txt) => (
+      <div className="gt-label" style={{ color: "var(--text-3)", marginBottom: 16 }}>{txt}</div>
+    );
+    const pill = (txt, activo, onClick, title) => (
+      <button key={txt} onClick={onClick} title={title} style={{ padding: "7px 14px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? ORANGE : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
+    );
+    const filaResumen = (label, valor, color) => (
+      <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--hairline)" }}>
+        <span style={{ fontSize: 13, color: "var(--text-2)", fontWeight: 500 }}>{label}</span>
+        <span style={{ fontSize: 14.5, fontWeight: 800, color: color || "var(--text)", whiteSpace: "nowrap" }}>{valor}</span>
       </div>
     );
 
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        {/* HEADER intro */}
-        <div style={{
-          background: `linear-gradient(135deg, #FFF7ED 0%, #FEF3E6 100%)`,
-          border: `1px solid ${BORDER}`, borderRadius: 12, padding: "14px 18px",
-          display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8,
-        }}>
-          <div>
-            <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
-              📊 Dashboard Gerencial
-            </div>
-            <div style={{ fontSize: 12, color: STONE, marginTop: 4 }}>Vista ejecutiva — lo que necesita tu atencion</div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 11, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>
-              {new Date().toLocaleDateString("es-HN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
-            </div>
-            <div>
-              <div style={{ fontSize: 9, fontWeight: 700, color: STONE, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Mes de análisis</div>
-              <input type="month" value={mesSel} onChange={e => setDashMonth(e.target.value)}
-                title="Mes para las métricas mensuales: pagado del mes y gasto por proyecto"
-                style={{ padding: "6px 10px", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12, background: "#fff", fontFamily: "inherit" }} />
-            </div>
-          </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        {/* Selector: mes de análisis o vista global */}
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span className="gt-label" style={{ color: "var(--text-3)" }}>Ver</span>
+          {pill("Por mes", !esGlobal, () => { if (esGlobal) setDashMonth(""); }, "Las tarjetas muestran el mes elegido")}
+          {!esGlobal && (
+            <input type="month" value={mesSel} onChange={e => setDashMonth(e.target.value)}
+              title="Mes para el pagado, la dona y Por proyecto"
+              style={{ padding: "7px 12px", border: "1px solid var(--hairline)", borderRadius: 999, fontSize: 12.5, background: "var(--surface)", fontFamily: "inherit", fontWeight: 700, color: "var(--text)" }} />
+          )}
+          {pill("Global (todo)", esGlobal, () => setDashMonth("global"), "Histórico completo, sin filtro de mes")}
         </div>
 
-        {/* KPI CARDS */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : `repeat(${kpis.length}, minmax(0,1fr))`,
-          gap: 12,
-        }}>
-          {kpis.map(k => (
-            <div key={k.label} style={{ ...cardStyle, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{
-                width: 44, height: 44, borderRadius: 10, background: k.tint,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 22, flexShrink: 0,
-              }}>{k.icon}</div>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: isMobile ? 15 : 18, fontWeight: 800, color: k.color, lineHeight: 1.1, overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {k.fmt(k.value)}
-                </div>
-                <div style={{ fontSize: 10, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 3 }}>
-                  {k.label}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        {/* Las 3 tarjetas (estilo IST) */}
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fit, minmax(min(320px,100%), 1fr))", gap: 18, alignItems: "stretch" }}>
 
-        {/* CHARTS ROW */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: isMobile ? "1fr" : "1fr 1.3fr",
-          gap: 16,
-        }}>
-          {/* DONUT — distribucion por estado */}
-          <div style={cardStyle}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12, letterSpacing: -0.2 }}>
-              Gasto del mes por proyecto — {mesSelLabel}
+          {/* 1 — RESUMEN */}
+          <div className="gt-vidrio" style={{ padding: 24, display: "flex", flexDirection: "column", minHeight: 300, minWidth: 0 }}>
+            {tituloCard("Resumen")}
+            <div style={{ font: "800 clamp(26px,2.4vw,34px)/1.1 var(--display)", letterSpacing: "-.02em", color: "#059669" }}>{fmtL(pagadoVista)}</div>
+            <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4, marginBottom: 14 }}>{esGlobal ? "pagado en total (histórico)" : `pagado en ${mesSelLabel}`}</div>
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {filaResumen("Por pagar (Lic. Carolina)", fmtL(montoPorPagar), "var(--naranja-tinta)")}
+              {filaResumen("Solicitudes activas", activas.length)}
+              {filaResumen("Pendiente de entrega", pendienteEntrega)}
+              {filaResumen("Pendiente ficha de recibido", pendienteFicha, pendienteFicha > 0 ? "#B03024" : undefined)}
             </div>
+          </div>
+
+          {/* 2 — GASTO POR PROYECTO (dona) */}
+          <div className="gt-vidrio" style={{ padding: 24, minHeight: 300, minWidth: 0 }}>
+            {tituloCard(esGlobal ? "Gasto global por proyecto" : `Gasto del mes por proyecto — ${mesSelLabel}`)}
             <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
-              <svg viewBox="0 0 160 160" style={{ width: 160, height: 160, flexShrink: 0 }}>
+              <svg viewBox="0 0 160 160" style={{ width: 150, height: 150, flexShrink: 0 }}>
                 <g transform="translate(80,80)">
-                  {/* Fondo del donut */}
-                  <circle r={donutR} fill="none" stroke="#F1F5F9" strokeWidth={donutR - donutInner} />
+                  <circle r={donutR} fill="none" stroke="rgba(44,42,40,.06)" strokeWidth={donutR - donutInner} />
                   {donutTotal > 0 && donutArcs.map(seg => (
                     <circle
                       key={seg.key}
@@ -3831,22 +3649,22 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                       transform={`rotate(${-90 + seg.rotation})`}
                     />
                   ))}
-                  <text textAnchor="middle" y="-4" style={{ fontSize: 15, fontWeight: 800, fill: CHARCOAL }}>{shortL(donutTotal)}</text>
-                  <text textAnchor="middle" y="14" style={{ fontSize: 8, fill: STONE, letterSpacing: 0.5 }}>PAGADO {mesSelLabel.split(" ")[0].toUpperCase()}</text>
+                  <text textAnchor="middle" y="-4" style={{ fontSize: 15, fontWeight: 800, fill: "var(--text)" }}>{shortL(donutTotal)}</text>
+                  <text textAnchor="middle" y="14" style={{ fontSize: 8, fill: "var(--text-3)", letterSpacing: 0.5 }}>PAGADO {mesCorto}</text>
                 </g>
               </svg>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 150, flex: 1 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 7, minWidth: 150, flex: 1 }}>
                 {donutCats.length === 0 && (
-                  <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Sin pagos registrados en {mesSelLabel}.</div>
+                  <div style={{ fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic" }}>Sin pagos registrados en {mesSelLabel}.</div>
                 )}
                 {donutCats.map(c => {
                   const pct = donutTotal > 0 ? Math.round((c.count / donutTotal) * 100) : 0;
                   return (
                     <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                      <div style={{ width: 12, height: 12, borderRadius: 3, background: c.color, flexShrink: 0 }} />
-                      <div style={{ flex: 1, color: CHARCOAL, fontWeight: 600, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.label}</div>
-                      <div style={{ fontWeight: 700, color: CHARCOAL, fontSize: 11, whiteSpace: "nowrap" }}>{fmtL(c.count)}</div>
-                      <div style={{ color: c.color, fontWeight: 800, fontSize: 11, width: 38, textAlign: "right" }}>{pct}%</div>
+                      <div style={{ width: 11, height: 11, borderRadius: 3, background: c.color, flexShrink: 0 }} />
+                      <div style={{ flex: 1, color: "var(--text)", font: "600 11px/1.3 var(--mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.label}</div>
+                      <div style={{ fontWeight: 700, color: "var(--text)", fontSize: 11, whiteSpace: "nowrap" }}>{fmtL(c.count)}</div>
+                      <div style={{ color: c.color, fontWeight: 800, fontSize: 11, width: 36, textAlign: "right" }}>{pct}%</div>
                     </div>
                   );
                 })}
@@ -3854,116 +3672,55 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             </div>
           </div>
 
-          {/* POR PROYECTO — por pagar (Carolina) + pagado del mes */}
-          <div style={cardStyle}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 12, letterSpacing: -0.2, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span>Por proyecto</span>
-              <span style={{ fontSize: 10, color: STONE, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>por pagar (Lic. Carolina) · pagado en {mesSelLabel}</span>
+          {/* 3 — POR PROYECTO */}
+          <div className="gt-vidrio" style={{ padding: 24, minHeight: 300, minWidth: 0 }}>
+            {tituloCard("Por proyecto")}
+            <div style={{ fontSize: 11, color: "var(--text-3)", margin: "-10px 0 12px" }}>
+              por pagar (Lic. Carolina) · pagado {esGlobal ? "histórico" : `en ${mesSelLabel}`}
             </div>
             {proyRows.length === 0 ? (
-              <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "20px 4px" }}>
+              <div style={{ fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic", padding: "20px 4px" }}>
                 Nada por pagar y ningún pago registrado en {mesSelLabel}.
               </div>
             ) : (
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
-                    <tr style={{ borderBottom: "2px solid #E2E8F0" }}>
-                      <th style={{ textAlign: "left", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: STONE, textTransform: "uppercase", letterSpacing: 0.4 }}>Proyecto</th>
-                      <th style={{ textAlign: "right", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "#D97706", textTransform: "uppercase", letterSpacing: 0.4 }}>Por pagar</th>
-                      <th style={{ textAlign: "right", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "#059669", textTransform: "uppercase", letterSpacing: 0.4 }}>Pagado {mesSelLabel.split(" ")[0]}</th>
+                    <tr style={{ borderBottom: "1px solid var(--hairline)" }}>
+                      <th style={{ textAlign: "left", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.4 }}>Proyecto</th>
+                      <th style={{ textAlign: "right", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "var(--naranja-tinta)", textTransform: "uppercase", letterSpacing: 0.4 }}>Por pagar</th>
+                      <th style={{ textAlign: "right", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "#059669", textTransform: "uppercase", letterSpacing: 0.4 }}>Pagado</th>
                     </tr>
                   </thead>
                   <tbody>
                     {proyRows.slice(0, 10).map(r => (
-                      <tr key={r.key} style={{ borderBottom: "1px solid #F1F5F9" }}
-                        title={`${r.name} — ${r.nPorPagar} por pagar · ${r.nPagadoMes} pagadas en ${mesSelLabel}`}>
-                        <td style={{ padding: "7px 6px", fontWeight: 700, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11 }}>{r.key}</td>
-                        <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 700, color: r.porPagar > 0 ? "#D97706" : "#CBD5E1", whiteSpace: "nowrap" }}>
-                          {r.porPagar > 0 ? <>{fmtL(r.porPagar)} <span style={{ fontSize: 9, color: STONE }}>({r.nPorPagar})</span></> : "—"}
+                      <tr key={r.key} style={{ borderBottom: "1px solid rgba(44,42,40,.05)" }}
+                        title={`${r.name} — ${r.nPorPagar} por pagar · ${r.nPagadoMes} pagadas`}>
+                        <td style={{ padding: "8px 6px", fontWeight: 700, color: "var(--text)", fontFamily: "var(--mono)", fontSize: 10.5 }}>{r.key}</td>
+                        <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: r.porPagar > 0 ? "var(--naranja-tinta)" : "var(--text-faint)", whiteSpace: "nowrap" }}>
+                          {r.porPagar > 0 ? <>{fmtL(r.porPagar)} <span style={{ fontSize: 9, color: "var(--text-3)" }}>({r.nPorPagar})</span></> : "—"}
                         </td>
-                        <td style={{ padding: "7px 6px", textAlign: "right", whiteSpace: "nowrap" }}>
+                        <td style={{ padding: "8px 6px", textAlign: "right", whiteSpace: "nowrap" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
-                            <div style={{ width: 46, height: 7, borderRadius: 4, background: "#F1F5F9", overflow: "hidden", flexShrink: 0 }}>
+                            <div style={{ width: 42, height: 6, borderRadius: 4, background: "rgba(44,42,40,.07)", overflow: "hidden", flexShrink: 0 }}>
                               <div style={{ width: `${(r.pagadoMes / maxPagadoMesProy) * 100}%`, height: "100%", background: "#059669" }} />
                             </div>
-                            <span style={{ fontWeight: 700, color: r.pagadoMes > 0 ? "#059669" : "#CBD5E1" }}>{r.pagadoMes > 0 ? fmtL(r.pagadoMes) : "—"}</span>
+                            <span style={{ fontWeight: 700, color: r.pagadoMes > 0 ? "#059669" : "var(--text-faint)" }}>{r.pagadoMes > 0 ? fmtL(r.pagadoMes) : "—"}</span>
                           </div>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
-                    <tr style={{ borderTop: "2px solid #CBD5E1" }}>
-                      <td style={{ padding: "7px 6px", fontWeight: 800, color: CHARCOAL, fontSize: 11 }}>TOTAL</td>
-                      <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 800, color: "#D97706", whiteSpace: "nowrap" }}>{fmtL(totPorPagarProy)}</td>
-                      <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 800, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(totPagadoMesProy)}</td>
+                    <tr style={{ borderTop: "1px solid var(--hairline)" }}>
+                      <td style={{ padding: "8px 6px", fontWeight: 800, color: "var(--text)", fontSize: 11 }}>TOTAL</td>
+                      <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 800, color: "var(--naranja-tinta)", whiteSpace: "nowrap" }}>{fmtL(totPorPagarProy)}</td>
+                      <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 800, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(totPagadoMesProy)}</td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
             )}
-          </div>
-        </div>
-
-        {/* SUMINISTRO PENDIENTE — lo que falta ENTREGAR a los proyectos */}
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginBottom: 10, letterSpacing: -0.2, textTransform: "uppercase" }}>
-            🚚 Suministro pendiente — material que falta entregar
-          </div>
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0,1fr))",
-            gap: 14,
-          }}>
-            {/* Que proyecto esta mas desabastecido */}
-            <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ fontSize: 22 }}>🏗️</div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, lineHeight: 1.2 }}>Falta entregar por proyecto</div>
-                  <div style={{ fontSize: 11, color: STONE, marginTop: 2 }}>compras pagadas aún sin entregar</div>
-                </div>
-              </div>
-              {faltaProyRows.length === 0 ? (
-                <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "12px 4px" }}>✓ Todo entregado.</div>
-              ) : (
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-                  <thead>
-                    <tr style={{ borderBottom: "2px solid #E2E8F0" }}>
-                      <th style={{ textAlign: "left", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: STONE, textTransform: "uppercase" }}>Proyecto</th>
-                      <th title="Ana no ha coordinado" style={{ textAlign: "center", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: "#7C3AED", textTransform: "uppercase" }}>Ana</th>
-                      <th title="En logistica, sin entregar" style={{ textAlign: "center", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: "#2563EB", textTransform: "uppercase" }}>Logíst.</th>
-                      <th style={{ textAlign: "right", padding: "5px 4px", fontSize: 9, fontWeight: 700, color: STONE, textTransform: "uppercase" }}>Monto</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {faltaProyRows.slice(0, 8).map(r => (
-                      <tr key={r.key} style={{ borderBottom: "1px solid #F1F5F9" }}>
-                        <td style={{ padding: "6px 4px", fontWeight: 700, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 10 }}>{r.key}</td>
-                        <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 800, color: r.ana > 0 ? "#7C3AED" : "#CBD5E1" }}>{r.ana || "—"}</td>
-                        <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 800, color: r.log > 0 ? "#2563EB" : "#CBD5E1" }}>{r.log || "—"}</td>
-                        <td style={{ padding: "6px 4px", textAlign: "right", fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(r.monto)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-            <AlertBlock
-              icon="🕐"
-              title="Ana no ha coordinado"
-              color="#7C3AED"
-              items={alertaAna}
-              emptyMsg="✓ Ana coordinó todo — nada pendiente de enviar a logística."
-            />
-            <AlertBlock
-              icon="🚛"
-              title="Logística no ha entregado"
-              color="#2563EB"
-              items={alertaEntrega}
-              emptyMsg="✓ Logística al día — sin despachos pendientes de entrega."
-            />
           </div>
         </div>
       </div>
@@ -4580,7 +4337,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <select value={scProy} onChange={e => setScProy(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }}>
-            <option value="">📍 Todos los proyectos</option>
+            <option value="">Todos los proyectos</option>
             {proyOpts.map(p2 => <option key={p2} value={p2}>{p2}</option>)}
           </select>
           <input value={scQuien} onChange={e => setScQuien(e.target.value)} placeholder="👤 Responsable…" style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", width: 150 }} />
@@ -5238,20 +4995,29 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const providers = [...new Set(cp.map(p => p.provider).filter(Boolean))].sort();
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Stats cards */}
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <StatCard icon="📋" label="Total solicitudes" value={stats.total} color="#BE185D" />
-        <StatCard icon="⏳" label="Pendiente de pago" value={stats.validado} color="#D97706" />
-        <StatCard icon="💸" label="Pagadas sin comprobante" value={stats.pagado} color="#2563EB" />
-        <StatCard icon="✅" label="Finalizadas" value={stats.finalizado} color="#059669" />
-        <StatCard icon="💰" label="Monto por pagar" value={fmtL(stats.montoPendiente)} color="#DC2626" />
-        <StatCard icon="📅" label="Pagado este mes" value={fmtL(stats.montoPagadoMes)} color="#059669" />
-        {stats.sinRecibido > 0 && <StatCard icon="📦" label="Pagadas sin recibido" value={stats.sinRecibido} color="#7C3AED" />}
+      {/* RESUMEN (rediseño 31-ago): un solo cuadrito — "tanta tarjeta es
+          repetitivo, cansa la vista". Sin emojis. */}
+      <div className="gt-vidrio" style={{ padding: "16px 22px", display: "flex", alignItems: "center", gap: isMobile ? 14 : 0, flexWrap: "wrap" }}>
+        {[
+          { v: stats.total, l: "solicitudes" },
+          { v: stats.validado, l: "pendientes de pago", c: "var(--naranja-tinta)" },
+          { v: fmtL(stats.montoPendiente), l: "por pagar", c: "var(--naranja-tinta)" },
+          { v: fmtL(stats.montoPagadoMes), l: "pagado este mes", c: "#059669" },
+          { v: stats.finalizado, l: "finalizadas", c: "#059669" },
+        ].map((x, i, arr) => (
+          <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 40%" : 1, minWidth: 0 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "800 clamp(17px,1.6vw,22px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap" }}>{x.v}</div>
+              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 3 }}>{x.l}</div>
+            </div>
+            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 22px 0 auto" }} />}
+          </div>
+        ))}
       </div>
 
       {/* Carolina destacado si es tesoreria */}
-      {isTesoreria && stats.validado > 0 && <div style={{ background: "linear-gradient(135deg, #FEF3C7, #FDE68A)", border: "1px solid #F59E0B", borderRadius: 12, padding: 14, color: "#92400E", fontSize: 14, fontWeight: 600 }}>
-        👋 Hola Lic. Carolina, tenes <b style={{ fontSize: 18, color: "#D97706" }}>{stats.validado} solicitud{stats.validado === 1 ? "" : "es"}</b> pendiente{stats.validado === 1 ? "" : "s"} de pago — <b>{fmtL(stats.montoPendiente)}</b>
+      {isTesoreria && stats.validado > 0 && <div className="gt-vidrio" style={{ borderLeft: "3px solid #E8762D", padding: "13px 18px", color: "var(--text)", fontSize: 14, fontWeight: 500 }}>
+        Hola Lic. Carolina — tenés <b style={{ color: "var(--naranja-tinta)" }}>{stats.validado} solicitud{stats.validado === 1 ? "" : "es"}</b> pendiente{stats.validado === 1 ? "" : "s"} de pago por <b>{fmtL(stats.montoPendiente)}</b>.
       </div>}
 
       {/* Filtros + acciones */}
@@ -5261,7 +5027,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           lleva más esperando), mirando pagadas importa la fecha de pago. */}
       {(() => {
         const btn = (txt, activo, onClick, title) => (
-          <button onClick={onClick} title={title} style={{ padding: "6px 13px", borderRadius: 20, border: "none", background: activo ? "#E8762D" : "#F1F5F9", color: activo ? "#fff" : "#475569", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
+          <button onClick={onClick} title={title} style={{ padding: "6px 13px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? "#E8762D" : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
         );
         const nPend = cp.filter(x => !esPagada(x)).length;
         const nPag = cp.filter(x => esPagada(x)).length;
@@ -5277,44 +5043,44 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           if (v === "pagadas" && !["pago_desc", "pago_asc"].includes(listOrden)) setListOrden("pago_desc");
           if (v === "todas") setListOrden("estado");
         };
-        return <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+        return <div className="gt-vidrio" style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
           {/* Qué ver */}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Ver</span>
-            {btn(`⏳ Pendientes de pago (${nPend})`, filter.ver === "pendientes", () => setVer("pendientes"), "Lo que Tesorería tiene por pagar")}
-            {btn(`✅ Pagadas (${nPag})`, filter.ver === "pagadas", () => setVer("pagadas"), "Las que ya pagó Tesorería")}
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Ver</span>
+            {btn(`Pendientes de pago (${nPend})`, filter.ver === "pendientes", () => setVer("pendientes"), "Lo que Tesorería tiene por pagar")}
+            {btn(`Pagadas (${nPag})`, filter.ver === "pagadas", () => setVer("pagadas"), "Las que ya pagó Tesorería")}
             {btn("Ambas", filter.ver === "todas", () => setVer("todas"), "Todas, con las pendientes arriba")}
           </div>
           {/* Orden */}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Orden</span>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Orden</span>
             {filter.ver !== "pagadas" && <>
-              {btn("📄 Solicitud: la que más espera", listOrden === "solicitud_asc", () => setListOrden("solicitud_asc"), "Por fecha de solicitud, la más antigua primero")}
-              {btn("📄 Solicitud: la más nueva", listOrden === "solicitud_desc", () => setListOrden("solicitud_desc"))}
+              {btn("Solicitud: la que más espera", listOrden === "solicitud_asc", () => setListOrden("solicitud_asc"), "Por fecha de solicitud, la más antigua primero")}
+              {btn("Solicitud: la más nueva", listOrden === "solicitud_desc", () => setListOrden("solicitud_desc"))}
             </>}
             {filter.ver !== "pendientes" && <>
-              {btn("💰 Pago: más reciente", listOrden === "pago_desc", () => setListOrden("pago_desc"), "Por fecha de pago, lo último pagado primero")}
-              {btn("💰 Pago: más antiguo", listOrden === "pago_asc", () => setListOrden("pago_asc"))}
+              {btn("Pago: más reciente", listOrden === "pago_desc", () => setListOrden("pago_desc"), "Por fecha de pago, lo último pagado primero")}
+              {btn("Pago: más antiguo", listOrden === "pago_asc", () => setListOrden("pago_asc"))}
             </>}
-            {filter.ver === "todas" && btn("🏷 Pendientes primero", listOrden === "estado", () => setListOrden("estado"))}
+            {filter.ver === "todas" && btn("Pendientes primero", listOrden === "estado", () => setListOrden("estado"))}
           </div>
           {/* Mes + proyecto + proveedor */}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Mes</span>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Mes</span>
             <select value={filter.mes} onChange={e => setFilter(f2 => ({ ...f2, mes: e.target.value }))}
               title={filter.ver === "pagadas" ? "Mes en que se pagó" : "Mes de la solicitud"}
-              style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", background: filter.mes ? "#FFF7ED" : "#fff", fontWeight: filter.mes ? 700 : 400 }}>
+              style={{ padding: "6px 10px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: filter.mes ? "#FFF7ED" : "var(--surface)", fontWeight: filter.mes ? 700 : 400 }}>
               <option value="">Todos los meses</option>
               {mesesOpts.map(m => <option key={m} value={m}>{mesLbl(m)}</option>)}
             </select>
             <span style={{ fontSize: 10.5, color: "#94A3B8" }}>{filter.ver === "pagadas" ? "(mes de pago)" : filter.ver === "pendientes" ? "(mes de la solicitud)" : "(pago si ya pagó, si no la carga)"}</span>
             <select value={filter.project} onChange={e => setFilter(f2 => ({ ...f2, project: e.target.value }))}
-              style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", background: filter.project ? "#FFF7ED" : "#fff" }}>
-              <option value="">📍 Todos los proyectos</option>
+              style={{ padding: "6px 10px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: filter.project ? "#FFF7ED" : "var(--surface)" }}>
+              <option value="">Todos los proyectos</option>
               {allProjects.map(p2 => <option key={p2.short} value={p2.short}>{p2.short}</option>)}
             </select>
-            <input value={filter.provider} onChange={e => setFilter(f2 => ({ ...f2, provider: e.target.value }))} placeholder="🔍 Proveedor…" list="providers-list"
-              style={{ flex: 1, minWidth: 150, padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }} />
+            <input value={filter.provider} onChange={e => setFilter(f2 => ({ ...f2, provider: e.target.value }))} placeholder="Buscar proveedor…" list="providers-list"
+              style={{ flex: 1, minWidth: 150, padding: "6px 10px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: "var(--surface)" }} />
             <datalist id="providers-list">{providers.map(pv => <option key={pv} value={pv} />)}</datalist>
             {(filter.mes || filter.project || filter.provider || filter.ver !== "pendientes") &&
               <Btn small variant="ghost" onClick={() => { setFilter({ ver: "pendientes", project: "", provider: "", mes: "" }); setListOrden("solicitud_asc"); }}>Limpiar</Btn>}
@@ -5326,15 +5092,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <span style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ color: "#64748b", fontSize: 13 }}>{filtered.length} de {cp.length} solicitudes</span>
         </span>
-        {isAdmin && cp.some(p => p && !p.codigo) && <Btn variant="ghost" onClick={asignarCodigosFaltantes} title="Numera las solicitudes viejas que todavía no tienen código">🔢 Asignar códigos faltantes ({purchases.filter(p => p && !p.codigo).length})</Btn>}
+        {isAdmin && cp.some(p => p && !p.codigo) && <Btn variant="ghost" onClick={asignarCodigosFaltantes} title="Numera las solicitudes viejas que todavía no tienen código">Asignar códigos faltantes ({purchases.filter(p => p && !p.codigo).length})</Btn>}
         {canCreate && <Btn variant="primary" onClick={() => setModal({ t: "new" })}>+ Nueva solicitud</Btn>}
         {!canCreate && canPay && <div style={{ fontSize: 12, color: "#64748b" }}>Click en una fila para revisar y gestionar el pago →</div>}
       </div>
 
       {/* Tabla */}
-      <div style={{ overflowX: "auto", borderRadius: 12, border: "1px solid #E2E8F0", background: "#fff" }}>
+      <div className="gt-vidrio" style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead><tr style={{ background: "#F1F5F9" }}>
+          <thead><tr style={{ background: "rgba(44,42,40,.04)" }}>
             <th style={TH}>Código</th>
             <th style={TH}>Estado</th>
             <th style={TH}>Proyecto</th>
@@ -5368,8 +5134,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
               <td style={TD}>{fmt(p.createdAt)}</td>
               <td style={TD}>{p.paymentDate ? fmt(p.paymentDate) : "—"}</td>
               <td style={TD}>{p.opsResponsible || "—"}</td>
-              <td style={{ ...TD, textAlign: "center" }}>{p.quoteFile ? <span title={p.quoteFile.name} style={{ color: "#2563EB", fontSize: 18 }}>📄</span> : <span style={{ color: "#CBD5E1" }}>—</span>}</td>
-              <td style={{ ...TD, textAlign: "center" }}>{p.receiptFile ? <span title={p.receiptFile.name} style={{ color: "#059669", fontSize: 18 }}>🧾</span> : <span style={{ color: "#CBD5E1" }}>—</span>}</td>
+              <td style={{ ...TD, textAlign: "center" }}>{p.quoteFile ? <span title={p.quoteFile.name} style={{ color: "#2563EB", fontSize: 14, fontWeight: 800 }}>✓</span> : <span style={{ color: "#CBD5E1" }}>—</span>}</td>
+              <td style={{ ...TD, textAlign: "center" }}>{p.receiptFile ? <span title={p.receiptFile.name} style={{ color: "#059669", fontSize: 14, fontWeight: 800 }}>✓</span> : <span style={{ color: "#CBD5E1" }}>—</span>}</td>
               <td style={{ ...TD, textAlign: "right" }} onClick={e => e.stopPropagation()}>
                 <Btn small variant="ghost" onClick={() => setModal({ t: "detail", d: p })}>Ver</Btn>
               </td>
@@ -5470,17 +5236,18 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   };
 
   // ── LAYOUT ──
+  // Sin emojis (rediseño 31-ago): pestañas de texto limpio, estilo IST.
   const allNav = [
-    { id: "dashboard", icon: "🎯", label: "Dashboard" },
-    { id: "costos", icon: "💵", label: "Costos" },
-    { id: "resumen", icon: "🔗", label: "Supply Chain" },
-    { id: "list", icon: "📋", label: "Solicitudes" },
-    { id: "projects", icon: "🏗️", label: "Proyectos" },
-    { id: "ana", icon: "📦", label: "Por coordinar" },
-    { id: "entregas", icon: "🏪", label: "Entregas de proveedor" },
-    { id: "conta", icon: "🧾", label: "Por cerrar contable" },
-    { id: "cerradas", icon: "✅", label: "Cerradas" },
-    { id: "providers", icon: "🏢", label: "Proveedores" },
+    { id: "dashboard", label: "Dashboard" },
+    { id: "costos", label: "Costos" },
+    { id: "resumen", label: "Supply Chain" },
+    { id: "list", label: "Solicitudes" },
+    { id: "projects", label: "Proyectos" },
+    { id: "ana", label: "Por coordinar" },
+    { id: "entregas", label: "Entregas de proveedor" },
+    { id: "conta", label: "Por cerrar contable" },
+    { id: "cerradas", label: "Cerradas" },
+    { id: "providers", label: "Proveedores" },
   ];
   // Dashboard y Resumen (command center) solo para admin/gerencia/costos —
   // quien necesita seguimiento end-to-end. Ana ve su Kanban.
@@ -5505,135 +5272,45 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     : userRole;
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
-  // SVG cartoon de carrito de compras
-  const CarritoSVG = ({ height = 170 }) => (
-    <svg viewBox="0 0 220 180" xmlns="http://www.w3.org/2000/svg" style={{ height, width: "auto", display: "block" }} aria-hidden="true">
-      {/* Sombra eliptica bajo las ruedas */}
-      <ellipse cx="120" cy="168" rx="90" ry="5" fill="#0F172A" opacity="0.09" />
+  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: "#F5F1E9", color: CHARCOAL }}>
+    {/* Sistema visual compartido (tokens + clases gt-*). ⚠ SIN `precedence`. */}
+    <style>{GT_CSS}</style>
+    {/* Manchas de brillo (fixed, z0): sin ellas el backdrop-filter del vidrio
+        no tiene nada que difuminar. Header/nav/contenido van con zIndex 1+. */}
+    <div className="gt-brillo gt-brillo-a" aria-hidden />
+    <div className="gt-brillo gt-brillo-b" aria-hidden />
 
-      {/* Manija (handle) — barra horizontal con curva descendente hacia el cesto */}
-      <path
-        d="M 18 38 L 60 38 Q 74 38 78 52 L 88 78"
-        fill="none"
-        stroke="#1B2B5C"
-        strokeWidth="5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {/* Empuñadura de la manija */}
-      <rect x="10" y="32" width="16" height="12" rx="3" fill="#1B2B5C" />
-
-      {/* Barra superior del cesto (borde del trapecio) */}
-      <line x1="72" y1="62" x2="206" y2="62" stroke="#1B2B5C" strokeWidth="5" strokeLinecap="round" />
-
-      {/* Cesta trapezoidal — mas ancha arriba, mas angosta abajo — relleno naranja */}
-      <polygon
-        points="76,64 202,64 188,140 92,140"
-        fill="#F5762D"
-        stroke="#1B2B5C"
-        strokeWidth="5"
-        strokeLinejoin="round"
-      />
-
-      {/* Lineas rojas horizontales dentro del cesto (items) */}
-      <line x1="94" y1="86"  x2="184" y2="86"  stroke="#D93A3A" strokeWidth="4" strokeLinecap="round" />
-      <line x1="97" y1="106" x2="181" y2="106" stroke="#D93A3A" strokeWidth="4" strokeLinecap="round" />
-      <line x1="100" y1="126" x2="178" y2="126" stroke="#D93A3A" strokeWidth="4" strokeLinecap="round" />
-
-      {/* Barra decorativa superior derecha (detalle opcional) */}
-      <rect x="188" y="52" width="14" height="10" rx="2" fill="#1B2B5C" />
-
-      {/* Ejes / soportes de las ruedas hacia el cesto */}
-      <line x1="106" y1="140" x2="102" y2="152" stroke="#1B2B5C" strokeWidth="4" strokeLinecap="round" />
-      <line x1="174" y1="140" x2="178" y2="152" stroke="#1B2B5C" strokeWidth="4" strokeLinecap="round" />
-
-      {/* Ruedas */}
-      <circle cx="102" cy="156" r="12" fill="#DC2626" stroke="#1B2B5C" strokeWidth="4" />
-      <circle cx="102" cy="156" r="3.5" fill="#1B2B5C" />
-      <circle cx="178" cy="156" r="12" fill="#DC2626" stroke="#1B2B5C" strokeWidth="4" />
-      <circle cx="178" cy="156" r="3.5" fill="#1B2B5C" />
-    </svg>
-  );
-
-  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: BEIGE, color: CHARCOAL }}>
-    {/* HERO — logo Geotecnica + titulo + ilustracion cartoon de carrito */}
-    <div style={{
-      position: "relative",
-      minHeight: isMobile ? 120 : 180,
-      flexShrink: 0,
-      background: "linear-gradient(135deg, #FFF7ED 0%, #FEF3E6 100%)",
-      borderBottom: `1px solid #E2E8F0`,
-      padding: isMobile ? "14px 16px" : "24px 32px",
-      overflow: "hidden",
-      display: "flex",
-      alignItems: "center",
-    }}>
-      {/* Botones arriba a la derecha */}
-      <div style={{ position: "absolute", top: isMobile ? 8 : 14, right: isMobile ? 12 : 24, display: "flex", gap: 8, zIndex: 3 }}>
-        {onBack && <button onClick={onBack} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 8, color: CHARCOAL, padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>← Volver al panel</button>}
-        {onLogout && <button onClick={onLogout} style={{ background: "#fff", border: "1px solid #E5B4A9", borderRadius: 8, color: "#B23A26", padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>Cerrar sesion</button>}
+    {/* HEADER (rediseño 31-ago, estilo IST): compacto — volver, logo y nombre
+        del módulo a la izquierda; usuario y salida a la derecha. El hero con
+        la ilustración del carrito se retiró ("estilo apple, sin saturar"). */}
+    <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
+        {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
+        <img src={logoUrl} alt="Geotecnica Soluciones" style={{ height: isMobile ? 28 : 34, width: "auto", display: "block" }} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ font: `800 ${isMobile ? 16 : 19}px/1.15 var(--display)`, letterSpacing: "-.02em", color: "var(--text)", whiteSpace: "nowrap" }}>GeoShopping</div>
+          {!isMobile && <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2 }}>Compras & Tesorería</div>}
+        </div>
       </div>
-
-      {/* Row principal */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        gap: isMobile ? 12 : 28,
-        width: "100%",
-        flexDirection: isMobile ? "row" : "row",
-      }}>
-        {/* IZQUIERDA — logo Geotecnica */}
-        <div style={{ flexShrink: 0, width: isMobile ? 90 : 200, display: "flex", alignItems: "center", justifyContent: isMobile ? "flex-start" : "center" }}>
-          <img
-            src={logoUrl}
-            alt="Geotecnica Soluciones"
-            style={{ height: isMobile ? 40 : 65, width: "auto", objectFit: "contain", display: "block" }}
-          />
-        </div>
-
-        {/* CENTRO — texto */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-          <div style={{ fontSize: isMobile ? 10 : 11, letterSpacing: 2, color: ORANGE_DARK, fontWeight: 700, textTransform: "uppercase" }}>Grupo Geotecnica</div>
-          <h1 style={{ margin: 0, fontSize: isMobile ? 18 : 28, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.5, lineHeight: 1.15 }}>
-            GeoShopping <span style={{ color: STONE, fontWeight: 500 }}>— Compras & Tesoreria</span>
-          </h1>
-          {!isMobile && <div style={{ fontSize: 13, color: STONE, fontWeight: 500 }}>
-            Solicitudes validadas, pagos y comprobantes
-          </div>}
-          {/* Badge de usuario en mobile va debajo */}
-          {isMobile && userName && (
-            <div style={{ marginTop: 4, display: "inline-flex", background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "3px 8px", alignSelf: "flex-start", fontSize: 10, color: CHARCOAL, fontWeight: 700 }}>
-              {userName} · {roleLabel}
-            </div>
-          )}
-        </div>
-
-        {/* DERECHA — ilustracion de carrito (solo desktop) */}
-        {!isMobile && (
-          <div style={{ flexShrink: 0, display: "flex", alignItems: "flex-end", justifyContent: "center", height: 180, marginRight: 8 }}>
-            <CarritoSVG height={170} />
-          </div>
-        )}
-
-        {/* Badge del usuario en desktop */}
-        {!isMobile && (
-          <div style={{ background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "8px 14px", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
-            <div style={{ fontSize: 13, color: CHARCOAL, fontWeight: 700, letterSpacing: 0.2 }}>{userName || "Usuario"}</div>
-            <div style={{ fontSize: 11, color: ORANGE_DARK, fontWeight: 600 }}>{roleLabel}</div>
-          </div>
-        )}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
+        {!isMobile && <div style={{ textAlign: "right" }}>
+          <div style={{ font: "600 13px/1.3 var(--sans)", color: "var(--text)" }}>{userName || "Usuario"}</div>
+          <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2 }}>{roleLabel}</div>
+        </div>}
+        {onLogout && <button onClick={onLogout} title="Cerrar sesión" style={{ minHeight: 36, padding: "8px 14px", borderRadius: 999, border: "1px solid rgba(192,57,43,.25)", background: "rgba(192,57,43,.06)", color: "#B03024", font: "700 12px/1 var(--sans)", cursor: "pointer" }}>Cerrar sesión</button>}
       </div>
     </div>
 
-    {/* TOPNAV horizontal */}
+    {/* TOPNAV — texto limpio sin emojis, subrayado naranja en la activa */}
     <div style={{
+      position: "relative",
+      zIndex: 2,
       display: "flex",
-      background: CREAM,
-      borderBottom: `1px solid ${BORDER}`,
+      borderBottom: "1px solid rgba(44,42,40,.08)",
       overflowX: "auto",
       whiteSpace: "nowrap",
       flexShrink: 0,
-      paddingLeft: isMobile ? 8 : 24,
+      paddingLeft: isMobile ? 8 : 20,
       scrollbarWidth: "thin",
     }}>
       {visibleNav.map(n => {
@@ -5642,51 +5319,27 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           key={n.id}
           onClick={() => setSec(n.id)}
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: isMobile ? "12px 16px" : "14px 22px",
+            padding: isMobile ? "12px 14px" : "14px 18px",
             background: "transparent",
             border: "none",
-            borderBottom: active ? `3px solid ${ORANGE}` : "3px solid transparent",
-            color: active ? CHARCOAL : STONE,
+            boxShadow: active ? `inset 0 -2px 0 ${ORANGE}` : "none",
+            color: active ? "var(--naranja-tinta)" : "var(--text-3)",
             cursor: "pointer",
-            fontSize: 14,
-            fontWeight: active ? 700 : 500,
+            fontSize: 13.5,
+            fontWeight: active ? 800 : 600,
             fontFamily: "inherit",
-            transition: "all .15s",
+            transition: "color .15s",
             whiteSpace: "nowrap",
-            marginBottom: -1,
           }}
-          onMouseEnter={e => { if (!active) e.currentTarget.style.color = CHARCOAL; }}
-          onMouseLeave={e => { if (!active) e.currentTarget.style.color = STONE; }}
-        >
-          <span style={{ fontSize: 16 }}>{n.icon}</span>
-          <span>{n.label}</span>
-        </button>;
+          onMouseEnter={e => { if (!active) e.currentTarget.style.color = "var(--text)"; }}
+          onMouseLeave={e => { if (!active) e.currentTarget.style.color = "var(--text-3)"; }}
+        >{n.label}</button>;
       })}
     </div>
 
-    {/* CONTENIDO */}
-    <div style={{ flex: 1, overflow: "auto", background: BEIGE }}>
-      <div style={{ padding: isMobile ? "12px 16px" : "20px 32px 8px 32px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>
-            {sec === "dashboard" ? "Dashboard gerencial"
-              : sec === "costos" ? "Costos por proyecto"
-              : sec === "resumen" ? "Supply Chain — dónde está cada compra"
-              : sec === "projects" ? "Proyectos"
-              : sec === "providers" ? "Proveedores"
-              : sec === "ana" ? "Por coordinar con proveedores"
-              : sec === "entregas" ? "Entregas de proveedor"
-              : sec === "conta" ? "Por cerrar contablemente"
-              : sec === "cerradas" ? "Cerradas contablemente"
-              : "Solicitudes de compra validadas"}
-          </h2>
-          <span style={{ fontSize: 13, color: cc.accent, fontWeight: 600, letterSpacing: 0.3 }}>{cc.name}</span>
-        </div>
-        <Badge color={cc.color}>{cp.length} solicitudes</Badge>
-      </div>
+    {/* CONTENIDO — sin strip de título: la pestaña activa ya dice dónde estás
+        (pedido 31-ago: "quitemos ese texto, es repetitivo") */}
+    <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{
         sec === "dashboard" ? renderDashboard()
           : sec === "costos" ? renderCostos()
@@ -5708,5 +5361,5 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   </div>;
 }
 
-const TH = { padding: "10px 14px", textAlign: "left", color: "#475569", fontWeight: 700, borderBottom: "2px solid #E2E8F0", whiteSpace: "nowrap", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3 };
-const TD = { padding: "10px 14px", color: "#334155", whiteSpace: "nowrap", fontSize: 13 };
+const TH = { padding: "10px 14px", textAlign: "left", color: "var(--text-3, #475569)", fontWeight: 700, borderBottom: "1px solid var(--hairline, #E2E8F0)", whiteSpace: "nowrap", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3 };
+const TD = { padding: "10px 14px", color: "var(--text-2, #334155)", whiteSpace: "nowrap", fontSize: 13 };

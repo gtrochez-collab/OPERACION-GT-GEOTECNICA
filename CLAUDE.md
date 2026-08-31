@@ -472,7 +472,9 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   ⚠ Forms (ItemFormImpl/ProvFormImpl) viven a NIVEL DE MÓDULO — definirlos
   dentro del componente causa remount y pérdida de estado al subir fotos.
   CartModal/FichaModal se renderizan como llamada `{CartModal()}`, no JSX.
-- `GeoDrillVault.jsx`, `projects.js` (base + helpers), `holidays.js`, `theme.js`.
+- `GeoDrillVault.jsx`, `projects.js` (base + helpers), `holidays.js`, `theme.js`,
+  `gt-ui.js` (GT_CSS: tokens + clases gt-* del rediseño — lo montan App y los
+  módulos rediseñados, cada quien con su propio <style>).
 
 ## Claves de datos (store = supabase.js)
 `cp-purchases`, `cp-projects` (proyectos custom — GeoShopping es el dueño; HR
