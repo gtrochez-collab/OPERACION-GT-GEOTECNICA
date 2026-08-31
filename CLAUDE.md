@@ -19,6 +19,43 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
 
 ## Módulos (src/)
 - `App.jsx` — login (usuarios en `users.js`, roles por módulo en array MODULES).
+  **Rediseño estético total (31-ago-2026)**: login + pantalla de bienvenida +
+  panel de control, estilo "Apple claro" con colores Geotecnica (inspirado en
+  el sistema escolar IST que Gerson co-diseñó). SOLO estética: credenciales,
+  roles, ruteo, sesión `gt-session` y banner de sync quedaron intactos; los
+  módulos internos NO se tocaron. Piezas:
+  - `UI_CSS` (template string montado como `<style>` SOLO en login/bienvenida/
+    panel — al entrar a un módulo se desmonta, los módulos usan sus estilos
+    inline): tokens (--marca carbón, --marca-2 #E8762D, --bg beige, e0/e1/e2,
+    --curva cubic-bezier(.32,.72,0,1)), clases `gt-*`, keyframes solo-`from` +
+    `fill-mode: backwards`, manchas de brillo 47s/59s (primos), vidrio
+    `--v-fondo-foto`, `prefers-reduced-motion` respetado.
+  - `LoginScreen`: slideshow crossfade 9s de fotos reales de obra
+    (`public/brand/login/obra-1..5.jpg`, ~2MB total; la 5 vino de un ARW de
+    Gerson vía sips) + Ken Burns en la activa, tagline "Ingeniería que
+    sostiene. Proyectos que avanzan.", form vidrio, versículo del día, dots
+    clickeables. Fuentes nuevas en index.html: Plus Jakarta Sans + IBM Plex
+    Mono (Inter y Manrope siguen para los módulos).
+  - `WelcomeScreen`: tras login, saludo XL ("Buenos días, Gerson.") que
+    transiciona smooth a 3 tarjetas — TO-DOS (persisten en Supabase
+    `gt-todos-<username>`, best-effort), BANDEJA (contadores reales por rol:
+    por pagar / por cerrar contable / tardanzas pendientes, cada ítem
+    clickeable a su módulo). Revisión adversarial aplicada: la bandeja lee
+    con `store.getCloud` (NUNCA store.get — su re-sync de cache viejo puede
+    ESCRIBIR cp-purchases desde una pantalla decorativa), estado "error" si
+    la nube no responde (jamás afirmar "todo al día"), tardanzas de quincena
+    actual + anterior (quincenaAnterior/gcMarkKey importados de HRModule) y
+    con la regla responsableDe replicada (Oscar/Ana solo las suyas), porCerrar
+    con el filtro de cierreResponsable, "coordinador" fuera de rolesTardies
+    (no entra a rrhh), y el input de to-dos deshabilitado mientras carga (un
+    add con todos===null pisaba la lista en la nube). ⚠ React 19: no ponerle
+    `precedence` al <style> de UI_CSS (lo izaría al <head> para siempre y el
+    CSS se filtraría a los módulos). Tercera tarjeta:
+    VERSÍCULO (`VERSICULOS` RVR1960, rota por día del año). Botón "Empezar
+    el día". Se muestra UNA vez por login (`gt-welcome-done` en
+    sessionStorage — F5 no la repite); el rol "marcaje" (kiosk) la SALTA.
+  - Panel: header minimal, label mono, H1 "Panel de Control", `PanelCard`
+    con entrada escalonada (90+i*60ms), footer con estado de sync.
 - `PurchasesModule.jsx` (GeoShopping) — compras: Dashboard mensual, Costos,
   **Supply Chain** (reemplazó al viejo "Resumen" el 24-ago-2026), Solicitudes, Proyectos,
   Por coordinar (kanban Ana → logística), Proveedores. Exporta `generateFichaPDF`.

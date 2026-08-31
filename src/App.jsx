@@ -10,9 +10,10 @@ import GeoClockModule from "./GeoClockModule.jsx";
 // en localStorage estaban presionando el cache. Cuando lo retomemos, sera
 // con Supabase Realtime + bypass de localStorage (ya esta listo).
 // import ChatModule, { fetchUnreadSummary, playBeep } from "./ChatModule.jsx";
-import { onSyncStateChange } from "./supabase.js";
+import { store, onSyncStateChange } from "./supabase.js";
+import { gcMarkKey, quincenaAnterior } from "./HRModule.jsx";
 import Logo from "./Logo.jsx";
-import { BRAND, FONT, R, SP } from "./theme.js";
+import { BRAND, FONT } from "./theme.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 
 // ── Modulos del sistema ──
@@ -23,9 +24,8 @@ const MODULES = [
     id: "rrhh",
     name: "GeoTeam",
     icon: "👥",
-    desc: "Empleados, planilla, asistencia, vacaciones, permisos",
-    accent: "#2C5F5D", // verde acero industrial
-    accentSoft: "rgba(44,95,93,0.10)",
+    desc: "El equipo, la asistencia y la planilla.",
+    accent: "#2C5F5D",
     // Ana (asistente_compras) entra con acceso ACOTADO (ago 2026): empleados
     // sin salarios, contratos, vacaciones, permisos, asistencia, HE y
     // constancias — sin planilla, movimientos ni costos. El recorte fino de
@@ -39,27 +39,24 @@ const MODULES = [
     id: "compras-operaciones",
     name: "GeoShopping",
     icon: "🛒",
-    desc: "Solicitudes de compra, pagos y comprobantes de tesoreria",
-    accent: "#8B3A3A", // borgona profesional
-    accentSoft: "rgba(139,58,58,0.10)",
+    desc: "Compras, pagos y cierre contable.",
+    accent: "#8B3A3A",
     roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion", "asistente_compras", "visor_compras", "compras_ops"],
   },
   {
     id: "maquinas",
     name: "GeoMachinery",
     icon: "⚙️",
-    desc: "Solicitudes de pago de repuestos y mantenimiento de maquinaria, por proyecto",
+    desc: "Repuestos y mantenimiento, por máquina.",
     accent: "#7C3AED",
-    accentSoft: "rgba(124,58,237,0.10)",
     roles: ["admin", "coordinador_maquinas", "tesoreria", "gerencia", "costos", "recepcion", "visor_compras", "compras_ops"],
   },
   {
     id: "geosafety",
     name: "GeoSafety",
     icon: "🦺",
-    desc: "EPP: catalogo con carrito, inventario, proveedores y descuentos por perdida",
-    accent: "#B45309", // ambar seguridad industrial
-    accentSoft: "rgba(180,83,9,0.10)",
+    desc: "EPP: catálogo, dotación e inventario.",
+    accent: "#B45309",
     // Acceso restringido (ago 2026, pedido de Gerson): admin (Gerson y Daniel)
     // = todo; tesoreria (Carolina), costos (Christian) y logistica (Oscar)
     // entran como INGENIEROS RESIDENTES — solo catalogo, carrito y enviar
@@ -70,40 +67,164 @@ const MODULES = [
     id: "logistica",
     name: "GeoLogistics",
     icon: "🚛",
-    desc: "Flota, mantenimientos, rutas y despachos",
+    desc: "Flota, rutas y despachos.",
     accent: "#2D4A6B",
-    accentSoft: "rgba(45,74,107,0.10)",
     roles: ["admin", "logistica", "recepcion"],
   },
   {
     id: "geoclock",
     name: "GeoClock",
     icon: "⏰",
-    desc: "Marcaje de entrada y salida del personal con firma — plantel central y oficina",
-    accent: "#C75F1F", // naranja reloj
-    accentSoft: "rgba(199,95,31,0.10)",
+    desc: "Entradas y salidas del personal, con firma.",
+    accent: "#C75F1F",
     // Tablets de marcaje (ago 2026): Oscar (logistica) en el plantel central,
     // Ana (asistente_compras) en oficina y el usuario dedicado "marcaje"
     // (tablet de administración — SOLO ve este módulo). Gerson supervisa.
     // Lic. Carolina (tesoreria) entra para corregir marcajes manuales.
-    // Si funciona esta quincena, la siguiente se suma proyectos.
     roles: ["admin", "coordinador", "tesoreria", "asistente_compras", "logistica", "marcaje"],
   },
   {
     id: "geodrill-vault",
     name: "GeoDrill Vault",
     icon: "🗄️",
-    desc: "Inventario de alto valor: picas, portapicas, muelas y herramientas de perforacion",
+    desc: "Picas, portapicas y herramienta de perforación.",
     accent: "#0F4C75",
-    accentSoft: "rgba(15,76,117,0.10)",
     roles: ["admin", "tesoreria", "almacenista", "almacen_visor"],
   },
 ];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SISTEMA VISUAL (31-ago-2026, rediseño pedido por Gerson) — tokens Geotecnica
+// sobre la receta "Apple claro": un solo fondo de página, tarjetas que se
+// apoyan (no flotan), tipografía display grande con poco texto, y movimiento
+// que desacelera sin rebotar. Solo viste login / bienvenida / panel — los
+// módulos internos no se tocan (el <style> se desmonta al entrar a uno).
+// ⚠ React 19: NUNCA agregarle `precedence` a estos <style> — React los izaría
+// al <head> y quedarían montados PARA SIEMPRE, filtrando este CSS a los módulos.
+// ═══════════════════════════════════════════════════════════════════════════
+const UI_CSS = `
+:root{
+  --marca:#2C2A28;          /* carbón Geotecnica */
+  --marca-2:#E8762D;        /* naranja Geotecnica */
+  --naranja-tinta:#C75F1F;  /* acento legible p/ texto grande (el naranja puro es RELLENO) */
+
+  --display:'Plus Jakarta Sans','Manrope',sans-serif;
+  --sans:'Inter',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+
+  --text:#2C2A28;
+  --text-2:#5C5853;
+  --text-3:#6E6862;
+  --text-faint:#A39C92;
+
+  --bg:#F5F1E9;             /* ÚNICO fondo de página (beige gris claro) */
+  --surface:#FFFFFF;
+  --sunk:#F3EEE5;
+  --hairline:rgba(44,42,40,.08);
+
+  --e0:0 1px 2px rgba(44,42,40,.05);
+  --e1:0 6px 18px rgba(44,42,40,.09);
+  --e2:0 18px 44px rgba(44,42,40,.16);
+
+  --mov-rapido:120ms; --mov-base:200ms; --mov-medio:320ms; --mov-lento:480ms;
+  --curva:cubic-bezier(.32,.72,0,1);
+  --curva-exp:cubic-bezier(.16,1,.3,1);
+
+  --radio-card:20px; --radio-control:12px; --radio-chip:999px;
+
+  --v-fondo-foto:linear-gradient(165deg,rgba(255,251,245,.97) 0%,rgba(255,251,245,.93) 100%);
+  --v-borde:rgba(255,255,255,.85);
+  --v-blur:blur(22px) saturate(180%);
+  --v-sombra:0 1px 0 rgba(255,255,255,.95) inset,0 0 0 1px rgba(44,42,40,.06),0 1px 2px rgba(44,42,40,.04),0 14px 34px rgba(44,42,40,.12);
+}
+.gt-ui{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh}
+
+/* Manchas de color difusas detrás de todo (la firma del vidrio). Duraciones
+   primas (47s/59s) para que el patrón casi nunca se repita igual. */
+.gt-brillo{position:fixed;z-index:0;pointer-events:none;border-radius:50%}
+.gt-brillo-a{width:min(760px,86vw);height:min(760px,86vw);top:-24%;left:50%;
+  background:radial-gradient(circle,rgba(232,118,45,.16) 0%,rgba(232,118,45,.06) 40%,transparent 70%);
+  animation:gtPaseoA 47s ease-in-out infinite}
+.gt-brillo-b{width:min(660px,80vw);height:min(660px,80vw);bottom:-26%;right:-12%;
+  background:radial-gradient(circle,rgba(44,95,93,.13) 0%,rgba(44,95,93,.05) 44%,transparent 72%);
+  animation:gtPaseoB 59s ease-in-out infinite}
+@keyframes gtPaseoA{0%{transform:translateX(-50%) translateY(0) scale(1)}25%{transform:translateX(-96%) translateY(34vh) scale(.86)}50%{transform:translateX(-38%) translateY(66vh) scale(1.08)}75%{transform:translateX(4%) translateY(28vh) scale(.92)}100%{transform:translateX(-50%) translateY(0) scale(1)}}
+@keyframes gtPaseoB{0%{transform:translate(0,0) scale(1)}25%{transform:translate(-46vw,-30vh) scale(1.1)}50%{transform:translate(-72vw,-58vh) scale(.84)}75%{transform:translate(-30vw,-72vh) scale(1.05)}100%{transform:translate(0,0) scale(1)}}
+
+/* Entradas: keyframe solo con "from" + fill backwards (forwards clava hover) */
+@keyframes gtSube{from{opacity:0;transform:translateY(18px)}}
+@keyframes gtAparece{from{opacity:0}}
+@keyframes gtKenBurns{from{transform:scale(1)}to{transform:scale(1.07)}}
+.gt-sube{animation:gtSube var(--mov-lento) var(--curva-exp) backwards}
+.gt-aparece{animation:gtAparece var(--mov-medio) var(--curva) backwards}
+
+/* Tarjeta base: se apoya, no flota */
+.gt-card{background:var(--surface);border:1px solid var(--hairline);border-radius:var(--radio-card);box-shadow:var(--e0);transition:box-shadow var(--mov-base) var(--curva),transform var(--mov-base) var(--curva),border-color var(--mov-base) var(--curva)}
+.gt-card-hover:hover{box-shadow:var(--e1);transform:translateY(-2px)}
+
+.gt-label{font:600 10px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase}
+.gt-input{width:100%;box-sizing:border-box;padding:13px 16px;border:1px solid var(--hairline);border-radius:var(--radio-control);font:400 15px/1.4 var(--sans);color:var(--text);background:var(--sunk);outline:none;transition:border-color var(--mov-rapido),background var(--mov-rapido),box-shadow var(--mov-rapido)}
+.gt-input:focus{border-color:var(--marca-2);background:#fff;box-shadow:0 0 0 3px rgba(232,118,45,.14)}
+.gt-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:12px 26px;border:none;border-radius:var(--radio-chip);font:700 15px/1 var(--sans);cursor:pointer;transition:transform var(--mov-rapido) var(--curva),box-shadow var(--mov-base) var(--curva),background var(--mov-rapido)}
+.gt-btn:active{transform:scale(.97)}
+.gt-btn-primario{background:var(--marca-2);color:#fff;box-shadow:0 4px 14px rgba(232,118,45,.30)}
+.gt-btn-primario:hover{background:var(--naranja-tinta);box-shadow:0 6px 18px rgba(232,118,45,.36)}
+.gt-btn-primario:disabled{background:var(--text-faint);box-shadow:none;cursor:not-allowed}
+
+@media (prefers-reduced-motion:reduce){
+  .gt-brillo,.gt-sube,.gt-aparece{animation:none !important}
+  .gt-kenburns{animation:none !important}
+}
+`;
+
+// ── Versículo del día (rota por día del año; RVR1960, cortos) ──
+const VERSICULOS = [
+  { ref: "Job 22:28", txt: "Determinarás asimismo una cosa, y te será firme, y sobre tus caminos resplandecerá luz." },
+  { ref: "Colosenses 3:23", txt: "Y todo lo que hagáis, hacedlo de corazón, como para el Señor y no para los hombres." },
+  { ref: "Proverbios 16:3", txt: "Encomienda a Jehová tus obras, y tus pensamientos serán afirmados." },
+  { ref: "Salmos 90:17", txt: "Sea la luz de Jehová nuestro Dios sobre nosotros, y la obra de nuestras manos confirma sobre nosotros." },
+  { ref: "Josué 1:9", txt: "Esfuérzate y sé valiente; no temas ni desmayes, porque Jehová tu Dios estará contigo dondequiera que vayas." },
+  { ref: "Filipenses 4:13", txt: "Todo lo puedo en Cristo que me fortalece." },
+  { ref: "Proverbios 22:29", txt: "¿Has visto hombre solícito en su trabajo? Delante de los reyes estará." },
+  { ref: "Salmos 127:1", txt: "Si Jehová no edificare la casa, en vano trabajan los que la edifican." },
+  { ref: "Eclesiastés 9:10", txt: "Todo lo que te viniere a la mano para hacer, hazlo según tus fuerzas." },
+  { ref: "Isaías 41:10", txt: "No temas, porque yo estoy contigo; no desmayes, porque yo soy tu Dios que te esfuerzo." },
+  { ref: "Mateo 6:33", txt: "Buscad primeramente el reino de Dios y su justicia, y todas estas cosas os serán añadidas." },
+  { ref: "Proverbios 3:5-6", txt: "Fíate de Jehová de todo tu corazón... reconócelo en todos tus caminos, y él enderezará tus veredas." },
+  { ref: "Salmos 118:24", txt: "Este es el día que hizo Jehová; nos gozaremos y alegraremos en él." },
+  { ref: "Gálatas 6:9", txt: "No nos cansemos, pues, de hacer bien; porque a su tiempo segaremos, si no desmayamos." },
+  { ref: "1 Corintios 15:58", txt: "Estad firmes y constantes, creciendo en la obra del Señor siempre, sabiendo que vuestro trabajo en el Señor no es en vano." },
+  { ref: "Salmos 37:5", txt: "Encomienda a Jehová tu camino, y confía en él; y él hará." },
+  { ref: "Proverbios 21:5", txt: "Los pensamientos del diligente ciertamente tienden a la abundancia." },
+  { ref: "Nehemías 8:10", txt: "El gozo de Jehová es vuestra fuerza." },
+  { ref: "Santiago 1:5", txt: "Si alguno de vosotros tiene falta de sabiduría, pídala a Dios, el cual da a todos abundantemente." },
+  { ref: "Salmos 121:1-2", txt: "Alzaré mis ojos a los montes... mi socorro viene de Jehová, que hizo los cielos y la tierra." },
+  { ref: "2 Timoteo 1:7", txt: "Porque no nos ha dado Dios espíritu de cobardía, sino de poder, de amor y de dominio propio." },
+];
+const versiculoDeHoy = () => {
+  const d = new Date();
+  const dia = Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
+  return VERSICULOS[dia % VERSICULOS.length];
+};
+
+// Saludo por hora de Honduras + nombre de pila (sin "Lic./Ing.").
+const horaTegus = () => Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Tegucigalpa", hour: "numeric", hour12: false }).format(new Date()));
+const saludoDe = () => { const h = horaTegus(); return h < 12 ? "Buenos días" : h < 18 ? "Buenas tardes" : "Buenas noches"; };
+const nombreDePila = (label) => String(label || "").replace(/^(Lic\.|Ing\.|Sr\.|Sra\.|Dr\.)\s+/i, "").split(" ")[0] || "";
+const fechaLargaTegus = () => {
+  const t = new Intl.DateTimeFormat("es-HN", { timeZone: "America/Tegucigalpa", weekday: "long", day: "numeric", month: "long" }).format(new Date());
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [activeModule, setActiveModule] = useState(null);
   const [syncState, setSyncState] = useState({ ok: true, error: null });
+  // Bienvenida (31-ago-2026): se muestra UNA vez por sesión, tras el login.
+  // Restaurar la sesión con la pestaña (F5) no la repite.
+  const [welcomeDone, setWelcomeDone] = useState(() => {
+    try { return sessionStorage.getItem("gt-welcome-done") === "1"; } catch { return true; }
+  });
   // chatUnread: desactivado junto con GeoChat (jun 2026).
   const chatUnread = 0;
 
@@ -122,6 +243,8 @@ export default function App() {
     const session = { username: found.username, role: found.role, label: found.label };
     setUser(session);
     sessionStorage.setItem("gt-session", JSON.stringify(session));
+    try { sessionStorage.removeItem("gt-welcome-done"); } catch {}
+    setWelcomeDone(false);
     return true;
   };
 
@@ -129,6 +252,12 @@ export default function App() {
     setUser(null);
     setActiveModule(null);
     sessionStorage.removeItem("gt-session");
+    try { sessionStorage.removeItem("gt-welcome-done"); } catch {}
+  };
+
+  const finishWelcome = () => {
+    try { sessionStorage.setItem("gt-welcome-done", "1"); } catch {}
+    setWelcomeDone(true);
   };
 
   if (!user) return <LoginScreen onLogin={login} />;
@@ -150,454 +279,385 @@ export default function App() {
   if (activeModule === "geosafety") return <>{syncBanner}<SafetyModule {...moduleProps} /></>;
   if (activeModule === "geoclock") return <>{syncBanner}<GeoClockModule {...moduleProps} /></>;
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
-  // if (activeModule === "geochat") return <>{syncBanner}<ChatModule {...moduleProps} /></>;
 
-  // ── Panel de Control ──
   const availableModules = MODULES.filter((m) => m.roles.includes(user.role));
 
+  // ── Bienvenida del día (todos menos la tablet kiosco de marcaje) ──
+  if (!welcomeDone && user.role !== "marcaje") {
+    return (
+      <>
+        <style>{UI_CSS}</style>
+        {syncBanner}
+        <WelcomeScreen
+          user={user}
+          availableModules={availableModules}
+          onStart={finishWelcome}
+          onOpenModule={(id) => { finishWelcome(); setActiveModule(id); }}
+        />
+      </>
+    );
+  }
+
+  // ── Panel de Control ──
   return (
-    <div style={{ minHeight: "100vh", background: BRAND.beige, fontFamily: FONT.body, color: BRAND.charcoal, overflow: "auto" }}>
-      {/* Header */}
-      <header style={{ background: BRAND.cream, borderBottom: `1px solid ${BRAND.borderSoft}`, padding: "20px 40px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
-        <Logo size={48} />
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+    <div className="gt-ui" style={{ display: "flex", flexDirection: "column" }}>
+      <style>{UI_CSS}</style>
+      {syncBanner}
+      <div className="gt-brillo gt-brillo-a" aria-hidden />
+      <div className="gt-brillo gt-brillo-b" aria-hidden />
+
+      {/* Header minimal */}
+      <header style={{ position: "relative", zIndex: 1, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "18px 28px", maxWidth: 1240, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        <Logo size={40} />
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.charcoal }}>{user.label}</div>
-            <div style={{ fontSize: 11, color: BRAND.stone, letterSpacing: 0.5 }}>{ROLE_LABEL[user.role] || user.role}</div>
+            <div style={{ font: "600 13px/1.3 var(--sans)", color: "var(--text)" }}>{user.label}</div>
+            <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2 }}>{ROLE_LABEL[user.role] || user.role}</div>
           </div>
-          <div style={{ width: 1, height: 36, background: BRAND.border }} />
           <button
             onClick={logout}
-            style={{ background: "transparent", border: `1px solid ${BRAND.border}`, borderRadius: R.sm, color: BRAND.graphite, padding: "9px 16px", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: FONT.body, transition: "all .15s" }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.surfaceHover; e.currentTarget.style.color = BRAND.charcoal; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = BRAND.graphite; }}
-          >
-            Cerrar sesión
-          </button>
+            title="Cerrar sesión"
+            style={{ minWidth: 44, minHeight: 44, borderRadius: "50%", border: "1px solid var(--hairline)", background: "var(--surface)", cursor: "pointer", fontSize: 17, boxShadow: "var(--e0)", transition: "box-shadow var(--mov-base) var(--curva)" }}
+            onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "var(--e1)")}
+            onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "var(--e0)")}
+          >⏻</button>
         </div>
       </header>
 
-      {/* Hero strip */}
-      <div style={{ background: `linear-gradient(135deg, ${BRAND.beige} 0%, ${BRAND.parchment} 100%)`, padding: "56px 40px 40px 40px", borderBottom: `1px solid ${BRAND.borderSoft}`, position: "relative", overflow: "hidden" }}>
-        {/* Decorative Bauer BG-11 silhouette */}
-        <div
-          style={{
-            position: "absolute",
-            right: -40,
-            bottom: -20,
-            width: 280,
-            height: 280,
-            opacity: 0.14,
-            pointerEvents: "none",
-            backgroundImage: `url(${import.meta.env.BASE_URL}machines/bauer-bg11.jpg)`,
-            backgroundSize: "contain",
-            backgroundRepeat: "no-repeat",
-            backgroundPosition: "right bottom",
-            filter: "grayscale(1) contrast(1.1) brightness(0.55)",
-            mixBlendMode: "multiply",
-          }}
-        />
-        <div style={{ maxWidth: 1200, margin: "0 auto", position: "relative" }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.orange, letterSpacing: 3, marginBottom: 12, textTransform: "uppercase" }}>Sistema de Operaciones</div>
-          <h1 style={{ fontFamily: FONT.display, fontSize: 36, fontWeight: 800, color: BRAND.charcoal, marginBottom: 8, letterSpacing: -0.5 }}>Panel de Control</h1>
-          <p style={{ fontSize: 15, color: BRAND.graphite, maxWidth: 560, lineHeight: 1.55 }}>
-            Bienvenido, <strong style={{ color: BRAND.charcoal }}>{user.label.split(" ").slice(-2).join(" ")}</strong>. Seleccioná el módulo con el que vas a trabajar.
-          </p>
-          <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: BRAND.stone }}>
-            <span style={{ width: 28, height: 1, background: BRAND.orange, opacity: 0.6 }} />
-            <span style={{ fontWeight: 600, letterSpacing: 0.4, color: BRAND.graphite }}>
-              {user.label}
-            </span>
-            <span style={{ color: BRAND.ash }}>·</span>
-            <span style={{ fontStyle: "italic" }}>{ROLE_LABEL[user.role] || user.role}</span>
-          </div>
+      {/* Título */}
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", padding: "40px 28px 8px", boxSizing: "border-box" }}>
+        <div className="gt-label gt-aparece" style={{ color: "var(--text-3)" }}>
+          Grupo Geotecnica · Sistema de Operaciones · Honduras
         </div>
+        <h1 className="gt-sube" style={{ font: "800 clamp(40px,5vw,64px)/1.05 var(--display)", letterSpacing: "-.025em", color: "var(--text)", margin: "14px 0 0" }}>
+          Panel de <span style={{ color: "var(--marca-2)" }}>Control</span>
+        </h1>
       </div>
 
-      {/* Modulos — con escena cartoon de proyecto de fondo */}
-      <div style={{ position: "relative", overflow: "hidden", backgroundColor: BRAND.beige }}>
-        {/* Background: ilustracion SVG cartoon flat (piloteadora + personal + terreno).
-            Los colores son suaves — no hace falta filtro. Opacity leve para "de fondo". */}
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            inset: 0,
-            opacity: 0.78,
-            pointerEvents: "none",
-          }}
-        >
-          <PanelHeroSVG />
-        </div>
-        {/* Overlay MUY SUTIL solo abajo — mejora legibilidad del bloque final de cards
-            y agrega una transicion hacia el footer. */}
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: `linear-gradient(180deg, ${BRAND.beige}40 0%, transparent 20%, transparent 65%, ${BRAND.beige}CC 100%)`,
-            pointerEvents: "none",
-          }}
-        />
-        <main style={{ maxWidth: 1200, margin: "0 auto", padding: "40px 40px 64px 40px", position: "relative" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 20 }}>
-          {availableModules.map((m) => (
-            <ModuleCard
-              key={m.id}
-              m={m}
-              badge={m.id === "geochat" && chatUnread > 0 ? chatUnread : 0}
-              onOpen={() => !m.soon && setActiveModule(m.id)}
-            />
+      {/* Módulos */}
+      <main style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", padding: "34px 28px 64px", boxSizing: "border-box", flex: 1 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(340px,100%), 1fr))", gap: 18 }}>
+          {availableModules.map((m, i) => (
+            <PanelCard key={m.id} m={m} index={i} onOpen={() => setActiveModule(m.id)} />
           ))}
         </div>
-        </main>
-      </div>
+      </main>
 
       {/* Footer */}
-      <footer style={{ borderTop: `1px solid ${BRAND.borderSoft}`, padding: "24px 40px", color: BRAND.stone, fontSize: 12, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+      <footer style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", padding: "20px 28px 26px", boxSizing: "border-box", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, color: "var(--text-3)", fontSize: 12 }}>
         <div>© Grupo Geotecnica · Sistema de Operaciones</div>
-        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: syncState.ok ? BRAND.green : BRAND.red }} />
-            {syncState.ok ? "Sincronizado" : "Sin sincronizar"}
-          </span>
-          <span>v1.1</span>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: syncState.ok ? "#059669" : BRAND.red }} />
+          {syncState.ok ? "Sincronizado" : "Sin sincronizar"} · v2.0
         </div>
       </footer>
     </div>
   );
 }
 
-// ── Escena cartoon de proyecto (fondo del panel de control) ──
-// SVG horizontal wide (viewBox 1200x360). Se estira 100% ancho y se recorta
-// verticalmente si hace falta via preserveAspectRatio="xMidYMid slice".
-function PanelHeroSVG() {
-  return (
-    <svg
-      viewBox="0 0 1200 360"
-      xmlns="http://www.w3.org/2000/svg"
-      preserveAspectRatio="xMidYMid slice"
-      style={{ width: "100%", height: "100%", display: "block" }}
-      aria-hidden="true"
-    >
-      <defs>
-        <linearGradient id="phSky" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#EFE6D3" />
-          <stop offset="100%" stopColor="#F6F0E2" />
-        </linearGradient>
-        <linearGradient id="phGround" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#B89876" />
-          <stop offset="100%" stopColor="#8C6E4D" />
-        </linearGradient>
-      </defs>
-
-      {/* Cielo */}
-      <rect x="0" y="0" width="1200" height="360" fill="url(#phSky)" />
-
-      {/* Nubes suaves */}
-      <g fill="#FFFFFF" opacity="0.85">
-        <ellipse cx="180" cy="70" rx="46" ry="14" />
-        <ellipse cx="210" cy="60" rx="30" ry="12" />
-        <ellipse cx="155" cy="62" rx="24" ry="10" />
-        <ellipse cx="870" cy="55" rx="52" ry="15" />
-        <ellipse cx="905" cy="45" rx="32" ry="13" />
-        <ellipse cx="840" cy="48" rx="26" ry="10" />
-      </g>
-
-      {/* Linea horizonte sutil */}
-      <line x1="0" y1="242" x2="1200" y2="242" stroke="#8C6E4D" strokeWidth="1" opacity="0.35" />
-
-      {/* Suelo/terreno */}
-      <path d="M0,244 Q300,238 600,246 T1200,242 L1200,360 L0,360 Z" fill="url(#phGround)" />
-
-      {/* Piedras y rocas en el suelo */}
-      <g stroke="#5C4632" strokeWidth="1.5" fill="#7A5C3F">
-        <ellipse cx="90" cy="330" rx="14" ry="6" />
-        <ellipse cx="112" cy="335" rx="8" ry="4" />
-        <ellipse cx="560" cy="345" rx="18" ry="7" />
-        <ellipse cx="780" cy="325" rx="10" ry="5" />
-        <ellipse cx="1100" cy="340" rx="16" ry="6" />
-        <ellipse cx="1140" cy="335" rx="9" ry="4" />
-      </g>
-
-      {/* Trabajador C (fondo, silueta pequeña) */}
-      <g transform="translate(1030, 218)">
-        {/* Casco */}
-        <path d="M-8,-4 Q0,-16 8,-4 L8,0 L-8,0 Z" fill="#F5B800" stroke="#B8860B" strokeWidth="1.2" />
-        <rect x="-9" y="0" width="18" height="2" fill="#B8860B" />
-        {/* Cabeza */}
-        <circle cx="0" cy="6" r="6" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1" />
-        {/* Cuerpo (chaleco naranja) */}
-        <rect x="-10" y="12" width="20" height="26" rx="3" fill="#F97316" stroke="#B84A0A" strokeWidth="1.2" />
-        <line x1="-10" y1="22" x2="10" y2="22" stroke="#F5F5F5" strokeWidth="1.2" />
-        {/* Piernas */}
-        <rect x="-9" y="38" width="8" height="22" rx="1.5" fill="#1E3A8A" />
-        <rect x="1" y="38" width="8" height="22" rx="1.5" fill="#1E3A8A" />
-        {/* Botas */}
-        <rect x="-10" y="58" width="10" height="4" rx="1" fill="#1F2937" />
-        <rect x="0" y="58" width="10" height="4" rx="1" fill="#1F2937" />
-      </g>
-
-      {/* Pilote perforado (visible bajo tierra atrás del mástil) */}
-      <rect x="422" y="248" width="26" height="90" rx="2" fill="#6B4E32" stroke="#3F2E1E" strokeWidth="1.5" opacity="0.85" />
-      <line x1="422" y1="270" x2="448" y2="270" stroke="#3F2E1E" strokeWidth="0.8" opacity="0.6" />
-      <line x1="422" y1="290" x2="448" y2="290" stroke="#3F2E1E" strokeWidth="0.8" opacity="0.6" />
-      <line x1="422" y1="310" x2="448" y2="310" stroke="#3F2E1E" strokeWidth="0.8" opacity="0.6" />
-      {/* Cráter / tierra removida alrededor del hoyo */}
-      <ellipse cx="435" cy="252" rx="42" ry="6" fill="#6B4E32" opacity="0.75" />
-
-      {/* PILOTEADORA — adaptada del cartoon de MachinesModule (scale ~1.0, en x=335,y=-5) */}
-      <g transform="translate(335, -5)">
-        {/* Orugas */}
-        <rect x="18" y="220" width="164" height="26" rx="13" fill="#1E3A8A" />
-        <rect x="26" y="226" width="148" height="14" rx="7" fill="#0F172A" />
-        <g fill="#1E3A8A">
-          <rect x="36" y="228" width="8" height="10" rx="1" />
-          <rect x="56" y="228" width="8" height="10" rx="1" />
-          <rect x="76" y="228" width="8" height="10" rx="1" />
-          <rect x="96" y="228" width="8" height="10" rx="1" />
-          <rect x="116" y="228" width="8" height="10" rx="1" />
-          <rect x="136" y="228" width="8" height="10" rx="1" />
-          <rect x="156" y="228" width="8" height="10" rx="1" />
-        </g>
-        <circle cx="30" cy="233" r="9" fill="#374151" stroke="#0F172A" strokeWidth="2" />
-        <circle cx="170" cy="233" r="9" fill="#374151" stroke="#0F172A" strokeWidth="2" />
-        {/* Chasis inferior */}
-        <rect x="30" y="200" width="140" height="24" rx="4" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
-        {/* Contrapeso trasero */}
-        <rect x="18" y="170" width="46" height="38" rx="4" fill="#1E3A8A" stroke="#0F172A" strokeWidth="1.5" />
-        <rect x="24" y="178" width="34" height="4" rx="1" fill="#F5B800" />
-        {/* Plataforma rotatoria */}
-        <rect x="60" y="188" width="110" height="14" rx="3" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
-        {/* Cabina */}
-        <rect x="118" y="150" width="52" height="42" rx="5" fill="#F5F5F5" stroke="#4B5563" strokeWidth="1.5" />
-        <rect x="124" y="156" width="40" height="20" rx="2" fill="#4B5563" />
-        <rect x="126" y="158" width="16" height="8" rx="1" fill="#93C5FD" opacity="0.75" />
-        <rect x="145" y="158" width="16" height="8" rx="1" fill="#93C5FD" opacity="0.75" />
-        {/* Escalera cabina */}
-        <line x1="118" y1="192" x2="112" y2="220" stroke="#4B5563" strokeWidth="2" />
-        <line x1="115" y1="200" x2="120" y2="200" stroke="#4B5563" strokeWidth="1.5" />
-        <line x1="114" y1="208" x2="119" y2="208" stroke="#4B5563" strokeWidth="1.5" />
-        {/* Mástil */}
-        <rect x="82" y="20" width="26" height="170" rx="3" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
-        <g fill="#0F172A">
-          <circle cx="95" cy="36" r="4" />
-          <circle cx="95" cy="60" r="4" />
-          <circle cx="95" cy="84" r="4" />
-          <circle cx="95" cy="108" r="4" />
-          <circle cx="95" cy="132" r="4" />
-          <circle cx="95" cy="156" r="4" />
-        </g>
-        <line x1="82" y1="50" x2="82" y2="180" stroke="#B8860B" strokeWidth="1" />
-        <line x1="108" y1="50" x2="108" y2="180" stroke="#B8860B" strokeWidth="1" />
-        {/* Polea */}
-        <rect x="76" y="12" width="38" height="14" rx="3" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
-        <circle cx="95" cy="19" r="5" fill="#4B5563" stroke="#0F172A" strokeWidth="1.5" />
-        <circle cx="95" cy="19" r="2" fill="#F5B800" />
-        {/* Cable + Kelly bar */}
-        <line x1="95" y1="26" x2="95" y2="90" stroke="#1F2937" strokeWidth="1.5" />
-        <rect x="90" y="90" width="10" height="80" rx="1" fill="#6B7280" stroke="#1F2937" strokeWidth="1.5" />
-        <line x1="90" y1="110" x2="100" y2="110" stroke="#1F2937" strokeWidth="0.8" />
-        <line x1="90" y1="130" x2="100" y2="130" stroke="#1F2937" strokeWidth="0.8" />
-        <line x1="90" y1="150" x2="100" y2="150" stroke="#1F2937" strokeWidth="0.8" />
-        {/* Broca */}
-        <polygon points="88,170 102,170 95,182" fill="#4B5563" stroke="#0F172A" strokeWidth="1.5" />
-      </g>
-
-      {/* Poste con señal de precaución (izquierda) */}
-      <g transform="translate(80, 200)">
-        <rect x="-1.5" y="0" width="3" height="70" fill="#4B5563" />
-        <polygon points="0,-30 26,-3 -26,-3" fill="#F5B800" stroke="#0F172A" strokeWidth="2" />
-        <text x="0" y="-8" textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="18" fontWeight="800" fill="#0F172A">!</text>
-      </g>
-
-      {/* Trabajador A (izquierda, con tablet) */}
-      <g transform="translate(220, 200)">
-        {/* Piernas */}
-        <rect x="-12" y="60" width="10" height="34" rx="2" fill="#1E3A8A" stroke="#0F172A" strokeWidth="1.2" />
-        <rect x="2" y="60" width="10" height="34" rx="2" fill="#1E3A8A" stroke="#0F172A" strokeWidth="1.2" />
-        {/* Botas */}
-        <rect x="-14" y="92" width="14" height="6" rx="2" fill="#1F2937" />
-        <rect x="0" y="92" width="14" height="6" rx="2" fill="#1F2937" />
-        {/* Chaleco naranja */}
-        <rect x="-16" y="24" width="32" height="42" rx="4" fill="#F97316" stroke="#B84A0A" strokeWidth="1.5" />
-        {/* Bandas reflectivas */}
-        <rect x="-16" y="38" width="32" height="3" fill="#F5F5F5" />
-        <rect x="-16" y="54" width="32" height="3" fill="#F5F5F5" />
-        {/* Camisa (interior azul) */}
-        <rect x="-16" y="24" width="32" height="6" fill="#1E3A8A" />
-        {/* Brazos */}
-        <rect x="-22" y="26" width="8" height="26" rx="3" fill="#F97316" stroke="#B84A0A" strokeWidth="1.2" />
-        <rect x="14" y="26" width="8" height="26" rx="3" fill="#F97316" stroke="#B84A0A" strokeWidth="1.2" />
-        {/* Manos */}
-        <circle cx="-18" cy="56" r="4" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1" />
-        <circle cx="18" cy="56" r="4" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1" />
-        {/* Tablet/plano en las manos */}
-        <rect x="-20" y="48" width="40" height="14" rx="2" fill="#F5F5F5" stroke="#0F172A" strokeWidth="1.5" />
-        <line x1="-16" y1="52" x2="16" y2="52" stroke="#4B5563" strokeWidth="0.8" />
-        <line x1="-16" y1="56" x2="10" y2="56" stroke="#4B5563" strokeWidth="0.8" />
-        {/* Cabeza */}
-        <circle cx="0" cy="12" r="12" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1.5" />
-        {/* Ojos + boca */}
-        <circle cx="-4" cy="12" r="1.4" fill="#0F172A" />
-        <circle cx="4" cy="12" r="1.4" fill="#0F172A" />
-        <path d="M-3,17 Q0,19 3,17" stroke="#0F172A" strokeWidth="1.2" fill="none" strokeLinecap="round" />
-        {/* Casco naranja */}
-        <path d="M-13,4 Q0,-14 13,4 L13,7 L-13,7 Z" fill="#F97316" stroke="#B84A0A" strokeWidth="1.5" />
-        <rect x="-14" y="6" width="28" height="3" rx="1" fill="#B84A0A" />
-        <rect x="-4" y="-6" width="8" height="4" rx="1" fill="#F5B800" />
-      </g>
-
-      {/* Trabajador B (derecha, con radio) */}
-      <g transform="translate(720, 210)">
-        {/* Piernas */}
-        <rect x="-11" y="56" width="9" height="30" rx="2" fill="#1E3A8A" stroke="#0F172A" strokeWidth="1.2" />
-        <rect x="2" y="56" width="9" height="30" rx="2" fill="#1E3A8A" stroke="#0F172A" strokeWidth="1.2" />
-        {/* Botas */}
-        <rect x="-13" y="84" width="13" height="6" rx="2" fill="#1F2937" />
-        <rect x="0" y="84" width="13" height="6" rx="2" fill="#1F2937" />
-        {/* Camisa azul */}
-        <rect x="-15" y="22" width="30" height="38" rx="4" fill="#2563EB" stroke="#0F172A" strokeWidth="1.5" />
-        {/* Detalle bolsillo */}
-        <rect x="-10" y="30" width="8" height="8" rx="1" fill="#1E3A8A" stroke="#0F172A" strokeWidth="0.8" />
-        {/* Brazo izq (colgando) */}
-        <rect x="-21" y="24" width="8" height="24" rx="3" fill="#2563EB" stroke="#0F172A" strokeWidth="1.2" />
-        <circle cx="-17" cy="52" r="4" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1" />
-        {/* Brazo der (sosteniendo radio, doblado hacia arriba) */}
-        <rect x="13" y="20" width="8" height="20" rx="3" fill="#2563EB" stroke="#0F172A" strokeWidth="1.2" />
-        <circle cx="17" cy="42" r="4" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1" />
-        {/* Radio walkie-talkie */}
-        <rect x="13" y="30" width="10" height="16" rx="1.5" fill="#1F2937" stroke="#0F172A" strokeWidth="1.2" />
-        <rect x="15" y="33" width="6" height="4" rx="0.5" fill="#F5B800" />
-        <line x1="18" y1="30" x2="18" y2="22" stroke="#0F172A" strokeWidth="1.5" />
-        <circle cx="18" cy="21" r="1.5" fill="#F97316" />
-        {/* Cabeza */}
-        <circle cx="0" cy="10" r="11" fill="#E8C9A0" stroke="#8C6E4D" strokeWidth="1.5" />
-        <circle cx="-3.5" cy="10" r="1.3" fill="#0F172A" />
-        <circle cx="3.5" cy="10" r="1.3" fill="#0F172A" />
-        <path d="M-2,15 Q0,16.5 2,15" stroke="#0F172A" strokeWidth="1.2" fill="none" strokeLinecap="round" />
-        {/* Casco amarillo */}
-        <path d="M-12,3 Q0,-14 12,3 L12,6 L-12,6 Z" fill="#F5B800" stroke="#B8860B" strokeWidth="1.5" />
-        <rect x="-13" y="5" width="26" height="3" rx="1" fill="#B8860B" />
-      </g>
-
-      {/* Cono de seguridad (delante-derecha) */}
-      <g transform="translate(900, 260)">
-        <polygon points="-14,50 14,50 8,0 -8,0" fill="#F97316" stroke="#B84A0A" strokeWidth="1.8" />
-        <rect x="-11" y="18" width="22" height="5" fill="#F5F5F5" />
-        <rect x="-13" y="32" width="26" height="5" fill="#F5F5F5" />
-        <rect x="-18" y="50" width="36" height="6" rx="1.5" fill="#1F2937" />
-      </g>
-
-      {/* Cinta de seguridad (barrera amarilla con lineas negras, primer plano derecha) */}
-      <g>
-        <line x1="960" y1="285" x2="1180" y2="292" stroke="#F5B800" strokeWidth="6" strokeLinecap="round" />
-        <line x1="960" y1="285" x2="1180" y2="292" stroke="#0F172A" strokeWidth="5" strokeDasharray="10 12" strokeLinecap="round" />
-        {/* Postes */}
-        <rect x="955" y="282" width="3" height="42" fill="#4B5563" />
-        <rect x="1178" y="289" width="3" height="42" fill="#4B5563" />
-      </g>
-    </svg>
-  );
-}
-
-// ── Tarjeta de modulo ──
-function ModuleCard({ m, onOpen, badge = 0 }) {
+// ── Tarjeta de módulo (estética IST: icono en cajita, título grande, flecha) ──
+function PanelCard({ m, onOpen, index = 0 }) {
   const [hover, setHover] = useState(false);
-  const isHero = m.hero && !m.soon;
   return (
     <div
+      className="gt-card gt-card-hover gt-sube"
       onClick={onOpen}
-      onMouseEnter={() => !m.soon && setHover(true)}
+      onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{
-        background: BRAND.cream,
-        borderRadius: R.lg,
-        padding: 28,
-        border: `1px solid ${hover ? m.accent : BRAND.borderSoft}`,
-        cursor: m.soon ? "default" : "pointer",
-        opacity: m.soon ? 0.55 : 1,
-        transition: "all .2s ease",
-        position: "relative",
-        boxShadow: hover ? (isHero ? BRAND.shadowOrange : BRAND.shadow) : BRAND.shadowSm,
-        transform: hover ? "translateY(-3px)" : "translateY(0)",
-        overflow: "hidden",
-      }}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
+      style={{ padding: "26px 26px 24px", cursor: "pointer", animationDelay: `${90 + index * 60}ms`, outline: "none", borderColor: hover ? m.accent + "55" : undefined }}
     >
-      {/* Banda lateral de color */}
-      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, background: m.soon ? BRAND.border : m.accent, opacity: m.soon ? 0.4 : 1 }} />
-
-      {m.soon && (
-        <div style={{ position: "absolute", top: 14, right: 14, background: BRAND.beigeDeep, color: BRAND.graphite, fontSize: 9, fontWeight: 700, padding: "4px 10px", borderRadius: R.full, letterSpacing: 1.2, textTransform: "uppercase" }}>
-          Próximamente
-        </div>
-      )}
-
-      {isHero && (
-        <div style={{ position: "absolute", top: 14, right: 14, background: BRAND.orange, color: "#fff", fontSize: 9, fontWeight: 700, padding: "4px 10px", borderRadius: R.full, letterSpacing: 1.2, textTransform: "uppercase" }}>
-          Destacado
-        </div>
-      )}
-
-      {badge > 0 && (
-        <div style={{
-          position: "absolute", top: 14, right: 14,
-          background: BRAND.red, color: "#fff",
-          fontSize: 11, fontWeight: 800,
-          padding: "4px 10px",
-          borderRadius: R.full,
-          minWidth: 24, textAlign: "center",
-          boxShadow: "0 2px 8px rgba(192,57,43,0.4)",
-          animation: "pulse 1.5s ease-in-out infinite",
-        }}>
-          {badge > 99 ? "99+" : badge}
-        </div>
-      )}
-
-      <div style={{ display: "flex", alignItems: "center", gap: 18, marginBottom: 16 }}>
-        <div
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: R.md,
-            background: m.soon ? BRAND.beigeDeep : m.accentSoft,
-            color: m.accent,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 26,
-            border: `1px solid ${m.soon ? BRAND.border : m.accent + "30"}`,
-            flexShrink: 0,
-          }}
-        >
-          {m.icon}
-        </div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: BRAND.charcoal, lineHeight: 1.2 }}>
-            {m.name}
-          </div>
-        </div>
+      <div
+        style={{
+          width: 54, height: 54, borderRadius: 16,
+          background: m.accent + "14", color: m.accent,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 25, marginBottom: 20,
+          transition: "transform var(--mov-base) var(--curva)",
+          transform: hover ? "scale(1.06)" : "scale(1)",
+        }}
+      >{m.icon}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ font: "800 24px/1.2 var(--display)", letterSpacing: "-.015em", color: "var(--text)" }}>{m.name}</div>
+        <span aria-hidden style={{ fontSize: 20, color: hover ? m.accent : "var(--text-faint)", transition: "transform var(--mov-base) var(--curva), color var(--mov-base)", transform: hover ? "translateX(4px)" : "translateX(0)" }}>→</span>
       </div>
-
-      <div style={{ fontSize: 13.5, color: BRAND.graphite, lineHeight: 1.55, marginBottom: 16 }}>{m.desc}</div>
-
-      {!m.soon && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, color: m.accent, fontSize: 12, fontWeight: 600, letterSpacing: 0.3, transition: "transform .2s", transform: hover ? "translateX(4px)" : "translateX(0)" }}>
-          Abrir módulo
-          <span style={{ fontSize: 14 }}>→</span>
-        </div>
-      )}
+      <div style={{ font: "400 14px/1.5 var(--sans)", color: "var(--text-2)", marginTop: 6 }}>{m.desc}</div>
     </div>
   );
 }
 
-// ── Login Screen — Split layout ──
+// ═══════════════════════════════════════════════════════════════════════════
+// BIENVENIDA DEL DÍA (31-ago-2026) — saludo grande que transiciona a su lugar
+// y tres tarjetas escalonadas: TO-DOS (personales, persistidos por usuario),
+// BANDEJA (pendientes reales del sistema según el rol) y VERSÍCULO DEL DÍA.
+// ═══════════════════════════════════════════════════════════════════════════
+function WelcomeScreen({ user, availableModules, onStart, onOpenModule }) {
+  // fase "hero" (saludo centrado XL) → fase "día" (saludo arriba + tarjetas)
+  const [fase, setFase] = useState("hero");
+  useEffect(() => {
+    const t = setTimeout(() => setFase("dia"), 1700);
+    return () => clearTimeout(t);
+  }, []);
+
+  const nombre = nombreDePila(user.label);
+  const saludo = saludoDe();
+  const verso = versiculoDeHoy();
+  const puedeAbrir = (id) => availableModules.some((m) => m.id === id);
+
+  // ── TO-DOS personales (key propia por usuario — no toca ninguna data) ──
+  const todosKey = `gt-todos-${user.username}`;
+  const [todos, setTodos] = useState(null);   // null = cargando
+  const [nuevo, setNuevo] = useState("");
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try { const t = await store.get(todosKey); if (vivo) setTodos(Array.isArray(t) ? t : []); }
+      catch { if (vivo) setTodos([]); }
+    })();
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const guardarTodos = (next) => {
+    setTodos(next);
+    // Lista personal: best-effort — si la nube falla, el banner global avisa.
+    store.set(todosKey, next);
+  };
+  const addTodo = () => {
+    // Con la lista aún cargando, un set pisaría lo guardado en la nube.
+    if (todos === null) return;
+    const t = nuevo.trim();
+    if (!t) return;
+    guardarTodos([...todos, { id: Math.random().toString(36).slice(2, 10), txt: t, done: false, at: new Date().toISOString() }]);
+    setNuevo("");
+  };
+
+  // ── BANDEJA: pendientes reales del sistema, según el rol ──
+  // SOLO getCloud: store.get puede disparar un re-sync de ESCRITURA en
+  // background si el cache local es más nuevo que la nube, y esta pantalla
+  // decorativa jamás debe escribir cp-purchases. getCloud lee directo
+  // (null si la key no existe, throw si la nube no responde).
+  const [inbox, setInbox] = useState(null);   // null = cargando, "error" = nube caída
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      const items = [];
+      try {
+        const rolesCompras = ["admin", "tesoreria", "gerencia", "costos", "recepcion", "asistente_compras", "visor_compras", "compras_ops"];
+        if (rolesCompras.includes(user.role)) {
+          const cp = await store.getCloud("cp-purchases");
+          const arr = Array.isArray(cp) ? cp : [];
+          const cerradaConta = (p) => !!(p?.conta?.fileId || p?.conta?.facturaFile?.fileId || p?.conta?.legacy);
+          const porPagar = arr.filter((p) => p && p.status === "validado").length;
+          // Mismo filtro de responsabilidad que el tablero "Por cerrar
+          // contable": no-supervisores cuentan las suyas + las sin asignar.
+          const esSuperConta = ["admin", "gerencia", "visor_compras"].includes(user.role);
+          const porCerrar = arr.filter((p) => p && (p.status === "pagado" || p.status === "finalizado") && !cerradaConta(p) && (p.deliveryStatus === "ficha_adjunta" || p.deliveryStatus === "cerrado") && (esSuperConta || !p.cierreResponsable || p.cierreResponsable === user.label)).length;
+          if (porPagar) items.push({ icon: "💰", txt: `${porPagar} solicitud${porPagar !== 1 ? "es" : ""} esperando pago`, mod: "compras-operaciones" });
+          if (porCerrar) items.push({ icon: "🧾", txt: `${porCerrar} compra${porCerrar !== 1 ? "s" : ""} lista${porCerrar !== 1 ? "s" : ""} para cerrar con conta`, mod: "compras-operaciones" });
+        }
+        // Solo roles que abren GeoTeam Y ven la pestaña de tardanzas
+        // ("coordinador" no entra a rrhh — sería una fila muerta).
+        const rolesTardies = ["admin", "tesoreria", "asistente_compras", "logistica"];
+        if (rolesTardies.includes(user.role)) {
+          const hoy = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Tegucigalpa", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+          const [y, m, d] = hoy.split("-");
+          const q = Number(d) <= 15 ? "1Q" : "2Q";
+          // Quincena actual + anterior (igual que HRModule): a inicios de
+          // quincena el backlog pendiente vive en la anterior.
+          const ant = quincenaAnterior(`${y}-${m}`, q);
+          const [mk1, mk2, tds] = await Promise.all([
+            store.getCloud(gcMarkKey(`${y}-${m}`, q)),
+            store.getCloud(gcMarkKey(ant.periodo, ant.quincena)),
+            store.getCloud("gc-tardies"),
+          ]);
+          const marks = [...(Array.isArray(mk1) ? mk1 : []), ...(Array.isArray(mk2) ? mk2 : [])];
+          const dec = new Set((Array.isArray(tds) ? tds : []).filter((t) => t && (t.estado === "aprobada" || t.estado === "denegada")).map((t) => t.markId));
+          // Misma regla que responsableDe de HRModule: Oscar decide las de su
+          // tablet, Ana las de oficina; admin/tesoreria (supers) ven todas.
+          const mia = (mk) => {
+            if (user.role === "admin" || user.role === "tesoreria") return true;
+            const por = String(mk.registradoPor || "");
+            if (user.role === "logistica") return por === "Oscar Paz";
+            return por === "Ana Vasquez" || por === "Marcaje de Asistencia";
+          };
+          const pend = marks.filter((mk) => mk && mk.tipo === "entrada" && mk.tarde && !dec.has(mk.id) && mia(mk)).length;
+          if (pend) items.push({ icon: "🕒", txt: `${pend} llegada${pend !== 1 ? "s" : ""} tarde por decidir`, mod: "rrhh" });
+        }
+        if (vivo) setInbox(items);
+      } catch {
+        // La nube no respondió: decirlo — jamás afirmar "todo al día".
+        if (vivo) setInbox("error");
+      }
+    })();
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const esHero = fase === "hero";
+  const cardTitulo = (txt) => (
+    <div className="gt-label" style={{ color: "var(--text-3)", marginBottom: 16 }}>{txt}</div>
+  );
+
+  return (
+    <div className="gt-ui" style={{ position: "relative", overflow: "hidden" }}>
+      <div className="gt-brillo gt-brillo-a" aria-hidden />
+      <div className="gt-brillo gt-brillo-b" aria-hidden />
+
+      {/* Saltar (arriba a la derecha, discreto) */}
+      <button
+        onClick={onStart}
+        style={{ position: "absolute", top: 18, right: 24, zIndex: 3, background: "transparent", border: "none", cursor: "pointer", color: "var(--text-3)", font: "500 13px/1 var(--sans)", padding: 10, minHeight: 44 }}
+      >Saltar →</button>
+
+      {/* El saludo: nace centrado XL y viaja a su lugar (misma caja, dos layouts;
+          la transición la hace el contenedor con flex + transition de padding) */}
+      <div
+        style={{
+          position: "relative", zIndex: 1,
+          maxWidth: 1240, margin: "0 auto", boxSizing: "border-box",
+          padding: esHero ? "36vh 28px 0" : "72px 28px 0",
+          transition: "padding var(--mov-lento) var(--curva)",
+          textAlign: esHero ? "center" : "left",
+        }}
+      >
+        <div className="gt-label gt-aparece" style={{ color: "var(--text-3)", marginBottom: 14, animationDelay: "120ms" }}>
+          {fechaLargaTegus()}
+        </div>
+        <h1
+          className="gt-sube"
+          style={{
+            font: `800 ${esHero ? "clamp(56px,8vw,96px)" : "clamp(40px,5vw,64px)"}/1.05 var(--display)`,
+            letterSpacing: "-.025em", color: "var(--text)", margin: 0,
+            transition: "font-size var(--mov-lento) var(--curva)",
+          }}
+        >
+          {saludo},<br />
+          <span style={{ color: "var(--marca-2)" }}>{nombre}</span>.
+        </h1>
+      </div>
+
+      {/* Tarjetas — entran escalonadas cuando el saludo llega a su lugar */}
+      <div
+        style={{
+          position: "relative", zIndex: 1,
+          maxWidth: 1240, margin: "0 auto", boxSizing: "border-box",
+          padding: "34px 28px 60px",
+          opacity: esHero ? 0 : 1,
+          transform: esHero ? "translateY(26px)" : "translateY(0)",
+          transition: "opacity var(--mov-lento) var(--curva-exp), transform var(--mov-lento) var(--curva-exp)",
+          pointerEvents: esHero ? "none" : "auto",
+        }}
+      >
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px,100%), 1fr))", gap: 18 }}>
+          {/* TO-DOS */}
+          <div className="gt-card" style={{ padding: 24, background: "linear-gradient(165deg,#FFFDF8 0%,#FFF7EC 100%)", display: "flex", flexDirection: "column", minHeight: 300 }}>
+            {cardTitulo("To-dos")}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minHeight: 0, overflowY: "auto" }}>
+              {todos === null
+                ? <div style={{ color: "var(--text-3)", fontSize: 14 }}>Cargando…</div>
+                : todos.length === 0
+                  ? <div style={{ color: "var(--text-2)", fontSize: 15 }}>Nada pendiente — día redondo.</div>
+                  : todos.map((t) => (
+                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 6, minHeight: 36 }}>
+                      <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "4px 0" }}>
+                        <input type="checkbox" checked={!!t.done} onChange={() => guardarTodos(todos.map((x) => x.id === t.id ? { ...x, done: !x.done } : x))} style={{ width: 18, height: 18, cursor: "pointer", accentColor: "var(--marca-2)", flexShrink: 0 }} />
+                        <span style={{ flex: 1, fontSize: 14.5, color: t.done ? "var(--text-faint)" : "var(--text)", textDecoration: t.done ? "line-through" : "none", wordBreak: "break-word" }}>{t.txt}</span>
+                      </label>
+                      <button onClick={() => guardarTodos(todos.filter((x) => x.id !== t.id))} title="Quitar" aria-label={`Quitar "${t.txt}"`} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-faint)", fontSize: 17, minWidth: 32, minHeight: 32, padding: 0 }}>×</button>
+                    </div>
+                  ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <input
+                className="gt-input"
+                style={{ fontSize: 14 }}
+                placeholder={todos === null ? "Cargando tus pendientes…" : "Agregar pendiente…"}
+                value={nuevo}
+                disabled={todos === null}
+                onChange={(e) => setNuevo(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") addTodo(); }}
+              />
+              <button onClick={addTodo} disabled={todos === null} title="Agregar" style={{ minWidth: 44, minHeight: 44, borderRadius: "var(--radio-control)", border: "1px solid var(--hairline)", background: "var(--surface)", cursor: todos === null ? "wait" : "pointer", fontSize: 19, color: todos === null ? "var(--text-faint)" : "var(--naranja-tinta)", fontWeight: 700 }}>+</button>
+            </div>
+          </div>
+
+          {/* BANDEJA */}
+          <div className="gt-card" style={{ padding: 24, minHeight: 300, display: "flex", flexDirection: "column" }}>
+            {cardTitulo("Bandeja")}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+              {inbox === null
+                ? <div style={{ color: "var(--text-3)", fontSize: 14 }}>Revisando el sistema…</div>
+                : inbox === "error"
+                  ? <div style={{ color: "var(--text-2)", fontSize: 14.5 }}>⚠️ No se pudo revisar el sistema (sin conexión con la nube). Los pendientes se ven dentro de cada módulo.</div>
+                  : inbox.length === 0
+                  ? <div style={{ color: "var(--text-2)", fontSize: 15 }}>✓ Sin pendientes del sistema. Todo al día.</div>
+                  : inbox.map((it, i) => {
+                    const clickeable = puedeAbrir(it.mod);
+                    return (
+                      <div
+                        key={i}
+                        onClick={() => clickeable && onOpenModule(it.mod)}
+                        role={clickeable ? "button" : undefined}
+                        style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 10px", borderRadius: 12, cursor: clickeable ? "pointer" : "default", transition: "background var(--mov-rapido)", borderBottom: i < inbox.length - 1 ? "1px solid var(--hairline)" : "none" }}
+                        onMouseEnter={(e) => { if (clickeable) e.currentTarget.style.background = "var(--sunk)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                      >
+                        <span style={{ fontSize: 17 }}>{it.icon}</span>
+                        <span style={{ flex: 1, fontSize: 14.5, color: "var(--text)", fontWeight: 600 }}>{it.txt}</span>
+                        {clickeable && <span aria-hidden style={{ color: "var(--text-faint)", fontSize: 15 }}>→</span>}
+                      </div>
+                    );
+                  })}
+            </div>
+          </div>
+
+          {/* VERSÍCULO DEL DÍA */}
+          <div className="gt-card" style={{ padding: 24, minHeight: 300, display: "flex", flexDirection: "column", background: "linear-gradient(165deg,#FFFFFF 0%,#F6F8FB 100%)" }}>
+            {cardTitulo("Versículo del día")}
+            <div style={{ flex: 1 }}>
+              <p style={{ font: "600 19px/1.55 var(--display)", letterSpacing: "-.01em", color: "var(--text)", margin: 0 }}>
+                “{verso.txt}”
+              </p>
+            </div>
+            <div className="gt-label" style={{ color: "var(--naranja-tinta)", marginTop: 16 }}>{verso.ref}</div>
+          </div>
+        </div>
+
+        <button className="gt-btn gt-btn-primario" onClick={onStart} style={{ marginTop: 30 }}>
+          Empezar el día <span aria-hidden>→</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOGIN (31-ago-2026) — foto de obra real a pantalla completa (rota con
+// crossfade + Ken Burns sutil), branding grande a la izquierda y tarjeta de
+// acceso a la derecha. Credenciales y flujo: EXACTAMENTE los de siempre.
+// ═══════════════════════════════════════════════════════════════════════════
+const FOTOS_LOGIN = ["obra-1.jpg", "obra-2.jpg", "obra-3.jpg", "obra-4.jpg", "obra-5.jpg"];
+
 function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [foto, setFoto] = useState(0);
+  const base = import.meta.env.BASE_URL;
+  const reduceMotion = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Rotación automática. Depende de `foto` a propósito: un click en un punto
+  // reinicia el conteo de 9 s (si no, podía saltar de foto al segundo del
+  // click). Las 5 fotos se descargan solas: sus divs ya están en el DOM.
+  useEffect(() => {
+    if (reduceMotion) return;
+    const t = setTimeout(() => setFoto((f) => (f + 1) % FOTOS_LOGIN.length), 9000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [foto]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -610,210 +670,120 @@ function LoginScreen({ onLogin }) {
     }, 350);
   };
 
+  const verso = versiculoDeHoy();
+
   return (
-    <div style={{ minHeight: "100vh", display: "flex", fontFamily: FONT.body, background: BRAND.beige, color: BRAND.charcoal }}>
-      {/* Lado izquierdo — branding */}
-      <div
-        style={{
-          flex: 1.1,
-          background: `linear-gradient(160deg, ${BRAND.beigeLight} 0%, ${BRAND.parchment} 50%, ${BRAND.beigeDeep} 100%)`,
-          padding: "60px 64px",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "space-between",
-          position: "relative",
-          overflow: "hidden",
-          borderRight: `1px solid ${BRAND.borderSoft}`,
-        }}
-      >
-        {/* Bauer BG-11 silhouette — pieza visual industrial */}
+    <div style={{ minHeight: "100vh", position: "relative", overflow: "hidden", fontFamily: "var(--sans)", background: "#1C1A18" }}>
+      <style>{UI_CSS}</style>
+
+      {/* Fotos de obra — crossfade; la activa lleva Ken Burns lento */}
+      {FOTOS_LOGIN.map((f, i) => (
         <div
+          key={f}
+          aria-hidden
+          className={i === foto && !reduceMotion ? "gt-kenburns" : undefined}
           style={{
-            position: "absolute",
-            right: -60,
-            bottom: -40,
-            width: 540,
-            height: 720,
-            opacity: 0.18,
-            pointerEvents: "none",
-            backgroundImage: `url(${import.meta.env.BASE_URL}machines/bauer-bg11.jpg)`,
-            backgroundSize: "contain",
-            backgroundRepeat: "no-repeat",
-            backgroundPosition: "right bottom",
-            filter: "grayscale(1) contrast(1.15) brightness(0.5)",
-            mixBlendMode: "multiply",
+            position: "absolute", inset: 0,
+            backgroundImage: `url(${base}brand/login/${f})`,
+            backgroundSize: "cover", backgroundPosition: "center 40%",
+            opacity: i === foto ? 1 : 0,
+            transition: "opacity 1600ms var(--curva), transform 1600ms var(--curva)",
+            animation: i === foto && !reduceMotion ? "gtKenBurns 11s linear forwards" : "none",
+            willChange: i === foto ? "opacity, transform" : "auto",
           }}
         />
+      ))}
+      {/* Velo carbón: legibilidad del texto sobre cualquier foto */}
+      <div aria-hidden style={{ position: "absolute", inset: 0, background: "linear-gradient(100deg, rgba(28,26,24,.82) 0%, rgba(28,26,24,.55) 46%, rgba(28,26,24,.30) 100%)" }} />
 
-        {/* Top — logo */}
-        <div style={{ position: "relative", zIndex: 1 }}>
-          <Logo size={64} />
+      {/* Contenido */}
+      <div style={{ position: "relative", zIndex: 1, minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box", padding: "clamp(20px,3.5vw,44px)" }}>
+        {/* Logo */}
+        <div className="gt-aparece" style={{ filter: "brightness(0) invert(1)", opacity: 0.96, width: "fit-content" }}>
+          <Logo size={46} />
         </div>
 
-        {/* Center — tagline */}
-        <div style={{ position: "relative", zIndex: 1, maxWidth: 460 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.orange, letterSpacing: 3, marginBottom: 18, textTransform: "uppercase" }}>
-            Sistema interno de operaciones
+        {/* Centro: tagline izquierda + tarjeta derecha */}
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 40, flexWrap: "wrap", padding: "28px 0" }}>
+          <div style={{ maxWidth: 620, minWidth: "min(100%, 320px)" }}>
+            <div className="gt-label gt-sube" style={{ color: "#FFDFC2", marginBottom: 20, animationDelay: "120ms", textShadow: "0 1px 10px rgba(0,0,0,.5)" }}>
+              Sistema de Gestión de Operaciones
+            </div>
+            <h1 className="gt-sube" style={{ font: "800 clamp(40px,5vw,68px)/1.08 var(--display)", letterSpacing: "-.022em", color: "#FFFDF9", margin: 0, animationDelay: "200ms", textShadow: "0 2px 24px rgba(0,0,0,.35)" }}>
+              Ingeniería que sostiene. <span style={{ color: "var(--marca-2)" }}>Proyectos que avanzan.</span>
+            </h1>
           </div>
-          <h1
+
+          {/* Tarjeta de acceso — fondo alto (NO cristal puro: hay foto detrás) */}
+          <form
+            onSubmit={handleSubmit}
+            className="gt-sube"
             style={{
-              fontFamily: FONT.display,
-              fontSize: 36,
-              fontWeight: 800,
-              color: BRAND.charcoal,
-              lineHeight: 1.15,
-              letterSpacing: -0.6,
-              marginBottom: 20,
+              width: "min(400px, 100%)", boxSizing: "border-box",
+              background: "var(--v-fondo-foto)",
+              border: "1px solid var(--v-borde)",
+              borderRadius: 24, padding: "34px 32px",
+              boxShadow: "var(--v-sombra)",
+              WebkitBackdropFilter: "var(--v-blur)", backdropFilter: "var(--v-blur)",
+              animationDelay: "320ms",
             }}
           >
-            Plataforma de operaciones de <span style={{ color: BRAND.orange }}>Geotecnica Soluciones</span>.
-          </h1>
-          <p style={{ fontSize: 15.5, color: BRAND.graphite, lineHeight: 1.65, fontWeight: 400, marginBottom: 14 }}>
-            Sostiene los proyectos con la cadena de suministro, los recursos humanos y las compras de la empresa.
-          </p>
-          <p style={{ fontSize: 16, color: BRAND.charcoal, lineHeight: 1.5, fontWeight: 700, fontFamily: FONT.display, letterSpacing: -0.2 }}>
-            Hacemos que los proyectos sean ejecutables.
-          </p>
-        </div>
+            <h2 style={{ font: "800 32px/1.12 var(--display)", letterSpacing: "-.02em", color: "var(--text)", margin: 0 }}>Bienvenido</h2>
+            <p style={{ font: "400 14px/1.5 var(--sans)", color: "var(--text-2)", margin: "8px 0 26px" }}>Ingresá para continuar.</p>
 
-        {/* Bottom — info bar */}
-        <div style={{ position: "relative", zIndex: 1, display: "flex", gap: 32, color: BRAND.stone, fontSize: 12, fontWeight: 500, letterSpacing: 0.5 }}>
-          <div>
-            <div style={{ color: BRAND.orange, fontWeight: 700, fontSize: 18, fontFamily: FONT.display }}>9+</div>
-            <div style={{ marginTop: 2 }}>Proyectos activos</div>
-          </div>
-          <div>
-            <div style={{ color: BRAND.orange, fontWeight: 700, fontSize: 18, fontFamily: FONT.display }}>3</div>
-            <div style={{ marginTop: 2 }}>Módulos operativos</div>
-          </div>
-          <div>
-            <div style={{ color: BRAND.orange, fontWeight: 700, fontSize: 18, fontFamily: FONT.display }}>HN</div>
-            <div style={{ marginTop: 2 }}>Honduras</div>
-          </div>
-        </div>
-      </div>
+            <label style={{ display: "block", marginBottom: 16 }}>
+              <span className="gt-label" style={{ color: "var(--text-3)", display: "block", marginBottom: 8 }}>Usuario</span>
+              <input className="gt-input" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="ej. administrador" autoFocus autoComplete="username" />
+            </label>
+            <label style={{ display: "block", marginBottom: 20 }}>
+              <span className="gt-label" style={{ color: "var(--text-3)", display: "block", marginBottom: 8 }}>Clave</span>
+              <input className="gt-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" />
+            </label>
 
-      {/* Lado derecho — formulario */}
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 32px", background: BRAND.cream }}>
-        <div style={{ width: "100%", maxWidth: 380 }}>
-          <div style={{ marginBottom: 36 }}>
-            <h2 style={{ fontFamily: FONT.display, fontSize: 28, fontWeight: 800, color: BRAND.charcoal, letterSpacing: -0.3, marginBottom: 8 }}>
-              Bienvenido
-            </h2>
-            <p style={{ fontSize: 14, color: BRAND.graphite, lineHeight: 1.5 }}>
-              Ingresá con tus credenciales para continuar.
-            </p>
-          </div>
+            {error && (
+              <div style={{ background: "rgba(192,57,43,.10)", border: "1px solid rgba(192,57,43,.30)", borderRadius: "var(--radio-control)", padding: "10px 14px", color: "#B03024", fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
+                {error}
+              </div>
+            )}
 
-          <form onSubmit={handleSubmit}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-              <Field label="Usuario">
-                <input
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="ej. administrador"
-                  autoFocus
-                  autoComplete="username"
-                  style={inputStyle}
-                  onFocus={(e) => (e.target.style.borderColor = BRAND.orange)}
-                  onBlur={(e) => (e.target.style.borderColor = BRAND.border)}
-                />
-              </Field>
+            <button type="submit" className="gt-btn gt-btn-primario" disabled={loading || !username || !password} style={{ width: "100%" }}>
+              {loading ? "Verificando…" : <>Ingresar <span aria-hidden>→</span></>}
+            </button>
 
-              <Field label="Clave">
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  style={inputStyle}
-                  onFocus={(e) => (e.target.style.borderColor = BRAND.orange)}
-                  onBlur={(e) => (e.target.style.borderColor = BRAND.border)}
-                />
-              </Field>
+            <div style={{ marginTop: 18, textAlign: "center", fontSize: 12, color: "var(--text-3)" }}>
+              ¿Olvidaste tu clave? Contactá al administrador.
+            </div>
 
-              {error && (
-                <div style={{ background: BRAND.redSoft, border: `1px solid ${BRAND.red}40`, borderRadius: R.sm, padding: "10px 14px", color: BRAND.red, fontSize: 13, fontWeight: 600 }}>
-                  {error}
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading || !username || !password}
-                style={{
-                  width: "100%",
-                  padding: "14px 0",
-                  background: !username || !password || loading ? BRAND.ash : BRAND.orange,
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: R.sm,
-                  fontSize: 15,
-                  fontWeight: 700,
-                  letterSpacing: 0.3,
-                  cursor: loading ? "wait" : !username || !password ? "not-allowed" : "pointer",
-                  marginTop: 8,
-                  fontFamily: FONT.body,
-                  transition: "all .15s",
-                  boxShadow: !username || !password || loading ? "none" : "0 4px 12px rgba(232,118,45,0.25)",
-                }}
-                onMouseEnter={(e) => { if (!loading && username && password) e.currentTarget.style.background = BRAND.orangeDark; }}
-                onMouseLeave={(e) => { if (!loading && username && password) e.currentTarget.style.background = BRAND.orange; }}
-              >
-                {loading ? "Verificando…" : "Ingresar →"}
-              </button>
+            <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--hairline)", textAlign: "center" }}>
+              <div className="gt-label" style={{ color: "var(--naranja-tinta)", marginBottom: 10 }}>{verso.ref}</div>
+              <p style={{ font: "italic 400 13px/1.7 var(--sans)", color: "var(--text-2)", margin: 0 }}>“{verso.txt}”</p>
             </div>
           </form>
+        </div>
 
-          <div style={{ marginTop: 32, paddingTop: 24, borderTop: `1px solid ${BRAND.borderSoft}`, fontSize: 11, color: BRAND.stone, lineHeight: 1.6, textAlign: "center" }}>
-            ¿Olvidaste tu clave? Contactá al administrador del sistema.
+        {/* Pie: ubicación + puntos del slideshow */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <div className="gt-label" style={{ color: "rgba(255,253,249,.75)" }}>
+            Tegucigalpa · San Pedro Sula — Honduras
           </div>
-
-          {/* Versículo · firma espiritual de la plataforma */}
-          <div style={{ marginTop: 28, paddingTop: 22, borderTop: `1px solid ${BRAND.borderSoft}`, textAlign: "center" }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, color: BRAND.orange, letterSpacing: 3.5, textTransform: "uppercase", marginBottom: 12 }}>
-              Job 22:28
-            </div>
-            <p style={{ fontFamily: FONT.display, fontSize: 13.5, color: BRAND.graphite, lineHeight: 1.75, fontStyle: "italic", fontWeight: 400 }}>
-              "
-              <span style={{ background: BRAND.orangeSoft, padding: "2px 6px", borderRadius: 3, fontWeight: 700, color: BRAND.charcoal, fontStyle: "normal", boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" }}>
-                You will succeed
-              </span>
-              {" in whatever you choose to do, and light will shine on "}
-              <span style={{ background: BRAND.orangeSoft, padding: "2px 6px", borderRadius: 3, fontWeight: 700, color: BRAND.charcoal, fontStyle: "normal", boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" }}>
-                the road ahead of you
-              </span>
-              ."
-            </p>
+          <div style={{ display: "flex", gap: 2 }}>
+            {FOTOS_LOGIN.map((f, i) => (
+              <button
+                key={f}
+                onClick={() => setFoto(i)}
+                aria-label={`Foto ${i + 1}`}
+                style={{ height: 34, padding: "0 6px", display: "flex", alignItems: "center", background: "transparent", border: "none", cursor: "pointer" }}
+              >
+                <span aria-hidden style={{
+                  width: i === foto ? 26 : 9, height: 9, borderRadius: 999,
+                  background: i === foto ? "var(--marca-2)" : "rgba(255,253,249,.45)",
+                  transition: "width var(--mov-medio) var(--curva), background var(--mov-rapido)",
+                }} />
+              </button>
+            ))}
           </div>
         </div>
       </div>
     </div>
   );
 }
-
-function Field({ label, children }) {
-  return (
-    <label style={{ display: "block" }}>
-      <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.graphite, display: "block", marginBottom: 7, letterSpacing: 1, textTransform: "uppercase" }}>
-        {label}
-      </span>
-      {children}
-    </label>
-  );
-}
-
-const inputStyle = {
-  width: "100%",
-  padding: "13px 16px",
-  border: `1px solid ${BRAND.border}`,
-  borderRadius: R.sm,
-  fontSize: 15,
-  outline: "none",
-  background: BRAND.beigeLight,
-  color: BRAND.charcoal,
-  boxSizing: "border-box",
-  fontFamily: FONT.body,
-  transition: "border-color .15s",
-};
