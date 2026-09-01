@@ -26,7 +26,10 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   módulos internos NO se tocaron. Piezas:
   - `UI_CSS` (template string montado como `<style>` SOLO en login/bienvenida/
     panel — al entrar a un módulo se desmonta, los módulos usan sus estilos
-    inline): tokens (--marca carbón, --marca-2 #E8762D, --bg beige, e0/e1/e2,
+    inline): tokens (--marca carbón, --marca-2 #E8762D, --bg #F4F4F2
+    blanco griseito — el beige se retiró el 31-ago: la paleta del rediseño
+    es blanco/gris/naranja/carbón y las manchas de brillo naranja/gris,
+    e0/e1/e2,
     --curva cubic-bezier(.32,.72,0,1)), clases `gt-*`, keyframes solo-`from` +
     `fill-mode: backwards`, manchas de brillo 47s/59s (primos), vidrio
     `--v-fondo-foto`, `prefers-reduced-motion` respetado.
@@ -89,12 +92,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   IST (se retiró el hero con CarritoSVG): [← gt-circulo][logo][GeoShopping]
   + usuario + Cerrar sesión. Pestañas SIN emojis. Se quitó el strip de
   título por pestaña ("Dashboard gerencial / N solicitudes" — repetitivo).
-  **Dashboard**: SOLO 3 tarjetas `.gt-vidrio` — Resumen (pagado grande +
-  por pagar/activas/pendientes), dona "Gasto por proyecto" y tabla "Por
-  proyecto" — con selector Por mes / **Global** (dashMonth==="global" es
-  valor mágico, solo lo lee renderDashboard; Global incluye pagadas viejas
-  SIN paidAt — por mes sigue exigiéndolo). Se eliminaron la fila de 7
-  KPIs, las alertas y "Suministro pendiente". **Solicitudes**: las 7
+  **Dashboard (v3, 31-ago tarde)**: DOS tarjetas `.gt-vidrio` — "Por
+  proyecto" (Resumen y la tabla vieja FUSIONADOS: pagado en carbón + por
+  pagar en naranja en grande, barras dobles por proyecto, chips de
+  activas/pendientes al pie) y la dona "Gasto por proyecto" EN GRANDE —
+  paleta SOLO naranja/carbón/gris (adiós arcoíris y verdes). Selector Por
+  mes / **Global** (dashMonth==="global" es valor mágico, solo lo lee
+  renderDashboard; Global incluye pagadas viejas SIN paidAt — por mes
+  sigue exigiéndolo). Botón "Reporte ejecutivo PDF — <mes>" en el propio
+  Dashboard: la pestaña **Costos se retiró** (31-ago, "es lo mismo";
+  renderCostos quedó sin ruteo). Se eliminaron la fila de 7 KPIs, las
+  alertas y "Suministro pendiente". ⚠ MAQUINAS en "Por proyecto" (cp,
+  códigos MAT-) ≠ el por pagar de GeoMachinery (mq, códigos MAQ-): bases
+  distintas, ambas correctas — auditado 31-ago contra la nube; la futura
+  "central de costos" las unificará. **Solicitudes**: las 7
   StatCard → UNA tira resumen en vidrio, banner de Carolina sobrio, barra
   de filtros y tabla en `.gt-vidrio`, TreasuryBadge/DeliveryBadge sin
   emoji, ✓ en cotización/comprobante. La lógica (filtros, orden, permisos,
