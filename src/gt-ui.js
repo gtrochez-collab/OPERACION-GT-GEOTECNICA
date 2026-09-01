@@ -20,9 +20,9 @@ export const GT_CSS = `
   --text-3:#6E6862;
   --text-faint:#A39C92;
 
-  --bg:#F5F1E9;             /* ÚNICO fondo de página (beige gris claro) */
+  --bg:#F4F4F2;             /* ÚNICO fondo de página (blanco griseito, pedido 31-ago) */
   --surface:#FFFFFF;
-  --sunk:#F3EEE5;
+  --sunk:#EDEDEB;
   --hairline:rgba(44,42,40,.08);
 
   --e0:0 1px 2px rgba(44,42,40,.05);
@@ -35,7 +35,7 @@ export const GT_CSS = `
 
   --radio-card:20px; --radio-control:12px; --radio-chip:999px;
 
-  --v-fondo-foto:linear-gradient(165deg,rgba(255,251,245,.97) 0%,rgba(255,251,245,.93) 100%);
+  --v-fondo-foto:linear-gradient(165deg,rgba(255,255,255,.97) 0%,rgba(252,252,251,.93) 100%);
   --v-borde:rgba(255,255,255,.85);
   --v-blur:blur(22px) saturate(180%);
   --v-sombra:0 1px 0 rgba(255,255,255,.95) inset,0 0 0 1px rgba(44,42,40,.06),0 1px 2px rgba(44,42,40,.04),0 14px 34px rgba(44,42,40,.12);
@@ -49,7 +49,7 @@ export const GT_CSS = `
   background:radial-gradient(circle,rgba(232,118,45,.16) 0%,rgba(232,118,45,.06) 40%,transparent 70%);
   animation:gtPaseoA 47s ease-in-out infinite}
 .gt-brillo-b{width:min(660px,80vw);height:min(660px,80vw);bottom:-26%;right:-12%;
-  background:radial-gradient(circle,rgba(44,95,93,.13) 0%,rgba(44,95,93,.05) 44%,transparent 72%);
+  background:radial-gradient(circle,rgba(199,95,31,.10) 0%,rgba(140,133,125,.06) 44%,transparent 72%);
   animation:gtPaseoB 59s ease-in-out infinite}
 @keyframes gtPaseoA{0%{transform:translateX(-50%) translateY(0) scale(1)}25%{transform:translateX(-96%) translateY(34vh) scale(.86)}50%{transform:translateX(-38%) translateY(66vh) scale(1.08)}75%{transform:translateX(4%) translateY(28vh) scale(.92)}100%{transform:translateX(-50%) translateY(0) scale(1)}}
 @keyframes gtPaseoB{0%{transform:translate(0,0) scale(1)}25%{transform:translate(-46vw,-30vh) scale(1.1)}50%{transform:translate(-72vw,-58vh) scale(.84)}75%{transform:translate(-30vw,-72vh) scale(1.05)}100%{transform:translate(0,0) scale(1)}}
@@ -67,7 +67,7 @@ export const GT_CSS = `
 
 /* Vidrio glossy sobre fondo claro (tarjetas de bienvenida y panel): brillo
    interior blanco + blur que deja pasar las manchas de color de atrás. */
-.gt-vidrio{background:linear-gradient(165deg,rgba(255,253,248,.88) 0%,rgba(255,247,236,.72) 100%);border:1px solid rgba(255,255,255,.92);border-radius:var(--radio-card);box-shadow:0 1px 0 rgba(255,255,255,.95) inset,0 0 0 1px rgba(44,42,40,.05),0 10px 26px rgba(44,42,40,.09);-webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%);transition:box-shadow var(--mov-base) var(--curva),transform var(--mov-base) var(--curva)}
+.gt-vidrio{background:linear-gradient(165deg,rgba(255,255,255,.9) 0%,rgba(252,252,251,.72) 100%);border:1px solid rgba(255,255,255,.92);border-radius:var(--radio-card);box-shadow:0 1px 0 rgba(255,255,255,.95) inset,0 0 0 1px rgba(44,42,40,.05),0 10px 26px rgba(44,42,40,.09);-webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%);transition:box-shadow var(--mov-base) var(--curva),transform var(--mov-base) var(--curva)}
 .gt-vidrio-hover:hover{box-shadow:0 1px 0 rgba(255,255,255,.95) inset,0 0 0 1px rgba(44,42,40,.05),0 18px 40px rgba(44,42,40,.14);transform:translateY(-2px)}
 
 /* Botón circular del header (volver / tuerquita) */

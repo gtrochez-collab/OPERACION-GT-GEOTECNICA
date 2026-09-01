@@ -3507,11 +3507,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // ─────────────────────────────────────────────────────────────────────────
   // Solo admin/gerencia/costos. Enfoque en "que falta pagar, que falta llegar,
   // que falta ficha". KPIs + donut de estados + top 5 proyectos + alertas.
-  // ── DASHBOARD (rediseño 31-ago-2026, pedido de Gerson) ──
-  // Estilo IST: SOLO 3 tarjetas en vidrio — Resumen, Gasto por proyecto
-  // (dona) y Por proyecto — con selector de mes + vista GLOBAL (histórico).
-  // Se quitaron el header repetido, la fila de 7 KPIs, las alertas y todo
-  // "Suministro pendiente" ("es repetitivo, cansa la vista"). Sin emojis.
+  // ── DASHBOARD (v3, 31-ago-2026) ──
+  // Dos tarjetas en vidrio: POR PROYECTO (resumen + gráfica de barras — antes
+  // Resumen y Por proyecto decían casi lo mismo, se juntaron) y la dona de
+  // GASTO POR PROYECTO en grande. Paleta del sistema: naranja/carbón/gris —
+  // nada de arcoíris. Selector Por mes / Global + Reporte ejecutivo PDF
+  // (la pestaña Costos se retiró: era lo mismo que esto).
   const renderDashboard = () => {
     const hoy = new Date();
     const mesActual = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}`;
@@ -3524,14 +3525,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const mesCorto = esGlobal ? "GLOBAL" : mesSelLabel.split(" ")[0].toUpperCase();
 
     const isPaid = (p) => p.status === "pagado" || p.status === "finalizado";
-    // ¿El pago entra en la vista? Global = todo lo pagado; si no, el mes elegido.
     // Global = TODO lo pagado (hay compras pagadas viejas SIN paidAt — no
     // pueden quedar invisibles en el "histórico completo"); por mes exige
-    // paidAt igual que el dashboard viejo.
+    // paidAt igual que siempre.
     const enVista = (p) => isPaid(p) && (esGlobal || (!!p.paidAt && String(p.paidAt).slice(0, 7) === mesSel));
 
-    // ── Resumen ──
-    const activas = cp.filter(p => p.deliveryStatus !== "cerrado");
+    const activas = cp.filter(p => p.deliveryStatus !== "cerrado").length;
     const montoPorPagar = cp.filter(p => p.status === "validado").reduce((s, p) => s + (Number(p.amount) || 0), 0);
     const pagadoVista = cp.filter(enVista).reduce((s, p) => s + (Number(p.amount) || 0), 0);
     const despachoOf = (p) => despachos.find(d => d.sourcePurchaseId === p.id);
@@ -3542,8 +3541,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       return isPaid(p) && (desp?.estado === "entregado" || p.deliveryStatus === "recibido");
     }).length;
 
-    // ── Dona: gasto por proyecto (mes elegido o global). Paleta original. ──
-    const DONUT_COLORS = ["#059669", "#2563EB", "#D97706", "#7C3AED", "#DC2626", "#0891B2", "#BE185D", "#65A30D"];
+    // ── Dona: gasto por proyecto — paleta del sistema (naranjas + grises) ──
+    const DONUT_COLORS = ["#E8762D", "#2C2A28", "#F2A265", "#8C857D", "#C75F1F", "#C9C3BA", "#6E6862"];
     const gastoProy = {};
     cp.forEach(p => {
       if (!enVista(p)) return;
@@ -3554,11 +3553,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const otrosGasto = gastoSorted.slice(6).reduce((s, [, v]) => s + v, 0);
     const donutCats = [
       ...gastoSorted.slice(0, 6).map(([k, v], i) => ({ key: k, label: k, count: v, color: DONUT_COLORS[i % DONUT_COLORS.length] })),
-      ...(otrosGasto > 0 ? [{ key: "_otros", label: "Otros", count: otrosGasto, color: "#94A3B8" }] : []),
+      ...(otrosGasto > 0 ? [{ key: "_otros", label: "Otros", count: otrosGasto, color: "#D8D3CC" }] : []),
     ];
     const donutTotal = donutCats.reduce((s, c) => s + c.count, 0);
     const shortL = (v) => v >= 1e6 ? `L ${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `L ${Math.round(v / 1e3)}k` : `L ${Math.round(v)}`;
-    const donutR = 60, donutInner = 42;
+    const donutR = 58, donutInner = 40;
     const donutCircum = 2 * Math.PI * donutR;
     let accAngle = 0;
     const donutArcs = donutCats.map(c => {
@@ -3581,61 +3580,122 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       return Object.entries(acc)
         .map(([key, v]) => ({ key, name: allProjects.find(pr => pr.short === key)?.name || key, ...v }))
         .filter(r => r.porPagar > 0 || r.pagadoMes > 0)
-        .sort((a, b) => b.porPagar - a.porPagar || b.pagadoMes - a.pagadoMes);
+        .sort((a, b) => (b.porPagar + b.pagadoMes) - (a.porPagar + a.pagadoMes));
     })();
     const totPorPagarProy = proyRows.reduce((s, r) => s + r.porPagar, 0);
     const totPagadoMesProy = proyRows.reduce((s, r) => s + r.pagadoMes, 0);
-    const maxPagadoMesProy = Math.max(1, ...proyRows.map(r => r.pagadoMes));
+    const maxBarra = Math.max(1, ...proyRows.map(r => Math.max(r.pagadoMes, r.porPagar)));
 
     // ── UI ──
+    const CARBON = "#2C2A28";
     const tituloCard = (txt) => (
       <div className="gt-label" style={{ color: "var(--text-3)", marginBottom: 16 }}>{txt}</div>
     );
     const pill = (txt, activo, onClick, title) => (
       <button key={txt} onClick={onClick} title={title} style={{ padding: "7px 14px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? ORANGE : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
     );
-    const filaResumen = (label, valor, color) => (
-      <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--hairline)" }}>
-        <span style={{ fontSize: 13, color: "var(--text-2)", fontWeight: 500 }}>{label}</span>
-        <span style={{ fontSize: 14.5, fontWeight: 800, color: color || "var(--text)", whiteSpace: "nowrap" }}>{valor}</span>
+    const puntoLeyenda = (color, txt) => (
+      <span key={txt} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: "var(--text-2)" }}>
+        <span style={{ width: 9, height: 9, borderRadius: 3, background: color }} />{txt}
+      </span>
+    );
+    const Barra = ({ valor, color }) => (
+      <div style={{ flex: 1, height: 8, borderRadius: 5, background: "rgba(44,42,40,.06)", overflow: "hidden" }}>
+        <div style={{ width: `${Math.max(valor > 0 ? 2 : 0, (valor / maxBarra) * 100)}%`, height: "100%", borderRadius: 5, background: color, transition: "width var(--mov-lento) var(--curva)" }} />
       </div>
     );
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-        {/* Selector: mes de análisis o vista global */}
-        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span className="gt-label" style={{ color: "var(--text-3)" }}>Ver</span>
-          {pill("Por mes", !esGlobal, () => { if (esGlobal) setDashMonth(""); }, "Las tarjetas muestran el mes elegido")}
-          {!esGlobal && (
-            <input type="month" value={mesSel} onChange={e => setDashMonth(e.target.value)}
-              title="Mes para el pagado, la dona y Por proyecto"
-              style={{ padding: "7px 12px", border: "1px solid var(--hairline)", borderRadius: 999, fontSize: 12.5, background: "var(--surface)", fontFamily: "inherit", fontWeight: 700, color: "var(--text)" }} />
-          )}
-          {pill("Global (todo)", esGlobal, () => setDashMonth("global"), "Histórico completo, sin filtro de mes")}
+        {/* Reporte PDF a la izquierda · selector de vista a la derecha */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div>
+            {!esGlobal && (
+              <button onClick={() => exportComprasEjecutivoPDF(mesSel)} title={`Reporte ejecutivo de materiales de ${mesSelLabel} (portada + detalle por proyecto)`}
+                style={{ padding: "7px 16px", borderRadius: 999, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--naranja-tinta)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                Reporte ejecutivo PDF — {mesSelLabel}
+              </button>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span className="gt-label" style={{ color: "var(--text-3)" }}>Ver</span>
+            {pill("Por mes", !esGlobal, () => { if (esGlobal) setDashMonth(""); }, "Las tarjetas muestran el mes elegido")}
+            {!esGlobal && (
+              <input type="month" value={mesSel} onChange={e => setDashMonth(e.target.value)}
+                title="Mes para el pagado, la dona y Por proyecto"
+                style={{ padding: "7px 12px", border: "1px solid var(--hairline)", borderRadius: 999, fontSize: 12.5, background: "var(--surface)", fontFamily: "inherit", fontWeight: 700, color: "var(--text)" }} />
+            )}
+            {pill("Global (todo)", esGlobal, () => setDashMonth("global"), "Histórico completo, sin filtro de mes")}
+          </div>
         </div>
 
-        {/* Las 3 tarjetas (estilo IST) */}
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fit, minmax(min(320px,100%), 1fr))", gap: 18, alignItems: "stretch" }}>
+        {/* Dos tarjetas: la gráfica por proyecto + la dona en grande */}
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.25fr) minmax(0,1fr)", gap: 18, alignItems: "stretch" }}>
 
-          {/* 1 — RESUMEN */}
-          <div className="gt-vidrio" style={{ padding: 24, display: "flex", flexDirection: "column", minHeight: 300, minWidth: 0 }}>
-            {tituloCard("Resumen")}
-            <div style={{ font: "800 clamp(26px,2.4vw,34px)/1.1 var(--display)", letterSpacing: "-.02em", color: "#059669" }}>{fmtL(pagadoVista)}</div>
-            <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4, marginBottom: 14 }}>{esGlobal ? "pagado en total (histórico)" : `pagado en ${mesSelLabel}`}</div>
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {filaResumen("Por pagar (Lic. Carolina)", fmtL(montoPorPagar), "var(--naranja-tinta)")}
-              {filaResumen("Solicitudes activas", activas.length)}
-              {filaResumen("Pendiente de entrega", pendienteEntrega)}
-              {filaResumen("Pendiente ficha de recibido", pendienteFicha, pendienteFicha > 0 ? "#B03024" : undefined)}
+          {/* 1 — POR PROYECTO (resumen + barras) */}
+          <div className="gt-vidrio" style={{ padding: 24, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            {tituloCard(esGlobal ? "Por proyecto — histórico" : `Por proyecto — ${mesSelLabel}`)}
+            <div style={{ display: "flex", gap: 34, flexWrap: "wrap", marginBottom: 18 }}>
+              <div>
+                <div style={{ font: "800 clamp(24px,2.2vw,32px)/1.1 var(--display)", letterSpacing: "-.02em", color: CARBON }}>{fmtL(pagadoVista)}</div>
+                <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 4 }}>{esGlobal ? "Pagado total" : "Pagado en el mes"}</div>
+              </div>
+              <div>
+                <div style={{ font: "800 clamp(24px,2.2vw,32px)/1.1 var(--display)", letterSpacing: "-.02em", color: "var(--naranja-tinta)" }}>{fmtL(montoPorPagar)}</div>
+                <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 4 }}>Por pagar (Lic. Carolina)</div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 16, marginBottom: 12 }}>
+              {puntoLeyenda(CARBON, esGlobal ? "Pagado" : "Pagado en el mes")}
+              {puntoLeyenda(ORANGE, "Por pagar")}
+            </div>
+
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 13 }}>
+              {proyRows.length === 0 && (
+                <div style={{ fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic", padding: "16px 0" }}>
+                  Nada por pagar y ningún pago registrado en {mesSelLabel}.
+                </div>
+              )}
+              {proyRows.slice(0, 8).map(r => (
+                <div key={r.key} title={`${r.name} — ${r.nPorPagar} por pagar · ${r.nPagadoMes} pagadas`} style={{ minWidth: 0 }}>
+                  <div style={{ font: "600 10.5px/1.3 var(--mono)", color: "var(--text-2)", marginBottom: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.key}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Barra valor={r.pagadoMes} color={CARBON} />
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: r.pagadoMes > 0 ? CARBON : "var(--text-faint)", width: 92, textAlign: "right", whiteSpace: "nowrap", flexShrink: 0 }}>{r.pagadoMes > 0 ? fmtL(r.pagadoMes) : "—"}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Barra valor={r.porPagar} color={ORANGE} />
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: r.porPagar > 0 ? "var(--naranja-tinta)" : "var(--text-faint)", width: 92, textAlign: "right", whiteSpace: "nowrap", flexShrink: 0 }}>{r.porPagar > 0 ? fmtL(r.porPagar) : "—"}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {proyRows.length > 8 && (
+                <div style={{ fontSize: 10.5, color: "var(--text-faint)" }}>+ {proyRows.length - 8} proyecto{proyRows.length - 8 !== 1 ? "s" : ""} más (totales abajo con todo incluido)</div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, borderTop: "1px solid var(--hairline)", marginTop: 16, paddingTop: 12, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--text-2)" }}>TOTAL</span>
+              <span style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11.5, fontWeight: 800, color: CARBON }}>{fmtL(totPagadoMesProy)} pagado</span>
+                <span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--naranja-tinta)" }}>{fmtL(totPorPagarProy)} por pagar</span>
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 16, marginTop: 12, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, color: "var(--text-3)" }}><b style={{ color: "var(--text-2)" }}>{activas}</b> activas</span>
+              <span style={{ fontSize: 11, color: "var(--text-3)" }}><b style={{ color: "var(--text-2)" }}>{pendienteEntrega}</b> pendientes de entrega</span>
+              <span style={{ fontSize: 11, color: "var(--text-3)" }}><b style={{ color: "var(--text-2)" }}>{pendienteFicha}</b> sin ficha de recibido</span>
             </div>
           </div>
 
-          {/* 2 — GASTO POR PROYECTO (dona) */}
-          <div className="gt-vidrio" style={{ padding: 24, minHeight: 300, minWidth: 0 }}>
+          {/* 2 — GASTO POR PROYECTO (dona en grande) */}
+          <div className="gt-vidrio" style={{ padding: 24, minWidth: 0, display: "flex", flexDirection: "column" }}>
             {tituloCard(esGlobal ? "Gasto global por proyecto" : `Gasto del mes por proyecto — ${mesSelLabel}`)}
-            <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
-              <svg viewBox="0 0 160 160" style={{ width: 150, height: 150, flexShrink: 0 }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18 }}>
+              <svg viewBox="0 0 160 160" style={{ width: "min(66%, 260px)", height: "auto", flexShrink: 0 }}>
                 <g transform="translate(80,80)">
                   <circle r={donutR} fill="none" stroke="rgba(44,42,40,.06)" strokeWidth={donutR - donutInner} />
                   {donutTotal > 0 && donutArcs.map(seg => (
@@ -3649,13 +3709,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                       transform={`rotate(${-90 + seg.rotation})`}
                     />
                   ))}
-                  <text textAnchor="middle" y="-4" style={{ fontSize: 15, fontWeight: 800, fill: "var(--text)" }}>{shortL(donutTotal)}</text>
-                  <text textAnchor="middle" y="14" style={{ fontSize: 8, fill: "var(--text-3)", letterSpacing: 0.5 }}>PAGADO {mesCorto}</text>
+                  <text textAnchor="middle" y="-3" style={{ fontSize: 14, fontWeight: 800, fill: "var(--text)" }}>{shortL(donutTotal)}</text>
+                  <text textAnchor="middle" y="13" style={{ fontSize: 7.5, fill: "var(--text-3)", letterSpacing: 0.5 }}>PAGADO {mesCorto}</text>
                 </g>
               </svg>
-              <div style={{ display: "flex", flexDirection: "column", gap: 7, minWidth: 150, flex: 1 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", minWidth: 0 }}>
                 {donutCats.length === 0 && (
-                  <div style={{ fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic" }}>Sin pagos registrados en {mesSelLabel}.</div>
+                  <div style={{ fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic", textAlign: "center" }}>Sin pagos registrados en {mesSelLabel}.</div>
                 )}
                 {donutCats.map(c => {
                   const pct = donutTotal > 0 ? Math.round((c.count / donutTotal) * 100) : 0;
@@ -3663,64 +3723,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                     <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
                       <div style={{ width: 11, height: 11, borderRadius: 3, background: c.color, flexShrink: 0 }} />
                       <div style={{ flex: 1, color: "var(--text)", font: "600 11px/1.3 var(--mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.label}</div>
-                      <div style={{ fontWeight: 700, color: "var(--text)", fontSize: 11, whiteSpace: "nowrap" }}>{fmtL(c.count)}</div>
-                      <div style={{ color: c.color, fontWeight: 800, fontSize: 11, width: 36, textAlign: "right" }}>{pct}%</div>
+                      <div style={{ fontWeight: 700, color: "var(--text)", fontSize: 11.5, whiteSpace: "nowrap" }}>{fmtL(c.count)}</div>
+                      <div style={{ color: "var(--text-3)", fontWeight: 800, fontSize: 11.5, width: 36, textAlign: "right" }}>{pct}%</div>
                     </div>
                   );
                 })}
               </div>
             </div>
-          </div>
-
-          {/* 3 — POR PROYECTO */}
-          <div className="gt-vidrio" style={{ padding: 24, minHeight: 300, minWidth: 0 }}>
-            {tituloCard("Por proyecto")}
-            <div style={{ fontSize: 11, color: "var(--text-3)", margin: "-10px 0 12px" }}>
-              por pagar (Lic. Carolina) · pagado {esGlobal ? "histórico" : `en ${mesSelLabel}`}
-            </div>
-            {proyRows.length === 0 ? (
-              <div style={{ fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic", padding: "20px 4px" }}>
-                Nada por pagar y ningún pago registrado en {mesSelLabel}.
-              </div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ borderBottom: "1px solid var(--hairline)" }}>
-                      <th style={{ textAlign: "left", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.4 }}>Proyecto</th>
-                      <th style={{ textAlign: "right", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "var(--naranja-tinta)", textTransform: "uppercase", letterSpacing: 0.4 }}>Por pagar</th>
-                      <th style={{ textAlign: "right", padding: "6px 6px", fontSize: 10, fontWeight: 700, color: "#059669", textTransform: "uppercase", letterSpacing: 0.4 }}>Pagado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {proyRows.slice(0, 10).map(r => (
-                      <tr key={r.key} style={{ borderBottom: "1px solid rgba(44,42,40,.05)" }}
-                        title={`${r.name} — ${r.nPorPagar} por pagar · ${r.nPagadoMes} pagadas`}>
-                        <td style={{ padding: "8px 6px", fontWeight: 700, color: "var(--text)", fontFamily: "var(--mono)", fontSize: 10.5 }}>{r.key}</td>
-                        <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: r.porPagar > 0 ? "var(--naranja-tinta)" : "var(--text-faint)", whiteSpace: "nowrap" }}>
-                          {r.porPagar > 0 ? <>{fmtL(r.porPagar)} <span style={{ fontSize: 9, color: "var(--text-3)" }}>({r.nPorPagar})</span></> : "—"}
-                        </td>
-                        <td style={{ padding: "8px 6px", textAlign: "right", whiteSpace: "nowrap" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
-                            <div style={{ width: 42, height: 6, borderRadius: 4, background: "rgba(44,42,40,.07)", overflow: "hidden", flexShrink: 0 }}>
-                              <div style={{ width: `${(r.pagadoMes / maxPagadoMesProy) * 100}%`, height: "100%", background: "#059669" }} />
-                            </div>
-                            <span style={{ fontWeight: 700, color: r.pagadoMes > 0 ? "#059669" : "var(--text-faint)" }}>{r.pagadoMes > 0 ? fmtL(r.pagadoMes) : "—"}</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr style={{ borderTop: "1px solid var(--hairline)" }}>
-                      <td style={{ padding: "8px 6px", fontWeight: 800, color: "var(--text)", fontSize: 11 }}>TOTAL</td>
-                      <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 800, color: "var(--naranja-tinta)", whiteSpace: "nowrap" }}>{fmtL(totPorPagarProy)}</td>
-                      <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 800, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(totPagadoMesProy)}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -5002,8 +5011,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           { v: stats.total, l: "solicitudes" },
           { v: stats.validado, l: "pendientes de pago", c: "var(--naranja-tinta)" },
           { v: fmtL(stats.montoPendiente), l: "por pagar", c: "var(--naranja-tinta)" },
-          { v: fmtL(stats.montoPagadoMes), l: "pagado este mes", c: "#059669" },
-          { v: stats.finalizado, l: "finalizadas", c: "#059669" },
+          { v: fmtL(stats.montoPagadoMes), l: "pagado este mes" },
+          { v: stats.finalizado, l: "finalizadas" },
         ].map((x, i, arr) => (
           <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 40%" : 1, minWidth: 0 }}>
             <div style={{ minWidth: 0 }}>
@@ -5080,7 +5089,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
               {allProjects.map(p2 => <option key={p2.short} value={p2.short}>{p2.short}</option>)}
             </select>
             <input value={filter.provider} onChange={e => setFilter(f2 => ({ ...f2, provider: e.target.value }))} placeholder="Buscar proveedor…" list="providers-list"
-              style={{ flex: 1, minWidth: 150, padding: "6px 10px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: "var(--surface)" }} />
+              style={{ flex: "0 1 220px", minWidth: 150, padding: "6px 10px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: "var(--surface)" }} />
             <datalist id="providers-list">{providers.map(pv => <option key={pv} value={pv} />)}</datalist>
             {(filter.mes || filter.project || filter.provider || filter.ver !== "pendientes") &&
               <Btn small variant="ghost" onClick={() => { setFilter({ ver: "pendientes", project: "", provider: "", mes: "" }); setListOrden("solicitud_asc"); }}>Limpiar</Btn>}
@@ -5130,7 +5139,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
               <td style={TD}><Badge color={cc.color}>{p.projectCode}</Badge></td>
               <td style={{ ...TD, fontWeight: 600 }}>{p.provider}</td>
               <td style={{ ...TD, maxWidth: 280, whiteSpace: "normal" }}>{p.description}</td>
-              <td style={{ ...TD, fontWeight: 700, color: "#059669" }}>{fmtL(p.amount)}</td>
+              <td style={{ ...TD, fontWeight: 700, color: "var(--text)" }}>{fmtL(p.amount)}</td>
               <td style={TD}>{fmt(p.createdAt)}</td>
               <td style={TD}>{p.paymentDate ? fmt(p.paymentDate) : "—"}</td>
               <td style={TD}>{p.opsResponsible || "—"}</td>
@@ -5239,7 +5248,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // Sin emojis (rediseño 31-ago): pestañas de texto limpio, estilo IST.
   const allNav = [
     { id: "dashboard", label: "Dashboard" },
-    { id: "costos", label: "Costos" },
+    // "costos" se retiró (31-ago, pedido de Gerson: "es lo mismo que el
+    // Dashboard y nos quita espacio") — el Reporte ejecutivo PDF se genera
+    // desde el Dashboard. renderCostos queda sin pestaña.
     { id: "resumen", label: "Supply Chain" },
     { id: "list", label: "Solicitudes" },
     { id: "projects", label: "Proyectos" },
@@ -5258,7 +5269,6 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     : allNav.filter(n => {
         if (n.id === "resumen") return canSeeResumen;
         if (n.id === "dashboard") return canSeeDashboard;
-        if (n.id === "costos") return canSeeDashboard;
         return true;
       });
   const roleLabel = isAdmin ? "Operaciones"
@@ -5272,7 +5282,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     : userRole;
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
-  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: "#F5F1E9", color: CHARCOAL }}>
+  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: "#F4F4F2", color: CHARCOAL }}>
     {/* Sistema visual compartido (tokens + clases gt-*). ⚠ SIN `precedence`. */}
     <style>{GT_CSS}</style>
     {/* Manchas de brillo (fixed, z0): sin ellas el backdrop-filter del vidrio
@@ -5342,7 +5352,6 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{
         sec === "dashboard" ? renderDashboard()
-          : sec === "costos" ? renderCostos()
           : sec === "resumen" ? renderSupplyChain()
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
