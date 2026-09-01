@@ -46,10 +46,10 @@ export const GT_CSS = `
    primas (47s/59s) para que el patrón casi nunca se repita igual. */
 .gt-brillo{position:fixed;z-index:0;pointer-events:none;border-radius:50%}
 .gt-brillo-a{width:min(760px,86vw);height:min(760px,86vw);top:-24%;left:50%;
-  background:radial-gradient(circle,rgba(232,118,45,.16) 0%,rgba(232,118,45,.06) 40%,transparent 70%);
+  background:radial-gradient(circle,rgba(232,118,45,.24) 0%,rgba(232,118,45,.10) 40%,transparent 70%);
   animation:gtPaseoA 47s ease-in-out infinite}
 .gt-brillo-b{width:min(660px,80vw);height:min(660px,80vw);bottom:-26%;right:-12%;
-  background:radial-gradient(circle,rgba(199,95,31,.10) 0%,rgba(140,133,125,.06) 44%,transparent 72%);
+  background:radial-gradient(circle,rgba(199,95,31,.16) 0%,rgba(140,133,125,.10) 44%,transparent 72%);
   animation:gtPaseoB 59s ease-in-out infinite}
 @keyframes gtPaseoA{0%{transform:translateX(-50%) translateY(0) scale(1)}25%{transform:translateX(-96%) translateY(34vh) scale(.86)}50%{transform:translateX(-38%) translateY(66vh) scale(1.08)}75%{transform:translateX(4%) translateY(28vh) scale(.92)}100%{transform:translateX(-50%) translateY(0) scale(1)}}
 @keyframes gtPaseoB{0%{transform:translate(0,0) scale(1)}25%{transform:translate(-46vw,-30vh) scale(1.1)}50%{transform:translate(-72vw,-58vh) scale(.84)}75%{transform:translate(-30vw,-72vh) scale(1.05)}100%{transform:translate(0,0) scale(1)}}
@@ -67,8 +67,8 @@ export const GT_CSS = `
 
 /* Vidrio glossy sobre fondo claro (tarjetas de bienvenida y panel): brillo
    interior blanco + blur que deja pasar las manchas de color de atrás. */
-.gt-vidrio{background:linear-gradient(165deg,rgba(255,255,255,.9) 0%,rgba(252,252,251,.72) 100%);border:1px solid rgba(255,255,255,.92);border-radius:var(--radio-card);box-shadow:0 1px 0 rgba(255,255,255,.95) inset,0 0 0 1px rgba(44,42,40,.05),0 10px 26px rgba(44,42,40,.09);-webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%);transition:box-shadow var(--mov-base) var(--curva),transform var(--mov-base) var(--curva)}
-.gt-vidrio-hover:hover{box-shadow:0 1px 0 rgba(255,255,255,.95) inset,0 0 0 1px rgba(44,42,40,.05),0 18px 40px rgba(44,42,40,.14);transform:translateY(-2px)}
+.gt-vidrio{background:linear-gradient(165deg,rgba(255,255,255,.86) 0%,rgba(250,250,249,.7) 100%);border:1px solid rgba(255,255,255,.95);border-radius:var(--radio-card);box-shadow:inset 0 1px 0 rgba(255,255,255,1),inset 0 34px 64px -34px rgba(255,255,255,.95),0 0 0 1px rgba(44,42,40,.05),0 12px 30px rgba(44,42,40,.10);-webkit-backdrop-filter:blur(20px) saturate(170%);backdrop-filter:blur(20px) saturate(170%);transition:box-shadow var(--mov-base) var(--curva),transform var(--mov-base) var(--curva)}
+.gt-vidrio-hover:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,1),inset 0 34px 64px -34px rgba(255,255,255,.95),0 0 0 1px rgba(44,42,40,.05),0 18px 42px rgba(44,42,40,.15);transform:translateY(-2px)}
 
 /* Botón circular del header (volver / tuerquita) */
 .gt-circulo{width:44px;height:44px;border-radius:50%;border:1px solid var(--hairline);background:var(--surface);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;color:var(--text-2);box-shadow:var(--e0);padding:0;transition:box-shadow var(--mov-base) var(--curva),color var(--mov-rapido),transform var(--mov-rapido) var(--curva)}

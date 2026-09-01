@@ -665,7 +665,7 @@ function WelcomeScreen({ user, onStart, onLogout }) {
 // estiraba pixeladas). `pos` = encuadre para pantallas horizontales:
 // son fotos verticales y el corte decide qué banda se ve.
 const FOTOS_LOGIN = [
-  { f: "obra-1.jpg", pos: "center 30%" },   // piladora Geotecnica con montañas
+  { f: "obra-3.jpg", pos: "center 45%" },   // el equipo viendo la obra (cascos y chalecos)
   { f: "obra-2.jpg", pos: "center 62%" },   // perforadora en el río, entre rocas
 ];
 

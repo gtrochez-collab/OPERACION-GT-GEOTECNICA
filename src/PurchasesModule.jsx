@@ -36,30 +36,32 @@ const UNITS = ["Unidad", "Bolsa", "Caja", "Rollo", "Galon", "Litro", "Kg", "Quin
 const PAYMENT_METHODS = ["Transferencia BAC", "Transferencia Banco Atlantida", "Transferencia Ficohsa", "Cheque", "Efectivo", "Tarjeta corporativa", "Otro"];
 
 // Estados del proceso de Operaciones
+// Paleta del sistema (1-sep-2026, pedido de Gerson: "mantengamos la paleta"):
+// naranja = requiere acción · gris = neutral/en camino · carbón = hecho.
 const STATUSES = {
-  borrador:   { label: "Borrador",                        color: "#64748b", bg: "#F1F5F9", order: 1, desc: "Operaciones aun no aprueba" },
-  validado:   { label: "Aprobado por Coord. Operaciones", color: "#D97706", bg: "#FEF3C7", order: 2, desc: "Aprobado por Operaciones, en gestion de Tesoreria" },
-  pagado:     { label: "Pagado (sin comprobante)",        color: "#2563EB", bg: "#DBEAFE", order: 3, desc: "Pago realizado, falta cargar comprobante" },
-  finalizado: { label: "Finalizado",                      color: "#059669", bg: "#DCFCE7", order: 4, desc: "Pago con comprobante cargado" },
+  borrador:   { label: "Borrador",                        color: "#6E6862", bg: "rgba(44,42,40,.05)", order: 1, desc: "Operaciones aun no aprueba" },
+  validado:   { label: "Aprobado por Coord. Operaciones", color: "#2C2A28", bg: "rgba(44,42,40,.08)", order: 2, desc: "Aprobado por Operaciones, en gestion de Tesoreria" },
+  pagado:     { label: "Pagado (sin comprobante)",        color: "#C75F1F", bg: "rgba(232,118,45,.12)", order: 3, desc: "Pago realizado, falta cargar comprobante" },
+  finalizado: { label: "Finalizado",                      color: "#2C2A28", bg: "rgba(44,42,40,.15)", order: 4, desc: "Pago con comprobante cargado" },
 };
 
 // Estados que maneja Tesoreria (paralelos al estado de Operaciones)
 const TREASURY_STATUSES = {
-  pendiente: { label: "Pendiente Lic. Carolina", color: "#B45309", bg: "#FEF3C7" },
-  recibida:  { label: "Recibida",                color: "#1D4ED8", bg: "#DBEAFE" },
-  pagada:    { label: "Pagada",                  color: "#047857", bg: "#D1FAE5" },
+  pendiente: { label: "Pendiente Lic. Carolina", color: "#C75F1F", bg: "rgba(232,118,45,.14)" },
+  recibida:  { label: "Recibida",                color: "#6E6862", bg: "rgba(44,42,40,.05)" },
+  pagada:    { label: "Pagada",                  color: "#2C2A28", bg: "rgba(44,42,40,.08)" },
 };
 
 // Estados de Recepcion de Materiales (logistica, post-pago)
 const DELIVERY_STATUSES = {
-  pendiente_entrega: { label: "Pendiente de entrega",      color: "#7C3AED", bg: "#F3E8FF", icon: "📦" },
+  pendiente_entrega: { label: "Pendiente de entrega",      color: "#C75F1F", bg: "rgba(232,118,45,.12)", icon: "📦" },
   // entrega_proveedor: el PROVEEDOR la lleva directo a proyecto (no pasa por
   // logistica). Ana registra dia y hora de llegada; despues se sube la ficha
   // firmada o se cierra sin ficha. Agregado ago 2026 a pedido de Gerson.
-  entrega_proveedor: { label: "La entrega el proveedor",    color: "#0F766E", bg: "#CCFBF1", icon: "🏪" },
-  recibido:          { label: "Materiales recibidos",       color: "#0891B2", bg: "#ECFEFF", icon: "✅" },
-  ficha_adjunta:     { label: "Ficha de recibido adjunta",  color: "#059669", bg: "#DCFCE7", icon: "📋" },
-  cerrado:           { label: "Compra cerrada",             color: "#059669", bg: "#DCFCE7", icon: "🔒" },
+  entrega_proveedor: { label: "La entrega el proveedor",    color: "#6E6862", bg: "rgba(44,42,40,.05)", icon: "🏪" },
+  recibido:          { label: "Materiales recibidos",       color: "#2C2A28", bg: "rgba(44,42,40,.08)", icon: "✅" },
+  ficha_adjunta:     { label: "Ficha de recibido adjunta",  color: "#2C2A28", bg: "rgba(44,42,40,.08)", icon: "📋" },
+  cerrado:           { label: "Compra cerrada",             color: "#2C2A28", bg: "rgba(44,42,40,.15)", icon: "🔒" },
 };
 
 // ── Utils ──
@@ -1584,6 +1586,20 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const [scVerCerradas, setScVerCerradas] = useState(false);
   // Mes de las metricas mensuales del Dashboard ("" = mes actual).
   const [dashMonth, setDashMonth] = useState("");
+  // Los gráficos del Dashboard "cargan" al entrar (1-sep: "que haya el
+  // efecto que cargan hasta donde están parados, smooth y lento"): arranca
+  // en false y un tick después pasa a true — las barras y la dona
+  // transicionan de 0 a su valor real.
+  const reduceMotion = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const [dashAnim, setDashAnim] = useState(reduceMotion);
+  useEffect(() => {
+    if (reduceMotion) { setDashAnim(true); return; }   // sin animación: nacen cargados
+    if (sec !== "dashboard") { setDashAnim(false); return; }
+    setDashAnim(false);
+    const t = setTimeout(() => setDashAnim(true), 120);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sec]);
 
   useEffect(() => {
     (async () => {
@@ -3507,12 +3523,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // ─────────────────────────────────────────────────────────────────────────
   // Solo admin/gerencia/costos. Enfoque en "que falta pagar, que falta llegar,
   // que falta ficha". KPIs + donut de estados + top 5 proyectos + alertas.
-  // ── DASHBOARD (v3, 31-ago-2026) ──
-  // Dos tarjetas en vidrio: POR PROYECTO (resumen + gráfica de barras — antes
-  // Resumen y Por proyecto decían casi lo mismo, se juntaron) y la dona de
-  // GASTO POR PROYECTO en grande. Paleta del sistema: naranja/carbón/gris —
-  // nada de arcoíris. Selector Por mes / Global + Reporte ejecutivo PDF
-  // (la pestaña Costos se retiró: era lo mismo que esto).
+  // ── DASHBOARD (v4, 1-sep-2026) ──
+  // TRES tarjetas compactas en vidrio: barras Por proyecto · dona de gasto
+  // del mes (en medio) · gasto por mes (tendencia global, últimos 6 meses,
+  // click en una barra = ver ese mes). Todo en la paleta naranja/carbón/gris
+  // y con carga animada (dashAnim: las barras y la dona crecen de 0 a su
+  // valor, smooth y lento, al entrar al Dashboard).
   const renderDashboard = () => {
     const hoy = new Date();
     const mesActual = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}`;
@@ -3525,23 +3541,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const mesCorto = esGlobal ? "GLOBAL" : mesSelLabel.split(" ")[0].toUpperCase();
 
     const isPaid = (p) => p.status === "pagado" || p.status === "finalizado";
-    // Global = TODO lo pagado (hay compras pagadas viejas SIN paidAt — no
-    // pueden quedar invisibles en el "histórico completo"); por mes exige
-    // paidAt igual que siempre.
+    // Global = TODO lo pagado (hay compras pagadas viejas SIN paidAt);
+    // por mes exige paidAt igual que siempre.
     const enVista = (p) => isPaid(p) && (esGlobal || (!!p.paidAt && String(p.paidAt).slice(0, 7) === mesSel));
 
-    const activas = cp.filter(p => p.deliveryStatus !== "cerrado").length;
     const montoPorPagar = cp.filter(p => p.status === "validado").reduce((s, p) => s + (Number(p.amount) || 0), 0);
     const pagadoVista = cp.filter(enVista).reduce((s, p) => s + (Number(p.amount) || 0), 0);
-    const despachoOf = (p) => despachos.find(d => d.sourcePurchaseId === p.id);
-    const pendienteEntrega = cp.filter(p => isPaid(p) && p.deliveryStatus !== "cerrado" && p.deliveryStatus !== "ficha_adjunta").length;
-    const pendienteFicha = cp.filter(p => {
-      if (p.delivery?.fichaFile || p.deliveryStatus === "cerrado") return false;
-      const desp = despachoOf(p);
-      return isPaid(p) && (desp?.estado === "entregado" || p.deliveryStatus === "recibido");
-    }).length;
 
-    // ── Dona: gasto por proyecto — paleta del sistema (naranjas + grises) ──
+    // ── Dona: gasto por proyecto (paleta naranja/carbón/gris) ──
     const DONUT_COLORS = ["#E8762D", "#2C2A28", "#F2A265", "#8C857D", "#C75F1F", "#C9C3BA", "#6E6862"];
     const gastoProy = {};
     cp.forEach(p => {
@@ -3586,10 +3593,28 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const totPagadoMesProy = proyRows.reduce((s, r) => s + r.pagadoMes, 0);
     const maxBarra = Math.max(1, ...proyRows.map(r => Math.max(r.pagadoMes, r.porPagar)));
 
+    // ── Gasto por mes (GLOBAL, últimos 6 meses) — la tendencia general ──
+    const meses6 = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+      meses6.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    }
+    const gastoPorMes = meses6.map(m => ({
+      mes: m,
+      label: new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1, 1).toLocaleDateString("es-HN", { month: "short" }).replace(".", ""),
+      total: cp.filter(p => isPaid(p) && String(p.paidAt || "").slice(0, 7) === m).reduce((s, p) => s + (Number(p.amount) || 0), 0),
+    }));
+    const maxMes = Math.max(1, ...gastoPorMes.map(g => g.total));
+    // El delta compara los dos últimos meses COMPLETOS (el mes en curso a
+    // medias contra agosto completo daba "-99%" el día 1 y asustaba de gratis).
+    const mesUltimo = gastoPorMes[gastoPorMes.length - 2], mesPenult = gastoPorMes[gastoPorMes.length - 3];
+    const deltaMes = (mesUltimo?.total > 0 && mesPenult?.total > 0)
+      ? Math.round(((mesUltimo.total - mesPenult.total) / mesPenult.total) * 100) : null;
+
     // ── UI ──
     const CARBON = "#2C2A28";
     const tituloCard = (txt) => (
-      <div className="gt-label" style={{ color: "var(--text-3)", marginBottom: 16 }}>{txt}</div>
+      <div className="gt-label" style={{ color: "var(--text-3)", marginBottom: 14 }}>{txt}</div>
     );
     const pill = (txt, activo, onClick, title) => (
       <button key={txt} onClick={onClick} title={title} style={{ padding: "7px 14px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? ORANGE : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
@@ -3599,14 +3624,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <span style={{ width: 9, height: 9, borderRadius: 3, background: color }} />{txt}
       </span>
     );
-    const Barra = ({ valor, color }) => (
-      <div style={{ flex: 1, height: 8, borderRadius: 5, background: "rgba(44,42,40,.06)", overflow: "hidden" }}>
-        <div style={{ width: `${Math.max(valor > 0 ? 2 : 0, (valor / maxBarra) * 100)}%`, height: "100%", borderRadius: 5, background: color, transition: "width var(--mov-lento) var(--curva)" }} />
+    // Barra horizontal que CARGA: nace en 0 y crece a su valor (dashAnim)
+    const Barra = ({ valor, color, delay = 0 }) => (
+      <div style={{ flex: 1, height: 7, borderRadius: 5, background: "rgba(44,42,40,.06)", overflow: "hidden" }}>
+        <div style={{ width: dashAnim ? `${Math.max(valor > 0 ? 2 : 0, (valor / maxBarra) * 100)}%` : "0%", height: "100%", borderRadius: 5, background: color, transition: "width 1100ms var(--curva)", transitionDelay: `${delay}ms` }} />
       </div>
     );
 
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {/* Reporte PDF a la izquierda · selector de vista a la derecha */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div>
@@ -3629,73 +3655,65 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           </div>
         </div>
 
-        {/* Dos tarjetas: la gráfica por proyecto + la dona en grande */}
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.25fr) minmax(0,1fr)", gap: 18, alignItems: "stretch" }}>
+        {/* Las 3 tarjetas: barras · dona · tendencia por mes */}
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(3, minmax(0,1fr))", gap: 16, alignItems: "stretch" }}>
 
-          {/* 1 — POR PROYECTO (resumen + barras) */}
-          <div className="gt-vidrio" style={{ padding: 24, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          {/* 1 — POR PROYECTO (barras) */}
+          <div className="gt-vidrio" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column" }}>
             {tituloCard(esGlobal ? "Por proyecto — histórico" : `Por proyecto — ${mesSelLabel}`)}
-            <div style={{ display: "flex", gap: 34, flexWrap: "wrap", marginBottom: 18 }}>
+            <div style={{ display: "flex", gap: 22, flexWrap: "wrap", marginBottom: 12 }}>
               <div>
-                <div style={{ font: "800 clamp(24px,2.2vw,32px)/1.1 var(--display)", letterSpacing: "-.02em", color: CARBON }}>{fmtL(pagadoVista)}</div>
-                <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 4 }}>{esGlobal ? "Pagado total" : "Pagado en el mes"}</div>
+                <div style={{ font: "800 clamp(19px,1.6vw,24px)/1.1 var(--display)", letterSpacing: "-.02em", color: CARBON }}>{fmtL(pagadoVista)}</div>
+                <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 3 }}>{esGlobal ? "Pagado total" : "Pagado en el mes"}</div>
               </div>
               <div>
-                <div style={{ font: "800 clamp(24px,2.2vw,32px)/1.1 var(--display)", letterSpacing: "-.02em", color: "var(--naranja-tinta)" }}>{fmtL(montoPorPagar)}</div>
-                <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 4 }}>Por pagar (Lic. Carolina)</div>
+                <div style={{ font: "800 clamp(19px,1.6vw,24px)/1.1 var(--display)", letterSpacing: "-.02em", color: "var(--naranja-tinta)" }}>{fmtL(montoPorPagar)}</div>
+                <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 3 }}>Por pagar (Lic. Carolina)</div>
               </div>
             </div>
-
-            <div style={{ display: "flex", gap: 16, marginBottom: 12 }}>
-              {puntoLeyenda(CARBON, esGlobal ? "Pagado" : "Pagado en el mes")}
+            <div style={{ display: "flex", gap: 14, marginBottom: 10 }}>
+              {puntoLeyenda(CARBON, "Pagado")}
               {puntoLeyenda(ORANGE, "Por pagar")}
             </div>
-
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 13 }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
               {proyRows.length === 0 && (
-                <div style={{ fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic", padding: "16px 0" }}>
+                <div style={{ fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic", padding: "14px 0" }}>
                   Nada por pagar y ningún pago registrado en {mesSelLabel}.
                 </div>
               )}
-              {proyRows.slice(0, 8).map(r => (
+              {proyRows.slice(0, 7).map((r, i) => (
                 <div key={r.key} title={`${r.name} — ${r.nPorPagar} por pagar · ${r.nPagadoMes} pagadas`} style={{ minWidth: 0 }}>
-                  <div style={{ font: "600 10.5px/1.3 var(--mono)", color: "var(--text-2)", marginBottom: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.key}</div>
+                  <div style={{ font: "600 10px/1.3 var(--mono)", color: "var(--text-2)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.key}</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <Barra valor={r.pagadoMes} color={CARBON} />
-                      <span style={{ fontSize: 10.5, fontWeight: 700, color: r.pagadoMes > 0 ? CARBON : "var(--text-faint)", width: 92, textAlign: "right", whiteSpace: "nowrap", flexShrink: 0 }}>{r.pagadoMes > 0 ? fmtL(r.pagadoMes) : "—"}</span>
+                      <Barra valor={r.pagadoMes} color={CARBON} delay={i * 90} />
+                      <span style={{ fontSize: 10, fontWeight: 700, color: r.pagadoMes > 0 ? CARBON : "var(--text-faint)", width: 84, textAlign: "right", whiteSpace: "nowrap", flexShrink: 0 }}>{r.pagadoMes > 0 ? fmtL(r.pagadoMes) : "—"}</span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <Barra valor={r.porPagar} color={ORANGE} />
-                      <span style={{ fontSize: 10.5, fontWeight: 700, color: r.porPagar > 0 ? "var(--naranja-tinta)" : "var(--text-faint)", width: 92, textAlign: "right", whiteSpace: "nowrap", flexShrink: 0 }}>{r.porPagar > 0 ? fmtL(r.porPagar) : "—"}</span>
+                      <Barra valor={r.porPagar} color={ORANGE} delay={i * 90 + 45} />
+                      <span style={{ fontSize: 10, fontWeight: 700, color: r.porPagar > 0 ? "var(--naranja-tinta)" : "var(--text-faint)", width: 84, textAlign: "right", whiteSpace: "nowrap", flexShrink: 0 }}>{r.porPagar > 0 ? fmtL(r.porPagar) : "—"}</span>
                     </div>
                   </div>
                 </div>
               ))}
-              {proyRows.length > 8 && (
-                <div style={{ fontSize: 10.5, color: "var(--text-faint)" }}>+ {proyRows.length - 8} proyecto{proyRows.length - 8 !== 1 ? "s" : ""} más (totales abajo con todo incluido)</div>
+              {proyRows.length > 7 && (
+                <div style={{ fontSize: 10, color: "var(--text-faint)" }}>+ {proyRows.length - 7} proyecto{proyRows.length - 7 !== 1 ? "s" : ""} más (el total incluye todo)</div>
               )}
             </div>
-
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, borderTop: "1px solid var(--hairline)", marginTop: 16, paddingTop: 12, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--text-2)" }}>TOTAL</span>
-              <span style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11.5, fontWeight: 800, color: CARBON }}>{fmtL(totPagadoMesProy)} pagado</span>
-                <span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--naranja-tinta)" }}>{fmtL(totPorPagarProy)} por pagar</span>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, borderTop: "1px solid var(--hairline)", marginTop: 12, paddingTop: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: "var(--text-2)" }}>TOTAL</span>
+              <span style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: CARBON }}>{fmtL(totPagadoMesProy)}</span>
+                <span style={{ fontSize: 11, fontWeight: 800, color: "var(--naranja-tinta)" }}>{fmtL(totPorPagarProy)}</span>
               </span>
-            </div>
-            <div style={{ display: "flex", gap: 16, marginTop: 12, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 11, color: "var(--text-3)" }}><b style={{ color: "var(--text-2)" }}>{activas}</b> activas</span>
-              <span style={{ fontSize: 11, color: "var(--text-3)" }}><b style={{ color: "var(--text-2)" }}>{pendienteEntrega}</b> pendientes de entrega</span>
-              <span style={{ fontSize: 11, color: "var(--text-3)" }}><b style={{ color: "var(--text-2)" }}>{pendienteFicha}</b> sin ficha de recibido</span>
             </div>
           </div>
 
-          {/* 2 — GASTO POR PROYECTO (dona en grande) */}
-          <div className="gt-vidrio" style={{ padding: 24, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          {/* 2 — GASTO POR PROYECTO (dona, en medio) */}
+          <div className="gt-vidrio" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column" }}>
             {tituloCard(esGlobal ? "Gasto global por proyecto" : `Gasto del mes por proyecto — ${mesSelLabel}`)}
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18 }}>
-              <svg viewBox="0 0 160 160" style={{ width: "min(66%, 260px)", height: "auto", flexShrink: 0 }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14 }}>
+              <svg viewBox="0 0 160 160" style={{ width: "min(62%, 210px)", height: "auto", flexShrink: 0 }}>
                 <g transform="translate(80,80)">
                   <circle r={donutR} fill="none" stroke="rgba(44,42,40,.06)" strokeWidth={donutR - donutInner} />
                   {donutTotal > 0 && donutArcs.map(seg => (
@@ -3705,15 +3723,16 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                       fill="none"
                       stroke={seg.color}
                       strokeWidth={donutR - donutInner}
-                      strokeDasharray={`${seg.dash} ${seg.gap}`}
+                      strokeDasharray={dashAnim ? `${seg.dash} ${seg.gap}` : `0 ${donutCircum}`}
                       transform={`rotate(${-90 + seg.rotation})`}
+                      style={{ transition: "stroke-dasharray 1300ms var(--curva)" }}
                     />
                   ))}
                   <text textAnchor="middle" y="-3" style={{ fontSize: 14, fontWeight: 800, fill: "var(--text)" }}>{shortL(donutTotal)}</text>
                   <text textAnchor="middle" y="13" style={{ fontSize: 7.5, fill: "var(--text-3)", letterSpacing: 0.5 }}>PAGADO {mesCorto}</text>
                 </g>
               </svg>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", minWidth: 0 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 7, width: "100%", minWidth: 0 }}>
                 {donutCats.length === 0 && (
                   <div style={{ fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic", textAlign: "center" }}>Sin pagos registrados en {mesSelLabel}.</div>
                 )}
@@ -3721,14 +3740,48 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                   const pct = donutTotal > 0 ? Math.round((c.count / donutTotal) * 100) : 0;
                   return (
                     <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                      <div style={{ width: 11, height: 11, borderRadius: 3, background: c.color, flexShrink: 0 }} />
-                      <div style={{ flex: 1, color: "var(--text)", font: "600 11px/1.3 var(--mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.label}</div>
-                      <div style={{ fontWeight: 700, color: "var(--text)", fontSize: 11.5, whiteSpace: "nowrap" }}>{fmtL(c.count)}</div>
-                      <div style={{ color: "var(--text-3)", fontWeight: 800, fontSize: 11.5, width: 36, textAlign: "right" }}>{pct}%</div>
+                      <div style={{ width: 10, height: 10, borderRadius: 3, background: c.color, flexShrink: 0 }} />
+                      <div style={{ flex: 1, color: "var(--text)", font: "600 10.5px/1.3 var(--mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.label}</div>
+                      <div style={{ fontWeight: 700, color: "var(--text)", fontSize: 11, whiteSpace: "nowrap" }}>{fmtL(c.count)}</div>
+                      <div style={{ color: "var(--text-3)", fontWeight: 800, fontSize: 11, width: 34, textAlign: "right" }}>{pct}%</div>
                     </div>
                   );
                 })}
               </div>
+            </div>
+          </div>
+
+          {/* 3 — GASTO POR MES (tendencia global; click en una barra = ver ese mes) */}
+          <div className="gt-vidrio" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            {tituloCard("Gasto por mes — últimos 6 meses")}
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+              <div style={{ font: "800 clamp(19px,1.6vw,24px)/1.1 var(--display)", letterSpacing: "-.02em", color: CARBON }}>{fmtL(gastoPorMes.reduce((s, g) => s + g.total, 0))}</div>
+              {deltaMes != null && (
+                <span title={`${mesUltimo.label}: ${fmtL(mesUltimo.total)} · ${mesPenult.label}: ${fmtL(mesPenult.total)}`}
+                  style={{ fontSize: 11, fontWeight: 800, color: deltaMes > 0 ? "var(--naranja-tinta)" : "var(--text-3)" }}>
+                  {mesUltimo.label} vs {mesPenult.label}: {deltaMes > 0 ? "+" : ""}{deltaMes}%
+                </span>
+              )}
+            </div>
+            <div className="gt-label" style={{ color: "var(--text-3)", marginBottom: 16 }}>Total del semestre (global)</div>
+            <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: isMobile ? 8 : 12, minHeight: 170, paddingBottom: 4 }}>
+              {gastoPorMes.map((g, i) => {
+                const activo = !esGlobal && g.mes === mesSel;
+                const hPct = Math.max(g.total > 0 ? 4 : 1.5, (g.total / maxMes) * 100);
+                return (
+                  <div key={g.mes} onClick={() => setDashMonth(g.mes)} title={`${g.label}: ${fmtL(g.total)} — click para ver este mes`}
+                    style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer", height: "100%" }}>
+                    <div style={{ fontSize: 9, fontWeight: 800, color: activo ? "var(--naranja-tinta)" : "var(--text-3)", whiteSpace: "nowrap", minHeight: 11 }}>{g.total > 0 ? shortL(g.total) : ""}</div>
+                    {/* Wrapper de altura idéntica en las 6 columnas: la barra
+                        mide % de ESTO (si midiera la columna, los labels se
+                        comían el espacio y los meses altos salían iguales). */}
+                    <div style={{ flex: 1, width: "100%", maxWidth: 40, display: "flex", alignItems: "flex-end", minWidth: 0 }}>
+                      <div style={{ width: "100%", height: dashAnim ? `${hPct}%` : "1.5%", borderRadius: "7px 7px 3px 3px", background: activo ? ORANGE : (g.total > 0 ? "#C9C3BA" : "rgba(44,42,40,.08)"), transition: `height 1100ms var(--curva) ${i * 110}ms, background var(--mov-rapido)` }} />
+                    </div>
+                    <div style={{ font: "700 9.5px/1 var(--mono)", color: activo ? "var(--naranja-tinta)" : "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5 }}>{g.label}</div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -4984,10 +5037,22 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     // Con el selector se puede volver al orden por estado o invertir.
     const fpagoOrd = (x) => String(x.paidAt || x.paymentDate || "");
     const dataSorted = filtered.slice().sort((a, b) => {
-      // Por fecha de SOLICITUD: útil viendo pendientes (la más vieja es la que
-      // más lleva esperando el pago).
-      if (listOrden === "solicitud_asc") return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
-      if (listOrden === "solicitud_desc") return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      // Por fecha de SOLICITUD — pero SIEMPRE respetando la numeración del
+      // código (1-sep, pedido de Gerson: varias del mismo día salían
+      // desordenadas — la 0368 en medio de la 0365 y la 0366). El código es
+      // correlativo global del año, así que ES el orden real de creación;
+      // solo las viejas sin código caen al createdAt.
+      if (listOrden === "solicitud_asc" || listOrden === "solicitud_desc") {
+        const codNum = (x) => {
+          const m = String(x.codigo || "").match(/-(\d{4})-(\d+)$/);
+          return m ? Number(m[1]) * 100000 + Number(m[2]) : null;
+        };
+        const ca = codNum(a), cb = codNum(b);
+        const cmp = (ca != null && cb != null)
+          ? ca - cb
+          : new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+        return listOrden === "solicitud_asc" ? cmp : -cmp;
+      }
       if (listOrden === "estado") {
         const ord = { validado: 1, pagado: 2, borrador: 3, finalizado: 4 };
         const da = ord[a.status] || 9, db = ord[b.status] || 9;
@@ -5297,9 +5362,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
         {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
         <img src={logoUrl} alt="Geotecnica Soluciones" style={{ height: isMobile ? 28 : 34, width: "auto", display: "block" }} />
-        <div style={{ minWidth: 0 }}>
-          <div style={{ font: `800 ${isMobile ? 16 : 19}px/1.15 var(--display)`, letterSpacing: "-.02em", color: "var(--text)", whiteSpace: "nowrap" }}>GeoShopping</div>
-          {!isMobile && <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2 }}>Compras & Tesorería</div>}
+        {/* El dibujito del carrito identifica el módulo (1-sep: "en vez de
+            que diga GeoShopping"). El nombre queda en el title/aria. */}
+        <div title="GeoShopping — Compras & Tesorería" aria-label="GeoShopping" style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="8" cy="21" r="1" /><circle cx="19" cy="21" r="1" /><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" /></svg>
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>

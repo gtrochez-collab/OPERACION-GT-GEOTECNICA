@@ -34,8 +34,10 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
     `fill-mode: backwards`, manchas de brillo 47s/59s (primos), vidrio
     `--v-fondo-foto`, `prefers-reduced-motion` respetado.
   - `LoginScreen`: slideshow crossfade 9s de fotos reales de obra
-    (`public/brand/login/obra-1..2.jpg`, ~2.5MB total). **Solo 2 fotos
-    (31-ago, pedido de Gerson)**: piladora con montañas y perforadora en el
+    (`public/brand/login/obra-2.jpg` + `obra-3.jpg`). **1-sep: la piladora
+    se retiró ("se sigue viendo fea") — quedan el EQUIPO de espaldas con
+    cascos (obra-3, 1600×1069, recuperada de git b0fdac5: el ARW original
+    de Downloads está truncado y sips ya no lo lee) y la perforadora en el
     río — regeneradas desde los ORIGINALES de Downloads (image (3).jpg
     2691×3600 y 7C98965D...jpeg 1536×2048; las 5 anteriores eran 1200×1600
     verticales y el cover las estiraba pixeladas en desktop). FOTOS_LOGIN es
@@ -92,11 +94,14 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   IST (se retiró el hero con CarritoSVG): [← gt-circulo][logo][GeoShopping]
   + usuario + Cerrar sesión. Pestañas SIN emojis. Se quitó el strip de
   título por pestaña ("Dashboard gerencial / N solicitudes" — repetitivo).
-  **Dashboard (v3, 31-ago tarde)**: DOS tarjetas `.gt-vidrio` — "Por
-  proyecto" (Resumen y la tabla vieja FUSIONADOS: pagado en carbón + por
-  pagar en naranja en grande, barras dobles por proyecto, chips de
-  activas/pendientes al pie) y la dona "Gasto por proyecto" EN GRANDE —
-  paleta SOLO naranja/carbón/gris (adiós arcoíris y verdes). Selector Por
+  **Dashboard (v4, 1-sep)**: TRES tarjetas compactas `.gt-vidrio` —
+  barras "Por proyecto" (pagado carbón + por pagar naranja en grande y
+  barras dobles), la dona EN MEDIO, y "Gasto por mes — últimos 6 meses"
+  (GLOBAL, barras verticales clickeables: click = ver ese mes; el delta
+  compara los 2 últimos meses COMPLETOS — el mes en curso a medias daba
+  -99% el día 1). Carga ANIMADA: `dashAnim` (useState + useEffect por
+  [sec]) hace crecer barras y dona de 0 a su valor (1.1-1.3s, --curva) al
+  entrar a la pestaña — paleta SOLO naranja/carbón/gris. Selector Por
   mes / **Global** (dashMonth==="global" es valor mágico, solo lo lee
   renderDashboard; Global incluye pagadas viejas SIN paidAt — por mes
   sigue exigiéndolo). Botón "Reporte ejecutivo PDF — <mes>" en el propio
@@ -108,8 +113,13 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   "central de costos" las unificará. **Solicitudes**: las 7
   StatCard → UNA tira resumen en vidrio, banner de Carolina sobrio, barra
   de filtros y tabla en `.gt-vidrio`, TreasuryBadge/DeliveryBadge sin
-  emoji, ✓ en cotización/comprobante. La lógica (filtros, orden, permisos,
-  modales) quedó INTACTA. Fixes de la revisión adversarial: grid móvil con
+  emoji, ✓ en cotización/comprobante. **1-sep**: STATUSES/TREASURY/
+  DELIVERY recoloreados a la paleta (naranja = requiere acción, gris =
+  neutral, carbón sólido = terminado; solo color/bg — labels/order
+  intactos); orden "más nueva/más vieja" SIEMPRE por numeración de código
+  (regex sobre `codigo`, fallback createdAt para viejas sin código);
+  header con chip de carrito SVG en vez del texto "GeoShopping". La
+  lógica (filtros, orden, permisos, modales) quedó INTACTA. Fixes de la revisión adversarial: grid móvil con
   minmax(0,1fr)+minWidth:0 (la tabla nowrap inflaba el track y la pestaña
   entera paneaba); stats.montoPagadoMes clasifica por slice(0,7) UTC
   (getMonth() local corría al mes anterior los pagos del día 1 y el mismo
