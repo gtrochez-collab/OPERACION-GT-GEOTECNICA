@@ -20,9 +20,9 @@ export const GT_CSS = `
   --text-3:#6E6862;
   --text-faint:#A39C92;
 
-  --bg:#F4F4F2;             /* ÚNICO fondo de página (blanco griseito, pedido 31-ago) */
+  --bg:#F7F7F5;             /* ÚNICO fondo de página (blanco griseito — "un tonito más claro, más alegre", 3-sep) */
   --surface:#FFFFFF;
-  --sunk:#EDEDEB;
+  --sunk:#EFEFED;
   --hairline:rgba(44,42,40,.08);
 
   --e0:0 1px 2px rgba(44,42,40,.05);

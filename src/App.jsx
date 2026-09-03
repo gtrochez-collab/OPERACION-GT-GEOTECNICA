@@ -98,6 +98,16 @@ const MODULES = [
 // bienvenida/panel y se desmonta al entrar a un módulo.
 const UI_CSS = GT_CSS;
 
+// Entrada a un módulo (3-sep, pedido de Gerson: "un efecto de como que
+// ingresar al sistema, una transición smooth"). CSS propio y mínimo porque
+// los módulos viejos NO montan GT_CSS. El panel hace el fade de salida
+// (estado `saliendo`) y el módulo aparece con este keyframe.
+const ENTRADA_CSS = `
+@keyframes gtEntraModulo{from{opacity:0;transform:translateY(12px) scale(.992)}}
+.gt-entra-modulo{animation:gtEntraModulo 560ms cubic-bezier(.16,1,.3,1) backwards}
+@media (prefers-reduced-motion:reduce){.gt-entra-modulo{animation:none !important}}
+`;
+
 // ── Versículo del día (rota por día del año; RVR1960, cortos) ──
 const VERSICULOS = [
   { ref: "Job 22:28", txt: "Determinarás asimismo una cosa, y te será firme, y sobre tus caminos resplandecerá luz." },
@@ -183,6 +193,7 @@ export default function App() {
     if (!found) return false;
     const session = { username: found.username, role: found.role, label: found.label };
     setUser(session);
+    setActiveModule(null);   // ninguna sesión hereda el módulo de la anterior
     setWelcomeDone(false);
     // Con storage bloqueado (Safari sin cookies) el accessor LANZA: si el
     // setItem quedara fuera del try, setWelcomeDone nunca corría y la
@@ -196,6 +207,7 @@ export default function App() {
   };
 
   const logout = () => {
+    cancelarSalida();
     setUser(null);
     setActiveModule(null);
     try {
@@ -210,8 +222,25 @@ export default function App() {
     setWelcomeDone(true);
   };
 
+  // Abrir un módulo desde el panel: el panel se desvanece 260 ms y recién
+  // ahí monta el módulo (que entra con gtEntraModulo). Sin movimiento
+  // preferido → directo.
+  const [saliendo, setSaliendo] = useState(false);
+  const salidaRef = useRef(null);   // timer del fade — se cancela en logout/volver
+  const abrirModulo = (id) => {
+    if (saliendo) return;           // doble tap en dos tarjetas: gana el primero
+    if (prefiereMenosMovimiento()) { setActiveModule(id); return; }
+    setSaliendo(true);
+    salidaRef.current = setTimeout(() => { salidaRef.current = null; setActiveModule(id); setSaliendo(false); }, 260);
+  };
+  const cancelarSalida = () => {
+    if (salidaRef.current) { clearTimeout(salidaRef.current); salidaRef.current = null; }
+    setSaliendo(false);
+  };
+
   // Flecha "back" del panel: vuelve a la bienvenida del día (pedido 31-ago).
   const volverBienvenida = () => {
+    cancelarSalida();
     try { sessionStorage.removeItem("gt-welcome-done"); } catch {}
     setWelcomeDone(false);
   };
@@ -227,13 +256,24 @@ export default function App() {
 
   // ── Modulo activo ──
   const moduleProps = { userRole: user.role, userName: user.label, onBack: () => setActiveModule(null), onLogout: logout };
-  if (activeModule === "rrhh") return <>{syncBanner}<HRModule {...moduleProps} /></>;
-  if (activeModule === "compras-operaciones") return <>{syncBanner}<PurchasesModule {...moduleProps} /></>;
-  if (activeModule === "maquinas") return <>{syncBanner}<MachinesModule {...moduleProps} /></>;
-  if (activeModule === "logistica") return <>{syncBanner}<LogisticsModule {...moduleProps} /></>;
-  if (activeModule === "geodrill-vault") return <>{syncBanner}<GeoDrillVault {...moduleProps} /></>;
-  if (activeModule === "geosafety") return <>{syncBanner}<SafetyModule {...moduleProps} /></>;
-  if (activeModule === "geoclock") return <>{syncBanner}<GeoClockModule {...moduleProps} /></>;
+  // Wrapper con la animación de entrada. key=activeModule para que al cambiar
+  // de módulo vuelva a entrar. El transform del keyframe dura 560 ms: los
+  // position:fixed del módulo (brillos, modales) se referencian al wrapper
+  // solo ese instante — el wrapper es pantalla completa, no se nota.
+  const conEntrada = (modulo) => (
+    <>
+      {syncBanner}
+      <style>{ENTRADA_CSS}</style>
+      <div key={activeModule} className="gt-entra-modulo" style={{ minHeight: "100vh" }}>{modulo}</div>
+    </>
+  );
+  if (activeModule === "rrhh") return conEntrada(<HRModule {...moduleProps} />);
+  if (activeModule === "compras-operaciones") return conEntrada(<PurchasesModule {...moduleProps} />);
+  if (activeModule === "maquinas") return conEntrada(<MachinesModule {...moduleProps} />);
+  if (activeModule === "logistica") return conEntrada(<LogisticsModule {...moduleProps} />);
+  if (activeModule === "geodrill-vault") return conEntrada(<GeoDrillVault {...moduleProps} />);
+  if (activeModule === "geosafety") return conEntrada(<SafetyModule {...moduleProps} />);
+  if (activeModule === "geoclock") return conEntrada(<GeoClockModule {...moduleProps} />);
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
 
   const availableModules = MODULES.filter((m) => m.roles.includes(user.role));
@@ -257,7 +297,8 @@ export default function App() {
         user={user}
         availableModules={availableModules}
         syncOk={syncState.ok}
-        onOpen={(id) => setActiveModule(id)}
+        onOpen={abrirModulo}
+        saliendo={saliendo}
         onLogout={logout}
         onVolverBienvenida={volverBienvenida}
       />
@@ -308,7 +349,7 @@ function TituloHero({ esHero, escala = 1.4, altura = 0.4, children }) {
   );
 }
 
-function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolverBienvenida }) {
+function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolverBienvenida, saliendo = false }) {
   const [fase, setFase] = useState(() => {
     if (prefiereMenosMovimiento()) {
       try { sessionStorage.setItem("gt-panel-hero-done", "1"); } catch {}
@@ -333,7 +374,7 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
   const esHero = fase === "hero";
 
   return (
-    <div className="gt-ui" style={{ display: "flex", flexDirection: "column", position: "relative", overflow: "hidden", height: esHero ? "100dvh" : undefined }}>
+    <div className="gt-ui" style={{ display: "flex", flexDirection: "column", position: "relative", overflow: "hidden", height: esHero ? "100dvh" : undefined, opacity: saliendo ? 0 : 1, pointerEvents: saliendo ? "none" : "auto", transition: "opacity 260ms var(--curva)" }}>
       <style>{UI_CSS}</style>
       <div className="gt-brillo gt-brillo-a" aria-hidden />
       <div className="gt-brillo gt-brillo-b" aria-hidden />
@@ -665,7 +706,7 @@ function WelcomeScreen({ user, onStart, onLogout }) {
 // estiraba pixeladas). `pos` = encuadre para pantallas horizontales:
 // son fotos verticales y el corte decide qué banda se ve.
 const FOTOS_LOGIN = [
-  { f: "obra-3.jpg", pos: "center 45%" },   // el equipo viendo la obra (cascos y chalecos)
+  { f: "obra-4.jpg", pos: "center 66%" },   // el equipo de espaldas viendo la obra (vertical: el corte muestra a la gente)
   { f: "obra-2.jpg", pos: "center 62%" },   // perforadora en el río, entre rocas
 ];
 

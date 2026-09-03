@@ -34,10 +34,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
     `fill-mode: backwards`, manchas de brillo 47s/59s (primos), vidrio
     `--v-fondo-foto`, `prefers-reduced-motion` respetado.
   - `LoginScreen`: slideshow crossfade 9s de fotos reales de obra
-    (`public/brand/login/obra-2.jpg` + `obra-3.jpg`). **1-sep: la piladora
-    se retiró ("se sigue viendo fea") — quedan el EQUIPO de espaldas con
-    cascos (obra-3, 1600×1069, recuperada de git b0fdac5: el ARW original
-    de Downloads está truncado y sips ya no lo lee) y la perforadora en el
+    (`public/brand/login/obra-2.jpg` + `obra-4.jpg`). **3-sep: el EQUIPO de
+    espaldas va en la foto VERTICAL completa (obra-4, 1080×1616 — sacada del
+    preview embebido del ARW con `qlmanage -t -s 6000`; la 1600×1069 anterior
+    era un recorte de la parte de arriba y "solo se veían los cascos"; el ARW
+    de Downloads está truncado, sips no lo lee — si Gerson manda el original
+    de cámara, reemplazarla) y la perforadora en el
     río — regeneradas desde los ORIGINALES de Downloads (image (3).jpg
     2691×3600 y 7C98965D...jpeg 1536×2048; las 5 anteriores eran 1200×1600
     verticales y el cover las estiraba pixeladas en desktop). FOTOS_LOGIN es
@@ -73,6 +75,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
     los contenedores ocultos usan visibility+inert, NO opacity (un padre con
     opacity<1 apaga el backdrop-filter del vidrio y opacity 0 dejaba
     tarjetas alcanzables con Tab+Enter).
+  - **Entrada a módulos (3-sep)**: `abrirModulo(id)` desvanece el panel
+    260 ms (`saliendo` → opacity 0 + scale 1.012 en el root de
+    PanelControl) y recién ahí monta el módulo envuelto en
+    `conEntrada()` → `<div key={activeModule} className="gt-entra-modulo">`
+    con `ENTRADA_CSS` propio (keyframe gtEntraModulo 560 ms; CSS mínimo e
+    independiente porque los módulos viejos NO montan GT_CSS). GeoShopping
+    además pone la clase en su root REAL (la del wrapper se gasta en el
+    "Cargando…"). Con prefers-reduced-motion va directo. El timer vive en
+    `salidaRef` y `cancelarSalida()` lo corta en logout/volverBienvenida;
+    login() limpia activeModule (ninguna sesión hereda el módulo de la
+    anterior); el panel lleva pointerEvents:none mientras se desvanece y
+    NO usa scale (el transform en el root hacía saltar los brillos fixed).
+    `body` en index.html es #F7F7F5 (= --bg: queda expuesto en el fade). La pantalla "Cargando GeoShopping…"
+    usa el fondo del sistema para no parpadear beige.
   - `PanelControl` (componente propio, v2 31-ago): el H1 "Panel de Control"
     nace centrado XL y viaja a su lugar (una vez por login,
     `gt-panel-hero-done`; login/logout limpian ambos flags de hero). Header
@@ -113,10 +129,25 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   "central de costos" las unificará. **Solicitudes**: las 7
   StatCard → UNA tira resumen en vidrio, banner de Carolina sobrio, barra
   de filtros y tabla en `.gt-vidrio`, TreasuryBadge/DeliveryBadge sin
-  emoji, ✓ en cotización/comprobante. **1-sep**: STATUSES/TREASURY/
-  DELIVERY recoloreados a la paleta (naranja = requiere acción, gris =
-  neutral, carbón sólido = terminado; solo color/bg — labels/order
-  intactos); orden "más nueva/más vieja" SIEMPRE por numeración de código
+  emoji, ✓ en cotización/comprobante. **3-sep — semáforo de colores**
+  (Gerson: "está muy gris triste, juguemos más con los colores"): consts
+  C_GRIS/C_VERDE/C_VERDE_2/C_AZUL/C_AMARILLO esparcidas en STATUSES/
+  TREASURY/DELIVERY — GRIS = pendiente de pago (validado, Pendiente Lic.
+  Carolina), VERDE clarito = pagado (todo verdecito una vez pagada:
+  pagado/finalizado/pagada/ficha_adjunta/cerrado), AZUL = recibida por
+  Tesorería, AMARILLO = pagado pero falta la ficha (pendiente_entrega,
+  entrega_proveedor, recibido). `pendiente_ficha` es una entrada SOLO DE
+  DISPLAY: la tabla de Solicitudes la muestra cuando el despacho ya está
+  entregado/cerrado y falta la ficha (misma regla que la etapa falta_ficha
+  de Supply Chain); el estado guardado sigue siendo pendiente_entrega y su
+  label "Pendiente de entrega" (la revisión adversarial cazó que
+  relabelar el estado real mentía en las compras que Ana ni coordinó).
+  Solo color/bg; labels/order intactos. Solicitudes es la 2ª pestaña. Barra
+  de filtros en DOS filas compactas (VER+ORDEN / MES+proyecto+proveedor) y
+  tira resumen más baja. ⚠ En renderDashboard las barras son la FUNCIÓN
+  `barra()` (no un componente `<Barra/>`: definido dentro del render se
+  remontaba en cada flip de dashAnim y nacía ya al 100% sin animar — "el de
+  la izquierda no carga"); orden "más nueva/más vieja" SIEMPRE por numeración de código
   (regex sobre `codigo`, fallback createdAt para viejas sin código);
   header con chip de carrito SVG en vez del texto "GeoShopping". La
   lógica (filtros, orden, permisos, modales) quedó INTACTA. Fixes de la revisión adversarial: grid móvil con

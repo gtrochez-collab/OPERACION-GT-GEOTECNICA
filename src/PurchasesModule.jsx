@@ -36,32 +36,44 @@ const UNITS = ["Unidad", "Bolsa", "Caja", "Rollo", "Galon", "Litro", "Kg", "Quin
 const PAYMENT_METHODS = ["Transferencia BAC", "Transferencia Banco Atlantida", "Transferencia Ficohsa", "Cheque", "Efectivo", "Tarjeta corporativa", "Otro"];
 
 // Estados del proceso de Operaciones
-// Paleta del sistema (1-sep-2026, pedido de Gerson: "mantengamos la paleta"):
-// naranja = requiere acción · gris = neutral/en camino · carbón = hecho.
+// Semáforo de estados (3-sep-2026, pedido de Gerson: "juguemos más con los
+// colores, está muy gris triste"): GRIS = pendiente de pago · VERDE clarito =
+// pagado (todo verdecito una vez pagada) · AZUL = recibida por Tesorería ·
+// AMARILLO = pagado pero falta la ficha. Tonos suaves, aesthetic.
+const C_GRIS     = { color: "#6E6862", bg: "rgba(44,42,40,.06)" };
+const C_VERDE    = { color: "#177243", bg: "#DCF3E4" };   // 5.1:1 sobre su fondo (AA)
+const C_VERDE_2  = { color: "#146A3F", bg: "#C7EBD5" };
+const C_AZUL     = { color: "#1D5FAF", bg: "#DDE9FA" };
+const C_AMARILLO = { color: "#8A5A00", bg: "#FBEFC4" };
 const STATUSES = {
-  borrador:   { label: "Borrador",                        color: "#6E6862", bg: "rgba(44,42,40,.05)", order: 1, desc: "Operaciones aun no aprueba" },
-  validado:   { label: "Aprobado por Coord. Operaciones", color: "#2C2A28", bg: "rgba(44,42,40,.08)", order: 2, desc: "Aprobado por Operaciones, en gestion de Tesoreria" },
-  pagado:     { label: "Pagado (sin comprobante)",        color: "#C75F1F", bg: "rgba(232,118,45,.12)", order: 3, desc: "Pago realizado, falta cargar comprobante" },
-  finalizado: { label: "Finalizado",                      color: "#2C2A28", bg: "rgba(44,42,40,.15)", order: 4, desc: "Pago con comprobante cargado" },
+  borrador:   { label: "Borrador",                        ...C_GRIS,    order: 1, desc: "Operaciones aun no aprueba" },
+  validado:   { label: "Aprobado por Coord. Operaciones", ...C_GRIS,    order: 2, desc: "Aprobado por Operaciones, en gestion de Tesoreria" },
+  pagado:     { label: "Pagado (sin comprobante)",        ...C_VERDE,   order: 3, desc: "Pago realizado, falta cargar comprobante" },
+  finalizado: { label: "Finalizado",                      ...C_VERDE_2, order: 4, desc: "Pago con comprobante cargado" },
 };
 
 // Estados que maneja Tesoreria (paralelos al estado de Operaciones)
 const TREASURY_STATUSES = {
-  pendiente: { label: "Pendiente Lic. Carolina", color: "#C75F1F", bg: "rgba(232,118,45,.14)" },
-  recibida:  { label: "Recibida",                color: "#6E6862", bg: "rgba(44,42,40,.05)" },
-  pagada:    { label: "Pagada",                  color: "#2C2A28", bg: "rgba(44,42,40,.08)" },
+  pendiente: { label: "Pendiente Lic. Carolina", ...C_GRIS },
+  recibida:  { label: "Recibida",                ...C_AZUL },
+  pagada:    { label: "Pagada",                  ...C_VERDE },
 };
 
 // Estados de Recepcion de Materiales (logistica, post-pago)
 const DELIVERY_STATUSES = {
-  pendiente_entrega: { label: "Pendiente de entrega",      color: "#C75F1F", bg: "rgba(232,118,45,.12)", icon: "📦" },
+  pendiente_entrega: { label: "Pendiente de entrega",      ...C_AMARILLO, icon: "📦" },
+  // SOLO DISPLAY (3-sep, pedido de Gerson: "si está pagada y falta la ficha,
+  // que diga pendiente de ficha"): la tabla de Solicitudes lo muestra cuando
+  // el despacho ya fue ENTREGADO y la ficha no ha llegado (misma regla que la
+  // etapa falta_ficha de Supply Chain). No es un deliveryStatus guardado.
+  pendiente_ficha:   { label: "Pendiente de ficha",        ...C_AMARILLO, icon: "📋" },
   // entrega_proveedor: el PROVEEDOR la lleva directo a proyecto (no pasa por
   // logistica). Ana registra dia y hora de llegada; despues se sube la ficha
   // firmada o se cierra sin ficha. Agregado ago 2026 a pedido de Gerson.
-  entrega_proveedor: { label: "La entrega el proveedor",    color: "#6E6862", bg: "rgba(44,42,40,.05)", icon: "🏪" },
-  recibido:          { label: "Materiales recibidos",       color: "#2C2A28", bg: "rgba(44,42,40,.08)", icon: "✅" },
-  ficha_adjunta:     { label: "Ficha de recibido adjunta",  color: "#2C2A28", bg: "rgba(44,42,40,.08)", icon: "📋" },
-  cerrado:           { label: "Compra cerrada",             color: "#2C2A28", bg: "rgba(44,42,40,.15)", icon: "🔒" },
+  entrega_proveedor: { label: "La entrega el proveedor",    ...C_AMARILLO, icon: "🏪" },
+  recibido:          { label: "Materiales recibidos",       ...C_AMARILLO, icon: "✅" },
+  ficha_adjunta:     { label: "Ficha de recibido adjunta",  ...C_VERDE,    icon: "📋" },
+  cerrado:           { label: "Compra cerrada",             ...C_VERDE_2,  icon: "🔒" },
 };
 
 // ── Utils ──
@@ -2883,7 +2895,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     sinRecibido: cp.filter(p => (p.status === "pagado" || p.status === "finalizado") && p.deliveryStatus !== "cerrado").length,
   };
 
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "'Segoe UI', sans-serif", color: "#64748b" }}>Cargando Compras-Operaciones...</div>;
+  // Pantalla de carga con el MISMO fondo del sistema (antes era beige y
+  // "parpadeaba" entre el panel y el módulo, rompiendo la entrada smooth).
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F7F7F5", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoShopping…</div>;
 
   // PurchaseFormImpl y PaymentFormImpl viven a nivel de modulo (final del archivo).
   // NO definir aqui — la identidad del componente cambiaria en cada render del padre
@@ -3625,9 +3639,12 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       </span>
     );
     // Barra horizontal que CARGA: nace en 0 y crece a su valor (dashAnim)
-    const Barra = ({ valor, color, delay = 0 }) => (
+    // OJO: función, NO componente (<Barra/> se remontaba en cada render del
+    // padre y la transición de width nunca corría — "el de la izquierda no
+    // carga como los otros").
+    const barra = (valor, color, delay = 0) => (
       <div style={{ flex: 1, height: 7, borderRadius: 5, background: "rgba(44,42,40,.06)", overflow: "hidden" }}>
-        <div style={{ width: dashAnim ? `${Math.max(valor > 0 ? 2 : 0, (valor / maxBarra) * 100)}%` : "0%", height: "100%", borderRadius: 5, background: color, transition: "width 1100ms var(--curva)", transitionDelay: `${delay}ms` }} />
+        <div style={{ width: dashAnim ? `${Math.max(valor > 0 ? 2 : 0, (valor / maxBarra) * 100)}%` : "0%", height: "100%", borderRadius: 5, background: color, transition: `width 1100ms var(--curva) ${delay}ms` }} />
       </div>
     );
 
@@ -3686,11 +3703,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                   <div style={{ font: "600 10px/1.3 var(--mono)", color: "var(--text-2)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.key}</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <Barra valor={r.pagadoMes} color={CARBON} delay={i * 90} />
+                      {barra(r.pagadoMes, CARBON, i * 90)}
                       <span style={{ fontSize: 10, fontWeight: 700, color: r.pagadoMes > 0 ? CARBON : "var(--text-faint)", width: 84, textAlign: "right", whiteSpace: "nowrap", flexShrink: 0 }}>{r.pagadoMes > 0 ? fmtL(r.pagadoMes) : "—"}</span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <Barra valor={r.porPagar} color={ORANGE} delay={i * 90 + 45} />
+                      {barra(r.porPagar, ORANGE, i * 90 + 45)}
                       <span style={{ fontSize: 10, fontWeight: 700, color: r.porPagar > 0 ? "var(--naranja-tinta)" : "var(--text-faint)", width: 84, textAlign: "right", whiteSpace: "nowrap", flexShrink: 0 }}>{r.porPagar > 0 ? fmtL(r.porPagar) : "—"}</span>
                     </div>
                   </div>
@@ -5071,7 +5088,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* RESUMEN (rediseño 31-ago): un solo cuadrito — "tanta tarjeta es
           repetitivo, cansa la vista". Sin emojis. */}
-      <div className="gt-vidrio" style={{ padding: "16px 22px", display: "flex", alignItems: "center", gap: isMobile ? 14 : 0, flexWrap: "wrap" }}>
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
         {[
           { v: stats.total, l: "solicitudes" },
           { v: stats.validado, l: "pendientes de pago", c: "var(--naranja-tinta)" },
@@ -5081,10 +5098,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         ].map((x, i, arr) => (
           <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 40%" : 1, minWidth: 0 }}>
             <div style={{ minWidth: 0 }}>
-              <div style={{ font: "800 clamp(17px,1.6vw,22px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap" }}>{x.v}</div>
-              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 3 }}>{x.l}</div>
+              <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap" }}>{x.v}</div>
+              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
             </div>
-            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 22px 0 auto" }} />}
+            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
           </div>
         ))}
       </div>
@@ -5101,7 +5118,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           lleva más esperando), mirando pagadas importa la fecha de pago. */}
       {(() => {
         const btn = (txt, activo, onClick, title) => (
-          <button onClick={onClick} title={title} style={{ padding: "6px 13px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? "#E8762D" : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
+          <button onClick={onClick} title={title} style={{ padding: "5px 11px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? "#E8762D" : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
         );
         const nPend = cp.filter(x => !esPagada(x)).length;
         const nPag = cp.filter(x => esPagada(x)).length;
@@ -5117,17 +5134,23 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           if (v === "pagadas" && !["pago_desc", "pago_asc"].includes(listOrden)) setListOrden("pago_desc");
           if (v === "todas") setListOrden("estado");
         };
-        return <div className="gt-vidrio" style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+        const sep = !isMobile && <div aria-hidden style={{ width: 1, height: 22, background: "var(--hairline)", margin: "0 6px" }} />;
+        // Dos filas compactas: [VER · ORDEN] arriba, [MES · proyecto · proveedor]
+        // abajo (3-sep: "la info llega a la mitad del cuadrito, hagámoslo más
+        // chiqui").
+        return <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, flexWrap: "wrap" }}>
           {/* Qué ver */}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Ver</span>
+            <span style={{ fontSize: 10, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5, minWidth: isMobile ? 62 : 0 }}>Ver</span>
             {btn(`Pendientes de pago (${nPend})`, filter.ver === "pendientes", () => setVer("pendientes"), "Lo que Tesorería tiene por pagar")}
             {btn(`Pagadas (${nPag})`, filter.ver === "pagadas", () => setVer("pagadas"), "Las que ya pagó Tesorería")}
             {btn("Ambas", filter.ver === "todas", () => setVer("todas"), "Todas, con las pendientes arriba")}
           </div>
-          {/* Orden */}
+          {/* Orden (el separador va DENTRO para que envuelva junto con el grupo) */}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Orden</span>
+            {sep}
+            <span style={{ fontSize: 10, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5, minWidth: isMobile ? 62 : 0 }}>Orden</span>
             {filter.ver !== "pagadas" && <>
               {btn("Solicitud: la que más espera", listOrden === "solicitud_asc", () => setListOrden("solicitud_asc"), "Por fecha de solicitud, la más antigua primero")}
               {btn("Solicitud: la más nueva", listOrden === "solicitud_desc", () => setListOrden("solicitud_desc"))}
@@ -5138,9 +5161,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             </>}
             {filter.ver === "todas" && btn("Pendientes primero", listOrden === "estado", () => setListOrden("estado"))}
           </div>
+          </div>
           {/* Mes + proyecto + proveedor */}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5, minWidth: 62 }}>Mes</span>
+            <span style={{ fontSize: 10, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5, minWidth: isMobile ? 62 : 0 }}>Mes</span>
             <select value={filter.mes} onChange={e => setFilter(f2 => ({ ...f2, mes: e.target.value }))}
               title={filter.ver === "pagadas" ? "Mes en que se pagó" : "Mes de la solicitud"}
               style={{ padding: "6px 10px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: filter.mes ? "#FFF7ED" : "var(--surface)", fontWeight: filter.mes ? 700 : 400 }}>
@@ -5198,7 +5222,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
                   <StatusBadge status={p.status} />
                   <TreasuryBadge status={p.treasuryStatus} />
-                  <DeliveryBadge status={p.deliveryStatus} />
+                  <DeliveryBadge status={
+                    // Entregado por Logística pero sin ficha → lo que falta es la ficha.
+                    p.deliveryStatus === "pendiente_entrega" && despachos.some(d => d.sourcePurchaseId === p.id && d.estado !== "cancelado" && (d.estado === "entregado" || d.estado === "cerrado"))
+                      ? "pendiente_ficha" : p.deliveryStatus
+                  } />
                 </div>
               </td>
               <td style={TD}><Badge color={cc.color}>{p.projectCode}</Badge></td>
@@ -5313,11 +5341,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // Sin emojis (rediseño 31-ago): pestañas de texto limpio, estilo IST.
   const allNav = [
     { id: "dashboard", label: "Dashboard" },
+    { id: "list", label: "Solicitudes" },   // 2ª pestaña (3-sep, pedido de Gerson)
     // "costos" se retiró (31-ago, pedido de Gerson: "es lo mismo que el
     // Dashboard y nos quita espacio") — el Reporte ejecutivo PDF se genera
     // desde el Dashboard. renderCostos queda sin pestaña.
     { id: "resumen", label: "Supply Chain" },
-    { id: "list", label: "Solicitudes" },
     { id: "projects", label: "Proyectos" },
     { id: "ana", label: "Por coordinar" },
     { id: "entregas", label: "Entregas de proveedor" },
@@ -5347,7 +5375,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     : userRole;
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
-  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: "#F4F4F2", color: CHARCOAL }}>
+  return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: "#F7F7F5", color: CHARCOAL }}>
     {/* Sistema visual compartido (tokens + clases gt-*). ⚠ SIN `precedence`. */}
     <style>{GT_CSS}</style>
     {/* Manchas de brillo (fixed, z0): sin ellas el backdrop-filter del vidrio
