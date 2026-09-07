@@ -1606,12 +1606,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const [dashAnim, setDashAnim] = useState(reduceMotion);
   useEffect(() => {
     if (reduceMotion) { setDashAnim(true); return; }   // sin animación: nacen cargados
-    if (sec !== "dashboard") { setDashAnim(false); return; }
+    if (sec !== "dashboard" || !loaded) { setDashAnim(false); return; }
+    // `loaded` en las deps: al entrar desde el panel, el módulo muestra
+    // "Cargando…" primero — si el flip a true pasaba antes de que existieran
+    // las tarjetas, nacían ya al 100% y "no cargaban" (pedido 3-sep).
     setDashAnim(false);
-    const t = setTimeout(() => setDashAnim(true), 120);
+    const t = setTimeout(() => setDashAnim(true), 160);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sec]);
+  }, [sec, loaded]);
 
   useEffect(() => {
     (async () => {
@@ -2897,7 +2900,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
   // Pantalla de carga con el MISMO fondo del sistema (antes era beige y
   // "parpadeaba" entre el panel y el módulo, rompiendo la entrada smooth).
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F7F7F5", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoShopping…</div>;
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoShopping…</div>;
 
   // PurchaseFormImpl y PaymentFormImpl viven a nivel de modulo (final del archivo).
   // NO definir aqui — la identidad del componente cambiaria en cada render del padre
@@ -3631,7 +3634,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       <div className="gt-label" style={{ color: "var(--text-3)", marginBottom: 14 }}>{txt}</div>
     );
     const pill = (txt, activo, onClick, title) => (
-      <button key={txt} onClick={onClick} title={title} style={{ padding: "7px 14px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? ORANGE : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
+      <button key={txt} onClick={onClick} title={title} style={{ padding: "7px 14px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
     );
     const puntoLeyenda = (color, txt) => (
       <span key={txt} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: "var(--text-2)" }}>
@@ -4233,14 +4236,17 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   //   esperando_pago → por_coordinar → en_logistica → con_proveedor
   //   → falta_ficha → por_cerrar → cerrada
   // ═══════════════════════════════════════════════════════════════════════
+  // Semáforo del sistema (3-sep): gris = esperando pago · naranja = acción de
+  // Compras · azul = en camino · amarillo = falta un documento · verde = cerrada.
+  // `bar` es el color sólido de las barritas segmentadas de las ventanitas.
   const ETAPAS = [
-    { k: "esperando_pago", label: "Esperando pago",     icon: "🟡", color: "#B45309", quien: "Lic. Carolina" },
-    { k: "por_coordinar",  label: "Por coordinar",      icon: "🟠", color: "#E8762D", quien: "Ana / Compras" },
-    { k: "en_logistica",   label: "En logística",       icon: "🚚", color: "#0891B2", quien: "Logística" },
-    { k: "con_proveedor",  label: "Con el proveedor",   icon: "🏪", color: "#0F766E", quien: "Ana / Compras" },
-    { k: "falta_ficha",    label: "Falta ficha firmada", icon: "📋", color: "#DC2626", quien: "Logística" },
-    { k: "por_cerrar",     label: "Por cerrar con conta", icon: "🧾", color: "#7C3AED", quien: "Responsable de cierre" },
-    { k: "cerrada",        label: "Cerrada",            icon: "✅", color: "#059669", quien: "—" },
+    { k: "esperando_pago", label: "Esperando pago",      ...C_GRIS,     bar: "#B9B3AA", quien: "Lic. Carolina" },
+    { k: "por_coordinar",  label: "Por coordinar",       color: "#C75F1F", bg: "rgba(232,118,45,.14)", bar: "#E8762D", quien: "Ana / Compras" },
+    { k: "en_logistica",   label: "En logística",        ...C_AZUL,     bar: "#4A86D8", quien: "Logística" },
+    { k: "con_proveedor",  label: "Con el proveedor",    ...C_AZUL,     bar: "#8FB4E8", quien: "Ana / Compras" },
+    { k: "falta_ficha",    label: "Falta ficha firmada", ...C_AMARILLO, bar: "#E4B94A", quien: "Logística" },
+    { k: "por_cerrar",     label: "Por cerrar con conta", ...C_AMARILLO, bar: "#8A5A00", quien: "Responsable de cierre" },
+    { k: "cerrada",        label: "Cerrada",             ...C_VERDE_2,  bar: "#3E9E6B", quien: "—" },
   ];
   const ETAPA = Object.fromEntries(ETAPAS.map(e => [e.k, e]));
 
@@ -4313,13 +4319,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     // `base`: todo lo que pasa los filtros MENOS el de etapa. Las tarjetas y el
     // ranking se calculan sobre esto, así al filtrar por una etapa las demás
     // siguen mostrando su conteo y se puede saltar entre ellas.
-    const base = cp.map(x => {
+    // `base0`: todo MENOS proyecto y etapa — alimenta las ventanitas por
+    // proyecto (si filtraran por proyecto, al elegir uno desaparecerían las demás).
+    const base0 = cp.map(x => {
       const e = etapaDe(x);
       if (!e) return null;
       return { x, ...e, dias: diasDesde(e.desde), cfg: ETAPA[e.k] };
     }).filter(Boolean)
       .filter(r => scVerCerradas || r.k !== "cerrada" || scEtapa === "cerrada")
-      .filter(r => !scProy || (r.x.projectCode || "SIN PROYECTO") === scProy)
       .filter(r => !scQuien || String(r.quien).toLowerCase().includes(scQuien.toLowerCase()))
       .filter(r => enRango(r.x))
       .filter(r => {
@@ -4327,15 +4334,18 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         const t = scQ.trim().toLowerCase();
         return [r.x.codigo, r.x.provider, r.x.description, r.x.projectCode].some(v => String(v || "").toLowerCase().includes(t));
       });
+    const base = base0.filter(r => !scProy || (r.x.projectCode || "SIN PROYECTO") === scProy);
     // La TABLA sí respeta el filtro de etapa.
     const filas = scEtapa ? base.filter(r => r.k === scEtapa) : base;
 
-    // Semáforo de atraso: verde ≤3 días, ámbar 4-7, rojo >7 en la MISMA etapa.
+    // Semáforo de atraso (paleta 3-sep): gris ≤3 días, amarillo 4-7, naranja >7 en la MISMA etapa.
+    // `c` es el color del PUNTO (el texto va en carbón): así la columna Días no
+    // repite los mismos pares color/bg de la etapa vecina.
     const sem = (dias, k) => {
-      if (k === "cerrada" || dias == null) return { c: "#94A3B8", bg: "#F1F5F9", txt: dias == null ? "—" : `${dias}d` };
-      if (dias <= 3) return { c: "#059669", bg: "#DCFCE7", txt: `${dias}d` };
-      if (dias <= 7) return { c: "#B45309", bg: "#FEF3C7", txt: `${dias}d` };
-      return { c: "#B91C1C", bg: "#FEE2E2", txt: `${dias}d` };
+      if (k === "cerrada" || dias == null) return { c: "#C9C3BA", txt: dias == null ? "—" : `${dias}d` };
+      if (dias <= 3) return { c: "#8C857D", txt: `${dias}d` };
+      if (dias <= 7) return { c: "#E4B94A", txt: `${dias}d` };
+      return { c: "#E8762D", txt: `${dias}d` };
     };
 
     const ordenadas = filas.slice().sort((a, b) => {
@@ -4370,143 +4380,192 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     });
     const ranking = Object.entries(porQuien).map(([quien, v]) => ({ quien, ...v })).sort((a, b) => b.dias - a.dias).slice(0, 5);
 
-    const proyOpts = [...new Set(cp.map(x => x.projectCode || "SIN PROYECTO"))].sort();
     // El mes seleccionado SIEMPRE está entre las opciones: si no, el <select>
     // se veía en "Todos los meses" mientras filtraba a un mes vacío.
     const mesesOpts = [...new Set([...cp.map(x => fEje(x).slice(0, 7)).filter(Boolean), ...(scMes ? [scMes] : [])])].sort().reverse();
     const mesLabel = (m) => { const [y, mm] = m.split("-").map(Number); const t = new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
     const totalAtascado = base.filter(r => r.k !== "cerrada").reduce((sm, r) => sm + (Number(r.x.amount) || 0), 0);
-    const chip = (txt, activo, onClick) => <button onClick={onClick} style={{ padding: "5px 12px", borderRadius: 20, border: "none", background: activo ? "#E8762D" : "#F1F5F9", color: activo ? "#fff" : "#475569", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{txt}</button>;
+    const enProceso = base.filter(r => r.k !== "cerrada").length;
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Encabezado */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: CHARCOAL }}>🔗 Supply Chain</div>
-          <div style={{ fontSize: 12, color: STONE, marginTop: 2 }}>Dónde está parada cada compra, desde cuándo y de quién es la pelota. El reloj arranca en la <b>fecha de pago</b>.</div>
+    // ── Ventanitas por proyecto (sobre base0: no desaparecen al elegir una) ──
+    const porProy = {};
+    base0.forEach(r => {
+      const k = r.x.projectCode || "SIN PROYECTO";
+      const t = (porProy[k] = porProy[k] || { k, n: 0, monto: 0, montoCerradas: 0, etapas: {}, maxDias: 0 });
+      t.n++;
+      // El monto grande es SIN cerrar (igual que el total de la tira); lo
+      // cerrado se guarda aparte para el tooltip con "ver cerradas".
+      if (r.k === "cerrada") t.montoCerradas += Number(r.x.amount) || 0; else t.monto += Number(r.x.amount) || 0;
+      t.etapas[r.k] = (t.etapas[r.k] || 0) + 1;
+      if (r.k !== "cerrada") t.maxDias = Math.max(t.maxDias, r.dias ?? 0);
+    });
+    const ventanitas = Object.values(porProy).sort((a, b) => (b.monto + b.montoCerradas) - (a.monto + a.montoCerradas));
+    // Si el proyecto elegido ya no aparece con estos filtros (cambiaste de
+    // mes, por ejemplo), no atenuar a las demás: quedaba todo al 55% sin
+    // ninguna activa. El chip "Proyecto: X ×" del filtro permite salir.
+    const proyVisible = !!porProy[scProy];
+
+    // ── UI (rediseño 3-sep: sin título, filtro compacto, ventanitas de vidrio
+    //    por proyecto, etapas como chips del semáforo, tabla en vidrio) ──
+    const pill = (txt, activo, onClick, title) => (
+      <button key={txt} onClick={onClick} title={title} style={{ padding: "5px 11px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
+    );
+    const inputSt = { padding: "5px 10px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12, fontFamily: "inherit", background: "var(--surface)", color: "var(--text)" };
+    const labelSt = { fontSize: 10, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5 };
+    const sep = !isMobile && <div aria-hidden style={{ width: 1, height: 22, background: "var(--hairline)", margin: "0 4px" }} />;
+    // Cada grupo del filtro envuelve junto (el separador es su borde izquierdo).
+    const grupoSt = { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", ...(isMobile ? {} : { borderLeft: "1px solid var(--hairline)", paddingLeft: 12 }) };
+    const hayFiltros = scEtapa || scProy || scQuien || scQ || scModo !== "todo";
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* FILTRO compacto (una fila que envuelve) */}
+      <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "9px 16px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={labelSt}>Pagadas en</span>
+        {pill("Todo", scModo === "todo", () => setScModo("todo"))}
+        {pill("Por mes", scModo === "mes", () => setScModo("mes"))}
+        {pill("Por semana", scModo === "semana", () => setScModo("semana"))}
+        {pill("Rango", scModo === "rango", () => setScModo("rango"))}
+        {scModo === "mes" && <select value={scMes} onChange={e => setScMes(e.target.value)} style={inputSt}>
+          <option value="">Todos los meses</option>
+          {mesesOpts.map(m => <option key={m} value={m}>{mesLabel(m)}</option>)}
+        </select>}
+        {scModo === "semana" && <input type="date" value={scSemana} onChange={e => setScSemana(e.target.value)} title="Semana que arranca ese día (7 días)" style={inputSt} />}
+        {scModo === "rango" && <>
+          <input type="date" value={scDesde} onChange={e => setScDesde(e.target.value)} style={inputSt} />
+          <span style={{ color: "var(--text-3)" }}>→</span>
+          <input type="date" value={scHasta} onChange={e => setScHasta(e.target.value)} style={inputSt} />
+        </>}
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 10.5, fontWeight: 800, color: STONE, textTransform: "uppercase", letterSpacing: 0.5 }}>Ordenar:</span>
-          {chip("📅 Fecha de pago", scOrden === "pago", () => setScOrden("pago"))}
-          {chip("🔥 Más atrasadas", scOrden === "atraso", () => setScOrden("atraso"))}
+        <div style={grupoSt}>
+        <input value={scQ} onChange={e => setScQ(e.target.value)} placeholder="Buscar código, proveedor, material…" style={{ ...inputSt, flex: "0 1 230px", minWidth: 150 }} />
+        {scProy && <button onClick={() => setScProy("")} title="Quitar filtro de proyecto" style={{ ...inputSt, cursor: "pointer", fontWeight: 700, color: "var(--naranja-texto-chico)" }}>Proyecto: {scProy} ×</button>}
+        {scQuien && <button onClick={() => setScQuien("")} title="Quitar filtro de responsable" style={{ ...inputSt, cursor: "pointer", fontWeight: 700, color: "var(--naranja-texto-chico)" }}>Responsable: {scQuien} ×</button>}
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-2)", cursor: "pointer", whiteSpace: "nowrap" }}>
+          <input type="checkbox" checked={scVerCerradas} onChange={e => { setScVerCerradas(e.target.checked); if (!e.target.checked && scEtapa === "cerrada") setScEtapa(""); }} style={{ cursor: "pointer", accentColor: ORANGE }} />
+          ver cerradas
+        </label>
+        </div>
+        <div style={grupoSt}>
+        <span style={labelSt}>Ordenar</span>
+        {pill("Fecha de pago", scOrden === "pago", () => setScOrden("pago"), "Lo más reciente arriba")}
+        {pill("Más atrasadas", scOrden === "atraso", () => setScOrden("atraso"), "Más días en la misma etapa primero")}
+        {hayFiltros && <button onClick={() => { setScEtapa(""); setScProy(""); setScQuien(""); setScQ(""); setScModo("todo"); }} title="Quita todos los filtros, incluido el de fecha" style={{ ...inputSt, cursor: "pointer", fontWeight: 700, color: "var(--text-2)" }}>Limpiar</button>}
         </div>
       </div>
 
-      {/* Filtros de tiempo */}
-      <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 10.5, fontWeight: 800, color: STONE, textTransform: "uppercase", letterSpacing: 0.5 }}>Pagadas en:</span>
-          {chip("Todo", scModo === "todo", () => setScModo("todo"))}
-          {chip("Por mes", scModo === "mes", () => setScModo("mes"))}
-          {chip("Por semana", scModo === "semana", () => setScModo("semana"))}
-          {chip("Rango libre", scModo === "rango", () => setScModo("rango"))}
-          {scModo === "mes" && <select value={scMes} onChange={e => setScMes(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }}>
-            <option value="">Todos los meses</option>
-            {mesesOpts.map(m => <option key={m} value={m}>{mesLabel(m)}</option>)}
-          </select>}
-          {scModo === "semana" && <>
-            <input type="date" value={scSemana} onChange={e => setScSemana(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }} />
-            <span style={{ fontSize: 11, color: STONE }}>semana que arranca ese día (7 días)</span>
-          </>}
-          {scModo === "rango" && <>
-            <input type="date" value={scDesde} onChange={e => setScDesde(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }} />
-            <span style={{ color: STONE }}>→</span>
-            <input type="date" value={scHasta} onChange={e => setScHasta(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }} />
-          </>}
+      {/* RESUMEN: dinero en la cadena + etapas como chips clickeables */}
+      <div className="gt-vidrio" style={{ padding: "12px 18px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ font: "800 clamp(17px,1.5vw,21px)/1.1 var(--display)", letterSpacing: "-.01em", color: "var(--text)", whiteSpace: "nowrap" }}>{fmtL(totalAtascado)}</div>
+          <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 10 }}>{enProceso} compra{enProceso !== 1 ? "s" : ""} sin cerrar{scProy ? ` · ${scProy}` : ""}</div>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <select value={scProy} onChange={e => setScProy(e.target.value)} style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }}>
-            <option value="">Todos los proyectos</option>
-            {proyOpts.map(p2 => <option key={p2} value={p2}>{p2}</option>)}
-          </select>
-          <input value={scQuien} onChange={e => setScQuien(e.target.value)} placeholder="👤 Responsable…" style={{ padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", width: 150 }} />
-          <input value={scQ} onChange={e => setScQ(e.target.value)} placeholder="🔍 Código, proveedor, material…" style={{ flex: 1, minWidth: 180, padding: "6px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit" }} />
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: STONE, cursor: "pointer", whiteSpace: "nowrap" }}>
-            <input type="checkbox" checked={scVerCerradas} onChange={e => { setScVerCerradas(e.target.checked); if (!e.target.checked && scEtapa === "cerrada") setScEtapa(""); }} style={{ cursor: "pointer", accentColor: "#059669" }} />
-            ver cerradas
-          </label>
-          {(scEtapa || scProy || scQuien || scQ || scModo !== "todo") && <Btn small variant="ghost" onClick={() => { setScEtapa(""); setScProy(""); setScQuien(""); setScQ(""); setScModo("todo"); }} title="Quita todos los filtros, incluido el de fecha">Limpiar todo</Btn>}
+        {sep}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flex: 1 }}>
+          {ETAPAS.filter(e => e.k !== "cerrada" || scVerCerradas).map(e => {
+            const t = porEtapa[e.k] || { n: 0, monto: 0, atrasadas: 0 };
+            const activo = scEtapa === e.k;
+            return <button key={e.k} aria-pressed={activo} onClick={() => setScEtapa(activo ? "" : e.k)} title={`${fmtL(t.monto)}${t.atrasadas ? ` · ${t.atrasadas} con más de 7 días` : ""}`}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, border: `1px solid ${activo ? e.color : "var(--hairline)"}`, background: activo ? e.bg : "var(--surface)", color: activo ? e.color : "var(--text-2)", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+              <span style={{ width: 8, height: 8, borderRadius: 3, background: e.bar, flexShrink: 0 }} />
+              {e.label} <b style={{ color: activo ? e.color : "var(--text)" }}>{t.n}</b>
+              {t.atrasadas > 0 && <span style={{ fontSize: 10, fontWeight: 800, color: "var(--naranja-texto-chico)" }}>· {t.atrasadas} +7d</span>}
+            </button>;
+          })}
         </div>
       </div>
 
-      {/* Etapas: click para filtrar */}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        {ETAPAS.filter(e => e.k !== "cerrada" || scVerCerradas).map(e => {
-          const t = porEtapa[e.k] || { n: 0, monto: 0, atrasadas: 0 };
-          const activo = scEtapa === e.k;
-          return <div key={e.k} onClick={() => setScEtapa(activo ? "" : e.k)}
-            style={{ flex: 1, minWidth: 148, background: activo ? e.color + "12" : "#fff", border: `1px solid ${activo ? e.color : BORDER}`, borderTop: `3px solid ${e.color}`, borderRadius: 12, padding: "11px 13px", cursor: "pointer" }}>
-            <div style={{ fontSize: 10, fontWeight: 800, color: STONE, textTransform: "uppercase", letterSpacing: 0.4 }}>{e.icon} {e.label}</div>
-            <div style={{ fontSize: 23, fontWeight: 800, color: e.color, marginTop: 3 }}>{t.n}</div>
-            <div style={{ fontSize: 11, color: "#475569", fontWeight: 700 }}>{fmtL(t.monto)}</div>
-            <div style={{ fontSize: 10, color: t.atrasadas ? "#B91C1C" : "#94A3B8", fontWeight: t.atrasadas ? 800 : 400, marginTop: 2 }}>
-              {t.atrasadas ? `⚠ ${t.atrasadas} con más de 7 días` : "al día"}
+      {/* VENTANITAS por proyecto: click = ver dónde está parada cada solicitud */}
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 150 : 172}px, 1fr))`, gap: 10 }}>
+        {ventanitas.map(v => {
+          const activo = scProy === v.k;
+          const nEtapa = scEtapa ? (v.etapas[scEtapa] || 0) : v.n;
+          const tip = activo ? "Click para ver todos los proyectos"
+            : scEtapa ? `${nEtapa} en ${ETAPA[scEtapa]?.label} (de ${v.n} en cadena) — click para verlas`
+            : `Ver las ${v.n} compras de ${v.k}`;
+          return <div key={v.k} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} aria-pressed={activo}
+            onClick={() => setScProy(activo ? "" : v.k)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setScProy(activo ? "" : v.k); } }}
+            title={tip}
+            style={{ padding: "12px 14px", cursor: "pointer", minWidth: 0, outline: activo ? `2px solid ${ORANGE}` : undefined, outlineOffset: -1, opacity: scProy && proyVisible && !activo ? 0.88 : 1, transition: "opacity var(--mov-base) var(--curva), box-shadow var(--mov-base) var(--curva), transform var(--mov-base) var(--curva)" }}>
+            <div style={{ font: "700 10px/1.3 var(--mono)", color: activo ? "var(--naranja-texto-chico)" : "var(--text-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={v.k}>{v.k}</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginTop: 6 }}>
+              <div style={{ font: "800 19px/1.1 var(--display)", color: "var(--text)" }} title={scEtapa ? `${nEtapa} en ${ETAPA[scEtapa]?.label} · ${v.n} en total` : `${v.n} compras en cadena`}>
+                {scEtapa ? nEtapa : v.n}{scEtapa && <span style={{ font: "600 10px/1 var(--sans)", color: "var(--text-3)", marginLeft: 4 }}>de {v.n}</span>}
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={v.montoCerradas > 0 ? `sin cerrar · además ${fmtL(v.montoCerradas)} ya cerradas` : "sin cerrar"}>{fmtL(v.monto)}</div>
+            </div>
+            <div style={{ display: "flex", gap: 1, height: 6, borderRadius: 4, overflow: "hidden", marginTop: 8, background: "rgba(44,42,40,.06)", filter: scProy && proyVisible && !activo ? "saturate(.25)" : "none", transition: "filter var(--mov-base)" }}>
+              {ETAPAS.map(e => v.etapas[e.k] ? <div key={e.k} title={`${e.label}: ${v.etapas[e.k]}`} style={{ flex: v.etapas[e.k], background: e.bar, opacity: scEtapa && e.k !== scEtapa ? 0.28 : 1, transition: "opacity var(--mov-base)" }} /> : null)}
+            </div>
+            <div style={{ fontSize: 10, marginTop: 6, fontWeight: v.maxDias > 7 ? 800 : 500, color: v.maxDias > 7 ? "var(--naranja-texto-chico)" : "var(--text-3)" }}>
+              {v.maxDias > 7 ? `${v.maxDias}d la más parada` : v.maxDias > 3 ? `${v.maxDias}d la más parada` : "al día"}
             </div>
           </div>;
         })}
+        {ventanitas.length === 0 && <div style={{ gridColumn: "1 / -1", fontSize: 12.5, color: "var(--text-3)", fontStyle: "italic", padding: "10px 4px" }}>Nada en la cadena con estos filtros.</div>}
       </div>
 
-      {/* Dinero atascado + ranking de atraso */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 240, background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: "13px 16px" }}>
-          <div style={{ fontSize: 10.5, fontWeight: 800, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5 }}>💰 Dinero en la cadena (sin cerrar)</div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: "#B45309", marginTop: 3 }}>{fmtL(totalAtascado)}</div>
-          <div style={{ fontSize: 11.5, color: "#78350F" }}>{base.filter(r => r.k !== "cerrada").length} compra(s) en proceso</div>
-        </div>
-        <div style={{ flex: 2, minWidth: 300, background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "13px 16px" }}>
-          <div style={{ fontSize: 10.5, fontWeight: 800, color: STONE, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>🔔 A quién hay que apurar (más de 3 días parado)</div>
-          {ranking.length === 0
-            ? <div style={{ fontSize: 12.5, color: "#059669", fontWeight: 700 }}>✓ Nadie con atrasos — la cadena va al día.</div>
-            : ranking.map(r => <div key={r.quien} onClick={() => setScQuien(r.quien)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #F1F5F9", cursor: "pointer", fontSize: 12.5 }}>
-                <span style={{ fontWeight: 700, color: CHARCOAL }}>{r.quien}</span>
-                <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <span style={{ color: "#64748b" }}>{r.n} compra{r.n !== 1 ? "s" : ""}</span>
-                  <span style={{ color: "#059669", fontWeight: 700 }}>{fmtL(r.monto)}</span>
-                  <span style={{ background: "#FEE2E2", color: "#B91C1C", fontWeight: 800, borderRadius: 6, padding: "1px 8px" }}>{r.dias}d acum.</span>
-                </span>
-              </div>)}
-        </div>
-      </div>
+      {/* A QUIÉN APURAR — una tira, solo si hay atrasos */}
+      {ranking.length > 0 && <div className="gt-vidrio" style={{ padding: "9px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={labelSt}>A quién apurar</span>
+        <span style={{ fontSize: 10, color: "var(--text-3)" }}>(más de 3 días parado)</span>
+        {ranking.map(r => {
+          const activo = scQuien === r.quien;
+          return <button key={r.quien} aria-pressed={activo} onClick={() => setScQuien(activo ? "" : r.quien)} title={`${fmtL(r.monto)} en ${r.n} compra${r.n !== 1 ? "s" : ""} — click para filtrar`}
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 11px", borderRadius: 999, border: `1px solid ${activo ? ORANGE : "var(--hairline)"}`, background: activo ? "rgba(232,118,45,.12)" : "var(--surface)", color: "var(--text)", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+            {r.quien}
+            <span style={{ color: "var(--text-3)", fontWeight: 600 }}>{r.n} compra{r.n !== 1 ? "s" : ""}</span>
+            <span style={{ color: "var(--naranja-texto-chico)", fontWeight: 800 }}>{r.dias}d acum.</span>
+          </button>;
+        })}
+      </div>}
 
-      {/* Tabla */}
-      {ordenadas.length === 0
-        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 50, textAlign: "center", color: "#94A3B8" }}>
-            <div style={{ fontSize: 34, marginBottom: 8 }}>🔗</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: CHARCOAL }}>Nada que mostrar con estos filtros</div>
+      {/* TABLA: dónde está parada cada solicitud */}
+      <div className="gt-vidrio" style={{ overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, padding: "14px 18px 10px", flexWrap: "wrap" }}>
+          <div className="gt-label" style={{ color: "var(--text-3)" }}>{scProy ? `${scProy} — dónde está parada cada solicitud` : "Todas las compras en cadena"}{scEtapa ? ` · ${ETAPA[scEtapa]?.label}` : ""}</div>
+          <div style={{ fontSize: 11, color: "var(--text-3)", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <span>{ordenadas.length} compra{ordenadas.length !== 1 ? "s" : ""} · días en la misma etapa:</span>
+            <span style={{ fontWeight: 800, color: "#6E6862" }}>≤3 al día</span>
+            <span style={{ fontWeight: 800, color: C_AMARILLO.color }}>4-7 ojo</span>
+            <span style={{ fontWeight: 800, color: "#C75F1F" }}>+7 apurar</span>
+            <span>· click en una fila = detalle</span>
           </div>
-        : <div style={{ overflowX: "auto", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-              <thead><tr style={{ background: "#F1F5F9" }}>
-                {["Etapa", "Días", "Código", "Proyecto", "Proveedor", "Qué se compró", "Monto", "Pagada", "De quién depende"].map(h => (
-                  <th key={h} style={{ textAlign: h === "Monto" ? "right" : "left", padding: "9px 12px", fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>))}
-              </tr></thead>
-              <tbody>
-                {ordenadas.map(r => {
-                  const sm = sem(r.dias, r.k);
-                  return <tr key={r.x.id} onClick={() => setModal({ t: "detail", d: r.x })} style={{ borderTop: "1px solid #F1F5F9", cursor: "pointer" }}>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
-                      <span style={{ background: r.cfg.color + "18", color: r.cfg.color, borderRadius: 7, padding: "3px 9px", fontSize: 11, fontWeight: 800 }}>{r.cfg.icon} {r.cfg.label}</span>
-                    </td>
-                    <td style={{ padding: "8px 12px" }}>
-                      <span style={{ background: sm.bg, color: sm.c, borderRadius: 6, padding: "2px 8px", fontWeight: 800, fontSize: 11.5 }}>{sm.txt}</span>
-                    </td>
-                    <td style={{ padding: "8px 12px", fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 800, fontSize: 11, color: CHARCOAL, whiteSpace: "nowrap" }}>{r.x.codigo || "—"}</td>
-                    <td style={{ padding: "8px 12px", fontWeight: 600, whiteSpace: "nowrap" }}>{r.x.projectCode || "—"}</td>
-                    <td style={{ padding: "8px 12px", fontWeight: 700 }}>{r.x.provider}</td>
-                    <td style={{ padding: "8px 12px", color: "#475569", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(r.x.description || "").slice(0, 70)}</td>
-                    <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(r.x.amount)}</td>
-                    <td style={{ padding: "8px 12px", color: "#64748b", whiteSpace: "nowrap" }}>{fpago(r.x) ? new Date(fpago(r.x) + "T12:00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short" }) : "sin pagar"}</td>
-                    <td style={{ padding: "8px 12px", fontWeight: 700, color: r.k === "cerrada" ? "#94A3B8" : CHARCOAL, whiteSpace: "nowrap" }}>
-                      {r.quien}
-                      {r.detalle && <div style={{ fontSize: 10, fontWeight: 400, color: "#94A3B8" }}>{String(r.detalle).slice(0, 26)}</div>}
-                    </td>
-                  </tr>;
-                })}
-              </tbody>
-            </table>
-          </div>}
-      <div style={{ fontSize: 11, color: STONE, textAlign: "center" }}>
-        {ordenadas.length} compra(s) · semáforo por días en la MISMA etapa: <b style={{ color: "#059669" }}>≤3 al día</b> · <b style={{ color: "#B45309" }}>4-7 ojo</b> · <b style={{ color: "#B91C1C" }}>+7 hay que apurar</b> · click en una fila para ver el detalle completo
+        </div>
+        {ordenadas.length === 0
+          ? <div style={{ padding: "34px 18px", textAlign: "center", color: "var(--text-faint)", fontSize: 13 }}>Nada que mostrar con estos filtros.</div>
+          : <div style={{ overflowX: "auto", paddingBottom: 8, scrollbarWidth: "thin" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead><tr style={{ background: "rgba(44,42,40,.06)", borderBottom: "1px solid rgba(44,42,40,.10)" }}>
+                  {["Etapa", "Días", "Código", "Proyecto", "Proveedor", "Qué se compró", "Monto", "Pagada", "De quién depende"].map(h => (
+                    <th key={h} style={{ textAlign: h === "Monto" ? "right" : "left", padding: "9px 12px", fontSize: 10, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>))}
+                </tr></thead>
+                <tbody>
+                  {ordenadas.map(r => {
+                    const sm = sem(r.dias, r.k);
+                    return <tr key={r.x.id} onClick={() => setModal({ t: "detail", d: r.x })} style={{ borderTop: "1px solid rgba(44,42,40,.05)", cursor: "pointer" }}>
+                      <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
+                        <span style={{ background: r.cfg.bg, color: r.cfg.color, borderRadius: 999, padding: "3px 10px", fontSize: 11, fontWeight: 800 }}>{r.cfg.label}</span>
+                      </td>
+                      <td style={{ padding: "8px 12px" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 800, fontSize: 11.5, color: "var(--text)" }}><span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: sm.c, flexShrink: 0 }} />{sm.txt}</span>
+                      </td>
+                      <td style={{ padding: "8px 12px", fontFamily: "var(--mono)", fontWeight: 800, fontSize: 11, color: "var(--text)", whiteSpace: "nowrap" }}>{r.x.codigo || "—"}</td>
+                      <td style={{ padding: "8px 12px", fontWeight: 600, color: "var(--text-2)", whiteSpace: "nowrap" }}>{r.x.projectCode || "—"}</td>
+                      <td style={{ padding: "8px 12px", fontWeight: 700, color: "var(--text)" }}>{r.x.provider}</td>
+                      <td style={{ padding: "8px 12px", color: "var(--text-2)", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(r.x.description || "").slice(0, 70)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{fmtL(r.x.amount)}</td>
+                      <td style={{ padding: "8px 12px", color: "var(--text-3)", whiteSpace: "nowrap" }}>{fpago(r.x) ? new Date(fpago(r.x) + "T12:00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short" }) : "sin pagar"}</td>
+                      <td style={{ padding: "8px 12px", fontWeight: 700, color: r.k === "cerrada" ? "var(--text-3)" : "var(--text)", whiteSpace: "nowrap" }}>
+                        {r.quien}
+                        {r.detalle && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--text-3)" }}>{String(r.detalle).slice(0, 26)}</div>}
+                      </td>
+                    </tr>;
+                  })}
+                </tbody>
+              </table>
+            </div>}
       </div>
     </div>;
   };
@@ -5118,7 +5177,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           lleva más esperando), mirando pagadas importa la fecha de pago. */}
       {(() => {
         const btn = (txt, activo, onClick, title) => (
-          <button onClick={onClick} title={title} style={{ padding: "5px 11px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? "#E8762D" : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
+          <button onClick={onClick} title={title} style={{ padding: "5px 11px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
         );
         const nPend = cp.filter(x => !esPagada(x)).length;
         const nPag = cp.filter(x => esPagada(x)).length;
@@ -5198,7 +5257,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       {/* Tabla */}
       <div className="gt-vidrio" style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead><tr style={{ background: "rgba(44,42,40,.04)" }}>
+          <thead><tr style={{ background: "rgba(44,42,40,.06)", borderBottom: "1px solid rgba(44,42,40,.10)" }}>
             <th style={TH}>Código</th>
             <th style={TH}>Estado</th>
             <th style={TH}>Proyecto</th>
@@ -5375,7 +5434,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     : userRole;
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
-  return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: "#F7F7F5", color: CHARCOAL }}>
+  return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: "#F9F9F8", color: CHARCOAL }}>
     {/* Sistema visual compartido (tokens + clases gt-*). ⚠ SIN `precedence`. */}
     <style>{GT_CSS}</style>
     {/* Manchas de brillo (fixed, z0): sin ellas el backdrop-filter del vidrio

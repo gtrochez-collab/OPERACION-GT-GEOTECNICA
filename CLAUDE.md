@@ -26,10 +26,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   módulos internos NO se tocaron. Piezas:
   - `UI_CSS` (template string montado como `<style>` SOLO en login/bienvenida/
     panel — al entrar a un módulo se desmonta, los módulos usan sus estilos
-    inline): tokens (--marca carbón, --marca-2 #E8762D, --bg #F4F4F2
-    blanco griseito — el beige se retiró el 31-ago: la paleta del rediseño
-    es blanco/gris/naranja/carbón y las manchas de brillo naranja/gris,
-    e0/e1/e2,
+    inline): tokens (--marca carbón, --marca-2 #E8762D, --bg #F9F9F8
+    blanco griseito casi blanco — el beige se retiró el 31-ago y el tono se
+    aclaró dos veces el 3-sep a pedido de Gerson; el `body` de index.html
+    lleva el MISMO valor porque queda expuesto en el fade panel→módulo. La
+    paleta del rediseño es blanco/gris/naranja/carbón y las manchas de
+    brillo naranja/gris, e0/e1/e2,
     --curva cubic-bezier(.32,.72,0,1)), clases `gt-*`, keyframes solo-`from` +
     `fill-mode: backwards`, manchas de brillo 47s/59s (primos), vidrio
     `--v-fondo-foto`, `prefers-reduced-motion` respetado.
@@ -90,8 +92,11 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
     `body` en index.html es #F7F7F5 (= --bg: queda expuesto en el fade). La pantalla "Cargando GeoShopping…"
     usa el fondo del sistema para no parpadear beige.
   - `PanelControl` (componente propio, v2 31-ago): el H1 "Panel de Control"
-    nace centrado XL y viaja a su lugar (una vez por login,
-    `gt-panel-hero-done`; login/logout limpian ambos flags de hero). Header
+    nace centrado XL y viaja a su lugar **CADA VEZ que aparece el panel**
+    (3-sep, pedido de Gerson: "si entrás a un módulo y volvés ya no hacía la
+    transición"): la primera vez por login aguanta 1.5 s y en los regresos
+    0.8 s (`primeraVezRef`, la flag `gt-panel-hero-done` solo distingue
+    primera vez; login/logout la limpian). Header
     estilo IST: [← `volverBienvenida` (borra gt-welcome-done; oculto para
     marcaje)] [tuerquita MenuUsuario] [logo] + usuario a la derecha.
     `PanelCard` en `.gt-vidrio` con iconos SVG de LÍNEA monocromos
@@ -117,7 +122,11 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   compara los 2 últimos meses COMPLETOS — el mes en curso a medias daba
   -99% el día 1). Carga ANIMADA: `dashAnim` (useState + useEffect por
   [sec]) hace crecer barras y dona de 0 a su valor (1.1-1.3s, --curva) al
-  entrar a la pestaña — paleta SOLO naranja/carbón/gris. Selector Por
+  entrar a la pestaña — paleta SOLO naranja/carbón/gris. ⚠ El efecto
+  depende de `[sec, loaded]`: al entrar desde el panel el módulo muestra
+  "Cargando…" y el flip a true pasaba ANTES de que existieran las tarjetas
+  (nacían al 100%, "no cargan") — con `loaded` en las deps se re-dispara al
+  llegar los datos. Selector Por
   mes / **Global** (dashMonth==="global" es valor mágico, solo lo lee
   renderDashboard; Global incluye pagadas viejas SIN paidAt — por mes
   sigue exigiéndolo). Botón "Reporte ejecutivo PDF — <mes>" en el propio
@@ -253,6 +262,37 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   quién cerró, y botones para ver la factura/paquete, re-descargar el PDF y
   reabrir (admin/Ana). Se sacó de "Por cerrar" para que ese tablero quede solo
   con lo pendiente.
+  **SUPPLY CHAIN — presentación v2 (3-sep)**: sin título, filtro compacto
+  en una fila (se quitaron el select de proyecto y el input de
+  responsable), tira resumen (dinero en cadena + etapas como CHIPS
+  clickeables del semáforo), **VENTANITAS `.gt-vidrio` por proyecto**
+  (click = toggle `scProy`; barrita segmentada por etapa con `ETAPAS[].bar`;
+  se calculan sobre `base0` = todos los filtros MENOS proyecto y etapa, para
+  que al elegir una no desaparezcan las demás; `base` = base0 + proyecto),
+  tira "A quién apurar" solo si hay atrasos (click = filtra responsable, el
+  chip "Responsable: X ×" lo quita), tabla en vidrio con título dinámico.
+  ETAPAS recoloreadas al semáforo (gris esperando pago · naranja por
+  coordinar · azul logística/proveedor · amarillo falta ficha/por cerrar ·
+  verde cerrada) sin emojis; `sem()` gris/amarillo/naranja como PUNTO de
+  color + texto carbón (compartía los pares color/bg de la etapa vecina). La
+  lógica de clasificación de abajo NO cambió. Revisión adversarial (7-sep,
+  18 agentes) aplicada: chip "Proyecto: X ×" en el filtro (scProy quedaba
+  pegado a un proyecto que ya no estaba en base0 tras cambiar de mes y solo
+  salías con Limpiar); las demás ventanitas NO se atenúan si la activa ya no
+  existe; con un chip de etapa activo la ventanita muestra "N de M" y atenúa
+  los otros segmentos de su barrita; el monto grande de la ventanita es SIN
+  cerradas (igual que la tira; lo cerrado va al tooltip); foco visible con
+  teclado (`.gt-vidrio[role=button]:focus-visible` en GT_CSS, sin
+  outline:none inline) y `aria-pressed` en ventanitas/chips; leyenda del
+  semáforo de días en el header de la tabla; filtro en 3 grupos con
+  borde izquierdo (los `sep` sueltos quedaban huérfanos al envolver);
+  pills activas con ORANGE_DARK (el naranja puro con texto blanco daba
+  2.97:1 — aplicado también a Dashboard y Solicitudes); token
+  `--naranja-texto-chico` #A94E16 para naranja en texto ≤12px; ventanitas
+  inactivas a .88 + barrita desaturada (al .55 el texto no se leía);
+  `bar` de por_cerrar #8A5A00 (era casi igual a falta_ficha) y gap 1px
+  entre segmentos; anillo del vidrio más marcado (sobre #F9F9F8 el borde
+  desaparecía); thead visible + scroll con paddingBottom.
   **SUPPLY CHAIN (24-ago-2026, reemplaza "Resumen")**: `renderSupplyChain` —
   para ver en 5 s dónde está parada cada compra, desde cuándo y de quién es la
   pelota. `ETAPAS`/`ETAPA` a nivel de módulo; `etapaDe(x)` clasifica en UNA

@@ -10,6 +10,7 @@ export const GT_CSS = `
   --marca:#2C2A28;          /* carbón Geotecnica */
   --marca-2:#E8762D;        /* naranja Geotecnica */
   --naranja-tinta:#C75F1F;  /* acento legible p/ texto grande (el naranja puro es RELLENO) */
+  --naranja-texto-chico:#A94E16; /* para texto naranja de ≤12px: --naranja-tinta no llega a AA ahí */
 
   --display:'Plus Jakarta Sans','Manrope',sans-serif;
   --sans:'Inter',sans-serif;
@@ -20,7 +21,7 @@ export const GT_CSS = `
   --text-3:#6E6862;
   --text-faint:#A39C92;
 
-  --bg:#F7F7F5;             /* ÚNICO fondo de página (blanco griseito — "un tonito más claro, más alegre", 3-sep) */
+  --bg:#F9F9F8;             /* ÚNICO fondo de página (blanco griseito — "otro tonito más claro", 3-sep) */
   --surface:#FFFFFF;
   --sunk:#EFEFED;
   --hairline:rgba(44,42,40,.08);
@@ -67,8 +68,9 @@ export const GT_CSS = `
 
 /* Vidrio glossy sobre fondo claro (tarjetas de bienvenida y panel): brillo
    interior blanco + blur que deja pasar las manchas de color de atrás. */
-.gt-vidrio{background:linear-gradient(165deg,rgba(255,255,255,.86) 0%,rgba(250,250,249,.7) 100%);border:1px solid rgba(255,255,255,.95);border-radius:var(--radio-card);box-shadow:inset 0 1px 0 rgba(255,255,255,1),inset 0 34px 64px -34px rgba(255,255,255,.95),0 0 0 1px rgba(44,42,40,.05),0 12px 30px rgba(44,42,40,.10);-webkit-backdrop-filter:blur(20px) saturate(170%);backdrop-filter:blur(20px) saturate(170%);transition:box-shadow var(--mov-base) var(--curva),transform var(--mov-base) var(--curva)}
-.gt-vidrio-hover:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,1),inset 0 34px 64px -34px rgba(255,255,255,.95),0 0 0 1px rgba(44,42,40,.05),0 18px 42px rgba(44,42,40,.15);transform:translateY(-2px)}
+.gt-vidrio{background:linear-gradient(165deg,rgba(255,255,255,.86) 0%,rgba(250,250,249,.7) 100%);border:1px solid rgba(255,255,255,.95);border-radius:var(--radio-card);box-shadow:inset 0 1px 0 rgba(255,255,255,1),inset 0 34px 64px -34px rgba(255,255,255,.95),0 0 0 1px rgba(44,42,40,.09),0 -1px 0 rgba(44,42,40,.04),0 12px 30px rgba(44,42,40,.10);-webkit-backdrop-filter:blur(20px) saturate(170%);backdrop-filter:blur(20px) saturate(170%);transition:box-shadow var(--mov-base) var(--curva),transform var(--mov-base) var(--curva)}
+.gt-vidrio[role=button]:focus-visible{outline:2px solid var(--marca-2);outline-offset:-1px}
+.gt-vidrio-hover:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,1),inset 0 34px 64px -34px rgba(255,255,255,.95),0 0 0 1px rgba(44,42,40,.09),0 -1px 0 rgba(44,42,40,.04),0 18px 42px rgba(44,42,40,.15);transform:translateY(-2px)}
 
 /* Botón circular del header (volver / tuerquita) */
 .gt-circulo{width:44px;height:44px;border-radius:50%;border:1px solid var(--hairline);background:var(--surface);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;color:var(--text-2);box-shadow:var(--e0);padding:0;transition:box-shadow var(--mov-base) var(--curva),color var(--mov-rapido),transform var(--mov-rapido) var(--curva)}

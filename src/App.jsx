@@ -350,25 +350,25 @@ function TituloHero({ esHero, escala = 1.4, altura = 0.4, children }) {
 }
 
 function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolverBienvenida, saliendo = false }) {
+  // El hero corre CADA VEZ que aparece el panel (3-sep, pedido de Gerson:
+  // "si entrás a un módulo y volvés, ya no hace la transición"). La primera
+  // vez por login aguanta 1.5 s; en los regresos 0.8 s para que ir y venir
+  // entre módulos no se sienta lento. La flag solo distingue primera vez.
+  const primeraVezRef = useRef(true);
   const [fase, setFase] = useState(() => {
-    if (prefiereMenosMovimiento()) {
-      try { sessionStorage.setItem("gt-panel-hero-done", "1"); } catch {}
-      return "lista";
-    }
-    try { return sessionStorage.getItem("gt-panel-hero-done") === "1" ? "lista" : "hero"; } catch { return "lista"; }
+    if (prefiereMenosMovimiento()) return "lista";
+    try { primeraVezRef.current = sessionStorage.getItem("gt-panel-hero-done") !== "1"; } catch {}
+    return "hero";
   });
   useEffect(() => {
     // El botón "Empezar el día" queda al FONDO de la bienvenida en pantallas
     // chicas: sin esto el panel abre scrolleado abajo y el hero no se ve.
     window.scrollTo(0, 0);
-    // La flag se estampa al ARRANCAR el hero (no al terminar): si el usuario
-    // se va a mitad (flecha, F5), no se le repite al volver.
-    if (fase === "hero") { try { sessionStorage.setItem("gt-panel-hero-done", "1"); } catch {} }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    try { sessionStorage.setItem("gt-panel-hero-done", "1"); } catch {}
   }, []);
   useEffect(() => {
     if (fase !== "hero") return;
-    const t = setTimeout(() => setFase("lista"), 1500);
+    const t = setTimeout(() => setFase("lista"), primeraVezRef.current ? 1500 : 800);
     return () => clearTimeout(t);
   }, [fase]);
   const esHero = fase === "hero";
