@@ -57,7 +57,13 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
     carga: un add con todos===null pisaba la lista en la nube), BANDEJA
     (**EN BLANCO a propósito, 31-ago**: va a estar amarrada al mail de cada
     usuario; la versión con contadores de cp-purchases/gc-tardies vivió unas
-    horas — si se retoma, leer SOLO con `store.getCloud`, NUNCA store.get:
+    horas
+    — **TO-DOS con tope de 5 (7-sep, "que no crezca la caja")**: pendientes
+    primero (sort estable), 5 a la vista y chip "+N ver todos" / "Ver
+    menos"; al desplegar la lista SCROLLEA dentro del mismo alto (maxHeight
+    = 5 filas), así la tarjeta nunca cambia de tamaño. `addTodo` abre la
+    lista para que se vea lo recién agregado. Lo demás del párrafo aplica
+    a la BANDEJA: — si se retoma, leer SOLO con `store.getCloud`, NUNCA store.get:
     su re-sync de cache viejo puede ESCRIBIR cp-purchases desde una pantalla
     decorativa) y VERSÍCULO (`VERSICULOS` RVR1960, rota por día). Header:
     tuerquita `MenuUsuario` (popover con Cerrar sesión) + logo a la

@@ -551,6 +551,10 @@ function WelcomeScreen({ user, onStart, onLogout }) {
   const todosKey = `gt-todos-${user.username}`;
   const [todos, setTodos] = useState(null);   // null = cargando
   const [nuevo, setNuevo] = useState("");
+  // Máximo 5 a la vista (7-sep, pedido de Gerson: "que no crezca la caja");
+  // el resto detrás de un chip "+N". Al desplegar, la lista SCROLLEA dentro
+  // del mismo alto — la tarjeta nunca cambia de tamaño.
+  const [todosAbierto, setTodosAbierto] = useState(false);
   useEffect(() => {
     let vivo = true;
     (async () => {
@@ -572,7 +576,15 @@ function WelcomeScreen({ user, onStart, onLogout }) {
     if (!t) return;
     guardarTodos([...todos, { id: Math.random().toString(36).slice(2, 10), txt: t, done: false, at: new Date().toISOString() }]);
     setNuevo("");
+    setTodosAbierto(true);   // que se vea el que acabás de agregar
   };
+
+  // Pendientes primero (sort estable: dentro de cada grupo, el orden original)
+  // — así los 5 visibles son los que faltan, no los ya tachados.
+  const TODOS_VISIBLES = 5;
+  const todosOrden = todos ? todos.slice().sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0)) : null;
+  const todosVista = todosOrden ? (todosAbierto ? todosOrden : todosOrden.slice(0, TODOS_VISIBLES)) : null;
+  const todosOcultos = todosOrden ? Math.max(0, todosOrden.length - TODOS_VISIBLES) : 0;
 
   // BANDEJA (31-ago-2026): va a estar amarrada al mail de cada usuario —
   // por pedido de Gerson queda EN BLANCO hasta que exista ese amarre.
@@ -634,12 +646,14 @@ function WelcomeScreen({ user, onStart, onLogout }) {
           {/* TO-DOS */}
           <div className={`gt-vidrio${!esHero ? " gt-sube" : ""}`} style={{ padding: 24, display: "flex", flexDirection: "column", minHeight: 300 }}>
             {cardTitulo("To-dos")}
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minHeight: 0, overflowY: "auto" }}>
+            {/* Alto TOPE de 5 filas (36px + 8 de gap): con más pendientes la
+                tarjeta se queda igual y la lista scrollea al desplegarse. */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minHeight: 0, maxHeight: 5 * 36 + 4 * 8, overflowY: todosAbierto ? "auto" : "hidden", scrollbarWidth: "thin" }}>
               {todos === null
                 ? <div style={{ color: "var(--text-3)", fontSize: 14 }}>Cargando…</div>
-                : todos.length === 0
+                : todosVista.length === 0
                   ? <div style={{ color: "var(--text-2)", fontSize: 15 }}>Nada pendiente — día redondo.</div>
-                  : todos.map((t) => (
+                  : todosVista.map((t) => (
                     <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 6, minHeight: 36 }}>
                       <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "4px 0" }}>
                         <input type="checkbox" checked={!!t.done} onChange={() => guardarTodos(todos.map((x) => x.id === t.id ? { ...x, done: !x.done } : x))} style={{ width: 18, height: 18, cursor: "pointer", accentColor: "var(--marca-2)", flexShrink: 0 }} />
@@ -649,6 +663,14 @@ function WelcomeScreen({ user, onStart, onLogout }) {
                     </div>
                   ))}
             </div>
+            {todosOcultos > 0 && (
+              <button
+                onClick={() => setTodosAbierto((o) => !o)}
+                aria-expanded={todosAbierto}
+                title={todosAbierto ? "Mostrar solo los primeros 5" : `Ver los ${todosOrden.length} pendientes`}
+                style={{ alignSelf: "flex-start", marginTop: 10, padding: "4px 12px", borderRadius: 999, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--naranja-texto-chico)", font: "800 11.5px/1 var(--sans)", cursor: "pointer", minHeight: 28 }}
+              >{todosAbierto ? "Ver menos" : `+${todosOcultos}  ver todos`}</button>
+            )}
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
               <input
                 className="gt-input"
