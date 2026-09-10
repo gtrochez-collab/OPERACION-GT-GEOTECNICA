@@ -592,6 +592,82 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   ⚠ Forms (ItemFormImpl/ProvFormImpl) viven a NIVEL DE MÓDULO — definirlos
   dentro del componente causa remount y pérdida de estado al subir fotos.
   CartModal/FichaModal se renderizan como llamada `{CartModal()}`, no JSX.
+- `GeoCostModule.jsx` (**GeoCost — Central de Costos por Proyecto, 9-sep-2026**)
+  + `geocost-calc.js` (lógica PURA, sin React ni store) + `geocost-pdf.js`
+  (Ficha de proyecto y Reporte de costos con jsPDF) + `geocost-forms.jsx`
+  (PresupuestoForm / MovilizacionForm / MovilizacionDetalle / AjustesTasa, a
+  nivel de módulo) + `geocost-ui.jsx` (primitivas Input/Select/Btn/Chip/
+  Modal/Vidrio + fmtUSD/fmtL/fmtFecha + colores C_*). Roles: admin, costos,
+  tesoreria, gerencia (solo lectura). Modelo APROBADO por Gerson tras 10
+  preguntas de descubrimiento (no re-litigar): presupuesto en **USD** (así lo
+  pasa el PM), compras en L, UNA tasa global editable en el módulo
+  (`cc-config.tasa`, hoy 27.00; el chip "L 27.00 / $" del header la abre);
+  solo proyectos NUEVOS empezando por VILLA SAN MIGUEL (presupuesto cargado
+  el 9-sep con la `PLANTILLA_VILLA_SAN_MIGUEL`: 14 partidas = $175,075.32);
+  **Comprometido** = solicitud `validado`, **Ejecutado** = `pagado|finalizado`;
+  repuestos caen al proyecto de la solicitud (partida por defecto la de
+  módulo `maquinas`); mano de obra BRUTA con la fórmula de GeoTeam
+  (`calcCostoMOPuro` es PORT FIEL de `calcCostoMO` + HE quincena vencida —
+  `horaLimiteH`/`HORARIOS`/`TOLERANCIA_MIN`/`hoyTegus` están DUPLICADOS como
+  espejo para que Node pueda testear el archivo: **si cambian en HRModule,
+  cambiar acá**); sin cargas patronales, sin contrato marco, sin avance
+  físico (los reportes solo muestran % del presupuesto consumido). La Central
+  NO duplica registros: compras/repuestos/MO se leen en vivo (SOLO
+  `store.getCloud`, nunca `store.get`) y se clasifican por `partidaId`; lo
+  único propio son presupuestos, movilizaciones y la tasa.
+  **Partidas**: `{id, categoria (6 del PM: Generales, Materiales, Personal,
+  Equipos, Servicios subcontratados, Otros), nombre, unidad, cantidad, pu,
+  monto, modulo}` con `modulo` ∈ compras | maquinas | mo | movilizacion |
+  libre (libre aparece en compras Y máquinas). `monto = cantidad×pu` si ambos
+  > 0. Lo que no tiene partida cae a **"Por clasificar"** (cuenta en los
+  totales del proyecto, no en ninguna partida); reclasificar (admin/costos/
+  tesoreria) escribe `partidaId` + audit `partida_reclasificada` en
+  cp-/mq-purchases con getCloud → map por id → set → verify (nunca el array
+  local).
+  **Movilizaciones** (pestaña propia; solo Gerson crea la "Solicitud de
+  fondos" como el correo: origen → destino, renglones Combustible/Peajes/MO
+  conductor/Imprevistos, total, "acreditar a"): Solicitada (gris) → Carolina
+  **Recibida** (azul) → adjunta comprobante (`cc-file-<id>`) → **Acreditada**
+  (verde). Solicitada/Recibida = comprometido; Acreditada = ejecutado.
+  Cancelar/Eliminar solo admin con confirm (eliminar solo solicitada/
+  cancelada). Código `MOV-YYYY-NNNN`.
+  **Vistas**: Dashboard (tira KPI + tarjeta por proyecto con anillo carbón=
+  ejecutado / naranja=comprometido y mini barras por categoría; carga animada
+  `dashAnim` por [sec, loaded]; anillos/barras son FUNCIONES), Proyectos
+  (cajitas → detalle con ficha, Por clasificar, partidas por categoría con
+  barra doble, Movimientos con filtros y Select de reclasificación), botones
+  **Ficha PDF** (réplica de la ficha que Gerson armaba a mano: solución,
+  cliente, código, fechas, barra de duración, maquinaria, materiales
+  recurrentes) y **Reporte PDF** (KPIs, tabla por partida, movimientos).
+  Sobregiro NO bloquea: chips "80 % +" / "Sobregiro" (semaforoDe).
+  **En GeoShopping/GeoMachinery** (solo cuando el proyecto tiene presupuesto
+  activo — si no, el form es IDÉNTICO a antes): Select "Partida del
+  presupuesto *" (optgroup por categoría; el `Select` local ganó soporte de
+  `{group, options}`), línea "Disponible: $ · L", y si el monto (en USD a la
+  tasa) supera el disponible → aviso naranja + `sobregiroJustificacion`
+  obligatoria (≥ 5 chars). El módulo lee cc-presupuestos/cc-config best-effort
+  con getCloud al cargar y en el refresh. DetailView muestra la partida.
+  **Revisión adversarial aplicada (9-sep, 7 lentes + verificación cruzada)**:
+  `sP` de AMBOS módulos RESCATA la reclasificación hecha en GeoCost antes de
+  mergear (si la nube trae entradas de audit `partida_reclasificada` que la
+  fila local no tiene, adopta `partidaId`/`sobregiroJustificacion` y suma esas
+  entradas) — sin eso, el próximo pago de Carolina con la pestaña abierta
+  desde antes borraba la partida en silencio y el verify semántico no lo veía;
+  `cambiarEstadoMov` valida la transición contra el estado REAL de la nube
+  (`DESDE_MOV`) porque los perms se calculan con el estado local del modal;
+  `adjuntarComprobante` ya NO borra el `cc-file-*` si la falla fue del verify
+  y la nube ya lo referencia; el tope de archivo es 2 MB (el empírico de
+  cp-file-*, no 8); `fmtFecha` trata la medianoche UTC como fecha pura (paidAt
+  salía un día antes en Honduras); `movimientosMO` deduplica hr-atts2 por
+  company|periodo|quincena quedándose con `lastSaved` más nuevo (espejo de
+  statsDeMes); partida huérfana (borrada del presupuesto) ya no pasa la
+  validación ni finge sobregiro, y un presupuesto sin partidas elegibles para
+  ese módulo NO bloquea el form; `customProjects` viaja al cálculo del
+  disponible (alias legacy tipo PLANTEL mezclaban proyectos); la duración es
+  la misma en pantalla, form y PDF (9-sep→14-oct = 35 días); las raíces de
+  sección de GeoCost llevan `gridTemplateColumns: minmax(0,1fr)` (la tabla de
+  Movimientos estiraba TODA la vista a 1124px en el teléfono); `cc-file-` se
+  agregó a SKIP_LOCAL_PREFIXES y EVICTION_PRIORITY_PREFIXES de supabase.js.
 - `GeoDrillVault.jsx`, `projects.js` (base + helpers), `holidays.js`, `theme.js`,
   `gt-ui.js` (GT_CSS: tokens + clases gt-* del rediseño — lo montan App y los
   módulos rediseñados, cada quien con su propio <style>).
@@ -602,6 +678,9 @@ los lee vía resolveShortHR), `cp-providers`, `cp-file-<id>` (archivos),
 `mq-purchases`, `mq-machines`, `lg-despachos` (compartido compras/máquinas/
 logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 `hr-he` (horas extras), `hr-pays`, `hr-contracts`, etc.
+GeoCost (sep 2026): `cc-config` ({tasa, historialTasa}), `cc-presupuestos`
+(uno por projectCode), `cc-movilizaciones`, `cc-file-<id>` (comprobantes);
+campos aditivos `partidaId` y `sobregiroJustificacion` en cp-/mq-purchases.
 GeoClock (ago 2026): `gc-marks-<periodo>-<quincena>` (marcajes, ÚNICO
 escritor GeoClock), `gc-firma-<markId>` (firma JPEG), `gc-tardies`
 (decisiones de RRHH sobre tardanzas, ÚNICO escritor HRModule) — ownership

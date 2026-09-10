@@ -4,6 +4,10 @@ import Logo from "./Logo.jsx";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { USERS } from "./users.js";
+// GeoCost (9-sep-2026): partida del presupuesto + aviso de sobregiro en la
+// solicitud. Lógica pura en geocost-calc; colores del semáforo en geocost-ui.
+import { partidasParaModulo, opcionesPartidas, disponibleDePartida, movimientosDeProyecto, hnlToUsd, num, TASA_DEFAULT } from "./geocost-calc.js";
+import { C_VERDE, C_AMARILLO } from "./geocost-ui.jsx";
 
 // Marca Geotecnica
 const ORANGE = "#E8762D";
@@ -225,6 +229,8 @@ export const restoreFiles = async (lightPurchases) => {
 const fmt = d => d ? new Date(d).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const fmtDT = d => d ? new Date(d).toLocaleString("es-HN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtL = n => (n != null && n !== "") ? `L ${Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2 })}` : "L 0.00";
+// USD del presupuesto (GeoCost) — mismo formato que fmtL.
+const fmtUSD = n => `$ ${(Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtMB = b => b ? (b / 1024 / 1024).toFixed(2) + " MB" : "—";
 const projLabel = s => { const p = PROJECTS.find(x => x.short === s); return p ? `${p.short} — ${p.name}` : s; };
 
@@ -255,7 +261,12 @@ const Input = ({ label, ...p }) => <div style={{ display: "flex", flexDirection:
 
 const Textarea = ({ label, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<textarea style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, outline: "none", background: "#F8FAFC", fontFamily: "inherit", resize: "vertical", minHeight: 70 }} {...p} /></div>;
 
-const Select = ({ label, options, emptyLabel = "—", ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} {...p}><option value="">{emptyLabel}</option>{options.map(o => <option key={typeof o === "string" ? o : o.value} value={typeof o === "string" ? o : o.value}>{typeof o === "string" ? o : o.label}</option>)}</select></div>;
+// Opciones: string | {value,label} | {group, options:[...]} → <optgroup>
+// (el tercer shape lo usa la partida del presupuesto, 9-sep-2026; retrocompatible).
+const Select = ({ label, options, emptyLabel = "—", ...p }) => {
+  const opt = (o) => <option key={typeof o === "string" ? o : o.value} value={typeof o === "string" ? o : o.value}>{typeof o === "string" ? o : o.label}</option>;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} {...p}><option value="">{emptyLabel}</option>{(options || []).map((o, i) => o && o.group ? <optgroup key={o.group + i} label={o.group}>{(o.options || []).map(opt)}</optgroup> : opt(o))}</select></div>;
+};
 
 const Modal = ({ title, onClose, children, wide, size }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onClose}>
   <div style={{ background: "#fff", borderRadius: 16, padding: 28, width: size === "xl" ? "96vw" : wide ? "85vw" : 620, maxWidth: "98vw", maxHeight: "94vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,.25)" }} onClick={e => e.stopPropagation()}>
@@ -812,12 +823,15 @@ function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, ren
 // ── PurchaseFormImpl: nivel de modulo ──
 // Mismo razonamiento que ProjectFormImpl: vive aqui para que React mantenga la
 // identidad del componente estable entre renders del padre. Recibe deps por props.
-function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, providers, machines, addAudit, saveOrAlert, upsertProvider}) {
+function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, providers, machines, addAudit, saveOrAlert, upsertProvider, presupuestos, tasa, calcDisponible }) {
   const [saving, setSaving] = useState(false);
   const [f, setF] = useState(purchase || {
     company: co, projectCode: "", provider: "", description: "",
     amount: "", quoteNumber: "", opsResponsible: userName || "",
     cierreResponsable: "", detalleMateriales: "",
+    // GeoCost (9-sep-2026): de qué partida del presupuesto baja el repuesto.
+    // Solo se pide si el proyecto tiene presupuesto en cc-presupuestos.
+    partidaId: "", sobregiroJustificacion: "",
     opsNotes: "", bacAccount: "", providerBank: "", providerAccountType: "", providerAccountHolder: "", providerRTN: "", quoteFile: null, receiptFile: null,
     // Ficha de proveedor NUEVO (20-ago-2026): si el proveedor no existe en la
     // base, se puede completar su ficha acá mismo y queda guardado en
@@ -829,6 +843,70 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   });
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const linkedProject = getProject(f.projectCode);
+
+  // ── GeoCost (9-sep-2026) ──────────────────────────────────────────────────
+  // Presupuesto activo del proyecto elegido. Si no hay, el form es EXACTAMENTE
+  // el de siempre (ni partida ni sobregiro).
+  const presConPartidas = (presupuestos || []).find(x => x.projectCode === f.projectCode && x.estado !== "cerrado") || null;
+  // Partidas ELEGIBLES para repuestos: módulo "maquinas" + "libre".
+  const opcionesCC = presConPartidas ? opcionesPartidas(presConPartidas, "maquinas") : [];
+  // La partida elegida tiene que EXISTIR en el presupuesto (revisión
+  // adversarial 9-sep): un id huérfano (Gerson la borró/renombró desde
+  // GeoCost) pasaba la validación, dejaba el Select en blanco y pintaba un
+  // sobregiro falso por el monto completo. Disponible, sobregiro, Select y
+  // validación cuelgan de `partidaSel`, no de `f.partidaId`.
+  const partidaSel = presConPartidas ? (presConPartidas.partidas || []).find(x => x.id === f.partidaId) || null : null;
+  // Si la solicitud ya trae una partida de otro módulo (reclasificada desde
+  // GeoCost), se conserva como opción para no perderla al editar.
+  const opcionesPartida = (() => {
+    if (!partidaSel) return opcionesCC;
+    const enOps = opcionesCC.some(g => (g.options || []).some(o => o.value === partidaSel.id));
+    return enOps ? opcionesCC : [...opcionesCC, { group: "Actual", options: [{ value: partidaSel.id, label: partidaSel.nombre }] }];
+  })();
+  // Sin partida elegible (presupuesto solo de MO/movilización, por ejemplo)
+  // NO se exige partida: la compra queda "Por clasificar" en GeoCost en vez
+  // de trabar el form con un Select vacío y sin salida.
+  const sinPartidaElegible = !!presConPartidas && opcionesPartida.length === 0;
+  // Al elegir un proyecto con presupuesto se PRESELECCIONA la primera partida
+  // de máquinas ("Costos de operación": Fernando casi siempre carga repuestos).
+  // Si cambia de proyecto y la partida ya no pertenece al nuevo presupuesto, se
+  // reajusta; sin presupuesto se limpia solo si el proyecto cambió (una
+  // solicitud vieja abierta con la nube caída no pierde su partida).
+  const proyPrevRef = useRef(f.projectCode);
+  useEffect(() => {
+    const cambio = proyPrevRef.current !== f.projectCode;
+    proyPrevRef.current = f.projectCode;
+    if (!presConPartidas) { if (cambio && f.partidaId) u("partidaId", ""); return; }
+    const pertenece = (presConPartidas.partidas || []).some(x => x.id === f.partidaId);
+    // Un id huérfano se reajusta también al ABRIR el form (antes solo si
+    // cambiaba el proyecto, y la solicitud editada quedaba con el id colgado).
+    if (!f.partidaId || !pertenece) {
+      const primera = partidasParaModulo(presConPartidas, "maquinas")[0]?.id || "";
+      if (primera !== f.partidaId) u("partidaId", primera);
+    }
+  }, [f.projectCode, presupuestos]);
+  // Disponible de la partida (USD a la tasa vigente) y sobregiro. Al editar,
+  // el padre excluye esta misma compra para no contarla dos veces.
+  const disp = partidaSel && calcDisponible ? calcDisponible(f.projectCode, partidaSel.id, purchase?.id) : null;
+  const montoUSD = hnlToUsd(num(f.amount), tasa || TASA_DEFAULT);
+  const sobregiroUSD = disp && montoUSD > 0 && montoUSD > disp.disponibleUSD ? montoUSD - disp.disponibleUSD : 0;
+  // Validación compartida por los dos botones (borrador y aprobar). Devuelve
+  // el mensaje de error o null. Sin presupuesto no exige nada.
+  const validarPartida = () => {
+    if (!presConPartidas || sinPartidaElegible) return null;
+    if (!partidaSel) return "Elegí la partida del presupuesto de la que baja esta compra";
+    if (sobregiroUSD > 0 && String(f.sobregiroJustificacion || "").trim().length < 5) return "Esta compra sobrepasa la partida: escribí la justificación del sobregiro (mínimo 5 caracteres)";
+    return null;
+  };
+  // Lo que viaja a la nube de la partida (los DOS botones lo usan): sin partida
+  // elegible va vacío (cae a "Por clasificar" en GeoCost), y la justificación
+  // de sobregiro SOLO si el sobregiro sigue existiendo — si no quedaba pegada
+  // al form (bajó el monto, cambió de proyecto) y el detalle mostraba
+  // "Sobregiro: …" en una compra que no sobregiró.
+  const camposPartida = () => ({
+    partidaId: sinPartidaElegible ? "" : (f.partidaId || ""),
+    sobregiroJustificacion: presConPartidas && sobregiroUSD > 0 ? String(f.sobregiroJustificacion || "").trim() : "",
+  });
 
   // Registra el proveedor de la solicitud en cp-providers (base COMPARTIDA por
   // los dos módulos). Si ya existe, solo completa los huecos — nunca pisa lo
@@ -885,6 +963,21 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           {allProjects.map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}{p.isCustom ? " (nuevo)" : ""}{p.code ? "" : " · sin codigo"}</option>)}
         </select>
       </div>
+      {/* PARTIDA DEL PRESUPUESTO (GeoCost, 9-sep-2026): solo si el proyecto
+          tiene presupuesto. Disponible en USD (L chiquito) y aviso de
+          sobregiro con justificación obligatoria — no bloquea. */}
+      {presConPartidas && <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8 }}>
+        {sinPartidaElegible
+          ? <div style={{ fontSize: 12, color: "#64748b" }}>El presupuesto no tiene partida para repuestos — quedará por clasificar en GeoCost</div>
+          : <Select label="Partida del presupuesto *" options={opcionesPartida} emptyLabel="— Elegí la partida —" value={partidaSel ? partidaSel.id : ""} onChange={e => u("partidaId", e.target.value)} />}
+        {disp && <div style={{ fontSize: 12, fontWeight: 600, color: disp.disponibleUSD >= 0 ? C_VERDE.color : C_AMARILLO.color }}>
+          Disponible: {fmtUSD(disp.disponibleUSD)} <span style={{ fontWeight: 500, opacity: .75 }}>· {fmtL(disp.disponibleUSD * (tasa || TASA_DEFAULT))}</span>
+        </div>}
+        {sobregiroUSD > 0 && <div style={{ background: "rgba(232,118,45,.10)", border: "1px solid rgba(232,118,45,.35)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: ORANGE_DARK }}>Sobrepasa la partida en {fmtUSD(sobregiroUSD)}</div>
+          <Textarea label="Justificación del sobregiro *" value={f.sobregiroJustificacion || ""} onChange={e => u("sobregiroJustificacion", e.target.value)} placeholder="Por qué se aprueba igual" />
+        </div>}
+      </div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Proveedor</span>
@@ -1032,9 +1125,10 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cancelar</Btn>
         <Btn variant="warn" disabled={saving} onClick={async () => {
           if (!f.projectCode || !f.provider || !f.description || !f.amount) return alert("Complete proyecto, proveedor, descripcion y monto");
+          { const errPartida = validarPartida(); if (errPartida) return alert(errPartida); }
           setSaving(true);
           try {
-            const rec = { ...f, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "borrador", treasuryStatus: null };
+            const rec = { ...f, ...camposPartida(), id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "borrador", treasuryStatus: null };
             await registrarProveedorSiNuevo(rec);
             const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
             const next = purchase
@@ -1048,10 +1142,11 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         }}>{saving ? "..." : "💾 Guardar borrador"}</Btn>
         <Btn variant="success" disabled={saving} onClick={async () => {
           if (!f.projectCode || !f.provider || !f.description || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert("Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
+          { const errPartida = validarPartida(); if (errPartida) return alert(errPartida); }
           if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
           setSaving(true);
           try {
-            const rec = { ...f, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
+            const rec = { ...f, ...camposPartida(), id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
             await registrarProveedorSiNuevo(rec);
             const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
             const next = purchase
@@ -1525,6 +1620,44 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
   const [despachos, _setDespachosRaw] = useState([]);
   const setDespachos = (v) => { lastLocalMutAtRef.current = Date.now(); _setDespachosRaw(v); };
   const [loaded, setLoaded] = useState(false);
+  // ── GeoCost (9-sep-2026): presupuestos por proyecto, tasa L/$ y las otras
+  // fuentes que consumen partidas (compras de GeoShopping y movilizaciones),
+  // para calcular el disponible de la partida en el form. SOLO LECTURA con
+  // getCloud: store.get podría re-sincronizar cache viejo hacia la nube desde
+  // acá. Si falla, el form sigue igual que antes (sin partida).
+  const [presupuestos, setPresupuestos] = useState([]);
+  const [ccConfig, setCcConfig] = useState(null);
+  const [cpPurchasesCC, setCpPurchasesCC] = useState([]);
+  const [movilizacionesCC, setMovilizacionesCC] = useState([]);
+  const cargarGeoCost = async () => {
+    try {
+      const [pr, cf, cp, mv] = await Promise.all([store.getCloud("cc-presupuestos"), store.getCloud("cc-config"), store.getCloud("cp-purchases"), store.getCloud("cc-movilizaciones")]);
+      if (Array.isArray(pr)) setPresupuestos(pr);
+      if (cf && typeof cf === "object") setCcConfig(cf);
+      if (Array.isArray(cp)) setCpPurchasesCC(cp);
+      if (Array.isArray(mv)) setMovilizacionesCC(mv);
+    } catch (e) { console.warn("[GeoCost] no se pudieron leer presupuestos:", e?.message || e); }
+  };
+  const tasaCC = num(ccConfig?.tasa) || TASA_DEFAULT;
+  // Disponible de una partida (USD) = presupuesto − comprometido − ejecutado
+  // de compras (GeoShopping), repuestos (esta lista) y movilizaciones. La MO
+  // no entra acá (tiene su propia partida y no se lee HR desde este módulo).
+  // `excluirId`: al editar una solicitud, no contarla dos veces.
+  const calcDisponible = (projectCode, partidaId, excluirId) => {
+    const pres = (presupuestos || []).find(x => x.projectCode === projectCode);
+    if (!pres || !partidaId) return null;
+    try {
+      const movs = movimientosDeProyecto({
+        pres, cpPurchases: cpPurchasesCC, mqPurchases: excluirId ? purchases.filter(x => x.id !== excluirId) : purchases,
+        movilizaciones: movilizacionesCC, atts: [], hes: [], emps: [], heSalBase: {}, machines: [], tasa: tasaCC,
+        // Sin customProjects, mismoProyecto resolvía por alias legacy (PLANTEL
+        // es custom Y alias de PLANTEL-OFICINA) y el disponible no cuadraba
+        // con el de GeoCost, que sí los pasa.
+        customProjects,
+      });
+      return disponibleDePartida({ pres, partidaId, movs });
+    } catch (e) { console.warn("[GeoCost] disponible:", e?.message || e); return null; }
+  };
   const [modal, setModal] = useState(null);
   const isMobile = useIsMobile();
   // Default section depende del rol:
@@ -1655,6 +1788,8 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       }
 
       setLoaded(true);
+      // GeoCost: aparte y sin bloquear la carga principal (best-effort).
+      cargarGeoCost();
     })();
   }, []);
 
@@ -1682,6 +1817,8 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
           // saturar Supabase. Archivos se cargan al abrir detalle/generar PDF.
         }
         if (Array.isArray(mach)) setMachines(mach);
+        // GeoCost: presupuestos/tasa/compras ajenas (tiene su propio try/catch).
+        cargarGeoCost();
       } catch (e) {
         console.warn("[Maquinas] Auto-refresh fallo:", e?.message || e);
       }
@@ -1761,11 +1898,29 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
       // 3) MERGE: tomar todo lo de cloud + agregar lo nuestro que no este en cloud
       // (basado en id), EXCLUYENDO los que acabamos de borrar.
       const cloudExtras = cloudPreviaArr.filter(p => !ourIds.has(p.id) && !deletedIds.has(p.id));
-      const merged = [...d, ...cloudExtras];
+      // GeoCost (9-sep-2026): la Central reclasifica partidas escribiendo por id en la
+      // nube. Nuestra fila local GANA en todo lo demás, pero si la nube trae entradas
+      // de audit `partida_reclasificada` que la fila local no tiene, esa
+      // reclasificación es POSTERIOR a nuestra foto: adoptamos partidaId/
+      // sobregiroJustificacion y sumamos esas entradas al audit (si no, el próximo
+      // pago de Carolina la borraba en silencio — revisión adversarial).
+      const cloudById = new Map(cloudPreviaArr.map(p => [p.id, p]));
+      let rescatadas = 0;
+      const dR = d.map(p => {
+        const c = cloudById.get(p.id);
+        if (!c) return p;
+        const atsLocal = new Set((p.audit || []).filter(a => a?.action === "partida_reclasificada").map(a => a.at));
+        const nuevas = (c.audit || []).filter(a => a?.action === "partida_reclasificada" && !atsLocal.has(a.at));
+        if (!nuevas.length) return p;
+        rescatadas++;
+        return { ...p, partidaId: c.partidaId, sobregiroJustificacion: c.sobregiroJustificacion ?? p.sobregiroJustificacion, audit: [...(p.audit || []), ...nuevas] };
+      });
+      if (rescatadas > 0) console.log(`[sP] partidas rescatadas de GeoCost: ${rescatadas}`);
+      const merged = [...dR, ...cloudExtras];
       if (cloudExtras.length > 0) {
         console.warn(`⚠️ Encontradas ${cloudExtras.length} solicitudes en cloud que no estaban en local — mergeadas.`);
-        setPurchases(merged); // actualizar UI con merge
       }
+      if (cloudExtras.length > 0 || rescatadas > 0) setPurchases(merged); // actualizar UI con merge
       // Re-log post-filtrado para confirmar que los borrados no vuelven
       const cloudBorradosResucitados = cloudPreviaArr.filter(p => deletedIds.has(p.id));
       if (cloudBorradosResucitados.length > 0) {
@@ -1830,7 +1985,7 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
               const nuestros = new Set(light.map(p => p.id));
               const ajenas = verify.filter(p => p && !nuestros.has(p.id));
               console.warn(`ℹ️ ${ajenas.length} solicitud(es) creadas por otro usuario durante el guardado — incorporadas a la vista.`);
-              setPurchases([...d, ...ajenas]);
+              setPurchases([...dR, ...ajenas]);
             }
           }
         } catch (e) {
@@ -2814,6 +2969,20 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, fontSize: 13 }}>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Empresa</div><div style={{ fontWeight: 600 }}>{COMPANIES[p.company]?.name}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Proyecto</div><div style={{ fontWeight: 600 }}>{projLabel(p.projectCode)}</div></div>
+          {/* Partida del presupuesto (GeoCost, 9-sep-2026): solo si el proyecto
+              tiene presupuesto. Sin partida = "por clasificar" en GeoCost. */}
+          {(() => {
+            const pres = (presupuestos || []).find(x => x.projectCode === p.projectCode);
+            if (!pres) return null;
+            const partida = (pres.partidas || []).find(x => x.id === p.partidaId);
+            return <div>
+              <div style={{ fontSize: 11, color: "#64748b" }}>Partida</div>
+              {partida
+                ? <div style={{ fontWeight: 600 }}>{partida.nombre}</div>
+                : <div style={{ fontWeight: 600, color: C_AMARILLO.color }}>Sin partida — por clasificar</div>}
+              {p.sobregiroJustificacion && <div style={{ fontSize: 12, fontStyle: "italic", color: "#64748b", marginTop: 2 }}>Sobregiro: {p.sobregiroJustificacion}</div>}
+            </div>;
+          })()}
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Fecha de carga</div><div style={{ fontWeight: 600 }}>{fmt(p.createdAt)}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Proveedor</div><div style={{ fontWeight: 600 }}>{p.provider}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>N° Cotizacion</div><div style={{ fontWeight: 600 }}>{p.quoteNumber || "—"}</div></div>
@@ -4710,8 +4879,8 @@ export default function MachinesModule({ userRole, userName, onBack, onLogout })
     if (!modal) return null;
     const m = modal;
     switch (m.t) {
-      case "new": return <Modal title="Nueva solicitud de pago — Maquinas" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} machines={machines} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} /></Modal>;
-      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} machines={machines} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} /></Modal>;
+      case "new": return <Modal title="Nueva solicitud de pago — Maquinas" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} machines={machines} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} /></Modal>;
+      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} machines={machines} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;

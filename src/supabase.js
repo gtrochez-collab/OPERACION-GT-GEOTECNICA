@@ -40,6 +40,7 @@ const MAX_LOCAL_VALUE_BYTES = 200 * 1024; // 200 KB — bajamos para ser mas est
 // porque se acumulan rapido (muchos archivos, muchos mensajes) y rompen quota.
 const SKIP_LOCAL_PREFIXES = [
   'cp-file-',       // archivos PDF/foto de compras (cloud es source of truth)
+  'cc-file-',       // comprobantes PDF/foto de GeoCost (cloud es source of truth, lectura on-demand)
   'chat-channel-',  // mensajes de canales (cloud es source of truth)
   'chat-dm-',       // mensajes directos (cloud es source of truth)
   // GeoClock (ago 2026): las firmas pesan ~10KB c/u y se acumulan (2 marcajes
@@ -57,6 +58,7 @@ const SKIP_LOCAL_PREFIXES = [
 // son CRITICOS y nunca se evictan automaticamente.
 const EVICTION_PRIORITY_PREFIXES = [
   'cp-file-',       // archivos PDF/foto de compras (cloud es source of truth)
+  'cc-file-',       // comprobantes PDF/foto de GeoCost (cloud es source of truth, lectura on-demand)
   'chat-channel-',  // mensajes de canales (cloud es source of truth)
   'chat-dm-',       // mensajes directos (cloud es source of truth)
   'chat-read-',     // estado de lectura del chat (no critico)

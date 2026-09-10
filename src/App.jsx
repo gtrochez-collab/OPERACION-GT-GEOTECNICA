@@ -6,6 +6,7 @@ import LogisticsModule from "./LogisticsModule.jsx";
 import GeoDrillVault from "./GeoDrillVault.jsx";
 import SafetyModule from "./SafetyModule.jsx";
 import GeoClockModule from "./GeoClockModule.jsx";
+import GeoCostModule from "./GeoCostModule.jsx";
 // GeoChat: desactivado temporalmente (jun 2026). El polling y los mensajes
 // en localStorage estaban presionando el cache. Cuando lo retomemos, sera
 // con Supabase Realtime + bypass de localStorage (ya esta listo).
@@ -50,6 +51,17 @@ const MODULES = [
     desc: "Repuestos y mantenimiento, por máquina.",
     accent: "#7C3AED",
     roles: ["admin", "coordinador_maquinas", "tesoreria", "gerencia", "costos", "recepcion", "visor_compras", "compras_ops"],
+  },
+  {
+    id: "geocost",
+    name: "GeoCost",
+    icon: "📊",
+    desc: "Presupuesto vs. gasto real, por proyecto.",
+    accent: "#C75F1F",
+    // Central de costos (9-sep-2026): Gerson administra presupuestos y tasa;
+    // Christian (costos) y Carolina (tesoreria) reclasifican y acreditan
+    // movilizaciones; gerencia solo lectura.
+    roles: ["admin", "costos", "tesoreria", "gerencia"],
   },
   {
     id: "geosafety",
@@ -274,6 +286,7 @@ export default function App() {
   if (activeModule === "geodrill-vault") return conEntrada(<GeoDrillVault {...moduleProps} />);
   if (activeModule === "geosafety") return conEntrada(<SafetyModule {...moduleProps} />);
   if (activeModule === "geoclock") return conEntrada(<GeoClockModule {...moduleProps} />);
+  if (activeModule === "geocost") return conEntrada(<GeoCostModule {...moduleProps} />);
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
 
   const availableModules = MODULES.filter((m) => m.roles.includes(user.role));
@@ -478,6 +491,7 @@ function IconoModulo({ id, fallback }) {
     rrhh: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>,
     "compras-operaciones": <><circle cx="8" cy="21" r="1" /><circle cx="19" cy="21" r="1" /><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" /></>,
     maquinas: <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />,
+    geocost: <><circle cx="8" cy="8" r="6" /><path d="M18.09 10.37A6 6 0 1 1 10.34 18" /><path d="M7 6h1v4" /><path d="m16.71 13.88.7.71-2.82 2.82" /></>,
     geosafety: <><path d="M2 18a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1z" /><path d="M10 10V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5" /><path d="M4 15v-3a6 6 0 0 1 6-6" /><path d="M14 6a6 6 0 0 1 6 6v3" /></>,
     logistica: <><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" /><path d="M15 18H9" /><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 17.52 8H14" /><circle cx="17" cy="18" r="2" /><circle cx="7" cy="18" r="2" /></>,
     geoclock: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
