@@ -24,10 +24,11 @@ import {
   uid, Select, Btn, Chip, Vidrio, Label, SEMAFORO,
 } from "./geocost-ui.jsx";
 import {
-  TASA_DEFAULT, num, hnlToUsd, montoPartida,
+  TASA_DEFAULT, CATEGORIAS, num, hnlToUsd, montoPartida,
   opcionesPartidas, partidaMO, proyectosUnificados, nombreProyecto,
   movimientosDeProyecto, resumenPresupuesto, resumenCartera, siguienteCodigoMov,
 } from "./geocost-calc.js";
+import { VisorArchivo } from "./visor-archivo.jsx";
 import { PresupuestoForm, MovilizacionForm, MovilizacionDetalle, AjustesTasa, ESTADOS_MOV } from "./geocost-forms.jsx";
 import { fichaProyectoPDF, reporteCostosPDF } from "./geocost-pdf.js";
 
@@ -73,23 +74,9 @@ const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
   r.readAsDataURL(file);
 });
 
-// dataUrl → Blob → pestaña nueva (el navegador bloquea los data: directos).
-// Si el popup se bloquea, cae a descarga.
-const abrirDataUrl = (dataUrl, name = "archivo") => {
-  const [meta, b64] = String(dataUrl).split(",");
-  const type = (meta.match(/data:([^;]+)/) || [])[1] || "application/octet-stream";
-  const bin = atob(b64 || "");
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const url = URL.createObjectURL(new Blob([bytes], { type }));
-  const w = window.open(url, "_blank");
-  if (!w) {
-    const a = document.createElement("a");
-    a.href = url; a.download = name;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  }
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
-};
+// El comprobante se muestra con <VisorArchivo> (src/visor-archivo.jsx, 10-sep-2026):
+// el window.open de acá corría DESPUÉS del await de la nube y el navegador lo
+// bloqueaba (caía a descarga en silencio).
 
 const utc = (ymd) => /^\d{4}-\d{2}-\d{2}$/.test(String(ymd || "")) ? new Date(ymd + "T00:00:00Z") : null;
 // Días de calendario entre dos fechas YYYY-MM-DD, SIN +1 inclusivo: 9-sep →
@@ -100,6 +87,27 @@ const truncar = (s, n) => { const t = String(s || ""); return t.length > n ? t.s
 // nunca dibujan más de una vuelta aunque haya sobregiro)
 const clamp01 = (x) => Math.max(0, Math.min(1, Number.isFinite(x) ? x : 0));
 const cssAnim = (prop, ms, delay = 0) => `${prop} ${ms}ms var(--curva) ${delay}ms`;
+
+// Monto USD corto para ejes y etiquetas de barra (Dashboard): $ 0 · $ 850 ·
+// $ 31.5k · $ 175k · $ 1.2M — 1 decimal mientras la cifra sea < 100, nunca
+// ".0". Los cortes van en 999.5 / 999,500 para que no salga "$ 1000k".
+const fmtCorto = (n) => {
+  const v = num(n), a = Math.abs(v), s = v < 0 ? "-" : "";
+  const cifra = (x) => String(x < 100 ? Math.round(x * 10) / 10 : Math.round(x));
+  if (a >= 999500) return `${s}$ ${cifra(a / 1e6)}M`;
+  if (a >= 999.5) return `${s}$ ${cifra(a / 1e3)}k`;
+  return `${s}$ ${Math.round(a)}`;
+};
+// Techo "redondo" del eje Y (175,075 → 200,000). Solo múltiplos que dividen
+// limpio entre 4: las guías caen en 50k/100k/150k/200k, no en 43.7k.
+const niceMax = (v) => {
+  if (!(v > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  const f = v / p;
+  return ([1, 1.2, 2, 3, 4, 6, 8, 10].find(k => f <= k) || 10) * p;
+};
+// Gris de la barra "Presupuesto" (mismo que el punto "Disponible" de las tarjetas)
+const GRIS_BARRA = "rgba(44,42,40,.14)";
 
 // Barra de tiempo del proyecto: eje de 5 meses (uno antes del inicio, tres
 // después), pista gris y segmento naranja inicio→fin. Pura, sin animación
@@ -185,6 +193,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   const [modal, setModal] = useState(null);
   const [reclasificando, setReclasificando] = useState(null);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [visor, setVisor] = useState(null); // comprobante de movilización (visor en la app)
 
   // Guardia anti-pisada del auto-refresh (CLAUDE.md): los diálogos nativos
   // hacen blur+focus y el refresh leería la nube de ANTES del guardado.
@@ -445,7 +454,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     try {
       const f = await store.getCloud("cc-file-" + fileId);
       if (!f?.dataUrl) { alert("El comprobante no está en la nube."); return; }
-      abrirDataUrl(f.dataUrl, f.name || mov.comprobanteFile.name || "comprobante");
+      setVisor({ ...f, name: f.name || mov.comprobanteFile.name || "comprobante" });
     } catch { alert("Sin conexión con la nube: no se pudo abrir el comprobante."); }
   };
 
@@ -591,7 +600,12 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   </div>;
 
   // ═══════════════════════════════════════════════════════════════════════
-  // DASHBOARD — cartera
+  // DASHBOARD — cartera (v2, 10-sep-2026: "gráficas de barras y el resumen
+  // de TODOS los presupuestos"). Tira KPI · barras verticales agrupadas por
+  // proyecto + barras dobles por categoría · gasto por mes apilado · y
+  // debajo las tarjetas por proyecto de siempre. Las gráficas son FUNCIONES
+  // (no componentes) que crecen desde 0 con dashAnim, patrón GeoShopping v4;
+  // paleta SOLO gris/naranja/carbón.
   // ═══════════════════════════════════════════════════════════════════════
   const renderDashboard = () => {
     const tarjeta = (r, i) => {
@@ -631,6 +645,147 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       </div>;
     };
 
+    // ── Piezas comunes de las gráficas ──
+    const trans = (prop, ms, delay = 0) => reduceMotion ? "none" : cssAnim(prop, ms, delay);
+    const puntoLeyenda = (color, txt) => <span key={txt} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: "var(--text-2)", whiteSpace: "nowrap" }}>
+      <span style={{ width: 9, height: 9, borderRadius: 3, background: color, flexShrink: 0 }} />{txt}
+    </span>;
+    const cabecera = (titulo, derecha) => <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+      <Label>{titulo}</Label>
+      {derecha && <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>{derecha}</div>}
+    </div>;
+    const vacioTxt = (txt, sx) => <div style={{ fontSize: 12, color: "var(--text-faint)", fontStyle: "italic", ...sx }}>{txt}</div>;
+    const SERIES = [["Presupuesto", "presupuestoUSD", GRIS_BARRA], ["Comprometido", "comprometidoUSD", ORANGE], ["Ejecutado", "ejecutadoUSD", CHARCOAL]];
+
+    // ── Por proyecto: barras verticales agrupadas (presupuesto · comprometido
+    // · ejecutado por presupuesto activo). Eje Y con 4 guías sobre un techo
+    // redondo; click en el grupo abre el proyecto. Con más de 6 grupos la
+    // tarjeta scrollea horizontal (120px mínimo por grupo) — nunca la página.
+    const grafProyectos = () => {
+      const H = isMobile ? 170 : 220;
+      const n = activos.length;
+      const maxY = niceMax(Math.max(0, ...activos.map(r => Math.max(...SERIES.map(([, k]) => num(r.resumen?.[k]))))));
+      const ticks = [1, 2, 3, 4].map(k => ({ v: maxY * k / 4, pct: k * 25 }));
+      const grupo = (r, i) => {
+        const { pres, resumen: s } = r;
+        const nombre = nombreDe(pres.projectCode);
+        const sem = s?.semaforo || "ok";
+        const vals = SERIES.map(([, k]) => num(s?.[k]));
+        const px = vals.map(v => clamp01(v / maxY) * H);
+        // Etiqueta de valor: se oculta si la barra mide < 14px o si la vecina
+        // queda a la misma altura (< 12px) y es más alta — dos "$ 31.5k" de
+        // 10.5px encimados no se leen; el title del grupo trae los 3 montos.
+        const conLabel = px.map((p, j) => p >= 14
+          && !(j > 0 && px[j - 1] >= p && px[j - 1] - p < 12)
+          && !(j < px.length - 1 && px[j + 1] > p && px[j + 1] - p < 12));
+        const abrir = () => { setSec("proyectos"); setProyActivo(pres.projectCode); };
+        const title = `${nombre} — ${SERIES.map(([l], j) => `${l.toLowerCase()} ${fmtUSD0(vals[j])}`).join(" · ")}`;
+        return <div key={pres.id} className="cc-fila" role="button" tabIndex={0} onClick={abrir} onKeyDown={onKeyActivar(abrir)} title={title} aria-label={`Abrir ${nombre}`}
+          style={{ minWidth: 0, display: "flex", flexDirection: "column", padding: "0 2px 8px" }}>
+          <div style={{ height: H, display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 6, padding: "0 6px" }}>
+            {SERIES.map(([, k, color], j) => {
+              const f = clamp01(vals[j] / maxY);
+              return <div key={k} style={{ position: "relative", flex: "1 1 0", maxWidth: 34, minWidth: 6, height: dashAnim ? `${Math.max(f * 100, 1)}%` : "0%", borderRadius: "5px 5px 2px 2px", background: color, transition: trans("height", 1100, i * 110 + j * 60) }}>
+                {conLabel[j] && <div style={{ position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)", marginBottom: 4, font: "600 10.5px/1 var(--mono)", color: "var(--text-2)", whiteSpace: "nowrap", opacity: dashAnim ? 1 : 0, transition: trans("opacity", 500, i * 110 + j * 60 + 600) }}>{fmtCorto(vals[j])}</div>}
+              </div>;
+            })}
+          </div>
+          <div style={{ marginTop: 10, textAlign: "center", minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nombre}</div>
+            {pres.ficha?.codigo && <div style={{ ...MONO, fontSize: 10.5, color: "var(--text-3)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pres.ficha.codigo}</div>}
+            {sem !== "ok" && <div style={{ marginTop: 6, display: "flex", justifyContent: "center" }}>{chipSem(sem)}</div>}
+          </div>
+        </div>;
+      };
+      return <div className="gt-vidrio gt-sube" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column", animationDelay: "40ms" }}>
+        {cabecera("Por proyecto", SERIES.map(([l, , color]) => puntoLeyenda(color, l)))}
+        <div style={{ overflowX: "auto", paddingBottom: 2, scrollbarWidth: "thin" }}>
+          {/* paddingTop deja lugar al valor de una barra al 100 % y a la guía de arriba */}
+          <div style={{ position: "relative", display: "flex", alignItems: "flex-start", paddingTop: 16, minWidth: n > 6 ? 54 + n * 128 : undefined }}>
+            <div style={{ position: "relative", width: 44, height: H, flexShrink: 0, marginRight: 10 }}>
+              {ticks.map(t => <div key={t.pct} style={{ position: "absolute", right: 0, bottom: `${t.pct}%`, transform: "translateY(50%)", font: "600 10px/1 var(--mono)", color: "var(--text-faint)", whiteSpace: "nowrap" }}>{fmtCorto(t.v)}</div>)}
+            </div>
+            <div aria-hidden style={{ position: "absolute", left: 54, right: 0, top: 16, height: H, pointerEvents: "none" }}>
+              {ticks.map(t => <div key={t.pct} style={{ position: "absolute", left: 0, right: 0, bottom: `${t.pct}%`, height: 1, background: "rgba(44,42,40,.06)" }} />)}
+              <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 1, background: "rgba(44,42,40,.12)" }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: `repeat(${n}, minmax(0,1fr))`, gap: 8 }}>
+              {activos.map(grupo)}
+            </div>
+          </div>
+        </div>
+      </div>;
+    };
+
+    // ── Por categoría: barras dobles horizontales con la cartera agregada
+    // por nombre de categoría (orden fijo de CATEGORIAS; una desconocida va
+    // al final). Solo las que tienen presupuesto.
+    const grafCategorias = () => {
+      const acc = new Map();
+      activos.forEach(r => (r.resumen?.categorias || []).forEach(c => {
+        const a = acc.get(c.categoria) || { categoria: c.categoria, presupuestoUSD: 0, comprometidoUSD: 0, ejecutadoUSD: 0 };
+        a.presupuestoUSD += num(c.presupuestoUSD); a.comprometidoUSD += num(c.comprometidoUSD); a.ejecutadoUSD += num(c.ejecutadoUSD);
+        acc.set(c.categoria, a);
+      }));
+      const orden = [...CATEGORIAS, ...[...acc.keys()].filter(k => !CATEGORIAS.includes(k))];
+      const filas = orden.map(k => acc.get(k)).filter(c => c && c.presupuestoUSD > 0);
+      return <div className="gt-vidrio gt-sube" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column", animationDelay: "80ms" }}>
+        {cabecera("Por categoría")}
+        {filas.length === 0 ? vacioTxt("Sin partidas con presupuesto.") : <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14, alignContent: "start" }}>
+          {filas.map((c, j) => {
+            const usado = c.comprometidoUSD + c.ejecutadoUSD;
+            const pct = usado / c.presupuestoUSD;
+            return <div key={c.categoria} style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.categoria}</span>
+                <span style={{ ...MONO, fontSize: 11.5, fontWeight: 700, color: pct > 1 ? "var(--naranja-texto-chico)" : "var(--text-2)", flexShrink: 0 }}>{fmtPct(pct)}</span>
+              </div>
+              {barraDoble(c, { alto: 8, delay: 200 + j * 70 })}
+              <div style={{ ...MONO, fontSize: 10.5, color: "var(--text-3)", marginTop: 5 }}>{fmtUSD0(usado)} / {fmtUSD0(c.presupuestoUSD)}</div>
+            </div>;
+          })}
+        </div>}
+      </div>;
+    };
+
+    // ── Gasto por mes: barras apiladas (carbón ejecutado + naranja
+    // comprometido) sumando resumen.porMes de todos los activos por YYYY-MM.
+    // Alturas en px sobre (H - 18): así el total encima nunca empuja la
+    // barra más alta fuera de la pista.
+    const grafMeses = () => {
+      const H = isMobile ? 130 : 150;
+      const acc = new Map();
+      activos.forEach(r => (r.resumen?.porMes || []).forEach(m => {
+        if (!m?.mes) return;
+        const a = acc.get(m.mes) || { mes: m.mes, ejecutadoUSD: 0, comprometidoUSD: 0 };
+        a.ejecutadoUSD += num(m.ejecutadoUSD); a.comprometidoUSD += num(m.comprometidoUSD);
+        acc.set(m.mes, a);
+      }));
+      const meses = [...acc.values()].sort((a, b) => a.mes < b.mes ? -1 : 1).slice(-6).map(m => ({ ...m, total: m.ejecutadoUSD + m.comprometidoUSD }));
+      const maxMes = Math.max(0, ...meses.map(m => m.total));
+      const etiqueta = (mes) => MESES_CORTOS[Number(mes.slice(5, 7)) - 1] || mes;
+      const alto = (v) => maxMes > 0 ? Math.round(clamp01(v / maxMes) * (H - 18)) : 0;
+      return <div className="gt-vidrio gt-sube" style={{ padding: 20, minWidth: 0, animationDelay: "120ms" }}>
+        {cabecera("Gasto por mes — últimos 6 meses", [puntoLeyenda(CHARCOAL, "Ejecutado"), puntoLeyenda(ORANGE, "Comprometido")])}
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${meses.length || 1}, minmax(0,1fr))`, gap: isMobile ? 8 : 14 }}>
+          {meses.map((m, i) => {
+            const hEj = alto(m.ejecutadoUSD), hCom = alto(m.comprometidoUSD);
+            return <div key={m.mes} title={`${etiqueta(m.mes)} ${m.mes.slice(0, 4)}: ${fmtUSD0(m.total)} — ejecutado ${fmtUSD0(m.ejecutadoUSD)} · comprometido ${fmtUSD0(m.comprometidoUSD)}`}
+              style={{ minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div style={{ height: H, width: "100%", maxWidth: 56, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+                {m.total > 0 && <div style={{ textAlign: "center", font: "600 10.5px/1 var(--mono)", color: "var(--text-2)", marginBottom: 4, whiteSpace: "nowrap", opacity: dashAnim ? 1 : 0, transition: trans("opacity", 500, i * 90 + 600) }}>{fmtCorto(m.total)}</div>}
+                <div style={{ height: dashAnim ? hCom : 0, flexShrink: 0, background: ORANGE, borderRadius: hEj > 0 ? "5px 5px 0 0" : "5px 5px 2px 2px", transition: trans("height", 1100, i * 90 + 80) }} />
+                <div style={{ height: dashAnim ? hEj : 0, flexShrink: 0, background: CHARCOAL, borderRadius: hCom > 0 ? "0 0 2px 2px" : "5px 5px 2px 2px", transition: trans("height", 1100, i * 90) }} />
+                {m.total <= 0 && <div style={{ height: 3, flexShrink: 0, borderRadius: 2, background: "rgba(44,42,40,.08)" }} />}
+              </div>
+              <div style={{ font: "700 9.5px/1 var(--mono)", color: "var(--text-3)", textTransform: "uppercase", letterSpacing: ".5px", marginTop: 8 }}>{etiqueta(m.mes)}</div>
+            </div>;
+          })}
+        </div>
+        {maxMes <= 0 && vacioTxt("Sin movimientos todavía", { textAlign: "center", marginTop: 10 })}
+      </div>;
+    };
+
     return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16 }}>
       <Vidrio className="gt-sube" style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(4, minmax(0,1fr))", gap: isMobile ? 16 : 24, padding: isMobile ? "16px 18px" : "18px 26px" }}>
         {kpi("Presupuesto", num(cartera?.presupuestoUSD))}
@@ -644,7 +799,14 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
           <div style={{ font: "800 17px/1.2 var(--display)", color: "var(--text)" }}>Todavía no hay presupuestos</div>
           {puedeEditarPresupuesto && <Btn onClick={() => setModal({ t: "presupuesto", pres: null })}>+ Presupuesto</Btn>}
         </Vidrio>
-        : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>{activos.map(tarjeta)}</div>}
+        : <>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,2fr) minmax(0,1fr)", gap: 16, alignItems: "stretch" }}>
+            {grafProyectos()}
+            {grafCategorias()}
+          </div>
+          {grafMeses()}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>{activos.map(tarjeta)}</div>
+        </>}
     </div>;
   };
 
@@ -991,5 +1153,6 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       }</div>
     </div>
     {renderModal()}
+    {visor && <VisorArchivo archivo={visor} onClose={() => setVisor(null)} />}
   </div>;
 }

@@ -17,6 +17,7 @@
 import { useState, useEffect, useRef } from "react";
 import QrScanner from "qr-scanner";
 import { store } from "./supabase.js";
+import { VisorArchivo } from "./visor-archivo.jsx";
 import { BRAND, FONT, R } from "./theme.js";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 
@@ -714,6 +715,7 @@ const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = VAULT_B
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const [opening, setOpening] = useState(false);
+  const [visor, setVisor] = useState(null);
 
   const openFile = async () => {
     if (!file) return;
@@ -736,15 +738,12 @@ const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = VAULT_B
       setOpening(false);
     }
     if (toOpen.type?.startsWith("image/") || toOpen.type === "application/pdf") {
-      const w = window.open();
-      if (w) {
-        w.document.write(`<!DOCTYPE html><html><head><title>${toOpen.name}</title></head><body style='margin:0;background:#222;display:flex;align-items:center;justify-content:center;min-height:100vh'>` +
-          (toOpen.type === "application/pdf"
-            ? `<iframe src='${toOpen.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>`
-            : `<img src='${toOpen.dataUrl}' style='max-width:100vw;max-height:100vh'/>`) +
-          `</body></html>`);
-      }
+      // Visor DENTRO de la app (10-sep-2026). Antes: window.open() DESPUÉS del
+      // await → popup bloqueado en Safari/iPad (y en Chrome si el gesto venció)
+      // y el `if (w)` se tragaba el fallo: "toco Ver y no pasa nada" (Arturo).
+      setVisor(toOpen);
     } else {
+      // Descarga para otros tipos — el <a download> no es popup, no lo bloquean
       const a = document.createElement("a");
       a.href = toOpen.dataUrl;
       a.download = toOpen.name;
@@ -801,6 +800,7 @@ const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = VAULT_B
           </Btn>
         </>
       )}
+      {visor && <VisorArchivo archivo={visor} onClose={() => setVisor(null)} />}
     </div>
   );
 };

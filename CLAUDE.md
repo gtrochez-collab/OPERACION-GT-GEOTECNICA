@@ -647,6 +647,19 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   tasa) supera el disponible → aviso naranja + `sobregiroJustificacion`
   obligatoria (≥ 5 chars). El módulo lee cc-presupuestos/cc-config best-effort
   con getCloud al cargar y en el refresh. DetailView muestra la partida.
+  **Dashboard v2 (10-sep, "quiero gráficas de barras de TODOS los proyectos
+  en la misma gráfica")**: tira KPI → fila `minmax(0,2fr) minmax(0,1fr)` con
+  "Por proyecto" (barras VERTICALES agrupadas por presupuesto activo:
+  presupuesto gris `GRIS_BARRA` · comprometido naranja · ejecutado carbón;
+  eje Y con 4 guías y techo redondo `niceMax`; valores `fmtCorto` encima —
+  se ocultan si la barra mide < 14px o choca con la vecina; click en el
+  grupo abre el proyecto; > 6 proyectos scrollea horizontal DENTRO de la
+  tarjeta) y "Por categoría" (barras dobles agregando `resumen.categorias`
+  de toda la cartera, orden fijo `CATEGORIAS`); debajo "Gasto por mes —
+  últimos 6 meses" (apiladas carbón+naranja sumando `resumen.porMes`) y las
+  tarjetas por proyecto con anillo (Gerson: "me encanta") quedan igual.
+  Helpers a nivel de módulo: `fmtCorto` ($ 850 · $ 31.5k · $ 175k · $ 1.2M),
+  `niceMax`. Todo son FUNCIONES dentro del render con `dashAnim`/`reduceMotion`.
   **Revisión adversarial aplicada (9-sep, 7 lentes + verificación cruzada)**:
   `sP` de AMBOS módulos RESCATA la reclasificación hecha en GeoCost antes de
   mergear (si la nube trae entradas de audit `partida_reclasificada` que la
@@ -742,6 +755,19 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   borrar una llegada tarde con firma, 19-ago-2026). Para borrar de verdad:
   `store.remove(k, { quiet })` (DELETE de la fila + limpia cache local;
   `quiet: true` no dispara el banner en borrados best-effort).
+- **NUNCA `window.open()` después de un `await` (10-sep-2026, caso Arturo)**:
+  las fichas de recibido "no se veían" porque `FileSlot.openFile` bajaba el
+  `cp-file-*` de la nube (1-5 s) y DESPUÉS abría la pestaña — Safari/iPad
+  bloquean ese popup siempre y Chrome cuando vence el gesto, y el `if (w)`
+  se lo tragaba en silencio. Para ver un adjunto usar `<VisorArchivo archivo
+  onClose>` de `src/visor-archivo.jsx` (portal a body, zIndex 10000 — por
+  encima del banner de sync 9999 —, blob URL sin fetch, "Abrir en pestaña" /
+  "Descargar" SÍNCRONOS dentro del click, Esc y click en el fondo cierran,
+  foco al abrir). Migrados: FileSlot y constancia/proyectos/cerradas de
+  GeoShopping y GeoMachinery, card del kanban de GeoLogistics, comprobante
+  de GeoCost, adjuntos EPP de GeoSafety y FileSlot de GeoDrill Vault. Los
+  `window.open("", "_blank")` síncronos de los reportes HTML sí funcionan y
+  se dejaron.
 - **Borrar siempre con confirm()** (las cuadrillas se perdieron una vez por un × sin confirm).
 - **Proyectos**: lista unificada base+custom con `resolveShortHR` en HR
   (los shorts de compras GANAN sobre aliases legacy de projects.js — caso PLANTEL).

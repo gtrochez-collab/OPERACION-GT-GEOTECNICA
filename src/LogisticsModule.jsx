@@ -21,6 +21,9 @@ import { store } from "./supabase.js";
 import { BRAND, FONT, R } from "./theme.js";
 import Logo from "./Logo.jsx";
 import { generateFichaPDF, restoreFiles } from "./PurchasesModule.jsx";
+// Visor de archivos en la app (10-sep-2026): la ficha se abría con window.open
+// DESPUÉS del await y el navegador bloqueaba el popup.
+import { VisorArchivo } from "./visor-archivo.jsx";
 
 // ── Hook responsive ──
 function useIsMobile(breakpoint = 768) {
@@ -826,6 +829,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const [despachos, _setDespachosRaw] = useState([]);
   const setDespachos = (v) => { lastLocalMutAtRef.current = Date.now(); _setDespachosRaw(v); };
   const [purchases, setPurchases] = useState([]); // shared con Compras
+  const [visorFicha, setVisorFicha] = useState(null); // ficha firmada en el visor de la app (10-sep-2026)
   // Compras de GeoMachinery (mq-purchases): los despachos source "maquinas"
   // enlazan acá — sin esto el botón de subir ficha no aparecía para máquinas
   // y el candado de "entregado sin ficha" los dejaba sin salida (19-ago-2026).
@@ -2396,7 +2400,9 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                 </div>
                 <button
                   onClick={async () => {
-                    // Cargar el archivo y abrirlo en nueva pestaña
+                    // Cargar el archivo y mostrarlo en el visor de la app
+                    // (10-sep-2026: el window.open DESPUÉS del await lo
+                    // bloqueaba el navegador y el botón "no hacía nada").
                     try {
                       const ref = sourcePurchase.delivery.fichaFile;
                       const full = await store.get(`cp-file-${ref.fileId}`);
@@ -2404,14 +2410,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                         alert("No se pudo cargar el archivo desde la nube.");
                         return;
                       }
-                      const w = window.open();
-                      if (w) {
-                        w.document.write(
-                          full.type === "application/pdf"
-                            ? `<iframe src='${full.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>`
-                            : `<img src='${full.dataUrl}' style='max-width:100vw;max-height:100vh'/>`
-                        );
-                      }
+                      setVisorFicha({ ...full, name: full.name || ref.name });
                     } catch (err) {
                       alert("Error abriendo ficha: " + (err?.message || err));
                     }
@@ -2821,6 +2820,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     </div>
 
     {renderModal()}
+    {visorFicha && <VisorArchivo archivo={visorFicha} onClose={() => setVisorFicha(null)} />}
   </div>;
 }
 

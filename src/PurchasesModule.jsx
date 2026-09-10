@@ -8,6 +8,9 @@ import { USERS } from "./users.js";
 // Lógica pura (sin store) — acá solo se LEE cc-presupuestos/cc-config.
 import { opcionesPartidas, disponibleDePartida, movimientosDeProyecto, hnlToUsd, num, TASA_DEFAULT } from "./geocost-calc.js";
 import { fmtUSD } from "./geocost-ui.jsx";
+// Visor de archivos en la app (10-sep-2026): las fichas se abrían con window.open
+// DESPUÉS del await y el navegador bloqueaba el popup (caso Arturo).
+import { VisorArchivo } from "./visor-archivo.jsx";
 
 // Marca Geotecnica
 const ORANGE = "#E8762D";
@@ -268,10 +271,14 @@ const StatCard = ({ label, value, icon, color = "#BE185D" }) => <div style={{ ba
 </div>;
 
 // File preview widget
-const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = "#2563EB" }) => {
+// `verArchivo` (opcional): delega el visor al padre. Los FileSlot del DetailView
+// se REMONTAN con cada refresh del módulo (DetailView vive dentro del componente
+// principal) y un visor local se cerraría solo al volver de "Abrir en pestaña".
+const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = "#2563EB", verArchivo }) => {
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const [opening, setOpening] = useState(false);
+  const [visor, setVisor] = useState(null);
 
   // Abre un archivo, hidratandolo desde cloud si solo tiene fileId (sin dataUrl).
   // Ahora que la carga inicial NO hidrata archivos en bulk (para evitar saturar
@@ -324,16 +331,12 @@ const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = "#2563E
       console.groupEnd();
     }
     if (fileToOpen.type?.startsWith("image/") || fileToOpen.type === "application/pdf") {
-      const w = window.open();
-      if (w) {
-        w.document.write(`<!DOCTYPE html><html><head><title>${fileToOpen.name}</title></head><body style='margin:0;background:#222;display:flex;align-items:center;justify-content:center;min-height:100vh'>` +
-          (fileToOpen.type === "application/pdf"
-            ? `<iframe src='${fileToOpen.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>`
-            : `<img src='${fileToOpen.dataUrl}' style='max-width:100vw;max-height:100vh'/>`) +
-          `</body></html>`);
-      }
+      // Visor DENTRO de la app (10-sep-2026). Antes: window.open() DESPUÉS del
+      // await → popup bloqueado en Safari/iPad (y en Chrome si el gesto venció)
+      // y el `if (w)` se tragaba el fallo: "toco Ver y no pasa nada" (Arturo).
+      if (verArchivo) verArchivo(fileToOpen); else setVisor(fileToOpen);
     } else {
-      // Trigger download for Excel/Word/etc
+      // Descarga para Excel/Word/etc — el <a download> no es popup, no lo bloquean
       const a = document.createElement("a");
       a.href = fileToOpen.dataUrl;
       a.download = fileToOpen.name;
@@ -386,6 +389,7 @@ const FileSlot = ({ label, file, canUpload, onUpload, onRemove, accent = "#2563E
         {busy ? "Subiendo..." : file ? "Reemplazar archivo" : "+ Subir archivo"}
       </Btn>
     </>}
+    {visor && <VisorArchivo archivo={visor} onClose={() => setVisor(null)} />}
   </div>;
 };
 
@@ -1269,6 +1273,7 @@ function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider, 
   const [saving, setSaving] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const isEdit = !!provider;
+  const [visor, setVisor] = useState(null); // constancia de pagos a cuenta (visor en la app)
 
   const setPhone = (idx, v) => setF(p => ({ ...p, phones: p.phones.map((x, i) => i === idx ? v : x) }));
   const addPhone = () => setF(p => ({ ...p, phones: [...(p.phones || []), ""] }));
@@ -1345,7 +1350,7 @@ function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider, 
         ? <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: "#065F46" }}>✓ {f.constanciaFile.name}</span>
             <Btn small variant="ghost" onClick={async () => {
-              try { const full = await store.get(fileKey(f.constanciaFile.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar."); const w = window.open(); if (w) w.document.write(full.type === "application/pdf" ? `<iframe src='${full.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>` : `<img src='${full.dataUrl}' style='max-width:100vw'/>`); } catch (e) { alert("Error: " + e.message); }
+              try { const full = await store.get(fileKey(f.constanciaFile.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar."); setVisor({ ...full, name: full.name || f.constanciaFile.name }); } catch (e) { alert("Error: " + e.message); }
             }}>👁 Ver</Btn>
             <Btn small variant="danger" onClick={() => { if (confirm("¿Quitar la constancia de este proveedor?\n\nDejará de adjuntarse a los paquetes de cierre.")) u("constanciaFile", null); }}>× Quitar</Btn>
           </div>
@@ -1388,6 +1393,7 @@ function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider, 
         }}>{saving ? "..." : (isEdit ? "💾 Guardar" : "+ Crear proveedor")}</Btn>
       </div>
     </div>
+    {visor && <VisorArchivo archivo={visor} onClose={() => setVisor(null)} />}
   </div>;
 }
 
@@ -1603,6 +1609,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const setDespachos = (v) => { lastLocalMutAtRef.current = Date.now(); _setDespachosRaw(v); };
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
+  // Visor de archivos en la app (10-sep-2026): UN estado a nivel de módulo para
+  // lo que abren Proyectos, Cerradas y los FileSlot del DetailView (que se
+  // remonta con cada refresh — un visor local ahí se cerraría solo).
+  const [visor, setVisor] = useState(null);
   // GeoCost (9-sep-2026): fuentes SOLO LECTURA para la partida del form.
   // Setters crudos a propósito: no son mutaciones locales, no deben frenar
   // el auto-refresh vía lastLocalMutAtRef.
@@ -3266,6 +3276,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
         <FileSlot
           label="📐 Solicitud original (Costos)"
+          verArchivo={setVisor}
           file={getProject(p.projectCode)?.costsRequestFile}
           canUpload={false}
           accent="#7C3AED"
@@ -3274,6 +3285,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         />
         <FileSlot
           label="📄 Cotizacion del proveedor"
+          verArchivo={setVisor}
           file={p.quoteFile}
           canUpload={canEditOps}
           accent="#2563EB"
@@ -3283,6 +3295,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         <div>
           <FileSlot
             label="🧾 Comprobante de transferencia"
+            verArchivo={setVisor}
             file={p.receiptFile}
             canUpload={canUploadReceipt}
             accent="#059669"
@@ -3392,6 +3405,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             {/* Ficha adjunta (PDF/imagen) */}
             <FileSlot
               label="📋 Ficha de recibido (PDF firmado)"
+              verArchivo={setVisor}
               file={df.fichaFile}
               canUpload={canEditDelivery && !isClosed}
               accent="#7C3AED"
@@ -3564,8 +3578,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
                 <Btn small variant="info" onClick={() => {
                   const f = project.costsRequestFile;
                   if (f.type?.startsWith("image/") || f.type === "application/pdf") {
-                    const w = window.open();
-                    if (w) w.document.write(`<html><body style='margin:0;background:#222'>${f.type === "application/pdf" ? `<iframe src='${f.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>` : `<img src='${f.dataUrl}' style='max-width:100vw;max-height:100vh;display:block;margin:auto'/>`}</body></html>`);
+                    setVisor(f); // visor en la app (10-sep-2026): sin popup
                   } else {
                     const a = document.createElement("a"); a.href = f.dataUrl; a.download = f.name; a.click();
                   }
@@ -5040,8 +5053,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       try {
         const full = await store.get(fileKey(ref.fileId));
         if (!full?.dataUrl) return alert("No se pudo cargar el archivo.");
-        const w = window.open();
-        if (w) w.document.write(full.type === "application/pdf" ? `<iframe src='${full.dataUrl}' style='width:100vw;height:100vh;border:none'></iframe>` : `<img src='${full.dataUrl}' style='max-width:100vw'/>`);
+        setVisor({ ...full, name: full.name || ref.name }); // visor en la app (10-sep-2026)
       } catch (e) { alert("Error: " + e.message); }
     };
     const mesLabel = (m) => { const [y2, m2] = m.split("-").map(Number); const t = new Date(y2, m2 - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
@@ -5667,6 +5679,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         resto de modales (nuevo/editar/pagar/etc.) sigue bloqueado para ellos. */}
     {(!canViewOnly || modal?.t === "detail") && renderModal()}
     {modalRezagadas()}
+    {visor && <VisorArchivo archivo={visor} onClose={() => setVisor(null)} />}
   </div>;
 }
 

@@ -35,6 +35,7 @@
 
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { store } from "./supabase.js";
+import { VisorArchivo } from "./visor-archivo.jsx";
 import { BRAND, FONT, R } from "./theme.js";
 import { resolveShort, PROJECTS } from "./projects.js";
 
@@ -1265,6 +1266,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
   const [loaded, setLoaded] = useState(false);
   const [sec, setSec] = useState("catalogo");
   const [modal, setModal] = useState(null); // {t: "cart"|"item"|"prov"|"ficha", ...}
+  const [visor, setVisor] = useState(null); // adjunto cp-file abierto en el visor de la app (10-sep-2026)
   const [cart, setCart] = useState([]);     // [{key, itemId, dests:[{empId, qty, motivo}]}]
   const [fCat, setFCat] = useState("");
   const [fProv, setFProv] = useState("");
@@ -2209,19 +2211,27 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
     w.document.close();
   };
 
-  // Abre un adjunto cp-file en pestaña nueva. dataUrl → Blob porque los
-  // browsers bloquean data: URLs a nivel top (no abriria el PDF).
+  // Abre un adjunto cp-file en el visor DENTRO de la app (10-sep-2026). Antes:
+  // window.open(blobUrl) DESPUÉS del await → popup bloqueado en Safari/iPad (y
+  // en Chrome si el gesto venció) y al tocar "ver" no pasaba nada (caso
+  // Arturo). El dataUrl → Blob lo hace el propio VisorArchivo.
   const verArchivo = async (ref) => {
     if (!ref?.fileId) return;
     try {
       const f = await withTimeout(store.get(`cp-file-${ref.fileId}`), 30000, "descargar archivo");
       if (!f?.dataUrl) return alert("⚠ No se pudo cargar el archivo de la nube.");
-      const [meta, b64] = String(f.dataUrl).split(",");
-      const mime = (meta.match(/data:(.*?)[;,]/) || [])[1] || "application/octet-stream";
-      const bin = atob(b64);
-      const arr = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-      window.open(URL.createObjectURL(new Blob([arr], { type: mime })), "_blank");
+      const archivo = { ...f, fileId: ref.fileId, name: f.name || ref.name };
+      // Si la ref no trae `type`, se toma el MIME del propio dataUrl (como antes).
+      const mime = archivo.type || (String(f.dataUrl).match(/^data:([^;,]+)/) || [])[1] || "";
+      if (mime.startsWith("image/") || mime === "application/pdf") {
+        setVisor(archivo);
+      } else {
+        // Descarga para otros tipos — el <a download> no es popup, no lo bloquean
+        const a = document.createElement("a");
+        a.href = archivo.dataUrl;
+        a.download = archivo.name || "archivo";
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      }
     } catch (e) { alert("⚠ No se pudo abrir el archivo: " + e.message); }
   };
 
@@ -3757,6 +3767,7 @@ export default function SafetyModule({ userRole, userName, onBack, onLogout }) {
         </Modal>
       )}
       {modal?.t === "ficha" && FichaModal({ empId: modal.empId })}
+      {visor && <VisorArchivo archivo={visor} onClose={() => setVisor(null)} />}
     </div>
   );
 }
