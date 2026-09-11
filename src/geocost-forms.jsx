@@ -14,7 +14,7 @@ import {
   C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, ORANGE, CHARCOAL,
 } from "./geocost-ui.jsx";
 import {
-  CATEGORIAS, MODULOS_PARTIDA, UNIDADES, RENGLONES_MOV_DEFAULT, TASA_DEFAULT,
+  CATEGORIAS, MODULOS_PARTIDA, UNIDADES, RENGLONES_MOV_DEFAULT, TIPOS_MOV, TASA_DEFAULT,
   num, hnlToUsd, usdToHnl, montoPartida, partidasParaModulo, PLANTILLA_VILLA_SAN_MIGUEL,
 } from "./geocost-calc.js";
 
@@ -321,14 +321,22 @@ export function PresupuestoForm({ pres, proyectos = [], machines = [], tasa = TA
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MOVILIZACIÓN — solicitud de fondos (solo admin la crea/edita en "solicitada")
+// MOVILIZACIÓN — "Registrar movilización" (11-sep-2026). Dos tipos con una
+// pill arriba: DE NOSOTROS (solicitud de fondos con renglones + conductor,
+// como siempre) o CON PROVEEDOR (proveedor, monto y N° de cotización; se guarda
+// como UN renglón "Servicio de movilización — X" para que calc, detalle y PDF
+// sigan igual). Solo admin la crea/edita en "solicitada".
 // ═══════════════════════════════════════════════════════════════════════════
 const renglonesDefault = () => RENGLONES_MOV_DEFAULT.map(c => ({ id: uid(), concepto: c, monto: "" }));
 const movAForm = (mov, presActivos, proyectosNombre) => {
   if (mov) {
     const a = mov.acreditarA || {};
-    const base = mov.renglones?.length ? mov.renglones : RENGLONES_MOV_DEFAULT.map(c => ({ concepto: c }));
+    const esProv = mov.tipo === "proveedor";
+    // Con proveedor el único renglón guardado es el "Servicio de movilización — X":
+    // se arrancan los default por si al editar la pasan a "De nosotros".
+    const base = !esProv && mov.renglones?.length ? mov.renglones : RENGLONES_MOV_DEFAULT.map(c => ({ concepto: c }));
     return {
+      tipo: esProv ? "proveedor" : "propia", proveedor: mov.proveedor || "", monto: esProv ? str(mov.total || mov.renglones?.[0]?.monto) : "", cotizacion: mov.cotizacion || "",
       projectCode: mov.projectCode || "", partidaId: mov.partidaId || "", origen: mov.origen || "", destino: mov.destino || "", fecha: mov.fecha || hoyISO(),
       descripcion: mov.descripcion || "", carga: mov.carga || "", conductor: mov.conductor || "",
       renglones: base.map(r => ({ id: r.id || uid(), concepto: r.concepto || "", monto: str(r.monto) })),
@@ -338,28 +346,41 @@ const movAForm = (mov, presActivos, proyectosNombre) => {
   // Nueva: si hay un solo presupuesto activo, ya viene elegido
   const unico = presActivos.length === 1 ? presActivos[0] : null;
   return {
+    tipo: "propia", proveedor: "", monto: "", cotizacion: "",
     projectCode: unico?.projectCode || "", partidaId: unico ? (partidasParaModulo(unico, "movilizacion")[0]?.id || "") : "",
     origen: "", destino: unico ? nombreDe(proyectosNombre, unico.projectCode) : "", fecha: hoyISO(), descripcion: "", carga: "", conductor: "",
     renglones: renglonesDefault(), acreditarA: { nombre: "", banco: "", tipoCuenta: "", cuenta: "" }, notas: "",
   };
 };
 
-export function MovilizacionForm({ mov, presupuestos = [], proyectosNombre, tasa = TASA_DEFAULT, userName, onSave, onClose }) {
+// Pill grande del selector de tipo: la activa en carbón (como el Btn "dark"),
+// aria-pressed para lectores. Botón propio porque Btn no pasa aria-*.
+const PillTipo = ({ activa, onClick, disabled, children }) => <button type="button" aria-pressed={activa} onClick={onClick} disabled={disabled} style={{ border: `1px solid ${activa ? "transparent" : "rgba(44,42,40,.10)"}`, borderRadius: 999, padding: "11px 16px", fontWeight: 700, fontSize: 14, lineHeight: 1, fontFamily: "inherit", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? .5 : 1, background: activa ? CHARCOAL : "rgba(44,42,40,.05)", color: activa ? "#fff" : "#5C5853", transition: "background .18s var(--curva), color .18s var(--curva)" }}>{children}</button>;
+
+// `proveedores`: nombres de cp-providers (el módulo los pasa; si no llegaron, el
+// input igual acepta texto libre).
+export function MovilizacionForm({ mov, presupuestos = [], proyectosNombre, proveedores = [], tasa = TASA_DEFAULT, userName, onSave, onClose }) {
   const isMobile = useIsMobile();
   const presActivos = useMemo(() => (presupuestos || []).filter(p => p && p.estado !== "cerrado"), [presupuestos]);
   const [f, setF] = useState(() => movAForm(mov, presActivos, proyectosNombre));
   const [saving, setSaving] = useState(false);
   const bloqueada = !!mov && mov.estado !== "solicitada";   // solo se edita mientras nadie la tocó
+  const esProv = f.tipo === "proveedor";
 
   const u = (k, v) => setF(x => ({ ...x, [k]: v }));
   const uA = (k, v) => setF(x => ({ ...x, acreditarA: { ...x.acreditarA, [k]: v } }));
   const uR = (id, k, v) => setF(x => ({ ...x, renglones: x.renglones.map(r => r.id === id ? { ...r, [k]: v } : r) }));
   const quitarR = (id) => setF(x => ({ ...x, renglones: x.renglones.filter(r => r.id !== id) }));
   const agregarR = () => setF(x => ({ ...x, renglones: [...x.renglones, { id: uid(), concepto: "", monto: "" }] }));
+  // Proveedor → "Pagar a" pre-llenado (editable): el nombre sigue al proveedor
+  // mientras esté vacío o sea el que se tipeó antes; si lo cambian a mano, se respeta.
+  const elegirProveedor = (v) => setF(x => ({ ...x, proveedor: v, acreditarA: { ...x.acreditarA, nombre: (!x.acreditarA.nombre.trim() || x.acreditarA.nombre === x.proveedor) ? v : x.acreditarA.nombre } }));
 
+  const listaProv = useMemo(() => [...new Set((proveedores || []).map(p => String(p || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es")), [proveedores]);
   const pres = presActivos.find(p => p.projectCode === f.projectCode) || (presupuestos || []).find(p => p.projectCode === f.projectCode) || null;
   const partidasMov = pres ? partidasParaModulo(pres, "movilizacion") : [];
-  const total = f.renglones.reduce((s, r) => s + num(r.monto), 0);
+  const montoProv = num(f.monto);
+  const total = esProv ? montoProv : f.renglones.reduce((s, r) => s + num(r.monto), 0);
 
   const opcProy = useMemo(() => {
     const o = presActivos.map(p => { const n = nombreDe(proyectosNombre, p.projectCode); return { value: p.projectCode, label: n && n !== p.projectCode ? `${p.projectCode} — ${n}` : p.projectCode }; });
@@ -381,17 +402,29 @@ export function MovilizacionForm({ mov, presupuestos = [], proyectosNombre, tasa
     if (!f.origen.trim()) return alert("Falta el origen.");
     if (!f.destino.trim()) return alert("Falta el destino.");
     if (!f.fecha) return alert("Falta la fecha.");
-    const sinConcepto = f.renglones.findIndex(r => num(r.monto) > 0 && !r.concepto.trim());
-    if (sinConcepto >= 0) return alert(`El renglón ${sinConcepto + 1} tiene monto pero no concepto.`);
-    const renglones = f.renglones.filter(r => num(r.monto) > 0).map(r => ({ id: r.id, concepto: r.concepto.trim(), monto: round2(num(r.monto)) }));
-    if (!renglones.length) return alert("Poné al menos un renglón con monto.");
-    if (!f.acreditarA.nombre.trim()) return alert("Falta a nombre de quién se acredita.");
+    const proveedor = f.proveedor.trim();
+    let renglones;
+    if (esProv) {
+      if (proveedor.length < 2) return alert("Falta el proveedor.");
+      if (montoProv <= 0) return alert("Poné el monto que cobra el proveedor.");
+      // UN renglón con el servicio: así movimientosMovilizaciones, el detalle y el
+      // PDF no cambian. Al editar se conserva el id del renglón guardado.
+      renglones = [{ id: (mov?.tipo === "proveedor" && mov.renglones?.[0]?.id) || uid(), concepto: `Servicio de movilización — ${proveedor}`, monto: round2(montoProv) }];
+    } else {
+      const sinConcepto = f.renglones.findIndex(r => num(r.monto) > 0 && !r.concepto.trim());
+      if (sinConcepto >= 0) return alert(`El renglón ${sinConcepto + 1} tiene monto pero no concepto.`);
+      renglones = f.renglones.filter(r => num(r.monto) > 0).map(r => ({ id: r.id, concepto: r.concepto.trim(), monto: round2(num(r.monto)) }));
+      if (!renglones.length) return alert("Poné al menos un renglón con monto.");
+    }
+    if (!f.acreditarA.nombre.trim()) return alert(esProv ? "Falta a nombre de quién se le paga." : "Falta a nombre de quién se acredita.");
     const totalL = round2(renglones.reduce((s, r) => s + r.monto, 0));
     // Si la partida elegida ya no existe en el presupuesto, cae a la primera de movilización
     const partidaId = partidasMov.some(p => p.id === f.partidaId) ? f.partidaId : (partidasMov[0]?.id || f.partidaId || "");
+    // Los campos del OTRO tipo se guardan vacíos (no se borran del form: si cambian de pill los recuperan)
     const movListo = {
-      ...(mov || {}), projectCode: f.projectCode, partidaId, origen: f.origen.trim(), destino: f.destino.trim(), fecha: f.fecha,
-      descripcion: f.descripcion.trim(), carga: f.carga.trim(), conductor: f.conductor.trim(), renglones, total: totalL,
+      ...(mov || {}), tipo: esProv ? "proveedor" : "propia", proveedor: esProv ? proveedor : "", cotizacion: esProv ? f.cotizacion.trim() : "",
+      projectCode: f.projectCode, partidaId, origen: f.origen.trim(), destino: f.destino.trim(), fecha: f.fecha,
+      descripcion: f.descripcion.trim(), carga: f.carga.trim(), conductor: esProv ? "" : f.conductor.trim(), renglones, total: totalL,
       acreditarA: { nombre: f.acreditarA.nombre.trim(), banco: f.acreditarA.banco.trim(), tipoCuenta: f.acreditarA.tipoCuenta.trim(), cuenta: f.acreditarA.cuenta.trim() },
       notas: f.notas.trim(),
     };
@@ -401,10 +434,16 @@ export function MovilizacionForm({ mov, presupuestos = [], proyectosNombre, tasa
   };
 
   const COLS_R = isMobile ? "minmax(0,1fr) 120px 30px" : "minmax(0,1fr) 170px 30px";
-  return <Modal title={mov ? `Editar ${mov.codigo || "solicitud"}` : "Solicitud de fondos"} wide fondoCierra={false} onClose={saving ? undefined : onClose}>
+  return <Modal title={mov ? `Editar ${mov.codigo || "movilización"}` : "Registrar movilización"} wide fondoCierra={false} onClose={saving ? undefined : onClose}>
     <datalist id="gc-bancos">{BANCOS.map(b => <option key={b} value={b} />)}</datalist>
+    <datalist id="gc-proveedores">{listaProv.map(p => <option key={p} value={p} />)}</datalist>
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       {bloqueada && <div style={{ ...SUNK, fontSize: 13, color: C_AMARILLO.color, background: C_AMARILLO.bg, border: "none" }}>Ya está {ESTADOS_MOV[mov.estado]?.label?.toLowerCase() || mov.estado}: no se puede editar.</div>}
+
+      {/* Tipo: quién hace la movilización — los apartados de abajo cambian según la pill */}
+      <div role="group" aria-label="Tipo de movilización" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 8 }}>
+        {Object.entries(TIPOS_MOV).map(([id, label]) => <PillTipo key={id} activa={f.tipo === id} onClick={() => u("tipo", id)} disabled={bloqueada}>{label}</PillTipo>)}
+      </div>
 
       {/* Proyecto + partida */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.4fr) minmax(0,1fr)", gap: 10, alignItems: "end" }}>
@@ -420,14 +459,21 @@ export function MovilizacionForm({ mov, presupuestos = [], proyectosNombre, tasa
         <Input label="Destino *" value={f.destino} onChange={e => u("destino", e.target.value)} placeholder="Proyecto" disabled={bloqueada} />
         <Input label="Fecha *" type="date" value={f.fecha} onChange={e => u("fecha", e.target.value)} disabled={bloqueada} />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : esProv ? "minmax(0,2fr) minmax(0,1fr)" : "minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)", gap: 10 }}>
         <Input label="Descripción" value={f.descripcion} onChange={e => u("descripcion", e.target.value)} placeholder="Lowboy + Isuzu — movilización de equipos" disabled={bloqueada} />
         <Input label="Carga / equipos" value={f.carga} onChange={e => u("carga", e.target.value)} placeholder="BG-11A" disabled={bloqueada} />
-        <Input label="Conductor" value={f.conductor} onChange={e => u("conductor", e.target.value)} disabled={bloqueada} />
+        {!esProv && <Input label="Conductor" value={f.conductor} onChange={e => u("conductor", e.target.value)} disabled={bloqueada} />}
       </div>
 
-      {/* Renglones */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Con proveedor: quién, cuánto (el hint muestra el equivalente en $) y la cotización */}
+      {esProv && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.6fr) 170px minmax(0,1fr)", gap: 10 }}>
+        <Input label="Proveedor *" list="gc-proveedores" autoComplete="off" value={f.proveedor} onChange={e => elegirProveedor(e.target.value)} placeholder="Transportes …" disabled={bloqueada} />
+        <Input label="Monto L *" hint={montoProv > 0 ? `${fmtUSD(hnlToUsd(montoProv, tasa))} · L ${Number(tasa).toFixed(2)} / $` : undefined} type="number" min="0" step="any" inputMode="decimal" value={f.monto} onChange={e => u("monto", e.target.value)} placeholder="0.00" style={MONO} disabled={bloqueada} />
+        <Input label="N° de cotización" value={f.cotizacion} onChange={e => u("cotizacion", e.target.value)} placeholder="Opcional" disabled={bloqueada} />
+      </div>}
+
+      {/* Renglones (solo de nosotros) */}
+      {!esProv && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={LBL}>Renglones</span>
           {!bloqueada && <Btn variant="ghost" small onClick={agregarR}><Ico d={ICO.mas} size={13} /> Renglón</Btn>}
@@ -443,11 +489,11 @@ export function MovilizacionForm({ mov, presupuestos = [], proyectosNombre, tasa
           <span style={{ font: "800 22px/1 var(--display)", letterSpacing: "-.01em" }}>{fmtL(total)}</span>
           <span style={{ fontSize: 12, color: "#6E6862", ...MONO }}>{fmtUSD(hnlToUsd(total, tasa))} · L {Number(tasa).toFixed(2)} / $</span>
         </div>
-      </div>
+      </div>}
 
-      {/* Acreditar a */}
+      {/* Acreditar a (de nosotros) / Pagar a (proveedor, pre-llenado con su nombre) */}
       <div style={{ ...SUNK, display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: 10 }}>
-        <div style={{ gridColumn: "1 / -1" }}><span style={LBL}>Acreditar a</span></div>
+        <div style={{ gridColumn: "1 / -1" }}><span style={LBL}>{esProv ? "Pagar a" : "Acreditar a"}</span></div>
         <div style={{ gridColumn: "1 / -1" }}><Input label="Nombre *" value={f.acreditarA.nombre} onChange={e => uA("nombre", e.target.value)} disabled={bloqueada} style={{ background: "#fff" }} /></div>
         <Input label="Banco" list="gc-bancos" value={f.acreditarA.banco} onChange={e => uA("banco", e.target.value)} disabled={bloqueada} style={{ background: "#fff" }} />
         <Select label="Tipo de cuenta" options={TIPOS_CUENTA} value={f.acreditarA.tipoCuenta} onChange={e => uA("tipoCuenta", e.target.value)} disabled={bloqueada} style={{ background: "#fff" }} />
@@ -457,7 +503,7 @@ export function MovilizacionForm({ mov, presupuestos = [], proyectosNombre, tasa
       <Textarea label="Notas" value={f.notas} onChange={e => u("notas", e.target.value)} style={{ minHeight: 52 }} disabled={bloqueada} />
 
       <PieAcciones saving={saving} onClose={onClose} izquierda={mov ? `Creada ${fmtFechaHora(mov.createdAt)}` : "Baja del presupuesto del proyecto."}>
-        {!bloqueada && <Btn onClick={guardar} disabled={saving}>{mov ? "Guardar cambios" : "Solicitar fondos"}</Btn>}
+        {!bloqueada && <Btn onClick={guardar} disabled={saving}>{mov ? "Guardar cambios" : "Registrar"}</Btn>}
       </PieAcciones>
     </div>
   </Modal>;
@@ -483,6 +529,7 @@ export function MovilizacionDetalle({ mov, pres, tasa = TASA_DEFAULT, perms = {}
   const renglones = mov.renglones || [];
   const total = num(mov.total) || renglones.reduce((s, r) => s + num(r.monto), 0);
   const a = mov.acreditarA || {};
+  const esProv = mov.tipo === "proveedor";   // registros viejos sin `tipo` = de nosotros
   const idx = mov.estado === "cancelada" ? -1 : PASOS_MOV.findIndex(p => p[0] === mov.estado);
   const audit = (mov.audit || []).slice(-5).reverse();
 
@@ -506,6 +553,7 @@ export function MovilizacionDetalle({ mov, pres, tasa = TASA_DEFAULT, perms = {}
   const titulo = <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
     <span style={{ ...MONO, fontWeight: 700 }}>{mov.codigo || "Movilización"}</span>
     <Chip c={est}>{est.label}</Chip>
+    {esProv && <Chip>{TIPOS_MOV.proveedor}</Chip>}
   </span>;
 
   return <Modal title={titulo} wide onClose={busy ? undefined : onClose}>
@@ -528,10 +576,12 @@ export function MovilizacionDetalle({ mov, pres, tasa = TASA_DEFAULT, perms = {}
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)", gap: 12 }}>
+      {/* Con proveedor: Proveedor (+ N° de cotización si hay) en lugar de Conductor */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : `minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)${esProv && mov.cotizacion ? " minmax(0,1fr)" : ""}`, gap: 12 }}>
         <Dato label="Descripción">{mov.descripcion}</Dato>
         <Dato label="Carga / equipos">{mov.carga}</Dato>
-        <Dato label="Conductor">{mov.conductor}</Dato>
+        {esProv ? <Dato label="Proveedor">{mov.proveedor}</Dato> : <Dato label="Conductor">{mov.conductor}</Dato>}
+        {esProv && !!mov.cotizacion && <Dato label="N° de cotización" mono>{mov.cotizacion}</Dato>}
       </div>
 
       {/* Renglones */}
@@ -553,7 +603,7 @@ export function MovilizacionDetalle({ mov, pres, tasa = TASA_DEFAULT, perms = {}
       {/* Acreditar a + comprobante */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap: 12 }}>
         <div style={SUNK}>
-          <div style={LBL}>Acreditar a</div>
+          <div style={LBL}>{esProv ? "Pagar a" : "Acreditar a"}</div>
           <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>{a.nombre || "—"}</div>
           <div style={{ fontSize: 12.5, color: "#5C5853", marginTop: 2 }}>{[a.banco, a.tipoCuenta].filter(Boolean).join(" · ") || "—"}</div>
           {a.cuenta && <div style={{ ...MONO, fontSize: 13, marginTop: 4 }}>{a.cuenta}</div>}
@@ -565,7 +615,7 @@ export function MovilizacionDetalle({ mov, pres, tasa = TASA_DEFAULT, perms = {}
                 <span style={{ fontSize: 12.5, color: "#5C5853", overflowWrap: "anywhere" }}>{mov.comprobanteFile.name || "Archivo"}{mov.comprobanteFile.size ? ` · ${(mov.comprobanteFile.size / 1024).toFixed(0)} KB` : ""}</span>
                 <Btn variant="ghost" small onClick={() => onVerComprobante?.(mov)} disabled={!!busy} style={{ alignSelf: "flex-start" }}><Ico d={ICO.ojo} size={14} /> Ver comprobante</Btn>
               </div>
-            : <div style={{ fontSize: 13, color: "#6E6862", marginTop: 6 }}>{perms.puedeAcreditar ? "Al adjuntarlo queda Acreditada." : "Todavía no hay."}</div>}
+            : <div style={{ fontSize: 13, color: "#6E6862", marginTop: 6 }}>{perms.puedeAcreditar ? (esProv ? "Al adjuntar el comprobante de pago al proveedor queda Acreditada." : "Al adjuntarlo queda Acreditada.") : "Todavía no hay."}</div>}
         </div>
       </div>
 

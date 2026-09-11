@@ -2,7 +2,8 @@
 // GeoCost — Central de Costos por Proyecto (9-sep-2026).
 // Presupuesto (USD) vs. gasto real (L → USD a la tasa de cc-config) por
 // partida, con lo que ya vive en el sistema: compras (GeoShopping), repuestos
-// (GeoMachinery), mano de obra (GeoTeam) y las movilizaciones propias.
+// (GeoMachinery), mano de obra (GeoTeam) y las movilizaciones (propias o con
+// proveedor externo, 11-sep-2026).
 //
 // Reglas de la casa (CLAUDE.md):
 //  · TODA lectura con store.getCloud — nunca store.get: su re-sync de cache
@@ -24,9 +25,9 @@ import {
   uid, Select, Btn, Chip, Vidrio, Label, SEMAFORO,
 } from "./geocost-ui.jsx";
 import {
-  TASA_DEFAULT, CATEGORIAS, num, hnlToUsd, montoPartida,
+  TASA_DEFAULT, num, hnlToUsd, montoPartida,
   opcionesPartidas, partidaMO, proyectosUnificados, nombreProyecto,
-  movimientosDeProyecto, resumenPresupuesto, resumenCartera, siguienteCodigoMov,
+  movimientosDeProyecto, resumenPresupuesto, siguienteCodigoMov,
 } from "./geocost-calc.js";
 import { VisorArchivo } from "./visor-archivo.jsx";
 import { PresupuestoForm, MovilizacionForm, MovilizacionDetalle, AjustesTasa, ESTADOS_MOV } from "./geocost-forms.jsx";
@@ -38,7 +39,9 @@ import { fichaProyectoPDF, reporteCostosPDF } from "./geocost-pdf.js";
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 // Orden de carga: las 4 primeras son OBLIGATORIAS (sin ellas no hay módulo);
 // las de HR pueden fallar — la MO sale "no disponible" y el resto sigue.
-const KEYS = ["cc-config", "cc-presupuestos", "cc-movilizaciones", "cp-purchases", "mq-purchases", "cp-projects", "mq-machines", "hr-emps5", "hr-atts2", "hr-he", "hr-he-salbase"];
+// cp-providers (última) es best-effort: solo alimenta el datalist "Proveedor"
+// del form de movilización (11-sep-2026); si falla, la lista queda vacía.
+const KEYS = ["cc-config", "cc-presupuestos", "cc-movilizaciones", "cp-purchases", "mq-purchases", "cp-projects", "mq-machines", "hr-emps5", "hr-atts2", "hr-he", "hr-he-salbase", "cp-providers"];
 const NAV = [{ id: "dashboard", label: "Dashboard" }, { id: "proyectos", label: "Proyectos" }, { id: "movilizaciones", label: "Movilizaciones" }];
 const FUENTES = { compras: "Compras", maquinas: "Máquinas", mo: "Mano de obra", movilizacion: "Movilización" };
 const ESTADO_COSTO = {
@@ -142,8 +145,6 @@ const IconoAlerta = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="
 const TH = { padding: "9px 12px", textAlign: "left", color: "var(--text-3)", fontWeight: 700, borderBottom: "1px solid var(--hairline)", whiteSpace: "nowrap", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", fontFamily: "var(--mono)" };
 const TD = { padding: "9px 12px", color: "var(--text-2)", whiteSpace: "nowrap", fontSize: 13, borderBottom: "1px solid rgba(44,42,40,.05)", verticalAlign: "middle" };
 const MONO = { fontFamily: "var(--mono)", fontVariantNumeric: "tabular-nums" };
-const KPI_NUM = { font: "800 26px/1 var(--display)", letterSpacing: "-.02em", color: "var(--text)" };
-const KPI_SUB = { color: "var(--text-3)", fontSize: 12, marginTop: 6, ...MONO };
 
 // Activa un elemento con Enter/Espacio (tarjetas role="button")
 const onKeyActivar = (fn) => (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); } };
@@ -181,6 +182,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   const [hes, setHes] = useState([]);
   const [heSalBase, setHeSalBase] = useState({});
   const [hrOk, setHrOk] = useState(true);
+  const [providers, setProviders] = useState([]); // cp-providers, best-effort (datalist del form de movilización)
 
   // ── UI ──
   const [sec, setSec] = useState("dashboard");
@@ -189,6 +191,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   const [filtroFuente, setFiltroFuente] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [movEstado, setMovEstado] = useState("todas");
+  const [movTipo, setMovTipo] = useState("todas");     // todas | propia | proveedor
   const [movProy, setMovProy] = useState("");
   const [modal, setModal] = useState(null);
   const [reclasificando, setReclasificando] = useState(null);
@@ -215,6 +218,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     if (ok(4)) setMqPurchases(Array.isArray(v(4)) ? v(4) : []);
     if (ok(5)) setCustomProjects(Array.isArray(v(5)) ? v(5) : []);
     if (ok(6)) setMachines(Array.isArray(v(6)) ? v(6) : []);
+    if (ok(11)) setProviders(Array.isArray(v(11)) ? v(11) : []);
     const hr = [7, 8, 9, 10].every(ok);
     if (hr) {
       setEmps(Array.isArray(v(7)) ? v(7) : []);
@@ -284,8 +288,13 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   }), [presupuestos, cpPurchases, mqPurchases, movilizaciones, atts, hes, emps, heSalBase, machines, tasa, customProjects]);
 
   const activos = resumenes.filter(r => r.pres.estado !== "cerrado");
-  // Totales de la cartera (solo presupuestos activos)
-  const cartera = useMemo(() => resumenCartera(presupuestos, resumenes), [presupuestos, resumenes]);
+  // Nombres únicos de cp-providers (sin repetir por mayúsculas) para el
+  // datalist "Proveedor" del form de movilización; texto libre sigue valiendo.
+  const proveedoresNombre = useMemo(() => {
+    const vistos = new Map();
+    providers.forEach(p => { const n = String(p?.name || "").trim(); if (n && !vistos.has(n.toLowerCase())) vistos.set(n.toLowerCase(), n); });
+    return [...vistos.values()].sort((a, b) => a.localeCompare(b, "es"));
+  }, [providers]);
 
   const rActivo = proyActivo ? resumenes.find(r => r.pres.projectCode === proyActivo) : null;
   // Si el presupuesto activo desapareció (otro usuario lo borró), volver al grid
@@ -356,7 +365,9 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       next = lista.map(x => x.id === id ? { ...x, ...mov, audit: [...(x.audit || []), { action: "editada", by: userName, role: userRole, at }] } : x);
     } else {
       id = uid();
-      next = [...lista, { ...mov, id, codigo: siguienteCodigoMov(lista), estado: "solicitada", comprobanteFile: null, createdAt: at, createdBy: userName, audit: [{ action: "creada", by: userName, role: userRole, at }] }];
+      // El form trae tipo/proveedor/cotizacion (11-sep-2026) y se guardan tal cual
+      const accion = mov.tipo === "proveedor" ? `creada (con proveedor ${String(mov.proveedor || "").trim()})` : "creada";
+      next = [...lista, { ...mov, id, codigo: siguienteCodigoMov(lista), estado: "solicitada", comprobanteFile: null, createdAt: at, createdBy: userName, audit: [{ action: accion, by: userName, role: userRole, at }] }];
     }
     const ok = await store.set("cc-movilizaciones", next);
     if (!ok) { alert("No se pudo guardar la movilización en la nube."); return false; }
@@ -547,12 +558,6 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   // `chico`: a ≤12px el naranja tinta no llega a AA → token --naranja-texto-chico
   const disponibleTxt = (v, fmt = fmtUSD0, chico = false) => <span style={{ ...MONO, color: v < 0 ? (chico ? "var(--naranja-texto-chico)" : ORANGE_DARK) : "var(--text-2)", fontWeight: 700 }}>{fmt(v)}</span>;
 
-  const kpi = (label, usd) => <div style={{ minWidth: 0 }}>
-    <Label>{label}</Label>
-    <div style={{ ...KPI_NUM, marginTop: 8, color: usd < 0 ? ORANGE_DARK : "var(--text)" }}>{fmtUSD0(usd)}</div>
-    <div style={KPI_SUB}>{fmtL0(usd * tasa)}</div>
-  </div>;
-
   // Nombre de la partida de un movimiento (la MO cae a la partida "mo")
   const nombrePartidaDe = (pres, mov) => {
     const p = pres.partidas?.find(x => x.id === mov.partidaId) || (mov.fuente === "mo" ? partidaMO(pres) : null);
@@ -600,12 +605,14 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   </div>;
 
   // ═══════════════════════════════════════════════════════════════════════
-  // DASHBOARD — cartera (v2, 10-sep-2026: "gráficas de barras y el resumen
-  // de TODOS los presupuestos"). Tira KPI · barras verticales agrupadas por
-  // proyecto + barras dobles por categoría · gasto por mes apilado · y
-  // debajo las tarjetas por proyecto de siempre. Las gráficas son FUNCIONES
-  // (no componentes) que crecen desde 0 con dashAnim, patrón GeoShopping v4;
-  // paleta SOLO gris/naranja/carbón.
+  // DASHBOARD — cartera (v3, 11-sep-2026: Gerson, "solo quiero el de barras,
+  // ese de ruedita por proyecto y el gasto por mes — 3, no más"). UNA fila:
+  // barras verticales agrupadas por proyecto · tarjeta(s) con anillo, una por
+  // presupuesto activo apiladas en la columna del medio · gasto por mes
+  // apilado. La tira KPI (Presupuesto/Comprometido/Ejecutado/Disponible) y
+  // "Por categoría" se retiraron: con un solo proyecto repetían San Miguel.
+  // Las gráficas son FUNCIONES (no componentes) que crecen desde 0 con
+  // dashAnim, patrón GeoShopping v4; paleta SOLO gris/naranja/carbón.
   // ═══════════════════════════════════════════════════════════════════════
   const renderDashboard = () => {
     const tarjeta = (r, i) => {
@@ -717,43 +724,13 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       </div>;
     };
 
-    // ── Por categoría: barras dobles horizontales con la cartera agregada
-    // por nombre de categoría (orden fijo de CATEGORIAS; una desconocida va
-    // al final). Solo las que tienen presupuesto.
-    const grafCategorias = () => {
-      const acc = new Map();
-      activos.forEach(r => (r.resumen?.categorias || []).forEach(c => {
-        const a = acc.get(c.categoria) || { categoria: c.categoria, presupuestoUSD: 0, comprometidoUSD: 0, ejecutadoUSD: 0 };
-        a.presupuestoUSD += num(c.presupuestoUSD); a.comprometidoUSD += num(c.comprometidoUSD); a.ejecutadoUSD += num(c.ejecutadoUSD);
-        acc.set(c.categoria, a);
-      }));
-      const orden = [...CATEGORIAS, ...[...acc.keys()].filter(k => !CATEGORIAS.includes(k))];
-      const filas = orden.map(k => acc.get(k)).filter(c => c && c.presupuestoUSD > 0);
-      return <div className="gt-vidrio gt-sube" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column", animationDelay: "80ms" }}>
-        {cabecera("Por categoría")}
-        {filas.length === 0 ? vacioTxt("Sin partidas con presupuesto.") : <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14, alignContent: "start" }}>
-          {filas.map((c, j) => {
-            const usado = c.comprometidoUSD + c.ejecutadoUSD;
-            const pct = usado / c.presupuestoUSD;
-            return <div key={c.categoria} style={{ minWidth: 0 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.categoria}</span>
-                <span style={{ ...MONO, fontSize: 11.5, fontWeight: 700, color: pct > 1 ? "var(--naranja-texto-chico)" : "var(--text-2)", flexShrink: 0 }}>{fmtPct(pct)}</span>
-              </div>
-              {barraDoble(c, { alto: 8, delay: 200 + j * 70 })}
-              <div style={{ ...MONO, fontSize: 10.5, color: "var(--text-3)", marginTop: 5 }}>{fmtUSD0(usado)} / {fmtUSD0(c.presupuestoUSD)}</div>
-            </div>;
-          })}
-        </div>}
-      </div>;
-    };
-
     // ── Gasto por mes: barras apiladas (carbón ejecutado + naranja
     // comprometido) sumando resumen.porMes de todos los activos por YYYY-MM.
     // Alturas en px sobre (H - 18): así el total encima nunca empuja la
-    // barra más alta fuera de la pista.
+    // barra más alta fuera de la pista. H 200 en desktop: la tarjeta ocupa la
+    // tercera columna de la fila y así queda a la par de las otras dos (v3).
     const grafMeses = () => {
-      const H = isMobile ? 130 : 150;
+      const H = isMobile ? 130 : 200;
       const acc = new Map();
       activos.forEach(r => (r.resumen?.porMes || []).forEach(m => {
         if (!m?.mes) return;
@@ -767,7 +744,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       const alto = (v) => maxMes > 0 ? Math.round(clamp01(v / maxMes) * (H - 18)) : 0;
       return <div className="gt-vidrio gt-sube" style={{ padding: 20, minWidth: 0, animationDelay: "120ms" }}>
         {cabecera("Gasto por mes — últimos 6 meses", [puntoLeyenda(CHARCOAL, "Ejecutado"), puntoLeyenda(ORANGE, "Comprometido")])}
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${meses.length || 1}, minmax(0,1fr))`, gap: isMobile ? 8 : 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${meses.length || 1}, minmax(0,1fr))`, gap: isMobile ? 8 : 10 }}>
           {meses.map((m, i) => {
             const hEj = alto(m.ejecutadoUSD), hCom = alto(m.comprometidoUSD);
             return <div key={m.mes} title={`${etiqueta(m.mes)} ${m.mes.slice(0, 4)}: ${fmtUSD0(m.total)} — ejecutado ${fmtUSD0(m.ejecutadoUSD)} · comprometido ${fmtUSD0(m.comprometidoUSD)}`}
@@ -786,27 +763,19 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       </div>;
     };
 
-    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16 }}>
-      <Vidrio className="gt-sube" style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(4, minmax(0,1fr))", gap: isMobile ? 16 : 24, padding: isMobile ? "16px 18px" : "18px 26px" }}>
-        {kpi("Presupuesto", num(cartera?.presupuestoUSD))}
-        {kpi("Comprometido", num(cartera?.comprometidoUSD))}
-        {kpi("Ejecutado", num(cartera?.ejecutadoUSD))}
-        {kpi("Disponible", num(cartera?.disponibleUSD))}
-      </Vidrio>
-      {activos.length === 0
-        ? <Vidrio className="gt-sube" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "38px 20px", textAlign: "center" }}>
-          <div style={{ width: 52, height: 52, borderRadius: 16, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center" }}><IconoGeoCost size={26} /></div>
-          <div style={{ font: "800 17px/1.2 var(--display)", color: "var(--text)" }}>Todavía no hay presupuestos</div>
-          {puedeEditarPresupuesto && <Btn onClick={() => setModal({ t: "presupuesto", pres: null })}>+ Presupuesto</Btn>}
-        </Vidrio>
-        : <>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,2fr) minmax(0,1fr)", gap: 16, alignItems: "stretch" }}>
-            {grafProyectos()}
-            {grafCategorias()}
-          </div>
-          {grafMeses()}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>{activos.map(tarjeta)}</div>
-        </>}
+    if (activos.length === 0) return <Vidrio className="gt-sube" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "38px 20px", textAlign: "center" }}>
+      <div style={{ width: 52, height: 52, borderRadius: 16, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center" }}><IconoGeoCost size={26} /></div>
+      <div style={{ font: "800 17px/1.2 var(--display)", color: "var(--text)" }}>Todavía no hay presupuestos</div>
+      {puedeEditarPresupuesto && <Btn onClick={() => setModal({ t: "presupuesto", pres: null })}>+ Presupuesto</Btn>}
+    </Vidrio>;
+
+    // Las 3 piezas en UNA fila (desktop); en el teléfono se apilan en ese
+    // orden. alignItems start: cada tarjeta con su alto natural, sin estirarse.
+    // La columna del medio apila una tarjeta con anillo por presupuesto activo.
+    return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.35fr) minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
+      {grafProyectos()}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, minWidth: 0 }}>{activos.map(tarjeta)}</div>
+      {grafMeses()}
     </div>;
   };
 
@@ -976,10 +945,11 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     const suma = (estado) => movilizaciones.filter(m => m.estado === estado).reduce((a, m) => a + totalDe(m), 0);
     const lista = movilizaciones
       .filter(m => movEstado === "todas" || m.estado === movEstado)
+      .filter(m => movTipo === "todas" || (m.tipo || "propia") === movTipo)
       .filter(m => !movProy || m.projectCode === movProy)
       .sort((a, b) => String(b.fecha || b.createdAt || "").localeCompare(String(a.fecha || a.createdAt || "")) || String(b.codigo || "").localeCompare(String(a.codigo || "")));
-    // Montos grandes en la display (800 real), igual que KPI_NUM: con ...MONO
-    // el navegador sintetizaba el 800 de IBM Plex Mono (solo carga 500/600).
+    // Montos grandes en la display (800 real): con ...MONO el navegador
+    // sintetizaba el 800 de IBM Plex Mono (solo carga 500/600).
     const celda = (l, v) => <div style={{ minWidth: 0 }}>
       <Label>{l}</Label>
       <div style={{ font: `800 ${isMobile ? 18 : 22}px/1 var(--display)`, letterSpacing: "-.02em", color: "var(--text)", marginTop: 8, fontVariantNumeric: "tabular-nums" }}>{fmtL0(v)}</div>
@@ -989,11 +959,20 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       const E = ESTADOS_MOV[m.estado] || ESTADOS_MOV.solicitada;
       const abrir = () => setModal({ t: "movDetalle", id: m.id });
       const total = totalDe(m);
+      // Con proveedor externo (11-sep-2026): chip "Proveedor" junto al estado y
+      // "Pagar a: <proveedor>"; las propias (o viejas sin tipo) siguen igual.
+      const esProv = m.tipo === "proveedor";
+      const [aQuienLabel, aQuien] = esProv ? ["Pagar a", m.proveedor || m.acreditarA?.nombre] : ["Acreditar a", m.acreditarA?.nombre];
       return <div key={m.id} className="gt-vidrio gt-vidrio-hover gt-sube" role="button" tabIndex={0} onClick={abrir} onKeyDown={onKeyActivar(abrir)}
         style={{ padding: 18, cursor: "pointer", display: "flex", flexDirection: "column", gap: 10, animationDelay: `${i * 50}ms`, opacity: m.estado === "cancelada" ? .7 : 1 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <span style={{ ...MONO, fontSize: 12, fontWeight: 700, color: "var(--text-2)" }}>{m.codigo}</span>
-          <Chip c={E}>{E.label}</Chip>
+          {/* Envuelve: con dos chips en una tarjeta de 280-320px (lo normal del
+              auto-fill) el código + chips no caben en una línea y se salían del vidrio */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
+            {esProv && <Chip style={{ fontSize: 10.5, padding: "3px 8px" }}>Proveedor</Chip>}
+            <Chip c={E}>{E.label}</Chip>
+          </div>
         </div>
         <div>
           <div className="gt-label" style={{ color: "var(--text-3)" }}>{nombreDe(m.projectCode)}</div>
@@ -1005,7 +984,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
             <div style={{ font: "800 20px/1 var(--display)", letterSpacing: "-.02em", color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{fmtL(total)}</div>
             <div style={{ ...MONO, fontSize: 11.5, color: "var(--text-3)", marginTop: 4 }}>{fmtUSD(hnlToUsd(total, tasa))}</div>
           </div>
-          {m.acreditarA?.nombre && <div style={{ textAlign: "right", fontSize: 11.5, color: "var(--text-3)", minWidth: 0 }}>Acreditar a<br /><b style={{ color: "var(--text-2)" }}>{truncar(m.acreditarA.nombre, 28)}</b></div>}
+          {aQuien && <div style={{ textAlign: "right", fontSize: 11.5, color: "var(--text-3)", minWidth: 0 }}>{aQuienLabel}<br /><b style={{ color: "var(--text-2)" }}>{truncar(aQuien, 28)}</b></div>}
         </div>
       </div>;
     };
@@ -1019,10 +998,17 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
           {celda("Recibidas", suma("recibida"))}
           {celda("Acreditadas", suma("acreditada"))}
         </div>
-        {puedeCrearMov && <Btn style={isMobile ? { width: "100%", justifyContent: "center" } : undefined} onClick={() => { if (!activos.length) { alert("Primero cargá un presupuesto: la movilización baja de una partida."); return; } setModal({ t: "mov", mov: null }); }}>+ Solicitar fondos</Btn>}
+        {puedeCrearMov && <Btn style={isMobile ? { width: "100%", justifyContent: "center" } : undefined} onClick={() => { if (!activos.length) { alert("Primero cargá un presupuesto: la movilización baja de una partida."); return; } setModal({ t: "mov", mov: null }); }}>+ Registrar movilización</Btn>}
       </Vidrio>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        {pillBar([["todas", "Todas"], ["solicitada", "Solicitadas"], ["recibida", "Recibidas"], ["acreditada", "Acreditadas"], ["cancelada", "Canceladas"]], movEstado, setMovEstado)}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {pillBar([["todas", "Todas"], ["solicitada", "Solicitadas"], ["recibida", "Recibidas"], ["acreditada", "Acreditadas"], ["cancelada", "Canceladas"]], movEstado, setMovEstado)}
+          {/* Grupo chico por tipo (11-sep-2026). Borde izquierdo PEGADO al grupo:
+              un separador suelto quedaba huérfano al envolver (Supply Chain). */}
+          <div style={{ paddingLeft: 10, borderLeft: "1px solid rgba(44,42,40,.12)" }}>
+            {pillBar([["todas", "Todas"], ["propia", "Nuestras"], ["proveedor", "Con proveedor"]], movTipo, setMovTipo)}
+          </div>
+        </div>
         {presupuestos.length > 1 && <Select options={presupuestos.map(p => ({ value: p.projectCode, label: nombreDe(p.projectCode) }))} value={movProy} emptyLabel="Todos los proyectos" onChange={e => setMovProy(e.target.value)} style={{ width: "auto", minWidth: 200, padding: "8px 12px", fontSize: 13 }} />}
       </div>
       {lista.length === 0
@@ -1051,7 +1037,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       // El form acepta función, Map u objeto: se pasa la FUNCIÓN (un short
       // llamado "name"/"length" haría reventar Object.assign sobre una función)
       const proyectosNombre = (s) => nombreDe(s);
-      return <MovilizacionForm mov={modal.mov} presupuestos={activos.map(r => r.pres)} proyectosNombre={proyectosNombre} tasa={tasa} userName={userName}
+      return <MovilizacionForm mov={modal.mov} presupuestos={activos.map(r => r.pres)} proyectosNombre={proyectosNombre} tasa={tasa} userName={userName} proveedores={proveedoresNombre}
         onSave={async (m) => { const ok = await guardarMovilizacion(m); if (ok) cerrar(); return ok; }} onClose={cerrar} />;
     }
     if (modal.t === "movDetalle") {

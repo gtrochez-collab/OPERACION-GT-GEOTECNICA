@@ -25,6 +25,11 @@ export const MODULOS_PARTIDA = {
 };
 export const UNIDADES = ["Global", "Ton", "kg", "m3", "m2", "m", "Galón", "Litro", "Unidad", "Lance 9 m", "Lance 12 m", "Rollo", "Pie-tablar", "Bolsa", "Viaje", "Hora", "Día", "Servicio"];
 export const RENGLONES_MOV_DEFAULT = ["Combustible (ida y vuelta)", "Peajes", "Mano de obra conductor", "Imprevistos"];
+// Tipo de movilización (11-sep-2026): "propia" = la hacemos nosotros (solicitud
+// de fondos con renglones y conductor); "proveedor" = la hace un tercero (UN
+// renglón "Servicio de movilización — <proveedor>" y se le paga a él). Los
+// registros viejos no traen `tipo`: se leen como propia.
+export const TIPOS_MOV = { propia: "De nosotros", proveedor: "Con proveedor" };
 
 // ── Números ──────────────────────────────────────────────────────────
 // Todo lo tipeado por el usuario o guardado como string (amount de
@@ -415,6 +420,8 @@ export const movimientosMO = ({ atts, hes, emps, heSalBase, projectCode, tasa, h
   return out;
 };
 
+// Con proveedor externo (m.tipo === "proveedor") el detalle es "Proveedor: X"
+// (no hay conductor); el monto sale igual de total/renglones.
 export const movimientosMovilizaciones = ({ movilizaciones, projectCode, tasa, customProjects = [] }) => {
   if (!projectCode) return [];
   return (movilizaciones || []).filter(m => m && m.estado !== "cancelada" && mismoProyecto(m.projectCode, projectCode, customProjects)).map(m => {
@@ -428,7 +435,7 @@ export const movimientosMovilizaciones = ({ movilizaciones, projectCode, tasa, c
       ref: m.codigo || m.id,
       fecha: m.fecha || m.createdAt || "",
       descripcion: `${m.origen || "?"} → ${m.destino || "?"}` + (m.descripcion ? " · " + m.descripcion : ""),
-      detalle: [m.conductor, m.carga].filter(Boolean).join(" · "),
+      detalle: m.tipo === "proveedor" ? `Proveedor: ${String(m.proveedor || "").trim() || "?"}` : [m.conductor, m.carga].filter(Boolean).join(" · "),
       partidaId: m.partidaId || null,
       estado,
       montoHNL,

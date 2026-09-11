@@ -660,6 +660,28 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   tarjetas por proyecto con anillo (Gerson: "me encanta") quedan igual.
   Helpers a nivel de módulo: `fmtCorto` ($ 850 · $ 31.5k · $ 175k · $ 1.2M),
   `niceMax`. Todo son FUNCIONES dentro del render con `dashAnim`/`reduceMotion`.
+  **Dashboard v3 (11-sep, Gerson: "solo quiero 3, no más — el de barras, la
+  ruedita por proyecto y el gasto por mes; la línea de Presupuesto/
+  Comprometido/Ejecutado no hace falta porque solo es de San Miguel")**: UNA
+  fila `minmax(0,1.35fr) minmax(0,1fr) minmax(0,1fr)` con `grafProyectos()` ·
+  las tarjetas con anillo (una por presupuesto, apiladas en la columna del
+  medio) · `grafMeses()` (H 200). Se RETIRARON la tira KPI, "Por categoría",
+  `kpi()`, `cartera`, KPI_NUM/KPI_SUB e imports `resumenCartera`/`CATEGORIAS`
+  del módulo. En tablet (768-1100px) las 3 columnas quedan apretadas — si
+  Gerson lo ve en iPad, pasar a 2+1.
+  **Movilizaciones con PROVEEDOR (11-sep)**: el botón es **"+ Registrar
+  movilización"**; el form arranca con dos pills **De nosotros / Con
+  proveedor** (`TIPOS_MOV` en geocost-calc; `mov.tipo` "propia"|"proveedor",
+  registros viejos sin `tipo` = propia). Con proveedor: Proveedor* (datalist
+  de `cp-providers`, texto libre), Monto L*, N° de cotización, y el bloque
+  bancario se titula "Pagar a" pre-llenado con el proveedor; se guarda UN
+  renglón "Servicio de movilización — <proveedor>" y `total = monto` para
+  que `movimientosMovilizaciones`/resúmenes/PDF sigan igual; campos aditivos
+  `tipo`, `proveedor`, `cotizacion` en cc-movilizaciones. Lista: chip
+  "Proveedor" + "Pagar a: X"; filtro Todas · Nuestras · Con proveedor
+  (`movTipo`); detalle muestra Proveedor/cotización en vez de Conductor.
+  Gerson avisó que las movilizaciones se MUDARÁN a GeoLogistics cuando ese
+  módulo se rediseñe (hoy viven acá a propósito).
   **Revisión adversarial aplicada (9-sep, 7 lentes + verificación cruzada)**:
   `sP` de AMBOS módulos RESCATA la reclasificación hecha en GeoCost antes de
   mergear (si la nube trae entradas de audit `partida_reclasificada` que la
