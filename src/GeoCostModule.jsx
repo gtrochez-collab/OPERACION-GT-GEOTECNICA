@@ -619,36 +619,43 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       const { pres, resumen: s } = r;
       const cats = (s?.categorias || []).filter(c => num(c.presupuestoUSD) > 0);
       const abrir = () => { setSec("proyectos"); setProyActivo(pres.projectCode); };
+      // Desktop: la tarjeta llena el alto disponible de su columna (mismo
+      // criterio que grafProyectos/grafMeses); el bloque de anillo+categorías
+      // se centra en el espacio que sobra en vez de quedar pegado arriba con
+      // un hueco abajo — Gerson: "que aprovechemos el espacio de la página".
+      const flexible = !isMobile;
       return <div key={pres.id} className="gt-vidrio gt-vidrio-hover gt-sube" role="button" tabIndex={0} onClick={abrir} onKeyDown={onKeyActivar(abrir)} aria-label={`Abrir ${nombreDe(pres.projectCode)}`}
-        style={{ padding: 20, cursor: "pointer", display: "flex", flexDirection: "column", gap: 16, animationDelay: `${i * 70}ms` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+        style={{ padding: 20, cursor: "pointer", display: "flex", flexDirection: "column", gap: 16, animationDelay: `${i * 70}ms`, ...(flexible ? { flex: "1 1 0", minHeight: 0 } : {}) }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexShrink: 0 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ font: "800 18px/1.15 var(--display)", letterSpacing: "-.015em", color: "var(--text)" }}>{nombreDe(pres.projectCode)}</div>
             {pres.ficha?.codigo && <div style={{ ...MONO, fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>{pres.ficha.codigo}</div>}
           </div>
           {chipSem(s?.semaforo)}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-          {anillo(s, { delay: i * 70 })}
-          <div style={{ display: "grid", gap: 9, minWidth: 0 }}>
-            {[["Ejecutado", s?.ejecutadoUSD, CHARCOAL], ["Comprometido", s?.comprometidoUSD, ORANGE], ["Disponible", s?.disponibleUSD, null]].map(([l, v, col]) => <div key={l} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 2, background: col || "rgba(44,42,40,.14)", flexShrink: 0 }} />
-              <div style={{ minWidth: 0 }}>
-                <div className="gt-label" style={{ color: "var(--text-3)" }}>{l}</div>
-                <div style={{ ...MONO, fontSize: 13.5, fontWeight: 700, color: num(v) < 0 && l === "Disponible" ? ORANGE_DARK : "var(--text)", marginTop: 2 }}>{fmtUSD0(num(v))}</div>
-              </div>
-            </div>)}
-          </div>
-        </div>
-        {cats.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
-          {cats.map((c, j) => <div key={c.categoria}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--text-3)", marginBottom: 3 }}>
-              <span style={{ fontWeight: 600 }}>{c.categoria}</span>
-              <span style={MONO}>{fmtPct(num(c.pct))}</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, ...(flexible ? { flex: 1, minHeight: 0, justifyContent: "center" } : {}) }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+            {anillo(s, { delay: i * 70 })}
+            <div style={{ display: "grid", gap: 9, minWidth: 0 }}>
+              {[["Ejecutado", s?.ejecutadoUSD, CHARCOAL], ["Comprometido", s?.comprometidoUSD, ORANGE], ["Disponible", s?.disponibleUSD, null]].map(([l, v, col]) => <div key={l} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: col || "rgba(44,42,40,.14)", flexShrink: 0 }} />
+                <div style={{ minWidth: 0 }}>
+                  <div className="gt-label" style={{ color: "var(--text-3)" }}>{l}</div>
+                  <div style={{ ...MONO, fontSize: 13.5, fontWeight: 700, color: num(v) < 0 && l === "Disponible" ? ORANGE_DARK : "var(--text)", marginTop: 2 }}>{fmtUSD0(num(v))}</div>
+                </div>
+              </div>)}
             </div>
-            {barraDoble(c, { alto: 6, delay: i * 70 + j * 60 })}
-          </div>)}
-        </div>}
+          </div>
+          {cats.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
+            {cats.map((c, j) => <div key={c.categoria}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--text-3)", marginBottom: 3 }}>
+                <span style={{ fontWeight: 600 }}>{c.categoria}</span>
+                <span style={MONO}>{fmtPct(num(c.pct))}</span>
+              </div>
+              {barraDoble(c, { alto: 6, delay: i * 70 + j * 60 })}
+            </div>)}
+          </div>}
+        </div>
       </div>;
     };
 
@@ -784,15 +791,17 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     </Vidrio>;
 
     // Las 3 piezas en UNA fila, del MISMO tamaño (14-sep, Gerson: "las 3 del
-    // mismo tamaño, que aprovechemos el espacio, se ve desproporcional").
-    // Columnas iguales + alignItems:stretch: la fila toma el alto de la más
-    // alta (la columna del medio, con anillo + categorías) y las otras dos
-    // se estiran a esa misma altura — sus gráficas crecen flexible (%) para
-    // llenar ese alto en vez de dejar espacio vacío abajo. En el teléfono se
-    // apilan en ese orden con su alto fijo de siempre (sin stretch).
-    return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(3, minmax(0,1fr))", gap: 16, alignItems: "stretch" }}>
+    // mismo tamaño, que aprovechemos el espacio de la página — siguen siendo
+    // más grandes las de GeoShopping"). Con un solo proyecto el contenido real
+    // (una tarjeta con 6 categorías) no alcanza el alto de las tarjetas de
+    // GeoShopping (7 proyectos + leyenda) — por eso la fila lleva un alto
+    // MÍNIMO explícito (gridTemplateRows) en vez de depender del contenido: la
+    // fila mide al menos 560px, las 3 columnas se estiran a esa altura
+    // (alignItems:stretch) y sus gráficas/tarjeta crecen flexible (%) para
+    // llenar ese espacio. En el teléfono se apilan con su alto natural.
+    return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(3, minmax(0,1fr))", gridTemplateRows: isMobile ? undefined : "minmax(560px, auto)", gap: 16, alignItems: "stretch" }}>
       {grafProyectos()}
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, minWidth: 0, alignContent: "start" }}>{activos.map(tarjeta)}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, height: isMobile ? undefined : "100%" }}>{activos.map(tarjeta)}</div>
       {grafMeses()}
     </div>;
   };
