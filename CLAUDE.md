@@ -35,21 +35,24 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
     --curva cubic-bezier(.32,.72,0,1)), clases `gt-*`, keyframes solo-`from` +
     `fill-mode: backwards`, manchas de brillo 47s/59s (primos), vidrio
     `--v-fondo-foto`, `prefers-reduced-motion` respetado.
-  - `LoginScreen`: slideshow crossfade 9s de fotos reales de obra
-    (`public/brand/login/obra-2.jpg` + `obra-4.jpg`). **3-sep: el EQUIPO de
-    espaldas va en la foto VERTICAL completa (obra-4, 1080×1616 — sacada del
-    preview embebido del ARW con `qlmanage -t -s 6000`; la 1600×1069 anterior
-    era un recorte de la parte de arriba y "solo se veían los cascos"; el ARW
-    de Downloads está truncado, sips no lo lee — si Gerson manda el original
-    de cámara, reemplazarla) y la perforadora en el
-    río — regeneradas desde los ORIGINALES de Downloads (image (3).jpg
-    2691×3600 y 7C98965D...jpeg 1536×2048; las 5 anteriores eran 1200×1600
-    verticales y el cover las estiraba pixeladas en desktop). FOTOS_LOGIN es
-    [{f, pos}]: `pos` = banda visible del cover por foto (30% piladora, 62%
-    río). Ken Burns en la activa, tagline "Ingeniería que
-    sostiene. Proyectos que avanzan.", form vidrio, versículo del día, dots
-    clickeables. Fuentes nuevas en index.html: Plus Jakarta Sans + IBM Plex
-    Mono (Inter y Manrope siguen para los módulos).
+  - `LoginScreen`: **14-sep-2026, reemplazo total del fondo** — Gerson pidió
+    el mismo diseño y efecto del sitio público (geotecnica-web.vercel.app,
+    obra de Daniel): fondo BLANCO con curvas de nivel (ruido tipo Perlin +
+    marching squares, `initCurvasDeNivel`/`ruido2D`/`NIVELES_CURVA` a nivel
+    de módulo) dibujadas en un `<canvas>` a pantalla completa; al mover el
+    mouse un resplandor naranja (gradiente radial recortado a un círculo)
+    recorre las curvas cerca del cursor. SIN fotos (las 2 fotos de obra y el
+    Ken Burns se retiraron; `public/brand/login/obra-2.jpg`/`obra-4.jpg`
+    quedan en disco por si se reusan en otro lado). Tagline "Ingeniería que
+    sostiene. Proyectos que avanzan.", tarjeta `.gt-vidrio` (antes tenía un
+    fondo especial `--v-fondo-foto` para verse sobre una foto — ya no hace
+    falta, es el vidrio estándar), versículo del día, pista "Mové el cursor
+    sobre las curvas de nivel" en el pie (mismo texto que el sitio público).
+    `initCurvasDeNivel` respeta `prefiereMenosMovimiento()` (curvas fijas,
+    solo reaccionan al mouse sin animación de fondo) y se limpia con
+    `IntersectionObserver` + `resize` + listeners de puntero, igual patrón
+    que el resto del rediseño. Fuentes nuevas en index.html: Plus Jakarta
+    Sans + IBM Plex Mono (Inter y Manrope siguen para los módulos).
   - `WelcomeScreen`: tras login, saludo XL ("Buenos días, Gerson.", hero de
     2.6 s) + `fraseDeHoy()` (FRASES neutras en género, rotan por día) que
     transiciona smooth a 3 tarjetas `.gt-vidrio` — TO-DOS (persisten en

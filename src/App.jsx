@@ -737,33 +737,129 @@ function WelcomeScreen({ user, onStart, onLogout }) {
 // crossfade + Ken Burns sutil), branding grande a la izquierda y tarjeta de
 // acceso a la derecha. Credenciales y flujo: EXACTAMENTE los de siempre.
 // ═══════════════════════════════════════════════════════════════════════════
-// Solo las 2 fotos que aprobó Gerson (31-ago), regeneradas desde los
-// originales en alta resolución (antes eran 1200×1600 y el cover las
-// estiraba pixeladas). `pos` = encuadre para pantallas horizontales:
-// son fotos verticales y el corte decide qué banda se ve.
-const FOTOS_LOGIN = [
-  { f: "obra-4.jpg", pos: "center 66%" },   // el equipo de espaldas viendo la obra (vertical: el corte muestra a la gente)
-  { f: "obra-2.jpg", pos: "center 62%" },   // perforadora en el río, entre rocas
-];
+// ═══════════════════════════════════════════════════════════════════════════
+// CURVAS DE NIVEL INTERACTIVAS (login, 14-sep-2026) — mismo efecto del sitio
+// público (geotecnica-web.vercel.app, diseño de Daniel): un campo de ruido
+// tipo Perlin se dibuja como líneas de nivel con marching squares; al mover
+// el mouse un resplandor naranja recorre las curvas cerca del cursor
+// (gradiente radial recortado a un círculo). Pedido de Gerson: "quiero ese
+// diseño y ese efecto, blanco, líneas grises, y que se pongan naranjas al
+// pasar el mouse encima — sin fotos". Vive a nivel de módulo (función pura,
+// sin JSX) y se invoca desde un useEffect de LoginScreen.
+function ruido2D(seed) {
+  const p = [...Array(256).keys()];
+  let s = seed;
+  for (let i = 255; i > 0; i--) { s = (s * 16807) % 2147483647; const j = s % (i + 1); [p[i], p[j]] = [p[j], p[i]]; }
+  const perm = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+  const fade = (t) => t * t * (3 - 2 * t);
+  const n2 = (x, y) => {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const X = xi & 255, Y = yi & 255, xf = x - xi, yf = y - yi;
+    const h = (i, j) => perm[perm[(X + i) & 255] + ((Y + j) & 255)] / 255;
+    const u = fade(xf), v = fade(yf);
+    return (h(0, 0) * (1 - u) + h(1, 0) * u) * (1 - v) + (h(0, 1) * (1 - u) + h(1, 1) * u) * v;
+  };
+  return (x, y) => n2(x, y) * .55 + n2(x * 2.13 + 7.3, y * 2.13 + 3.1) * .3 + n2(x * 4.7 + 1.7, y * 4.7 + 9.2) * .15;
+}
+const NIVELES_CURVA = [.28, .34, .40, .46, .52, .58, .64, .70, .76, .82];
+// `base` = color de las curvas en reposo (gris); `hot` = color del resplandor
+// bajo el cursor (naranja de marca). Devuelve la función de limpieza.
+function initCurvasDeNivel(canvas, { base = "rgba(44,42,40,.16)", hot = "#E8762D", reduced = false } = {}) {
+  if (!canvas) return () => {};
+  const noise = ruido2D(1337);
+  const ctx = canvas.getContext("2d");
+  const host = canvas.parentElement;
+  let W, H, cols, rows, cell = 16, vals;
+  let mx = -9999, my = -9999, tx = -9999, ty = -9999, t0 = performance.now(), raf = 0, alive = true, inView = true;
+  const field = (time) => {
+    const sc = 0.0042 * cell, tz = reduced ? 0 : time * 0.00004;
+    const bump = mx > -9000; const sig = Math.max(90, W * 0.09);
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+      let v = noise(i * sc + tz * 3, j * sc + tz);
+      if (bump) { const dx = i * cell - mx, dy = j * cell - my; v += 0.32 * Math.exp(-(dx * dx + dy * dy) / (2 * sig * sig)); }
+      vals[j * cols + i] = v;
+    }
+  };
+  const segs = (level, out) => {
+    for (let j = 0; j < rows - 1; j++) for (let i = 0; i < cols - 1; i++) {
+      const a = vals[j * cols + i], b = vals[j * cols + i + 1], c = vals[(j + 1) * cols + i + 1], d = vals[(j + 1) * cols + i];
+      const idx = (a > level ? 8 : 0) | (b > level ? 4 : 0) | (c > level ? 2 : 0) | (d > level ? 1 : 0);
+      if (idx === 0 || idx === 15) continue;
+      const x = i * cell, y = j * cell; const L = (p, q) => (level - p) / (q - p);
+      const top = [x + cell * L(a, b), y], right = [x + cell, y + cell * L(b, c)], bottom = [x + cell * L(d, c), y + cell], left = [x, y + cell * L(a, d)];
+      const push = (p, q) => out.push(p[0], p[1], q[0], q[1]);
+      switch (idx) {
+        case 1: case 14: push(left, bottom); break;
+        case 2: case 13: push(bottom, right); break;
+        case 3: case 12: push(left, right); break;
+        case 4: case 11: push(top, right); break;
+        case 5: push(top, left); push(bottom, right); break;
+        case 6: case 9: push(top, bottom); break;
+        case 7: case 8: push(top, left); break;
+        case 10: push(top, right); push(left, bottom); break;
+      }
+    }
+  };
+  const draw = (time) => {
+    if (!W) return;
+    field(time); ctx.clearRect(0, 0, W, H);
+    const all = []; NIVELES_CURVA.forEach((l) => segs(l, all));
+    ctx.lineWidth = 1.1; ctx.strokeStyle = base;
+    ctx.beginPath(); for (let k = 0; k < all.length; k += 4) { ctx.moveTo(all[k], all[k + 1]); ctx.lineTo(all[k + 2], all[k + 3]); } ctx.stroke();
+    if (mx > -9000) {
+      const R = Math.max(120, W * 0.13);
+      ctx.save();
+      const g = ctx.createRadialGradient(mx, my, 0, mx, my, R);
+      g.addColorStop(0, hot); g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.strokeStyle = g; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(mx, my, R, 0, Math.PI * 2); ctx.clip();
+      ctx.beginPath(); for (let k = 0; k < all.length; k += 4) { ctx.moveTo(all[k], all[k + 1]); ctx.lineTo(all[k + 2], all[k + 3]); } ctx.stroke();
+      ctx.restore();
+    }
+  };
+  const resize = () => {
+    const r = host.getBoundingClientRect();
+    W = canvas.width = Math.floor(r.width); H = canvas.height = Math.floor(r.height);
+    cell = W > 900 ? 16 : 12; cols = Math.ceil(W / cell) + 1; rows = Math.ceil(H / cell) + 1;
+    vals = new Float32Array(cols * rows); draw(0);
+  };
+  const loop = (now) => {
+    if (!alive) return;
+    if (inView) {
+      if (tx > -9000) { mx = mx < -9000 ? tx : mx + (tx - mx) * .12; my = my < -9000 ? ty : my + (ty - my) * .12; }
+      else if (mx > -9000) { mx += (-9999 - mx) * .05; if (mx < -8000) { mx = my = -9999; } }
+      draw(now - t0);
+    }
+    raf = requestAnimationFrame(loop);
+  };
+  const onMove = (e) => { const r = canvas.getBoundingClientRect(); tx = e.clientX - r.left; ty = e.clientY - r.top; if (reduced) { mx = tx; my = ty; draw(0); } };
+  const onLeave = () => { tx = ty = -9999; if (reduced) { mx = my = -9999; draw(0); } };
+  host.addEventListener("pointermove", onMove);
+  host.addEventListener("pointerleave", onLeave);
+  const io = new IntersectionObserver((es) => { inView = es[0].isIntersecting; }); io.observe(host);
+  window.addEventListener("resize", resize);
+  resize();
+  if (!reduced) raf = requestAnimationFrame(loop);
+  return () => {
+    alive = false;
+    cancelAnimationFrame(raf);
+    window.removeEventListener("resize", resize);
+    host.removeEventListener("pointermove", onMove);
+    host.removeEventListener("pointerleave", onLeave);
+    io.disconnect();
+  };
+}
 
 function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [foto, setFoto] = useState(0);
-  const base = import.meta.env.BASE_URL;
+  const canvasRef = useRef(null);
   const reduceMotion = prefiereMenosMovimiento();
 
-  // Rotación automática. Depende de `foto` a propósito: un click en un punto
-  // reinicia el conteo de 9 s (si no, podía saltar de foto al segundo del
-  // click). Las 5 fotos se descargan solas: sus divs ya están en el DOM.
-  useEffect(() => {
-    if (reduceMotion) return;
-    const t = setTimeout(() => setFoto((f) => (f + 1) % FOTOS_LOGIN.length), 9000);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [foto]);
+  useEffect(() => initCurvasDeNivel(canvasRef.current, { reduced: reduceMotion }), [reduceMotion]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -779,61 +875,35 @@ function LoginScreen({ onLogin }) {
   const verso = versiculoDeHoy();
 
   return (
-    <div style={{ minHeight: "100vh", position: "relative", overflow: "hidden", fontFamily: "var(--sans)", background: "#1C1A18" }}>
+    <div style={{ minHeight: "100vh", position: "relative", overflow: "hidden", fontFamily: "var(--sans)", background: "#FFFFFF" }}>
       <style>{UI_CSS}</style>
 
-      {/* Fotos de obra — crossfade; la activa lleva Ken Burns lento */}
-      {FOTOS_LOGIN.map((p, i) => (
-        <div
-          key={p.f}
-          aria-hidden
-          className={i === foto && !reduceMotion ? "gt-kenburns" : undefined}
-          style={{
-            position: "absolute", inset: 0,
-            backgroundImage: `url(${base}brand/login/${p.f})`,
-            backgroundSize: "cover", backgroundPosition: p.pos,
-            opacity: i === foto ? 1 : 0,
-            transition: "opacity 1600ms var(--curva), transform 1600ms var(--curva)",
-            animation: i === foto && !reduceMotion ? "gtKenBurns 11s linear forwards" : "none",
-            willChange: i === foto ? "opacity, transform" : "auto",
-          }}
-        />
-      ))}
-      {/* Velo carbón: legibilidad del texto sobre cualquier foto */}
-      <div aria-hidden style={{ position: "absolute", inset: 0, background: "linear-gradient(100deg, rgba(28,26,24,.82) 0%, rgba(28,26,24,.55) 46%, rgba(28,26,24,.30) 100%)" }} />
+      {/* Curvas de nivel — fondo blanco, sin fotos (14-sep, mismo diseño y
+          efecto del sitio público). El canvas reacciona al mouse en TODA el
+          área; el form/tarjeta quedan por encima (zIndex 1) y siguen
+          recibiendo el click con normalidad. */}
+      <canvas ref={canvasRef} aria-hidden style={{ position: "absolute", inset: 0, zIndex: 0 }} />
 
       {/* Contenido */}
       <div style={{ position: "relative", zIndex: 1, minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box", padding: "clamp(20px,3.5vw,44px)" }}>
         {/* Logo */}
-        <div className="gt-aparece" style={{ filter: "brightness(0) invert(1)", opacity: 0.96, width: "fit-content" }}>
+        <div className="gt-aparece" style={{ width: "fit-content" }}>
           <Logo size={46} />
         </div>
 
         {/* Centro: tagline izquierda + tarjeta derecha */}
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 40, flexWrap: "wrap", padding: "28px 0" }}>
           <div style={{ maxWidth: 620, minWidth: "min(100%, 320px)" }}>
-            <div className="gt-label gt-sube" style={{ color: "#FFDFC2", marginBottom: 20, animationDelay: "120ms", textShadow: "0 1px 10px rgba(0,0,0,.5)" }}>
+            <div className="gt-label gt-sube" style={{ color: "var(--naranja-tinta)", marginBottom: 20, animationDelay: "120ms" }}>
               Sistema de Gestión de Operaciones
             </div>
-            <h1 className="gt-sube" style={{ font: "800 clamp(40px,5vw,68px)/1.08 var(--display)", letterSpacing: "-.022em", color: "#FFFDF9", margin: 0, animationDelay: "200ms", textShadow: "0 2px 24px rgba(0,0,0,.35)" }}>
+            <h1 className="gt-sube" style={{ font: "800 clamp(40px,5vw,68px)/1.08 var(--display)", letterSpacing: "-.022em", color: "var(--text)", margin: 0, animationDelay: "200ms" }}>
               Ingeniería que sostiene. <span style={{ color: "var(--marca-2)" }}>Proyectos que avanzan.</span>
             </h1>
           </div>
 
-          {/* Tarjeta de acceso — fondo alto (NO cristal puro: hay foto detrás) */}
-          <form
-            onSubmit={handleSubmit}
-            className="gt-sube"
-            style={{
-              width: "min(400px, 100%)", boxSizing: "border-box",
-              background: "var(--v-fondo-foto)",
-              border: "1px solid var(--v-borde)",
-              borderRadius: 24, padding: "34px 32px",
-              boxShadow: "var(--v-sombra)",
-              WebkitBackdropFilter: "var(--v-blur)", backdropFilter: "var(--v-blur)",
-              animationDelay: "320ms",
-            }}
-          >
+          {/* Tarjeta de acceso — mismo vidrio que el resto del rediseño */}
+          <form onSubmit={handleSubmit} className="gt-vidrio gt-sube" style={{ width: "min(400px, 100%)", boxSizing: "border-box", padding: "34px 32px", animationDelay: "320ms" }}>
             <h2 style={{ font: "800 32px/1.12 var(--display)", letterSpacing: "-.02em", color: "var(--text)", margin: 0 }}>Bienvenido</h2>
             <p style={{ font: "400 14px/1.5 var(--sans)", color: "var(--text-2)", margin: "8px 0 26px" }}>Ingresá para continuar.</p>
 
@@ -867,26 +937,13 @@ function LoginScreen({ onLogin }) {
           </form>
         </div>
 
-        {/* Pie: ubicación + puntos del slideshow */}
+        {/* Pie: ubicación + pista del efecto (mismo texto del sitio público) */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-          <div className="gt-label" style={{ color: "rgba(255,253,249,.75)" }}>
+          <div className="gt-label" style={{ color: "var(--text-3)" }}>
             Tegucigalpa · San Pedro Sula — Honduras
           </div>
-          <div style={{ display: "flex", gap: 2 }}>
-            {FOTOS_LOGIN.map((p, i) => (
-              <button
-                key={p.f}
-                onClick={() => setFoto(i)}
-                aria-label={`Foto ${i + 1}`}
-                style={{ height: 34, padding: "0 6px", display: "flex", alignItems: "center", background: "transparent", border: "none", cursor: "pointer" }}
-              >
-                <span aria-hidden style={{
-                  width: i === foto ? 26 : 9, height: 9, borderRadius: 999,
-                  background: i === foto ? "var(--marca-2)" : "rgba(255,253,249,.45)",
-                  transition: "width var(--mov-medio) var(--curva), background var(--mov-rapido)",
-                }} />
-              </button>
-            ))}
+          <div className="gt-label" style={{ color: "var(--text-faint)" }}>
+            Mové el cursor sobre las curvas de nivel
           </div>
         </div>
       </div>
