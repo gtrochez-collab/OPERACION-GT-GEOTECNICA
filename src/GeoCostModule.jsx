@@ -669,7 +669,12 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     // redondo; click en el grupo abre el proyecto. Con más de 6 grupos la
     // tarjeta scrollea horizontal (120px mínimo por grupo) — nunca la página.
     const grafProyectos = () => {
-      const H = isMobile ? 170 : 220;
+      // Desktop: la tarjeta llena el alto de la fila (align-items:stretch del
+      // grid de abajo) y el área de barras crece flexible (%) para ocupar todo
+      // ese alto — Gerson: "los 3 del mismo tamaño, que se aproveche el
+      // espacio". Móvil: alto fijo, apiladas, sin stretch entre columnas.
+      const flexible = !isMobile;
+      const H = isMobile ? 170 : 220; // solo se usa como alto fijo en móvil (y de referencia para decidir qué etiquetas entran)
       const n = activos.length;
       const maxY = niceMax(Math.max(0, ...activos.map(r => Math.max(...SERIES.map(([, k]) => num(r.resumen?.[k]))))));
       const ticks = [1, 2, 3, 4].map(k => ({ v: maxY * k / 4, pct: k * 25 }));
@@ -688,8 +693,8 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
         const abrir = () => { setSec("proyectos"); setProyActivo(pres.projectCode); };
         const title = `${nombre} — ${SERIES.map(([l], j) => `${l.toLowerCase()} ${fmtUSD0(vals[j])}`).join(" · ")}`;
         return <div key={pres.id} className="cc-fila" role="button" tabIndex={0} onClick={abrir} onKeyDown={onKeyActivar(abrir)} title={title} aria-label={`Abrir ${nombre}`}
-          style={{ minWidth: 0, display: "flex", flexDirection: "column", padding: "0 2px 8px" }}>
-          <div style={{ height: H, display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 6, padding: "0 6px" }}>
+          style={{ minWidth: 0, display: "flex", flexDirection: "column", height: flexible ? "100%" : undefined, padding: "0 2px 8px" }}>
+          <div style={{ ...(flexible ? { flex: 1, minHeight: 0 } : { height: H }), display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 6, padding: "0 6px" }}>
             {SERIES.map(([, k, color], j) => {
               const f = clamp01(vals[j] / maxY);
               return <div key={k} style={{ position: "relative", flex: "1 1 0", maxWidth: 34, minWidth: 6, height: dashAnim ? `${Math.max(f * 100, 1)}%` : "0%", borderRadius: "5px 5px 2px 2px", background: color, transition: trans("height", 1100, i * 110 + j * 60) }}>
@@ -697,26 +702,26 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
               </div>;
             })}
           </div>
-          <div style={{ marginTop: 10, textAlign: "center", minWidth: 0 }}>
+          <div style={{ marginTop: 10, textAlign: "center", minWidth: 0, flexShrink: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nombre}</div>
             {pres.ficha?.codigo && <div style={{ ...MONO, fontSize: 10.5, color: "var(--text-3)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pres.ficha.codigo}</div>}
             {sem !== "ok" && <div style={{ marginTop: 6, display: "flex", justifyContent: "center" }}>{chipSem(sem)}</div>}
           </div>
         </div>;
       };
-      return <div className="gt-vidrio gt-sube" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column", animationDelay: "40ms" }}>
+      return <div className="gt-vidrio gt-sube" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column", height: flexible ? "100%" : undefined, animationDelay: "40ms" }}>
         {cabecera("Por proyecto", SERIES.map(([l, , color]) => puntoLeyenda(color, l)))}
-        <div style={{ overflowX: "auto", paddingBottom: 2, scrollbarWidth: "thin" }}>
+        <div style={{ overflowX: "auto", paddingBottom: 2, scrollbarWidth: "thin", ...(flexible ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } : {}) }}>
           {/* paddingTop deja lugar al valor de una barra al 100 % y a la guía de arriba */}
-          <div style={{ position: "relative", display: "flex", alignItems: "flex-start", paddingTop: 16, minWidth: n > 6 ? 54 + n * 128 : undefined }}>
-            <div style={{ position: "relative", width: 44, height: H, flexShrink: 0, marginRight: 10 }}>
+          <div style={{ position: "relative", display: "flex", alignItems: flexible ? "stretch" : "flex-start", paddingTop: 16, minWidth: n > 6 ? 54 + n * 128 : undefined, ...(flexible ? { flex: 1, minHeight: 0 } : {}) }}>
+            <div style={{ position: "relative", width: 44, height: flexible ? "100%" : H, flexShrink: 0, marginRight: 10 }}>
               {ticks.map(t => <div key={t.pct} style={{ position: "absolute", right: 0, bottom: `${t.pct}%`, transform: "translateY(50%)", font: "600 10px/1 var(--mono)", color: "var(--text-faint)", whiteSpace: "nowrap" }}>{fmtCorto(t.v)}</div>)}
             </div>
-            <div aria-hidden style={{ position: "absolute", left: 54, right: 0, top: 16, height: H, pointerEvents: "none" }}>
+            <div aria-hidden style={{ position: "absolute", left: 54, right: 0, top: 16, ...(flexible ? { bottom: 0 } : { height: H }), pointerEvents: "none" }}>
               {ticks.map(t => <div key={t.pct} style={{ position: "absolute", left: 0, right: 0, bottom: `${t.pct}%`, height: 1, background: "rgba(44,42,40,.06)" }} />)}
               <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 1, background: "rgba(44,42,40,.12)" }} />
             </div>
-            <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: `repeat(${n}, minmax(0,1fr))`, gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: `repeat(${n}, minmax(0,1fr))`, gap: 8, height: flexible ? "100%" : undefined }}>
               {activos.map(grupo)}
             </div>
           </div>
@@ -730,7 +735,10 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     // barra más alta fuera de la pista. H 200 en desktop: la tarjeta ocupa la
     // tercera columna de la fila y así queda a la par de las otras dos (v3).
     const grafMeses = () => {
-      const H = isMobile ? 130 : 200;
+      // Igual criterio que grafProyectos: en desktop la tarjeta y la barra
+      // crecen flexible (%) para llenar el alto de la fila.
+      const flexible = !isMobile;
+      const H = isMobile ? 130 : 200; // alto fijo de referencia (móvil)
       const acc = new Map();
       activos.forEach(r => (r.resumen?.porMes || []).forEach(m => {
         if (!m?.mes) return;
@@ -741,21 +749,27 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       const meses = [...acc.values()].sort((a, b) => a.mes < b.mes ? -1 : 1).slice(-6).map(m => ({ ...m, total: m.ejecutadoUSD + m.comprometidoUSD }));
       const maxMes = Math.max(0, ...meses.map(m => m.total));
       const etiqueta = (mes) => MESES_CORTOS[Number(mes.slice(5, 7)) - 1] || mes;
-      const alto = (v) => maxMes > 0 ? Math.round(clamp01(v / maxMes) * (H - 18)) : 0;
-      return <div className="gt-vidrio gt-sube" style={{ padding: 20, minWidth: 0, animationDelay: "120ms" }}>
+      // Móvil: alto fijo en px (H-18, deja lugar al total encima). Desktop: la
+      // barra crece en % hasta un 90 % de la tarjeta — el 10 % restante es el
+      // lugar del total, mismo criterio que el margen fijo del móvil.
+      const altoPx = (v) => maxMes > 0 ? Math.round(clamp01(v / maxMes) * (H - 18)) : 0;
+      const altoPct = (v) => maxMes > 0 ? clamp01(v / maxMes) * 90 : 0;
+      return <div className="gt-vidrio gt-sube" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column", height: flexible ? "100%" : undefined, animationDelay: "120ms" }}>
         {cabecera("Gasto por mes — últimos 6 meses", [puntoLeyenda(CHARCOAL, "Ejecutado"), puntoLeyenda(ORANGE, "Comprometido")])}
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${meses.length || 1}, minmax(0,1fr))`, gap: isMobile ? 8 : 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${meses.length || 1}, minmax(0,1fr))`, gap: isMobile ? 8 : 10, ...(flexible ? { flex: 1, minHeight: 0, alignItems: "stretch" } : {}) }}>
           {meses.map((m, i) => {
-            const hEj = alto(m.ejecutadoUSD), hCom = alto(m.comprometidoUSD);
+            const hasEj = num(m.ejecutadoUSD) > 0, hasCom = num(m.comprometidoUSD) > 0;
+            const hEj = flexible ? `${altoPct(m.ejecutadoUSD)}%` : altoPx(m.ejecutadoUSD);
+            const hCom = flexible ? `${altoPct(m.comprometidoUSD)}%` : altoPx(m.comprometidoUSD);
             return <div key={m.mes} title={`${etiqueta(m.mes)} ${m.mes.slice(0, 4)}: ${fmtUSD0(m.total)} — ejecutado ${fmtUSD0(m.ejecutadoUSD)} · comprometido ${fmtUSD0(m.comprometidoUSD)}`}
-              style={{ minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center" }}>
-              <div style={{ height: H, width: "100%", maxWidth: 56, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+              style={{ minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", height: flexible ? "100%" : undefined }}>
+              <div style={{ ...(flexible ? { flex: 1, minHeight: 0 } : { height: H }), width: "100%", maxWidth: 56, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
                 {m.total > 0 && <div style={{ textAlign: "center", font: "600 10.5px/1 var(--mono)", color: "var(--text-2)", marginBottom: 4, whiteSpace: "nowrap", opacity: dashAnim ? 1 : 0, transition: trans("opacity", 500, i * 90 + 600) }}>{fmtCorto(m.total)}</div>}
-                <div style={{ height: dashAnim ? hCom : 0, flexShrink: 0, background: ORANGE, borderRadius: hEj > 0 ? "5px 5px 0 0" : "5px 5px 2px 2px", transition: trans("height", 1100, i * 90 + 80) }} />
-                <div style={{ height: dashAnim ? hEj : 0, flexShrink: 0, background: CHARCOAL, borderRadius: hCom > 0 ? "0 0 2px 2px" : "5px 5px 2px 2px", transition: trans("height", 1100, i * 90) }} />
+                <div style={{ height: dashAnim ? hCom : 0, flexShrink: 0, background: ORANGE, borderRadius: hasEj ? "5px 5px 0 0" : "5px 5px 2px 2px", transition: trans("height", 1100, i * 90 + 80) }} />
+                <div style={{ height: dashAnim ? hEj : 0, flexShrink: 0, background: CHARCOAL, borderRadius: hasCom ? "0 0 2px 2px" : "5px 5px 2px 2px", transition: trans("height", 1100, i * 90) }} />
                 {m.total <= 0 && <div style={{ height: 3, flexShrink: 0, borderRadius: 2, background: "rgba(44,42,40,.08)" }} />}
               </div>
-              <div style={{ font: "700 9.5px/1 var(--mono)", color: "var(--text-3)", textTransform: "uppercase", letterSpacing: ".5px", marginTop: 8 }}>{etiqueta(m.mes)}</div>
+              <div style={{ font: "700 9.5px/1 var(--mono)", color: "var(--text-3)", textTransform: "uppercase", letterSpacing: ".5px", marginTop: 8, flexShrink: 0 }}>{etiqueta(m.mes)}</div>
             </div>;
           })}
         </div>
@@ -769,12 +783,16 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       {puedeEditarPresupuesto && <Btn onClick={() => setModal({ t: "presupuesto", pres: null })}>+ Presupuesto</Btn>}
     </Vidrio>;
 
-    // Las 3 piezas en UNA fila (desktop); en el teléfono se apilan en ese
-    // orden. alignItems start: cada tarjeta con su alto natural, sin estirarse.
-    // La columna del medio apila una tarjeta con anillo por presupuesto activo.
-    return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.35fr) minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
+    // Las 3 piezas en UNA fila, del MISMO tamaño (14-sep, Gerson: "las 3 del
+    // mismo tamaño, que aprovechemos el espacio, se ve desproporcional").
+    // Columnas iguales + alignItems:stretch: la fila toma el alto de la más
+    // alta (la columna del medio, con anillo + categorías) y las otras dos
+    // se estiran a esa misma altura — sus gráficas crecen flexible (%) para
+    // llenar ese alto en vez de dejar espacio vacío abajo. En el teléfono se
+    // apilan en ese orden con su alto fijo de siempre (sin stretch).
+    return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(3, minmax(0,1fr))", gap: 16, alignItems: "stretch" }}>
       {grafProyectos()}
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, minWidth: 0 }}>{activos.map(tarjeta)}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16, minWidth: 0, alignContent: "start" }}>{activos.map(tarjeta)}</div>
       {grafMeses()}
     </div>;
   };
