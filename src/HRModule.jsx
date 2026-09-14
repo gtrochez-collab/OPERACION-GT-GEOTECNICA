@@ -62,6 +62,31 @@ const GRUPO_COLOR = { A: "#0F4C75", B: "#D97706", C: "#1B4332", D: "#7C3AED" };
 const MOTIVOS_ALTA = ["Contratacion nueva", "Reingreso", "Cambio de empresa", "Conversion temporal a permanente", "Otro"];
 const MOTIVOS_BAJA = ["Renuncia voluntaria", "Despido", "Fin de contrato temporal", "Mutuo acuerdo", "Jubilacion", "Fallecimiento", "Otro"];
 
+// ── DÍA DE BAJA (14-sep-2026, pedido de Gerson) ─────────────────────────────
+// El `endDate` de un empleado con status "inactive" es el DÍA DE BAJA: el
+// primer dia en que la persona YA NO PERTENECE a la empresa. Ese dia y todos
+// los siguientes quedan bloqueados (gris) en la asistencia — domingos y
+// feriados INCLUIDOS, asi que tampoco se le autorrellena el "1" de descanso
+// pagado por ley (si ya no es de la empresa, ese domingo no se le paga).
+//
+// Antes se interpretaba como "ultimo dia laborado" y se bloqueaba a partir
+// del dia SIGUIENTE. Gerson lo cambio: "ese dia ya no pertenece a la empresa,
+// que salga en gris de ahi en adelante". Una sola fecha, un solo significado,
+// igual en la ficha, en la asistencia y en el reporte de movimientos.
+//
+// OJO: solo aplica con status "inactive". Los temporales ACTIVOS traen un
+// endDate de contrato que queda viejo al renovar — ese no bloquea nada.
+const fueraPorBaja = (e, dStr) => !!(e && e.status === "inactive" && e.endDate && dStr >= e.endDate);
+
+// "2026-09-05" → "2026-09-04". En UTC a proposito: `new Date("2026-09-05")` es
+// medianoche UTC y restar en hora local de Honduras (UTC-6) corre otro dia.
+const diaAnterior = (dStr) => {
+  const ymd = String(dStr || "").slice(0, 10);
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (!y || !m || !d) return "";
+  return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+};
+
 // Devuelve la quincena (1Q/2Q) y periodo (YYYY-MM) de una fecha.
 //
 // CRITICO: parseamos el string YYYY-MM-DD manualmente en lugar de pasar
@@ -754,7 +779,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       // Bloqueo por alta/baja (mismas reglas que dayLockReason)
       const dStr = `${periodo}-${String(day).padStart(2, "0")}`;
       if (emp.startDate && dStr < emp.startDate) return;
-      if (emp.status === "inactive" && emp.endDate && dStr > emp.endDate) return;
+      if (fueraPorBaja(emp, dStr)) return;
       const k = `${empId}-${day}`;
       const grid = { ...(hoja.grid || {}) };
       const actual = grid[k] || "";
@@ -856,7 +881,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     // Domingos/feriados se pagan por ley — no aplica descuento por hora.
     if (new Date(y, m - 1, day).getDay() === 0 || esFeriadoQuincena(periodo, day)) return { ok: true, celdas: 0 };
     if (emp.startDate && dStr < emp.startDate) return { ok: true, celdas: 0 };
-    if (emp.status === "inactive" && emp.endDate && dStr > emp.endDate) return { ok: true, celdas: 0 };
+    if (fueraPorBaja(emp, dStr)) return { ok: true, celdas: 0 };
     let cloudArr = null;
     try { const c = await store.getCloud("hr-atts2"); if (Array.isArray(c)) cloudArr = c; } catch { cloudArr = null; }
     if (!cloudArr) return { ok: false, celdas: 0, sinNube: true };
@@ -1202,7 +1227,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <Select label="Contrato" options={[{ value: "permanent", label: "Permanente" }, { value: "temporary", label: "Temporal" }, { value: "honorarios", label: "Honorarios" }]} value={f.contractType} onChange={e => u("contractType", e.target.value)} />
         <Select label="Estado" options={[{ value: "active", label: "Activo" }, { value: "inactive", label: "Inactivo" }]} value={f.status} onChange={e => u("status", e.target.value)} />
         <Input label="Fecha inicio" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
-        {f.contractType === "temporary" && <Input label="Fecha fin" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />}
+        {/* En un empleado INACTIVO este campo ES el día de baja (el primer día
+            que ya no pertenece a la empresa) y es el que bloquea la asistencia
+            de ahí en adelante. En un temporal activo es el fin de contrato. */}
+        {(f.contractType === "temporary" || f.status === "inactive") && <Input label={f.status === "inactive" ? "Día de baja" : "Fecha fin"} type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />}
+        {f.status === "inactive" && <div style={{ gridColumn: "1/-1", fontSize: 11.5, color: "#7F1D1D", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: "8px 12px" }}>
+          Desde el <b>día de baja</b> (inclusive) la asistencia queda en gris: es el primer día en que ya no pertenece a la empresa.
+        </div>}
         {/* Salario y bonificación: ocultos para roles sin acceso a montos
             (Ana). Al no renderizar los inputs, `f` conserva los valores
             originales del empleado y el guardado NO los pisa. */}
@@ -1408,11 +1439,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           const dStr = `${per}-${String(d).padStart(2, "0")}`;
           // Bloqueo por fechas de alta / baja. Alineado con AttendanceGrid:
           //   - Siempre bloqueamos antes del startDate (alta).
-          //   - Solo bloqueamos despues del endDate si status === "inactive"
+          //   - Desde el DIA DE BAJA (inclusive) solo si status === "inactive"
           //     (baja efectivamente registrada). Asi no penalizamos a temporales
           //     activos cuyo endDate quedo viejo por renovacion de contrato.
           if (emp.startDate && dStr < emp.startDate) { diasFueraRango++; continue; }
-          if (emp.status === "inactive" && emp.endDate && dStr > emp.endDate) { diasFueraRango++; continue; }
+          if (fueraPorBaja(emp, dStr)) { diasFueraRango++; continue; }
 
           const v = grid[`${emp.id}-${d}`] || "";
           const dt = new Date(y, m - 1, d);
@@ -1823,8 +1854,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     // como dia normal aun si el empleado no trabaja. El usuario solo cambia a
     // DT/DT2 (domingo trabajado) o TF (feriado trabajado) si efectivamente
     // trabajaron. Respeta el bloqueo por alta/baja (no rellena dias fuera de
-    // rango). Solo rellena celdas que esten vacias — no sobrescribe valores
-    // existentes (ya marcados, o explicitamente puestos por el usuario).
+    // rango: a un dado de baja NO se le paga el domingo posterior). Solo
+    // rellena celdas que esten vacias — no sobrescribe valores existentes
+    // (ya marcados, o explicitamente puestos por el usuario).
     const initialData = (() => {
       if (attDraft) return attDraft.data;
       const initial = { ...(sheet?.grid || {}) };
@@ -1842,7 +1874,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           const k = `${e.id}-${d}`;
           if (initial[k]) return;
           if (e.startDate && dStr < e.startDate) return;
-          if (e.status === "inactive" && e.endDate && dStr > e.endDate) return;
+          if (fueraPorBaja(e, dStr)) return;
           initial[k] = "1";
         });
       }
@@ -1865,7 +1897,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           const dt = new Date(y, m - 1, d);
           if (dt.getDay() === 0 || esFeriadoQuincena(sheet.periodo, d)) continue;
           if (e.startDate && dStr < e.startDate) continue;
-          if (e.status === "inactive" && e.endDate && dStr > e.endDate) continue;
+          if (fueraPorBaja(e, dStr)) continue;
           const k = `${e.id}-${d}`;
           // RECONCILIA: hr-vacs es la fuente de verdad, así que también
           // convierte un "1" (autorrelleno o pisado por un guardado con la
@@ -1886,7 +1918,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         const dt = new Date(y, m - 1, dd);
         if (dt.getDay() === 0 || esFeriadoQuincena(sheet.periodo, dd)) return;
         if (e.startDate && dStr < e.startDate) return;
-        if (e.status === "inactive" && e.endDate && dStr > e.endDate) return;
+        if (fueraPorBaja(e, dStr)) return;
         const k = `${e.id}-${dd}`;
         if (initial[k]) return;
         initial[k] = String(l.type || "").toLowerCase().includes("sin goce") ? "0" : "1";
@@ -1906,7 +1938,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         const dt = new Date(y, m - 1, dd);
         if (dt.getDay() === 0 || esFeriadoQuincena(sheet.periodo, dd)) return;
         if (e.startDate && dStr < e.startDate) return;
-        if (e.status === "inactive" && e.endDate && dStr > e.endDate) return;
+        if (fueraPorBaja(e, dStr)) return;
         const k = `${e.id}-${dd}`;
         if (initial[k]) return;
         initial[k] = "1";
@@ -1991,9 +2023,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     //      Esto cubre altas a mitad de quincena (ej: alta el 8 → dias 1-7 grises).
     //
     //   2. Solo cuando el empleado tiene status "inactive" (baja registrada):
-    //      dias DESPUES del endDate quedan bloqueados (ej: baja el 8 → dias
-    //      9-15 grises). El status "inactive" lo setea BajaForm junto con el
-    //      endDate, asi que es la fuente de verdad.
+    //      el DIA DE BAJA y los siguientes quedan bloqueados (ej: baja el 8 →
+    //      dias 8-15 grises, domingos incluidos). Ver `fueraPorBaja` arriba.
+    //      El status "inactive" lo setea BajaForm junto con el endDate, asi
+    //      que es la fuente de verdad.
     //
     // Por que no chequeamos endDate cuando status === "active":
     //   Los contratos temporales tienen endDate inicial al darlos de alta.
@@ -2003,8 +2036,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const dayLockReason = (e, dayObj) => {
       const dStr = `${sheet.periodo}-${String(dayObj.day).padStart(2, "0")}`;
       if (e.startDate && dStr < e.startDate) return `Antes del alta (${e.startDate})`;
-      if (e.status === "inactive" && e.endDate && dStr > e.endDate) {
-        return `Despues de la baja (${e.endDate})`;
+      if (fueraPorBaja(e, dStr)) {
+        return `Baja el ${e.endDate} — ya no pertenece a la empresa`;
       }
       return null;
     };
@@ -3592,7 +3625,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         // valor guardado de antes (mismo fix que empStats — caso Norman).
         const dStr = `${sheet.periodo}-${String(d.day).padStart(2, "0")}`;
         if (e.startDate && dStr < e.startDate) return;
-        if (e.status === "inactive" && e.endDate && dStr > e.endDate) return;
+        if (fueraPorBaja(e, dStr)) return;
         const k = `${e.id}-${d.day}`;
         const v = grid[k] || "";
         let val = 0;
@@ -4226,7 +4259,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       let esperados = 0, presentes = 0, conDato = 0;
       ae.forEach(e => {
         if (e.startDate && dStr < e.startDate) return;
-        if (e.status === "inactive" && e.endDate && dStr > e.endDate) return;
+        if (fueraPorBaja(e, dStr)) return;
         esperados++;
         const v = (sh.grid || {})[`${e.id}-${d}`] || "";
         if (v) conDato++;
@@ -5532,17 +5565,30 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const u = (k, v) => setF(p => ({ ...p, [k]: v }));
     const q = getQuincena(f.excepcional && f.payrollEffectiveDate ? f.payrollEffectiveDate : f.date);
     const esAlta = mov.tipo === "alta";
+    // La ficha del empleado es la que pinta el gris en la asistencia. Antes,
+    // editar la fecha de una baja acá dejaba el reporte diciendo una fecha y la
+    // hoja de asistencia gris desde otra (caso Henry: reporte 5-sep, gris desde
+    // el 8). Ahora una baja SIEMPRE sincroniza el `endDate` de la ficha.
+    const empFicha = esAlta ? null : emps.find(x => x.id === mov.employeeId);
+    const desfase = !!(empFicha && f.date && empFicha.endDate !== f.date);
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ background: "#F1F5F9", border: "1px solid #CBD5E1", borderRadius: 10, padding: 12, fontSize: 13, color: "#334155" }}>
         Editando: <b>{mov.fullName}</b> · <b>{mov.dni}</b> · {mov.position}
         <div style={{ fontSize: 11, color: "#64748B", marginTop: 4 }}>
-          Solo se modifican los campos del movimiento. La ficha del empleado y el contrato NO se tocan.
+          {esAlta
+            ? "Solo se modifican los campos del movimiento. La ficha del empleado y el contrato NO se tocan."
+            : "Al guardar, el día de baja también se actualiza en la ficha del colaborador (es el que bloquea la asistencia)."}
         </div>
       </div>
 
+      {desfase && <div style={{ background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#78350F", lineHeight: 1.6 }}>
+        ⚠️ La ficha de <b>{mov.fullName}</b> tiene día de baja <b>{empFicha.endDate ? fmt(empFicha.endDate) : "(sin fecha)"}</b> y este movimiento dice <b>{fmt(f.date)}</b>.
+        Al guardar quedan las dos en <b>{fmt(f.date)}</b> y la asistencia se pone en gris desde ese día.
+      </div>}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <Input label={esAlta ? "Fecha de efecto en planilla *" : "Fecha de baja *"} type="date" value={f.date} onChange={e => u("date", e.target.value)} />
+        <Input label={esAlta ? "Fecha de efecto en planilla *" : "Día de baja *"} type="date" value={f.date} onChange={e => u("date", e.target.value)} />
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Quincena / periodo (auto)</label>
           <div style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, background: "#fff", fontWeight: 700, fontSize: 13 }}>
@@ -5608,6 +5654,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             delete updated.proporcional;
           }
           onSave(updated);
+          // Una BAJA sincroniza la ficha: el `endDate` del empleado es el DIA
+          // DE BAJA y es lo unico que mira la asistencia para pintar el gris.
+          if (!esAlta && empFicha && empFicha.endDate !== f.date) {
+            sE(emps.map(x => x.id === empFicha.id ? { ...x, status: "inactive", endDate: f.date } : x));
+          }
           setModal(null);
         }}>Guardar cambios</Btn>
       </div>
@@ -5645,8 +5696,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           </div>;
         })()}
       </div>}
-      <Input label="Fecha de baja" type="date" value={f.date} onChange={e => u("date", e.target.value)} />
+      <Input label="Día de baja" type="date" value={f.date} onChange={e => u("date", e.target.value)} />
       <Select label="Motivo de baja" options={MOTIVOS_BAJA} value={f.motivo} onChange={e => u("motivo", e.target.value)} />
+      {f.date && <div style={{ gridColumn: "1/-1", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#7F1D1D", lineHeight: 1.6 }}>
+        El <b>día de baja</b> es el primer día en que la persona <b>ya no pertenece a la empresa</b>.
+        Desde el <b>{fmt(f.date)}</b> en adelante su asistencia queda <b>en gris</b> (bloqueada) — domingos y feriados incluidos, así que no se le paga el descanso.
+        Su último día laborado sería el <b>{fmt(diaAnterior(f.date))}</b>.
+      </div>}
       <div style={{ gridColumn: "1/-1" }}>
         <Input label="Notas / Observaciones" value={f.notas} onChange={e => u("notas", e.target.value)} />
       </div>
@@ -5763,7 +5819,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         </tr>`;
       }).join("");
 
-      // BAJAS: "Último día del colaborador" (= fecha de baja). Sin Duración contrato ni Fecha mov.
+      // BAJAS: "Día de baja" = primer día que YA NO pertenece a la empresa (es
+      // el mismo que bloquea la asistencia). Sin Duración contrato ni Fecha mov.
       const renderRowsBajas = (rows, color) => rows.map(m => {
         const q = getQuincena(m.date);
         return `<tr>
@@ -5788,7 +5845,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       w.document.write("<h1>" + titulo + "</h1><h2>" + sub + "</h2>");
       w.document.write(`<p style='font-size:12px'><b>Total altas:</b> ${altas.length} &nbsp;|&nbsp; <b>Total bajas:</b> ${bajas.length}</p>`);
       const headerAltas = "<tr><th>Tipo</th><th>Día 1 del colaborador</th><th>Fecha mov.</th><th>Q</th><th>Grupo</th><th>Nombre</th><th>DNI</th><th>Posicion</th><th>Empresa</th><th>Contrato</th><th>Duración contrato</th><th>Salario</th><th>Motivo</th><th>Notas</th></tr>";
-      const headerBajas = "<tr><th>Tipo</th><th>Último día del colaborador</th><th>Q</th><th>Grupo</th><th>Nombre</th><th>DNI</th><th>Posicion</th><th>Empresa</th><th>Contrato</th><th>Salario</th><th>Motivo</th><th>Notas</th></tr>";
+      const headerBajas = "<tr><th>Tipo</th><th>Día de baja</th><th>Q</th><th>Grupo</th><th>Nombre</th><th>DNI</th><th>Posicion</th><th>Empresa</th><th>Contrato</th><th>Salario</th><th>Motivo</th><th>Notas</th></tr>";
       if (altas.length > 0) {
         w.document.write("<h3 style='color:#059669'>ALTAS (" + altas.length + ")</h3>");
         w.document.write("<table><thead>" + headerAltas + "</thead><tbody>" + renderRowsAltas(altas, "#059669") + "</tbody></table>");
@@ -5881,7 +5938,17 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           BAJAS ({bajas.length})
         </div>
         <Table columns={[
-          { key: "date", label: "Fecha", render: r => fmt(r.date) },
+          // "Día de baja" = primer día que ya no pertenece a la empresa. Si la
+          // ficha del colaborador quedó con otra fecha (bajas editadas antes
+          // del 14-sep-2026), avisamos: la asistencia se pinta con la ficha.
+          { key: "date", label: "Día de baja", render: r => {
+            const ef = emps.find(x => x.id === r.employeeId);
+            const desf = ef && ef.endDate && ef.endDate !== r.date;
+            return <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              {fmt(r.date)}
+              {desf && <span title={`La ficha dice ${fmt(ef.endDate)} — la asistencia se bloquea con esa. Editá el movimiento (✏️) y guardá para dejar las dos en ${fmt(r.date)}.`} style={{ color: "#B45309", cursor: "help" }}>⚠️</span>}
+            </span>;
+          } },
           { key: "q", label: "Q", render: r => { const q = getQuincena(r.date); return <Badge color="#0891B2">{q.quincena}</Badge>; } },
           { key: "grupo", label: "Grupo", render: r => <Badge color={GRUPO_COLOR[r.grupo]}>{r.grupo}</Badge> },
           { key: "fullName", label: "Nombre" },

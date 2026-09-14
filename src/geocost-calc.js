@@ -242,7 +242,10 @@ export const calcCostoMOPuro = ({ sheet, emps, hes, heSalBase, resolveProj }) =>
     dias.forEach(d => {
       const dStr = `${sheet.periodo}-${String(d.day).padStart(2, "0")}`;
       if (e.startDate && dStr < e.startDate) return;
-      if (e.status === "inactive" && e.endDate && dStr > e.endDate) return;
+      // Espejo de `fueraPorBaja` de HRModule (14-sep-2026): el endDate de un
+      // inactivo es el DIA DE BAJA — ese dia ya no pertenece a la empresa, asi
+      // que no se le paga ni siquiera el domingo. Si cambia alla, cambiar aca.
+      if (e.status === "inactive" && e.endDate && dStr >= e.endDate) return;
       const k = `${e.id}-${d.day}`;
       const v = grid[k] || "";
       let val = 0;
