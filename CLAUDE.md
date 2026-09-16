@@ -601,7 +601,8 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (PresupuestoForm / MovilizacionForm / MovilizacionDetalle / AjustesTasa, a
   nivel de módulo) + `geocost-ui.jsx` (primitivas Input/Select/Btn/Chip/
   Modal/Vidrio + fmtUSD/fmtL/fmtFecha + colores C_*). Roles: admin, costos,
-  tesoreria, gerencia (solo lectura). Modelo APROBADO por Gerson tras 10
+  tesoreria, gerencia (solo lectura), compras_ops (16-sep-2026: Arturo entra
+  SOLO para cargar/editar presupuestos — ver más abajo). Modelo APROBADO por Gerson tras 10
   preguntas de descubrimiento (no re-litigar): presupuesto en **USD** (así lo
   pasa el PM), compras en L, UNA tasa global editable en el módulo
   (`cc-config.tasa`, hoy 27.00; el chip "L 27.00 / $" del header la abre);
@@ -706,6 +707,15 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   sección de GeoCost llevan `gridTemplateColumns: minmax(0,1fr)` (la tabla de
   Movimientos estiraba TODA la vista a 1124px en el teléfono); `cc-file-` se
   agregó a SKIP_LOCAL_PREFIXES y EVICTION_PRIORITY_PREFIXES de supabase.js.
+  **Acceso de Arturo/Christian a presupuestos (16-sep-2026, pedido de
+  Gerson)**: `puedeEditarPresupuesto` pasó de `isAdmin` a
+  `isAdmin || isCostos || isComprasOps` — Arturo (rol `compras_ops`, antes
+  SIN acceso al módulo) entra ahora a GeoCost solo para cargar/editar
+  presupuestos de proyecto; Christian (rol `costos`) ya entraba pero antes
+  no podía tocar presupuestos, solo reclasificar. Tasa de cambio
+  (`puedeTasa`), crear/recibir/acreditar movilizaciones y reclasificar
+  partidas **NO cambiaron** — siguen exactamente como estaban (admin para
+  tasa y movilizaciones; admin/costos/tesoreria para reclasificar).
 - `GeoDrillVault.jsx`, `projects.js` (base + helpers), `holidays.js`, `theme.js`,
   `gt-ui.js` (GT_CSS: tokens + clases gt-* del rediseño — lo montan App y los
   módulos rediseñados, cada quien con su propio <style>).
