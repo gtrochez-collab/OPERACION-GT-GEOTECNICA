@@ -58,10 +58,11 @@ const MODULES = [
     icon: "📊",
     desc: "Presupuesto vs. gasto real, por proyecto.",
     accent: "#C75F1F",
-    // Central de costos (9-sep-2026): Gerson administra presupuestos y tasa;
+    // Central de costos (9-sep-2026): Gerson administra tasa y movilizaciones;
     // Christian (costos) y Carolina (tesoreria) reclasifican y acreditan
-    // movilizaciones; gerencia solo lectura.
-    roles: ["admin", "costos", "tesoreria", "gerencia"],
+    // movilizaciones; gerencia solo lectura. 16-sep-2026: Arturo (compras_ops)
+    // entra SOLO para cargar/editar presupuestos de proyecto (ver GeoCostModule).
+    roles: ["admin", "costos", "tesoreria", "gerencia", "compras_ops"],
   },
   {
     id: "geosafety",

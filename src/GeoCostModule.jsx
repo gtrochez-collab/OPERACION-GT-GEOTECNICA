@@ -159,13 +159,19 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   const isCostos = userRole === "costos";
   const isTesoreria = userRole === "tesoreria";
   const isGerencia = userRole === "gerencia";
-  const puedeEditarPresupuesto = isAdmin;
+  // 16-sep-2026 (pedido de Gerson): Arturo (compras_ops) y Christian (costos)
+  // pueden CARGAR/EDITAR presupuestos de proyecto — es lo único nuevo que se
+  // les abrió. Tasa de cambio, movilizaciones y reclasificación de partidas
+  // NO cambiaron (Christian ya reclasificaba por ser "costos"; Arturo sigue
+  // sin poder hacerlo).
+  const isComprasOps = userRole === "compras_ops";
+  const puedeEditarPresupuesto = isAdmin || isCostos || isComprasOps;
   const puedeTasa = isAdmin;
   const puedeReclasificar = isAdmin || isCostos || isTesoreria;
   const puedeCrearMov = isAdmin;
   const puedeRecibirMov = isTesoreria || isAdmin;
   const puedeAcreditarMov = isTesoreria || isAdmin;
-  const roleLabel = isAdmin ? "Operaciones" : isTesoreria ? "Tesorería" : isCostos ? "Costos / Operaciones" : isGerencia ? "Gerencia (solo lectura)" : userRole;
+  const roleLabel = isAdmin ? "Operaciones" : isTesoreria ? "Tesorería" : isCostos ? "Costos / Operaciones" : isGerencia ? "Gerencia (solo lectura)" : isComprasOps ? "Compras / Operaciones" : userRole;
 
   // ── Datos ──
   const [loaded, setLoaded] = useState(false);
