@@ -202,9 +202,15 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   solo miran; Ana y Jorge no ven la pestaña.
   **VENCIDA — +2 semanas sin pago (18-sep-2026)**: `estaVencida(p)` /
   `diasEsperandoPago(p)` / `DIAS_VENCIDA = 14` a nivel de módulo. El reloj corre
-  desde `validatedAt || createdAt` (cuando empezó a esperar a Tesorería) y
-  compara SOLO fechas (los timestamps mezclan medianoche UTC con hora local y
-  cruzaban el umbral un día antes). Pinta de **rojo clarito** (`C_ROJO`) la fila
+  desde la FECHA DE CARGA (`createdAt`) — la misma columna que la tabla muestra
+  al lado, así los días siempre cuadran con lo que se ve — y compara SOLO fechas
+  (los timestamps mezclan medianoche UTC con hora local y cruzaban el umbral un
+  día antes). ⚠ **NO usar `validatedAt`**: ese campo se REESCRIBE cada vez que
+  alguien le da "Aprobar y enviar a Tesorería" (por ejemplo al editar la
+  solicitud), así que re-aprobar reiniciaba el reloj y ESCONDÍA el atraso. Lo
+  cazó Gerson el mismo 18-sep: la MAT-2026-0385 (Ebenezer) se cargó el 2-sep
+  igual que sus vecinas pero se re-aprobó el 9-sep, y era la única de esa fecha
+  que no salía vencida. Pinta de **rojo clarito** (`C_ROJO`) la fila
   en Solicitudes con el chip "Vencida · N d" y la tarjeta en Prioridades; el
   contador "vencidas" solo aparece en la tira resumen si hay alguna. El
   **naranja clarito** (`C_ULTRA`) es "Urgente", que lo marca Finanzas a mano. Si

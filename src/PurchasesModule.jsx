@@ -61,10 +61,18 @@ const C_ROJO     = { color: "#B03024", bg: "rgba(192,57,43,.07)", borde: "rgba(1
 const C_ULTRA    = { color: "#A94E16", bg: "rgba(232,118,45,.10)", borde: "rgba(232,118,45,.30)" };
 
 // ── VENCIDA: más de 2 semanas sin pago (18-sep-2026, pedido de Gerson) ──
-// El reloj corre desde que Operaciones la aprobó (ahí empieza a esperar a
-// Tesorería); las que siguen en borrador usan su fecha de carga. Se comparan
-// solo FECHAS (sin horas): los timestamps mezclan medianoche UTC con hora
-// local de Honduras y cruzaban el umbral un día antes.
+// El reloj corre desde la FECHA DE CARGA (`createdAt`) — la misma columna que
+// la tabla muestra al lado, así los días siempre cuadran con lo que se ve.
+//
+// ⚠ NO se usa `validatedAt`: ese campo se REESCRIBE cada vez que alguien le da
+// "Aprobar y enviar a Tesorería" (por ejemplo al editar la solicitud para
+// corregir algo), así que re-aprobar le reiniciaba el reloj y escondía el
+// atraso. Lo cazó Gerson el 18-sep: la MAT-2026-0385 (Ebenezer) se cargó el
+// 2-sep igual que sus vecinas, pero se volvió a aprobar el 9-sep y era la
+// única de esa fecha que NO salía vencida.
+//
+// Se comparan solo FECHAS (sin horas): los timestamps mezclan medianoche UTC
+// con hora local de Honduras y cruzaban el umbral un día antes.
 const DIAS_VENCIDA = 14;
 const diasDesdeYMDLocal = (iso) => {
   const ymd = String(iso || "").slice(0, 10);
@@ -73,7 +81,7 @@ const diasDesdeYMDLocal = (iso) => {
   return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86400000)) : null;
 };
 const esPagadaP = (p) => p?.status === "pagado" || p?.status === "finalizado";
-const diasEsperandoPago = (p) => diasDesdeYMDLocal(p?.validatedAt || p?.createdAt);
+const diasEsperandoPago = (p) => diasDesdeYMDLocal(p?.createdAt);
 const estaVencida = (p) => {
   if (!p || esPagadaP(p)) return false;
   const d = diasEsperandoPago(p);
