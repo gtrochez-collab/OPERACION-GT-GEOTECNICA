@@ -232,6 +232,22 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   `treasuryStatus`, así que editar con él una compra pagada le BORRABA el pago a
   Carolina. El audit se escribe con la acción `partida_reclasificada`, la misma
   que `sP` RESCATA de la nube antes de mergear.
+  **PROYECTOS rediseñado (18-sep-2026)** — Gerson: "qué horrible se ven, quiero
+  que se vean como en GeoCost". `renderProjects` usa las mismas piezas que
+  `renderProyectosGrid` de GeoCostModule: tarjetas `.gt-vidrio gt-vidrio-hover`
+  clickeables (abren las solicitudes de ese proyecto), nombre en `var(--display)`,
+  código en mono, barra de avance carbón (pagado) + naranja (por pagar), y dos
+  columnas Por pagar / Pagado. Cajita punteada al final para "Nuevo proyecto".
+  Se retiraron los StatCards de colores sueltos (→ tira resumen en vidrio) y el
+  chip "NUEVO" (lo traía casi todo proyecto: puro ruido). Chips que quedan:
+  "N vencidas" (rojo) y "Sin código" (gris). La lógica no cambió.
+  **Fix — partida de MOVILIZACIÓN en las solicitudes (18-sep-2026)**: Gerson
+  pagó una movilización de Villa San Miguel POR SOLICITUDES (no por el flujo de
+  GeoCost) y el Select no le ofrecía la partida "Generales · Movilización".
+  `partidasParaModulo` de `geocost-calc.js` ahora incluye las de módulo
+  `movilizacion` cuando se piden las de `compras` o `maquinas`: una movilización
+  se puede pagar por los dos caminos y las dos bajan de la MISMA partida (no hay
+  doble conteo — cada movimiento se cuenta una sola vez).
   **Flujo de cierre contable (19-ago-2026, pedido de Gerson)**: el form de
   solicitud lleva `cierreResponsable` (quién cierra con conta) y
   `detalleMateriales` (qué se compra, según cotización — opcional).
@@ -329,7 +345,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   quién cerró, y botones para ver la factura/paquete, re-descargar el PDF y
   reabrir (admin/Ana). Se sacó de "Por cerrar" para que ese tablero quede solo
   con lo pendiente.
-  **SUPPLY CHAIN — presentación v2 (3-sep)**: sin título, filtro compacto
+  **SUPPLY CHAIN v3 (18-sep-2026)** — Gerson: "qué desorden, no dan ganas de
+  ver eso". Se retiró toda la presentación de la v2 (ventanitas por proyecto,
+  ranking "a quién apurar", tabla y los filtros de rango libre / proyecto /
+  responsable / orden por atraso). Ahora es lo que él pidió: **las compras YA
+  PAGADAS agrupadas por DÍA DE PAGO** (lo más reciente arriba), en tarjetas
+  `.gt-vidrio` como Prioridades, cada una con su proyecto, proveedor, monto y
+  **en qué etapa del proceso va** (chip de color + punto de semáforo por días
+  parados + de quién depende). Filtros: **semana de LUNES A DOMINGO** (default)
+  · Semana pasada · Este mes · Todo, chips por etapa, "ver cerradas" y
+  buscador. Click en una tarjeta abre esa solicitud. `etapaDe()` quedó
+  INTACTA (la clasificación auditada en ago-2026); los estados se redujeron a
+  `scModo`/`scEtapa`/`scQ`/`scVerCerradas`. El texto de abajo describe la v2,
+  que ya no existe — se conserva solo por el detalle de la lógica de etapas.
+  **SUPPLY CHAIN — presentación v2 (3-sep, RETIRADA el 18-sep)**: sin título, filtro compacto
   en una fila (se quitaron el select de proyecto y el input de
   responsable), tira resumen (dinero en cadena + etapas como CHIPS
   clickeables del semáforo), **VENTANITAS `.gt-vidrio` por proyecto**
@@ -774,6 +803,23 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (`puedeTasa`), crear/recibir/acreditar movilizaciones y reclasificar
   partidas **NO cambiaron** — siguen exactamente como estaban (admin para
   tasa y movilizaciones; admin/costos/tesoreria para reclasificar).
+- `TasksModule.jsx` (**Mis Tareas, 18-sep-2026**) — pedido de Gerson: "que si le
+  das click [a TO-DOS] entrés a otra página donde estén todos tus to-dos; una
+  herramienta para que TODOS los colaboradores organicemos nuestras tareas CON
+  FECHA, para planificarnos mejor". Módulo propio en MODULES (id `tareas`,
+  abierto a todos los roles menos la tablet `marcaje`) + atajo desde el título
+  de la tarjeta TO-DOS de la bienvenida (`onAbrirTareas` → cierra la bienvenida
+  y entra al módulo). MISMA key que la tarjeta: **`gt-todos-<username>`** — a
+  propósito, los pendientes viejos aparecen sin migrar nada y lo que se agrega
+  en un lado se ve en el otro. Campos nuevos ADITIVOS: `fecha` (YYYY-MM-DD),
+  `doneAt`; una tarea vieja sin fecha cae en "Sin fecha". Vistas: Todas · Hoy ·
+  Esta semana (lunes→domingo) · Hechas, agrupadas por día. Una tarea con fecha
+  pasada se pinta de ROJO clarito con "Atrasada N días" (misma semántica y
+  colores que "Vencida" de GeoShopping). El guardado usa el patrón robusto
+  (getCloud + rescate de lo que agregó el otro dispositivo + verify), no el
+  best-effort de la tarjeta. Las fechas se comparan como STRING YYYY-MM-DD con
+  partes locales — `new Date("2026-09-18")` es medianoche UTC y en Honduras
+  devolvía el día anterior.
 - `GeoDrillVault.jsx`, `projects.js` (base + helpers), `holidays.js`, `theme.js`,
   `gt-ui.js` (GT_CSS: tokens + clases gt-* del rediseño — lo montan App y los
   módulos rediseñados, cada quien con su propio <style>).
@@ -786,6 +832,8 @@ el ORDEN del array es la prioridad),
 `mq-purchases`, `mq-machines`, `lg-despachos` (compartido compras/máquinas/
 logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 `hr-he` (horas extras), `hr-pays`, `hr-contracts`, etc.
+`gt-todos-<username>` (tareas personales — las comparten la tarjeta TO-DOS de
+la bienvenida y el módulo Mis Tareas; nadie ve las de otro).
 GeoCost (sep 2026): `cc-config` ({tasa, historialTasa}), `cc-presupuestos`
 (uno por projectCode), `cc-movilizaciones`, `cc-file-<id>` (comprobantes);
 campos aditivos `partidaId` y `sobregiroJustificacion` en cp-/mq-purchases.

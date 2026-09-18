@@ -7,6 +7,7 @@ import GeoDrillVault from "./GeoDrillVault.jsx";
 import SafetyModule from "./SafetyModule.jsx";
 import GeoClockModule from "./GeoClockModule.jsx";
 import GeoCostModule from "./GeoCostModule.jsx";
+import TasksModule from "./TasksModule.jsx";
 // GeoChat: desactivado temporalmente (jun 2026). El polling y los mensajes
 // en localStorage estaban presionando el cache. Cuando lo retomemos, sera
 // con Supabase Realtime + bypass de localStorage (ya esta listo).
@@ -103,6 +104,18 @@ const MODULES = [
     desc: "Picas, portapicas y herramienta de perforación.",
     accent: "#0F4C75",
     roles: ["admin", "tesoreria", "almacenista", "almacen_visor"],
+  },
+  {
+    // Mis tareas (18-sep-2026, pedido de Gerson): "una herramienta para que
+    // TODOS los colaboradores podamos organizar nuestras tareas con fecha".
+    // Cada quien ve solo las suyas (key `gt-todos-<username>`), así que va
+    // abierto a todos los roles menos la tablet kiosco de marcaje.
+    id: "tareas",
+    name: "Mis Tareas",
+    icon: "✅",
+    desc: "Organizá tus pendientes con fecha.",
+    accent: "#C75F1F",
+    roles: USERS.map(u => u.role).filter(r => r !== "marcaje"),
   },
 ];
 
@@ -288,6 +301,7 @@ export default function App() {
   if (activeModule === "geosafety") return conEntrada(<SafetyModule {...moduleProps} />);
   if (activeModule === "geoclock") return conEntrada(<GeoClockModule {...moduleProps} />);
   if (activeModule === "geocost") return conEntrada(<GeoCostModule {...moduleProps} />);
+  if (activeModule === "tareas") return conEntrada(<TasksModule {...moduleProps} userKey={user.username} />);
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
 
   const availableModules = MODULES.filter((m) => m.roles.includes(user.role));
@@ -298,7 +312,7 @@ export default function App() {
       <>
         <style>{UI_CSS}</style>
         {syncBanner}
-        <WelcomeScreen user={user} onStart={finishWelcome} onLogout={logout} />
+        <WelcomeScreen user={user} onStart={finishWelcome} onLogout={logout} onAbrirTareas={() => { finishWelcome(); setActiveModule("tareas"); }} />
       </>
     );
   }
@@ -546,7 +560,7 @@ function PanelCard({ m, onOpen, index = 0, animar = true }) {
 // y tres tarjetas escalonadas: TO-DOS (personales, persistidos por usuario),
 // BANDEJA (pendientes reales del sistema según el rol) y VERSÍCULO DEL DÍA.
 // ═══════════════════════════════════════════════════════════════════════════
-function WelcomeScreen({ user, onStart, onLogout }) {
+function WelcomeScreen({ user, onStart, onLogout, onAbrirTareas }) {
   // fase "hero" (saludo centrado XL, que se disfrute) → fase "día" (arriba + tarjetas)
   const [fase, setFase] = useState(() => (prefiereMenosMovimiento() ? "dia" : "hero"));
   useEffect(() => {
@@ -660,7 +674,17 @@ function WelcomeScreen({ user, onStart, onLogout }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px,100%), 1fr))", gap: 18 }}>
           {/* TO-DOS */}
           <div className={`gt-vidrio${!esHero ? " gt-sube" : ""}`} style={{ padding: 24, display: "flex", flexDirection: "column", minHeight: 300 }}>
-            {cardTitulo("To-dos")}
+            {/* 18-sep-2026: el título abre la página completa de tareas (con
+                fechas, vistas por día/semana y las ya hechas). Acá se queda el
+                vistazo rápido de los 5 que faltan. */}
+            <button onClick={onAbrirTareas} title="Abrir todas mis tareas"
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%", background: "none", border: "none", padding: 0, marginBottom: 16, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}
+              onMouseEnter={(e) => { e.currentTarget.querySelector(".gt-label").style.color = "var(--naranja-tinta)"; e.currentTarget.querySelector("svg").style.color = "var(--naranja-tinta)"; }}
+              onMouseLeave={(e) => { e.currentTarget.querySelector(".gt-label").style.color = "var(--text-3)"; e.currentTarget.querySelector("svg").style.color = "var(--text-faint)"; }}
+            >
+              <span className="gt-label" style={{ color: "var(--text-3)", transition: "color .18s" }}>To-dos</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ color: "var(--text-faint)", transition: "color .18s", flexShrink: 0 }}><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+            </button>
             {/* Alto TOPE de 5 filas (36px + 8 de gap): con más pendientes la
                 tarjeta se queda igual y la lista scrollea al desplegarse. */}
             <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minHeight: 0, maxHeight: 5 * 36 + 4 * 8, overflowY: todosAbierto ? "auto" : "hidden", scrollbarWidth: "thin" }}>
