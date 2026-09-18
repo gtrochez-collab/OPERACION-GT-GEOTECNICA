@@ -68,6 +68,17 @@ export const partidasParaModulo = (pres, modulo) => {
   const ps = pres?.partidas || [];
   if (!modulo) return ps;
   if (modulo === "mo") return ps.filter(p => p.modulo === "mo");
+  // 18-sep-2026 (caso real de Gerson en Villa San Miguel): una MOVILIZACIÓN se
+  // paga de dos formas — con el flujo de Movilizaciones de GeoCost, o
+  // comprándola como servicio por Solicitudes de GeoShopping/GeoMachinery.
+  // Las dos bajan de la MISMA partida, así que la de módulo `movilizacion`
+  // también tiene que ofrecerse en compras y en máquinas (antes el select la
+  // escondía y la movilización quedaba "Por clasificar" a la fuerza).
+  // No hay doble conteo: cada movimiento se cuenta una sola vez, venga del
+  // flujo que venga.
+  if (modulo === "compras" || modulo === "maquinas") {
+    return ps.filter(p => p.modulo === modulo || p.modulo === "libre" || p.modulo === "movilizacion");
+  }
   return ps.filter(p => p.modulo === modulo || p.modulo === "libre");
 };
 export const partidaMO = (pres) => (pres?.partidas || []).find(p => p.modulo === "mo") || null;

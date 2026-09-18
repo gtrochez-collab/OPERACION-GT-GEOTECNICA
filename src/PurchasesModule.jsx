@@ -59,6 +59,9 @@ const C_AMARILLO = { color: "#8A5A00", bg: "#FBEFC4" };
 // se muestran los dos chips.
 const C_ROJO     = { color: "#B03024", bg: "rgba(192,57,43,.07)", borde: "rgba(192,57,43,.22)" };
 const C_ULTRA    = { color: "#A94E16", bg: "rgba(232,118,45,.10)", borde: "rgba(232,118,45,.30)" };
+// Naranja para chips chiquitos (token --naranja-texto-chico: el naranja puro
+// no llega a contraste AA en texto ≤12px).
+const C_NARANJA_CHIP = { color: "#A94E16", bg: "rgba(232,118,45,.14)" };
 
 // ── VENCIDA: más de 2 semanas sin pago (18-sep-2026, pedido de Gerson) ──
 // El reloj corre desde la FECHA DE CARGA (`createdAt`) — la misma columna que
@@ -1936,19 +1939,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // Coherente con el default de arriba (ver: "pendientes"): la que MÁS lleva
   // esperando el pago va primero, para que a nadie se le quede colgada.
   const [listOrden, setListOrden] = useState("solicitud_asc");
-  // ── Filtros de Supply Chain (24-ago-2026) ──
-  const [scModo, setScModo] = useState("mes");          // todo | mes | semana | rango
-  // Default con partes LOCALES: toISOString() es UTC y las últimas 6 h del mes
-  // saltaba al mes siguiente.
-  const [scMes, setScMes] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
-  const [scSemana, setScSemana] = useState("");
-  const [scDesde, setScDesde] = useState("");
-  const [scHasta, setScHasta] = useState("");
+  // ── Filtros de Supply Chain (v3, 18-sep-2026) ──
+  // Quedaron 4: cuándo se pagó (semana lunes-domingo por defecto), en qué
+  // etapa está, si se ven las cerradas y el buscador. Los de rango libre,
+  // proyecto, responsable y orden por atraso se retiraron con la v2 —
+  // Gerson: "qué desorden, no dan ganas de ver eso".
+  const [scModo, setScModo] = useState("semana");       // semana | anterior | mes | todo
   const [scEtapa, setScEtapa] = useState("");
-  const [scProy, setScProy] = useState("");
-  const [scQuien, setScQuien] = useState("");
   const [scQ, setScQ] = useState("");
-  const [scOrden, setScOrden] = useState("pago");       // pago | atraso
   const [scVerCerradas, setScVerCerradas] = useState(false);
   // Mes de las metricas mensuales del Dashboard ("" = mes actual).
   const [dashMonth, setDashMonth] = useState("");
@@ -3771,6 +3769,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // padre y React desmonta los inputs perdiendo foco/typing.
 
   // ── SECCIONES ──
+  // ── PROYECTOS (rediseño 18-sep-2026, pedido de Gerson: "qué horrible se ven,
+  // quiero que se vean como en GeoCost") ──────────────────────────────────────
+  // Mismas piezas que `renderProyectosGrid` de GeoCostModule: tarjetas
+  // `.gt-vidrio` clickeables, nombre en display, código en mono, barra de
+  // avance y dos columnas de cifras abajo. Sin emojis, sin StatCards de
+  // colores sueltos — solo la paleta blanco/gris/naranja/carbón + el verde
+  // del semáforo para lo ya pagado. La LÓGICA (stats, subir archivo de
+  // Costos, editar/borrar proyecto, ir a sus solicitudes) quedó igual.
   const renderProjects = () => {
     const projectStats = allProjects.map(proj => {
       const ps = cp.filter(x => x.projectCode === proj.short);
@@ -3787,132 +3793,149 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         paidCount: paid.length,
         draftCount: draft.length,
         finalizedCount: ps.filter(x => x.status === "finalizado").length,
+        vencidas: ps.filter(estaVencida).length,
       };
     });
+    // Los que tienen movimiento primero; dentro de cada grupo, alfabético
+    // (allProjects ya viene ordenado).
+    const ordenados = [...projectStats.filter(p => p.count > 0), ...projectStats.filter(p => p.count === 0)];
 
-    // Totales por empresa seleccionada
     const empresa = {
       total: projectStats.reduce((s, p) => s + p.total, 0),
       pending: projectStats.reduce((s, p) => s + p.pendingAmt, 0),
       paid: projectStats.reduce((s, p) => s + p.paidAmt, 0),
       count: projectStats.reduce((s, p) => s + p.count, 0),
+      activos: projectStats.filter(p => p.count > 0).length,
     };
 
-    const uploadCostsFile = async (short, fd) => {
-      upsertProjectMeta(short, { costsRequestFile: fd });
-    };
+    const uploadCostsFile = async (short, fd) => { upsertProjectMeta(short, { costsRequestFile: fd }); };
     const removeCostsFile = (short) => {
       if (!confirm("¿Eliminar el archivo de solicitud de Costos de este proyecto?")) return;
       upsertProjectMeta(short, { costsRequestFile: null });
     };
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-        <div>
-          <div style={{ fontSize: 13, color: "#64748b" }}>Dashboard por proyecto — {cc.name}</div>
-          <div style={{ fontSize: 13, color: "#94A3B8" }}>{allProjects.length} proyectos · {empresa.count} solicitudes · total movido {fmtL(empresa.total)}</div>
+    const chipMini = (txt, c) => <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 9px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: c.color, background: c.bg, whiteSpace: "nowrap", letterSpacing: ".02em" }}>{txt}</span>;
+
+    const tarjeta = ({ project, count, total, pendingAmt, paidAmt, pendingCount, paidCount, draftCount, finalizedCount, vencidas }, i) => {
+      const abrir = () => { setFilter({ ver: "todas", project: project.short, provider: "", mes: "" }); setListOrden("estado"); setSec("list"); };
+      const pct = total > 0 ? paidAmt / total : 0;
+      return <div key={project.short}
+        className="gt-vidrio gt-vidrio-hover gt-sube"
+        role={count > 0 ? "button" : undefined} tabIndex={count > 0 ? 0 : undefined}
+        aria-label={count > 0 ? `Ver las ${count} solicitudes de ${project.short}` : undefined}
+        onClick={count > 0 ? abrir : undefined}
+        onKeyDown={count > 0 ? (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); abrir(); } } : undefined}
+        style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14, cursor: count > 0 ? "pointer" : "default", opacity: count > 0 ? 1 : .72, animationDelay: `${Math.min(i, 12) * 45}ms` }}>
+
+        {/* Encabezado */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ font: "800 17px/1.15 var(--display)", letterSpacing: "-.015em", color: "var(--text)", wordBreak: "break-word" }}>{project.short}</div>
+            <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 4, lineHeight: 1.35 }}>{project.name}</div>
+            <div style={{ font: "500 10.5px/1 var(--mono, ui-monospace)", color: "var(--text-3)", marginTop: 5, letterSpacing: ".02em" }}>
+              {project.code || "código contable pendiente"}
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0 }}>
+            {/* "Nuevo" (isCustom) se retiró: lo trae casi todo proyecto, no
+                informaba nada y era puro ruido. Quedan los dos accionables. */}
+            {vencidas > 0 && chipMini(`${vencidas} vencida${vencidas === 1 ? "" : "s"}`, C_ROJO)}
+            {!project.code && chipMini("Sin código", C_GRIS)}
+          </div>
         </div>
-        {canCreate && <Btn variant="primary" onClick={() => setModal({ t: "new-project" })}>+ Nuevo proyecto</Btn>}
+
+        {/* Avance de pago: carbón lo pagado, naranja lo que falta */}
+        {count > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ height: 7, borderRadius: 999, background: "rgba(44,42,40,.07)", overflow: "hidden", display: "flex" }}>
+            <div style={{ width: `${Math.round(pct * 100)}%`, background: CHARCOAL, transition: "width .6s var(--curva)" }} />
+            <div style={{ flex: 1, background: pendingAmt > 0 ? ORANGE : "transparent" }} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", font: "500 10px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".04em", textTransform: "uppercase" }}>
+            <span>{Math.round(pct * 100)} % pagado</span>
+            <span>{count} solicitud{count === 1 ? "" : "es"}</span>
+          </div>
+        </div>}
+
+        {/* Cifras */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <div>
+            <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Por pagar</div>
+            <div style={{ font: "800 17px/1.1 var(--display)", letterSpacing: "-.015em", marginTop: 5, color: pendingAmt > 0 ? "var(--naranja-tinta)" : "var(--text-3)" }}>{fmtL(pendingAmt)}</div>
+            {pendingCount > 0 && <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 2 }}>{pendingCount} solicitud{pendingCount === 1 ? "" : "es"}</div>}
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Pagado</div>
+            <div style={{ font: "800 17px/1.1 var(--display)", letterSpacing: "-.015em", marginTop: 5, color: paidAmt > 0 ? C_VERDE.color : "var(--text-3)" }}>{fmtL(paidAmt)}</div>
+            {paidCount > 0 && <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 2 }}>{paidCount} solicitud{paidCount === 1 ? "" : "es"}</div>}
+          </div>
+        </div>
+
+        {/* Solicitud original de Costos + acciones (no propagan el click) */}
+        <div onClick={e => e.stopPropagation()} style={{ borderTop: "1px solid var(--hairline)", paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Solicitud original (Costos)</div>
+          {project.costsRequestFile ? <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 110 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-2)", wordBreak: "break-all", lineHeight: 1.3 }}>{project.costsRequestFile.name}</div>
+              <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 2 }}>{fmtMB(project.costsRequestFile.size)}</div>
+            </div>
+            <Btn small variant="ghost" onClick={() => {
+              const f = project.costsRequestFile;
+              if (f.type?.startsWith("image/") || f.type === "application/pdf") setVisor(f);   // visor in-app, sin popup
+              else { const a = document.createElement("a"); a.href = f.dataUrl; a.download = f.name; a.click(); }
+            }}>Ver</Btn>
+            {canCreate && <Btn small variant="ghost" onClick={() => removeCostsFile(project.short)} title="Quitar el archivo">✕</Btn>}
+          </div> : <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Sin archivo adjunto</div>}
+          {canCreate && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <input type="file" accept=".pdf,image/*,.xls,.xlsx,.doc,.docx" style={{ display: "none" }} id={`costs-${project.short}`} onChange={async (e) => {
+              const file = e.target.files?.[0]; if (!file) return;
+              if (file.size > 2 * 1024 * 1024) { alert(`❌ ${fmtMB(file.size)}. Maximo 2 MB. Reduci el PDF en https://smallpdf.com/compress-pdf`); e.target.value = ""; return; }
+              if (file.size > 1 * 1024 * 1024 && !confirm(`⚠️ ${fmtMB(file.size)}. ¿Continuar?`)) { e.target.value = ""; return; }
+              const fd = await readFileAsDataUrl(file);
+              uploadCostsFile(project.short, fd);
+              e.target.value = "";
+            }} />
+            <Btn small variant="ghost" onClick={() => document.getElementById(`costs-${project.short}`).click()}>
+              {project.costsRequestFile ? "Reemplazar" : "+ Subir archivo"}
+            </Btn>
+            <div style={{ flex: 1 }} />
+            <Btn small variant="ghost" onClick={() => setModal({ t: "edit-project", d: project })} title="Editar proyecto">Editar</Btn>
+            <Btn small variant="ghost" disabled={count > 0} onClick={() => deleteProject(project.short)}
+              title={count > 0 ? `No se puede borrar: tiene ${count} solicitud(es)` : "Eliminar proyecto"}>🗑</Btn>
+          </div>}
+        </div>
+      </div>;
+    };
+
+    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 16 }}>
+      {/* Tira resumen — misma que Solicitudes y Prioridades */}
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+        {[
+          { v: empresa.activos, l: "proyectos con movimiento" },
+          { v: empresa.count, l: "solicitudes" },
+          { v: fmtL(empresa.pending), l: "por pagar", c: "var(--naranja-tinta)" },
+          { v: fmtL(empresa.paid), l: "ya pagado" },
+        ].map((x, i, arr) => (
+          <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 40%" : 1, minWidth: 0 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap" }}>{x.v}</div>
+              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
+            </div>
+            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
+          </div>
+        ))}
       </div>
 
-      {/* Totales rapidos */}
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <StatCard icon="🏗️" label="Proyectos activos" value={projectStats.filter(p => p.count > 0).length} color="#BE185D" />
-        <StatCard icon="📋" label="Total solicitudes" value={empresa.count} color="#2563EB" />
-        <StatCard icon="⏳" label="Por pagar" value={fmtL(empresa.pending)} color="#D97706" />
-        <StatCard icon="✅" label="Ya pagado" value={fmtL(empresa.paid)} color="#059669" />
-      </div>
-
-      {/* Cards por proyecto */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
-        {projectStats.map(({ project, count, total, pendingAmt, paidAmt, pendingCount, paidCount, draftCount, finalizedCount }) => {
-          const ref = { current: null };
-          return <div key={project.short} style={{ background: "#fff", border: "1px solid #E2E8F0", borderLeft: `4px solid ${cc.color}`, borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 800, fontSize: 16, color: cc.color }}>{project.short}</span>
-                  {project.isCustom && <Badge color="#BE185D">NUEVO</Badge>}
-                  {!project.code && <Badge color="#D97706">SIN CODIGO</Badge>}
-                </div>
-                <div style={{ fontSize: 13, color: "#334155", marginTop: 2 }}>{project.name}</div>
-                <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 2, fontFamily: "monospace" }}>{project.code || "codigo contable pendiente"}</div>
-              </div>
-              {canCreate && <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={() => setModal({ t: "edit-project", d: project })} title="Editar proyecto" style={{ background: "none", border: "1px solid #E2E8F0", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", color: "#64748b" }}>✏️</button>
-                <button onClick={() => deleteProject(project.short)} title={count > 0 ? `No se puede borrar: tiene ${count} solicitud(es)` : "Eliminar proyecto"} disabled={count > 0} style={{ background: "none", border: "1px solid #FECACA", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: count > 0 ? "not-allowed" : "pointer", color: count > 0 ? "#CBD5E1" : "#DC2626", opacity: count > 0 ? 0.5 : 1 }}>🗑</button>
-              </div>}
-            </div>
-
-            {/* Stats del proyecto */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
-              <div style={{ background: "#F1F5F9", borderRadius: 8, padding: "8px 10px" }}>
-                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 600 }}>SOLICITUDES</div>
-                <div style={{ fontWeight: 700, fontSize: 18, color: "#1E293B" }}>{count}</div>
-              </div>
-              <div style={{ background: "#ECFDF5", borderRadius: 8, padding: "8px 10px" }}>
-                <div style={{ color: "#047857", fontSize: 10, fontWeight: 600 }}>TOTAL</div>
-                <div style={{ fontWeight: 700, fontSize: 14, color: "#059669" }}>{fmtL(total)}</div>
-              </div>
-              <div style={{ background: "#FEF3C7", borderRadius: 8, padding: "8px 10px" }}>
-                <div style={{ color: "#92400E", fontSize: 10, fontWeight: 600 }}>PENDIENTE ({pendingCount})</div>
-                <div style={{ fontWeight: 700, fontSize: 13, color: "#D97706" }}>{fmtL(pendingAmt)}</div>
-              </div>
-              <div style={{ background: "#DBEAFE", borderRadius: 8, padding: "8px 10px" }}>
-                <div style={{ color: "#1E40AF", fontSize: 10, fontWeight: 600 }}>PAGADO ({paidCount})</div>
-                <div style={{ fontWeight: 700, fontSize: 13, color: "#2563EB" }}>{fmtL(paidAmt)}</div>
-              </div>
-            </div>
-
-            {/* Barra de estados */}
-            {count > 0 && <div style={{ display: "flex", height: 6, borderRadius: 10, overflow: "hidden", background: "#F1F5F9" }}>
-              {draftCount > 0 && <div style={{ flex: draftCount, background: "#94A3B8" }} title={`${draftCount} borradores`} />}
-              {pendingCount > 0 && <div style={{ flex: pendingCount, background: "#D97706" }} title={`${pendingCount} pendientes de pago`} />}
-              {(paidCount - finalizedCount) > 0 && <div style={{ flex: paidCount - finalizedCount, background: "#2563EB" }} title={`${paidCount - finalizedCount} pagados sin comprobante`} />}
-              {finalizedCount > 0 && <div style={{ flex: finalizedCount, background: "#059669" }} title={`${finalizedCount} finalizados`} />}
-            </div>}
-
-            {/* Solicitud de Costos */}
-            <div style={{ borderTop: "1px dashed #E2E8F0", paddingTop: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>📐 Solicitud original (Costos / Ingenieria)</div>
-              {project.costsRequestFile ? <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <div style={{ flex: 1, minWidth: 120 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, wordBreak: "break-all" }}>📎 {project.costsRequestFile.name}</div>
-                  <div style={{ fontSize: 10, color: "#64748b" }}>{fmtMB(project.costsRequestFile.size)}</div>
-                </div>
-                <Btn small variant="info" onClick={() => {
-                  const f = project.costsRequestFile;
-                  if (f.type?.startsWith("image/") || f.type === "application/pdf") {
-                    setVisor(f); // visor en la app (10-sep-2026): sin popup
-                  } else {
-                    const a = document.createElement("a"); a.href = f.dataUrl; a.download = f.name; a.click();
-                  }
-                }}>Ver</Btn>
-                {canCreate && <Btn small variant="danger" onClick={() => removeCostsFile(project.short)}>×</Btn>}
-              </div> : <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Sin archivo adjunto</div>}
-              {canCreate && <div style={{ marginTop: 6 }}>
-                <input type="file" accept=".pdf,image/*,.xls,.xlsx,.doc,.docx" style={{ display: "none" }} id={`costs-${project.short}`} onChange={async (e) => {
-                  const file = e.target.files?.[0]; if (!file) return;
-                  if (file.size > 2 * 1024 * 1024) {
-                    alert(`❌ ${fmtMB(file.size)}. Maximo 2 MB. Reduci el PDF en https://smallpdf.com/compress-pdf`);
-                    e.target.value = ""; return;
-                  }
-                  if (file.size > 1 * 1024 * 1024 && !confirm(`⚠️ ${fmtMB(file.size)}. ¿Continuar?`)) { e.target.value = ""; return; }
-                  const fd = await readFileAsDataUrl(file);
-                  uploadCostsFile(project.short, fd);
-                  e.target.value = "";
-                }} />
-                <Btn small variant="ghost" onClick={() => document.getElementById(`costs-${project.short}`).click()}>
-                  {project.costsRequestFile ? "Reemplazar archivo" : "+ Subir solicitud de Costos"}
-                </Btn>
-              </div>}
-            </div>
-
-            {/* Ver solicitudes del proyecto */}
-            {count > 0 && <Btn small variant="ghost" onClick={() => { setFilter(s => ({ ...s, project: project.short })); setSec("list"); }}>Ver {count} solicitud{count === 1 ? "" : "es"} →</Btn>}
-          </div>;
-        })}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16, alignItems: "start" }}>
+        {ordenados.map(tarjeta)}
+        {canCreate && <div role="button" tabIndex={0}
+          onClick={() => setModal({ t: "new-project" })}
+          onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); setModal({ t: "new-project" }); } }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = ORANGE; e.currentTarget.style.color = "var(--naranja-tinta)"; e.currentTarget.style.background = "rgba(232,118,45,.05)"; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(44,42,40,.18)"; e.currentTarget.style.color = "var(--text-3)"; e.currentTarget.style.background = "rgba(255,255,255,.35)"; }}
+          style={{ minHeight: 190, border: "1.5px dashed rgba(44,42,40,.18)", borderRadius: 18, color: "var(--text-3)", background: "rgba(255,255,255,.35)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, transition: "border-color .25s, color .25s, background .25s" }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
+          <div style={{ font: "700 14px/1 var(--sans)" }}>Nuevo proyecto</div>
+        </div>}
       </div>
     </div>;
   };
@@ -4716,6 +4739,24 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   ];
   const ETAPA = Object.fromEntries(ETAPAS.map(e => [e.k, e]));
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SUPPLY CHAIN — v3 (18-sep-2026, pedido de Gerson)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // La v2 (ventanitas por proyecto + ranking + tabla + 6 filtros) le resultó
+  // un desorden: "no dan ganas de ver eso". Lo que él realmente quiere es
+  // simple: **el día que la Lic. Carolina paga algo, que le aparezca ahí, bien
+  // ordenadito, con su proyecto y en qué etapa del proceso va.**
+  //
+  // Entonces: lista de compras PAGADAS agrupada POR DÍA DE PAGO (lo más
+  // reciente arriba), en tarjetas de vidrio como Prioridades. Filtro de tiempo
+  // por SEMANA DE LUNES A DOMINGO (lo que pidió), chips por etapa, buscador.
+  // Click en una tarjeta = abre esa solicitud.
+  //
+  // Se CONSERVA `etapaDe` tal cual (la clasificación auditada contra la data
+  // real en ago-2026): esperando_pago → cerrada → por_cerrar → falta_ficha →
+  // en_logistica → con_proveedor → por_coordinar. Lo que se retiró es solo la
+  // presentación: ventanitas por proyecto, ranking "a quién apurar", tabla y
+  // los filtros de rango libre / responsable / orden por atraso.
   const renderSupplyChain = () => {
     // Días entre dos FECHAS (sin horas): paidAt se guarda como medianoche UTC y
     // `new Date()` es hora local, así que comparar timestamps daba un día de
@@ -4727,10 +4768,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       const ms = Date.parse(hoyYMD + "T00:00:00Z") - Date.parse(ymd + "T00:00:00Z");
       return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86400000)) : null;
     };
-    // Índice por compra: con 321 compras × 185 despachos, buscar con .find()
-    // en cada fila era O(n·m) en cada render. Se ignoran los CANCELADOS (esa
-    // compra volvió a manos de Compras) y, si hay varios, gana el más
-    // reciente — antes .find() devolvía el primero del array.
+    // Índice por compra: con 440 compras × 185 despachos, buscar con .find() en
+    // cada fila era O(n·m) por render. Se ignoran los CANCELADOS (esa compra
+    // volvió a manos de Compras) y, si hay varios, gana el más reciente.
     const despPorCompra = {};
     despachos.forEach(d => {
       if (!d || !d.sourcePurchaseId || d.estado === "cancelado") return;
@@ -4738,13 +4778,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       const ts = String(d.updatedAt || d.createdAt || "");
       if (!prev || ts > String(prev.updatedAt || prev.createdAt || "")) despPorCompra[d.sourcePurchaseId] = d;
     });
-    const despachoDe = (id) => despPorCompra[id];
-
+    const despachoDe = (id) => despPorCompra[id] || null;
     // Quién coordina esta compra: el proyecto MAQUINAS lo lleva Fernando desde
     // GeoMachinery (el kanban de Ana lo excluye), el resto es Compras/Ana.
     const coordinaCompra = (x) => /MAQUINA/i.test(String(x.projectCode || "")) ? "Fernando / Máquinas" : "Ana / Compras";
 
-    // Etapa + "desde cuándo" + responsable concreto de esa etapa.
+    // Etapa + "desde cuándo" + responsable concreto de esa etapa. (Sin cambios
+    // desde la auditoría de ago-2026 contra las compras reales.)
     const etapaDe = (x) => {
       const d = despachoDe(x.id);
       if (x.status === "borrador") return null;                       // aún no aprobada: no es supply chain
@@ -4762,282 +4802,166 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       return { k: "por_coordinar", desde: x.paidAt || x.paymentDate || x.createdAt, quien: coordinaCompra(x) };
     };
 
-    // ── Filtros: mes / semana / rango libre ──
-    // fpago: solo para MOSTRAR (vacío = "sin pagar").
-    // fEje: la fecha con la que se FILTRA. Cae a validatedAt/createdAt porque
-    // hay compras pagadas viejas sin paidAt: con el filtro por mes quedaban
-    // invisibles Y sin contar como atrasadas — justo las más propensas a estar
-    // trabadas. Y las que esperan pago se filtran por cuándo se aprobaron.
-    const fpago = (x) => String(x.paidAt || x.paymentDate || "").slice(0, 10);
-    const fEje = (x) => String(x.paidAt || x.paymentDate || x.validatedAt || x.createdAt || "").slice(0, 10);
-    const enRango = (x) => {
-      const f = fEje(x);
-      if (scModo === "mes") return !scMes || f.slice(0, 7) === scMes;
-      if (scModo === "semana") {
-        if (!scSemana) return true;
-        const ini = scSemana, fin = new Date(new Date(scSemana + "T12:00:00").getTime() + 6 * 86400000).toISOString().slice(0, 10);
-        return f >= ini && f <= fin;
-      }
-      if (scModo === "rango") return (!scDesde || f >= scDesde) && (!scHasta || f <= scHasta);
-      return true;   // "todo"
+    // ── Semana de LUNES a DOMINGO (pedido explícito) ──
+    // Se arma con partes LOCALES: `new Date(ymd)` es medianoche UTC y en
+    // Honduras (UTC-6) devolvía el día anterior, corriendo la semana entera.
+    const hoyD = new Date(); hoyD.setHours(0, 0, 0, 0);
+    const lunesDe = (d) => { const x = new Date(d); const dow = (x.getDay() + 6) % 7; x.setDate(x.getDate() - dow); x.setHours(0, 0, 0, 0); return x; };
+    const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const lunEsta = lunesDe(hoyD);
+    const domEsta = new Date(lunEsta); domEsta.setDate(domEsta.getDate() + 6);
+    const lunPasada = new Date(lunEsta); lunPasada.setDate(lunPasada.getDate() - 7);
+    const domPasada = new Date(lunEsta); domPasada.setDate(domPasada.getDate() - 1);
+    const RANGOS = {
+      semana:   { label: "Esta semana",   desde: ymd(lunEsta),   hasta: ymd(domEsta) },
+      anterior: { label: "Semana pasada", desde: ymd(lunPasada), hasta: ymd(domPasada) },
+      mes:      { label: "Este mes",      desde: `${hoyD.getFullYear()}-${String(hoyD.getMonth() + 1).padStart(2, "0")}-01`, hasta: `${hoyD.getFullYear()}-${String(hoyD.getMonth() + 1).padStart(2, "0")}-31` },
+      todo:     { label: "Todo",          desde: null, hasta: null },
     };
+    const rango = RANGOS[scModo] || RANGOS.semana;
 
-    // `base`: todo lo que pasa los filtros MENOS el de etapa. Las tarjetas y el
-    // ranking se calculan sobre esto, así al filtrar por una etapa las demás
-    // siguen mostrando su conteo y se puede saltar entre ellas.
-    // `base0`: todo MENOS proyecto y etapa — alimenta las ventanitas por
-    // proyecto (si filtraran por proyecto, al elegir uno desaparecerían las demás).
-    const base0 = cp.map(x => {
+    // La fecha que manda acá es la del PAGO (es "el día que Carolina pagó").
+    // Las pagadas viejas sin paidAt caen a paymentDate; si no tienen ninguna,
+    // van al grupo "Sin fecha de pago" para que no queden invisibles.
+    const fpago = (x) => String(x.paidAt || x.paymentDate || "").slice(0, 10);
+
+    const todas = cp.map(x => {
+      if (!esPagada(x)) return null;                 // Supply Chain = lo que YA se pagó
       const e = etapaDe(x);
       if (!e) return null;
-      return { x, ...e, dias: diasDesde(e.desde), cfg: ETAPA[e.k] };
-    }).filter(Boolean)
+      return { x, ...e, dias: diasDesde(e.desde), cfg: ETAPA[e.k], pago: fpago(x) };
+    }).filter(Boolean);
+
+    const enRango = (r) => !rango.desde || (r.pago && r.pago >= rango.desde && r.pago <= rango.hasta);
+    const txt = scQ.trim().toLowerCase();
+    const base = todas
+      .filter(enRango)
       .filter(r => scVerCerradas || r.k !== "cerrada" || scEtapa === "cerrada")
-      .filter(r => !scQuien || String(r.quien).toLowerCase().includes(scQuien.toLowerCase()))
-      .filter(r => enRango(r.x))
-      .filter(r => {
-        if (!scQ.trim()) return true;
-        const t = scQ.trim().toLowerCase();
-        return [r.x.codigo, r.x.provider, r.x.description, r.x.projectCode].some(v => String(v || "").toLowerCase().includes(t));
-      });
-    const base = base0.filter(r => !scProy || (r.x.projectCode || "SIN PROYECTO") === scProy);
-    // La TABLA sí respeta el filtro de etapa.
+      .filter(r => !txt || [r.x.codigo, r.x.provider, r.x.description, r.x.projectCode].some(v => String(v || "").toLowerCase().includes(txt)));
     const filas = scEtapa ? base.filter(r => r.k === scEtapa) : base;
 
-    // Semáforo de atraso (paleta 3-sep): gris ≤3 días, amarillo 4-7, naranja >7 en la MISMA etapa.
-    // `c` es el color del PUNTO (el texto va en carbón): así la columna Días no
-    // repite los mismos pares color/bg de la etapa vecina.
-    const sem = (dias, k) => {
-      if (k === "cerrada" || dias == null) return { c: "#C9C3BA", txt: dias == null ? "—" : `${dias}d` };
-      if (dias <= 3) return { c: "#8C857D", txt: `${dias}d` };
-      if (dias <= 7) return { c: "#E4B94A", txt: `${dias}d` };
-      return { c: "#E8762D", txt: `${dias}d` };
+    // Agrupado por día de pago, lo más reciente arriba.
+    const porDia = {};
+    filas.forEach(r => { const k = r.pago || "—"; (porDia[k] = porDia[k] || []).push(r); });
+    const dias = Object.keys(porDia).sort((a, b) => (a === "—" ? 1 : b === "—" ? -1 : b.localeCompare(a)));
+
+    const total = base.reduce((s, r) => s + (Number(r.x.amount) || 0), 0);
+    const conteoEtapa = {};
+    base.forEach(r => { conteoEtapa[r.k] = (conteoEtapa[r.k] || 0) + 1; });
+
+    const fechaLarga = (d) => {
+      if (d === "—") return "Sin fecha de pago";
+      const [y, m, dd] = d.split("-").map(Number);
+      const t = new Date(y, m - 1, dd).toLocaleDateString("es-HN", { weekday: "long", day: "numeric", month: "long" });
+      return t.charAt(0).toUpperCase() + t.slice(1);
     };
 
-    const ordenadas = filas.slice().sort((a, b) => {
-      // Las cerradas nunca encabezan el ranking de atraso (sus "días" son
-      // días-desde-el-cierre, que no es un atraso).
-      if (scOrden === "atraso") {
-        const kk = (r) => r.k === "cerrada" ? -1 : (r.dias ?? -1);
-        return kk(b) - kk(a);
-      }
-      // Default: por FECHA DE PAGO, lo más reciente arriba (lo que Gerson
-      // tiene que perseguir ahora). Las sin pago van al final.
-      const fa = fpago(a.x), fb = fpago(b.x);
-      if (!fa && !fb) return 0;
-      if (!fa) return 1;
-      if (!fb) return -1;
-      return fb.localeCompare(fa);
-    });
-
-    // ── Tarjetas por etapa: cuántas y CUÁNTO DINERO hay atascado ──
-    const porEtapa = {};
-    base.forEach(r => {
-      const t = (porEtapa[r.k] = porEtapa[r.k] || { n: 0, monto: 0, atrasadas: 0 });
-      t.n++; t.monto += Number(r.x.amount) || 0;
-      if (r.k !== "cerrada" && (r.dias ?? 0) > 7) t.atrasadas++;
-    });
-
-    // ── Ranking de atraso por responsable (el "jalar orejas") ──
-    const porQuien = {};
-    base.filter(r => r.k !== "cerrada" && (r.dias ?? 0) > 3).forEach(r => {
-      const q = (porQuien[r.quien] = porQuien[r.quien] || { n: 0, dias: 0, monto: 0 });
-      q.n++; q.dias += r.dias || 0; q.monto += Number(r.x.amount) || 0;
-    });
-    const ranking = Object.entries(porQuien).map(([quien, v]) => ({ quien, ...v })).sort((a, b) => b.dias - a.dias).slice(0, 5);
-
-    // El mes seleccionado SIEMPRE está entre las opciones: si no, el <select>
-    // se veía en "Todos los meses" mientras filtraba a un mes vacío.
-    const mesesOpts = [...new Set([...cp.map(x => fEje(x).slice(0, 7)).filter(Boolean), ...(scMes ? [scMes] : [])])].sort().reverse();
-    const mesLabel = (m) => { const [y, mm] = m.split("-").map(Number); const t = new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
-    const totalAtascado = base.filter(r => r.k !== "cerrada").reduce((sm, r) => sm + (Number(r.x.amount) || 0), 0);
-    const enProceso = base.filter(r => r.k !== "cerrada").length;
-
-    // ── Ventanitas por proyecto (sobre base0: no desaparecen al elegir una) ──
-    const porProy = {};
-    base0.forEach(r => {
-      const k = r.x.projectCode || "SIN PROYECTO";
-      const t = (porProy[k] = porProy[k] || { k, n: 0, monto: 0, montoCerradas: 0, etapas: {}, maxDias: 0 });
-      t.n++;
-      // El monto grande es SIN cerrar (igual que el total de la tira); lo
-      // cerrado se guarda aparte para el tooltip con "ver cerradas".
-      if (r.k === "cerrada") t.montoCerradas += Number(r.x.amount) || 0; else t.monto += Number(r.x.amount) || 0;
-      t.etapas[r.k] = (t.etapas[r.k] || 0) + 1;
-      if (r.k !== "cerrada") t.maxDias = Math.max(t.maxDias, r.dias ?? 0);
-    });
-    const ventanitas = Object.values(porProy).sort((a, b) => (b.monto + b.montoCerradas) - (a.monto + a.montoCerradas));
-    // Si el proyecto elegido ya no aparece con estos filtros (cambiaste de
-    // mes, por ejemplo), no atenuar a las demás: quedaba todo al 55% sin
-    // ninguna activa. El chip "Proyecto: X ×" del filtro permite salir.
-    const proyVisible = !!porProy[scProy];
-
-    // ── UI (rediseño 3-sep: sin título, filtro compacto, ventanitas de vidrio
-    //    por proyecto, etapas como chips del semáforo, tabla en vidrio) ──
-    const pill = (txt, activo, onClick, title) => (
-      <button key={txt} onClick={onClick} title={title} style={{ padding: "5px 11px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
+    const pill = (txt2, activo, onClick, title) => (
+      <button key={txt2} onClick={onClick} title={title} aria-pressed={activo} style={{
+        padding: "5px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
+        border: activo ? "1px solid transparent" : "1px solid var(--hairline)",
+        background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)",
+        fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap",
+      }}>{txt2}</button>
     );
-    const inputSt = { padding: "5px 10px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12, fontFamily: "inherit", background: "var(--surface)", color: "var(--text)" };
-    const labelSt = { fontSize: 10, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.5 };
-    const sep = !isMobile && <div aria-hidden style={{ width: 1, height: 22, background: "var(--hairline)", margin: "0 4px" }} />;
-    // Cada grupo del filtro envuelve junto (el separador es su borde izquierdo).
-    const grupoSt = { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", ...(isMobile ? {} : { borderLeft: "1px solid var(--hairline)", paddingLeft: 12 }) };
-    const hayFiltros = scEtapa || scProy || scQuien || scQ || scModo !== "todo";
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {/* FILTRO compacto (una fila que envuelve) */}
-      <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "9px 16px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <span style={labelSt}>Pagadas en</span>
-        {pill("Todo", scModo === "todo", () => setScModo("todo"))}
-        {pill("Por mes", scModo === "mes", () => setScModo("mes"))}
-        {pill("Por semana", scModo === "semana", () => setScModo("semana"))}
-        {pill("Rango", scModo === "rango", () => setScModo("rango"))}
-        {scModo === "mes" && <select value={scMes} onChange={e => setScMes(e.target.value)} style={inputSt}>
-          <option value="">Todos los meses</option>
-          {mesesOpts.map(m => <option key={m} value={m}>{mesLabel(m)}</option>)}
-        </select>}
-        {scModo === "semana" && <input type="date" value={scSemana} onChange={e => setScSemana(e.target.value)} title="Semana que arranca ese día (7 días)" style={inputSt} />}
-        {scModo === "rango" && <>
-          <input type="date" value={scDesde} onChange={e => setScDesde(e.target.value)} style={inputSt} />
-          <span style={{ color: "var(--text-3)" }}>→</span>
-          <input type="date" value={scHasta} onChange={e => setScHasta(e.target.value)} style={inputSt} />
-        </>}
-        </div>
-        <div style={grupoSt}>
-        <input value={scQ} onChange={e => setScQ(e.target.value)} placeholder="Buscar código, proveedor, material…" style={{ ...inputSt, flex: "0 1 230px", minWidth: 150 }} />
-        {scProy && <button onClick={() => setScProy("")} title="Quitar filtro de proyecto" style={{ ...inputSt, cursor: "pointer", fontWeight: 700, color: "var(--naranja-texto-chico)" }}>Proyecto: {scProy} ×</button>}
-        {scQuien && <button onClick={() => setScQuien("")} title="Quitar filtro de responsable" style={{ ...inputSt, cursor: "pointer", fontWeight: 700, color: "var(--naranja-texto-chico)" }}>Responsable: {scQuien} ×</button>}
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-2)", cursor: "pointer", whiteSpace: "nowrap" }}>
-          <input type="checkbox" checked={scVerCerradas} onChange={e => { setScVerCerradas(e.target.checked); if (!e.target.checked && scEtapa === "cerrada") setScEtapa(""); }} style={{ cursor: "pointer", accentColor: ORANGE }} />
-          ver cerradas
-        </label>
-        </div>
-        <div style={grupoSt}>
-        <span style={labelSt}>Ordenar</span>
-        {pill("Fecha de pago", scOrden === "pago", () => setScOrden("pago"), "Lo más reciente arriba")}
-        {pill("Más atrasadas", scOrden === "atraso", () => setScOrden("atraso"), "Más días en la misma etapa primero")}
-        {hayFiltros && <button onClick={() => { setScEtapa(""); setScProy(""); setScQuien(""); setScQ(""); setScModo("todo"); }} title="Quita todos los filtros, incluido el de fecha" style={{ ...inputSt, cursor: "pointer", fontWeight: 700, color: "var(--text-2)" }}>Limpiar</button>}
-        </div>
-      </div>
-
-      {/* RESUMEN: dinero en la cadena + etapas como chips clickeables */}
-      <div className="gt-vidrio" style={{ padding: "12px 18px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ font: "800 clamp(17px,1.5vw,21px)/1.1 var(--display)", letterSpacing: "-.01em", color: "var(--text)", whiteSpace: "nowrap" }}>{fmtL(totalAtascado)}</div>
-          <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 10 }}>{enProceso} compra{enProceso !== 1 ? "s" : ""} sin cerrar{scProy ? ` · ${scProy}` : ""}</div>
-        </div>
-        {sep}
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flex: 1 }}>
-          {ETAPAS.filter(e => e.k !== "cerrada" || scVerCerradas).map(e => {
-            const t = porEtapa[e.k] || { n: 0, monto: 0, atrasadas: 0 };
-            const activo = scEtapa === e.k;
-            return <button key={e.k} aria-pressed={activo} onClick={() => setScEtapa(activo ? "" : e.k)} title={`${fmtL(t.monto)}${t.atrasadas ? ` · ${t.atrasadas} con más de 7 días` : ""}`}
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, border: `1px solid ${activo ? e.color : "var(--hairline)"}`, background: activo ? e.bg : "var(--surface)", color: activo ? e.color : "var(--text-2)", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-              <span style={{ width: 8, height: 8, borderRadius: 3, background: e.bar, flexShrink: 0 }} />
-              {e.label} <b style={{ color: activo ? e.color : "var(--text)" }}>{t.n}</b>
-              {t.atrasadas > 0 && <span style={{ fontSize: 10, fontWeight: 800, color: "var(--naranja-texto-chico)" }}>· {t.atrasadas} +7d</span>}
-            </button>;
-          })}
-        </div>
-      </div>
-
-      {/* VENTANITAS por proyecto: click = ver dónde está parada cada solicitud */}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 150 : 172}px, 1fr))`, gap: 10 }}>
-        {ventanitas.map(v => {
-          const activo = scProy === v.k;
-          const nEtapa = scEtapa ? (v.etapas[scEtapa] || 0) : v.n;
-          const tip = activo ? "Click para ver todos los proyectos"
-            : scEtapa ? `${nEtapa} en ${ETAPA[scEtapa]?.label} (de ${v.n} en cadena) — click para verlas`
-            : `Ver las ${v.n} compras de ${v.k}`;
-          return <div key={v.k} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} aria-pressed={activo}
-            onClick={() => setScProy(activo ? "" : v.k)}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setScProy(activo ? "" : v.k); } }}
-            title={tip}
-            style={{ padding: "12px 14px", cursor: "pointer", minWidth: 0, outline: activo ? `2px solid ${ORANGE}` : undefined, outlineOffset: -1, opacity: scProy && proyVisible && !activo ? 0.88 : 1, transition: "opacity var(--mov-base) var(--curva), box-shadow var(--mov-base) var(--curva), transform var(--mov-base) var(--curva)" }}>
-            <div style={{ font: "700 10px/1.3 var(--mono)", color: activo ? "var(--naranja-texto-chico)" : "var(--text-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={v.k}>{v.k}</div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginTop: 6 }}>
-              <div style={{ font: "800 19px/1.1 var(--display)", color: "var(--text)" }} title={scEtapa ? `${nEtapa} en ${ETAPA[scEtapa]?.label} · ${v.n} en total` : `${v.n} compras en cadena`}>
-                {scEtapa ? nEtapa : v.n}{scEtapa && <span style={{ font: "600 10px/1 var(--sans)", color: "var(--text-3)", marginLeft: 4 }}>de {v.n}</span>}
-              </div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={v.montoCerradas > 0 ? `sin cerrar · además ${fmtL(v.montoCerradas)} ya cerradas` : "sin cerrar"}>{fmtL(v.monto)}</div>
-            </div>
-            <div style={{ display: "flex", gap: 1, height: 6, borderRadius: 4, overflow: "hidden", marginTop: 8, background: "rgba(44,42,40,.06)", filter: scProy && proyVisible && !activo ? "saturate(.25)" : "none", transition: "filter var(--mov-base)" }}>
-              {ETAPAS.map(e => v.etapas[e.k] ? <div key={e.k} title={`${e.label}: ${v.etapas[e.k]}`} style={{ flex: v.etapas[e.k], background: e.bar, opacity: scEtapa && e.k !== scEtapa ? 0.28 : 1, transition: "opacity var(--mov-base)" }} /> : null)}
-            </div>
-            <div style={{ fontSize: 10, marginTop: 6, fontWeight: v.maxDias > 7 ? 800 : 500, color: v.maxDias > 7 ? "var(--naranja-texto-chico)" : "var(--text-3)" }}>
-              {v.maxDias > 7 ? `${v.maxDias}d la más parada` : v.maxDias > 3 ? `${v.maxDias}d la más parada` : "al día"}
-            </div>
-          </div>;
-        })}
-        {ventanitas.length === 0 && <div style={{ gridColumn: "1 / -1", fontSize: 12.5, color: "var(--text-3)", fontStyle: "italic", padding: "10px 4px" }}>Nada en la cadena con estos filtros.</div>}
-      </div>
-
-      {/* A QUIÉN APURAR — una tira, solo si hay atrasos */}
-      {ranking.length > 0 && <div className="gt-vidrio" style={{ padding: "9px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <span style={labelSt}>A quién apurar</span>
-        <span style={{ fontSize: 10, color: "var(--text-3)" }}>(más de 3 días parado)</span>
-        {ranking.map(r => {
-          const activo = scQuien === r.quien;
-          return <button key={r.quien} aria-pressed={activo} onClick={() => setScQuien(activo ? "" : r.quien)} title={`${fmtL(r.monto)} en ${r.n} compra${r.n !== 1 ? "s" : ""} — click para filtrar`}
-            style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 11px", borderRadius: 999, border: `1px solid ${activo ? ORANGE : "var(--hairline)"}`, background: activo ? "rgba(232,118,45,.12)" : "var(--surface)", color: "var(--text)", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-            {r.quien}
-            <span style={{ color: "var(--text-3)", fontWeight: 600 }}>{r.n} compra{r.n !== 1 ? "s" : ""}</span>
-            <span style={{ color: "var(--naranja-texto-chico)", fontWeight: 800 }}>{r.dias}d acum.</span>
-          </button>;
-        })}
-      </div>}
-
-      {/* TABLA: dónde está parada cada solicitud */}
-      <div className="gt-vidrio" style={{ overflow: "hidden" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, padding: "14px 18px 10px", flexWrap: "wrap" }}>
-          <div className="gt-label" style={{ color: "var(--text-3)" }}>{scProy ? `${scProy} — dónde está parada cada solicitud` : "Todas las compras en cadena"}{scEtapa ? ` · ${ETAPA[scEtapa]?.label}` : ""}</div>
-          <div style={{ fontSize: 11, color: "var(--text-3)", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <span>{ordenadas.length} compra{ordenadas.length !== 1 ? "s" : ""} · días en la misma etapa:</span>
-            <span style={{ fontWeight: 800, color: "#6E6862" }}>≤3 al día</span>
-            <span style={{ fontWeight: 800, color: C_AMARILLO.color }}>4-7 ojo</span>
-            <span style={{ fontWeight: 800, color: "#C75F1F" }}>+7 apurar</span>
-            <span>· click en una fila = detalle</span>
+    const tarjeta = (r) => {
+      const c = r.cfg || C_GRIS;
+      // Semáforo del tiempo parado EN ESA ETAPA (≤3 al día · 4-7 ojo · +7 apurar)
+      const punto = r.k === "cerrada" || r.dias == null ? "#C9C3BA" : r.dias <= 3 ? "#8C857D" : r.dias <= 7 ? "#E4B94A" : ORANGE;
+      return <div key={r.x.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0}
+        aria-label={`Abrir ${r.x.codigo || r.x.provider}`}
+        onClick={() => setModal({ t: "detail", d: r.x })}
+        onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); setModal({ t: "detail", d: r.x }); } }}
+        style={{
+          padding: isMobile ? "12px 14px" : "13px 18px", cursor: "pointer",
+          display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) auto auto",
+          alignItems: "center", gap: isMobile ? 9 : 18,
+        }}>
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+            <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".02em" }}>{r.x.codigo || "—"}</span>
+            <Badge color={cc.color}>{r.x.projectCode}</Badge>
           </div>
+          <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.x.provider}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.x.description}</div>
         </div>
-        {ordenadas.length === 0
-          ? <div style={{ padding: "34px 18px", textAlign: "center", color: "var(--text-faint)", fontSize: 13 }}>Nada que mostrar con estos filtros.</div>
-          : <div style={{ overflowX: "auto", paddingBottom: 8, scrollbarWidth: "thin" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                <thead><tr style={{ background: "rgba(44,42,40,.06)", borderBottom: "1px solid rgba(44,42,40,.10)" }}>
-                  {["Etapa", "Días", "Código", "Proyecto", "Proveedor", "Qué se compró", "Monto", "Pagada", "De quién depende"].map(h => (
-                    <th key={h} style={{ textAlign: h === "Monto" ? "right" : "left", padding: "9px 12px", fontSize: 10, fontWeight: 800, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>))}
-                </tr></thead>
-                <tbody>
-                  {ordenadas.map(r => {
-                    const sm = sem(r.dias, r.k);
-                    return <tr key={r.x.id} onClick={() => setModal({ t: "detail", d: r.x })} style={{ borderTop: "1px solid rgba(44,42,40,.05)", cursor: "pointer" }}>
-                      <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
-                        <span style={{ background: r.cfg.bg, color: r.cfg.color, borderRadius: 999, padding: "3px 10px", fontSize: 11, fontWeight: 800 }}>{r.cfg.label}</span>
-                      </td>
-                      <td style={{ padding: "8px 12px" }}>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 800, fontSize: 11.5, color: "var(--text)" }}><span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: sm.c, flexShrink: 0 }} />{sm.txt}</span>
-                      </td>
-                      <td style={{ padding: "8px 12px", fontFamily: "var(--mono)", fontWeight: 800, fontSize: 11, color: "var(--text)", whiteSpace: "nowrap" }}>{r.x.codigo || "—"}</td>
-                      <td style={{ padding: "8px 12px", fontWeight: 600, color: "var(--text-2)", whiteSpace: "nowrap" }}>{r.x.projectCode || "—"}</td>
-                      <td style={{ padding: "8px 12px", fontWeight: 700, color: "var(--text)" }}>{r.x.provider}</td>
-                      <td style={{ padding: "8px 12px", color: "var(--text-2)", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(r.x.description || "").slice(0, 70)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{fmtL(r.x.amount)}</td>
-                      <td style={{ padding: "8px 12px", color: "var(--text-3)", whiteSpace: "nowrap" }}>{fpago(r.x) ? new Date(fpago(r.x) + "T12:00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short" }) : "sin pagar"}</td>
-                      <td style={{ padding: "8px 12px", fontWeight: 700, color: r.k === "cerrada" ? "var(--text-3)" : "var(--text)", whiteSpace: "nowrap" }}>
-                        {r.quien}
-                        {r.detalle && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--text-3)" }}>{String(r.detalle).slice(0, 26)}</div>}
-                      </td>
-                    </tr>;
-                  })}
-                </tbody>
-              </table>
-            </div>}
+        {/* Etapa del proceso + de quién depende */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: isMobile ? "flex-start" : "flex-end", gap: 5, minWidth: 0 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 11px", borderRadius: 999, fontSize: 11, fontWeight: 800, color: c.color, background: c.bg, whiteSpace: "nowrap" }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: punto, flexShrink: 0 }} />
+            {c.label}
+          </span>
+          <span style={{ fontSize: 10.5, color: "var(--text-3)", whiteSpace: "nowrap" }}>
+            {r.quien}{r.dias != null && r.k !== "cerrada" ? ` · ${r.dias}d` : ""}
+          </span>
+        </div>
+        <div style={{ textAlign: isMobile ? "left" : "right", whiteSpace: "nowrap" }}>
+          <div style={{ font: "800 16px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(r.x.amount)}</div>
+        </div>
+      </div>;
+    };
+
+    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+      {/* Resumen */}
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+        {[
+          { v: base.length, l: "compras pagadas" },
+          { v: fmtL(total), l: "monto pagado" },
+          { v: dias.filter(d => d !== "—").length, l: "días con pago" },
+          { v: base.filter(r => r.k !== "cerrada").length, l: "todavía en cadena", c: "var(--naranja-tinta)" },
+        ].map((x, i, arr) => (
+          <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 40%" : 1, minWidth: 0 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap" }}>{x.v}</div>
+              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
+            </div>
+            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
+          </div>
+        ))}
       </div>
+
+      {/* Filtros: cuándo se pagó · en qué etapa está · buscador */}
+      <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", flexDirection: "column", gap: 9 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 58 : 0 }}>Pagadas</span>
+          {Object.entries(RANGOS).map(([k, v]) => pill(v.label, scModo === k, () => setScModo(k), v.desde ? `${v.desde} → ${v.hasta}` : "Todas las pagadas"))}
+          {rango.desde && <span style={{ fontSize: 10.5, color: "var(--text-3)", fontFamily: "var(--mono, ui-monospace)" }}>{rango.desde} → {rango.hasta}</span>}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 58 : 0 }}>Etapa</span>
+          {pill(`Todas (${base.length})`, !scEtapa, () => setScEtapa(""))}
+          {ETAPAS.filter(e => e.k !== "esperando_pago" && (conteoEtapa[e.k] || scEtapa === e.k)).map(e =>
+            pill(`${e.label} (${conteoEtapa[e.k] || 0})`, scEtapa === e.k, () => setScEtapa(scEtapa === e.k ? "" : e.k)))}
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-2)", cursor: "pointer", whiteSpace: "nowrap" }}>
+            <input type="checkbox" checked={scVerCerradas} onChange={e => { setScVerCerradas(e.target.checked); if (!e.target.checked && scEtapa === "cerrada") setScEtapa(""); }} style={{ accentColor: ORANGE_DARK, cursor: "pointer" }} />
+            ver cerradas
+          </label>
+          <input value={scQ} onChange={e => setScQ(e.target.value)} placeholder="Buscar código, proveedor, material…"
+            style={{ flex: "0 1 260px", minWidth: 150, marginLeft: "auto", padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", outline: "none", background: "var(--surface)" }} />
+        </div>
+      </div>
+
+      {/* Agrupado por día de pago */}
+      {filas.length === 0
+        ? <div className="gt-vidrio" style={{ padding: "38px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 13.5 }}>
+            {scModo === "semana" ? "Todavía no hay pagos esta semana." : "No hay compras pagadas con estos filtros."}
+          </div>
+        : dias.map(d => {
+            const grupo = porDia[d];
+            const suma = grupo.reduce((s, r) => s + (Number(r.x.amount) || 0), 0);
+            return <div key={d} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
+                <span className="gt-label" style={{ color: "var(--text-2)", fontSize: 10.5 }}>{fechaLarga(d)}</span>
+                <span style={{ fontSize: 11, color: "var(--text-3)" }}>{grupo.length} compra{grupo.length === 1 ? "" : "s"}</span>
+                <span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--naranja-tinta)" }}>{fmtL(suma)}</span>
+              </div>
+              {grupo.slice().sort((a, b) => (Number(b.x.amount) || 0) - (Number(a.x.amount) || 0)).map(tarjeta)}
+            </div>;
+          })}
     </div>;
   };
 
-  // ANA KANBAN — Compras pagadas pendientes de coordinar retiro con proveedor
-  // ─────────────────────────────────────────────────────────────────────────
   const renderAnaKanban = () => {
     // Clasificacion de cada compra pagada en una de 3 sub-secciones por proyecto.
     // El mismo ID de compra vive en una sola sub-seccion segun su estado actual.
