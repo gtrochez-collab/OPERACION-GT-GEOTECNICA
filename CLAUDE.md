@@ -174,6 +174,58 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (getMonth() local corría al mes anterior los pagos del día 1 y el mismo
   número salía distinto que en el Dashboard); subrayado de pestaña con
   inset boxShadow (el marginBottom:-1 se recortaba en el overflow).
+  **PRIORIDADES — cola de pago de Tesorería (18-sep-2026, pedido de Gerson)**:
+  `renderPrioridades` + `PrioridadAddModal` (a nivel de módulo). Reemplaza el
+  Excel gigante que Finanzas le armaba a mano a Carolina cada semana: Finanzas
+  agrega ahí las solicitudes YA CARGADAS, las ORDENA por urgencia (↑ ↓ o
+  drag&drop en escritorio) y marca las que van con prioridad máxima; Carolina
+  paga de arriba hacia abajo mientras tenga fondos. Click en cualquier tarjeta
+  → `irASolicitud` lleva a la pestaña Solicitudes con el detalle abierto (limpia
+  los filtros para que la fila quede visible detrás del modal). Es la pestaña
+  que va ANTES de Solicitudes ("al lado, o antes mejor dicho"); para Carolina es
+  la PRIMERA (no tiene Dashboard).
+  Key propia **`cp-prioridades`** — NO campos dentro de las solicitudes:
+  reordenar no reescribe las 440 filas de cp-purchases ni compite con los pagos
+  de Carolina (mismo criterio de ownership que gc-marks/gc-tardies). Shape
+  `[{id: <purchaseId>, urgente, addedBy, createdAt}]` y el **ORDEN DEL ARRAY ES
+  LA PRIORIDAD** (índice 0 = se paga primero). ⚠ El campo se llama `createdAt`
+  a propósito: es el único nombre que mira el re-sync de supabase.js para
+  RESCATAR filas ajenas cuando el cache local queda más nuevo que la nube.
+  `sPri` guarda con el patrón de siempre: pre-fetch `getCloud` (si la nube no
+  responde NO se guarda y se revierte el estado local), RESCATE de lo que otro
+  agregó y yo nunca tuve (lo que yo saqué a propósito no revive porque estaba en
+  mi lista previa) y verify releyendo la nube. `reordenarVisibles` reordena solo
+  las entradas de la empresa activa dejando las de la otra en su posición global
+  exacta. Las pagadas caen solas a una tira verde "Ya pagadas" (con botón
+  "Quitar pagadas", que también limpia huérfanas de solicitudes borradas).
+  Permisos: `canEditPri` = admin/costos/compras_ops/tesoreria; gerencia y visor
+  solo miran; Ana y Jorge no ven la pestaña.
+  **VENCIDA — +2 semanas sin pago (18-sep-2026)**: `estaVencida(p)` /
+  `diasEsperandoPago(p)` / `DIAS_VENCIDA = 14` a nivel de módulo. El reloj corre
+  desde `validatedAt || createdAt` (cuando empezó a esperar a Tesorería) y
+  compara SOLO fechas (los timestamps mezclan medianoche UTC con hora local y
+  cruzaban el umbral un día antes). Pinta de **rojo clarito** (`C_ROJO`) la fila
+  en Solicitudes con el chip "Vencida · N d" y la tarjeta en Prioridades; el
+  contador "vencidas" solo aparece en la tira resumen si hay alguna. El
+  **naranja clarito** (`C_ULTRA`) es "Urgente", que lo marca Finanzas a mano. Si
+  una es las dos, el fondo va ROJO (es un hecho, no una decisión) y se muestran
+  los dos chips.
+  **Proyectos en orden ALFABÉTICO (18-sep-2026)**: `getAllProjects()` ordena por
+  `short` con `localeCompare("es", {sensitivity:"base", numeric:true})` — se
+  ordena en la FUENTE, así sale igual en el form de solicitud, en el filtro de
+  Solicitudes y en la pestaña Proyectos (los acentos ya no mandan CIMENTACIÓN al
+  final).
+  **Corregir una compra YA PAGADA (18-sep-2026)**: `CorreccionFormImpl` + modal
+  `corregir` + botón en DetailView. SOLO Gerson y Christian
+  (`canCorregirPagada = isAdmin || userRole === "costos"` — se compara el rol
+  CRUDO porque `isCostos` incluye a Arturo). Cambia únicamente **proyecto** y
+  **partida** (con el mismo Select de GeoCost, disponible y justificación de
+  sobregiro) + motivo obligatorio; el estado, el pago, la fecha y el comprobante
+  de Carolina quedan intactos. ⚠ A propósito NO reusa `PurchaseFormImpl`: sus
+  dos botones fuerzan `status: "borrador"/"validado"` y resetean
+  `treasuryStatus`, así que editar con él una compra pagada le BORRABA el pago a
+  Carolina. El audit se escribe con la acción `partida_reclasificada`, la misma
+  que `sP` RESCATA de la nube antes de mergear.
   **Flujo de cierre contable (19-ago-2026, pedido de Gerson)**: el form de
   solicitud lleva `cierreResponsable` (quién cierra con conta) y
   `detalleMateriales` (qué se compra, según cotización — opcional).
@@ -723,6 +775,8 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
 ## Claves de datos (store = supabase.js)
 `cp-purchases`, `cp-projects` (proyectos custom — GeoShopping es el dueño; HR
 los lee vía resolveShortHR), `cp-providers`, `cp-file-<id>` (archivos),
+`cp-prioridades` (cola de pago de Tesorería — GeoShopping es el dueño;
+el ORDEN del array es la prioridad),
 `mq-purchases`, `mq-machines`, `lg-despachos` (compartido compras/máquinas/
 logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 `hr-he` (horas extras), `hr-pays`, `hr-contracts`, etc.

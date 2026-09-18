@@ -52,6 +52,33 @@ const C_VERDE    = { color: "#177243", bg: "#DCF3E4" };   // 5.1:1 sobre su fond
 const C_VERDE_2  = { color: "#146A3F", bg: "#C7EBD5" };
 const C_AZUL     = { color: "#1D5FAF", bg: "#DDE9FA" };
 const C_AMARILLO = { color: "#8A5A00", bg: "#FBEFC4" };
+// 18-sep-2026 — dos avisos nuevos, ambos con la paleta de siempre:
+//   ROJO clarito  = VENCIDA (más de 2 semanas sin pago) — es un HECHO.
+//   NARANJA clarito = URGENTE (lo marca el equipo de finanzas) — es una DECISIÓN.
+// Si una solicitud es las dos, gana el rojo en el fondo (la alarma manda) y
+// se muestran los dos chips.
+const C_ROJO     = { color: "#B03024", bg: "rgba(192,57,43,.07)", borde: "rgba(192,57,43,.22)" };
+const C_ULTRA    = { color: "#A94E16", bg: "rgba(232,118,45,.10)", borde: "rgba(232,118,45,.30)" };
+
+// ── VENCIDA: más de 2 semanas sin pago (18-sep-2026, pedido de Gerson) ──
+// El reloj corre desde que Operaciones la aprobó (ahí empieza a esperar a
+// Tesorería); las que siguen en borrador usan su fecha de carga. Se comparan
+// solo FECHAS (sin horas): los timestamps mezclan medianoche UTC con hora
+// local de Honduras y cruzaban el umbral un día antes.
+const DIAS_VENCIDA = 14;
+const diasDesdeYMDLocal = (iso) => {
+  const ymd = String(iso || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+  const ms = Date.parse(new Date().toLocaleDateString("en-CA") + "T00:00:00Z") - Date.parse(ymd + "T00:00:00Z");
+  return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86400000)) : null;
+};
+const esPagadaP = (p) => p?.status === "pagado" || p?.status === "finalizado";
+const diasEsperandoPago = (p) => diasDesdeYMDLocal(p?.validatedAt || p?.createdAt);
+const estaVencida = (p) => {
+  if (!p || esPagadaP(p)) return false;
+  const d = diasEsperandoPago(p);
+  return d != null && d > DIAS_VENCIDA;
+};
 const STATUSES = {
   borrador:   { label: "Borrador",                        ...C_GRIS,    order: 1, desc: "Operaciones aun no aprueba" },
   validado:   { label: "Aprobado por Coord. Operaciones", ...C_GRIS,    order: 2, desc: "Aprobado por Operaciones, en gestion de Tesoreria" },
@@ -850,6 +877,182 @@ function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, ren
 // ── PurchaseFormImpl: nivel de modulo ──
 // Mismo razonamiento que ProjectFormImpl: vive aqui para que React mantenga la
 // identidad del componente estable entre renders del padre. Recibe deps por props.
+// ── CorreccionFormImpl (18-sep-2026, pedido de Gerson) ───────────────────
+// Corregir el PROYECTO o la PARTIDA de una compra YA PAGADA. Solo Gerson
+// (admin) y Christian (costos) — "por si acaso Arturo se equivoca".
+//
+// ⚠ A propósito NO se reusa PurchaseFormImpl: sus dos botones fuerzan
+// `status: "borrador"` / `"validado"` y resetean `treasuryStatus`, así que
+// editar con él una compra pagada le borraría a Carolina el pago, la fecha y
+// el comprobante. Este form hace un PARCHE de tres campos y no toca nada más.
+function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tasa, calcDisponible, updatePurchase, addAudit, userName }) {
+  const [projectCode, setProjectCode] = useState(purchase.projectCode || "");
+  const [partidaId, setPartidaId] = useState(purchase.partidaId || "");
+  const [motivo, setMotivo] = useState("");
+  const [justif, setJustif] = useState(purchase.sobregiroJustificacion || "");
+  const [saving, setSaving] = useState(false);
+
+  const pres = (presupuestos || []).find(x => x.projectCode === projectCode && x.estado !== "cerrado");
+  const partidaSel = pres ? (pres.partidas || []).find(x => x.id === partidaId) : null;
+  const opciones = pres ? opcionesPartidas(pres, "compras") : [];
+  const opcionesSel = (() => {
+    const enOps = opciones.some(g => (g.options || []).some(o => o.value === partidaId));
+    return !enOps && partidaSel ? [...opciones, { group: "Actual", options: [{ value: partidaSel.id, label: partidaSel.nombre || "(sin nombre)" }] }] : opciones;
+  })();
+  const sinElegibles = !!pres && opciones.length === 0 && !partidaSel;
+  const tasaN = num(tasa) || TASA_DEFAULT;
+  const disp = partidaSel && calcDisponible ? calcDisponible(projectCode, partidaId, purchase.id) : null;
+  const montoUSD = hnlToUsd(num(purchase.amount), tasaN);
+  const sobregiro = disp && montoUSD > disp.disponibleUSD ? montoUSD - disp.disponibleUSD : 0;
+
+  const cambioProyecto = projectCode !== (purchase.projectCode || "");
+  const cambioPartida = (partidaId || "") !== (purchase.partidaId || "");
+  const hayCambio = cambioProyecto || cambioPartida;
+
+  const nombrePartida = (id, presu) => {
+    const pp = presu ? (presu.partidas || []).find(x => x.id === id) : null;
+    return pp ? (pp.nombre || "(sin nombre)") : (id ? "(partida de otro presupuesto)" : "Por clasificar");
+  };
+  const presOriginal = (presupuestos || []).find(x => x.projectCode === purchase.projectCode);
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ background: C_AMARILLO.bg, border: `1px solid ${C_AMARILLO.color}55`, borderRadius: 12, padding: "12px 15px", fontSize: 12.5, color: C_AMARILLO.color, lineHeight: 1.55 }}>
+      Esta compra <b>ya está pagada</b>. Acá solo se corrige a qué <b>proyecto</b> y <b>partida</b> se le carga el gasto —
+      el pago, la fecha, el comprobante y el estado quedan intactos. Queda registrado en la bitácora.
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div><div style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>Proveedor</div><div style={{ fontWeight: 700 }}>{purchase.provider}</div></div>
+      <div><div style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>Monto</div><div style={{ fontWeight: 800, color: "#059669" }}>{fmtL(purchase.amount)}</div></div>
+    </div>
+
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Proyecto</label>
+      <select value={projectCode} onChange={e => { const v = e.target.value; setProjectCode(v); if (v !== purchase.projectCode) setPartidaId(""); else setPartidaId(purchase.partidaId || ""); }}
+        style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }}>
+        <option value="">—</option>
+        {(allProjects || []).map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}</option>)}
+      </select>
+    </div>
+
+    {pres && sinElegibles && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>
+      El presupuesto no tiene partida para compras — quedará por clasificar en GeoCost
+    </div>}
+    {pres && !sinElegibles && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <Select label="Partida del presupuesto *" emptyLabel="— Elegí la partida —" options={opcionesSel} value={partidaSel ? partidaId : ""} onChange={e => setPartidaId(e.target.value)} />
+      {disp && <div style={{ fontSize: 12, fontWeight: 600, color: disp.disponibleUSD >= 0 ? C_VERDE.color : C_AMARILLO.color }}>
+        Disponible: {fmtUSD(disp.disponibleUSD)} · {fmtL(disp.disponibleUSD * tasaN)}
+      </div>}
+      {sobregiro > 0 && <div style={{ background: C_ULTRA.bg, border: `1px solid ${C_ULTRA.borde}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: C_ULTRA.color }}>Sobrepasa la partida en {fmtUSD(sobregiro)}</div>
+        <Textarea label="Justificación del sobregiro *" value={justif} onChange={e => setJustif(e.target.value)} placeholder="Por qué se carga igual a esta partida" />
+      </div>}
+    </div>}
+    {!pres && projectCode && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>
+      Ese proyecto no tiene presupuesto en GeoCost — la compra no lleva partida.
+    </div>}
+
+    <Textarea label="Motivo de la corrección *" value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Ej: la compra era para Villa San Miguel, no para Plantel" />
+
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, borderTop: "1px solid #E2E8F0", paddingTop: 14 }}>
+      <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cancelar</Btn>
+      <Btn variant="success" disabled={saving || !hayCambio} onClick={async () => {
+        if (!projectCode) return alert("Elegí el proyecto.");
+        if (pres && !sinElegibles && !partidaSel) return alert("Elegí la partida del presupuesto.");
+        if (sobregiro > 0 && String(justif || "").trim().length < 5) return alert("Sobrepasa la partida: escribí la justificación del sobregiro (mínimo 5 caracteres).");
+        if (String(motivo || "").trim().length < 5) return alert("Escribí el motivo de la corrección (mínimo 5 caracteres).");
+        setSaving(true);
+        try {
+          const antesProy = purchase.projectCode || "—";
+          const antesPart = nombrePartida(purchase.partidaId, presOriginal);
+          const ahoraPart = sinElegibles || !pres ? "Por clasificar" : nombrePartida(partidaId, pres);
+          // PARCHE: se copia la compra tal cual y solo se pisan 3 campos.
+          const rec = {
+            ...purchase,
+            projectCode,
+            partidaId: (!pres || sinElegibles) ? "" : (partidaId || ""),
+            sobregiroJustificacion: pres && sobregiro > 0 ? String(justif || "").trim() : "",
+          };
+          // Mismo tipo de audit que usa GeoCost al reclasificar: así `sP` lo
+          // RESCATA si otra pestaña guarda encima con una foto vieja.
+          const saved = addAudit(rec, "partida_reclasificada",
+            `Corrección post-pago por ${userName || "—"}: ${antesProy} → ${projectCode} · ${antesPart} → ${ahoraPart}. Motivo: ${String(motivo).trim()}`);
+          const ok = await updatePurchase(saved);
+          if (ok !== false) setModal(null);
+        } finally { setSaving(false); }
+      }}>{saving ? "Guardando…" : "Guardar corrección"}</Btn>
+    </div>
+  </div>;
+}
+
+// ── PrioridadAddModal: nivel de módulo (mismo motivo que los otros forms —
+// definido adentro se remontaría en cada render y perdería lo tildado).
+// Elegir qué solicitudes entran a la cola de pago de Tesorería.
+function PrioridadAddModal({ candidatas, ccColor, onClose, onAdd }) {
+  const [sel, setSel] = useState([]);
+  const [q, setQ] = useState("");
+  const [saving, setSaving] = useState(false);
+  const txt = q.trim().toLowerCase();
+  const lista = (candidatas || []).filter(p => !txt
+    || String(p.codigo || "").toLowerCase().includes(txt)
+    || String(p.provider || "").toLowerCase().includes(txt)
+    || String(p.projectCode || "").toLowerCase().includes(txt)
+    || String(p.description || "").toLowerCase().includes(txt));
+  // Las que más esperan, primero: es el orden en que uno las va a priorizar.
+  const ordenadas = lista.slice().sort((a, b) => String(a.validatedAt || a.createdAt || "").localeCompare(String(b.validatedAt || b.createdAt || "")));
+  const toggle = (id) => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+  const totalSel = (candidatas || []).filter(p => sel.includes(p.id)).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+  return <Modal title="Agregar a la cola de pago" onClose={saving ? () => {} : onClose} wide>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar por código, proveedor, proyecto…" autoFocus
+        style={{ padding: "9px 13px", border: "1px solid var(--hairline, #CBD5E1)", borderRadius: 10, fontSize: 13.5, fontFamily: "inherit", outline: "none", background: "var(--surface, #F8FAFC)" }} />
+      <div style={{ maxHeight: "52vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+        {ordenadas.length === 0 && <div style={{ padding: 30, textAlign: "center", color: "var(--text-3, #94A3B8)", fontSize: 13 }}>
+          {(candidatas || []).length === 0 ? "No hay solicitudes pendientes de pago fuera de la cola." : "Nada coincide con la búsqueda."}
+        </div>}
+        {ordenadas.map(p => {
+          const activo = sel.includes(p.id);
+          const venc = estaVencida(p);
+          const dias = diasEsperandoPago(p);
+          return <label key={p.id} style={{
+            display: "grid", gridTemplateColumns: "22px minmax(0,1fr) auto", alignItems: "center", gap: 12,
+            padding: "10px 13px", borderRadius: 12, cursor: "pointer",
+            border: `1px solid ${activo ? "rgba(232,118,45,.45)" : venc ? C_ROJO.borde : "var(--hairline, #E2E8F0)"}`,
+            background: activo ? "rgba(232,118,45,.08)" : venc ? C_ROJO.bg : "var(--surface, #fff)",
+          }}>
+            <input type="checkbox" checked={activo} onChange={() => toggle(p.id)} style={{ width: 16, height: 16, accentColor: ORANGE_DARK, cursor: "pointer" }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3, #6E6862)" }}>{p.codigo || "—"}</span>
+                <Badge color={ccColor}>{p.projectCode}</Badge>
+                {venc && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_ROJO.color, background: C_ROJO.bg }}>Vencida</span>}
+              </div>
+              <div style={{ font: "700 13px/1.3 var(--sans)", color: "var(--text, #2C2A28)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider}</div>
+              <div style={{ fontSize: 11.5, color: "var(--text-3, #6E6862)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>
+            </div>
+            <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+              <div style={{ font: "800 14px/1.2 var(--display)", color: "var(--text, #2C2A28)" }}>{fmtL(p.amount)}</div>
+              <div style={{ fontSize: 10.5, marginTop: 2, color: venc ? C_ROJO.color : "var(--text-3, #6E6862)", fontWeight: venc ? 800 : 500 }}>{dias != null ? `${dias} días` : "—"}</div>
+            </div>
+          </label>;
+        })}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", borderTop: "1px solid var(--hairline, #E2E8F0)", paddingTop: 12 }}>
+        <span style={{ fontSize: 12.5, color: "var(--text-3, #6E6862)" }}>
+          {sel.length ? <>{sel.length} seleccionada{sel.length === 1 ? "" : "s"} · <b style={{ color: "var(--text, #2C2A28)" }}>{fmtL(totalSel)}</b></> : "Ninguna seleccionada"}
+        </span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Btn>
+          <Btn variant="primary" disabled={!sel.length || saving} onClick={async () => { setSaving(true); try { await onAdd(sel); } finally { setSaving(false); } }}>
+            {saving ? "Agregando…" : `Agregar ${sel.length || ""}`.trim()}
+          </Btn>
+        </div>
+      </div>
+    </div>
+  </Modal>;
+}
+
 function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, providers, addAudit, saveOrAlert, upsertProvider, presupuestos, tasa, calcDisponible }) {
   const [saving, setSaving] = useState(false);
   const [f, setF] = useState(purchase || {
@@ -1589,6 +1792,16 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const canEditDelivery = isAdmin || isCostos || isRecepcion;                     // subir/editar fichas de recibido
   const canManageProviders = isAdmin || isCostos || isAsistenteCompras || isRecepcion;  // CRUD de proveedores (Ana primaria, Jorge tambien para no quedar trabados)
   const canSendToLogistics = isAdmin || isCostos || isAsistenteCompras;           // crear orden de recogida desde compra pagada
+  // CORREGIR UNA COMPRA YA PAGADA (18-sep-2026, pedido de Gerson: "solo a mi y
+  // a Christian, por si acaso Arturo se equivoca en el proyecto o en la
+  // partida presupuestaria"). OJO: `isCostos` incluye a Arturo (compras_ops),
+  // por eso acá se compara el rol CRUDO. Solo toca proyecto + partida: el
+  // estado, el pago y el comprobante de Carolina quedan intactos.
+  const canCorregirPagada = isAdmin || userRole === "costos";
+  // LISTA DE PRIORIDADES: la arma Finanzas (Gerson, Christian, Arturo) y la
+  // lee/reordena también Carolina — es su cola de pago. Gerencia y el visor
+  // de compras solo miran.
+  const canEditPri = isAdmin || isCostos || isTesoreria;
 
   const [co, setCo] = useState("geotecnica");
   // ── GUARDIA ANTI-PISADA DEL AUTO-REFRESH (20-ago-2026) ──────────────────
@@ -1613,6 +1826,25 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // lo que abren Proyectos, Cerradas y los FileSlot del DetailView (que se
   // remonta con cada refresh — un visor local ahí se cerraría solo).
   const [visor, setVisor] = useState(null);
+  // ── LISTA DE PRIORIDADES (18-sep-2026, pedido de Gerson) ────────────────
+  // Reemplaza el Excel gigante que Finanzas le armaba a mano a Tesorería cada
+  // semana. Vive en su PROPIA key (`cp-prioridades`) y NO dentro de las
+  // solicitudes: así reordenar no reescribe las 438 filas de cp-purchases ni
+  // compite con los pagos de Carolina (mismo criterio de ownership que
+  // gc-marks / gc-tardies en GeoClock).
+  // Shape: [{ id: <purchaseId>, urgente: bool, addedBy, createdAt }] — el ORDEN
+  // DEL ARRAY es la prioridad (índice 0 = se paga primero).
+  // ⚠ El campo se llama `createdAt` a propósito: es el único nombre que mira el
+  // re-sync de supabase.js para RESCATAR filas que otro usuario agregó cuando
+  // el cache local quedó más nuevo que la nube. Con `addedAt` esas entradas se
+  // habrían perdido en silencio (mismo agujero que borraba solicitudes de
+  // Fernando en GeoMachinery).
+  const [prioridades, _setPrioridadesRaw] = useState([]);
+  const prioridadesRef = useRef([]);
+  const setPrioridades = (v) => { prioridadesRef.current = v; _setPrioridadesRaw(v); };
+  const [priSaving, setPriSaving] = useState(false);
+  const [priModal, setPriModal] = useState(null);   // { t: "add" }
+  const [priDrag, setPriDrag] = useState(null);     // índice que se está arrastrando
   // GeoCost (9-sep-2026): fuentes SOLO LECTURA para la partida del form.
   // Setters crudos a propósito: no son mutaciones locales, no deben frenar
   // el auto-refresh vía lastLocalMutAtRef.
@@ -1732,12 +1964,14 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
   useEffect(() => {
     (async () => {
-      const [p, cps, prov, desp] = await Promise.all([
+      const [p, cps, prov, desp, pri] = await Promise.all([
         store.get("cp-purchases"),
         store.get("cp-projects"),
         store.get("cp-providers"),
         store.get("lg-despachos"),
+        store.get("cp-prioridades"),
       ]);
+      if (Array.isArray(pri)) setPrioridades(pri.filter(x => x && x.id));
       let purchasesArr = [];
       if (p) {
         // Migracion 1: asegurar treasuryStatus y deliveryStatus
@@ -1821,10 +2055,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       // Cambios locales recientes → no arriesgar pisarlos con una foto vieja.
       if (Date.now() - lastLocalMutAtRef.current < 8000) { console.log("[refresh] omitido: guardado local reciente"); return; }
       try {
-        const [p, desp] = await Promise.all([
+        const [p, desp, pri] = await Promise.all([
           store.get("cp-purchases"),
           store.get("lg-despachos"),
+          store.getCloud("cp-prioridades"),
         ]);
+        // Lista de prioridades: si Finanzas reordenó en otra máquina, al volver
+        // a la pestaña se ve el orden nuevo. getCloud (no get) — es una lista
+        // chiquita y compartida, el cache viejo acá solo confundiría.
+        if (Array.isArray(pri) && Date.now() - lastLocalMutAtRef.current >= 8000) setPrioridades(pri.filter(x => x && x.id));
         if (Array.isArray(p)) {
           const migrated = p.map(x => ({
             ...x,
@@ -2225,6 +2464,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       if (cp.hidden || cp.deleted) return;
       result.push({ ...cp, isCustom: true });
     });
+    // ORDEN ALFABÉTICO (18-sep-2026, pedido de Gerson: "que los proyectos
+    // aparezcan en orden alfabético cuando vas a poner un proyecto en una
+    // solicitud de compra"). Se ordena en la FUENTE para que salga igual en
+    // el form, en el filtro de Solicitudes y en la pestaña Proyectos.
+    // `localeCompare` con sensitivity base: los acentos y las mayúsculas no
+    // mandan a CIMENTACIÓN al final de la lista.
+    result.sort((a, b) => String(a.short || "").localeCompare(String(b.short || ""), "es", { sensitivity: "base", numeric: true }));
     return result;
   };
   const allProjects = getAllProjects();
@@ -2352,6 +2598,55 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // hacen uploads de archivos puedan AWAIT y dar feedback al usuario en caso
   // de error. Antes esto retornaba void y los errores quedaban en silencio.
   const updatePurchase = (updated) => sP(purchases.map(p => p.id === updated.id ? updated : p));
+
+  // ── GUARDAR LA LISTA DE PRIORIDADES (18-sep-2026) ───────────────────────
+  // Array chiquito y propio, pero igual lo pueden tocar dos personas de
+  // Finanzas a la vez. Reglas (mismas que el resto del módulo):
+  //   · pre-fetch con getCloud — si la nube no responde, NO se guarda.
+  //   · RESCATE: lo que alguien más agregó y yo nunca tuve se conserva (se
+  //     pega al final); lo que yo saqué a propósito no revive, porque estaba
+  //     en mi lista previa.
+  //   · verify releyendo la nube: todos MIS ids tienen que estar.
+  const sPri = async (next) => {
+    const previa = prioridadesRef.current || [];
+    setPrioridades(next);
+    setPriSaving(true);
+    lastLocalMutAtRef.current = Date.now();
+    try {
+      let cloud;
+      try { cloud = await store.getCloud("cp-prioridades"); }
+      catch (e) {
+        console.error("[prioridades] nube no responde:", e?.message || e);
+        setPrioridades(previa);
+        alert("⚠️ No hay conexión con la nube.\n\nNo se guardó el cambio en la lista de prioridades. Esperá unos segundos y volvé a intentar.");
+        return false;
+      }
+      const cloudArr = Array.isArray(cloud) ? cloud : [];
+      const idsMios = new Set(next.map(x => x.id));
+      const idsPrevios = new Set(previa.map(x => x.id));
+      const ajenas = cloudArr.filter(c => c && c.id && !idsMios.has(c.id) && !idsPrevios.has(c.id));
+      const merged = [...next, ...ajenas];
+      const ok = await store.set("cp-prioridades", merged);
+      if (!ok) {
+        setPrioridades(previa);
+        alert("⚠️ No se pudo guardar la lista de prioridades. Volvé a intentar.");
+        return false;
+      }
+      let verify;
+      try { verify = await store.getCloud("cp-prioridades"); } catch { verify = null; }
+      if (Array.isArray(verify)) {
+        const enNube = new Set(verify.map(x => x?.id));
+        const faltan = next.filter(x => !enNube.has(x.id));
+        if (faltan.length) {
+          alert(`⚠️ La lista se guardó incompleta (${faltan.length} solicitud(es) no quedaron en la nube). Recargá la página y revisá antes de seguir.`);
+          return false;
+        }
+      }
+      setPrioridades(merged);
+      lastLocalMutAtRef.current = Date.now();
+      return true;
+    } finally { setPriSaving(false); }
+  };
 
   // ── SALIDAS ALTERNATIVAS DEL KANBAN DE ANA (ago 2026) ──
   // Hasta ahora una compra pagada SOLO salia de "Por coordinar" mandandola a
@@ -3009,7 +3304,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
 
   // ── Filtros aplicados ──
   // Una compra está PAGADA si tesorería ya la pagó (pagado o finalizado).
-  const esPagada = (p) => p.status === "pagado" || p.status === "finalizado";
+  const esPagada = esPagadaP;   // definido a nivel de módulo (lo usa también Prioridades)
   // Fecha con la que se filtra por mes: la de PAGO si ya se pagó, si no la de
   // carga — así "agosto" significa lo natural en cada caso.
   const fechaFiltro = (p) => String((esPagada(p) ? (p.paidAt || p.paymentDate) : null) || p.createdAt || "").slice(0, 7);
@@ -3449,6 +3744,9 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, paddingTop: 10, borderTop: "1px solid #E2E8F0" }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {canEditOps && <Btn variant="ghost" onClick={() => setModal({ t: "edit", d: p })}>✏️ Editar (Ops)</Btn>}
+          {/* Corregir proyecto/partida de una compra YA PAGADA — solo Gerson y
+              Christian (18-sep-2026). No toca el pago ni el comprobante. */}
+          {canCorregirPagada && esPagadaP(p) && <Btn variant="ghost" onClick={() => setModal({ t: "corregir", d: p })} title="Corregir el proyecto o la partida presupuestaria">✏️ Corregir proyecto / partida</Btn>}
           {canRegisterPay && <Btn variant="success" onClick={() => setModal({ t: "pay", d: p })}>💰 Registrar pago{isActingAsEmergency && p.status === "validado" ? " (emergencia)" : ""}</Btn>}
           {canRevertPay && <Btn variant="warn" onClick={revertToValidado}>↺ Revertir pago</Btn>}
           {canCreate && <Btn variant="danger" onClick={() => { if (confirm(`¿Eliminar la solicitud de ${p.provider}?`)) { removePurchase(p.id); setModal(null); } }}>🗑 Eliminar</Btn>}
@@ -5266,6 +5564,225 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     </div>;
   };
 
+  // ═════════════════════════════════════════════════════════════════════════
+  // PRIORIDADES (18-sep-2026, pedido de Gerson)
+  // Reemplaza el Excel gigante que Finanzas le armaba a mano a Tesorería:
+  // acá agregan las solicitudes YA CARGADAS y las ordenan por urgencia. La
+  // Lic. Carolina paga de arriba hacia abajo mientras tenga fondos y, con un
+  // click en cualquier tarjeta, cae directo en esa solicitud.
+  // El orden del array ES la prioridad. Ver `sPri` para el guardado.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  // Lleva a la solicitud en la pestaña Solicitudes y le abre el detalle.
+  // Limpia los filtros para que la fila quede visible detrás del modal (si no,
+  // al cerrar podía caer en una vista donde esa solicitud está filtrada).
+  const irASolicitud = (p) => {
+    setFilter({ ver: "todas", project: "", provider: "", mes: "" });
+    setListOrden("estado");
+    setSec("list");
+    setModal({ t: "detail", d: p });
+  };
+
+  // Reordena SOLO las entradas visibles (las de la otra empresa conservan su
+  // posición global exacta): se recorre el array completo y cada hueco que
+  // ocupaba una entrada visible se vuelve a llenar con la cola reordenada.
+  const reordenarVisibles = (nuevosVisibles) => {
+    const ids = new Set(nuevosVisibles.map(x => x.id));
+    const cola = [...nuevosVisibles];
+    return prioridades.map(e => ids.has(e.id) ? cola.shift() : e);
+  };
+
+  const renderPrioridades = () => {
+    const porIdGlobal = new Map(purchases.map(p => [p.id, p]));
+    // Entradas de ESTA empresa cuya solicitud todavía existe.
+    const visibles = prioridades.map(e => ({ e, p: porIdGlobal.get(e.id) })).filter(x => x.p && x.p.company === co);
+    const pendientes = visibles.filter(x => !esPagada(x.p));
+    const pagadas = visibles.filter(x => esPagada(x.p));
+    // Basura: entradas de solicitudes borradas (de cualquier empresa).
+    const huerfanas = prioridades.filter(e => !porIdGlobal.has(e.id));
+
+    const total = pendientes.reduce((s, x) => s + (Number(x.p.amount) || 0), 0);
+    const nUrg = pendientes.filter(x => x.e.urgente).length;
+    const nVenc = pendientes.filter(x => estaVencida(x.p)).length;
+
+    const mover = (id, delta) => {
+      const orden = pendientes.map(x => x.e);
+      const i = orden.findIndex(e => e.id === id);
+      const j = i + delta;
+      if (i < 0 || j < 0 || j >= orden.length) return;
+      const copia = [...orden];
+      [copia[i], copia[j]] = [copia[j], copia[i]];
+      sPri(reordenarVisibles([...copia, ...pagadas.map(x => x.e)]));
+    };
+    const soltarEn = (destino) => {
+      if (priDrag == null || priDrag === destino) { setPriDrag(null); return; }
+      const orden = pendientes.map(x => x.e);
+      const copia = [...orden];
+      const [movida] = copia.splice(priDrag, 1);
+      copia.splice(destino, 0, movida);
+      setPriDrag(null);
+      sPri(reordenarVisibles([...copia, ...pagadas.map(x => x.e)]));
+    };
+    const toggleUrgente = (id) => sPri(prioridades.map(e => e.id === id ? { ...e, urgente: !e.urgente } : e));
+    const quitar = (id) => sPri(prioridades.filter(e => e.id !== id));
+    const limpiar = () => {
+      const fuera = new Set([...pagadas.map(x => x.e.id), ...huerfanas.map(e => e.id)]);
+      if (!fuera.size) return;
+      if (!confirm(`¿Quitar ${fuera.size} solicitud(es) ya pagadas de la lista?`)) return;
+      sPri(prioridades.filter(e => !fuera.has(e.id)));
+    };
+
+    const chip = (txt, c) => <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: c.color, background: c.bg, whiteSpace: "nowrap", letterSpacing: ".01em" }}>{txt}</span>;
+
+    const iconBtn = (txt, onClick, title, activo) => <button
+      type="button" title={title} aria-label={title}
+      onClick={(ev) => { ev.stopPropagation(); onClick(); }}
+      disabled={priSaving}
+      style={{
+        width: 30, height: 30, borderRadius: 9, cursor: priSaving ? "wait" : "pointer",
+        border: `1px solid ${activo ? "transparent" : "var(--hairline)"}`,
+        background: activo ? ORANGE_DARK : "var(--surface)",
+        color: activo ? "#fff" : "var(--text-3)",
+        fontSize: 13, fontWeight: 800, fontFamily: "inherit", lineHeight: 1,
+        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+      }}>{txt}</button>;
+
+    const tarjeta = (x, i) => {
+      const { e, p } = x;
+      const venc = estaVencida(p);
+      const dias = diasEsperandoPago(p);
+      // El rojo de "vencida" manda sobre el naranja de "urgente": es un hecho,
+      // no una decisión. Los dos chips igual se muestran.
+      const tono = venc ? C_ROJO : e.urgente ? C_ULTRA : null;
+      return <div
+        key={e.id}
+        className="gt-vidrio gt-vidrio-hover"
+        role="button" tabIndex={0}
+        aria-label={`Abrir solicitud ${p.codigo || p.provider}`}
+        draggable={canEditPri && !isMobile}
+        onDragStart={() => setPriDrag(i)}
+        onDragOver={(ev) => { if (priDrag != null) ev.preventDefault(); }}
+        onDrop={(ev) => { ev.preventDefault(); soltarEn(i); }}
+        onDragEnd={() => setPriDrag(null)}
+        onClick={() => irASolicitud(p)}
+        onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); irASolicitud(p); } }}
+        style={{
+          padding: isMobile ? "12px 14px" : "13px 18px",
+          display: "grid",
+          gridTemplateColumns: isMobile ? "34px minmax(0,1fr)" : "38px minmax(0,1fr) auto auto",
+          alignItems: "center",
+          gap: isMobile ? 10 : 16,
+          cursor: "pointer",
+          background: tono ? tono.bg : undefined,
+          borderColor: tono ? tono.borde : undefined,
+          opacity: priDrag === i ? 0.45 : 1,
+          transition: "opacity .15s",
+        }}>
+        {/* Puesto en la cola */}
+        <div style={{ font: "800 17px/1 var(--mono, ui-monospace)", color: tono ? tono.color : "var(--text-3)", fontVariantNumeric: "tabular-nums", textAlign: "center" }}>
+          {String(i + 1).padStart(2, "0")}
+        </div>
+        {/* Qué es */}
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+            <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".02em" }}>{p.codigo || "—"}</span>
+            <Badge color={cc.color}>{p.projectCode}</Badge>
+            {e.urgente && chip("Urgente", C_ULTRA)}
+            {venc && chip("Vencida", C_ROJO)}
+          </div>
+          <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>
+          {isMobile && <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 3 }}>
+            <span style={{ font: "800 15px/1 var(--display)", color: "var(--text)" }}>{fmtL(p.amount)}</span>
+            <span style={{ fontSize: 11, color: venc ? C_ROJO.color : "var(--text-3)", fontWeight: venc ? 800 : 500 }}>{dias != null ? `${dias} días` : ""}</span>
+          </div>}
+        </div>
+        {/* Cuánto y desde cuándo */}
+        {!isMobile && <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+          <div style={{ font: "800 16px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(p.amount)}</div>
+          <div style={{ fontSize: 10.5, marginTop: 3, color: venc ? C_ROJO.color : "var(--text-3)", fontWeight: venc ? 800 : 500 }}>
+            {dias != null ? `esperando ${dias} días` : "—"}
+          </div>
+        </div>}
+        {/* Acciones */}
+        {canEditPri && <div style={{ display: "flex", alignItems: "center", gap: 5, gridColumn: isMobile ? "1 / -1" : undefined, justifyContent: isMobile ? "flex-end" : undefined }}>
+          {iconBtn("↑", () => mover(e.id, -1), "Subir")}
+          {iconBtn("↓", () => mover(e.id, 1), "Bajar")}
+          {iconBtn("!", () => toggleUrgente(e.id), e.urgente ? "Quitar urgente" : "Marcar urgente", e.urgente)}
+          {iconBtn("✕", () => quitar(e.id), "Quitar de la lista")}
+        </div>}
+      </div>;
+    };
+
+    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+      {/* Resumen */}
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+        {[
+          { v: pendientes.length, l: "en la cola" },
+          { v: fmtL(total), l: "por pagar", c: "var(--naranja-tinta)" },
+          { v: nUrg, l: "urgentes", c: nUrg ? C_ULTRA.color : undefined },
+          { v: nVenc, l: "vencidas", c: nVenc ? C_ROJO.color : undefined },
+        ].map((x, i, arr) => (
+          <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 40%" : 1, minWidth: 0 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap" }}>{x.v}</div>
+              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
+            </div>
+            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
+          </div>
+        ))}
+      </div>
+
+      {/* Acciones */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+          {isTesoreria ? "Pagá de arriba hacia abajo. Click en una tarjeta para abrirla." : "Arrastrá o usá ↑ ↓ para ordenar. Click en una tarjeta para abrirla."}
+        </span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {priSaving && <span style={{ fontSize: 11.5, color: "var(--naranja-tinta)", fontWeight: 700 }}>Guardando…</span>}
+          {canEditPri && (pagadas.length > 0 || huerfanas.length > 0) && <Btn small variant="ghost" onClick={limpiar}>Quitar pagadas ({pagadas.length + huerfanas.length})</Btn>}
+          {canEditPri && <Btn variant="primary" onClick={() => setPriModal({ t: "add" })}>+ Agregar solicitudes</Btn>}
+        </div>
+      </div>
+
+      {/* La cola */}
+      {pendientes.length === 0
+        ? <div className="gt-vidrio" style={{ padding: "38px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 13.5 }}>
+            La cola está vacía.{canEditPri ? " Agregá las solicitudes que Tesorería debe pagar primero." : ""}
+          </div>
+        : <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>{pendientes.map(tarjeta)}</div>}
+
+      {/* Ya pagadas — se quedan a la vista para saber por dónde va la semana */}
+      {pagadas.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+        <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 4 }}>Ya pagadas ({pagadas.length})</div>
+        {pagadas.map(({ e, p }) => <div key={e.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0}
+          onClick={() => irASolicitud(p)} onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); irASolicitud(p); } }}
+          style={{ padding: "10px 18px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer", background: C_VERDE.bg, borderColor: "rgba(23,114,67,.18)", flexWrap: "wrap" }}>
+          <span style={{ color: C_VERDE.color, fontWeight: 800, fontSize: 14 }}>✓</span>
+          <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: C_VERDE.color }}>{p.codigo || "—"}</span>
+          <span style={{ font: "700 13px/1 var(--sans)", color: "var(--text-2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider}</span>
+          <span style={{ font: "700 13px/1 var(--sans)", color: C_VERDE.color }}>{fmtL(p.amount)}</span>
+        </div>)}
+      </div>}
+    </div>;
+  };
+
+  // Modal para agregar solicitudes a la cola: solo lo NO pagado que todavía no
+  // está en la lista, con buscador y check múltiple.
+  const renderPriModal = () => {
+    if (!priModal || priModal.t !== "add") return null;
+    return <PrioridadAddModal
+      candidatas={cp.filter(p => !esPagada(p) && !prioridades.some(e => e.id === p.id))}
+      ccColor={cc.color}
+      onClose={() => setPriModal(null)}
+      onAdd={async (ids) => {
+        const ahora = new Date().toISOString();
+        const ok = await sPri([...prioridades, ...ids.map(id => ({ id, urgente: false, addedBy: userName || "", createdAt: ahora }))]);
+        if (ok) setPriModal(null);
+      }}
+    />;
+  };
+
   const renderList = () => {
     // ORDEN (24-ago-2026, pedido de Gerson): por defecto por FECHA DE PAGO
     // (lo más reciente arriba) — es el dato con el que él persigue la cadena.
@@ -5313,6 +5830,8 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           { v: fmtL(stats.montoPendiente), l: "por pagar", c: "var(--naranja-tinta)" },
           { v: fmtL(stats.montoPagadoMes), l: "pagado este mes" },
           { v: stats.finalizado, l: "finalizadas" },
+          // Vencidas: solo aparece si hay (18-sep-2026)
+          ...(cp.some(estaVencida) ? [{ v: cp.filter(estaVencida).length, l: "vencidas", c: C_ROJO.color }] : []),
         ].map((x, i, arr) => (
           <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 40%" : 1, minWidth: 0 }}>
             <div style={{ minWidth: 0 }}>
@@ -5434,11 +5953,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             {dataSorted.length === 0 && <tr><td colSpan={12} style={{ padding: 40, textAlign: "center", color: "#94A3B8" }}>
               {cp.length === 0 ? "Aun no hay solicitudes registradas para esta empresa." : "No hay resultados con los filtros aplicados."}
             </td></tr>}
-            {dataSorted.map(p => <tr key={p.id} style={{ borderBottom: "1px solid #F1F5F9", cursor: "pointer" }} onClick={() => setModal({ t: "detail", d: p })}>
+            {dataSorted.map(p => { const venc = estaVencida(p); const diasV = diasEsperandoPago(p); return <tr key={p.id} style={{ borderBottom: "1px solid #F1F5F9", cursor: "pointer", background: venc ? C_ROJO.bg : undefined }} onClick={() => setModal({ t: "detail", d: p })}>
               <td style={{ ...TD, fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 800, fontSize: 11.5, color: CHARCOAL, whiteSpace: "nowrap" }}>{p.codigo || <span style={{ color: "#CBD5E1", fontWeight: 400 }}>—</span>}</td>
               <td style={TD}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
                   <StatusBadge status={p.status} />
+                  {/* VENCIDA: +2 semanas sin pago (18-sep-2026) */}
+                  {venc && <span title={`Lleva ${diasV} días sin pago`} style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_ROJO.color, background: C_ROJO.bg, border: `1px solid ${C_ROJO.borde}`, whiteSpace: "nowrap" }}>Vencida · {diasV} d</span>}
                   <TreasuryBadge status={p.treasuryStatus} />
                   <DeliveryBadge status={
                     // Entregado por Logística pero sin ficha → lo que falta es la ficha.
@@ -5459,7 +5980,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
               <td style={{ ...TD, textAlign: "right" }} onClick={e => e.stopPropagation()}>
                 <Btn small variant="ghost" onClick={() => setModal({ t: "detail", d: p })}>Ver</Btn>
               </td>
-            </tr>)}
+            </tr>; })}
           </tbody>
         </table>
       </div>
@@ -5474,6 +5995,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} /></Modal>;
       case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
+      case "corregir": return <Modal title={`Corregir proyecto / partida — ${m.d.codigo || m.d.provider}`} onClose={() => setModal(null)} wide><CorreccionFormImpl purchase={m.d} setModal={setModal} allProjects={allProjects} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} updatePurchase={updatePurchase} addAudit={addAudit} userName={userName} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
       case "edit-project": return <Modal title={`Editar proyecto — ${m.d.short}`} onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} project={m.d} /></Modal>;
@@ -5559,6 +6081,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // Sin emojis (rediseño 31-ago): pestañas de texto limpio, estilo IST.
   const allNav = [
     { id: "dashboard", label: "Dashboard" },
+    // "Prioridades" va ANTES de Solicitudes (18-sep, pedido de Gerson: "un
+    // apartado al lado de solicitudes, o antes mejor dicho"): es la cola de
+    // pago que Finanzas le ordena a Tesorería.
+    { id: "prioridades", label: "Prioridades" },
     { id: "list", label: "Solicitudes" },   // 2ª pestaña (3-sep, pedido de Gerson)
     // "costos" se retiró (31-ago, pedido de Gerson: "es lo mismo que el
     // Dashboard y nos quita espacio") — el Reporte ejecutivo PDF se genera
@@ -5575,11 +6101,15 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   // quien necesita seguimiento end-to-end. Ana ve su Kanban.
   const canSeeResumen = isAdmin || isGerencia || isCostos || isVisorCompras;
   const canSeeDashboard = canSeeResumen;
+  // Prioridades es la cola de pago: la arma Finanzas y la ejecuta Tesorería.
+  // Jorge (recepción) y Ana no tienen nada que hacer ahí.
+  const canSeePri = canEditPri || isGerencia || isVisorCompras;
   const visibleNav = isAsistenteCompras
     ? allNav.filter(n => n.id === "ana" || n.id === "entregas" || n.id === "conta" || n.id === "providers")
     : allNav.filter(n => {
         if (n.id === "resumen") return canSeeResumen;
         if (n.id === "dashboard") return canSeeDashboard;
+        if (n.id === "prioridades") return canSeePri;
         return true;
       });
   const roleLabel = isAdmin ? "Operaciones"
@@ -5664,6 +6194,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{
         sec === "dashboard" ? renderDashboard()
+          : sec === "prioridades" ? renderPrioridades()
           : sec === "resumen" ? renderSupplyChain()
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
@@ -5678,6 +6209,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         modal de detalle — es de solo lectura (sin botones de mutacion). El
         resto de modales (nuevo/editar/pagar/etc.) sigue bloqueado para ellos. */}
     {(!canViewOnly || modal?.t === "detail") && renderModal()}
+    {renderPriModal()}
     {modalRezagadas()}
     {visor && <VisorArchivo archivo={visor} onClose={() => setVisor(null)} />}
   </div>;
