@@ -116,7 +116,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
     pantallas chicas y el hero no se veía). Footer con estado de sync.
 - `PurchasesModule.jsx` (GeoShopping) — compras: Dashboard mensual, Costos,
   **Supply Chain** (reemplazó al viejo "Resumen" el 24-ago-2026), Solicitudes, Proyectos,
-  Por coordinar (kanban Ana → logística), Proveedores. Exporta `generateFichaPDF`.
+  Por coordinar (bandeja de decisión de Ana → logística), Proveedores. Exporta `generateFichaPDF`.
   **Rediseño estético (31-ago-2026, SOLO presentación)**: el módulo monta
   `<style>{GT_CSS}</style>` de `gt-ui.js` (tokens + clases gt-* compartidos
   con App; ⚠ sin `precedence`) + manchas `.gt-brillo` en el root (sin ellas
@@ -232,6 +232,34 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   `treasuryStatus`, así que editar con él una compra pagada le BORRABA el pago a
   Carolina. El audit se escribe con la acción `partida_reclasificada`, la misma
   que `sP` RESCATA de la nube antes de mergear.
+  **POR COORDINAR — bandeja de decisión (21-sep-2026)** — Gerson: "qué relajo
+  visual". El "kanban" no era un kanban: de las 4 sub-secciones quedó SOLO
+  `por_coordinar` (las otras tres viven en sus pestañas), así que eran 60
+  tarjetas TODAS en el mismo estado repartidas en 14 columnas con scroll
+  horizontal, cada una repitiendo los mismos 4 botones grandes (~240 botones).
+  Y un kanban sin etapas no tiene a dónde arrastrar: al elegir la salida la
+  compra SE VA del tablero. Ahora es una **bandeja**: una sola columna,
+  **AGRUPADA POR PROYECTO** (pedido explícito: "visualizar en orden por
+  proyecto cada pago que hace la Lic. Carolina"), con los proyectos ordenados
+  por su compra MÁS VIEJA y, dentro de cada uno, la que más lleva esperando
+  primero. Toggle `coordVista` **Por proyecto** (default) / **Lo que más
+  espera** (cola plana). Tarjeta compacta: código · "pagada hace N d" (naranja
+  a los +7) · proveedor · qué se compró (2 líneas) · monto, y las **3 salidas
+  como botones chicos** — Logística (naranja, la principal) · Proveedor (azul)
+  · Sin ficha (ghost). Teléfono del proveedor, "Ficha de entrega", "Ver
+  solicitud" y las acciones solo-Gerson (cerrar rezagada / borrar) quedan como
+  enlaces discretos: se usan poco y competían con la decisión. Filtros:
+  buscador + pills de mes de pago. La tira resumen lleva accesos directos a
+  "con el proveedor →" y "por cerrar contable →" (los StatCards viejos). **Se
+  retiró el banner amarillo del Flujo** (Gerson: "ese texto es innecesario").
+  `clasificar()` quedó INTACTA. Estados: `coordMes`/`coordVista`/`coordQ`.
+  **LATIDO de 60 s (21-sep-2026)**: el auto-refresh solo corría con el evento
+  `focus`, así que si Ana dejaba "Por coordinar" abierta toda la mañana no veía
+  los pagos nuevos de Carolina. Ahora un `setInterval` de 60 s llama a
+  `refreshFromCloud` **solo** con la pestaña visible y solo en las vistas que
+  son cola de trabajo (`ana`, `prioridades`, `list`) — la sección se lee de
+  `secRef` porque el effect corre con deps `[]` y su closure congelaría el
+  `sec` inicial. Sigue respetando la guardia de 8 s por mutación local.
   **PROYECTOS rediseñado (18-sep-2026)** — Gerson: "qué horrible se ven, quiero
   que se vean como en GeoCost". `renderProjects` usa las mismas piezas que
   `renderProyectosGrid` de GeoCostModule: tarjetas `.gt-vidrio gt-vidrio-hover`

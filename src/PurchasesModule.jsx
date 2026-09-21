@@ -1901,6 +1901,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         ? "dashboard"
         : "list";
   const [sec, setSec] = useState(defaultSec);
+  // Espejo en un ref: el effect del auto-refresh corre con deps [] y su
+  // closure capturaría el `sec` inicial para siempre.
+  const secRef = useRef(sec);
+  useEffect(() => { secRef.current = sec; }, [sec]);
   // Filtro de mes de "Por cerrar contablemente" (por fecha de PAGO).
   // Default: mes actual — el histórico viejo no se le viene encima a nadie,
   // pero queda accesible eligiendo el mes o "Todos".
@@ -1909,7 +1913,10 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const [contaResp, setContaResp] = useState("");
   // Filtros del archivo de cerradas contablemente (mes de cierre / proyecto / texto)
   const [provQ, setProvQ] = useState("");   // buscador de proveedores
-  const [coordMes, setCoordMes] = useState("");  // filtro por mes de pago en Por coordinar
+  // ── Bandeja "Por coordinar" (21-sep-2026) ──
+  const [coordMes, setCoordMes] = useState("");          // filtro por mes de pago
+  const [coordVista, setCoordVista] = useState("proyecto");  // proyecto | espera
+  const [coordQ, setCoordQ] = useState("");
   const [rez, setRez] = useState(null);       // modal de cierre de rezagadas
   const [rezSaving, setRezSaving] = useState(false);
   const [cerrMes, setCerrMes] = useState("");
@@ -2095,7 +2102,19 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     const onVisChange = () => { if (document.visibilityState === "visible") refreshFromCloud(); };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisChange);
+    // LATIDO en las pestañas de cola (21-sep-2026, pedido de Gerson: "lo que
+    // haga la Lic. viaja acá inmediatamente"). El refresh por `focus` solo
+    // dispara al volver a la ventana; si Ana deja "Por coordinar" abierta toda
+    // la mañana no veía los pagos nuevos. Una lectura por minuto, SOLO con la
+    // pestaña visible y solo en las vistas que son cola de trabajo — y el
+    // propio refreshFromCloud se salta si hubo una mutación local hace <8 s.
+    const latido = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (!["ana", "prioridades", "list"].includes(secRef.current)) return;
+      refreshFromCloud();
+    }, 60000);
     return () => {
+      clearInterval(latido);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisChange);
     };
@@ -4962,236 +4981,227 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     </div>;
   };
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // POR COORDINAR — bandeja de decisión (21-sep-2026, rediseño pedido por Gerson)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Antes era un "kanban" por proyecto con scroll horizontal. No era un kanban:
+  // de las 4 sub-secciones quedó SOLO `por_coordinar` (las otras tres viven en
+  // sus propias pestañas), así que eran 60 tarjetas TODAS en el mismo estado,
+  // repartidas en 14 columnas que no caben en pantalla, y cada una repetía los
+  // mismos 4 botones grandes a todo color (~240 botones). Gerson: "qué relajo
+  // visual, no dan ganas de ver eso".
+  //
+  // Lo que Ana hace acá es TRIAGE: por cada compra que pagó la Lic. Carolina
+  // elige UNA de tres salidas. Eso pide una bandeja, no un tablero:
+  //   · Una sola columna (cero scroll horizontal), AGRUPADA POR PROYECTO
+  //     (pedido explícito: "visualizar todo en orden por proyecto cada pago
+  //     que hace la Lic. Carolina").
+  //   · Dentro de cada proyecto, primero la que MÁS lleva esperando; y los
+  //     proyectos se ordenan por su compra más vieja — lo urgente sube solo.
+  //   · Toggle a vista plana "Lo que más espera" para cuando importa la cola.
+  //   · Las 3 salidas como botones chicos; la ficha PDF y el teléfono quedan
+  //     discretos (se usan poco y competían con la decisión).
+  // El banner amarillo de "Flujo" se retiró: los botones ya lo dicen.
   const renderAnaKanban = () => {
-    // Clasificacion de cada compra pagada en una de 3 sub-secciones por proyecto.
-    // El mismo ID de compra vive en una sola sub-seccion segun su estado actual.
-    //
-    // FLUJO (simplificado — el cierre contable lo maneja Ana fuera del sistema):
-    //   por_coordinar    → pagada, sin despacho y sin entrega directa
-    //   entrega_directa  → el PROVEEDOR la lleva a proyecto (dia y hora pactados)
-    //   en_logistica     → tiene despacho pendiente/programado/en_ruta/entregado sin ficha
-    //   listas           → ficha de recibido subida, o cerrada sin ficha (servicios)
-    const yaTieneDespacho = (purchaseId) => despachos.some(d => d.sourcePurchaseId === purchaseId);
     const despachoDe = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
 
-    // Para cada compra pagada, decidir en que sub-seccion va
+    // Clasificación (SIN CAMBIOS — la lógica auditada en ago-2026).
+    // Solo interesa `por_coordinar`; el resto alimenta los accesos directos.
     const clasificar = (p) => {
       if (p.status !== "pagado" && p.status !== "finalizado") return null;
       // El proyecto MAQUINAS lo coordina Fernando desde GeoMachinery — a Ana
-      // no le corresponde (20-ago-2026). Los demás roles sí lo siguen viendo
-      // acá, para que nada quede sin dueño.
+      // no le corresponde (20-ago-2026). Los demás roles sí lo siguen viendo.
       if (isAsistenteCompras && String(p.projectCode || "").toUpperCase().includes("MAQUINA")) return null;
-      // Cerrada contablemente (incluye las rezagadas cerradas a mano): fuera
-      // de este tablero — vive en la pestaña "Cerradas".
-      if (yaCerradaConta(p)) return null;
-      // ficha_adjunta o cerrada → "listas" (informativo, no se actua mas aqui)
+      if (yaCerradaConta(p)) return null;                       // vive en "Cerradas"
       if (p.deliveryStatus === "ficha_adjunta" || p.deliveryStatus === "cerrado") return "listas";
-      // El proveedor la lleva directo: esperando la llegada al proyecto
       if (p.deliveryStatus === "entrega_proveedor") return "entrega_directa";
       const d = despachoDe(p.id);
-      if (d && (d.estado === "pendiente" || d.estado === "programado" || d.estado === "en_ruta" || d.estado === "entregado")) {
-        // Entregado pero sin ficha aun: sigue en logistica
-        return "en_logistica";
-      }
-      // No tiene despacho — Ana tiene que coordinar
+      if (d && (d.estado === "pendiente" || d.estado === "programado" || d.estado === "en_ruta" || d.estado === "entregado")) return "en_logistica";
       return "por_coordinar";
     };
 
-    // Agrupar por proyecto, dentro de cada proyecto por sub-seccion
-    const grupos = {};
-    const ensure = (key) => { if (!grupos[key]) grupos[key] = { por_coordinar: [], entrega_directa: [], en_logistica: [], listas: [] }; };
-    let totales = { por_coordinar: 0, entrega_directa: 0, en_logistica: 0, listas: 0 };
-    // Filtro por MES DE PAGO (19-ago-2026): con 34 compras por coordinar el
-    // tablero se hacía largo. Default: TODOS (nada se esconde por accidente).
-    const mesesDisponibles = [...new Set(cp.filter(p => clasificar(p)).map(p => String(p.paidAt || p.paymentDate || "").slice(0, 7)).filter(Boolean))].sort().reverse();
-    const pasaMes = (p) => !coordMes || String(p.paidAt || p.paymentDate || "").slice(0, 7) === coordMes;
+    // Días desde el pago (solo FECHAS: paidAt es medianoche UTC y comparar
+    // timestamps con hora local daba un día de más de las 18:00 en adelante).
+    const hoyL = new Date().toLocaleDateString("en-CA");
+    const diasDesdePago = (p) => {
+      const y = String(p.paidAt || p.paymentDate || "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(y)) return null;
+      return Math.max(0, Math.floor((Date.parse(hoyL + "T00:00:00Z") - Date.parse(y + "T00:00:00Z")) / 86400000));
+    };
+
+    const totales = { por_coordinar: 0, entrega_directa: 0, en_logistica: 0, listas: 0 };
+    const todas = [];
     cp.forEach(p => {
-      const bucket = clasificar(p);
-      if (!bucket) return;
-      if (!pasaMes(p)) return;
-      const key = p.projectCode || "__sin__";
-      ensure(key);
-      grupos[key][bucket].push(p);
-      totales[bucket]++;
+      const b = clasificar(p);
+      if (!b) return;
+      totales[b]++;
+      if (b === "por_coordinar") todas.push(p);
     });
 
-    // Proyectos a mostrar: SOLO los que tienen compras POR COORDINAR.
-    // Lo demás vive en sus propias pestañas (ago 2026, pedido de Gerson):
-    // "Entregas de proveedor" y "Por cerrar contablemente" — así este
-    // tablero queda limpio: solo lo que Ana tiene que accionar YA.
-    const projKeys = Object.keys(grupos).filter(k => grupos[k].por_coordinar.length > 0).sort((a, b) => {
-      if (a === "__sin__") return 1;
-      if (b === "__sin__") return -1;
-      // Ordenar primero por cantidad de items activos (por_coordinar es donde Ana debe actuar)
-      const aActive = grupos[a].por_coordinar.length;
-      const bActive = grupos[b].por_coordinar.length;
-      if (aActive !== bActive) return bActive - aActive;
-      return a.localeCompare(b);
-    });
+    const mesesDisponibles = [...new Set(todas.map(p => String(p.paidAt || p.paymentDate || "").slice(0, 7)).filter(Boolean))].sort().reverse();
+    const txt = coordQ.trim().toLowerCase();
+    const filas = todas
+      .filter(p => !coordMes || String(p.paidAt || p.paymentDate || "").slice(0, 7) === coordMes)
+      .filter(p => !txt || [p.codigo, p.provider, p.description, p.projectCode].some(v => String(v || "").toLowerCase().includes(txt)));
 
-    // Helpers de renderizado para cada sub-seccion (cards mas compactas para historico)
-    const renderCardCompacta = (p, opts = {}) => {
-      const provider = findProviderByName(p.provider);
-      const d = despachoDe(p.id);
-      return <div key={p.id} style={{
-        background: "#fff",
-        border: `1px solid ${opts.borderColor || "#E2E8F0"}`,
-        borderLeft: `3px solid ${opts.accentColor || "#94A3B8"}`,
-        borderRadius: 8,
-        padding: 10,
-        opacity: opts.faded ? 0.85 : 1,
-      }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-          {opts.badge && <Badge color={opts.accentColor}>{opts.badge}</Badge>}
-          {opts.dateRight && <span style={{ fontSize: 9, color: "#64748b", fontWeight: 700 }}>{opts.dateRight}</span>}
-        </div>
-        <div style={{ fontSize: 12, fontWeight: 800, color: CHARCOAL, marginTop: 2, textDecoration: opts.strike ? "line-through" : "none", textDecorationColor: opts.accentColor }}>{p.provider}</div>
-        <div style={{ fontSize: 11, color: "#475569", marginTop: 2, lineHeight: 1.4, textDecoration: opts.strike ? "line-through" : "none", textDecorationColor: opts.accentColor }}>{p.description}</div>
-        {p.amount && <div style={{ fontSize: 10, color: opts.accentColor || "#059669", fontWeight: 700, marginTop: 3 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</div>}
-        {opts.subline && <div style={{ fontSize: 10, color: opts.accentColor || "#64748b", marginTop: 4, paddingTop: 4, borderTop: "1px dashed #E2E8F0" }}>{opts.subline}</div>}
-        {opts.actions}
-      </div>;
+    const monto = filas.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const masVieja = filas.reduce((mx, p) => Math.max(mx, diasDesdePago(p) ?? 0), 0);
+
+    // La que más espera primero (sin fecha de pago al final: no se puede medir).
+    const porEspera = (a, b) => {
+      const da = diasDesdePago(a), db = diasDesdePago(b);
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db - da;
     };
 
-    // Card grande para "por coordinar" — incluye contacto provider y botones
-    const renderCardPorCoordinar = (p) => {
-      const provider = findProviderByName(p.provider);
-      return <div key={p.id} style={{
-        background: "#fff",
-        border: "1px solid #FDBA74",
-        borderLeft: "3px solid #E8762D",
-        borderRadius: 8,
-        padding: 12,
+    // Agrupado por proyecto; los proyectos se ordenan por su compra MÁS VIEJA.
+    const grupos = (() => {
+      const m = {};
+      filas.forEach(p => { const k = p.projectCode || "SIN PROYECTO"; (m[k] = m[k] || []).push(p); });
+      return Object.entries(m)
+        .map(([proyecto, items]) => ({
+          proyecto,
+          items: items.slice().sort(porEspera),
+          monto: items.reduce((s, p) => s + (Number(p.amount) || 0), 0),
+          espera: items.reduce((mx, p) => Math.max(mx, diasDesdePago(p) ?? 0), 0),
+        }))
+        .sort((a, b) => b.espera - a.espera || b.items.length - a.items.length || a.proyecto.localeCompare(b.proyecto));
+    })();
+
+    const pill = (t, activo, onClick, title) => (
+      <button key={t} onClick={onClick} title={title} aria-pressed={activo} style={{
+        padding: "5px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
+        border: activo ? "1px solid transparent" : "1px solid var(--hairline)",
+        background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)",
+        fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap",
+      }}>{t}</button>
+    );
+
+    // Botón de SALIDA: chico, sin emoji, con el color que le toca en la paleta.
+    const salida = (txt2, onClick, tono, title) => (
+      <button onClick={onClick} title={title} style={{
+        padding: "7px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
+        border: tono.borde ? `1px solid ${tono.borde}` : "1px solid transparent",
+        background: tono.bg, color: tono.color, fontSize: 12, fontWeight: 800, whiteSpace: "nowrap",
+      }}>{txt2}</button>
+    );
+    const T_LOG  = { bg: ORANGE, color: "#fff" };                                        // la salida principal
+    const T_PROV = { bg: C_AZUL.bg, color: C_AZUL.color, borde: "rgba(29,95,175,.22)" };
+    const T_SIN  = { bg: "var(--surface)", color: "var(--text-3)", borde: "var(--hairline)" };
+
+    const tarjeta = (p) => {
+      const prov = findProviderByName(p.provider);
+      const dias = diasDesdePago(p);
+      const tel = prov?.phones?.[0];
+      return <div key={p.id} className="gt-vidrio" style={{
+        padding: isMobile ? "13px 14px" : "14px 18px",
+        display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) auto",
+        gap: isMobile ? 12 : 18, alignItems: "center",
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-          <Badge color="#E8762D">📦 Por coordinar</Badge>
-          {puedeBorrarSolicitud && <span style={{ display: "flex", gap: 6, marginLeft: "auto", marginRight: 6 }}>
-            <span role="button" title="Cerrar contablemente (rezagada del flujo anterior)" onClick={() => setRez({ modo: "una", purchase: p, quien: "", otro: "", nota: "" })} style={{ cursor: "pointer", fontSize: 12, opacity: 0.6 }}>✅</span>
-            <span role="button" title="Borrar esta solicitud por completo (solo vos)" onClick={() => borrarSolicitudCompleta(p)} style={{ cursor: "pointer", fontSize: 12, opacity: 0.45 }}>🗑</span>
-          </span>}
-          {p.paidAt && <span style={{ fontSize: 9, color: "#64748b", fontWeight: 700 }}>Pagado {new Date(p.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short" })}</span>}
-        </div>
-        <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 4 }}>{p.provider}</div>
-        <div style={{ fontSize: 12, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
-        {p.amount && <div style={{ fontSize: 11, color: "#059669", fontWeight: 700, marginTop: 4 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</div>}
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #E2E8F0", fontSize: 11, color: "#475569" }}>
-          {provider?.phones?.length > 0 || provider?.contactName ? <>
-            {provider.contactName && <div>👤 {provider.contactName}</div>}
-            {provider.phones?.length > 0 && <div>📞 <a href={`tel:${provider.phones[0]}`} style={{ color: "#0891B2", textDecoration: "none", fontWeight: 700 }}>{provider.phones[0]}</a>{provider.phones.length > 1 && ` · +${provider.phones.length - 1}`}</div>}
-          </> : <div style={{ fontStyle: "italic", color: "#F59E0B", fontSize: 10 }}>
-            ⚠️ Sin info de contacto. <button onClick={() => { setSec("providers"); }} style={{ background: "none", border: "none", color: "#0891B2", textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 10 }}>Agregar</button>
-          </div>}
-        </div>
-        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-          <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (err) { if (!err?.isStaleChunk) alert("No se pudo generar la ficha: " + (err?.message || err)); } }} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Descargar Ficha de Entrega</button>
-          {canSendToLogistics && <button onClick={() => setModal({ t: "send-pickup", d: p })} style={{ background: "#E8762D", color: "#fff", border: "none", padding: "9px 10px", borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", letterSpacing: 0.3 }}>🚛 Enviar a Logistica</button>}
-          {/* Salidas alternativas: la trae el proveedor, o es un servicio/renta sin ficha */}
-          {canSendToLogistics && <button onClick={() => setModal({ t: "entrega-directa", d: p })} style={{ background: "#0F766E", color: "#fff", border: "none", padding: "9px 10px", borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", letterSpacing: 0.3 }} title="El proveedor la lleva al proyecto — no hay que ir a traerla">🏪 La entrega el proveedor</button>}
-          {canSendToLogistics && <button onClick={() => cerrarSinFicha(p)} style={{ background: "transparent", color: "#64748b", border: "1px solid #CBD5E1", padding: "6px 10px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }} title="Rentas, servicios y pagos que no llevan ficha de recibido">🔒 Cerrar sin ficha (servicio/renta)</button>}
-        </div>
-      </div>;
-    };
-
-    return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {/* Stats globales */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150 }}>
-          <div style={{ fontSize: 22 }}>📦</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: "#E8762D", marginTop: 4 }}>{totales.por_coordinar}</div>
-          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Por coordinar</div>
-        </div>
-        <div onClick={() => setSec("entregas")} style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150, cursor: "pointer" }} title="Ver la pestaña Entregas de proveedor">
-          <div style={{ fontSize: 22 }}>🏪</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: "#0F766E", marginTop: 4 }}>{totales.entrega_directa}</div>
-          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Entregas de proveedor →</div>
-        </div>
-        <div onClick={() => setSec("conta")} style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "14px 18px", minWidth: 150, cursor: "pointer" }} title="Ver la pestaña Por cerrar contablemente">
-          <div style={{ fontSize: 22 }}>🧾</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: "#B45309", marginTop: 4 }}>{totales.en_logistica + totales.listas}</div>
-          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Por cerrar contablemente →</div>
-        </div>
-      </div>
-
-      <div style={{ background: "#FFFBEB", border: "1px solid #F59E0B", borderRadius: 12, padding: 14, fontSize: 13, color: "#78350F" }}>
-        💼 <b>Flujo:</b> Lic. Carolina paga → cae acá 📦. Vos coordinás y elegís la salida: 🚛 <b>Enviar a Logística</b> o 🏪 <b>La entrega el proveedor</b> (o 🔒 cerrar sin ficha si es servicio/renta). Al elegir, la compra SALE de este tablero y sigue su camino en las pestañas <b>Entregas de proveedor</b> y <b>Por cerrar contablemente</b>.
-      </div>
-
-
-      {/* Filtro por MES DE PAGO — el tablero se hacía largo con todo junto */}
-      {mesesDisponibles.length > 1 && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "10px 14px" }}>
-        <span style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>📅 Mes de pago:</span>
-        <button onClick={() => setCoordMes("")} style={{ padding: "5px 12px", borderRadius: 20, border: "none", background: !coordMes ? "#E8762D" : "#F1F5F9", color: !coordMes ? "#fff" : "#475569", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Todos</button>
-        {mesesDisponibles.map(m => {
-          const [yy2, mm2] = m.split("-").map(Number);
-          const lbl = new Date(yy2, mm2 - 1, 1).toLocaleDateString("es-HN", { month: "short", year: "2-digit" });
-          return <button key={m} onClick={() => setCoordMes(m === coordMes ? "" : m)} style={{ padding: "5px 12px", borderRadius: 20, border: "none", background: coordMes === m ? "#E8762D" : "#F1F5F9", color: coordMes === m ? "#fff" : "#475569", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{lbl}</button>;
-        })}
-        {coordMes && <span style={{ fontSize: 11, color: "#64748b" }}>mostrando solo lo pagado en ese mes</span>}
-      </div>}
-      {/* Kanban por proyecto — cada columna tiene 4 sub-secciones colapsables */}
-      {projKeys.length === 0
-        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 60, textAlign: "center", color: "#94A3B8" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>✨</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: CHARCOAL, marginBottom: 4 }}>Sin compras activas</div>
-            <div style={{ fontSize: 13 }}>Cuando Lic. Carolina pague una solicitud, aparecera aca por proyecto.</div>
+        {/* Qué es */}
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".02em" }}>{p.codigo || "—"}</span>
+            {dias != null && <span style={{ fontSize: 10.5, color: dias > 7 ? "var(--naranja-tinta)" : "var(--text-3)", fontWeight: dias > 7 ? 800 : 500 }}>
+              pagada hace {dias} d
+            </span>}
+            <span style={{ marginLeft: "auto", font: "800 15px/1 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(p.amount)}</span>
           </div>
-        : <div style={{ display: "flex", gap: 14, overflowX: "auto", padding: "4px 4px 12px 4px" }}>
-            {projKeys.map(key => {
-              const items = grupos[key];
-              const proj = (customProjects || []).find(p => p.short === key);
-              const projDisplay = key === "__sin__" ? "SIN PROYECTO" : key;
-              const projName = proj?.name || "";
-              // Solo cuenta lo accionable acá: las demás fases viven en sus pestañas.
-              const colTotal = items.por_coordinar.length;
-              const headerColor = "#E8762D";
+          <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", wordBreak: "break-word" }}>{p.provider}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>
+          {/* Contacto + ficha: discretos, se usan poco */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 2 }}>
+            {tel
+              ? <a href={`tel:${tel}`} style={{ fontSize: 11, color: C_AZUL.color, textDecoration: "none", fontWeight: 700 }}>{prov.contactName ? `${prov.contactName} · ` : ""}{tel}</a>
+              : <button onClick={() => setSec("providers")} style={{ background: "none", border: "none", padding: 0, fontSize: 11, color: "var(--text-faint)", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>Sin contacto — agregar</button>}
+            <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (err) { if (!err?.isStaleChunk) alert("No se pudo generar la ficha: " + (err?.message || err)); } }}
+              style={{ background: "none", border: "none", padding: 0, fontSize: 11, color: "var(--text-3)", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>Ficha de entrega</button>
+            <button onClick={() => setModal({ t: "detail", d: p })}
+              style={{ background: "none", border: "none", padding: 0, fontSize: 11, color: "var(--text-3)", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>Ver solicitud</button>
+            {puedeBorrarSolicitud && <>
+              <button onClick={() => setRez({ modo: "una", purchase: p, quien: "", otro: "", nota: "" })} title="Cerrar contablemente (rezagada del flujo anterior)"
+                style={{ background: "none", border: "none", padding: 0, fontSize: 11, color: "var(--text-faint)", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>Cerrar rezagada</button>
+              <button onClick={() => borrarSolicitudCompleta(p)} title="Borrar esta solicitud por completo"
+                style={{ background: "none", border: "none", padding: 0, fontSize: 11, color: "var(--text-faint)", cursor: "pointer", fontFamily: "inherit" }}>🗑</button>
+            </>}
+          </div>
+        </div>
+        {/* La decisión: una de tres */}
+        {canSendToLogistics && <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end", flexShrink: 0 }}>
+          {salida("Logística", () => setModal({ t: "send-pickup", d: p }), T_LOG, "Nosotros la vamos a traer — se crea la orden de recogida")}
+          {salida("Proveedor", () => setModal({ t: "entrega-directa", d: p }), T_PROV, "El proveedor la lleva al proyecto")}
+          {salida("Sin ficha", () => cerrarSinFicha(p), T_SIN, "Rentas, servicios y pagos que no llevan ficha de recibido")}
+        </div>}
+      </div>;
+    };
 
-              return <div key={key} style={{
-                minWidth: 310,
-                maxWidth: 350,
-                flex: "0 0 auto",
-                background: "#F8F2E6",
-                borderRadius: 12,
-                padding: 14,
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-                border: "1px solid #E8E1D3",
-              }}>
-                {/* Header de proyecto */}
-                <div style={{ borderBottom: `3px solid ${headerColor}`, paddingBottom: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ fontWeight: 800, fontSize: 14, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.5 }}>{projDisplay}</div>
-                    <Badge color={headerColor}>{colTotal}</Badge>
-                  </div>
-                  {projName && <div style={{ fontSize: 11, color: "#5C5853", marginTop: 4, lineHeight: 1.3 }}>{projName}</div>}
-                </div>
+    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+      {/* Resumen + accesos a las fases siguientes */}
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+        {[
+          { v: filas.length, l: "por coordinar", c: "var(--naranja-tinta)" },
+          { v: fmtL(monto), l: "en decisión" },
+          { v: grupos.length, l: "proyectos" },
+          { v: masVieja ? `${masVieja} d` : "—", l: "la que más espera", c: masVieja > 7 ? C_ROJO.color : undefined },
+          { v: totales.entrega_directa, l: "con el proveedor →", go: "entregas" },
+          { v: totales.en_logistica + totales.listas, l: "por cerrar contable →", go: "conta" },
+        ].map((x, i, arr) => (
+          // En móvil van 2 por fila (45 %): con 3 el monto largo se pegaba al
+          // número vecino, y el nowrap lo hacía desbordar.
+          <div key={x.l} onClick={x.go ? () => setSec(x.go) : undefined}
+            style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 45%" : 1, minWidth: 0, cursor: x.go ? "pointer" : "default" }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.v}</div>
+              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
+            </div>
+            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
+          </div>
+        ))}
+      </div>
 
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 720, overflowY: "auto" }}>
-                  {/* Sub-seccion: POR COORDINAR (cards grandes activas) */}
-                  {items.por_coordinar.length > 0 && <div>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#9A4F1D", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, padding: "4px 8px", background: "#FFEFD9", borderRadius: 4 }}>
-                      📦 Por coordinar ({items.por_coordinar.length})
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {items.por_coordinar
-                        .sort((a, b) => (a.paidAt || "").localeCompare(b.paidAt || ""))
-                        .map(renderCardPorCoordinar)}
-                    </div>
-                  </div>}
+      {/* Filtros */}
+      <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", flexDirection: "column", gap: 9 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 48 : 0 }}>Ver</span>
+          {pill("Por proyecto", coordVista === "proyecto", () => setCoordVista("proyecto"), "Agrupadas por proyecto, el más atrasado arriba")}
+          {pill("Lo que más espera", coordVista === "espera", () => setCoordVista("espera"), "Todas en una cola, la más vieja primero")}
+          <input value={coordQ} onChange={e => setCoordQ(e.target.value)} placeholder="Buscar código, proveedor, material…"
+            style={{ flex: "0 1 250px", minWidth: 150, marginLeft: "auto", padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", outline: "none", background: "var(--surface)" }} />
+        </div>
+        {mesesDisponibles.length > 1 && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 48 : 0 }}>Pagadas</span>
+          {pill("Todas", !coordMes, () => setCoordMes(""))}
+          {mesesDisponibles.map(m => {
+            const [yy, mm] = m.split("-").map(Number);
+            const lbl = new Date(yy, mm - 1, 1).toLocaleDateString("es-HN", { month: "short", year: "2-digit" });
+            return pill(lbl.charAt(0).toUpperCase() + lbl.slice(1), coordMes === m, () => setCoordMes(m === coordMes ? "" : m));
+          })}
+        </div>}
+      </div>
 
-                </div>
-              </div>;
-            })}
-          </div>}
+      {/* La bandeja */}
+      {filas.length === 0
+        ? <div className="gt-vidrio" style={{ padding: "44px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>
+            {todas.length === 0 ? "Nada por coordinar. Cuando la Lic. Carolina pague una solicitud, cae acá." : "Nada con estos filtros."}
+          </div>
+        : coordVista === "espera"
+          ? <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>{filas.slice().sort(porEspera).map(tarjeta)}</div>
+          : grupos.map(g => (
+            <div key={g.proyecto} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
+                <span className="gt-label" style={{ color: "var(--text-2)", fontSize: 10.5 }}>{g.proyecto}</span>
+                <span style={{ fontSize: 11, color: "var(--text-3)" }}>{g.items.length} por coordinar</span>
+                <span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--naranja-tinta)" }}>{fmtL(g.monto)}</span>
+                {g.espera > 7 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C_ROJO.color }}>la más vieja, {g.espera} d</span>}
+              </div>
+              {g.items.map(tarjeta)}
+            </div>
+          ))}
     </div>;
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // ENTREGAS DE PROVEEDOR (ago 2026) — compras que el PROVEEDOR lleva directo
-  // al proyecto. Viven acá entre "Por coordinar" y "Por cerrar contablemente":
-  // Ana descarga la ficha, se la manda al ingeniero que recibe, y cuando
-  // vuelve firmada la adjunta — con eso la compra migra sola a conta.
-  // ─────────────────────────────────────────────────────────────────────────
   const renderEntregasProveedor = () => {
     const activas = cp.filter(p => (p.status === "pagado" || p.status === "finalizado") && p.deliveryStatus === "entrega_proveedor" && !yaCerradaConta(p));
     const grupos = {};
