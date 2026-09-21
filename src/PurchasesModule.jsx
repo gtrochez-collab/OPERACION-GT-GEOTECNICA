@@ -1917,6 +1917,19 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const [coordMes, setCoordMes] = useState("");          // filtro por mes de pago
   const [coordVista, setCoordVista] = useState("proyecto");  // proyecto | espera
   const [coordQ, setCoordQ] = useState("");
+  const [coordProy, setCoordProy] = useState("");        // filtro por proyecto
+  // Proyectos DESPLEGADOS (21-sep-2026, "que se puedan compactar para que no
+  // sea ese listón"). Vacío = todo compacto: la pestaña arranca como un índice
+  // de una fila por proyecto. Se recuerda en localStorage —preferencia de
+  // pantalla, no dato de negocio: nunca toca Supabase.
+  const [coordAbiertos, setCoordAbiertos] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem("gt-coord-abiertos") || "[]"); return Array.isArray(v) ? v : []; }
+    catch { return []; }
+  });
+  const abrirCoord = (lista) => {
+    setCoordAbiertos(lista);
+    try { localStorage.setItem("gt-coord-abiertos", JSON.stringify(lista)); } catch {}
+  };
   const [rez, setRez] = useState(null);       // modal de cierre de rezagadas
   const [rezSaving, setRezSaving] = useState(false);
   const [cerrMes, setCerrMes] = useState("");
@@ -5039,9 +5052,19 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
     });
 
     const mesesDisponibles = [...new Set(todas.map(p => String(p.paidAt || p.paymentDate || "").slice(0, 7)).filter(Boolean))].sort().reverse();
+    // Proyectos del selector: con su conteo, alfabéticos. Se calculan ANTES
+    // del filtro de proyecto (si no, al elegir uno desaparecerían los demás).
+    const proyectosDisponibles = (() => {
+      const m = {};
+      todas
+        .filter(p => !coordMes || String(p.paidAt || p.paymentDate || "").slice(0, 7) === coordMes)
+        .forEach(p => { const k = p.projectCode || "SIN PROYECTO"; m[k] = (m[k] || 0) + 1; });
+      return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], "es", { sensitivity: "base" }));
+    })();
     const txt = coordQ.trim().toLowerCase();
     const filas = todas
       .filter(p => !coordMes || String(p.paidAt || p.paymentDate || "").slice(0, 7) === coordMes)
+      .filter(p => !coordProy || (p.projectCode || "SIN PROYECTO") === coordProy)
       .filter(p => !txt || [p.codigo, p.provider, p.description, p.projectCode].some(v => String(v || "").toLowerCase().includes(txt)));
 
     const monto = filas.reduce((s, p) => s + (Number(p.amount) || 0), 0);
@@ -5069,6 +5092,13 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         }))
         .sort((a, b) => b.espera - a.espera || b.items.length - a.items.length || a.proyecto.localeCompare(b.proyecto));
     })();
+    // Con un proyecto filtrado se abre solo: filtrar a uno y verlo cerrado no
+    // tendría sentido. Si no, manda lo que el usuario dejó abierto.
+    const estaAbierto = (proy) => !!coordProy || coordAbiertos.includes(proy);
+    const todosAbiertos = grupos.length > 0 && grupos.every(g => coordAbiertos.includes(g.proyecto));
+    const toggleGrupo = (proy) => abrirCoord(
+      coordAbiertos.includes(proy) ? coordAbiertos.filter(x => x !== proy) : [...coordAbiertos, proy]
+    );
 
     const pill = (t, activo, onClick, title) => (
       <button key={t} onClick={onClick} title={title} aria-pressed={activo} style={{
@@ -5167,8 +5197,24 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 48 : 0 }}>Ver</span>
           {pill("Por proyecto", coordVista === "proyecto", () => setCoordVista("proyecto"), "Agrupadas por proyecto, el más atrasado arriba")}
           {pill("Lo que más espera", coordVista === "espera", () => setCoordVista("espera"), "Todas en una cola, la más vieja primero")}
+          {/* Compactar / expandir todo (solo aplica agrupado por proyecto) */}
+          {coordVista === "proyecto" && grupos.length > 1 && (
+            todosAbiertos
+              ? pill("Compactar todo", false, () => abrirCoord([]), "Dejar solo la fila de cada proyecto")
+              : pill("Expandir todo", false, () => abrirCoord(grupos.map(g => g.proyecto)), "Abrir todos los proyectos")
+          )}
           <input value={coordQ} onChange={e => setCoordQ(e.target.value)} placeholder="Buscar código, proveedor, material…"
             style={{ flex: "0 1 250px", minWidth: 150, marginLeft: "auto", padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", outline: "none", background: "var(--surface)" }} />
+        </div>
+        {/* Filtro por PROYECTO */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 48 : 0 }}>Proyecto</span>
+          <select value={coordProy} onChange={e => setCoordProy(e.target.value)}
+            style={{ padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: coordProy ? "rgba(232,118,45,.08)" : "var(--surface)", fontWeight: coordProy ? 700 : 400, color: "var(--text-2)", maxWidth: "100%" }}>
+            <option value="">Todos los proyectos</option>
+            {proyectosDisponibles.map(([nombre, n]) => <option key={nombre} value={nombre}>{nombre} ({n})</option>)}
+          </select>
+          {(coordProy || coordMes || coordQ) && <Btn small variant="ghost" onClick={() => { setCoordProy(""); setCoordMes(""); setCoordQ(""); }}>Limpiar</Btn>}
         </div>
         {mesesDisponibles.length > 1 && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 48 : 0 }}>Pagadas</span>
@@ -5188,17 +5234,27 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           </div>
         : coordVista === "espera"
           ? <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>{filas.slice().sort(porEspera).map(tarjeta)}</div>
-          : grupos.map(g => (
-            <div key={g.proyecto} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
-                <span className="gt-label" style={{ color: "var(--text-2)", fontSize: 10.5 }}>{g.proyecto}</span>
-                <span style={{ fontSize: 11, color: "var(--text-3)" }}>{g.items.length} por coordinar</span>
-                <span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--naranja-tinta)" }}>{fmtL(g.monto)}</span>
-                {g.espera > 7 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C_ROJO.color }}>la más vieja, {g.espera} d</span>}
+          : grupos.map(g => {
+            const abierto = estaAbierto(g.proyecto);
+            return <div key={g.proyecto} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+              {/* Fila del proyecto: compacta se lee como índice; click abre */}
+              <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} aria-expanded={abierto}
+                aria-label={`${abierto ? "Compactar" : "Abrir"} ${g.proyecto}`}
+                onClick={() => toggleGrupo(g.proyecto)}
+                onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleGrupo(g.proyecto); } }}
+                style={{ padding: isMobile ? "11px 14px" : "11px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: abierto ? "rgba(232,118,45,.05)" : undefined }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden
+                  style={{ color: "var(--text-3)", flexShrink: 0, transform: abierto ? "rotate(90deg)" : "none", transition: "transform .18s var(--curva)" }}><path d="M9 18l6-6-6-6" /></svg>
+                <span style={{ font: "800 13px/1.2 var(--sans)", color: "var(--text)", letterSpacing: ".01em", minWidth: 0, wordBreak: "break-word" }}>{g.proyecto}</span>
+                <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{g.items.length} por coordinar</span>
+                <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  {g.espera > 7 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C_ROJO.color, whiteSpace: "nowrap" }}>la más vieja, {g.espera} d</span>}
+                  <span style={{ font: "800 14px/1 var(--display)", color: "var(--naranja-tinta)", whiteSpace: "nowrap" }}>{fmtL(g.monto)}</span>
+                </span>
               </div>
-              {g.items.map(tarjeta)}
-            </div>
-          ))}
+              {abierto && g.items.map(tarjeta)}
+            </div>;
+          })}
     </div>;
   };
 

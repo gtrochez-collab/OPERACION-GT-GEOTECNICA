@@ -252,7 +252,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   buscador + pills de mes de pago. La tira resumen lleva accesos directos a
   "con el proveedor →" y "por cerrar contable →" (los StatCards viejos). **Se
   retiró el banner amarillo del Flujo** (Gerson: "ese texto es innecesario").
-  `clasificar()` quedó INTACTA. Estados: `coordMes`/`coordVista`/`coordQ`.
+  `clasificar()` quedó INTACTA. Estados: `coordMes`/`coordVista`/`coordQ`/
+  `coordProy`/`coordAbiertos`.
+  **Grupos COMPACTABLES + filtro por proyecto (21-sep-2026)** — Gerson: "que
+  se puedan compactar para que no sea ese listón, y un filtro por proyecto".
+  Cada proyecto es una FILA de vidrio clickeable (chevron + nombre + cuántas +
+  "la más vieja, N d" + monto): compacta, la pestaña entera es un índice de 15
+  filas que cabe en una pantalla; click la abre. `coordAbiertos` guarda los
+  proyectos desplegados y se persiste en **localStorage** (`gt-coord-abiertos`)
+  — es preferencia de pantalla, NO dato de negocio: nunca toca Supabase. Pill
+  "Expandir todo" / "Compactar todo" (solo con más de un grupo). El selector
+  de proyecto se arma ANTES de aplicar su propio filtro (si no, al elegir uno
+  desaparecerían los demás del select) y trae el conteo; con un proyecto
+  filtrado el grupo se abre SOLO (filtrar a uno y verlo cerrado no tendría
+  sentido). Botón "Limpiar" cuando hay algún filtro puesto.
   **LATIDO de 60 s (21-sep-2026)**: el auto-refresh solo corría con el evento
   `focus`, así que si Ana dejaba "Por coordinar" abierta toda la mañana no veía
   los pagos nuevos de Carolina. Ahora un `setInterval` de 60 s llama a
