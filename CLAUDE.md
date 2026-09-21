@@ -200,6 +200,39 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   "Quitar pagadas", que también limpia huérfanas de solicitudes borradas).
   Permisos: `canEditPri` = admin/costos/compras_ops/tesoreria; gerencia y visor
   solo miran; Ana y Jorge no ven la pestaña.
+  **CUENTAS POR PAGAR (21-sep-2026, pedido de Gerson)**: `renderCxp` +
+  `CxpAddModal` (a nivel de módulo), pestaña DESPUÉS de Prioridades. Christian
+  le CALENDARIZA los pagos a Tesorería. Dos casos: las compras grandes que el
+  proveedor nos dio a **crédito**, y las que simplemente **pueden esperar** y
+  no entran en Prioridades. ⚠ Diferencia conceptual con Prioridades: allá el
+  ORDEN DEL ARRAY es la cola de urgencia; acá manda la **FECHA** — es un
+  calendario, no una cola. Key propia **`cp-cxp`**, shape
+  `[{id, fecha: "YYYY-MM-DD", nota, addedBy, createdAt}]`.
+  Vista: tira resumen (programadas · total · lo que vence esta semana · las que
+  se pasaron de fecha), aviso azul con los **créditos aprobados sin
+  calendarizar** y botón para programarlos de una, pills de rango (Todas · Se
+  pasaron · Esta semana · Este mes · Más adelante) y la lista **agrupada por
+  fecha de pago** con el total de cada día. Lo vencido va en rojo (`C_ROJO`) y
+  lo de esta semana en naranja (`C_ULTRA`). Cada tarjeta trae el datepicker
+  para reprogramar, un botón **"A prioridades"** (la empuja a la cola urgente y
+  navega allá; si ya está, solo navega) y la ✕. Las pagadas caen solas a la
+  tira verde con "Quitar pagadas".
+  **CONDICIÓN DE PAGO en la solicitud (21-sep-2026)**: campos aditivos
+  `condicionPago` ("contado" | "credito", default contado — las 441 viejas sin
+  el campo se leen como contado) y `fechaPagoAcordada` (sugerencia opcional).
+  Dos pills en el form; al elegir Crédito sale un aviso azul explicando que va
+  a aparecer en Cuentas por pagar. Es lo que alimenta el bloque de "créditos
+  sin calendarizar".
+  **FECHA DE PAGO REQUERIDA en Prioridades (21-sep-2026)**: campo aditivo
+  `fechaRequerida` en las entradas de `cp-prioridades`, con datepicker en cada
+  tarjeta y un chip que dice cuánto falta ("En 2 días" gris/ámbar · "Pagar hoy"
+  naranja · "Se pasó N días" rojo). Se compara como STRING YYYY-MM-DD contra
+  hoy LOCAL — `new Date` sobre una fecha pura es medianoche UTC y en Honduras
+  corría un día.
+  ⚠ `sPri` y `sCxp` comparten **`sListaPropia({key, next, previa, ...})`**: el
+  guardado robusto de las listas propias de GeoShopping (pre-fetch `getCloud`,
+  rescate de lo ajeno, verify) vive en UN solo lugar — si se agrega otra lista
+  de este tipo, reusarlo.
   **VENCIDA — +2 semanas sin pago (18-sep-2026)**: `estaVencida(p)` /
   `diasEsperandoPago(p)` / `DIAS_VENCIDA = 14` a nivel de módulo. El reloj corre
   desde la FECHA DE CARGA (`createdAt`) — la misma columna que la tabla muestra
@@ -891,7 +924,8 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
 `cp-purchases`, `cp-projects` (proyectos custom — GeoShopping es el dueño; HR
 los lee vía resolveShortHR), `cp-providers`, `cp-file-<id>` (archivos),
 `cp-prioridades` (cola de pago de Tesorería — GeoShopping es el dueño;
-el ORDEN del array es la prioridad),
+el ORDEN del array es la prioridad), `cp-cxp` (calendarización de pagos: acá
+manda la FECHA, no el orden),
 `mq-purchases`, `mq-machines`, `lg-despachos` (compartido compras/máquinas/
 logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 `hr-he` (horas extras), `hr-pays`, `hr-contracts`, etc.

@@ -84,6 +84,19 @@ const diasDesdeYMDLocal = (iso) => {
   return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86400000)) : null;
 };
 const esPagadaP = (p) => p?.status === "pagado" || p?.status === "finalizado";
+// "2026-09-25" → "25 sep". Se parte el string a mano: `new Date("2026-09-25")`
+// es medianoche UTC y en Honduras (UTC-6) imprimiría el día anterior.
+const fmtCorta = (ymd) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+  if (!m) return "";
+  return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString("es-HN", { day: "numeric", month: "short" });
+};
+const fmtLarga = (ymd) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+  if (!m) return "Sin fecha";
+  const t = new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString("es-HN", { weekday: "long", day: "numeric", month: "long" });
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
 const diasEsperandoPago = (p) => diasDesdeYMDLocal(p?.createdAt);
 const estaVencida = (p) => {
   if (!p || esPagadaP(p)) return false;
@@ -996,6 +1009,94 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
   </div>;
 }
 
+// ── CxpAddModal: nivel de módulo (si se define adentro se remonta en cada
+// render y pierde lo tildado). Programar el pago de solicitudes: se eligen y
+// se les pone la fecha en que hay que pagarlas.
+function CxpAddModal({ candidatas, ccColor, onClose, onAdd }) {
+  const [sel, setSel] = useState([]);
+  const [q, setQ] = useState("");
+  const [fecha, setFecha] = useState("");
+  const [soloCredito, setSoloCredito] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const txt = q.trim().toLowerCase();
+  const lista = (candidatas || [])
+    .filter(p => !soloCredito || p.condicionPago === "credito")
+    .filter(p => !txt
+      || String(p.codigo || "").toLowerCase().includes(txt)
+      || String(p.provider || "").toLowerCase().includes(txt)
+      || String(p.projectCode || "").toLowerCase().includes(txt)
+      || String(p.description || "").toLowerCase().includes(txt));
+  // Las de crédito primero (son las que hay que calendarizar sí o sí) y dentro
+  // de cada grupo, la que más lleva esperando.
+  const ordenadas = lista.slice().sort((a, b) =>
+    (b.condicionPago === "credito") - (a.condicionPago === "credito")
+    || String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+  const toggle = (id) => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+  const totalSel = (candidatas || []).filter(p => sel.includes(p.id)).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const nCredito = (candidatas || []).filter(p => p.condicionPago === "credito").length;
+
+  return <Modal title="Programar pagos" onClose={saving ? () => {} : onClose} wide>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", gap: 9, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 4 }}>Fecha en que hay que pagar *</label>
+          <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
+            style={{ width: "100%", boxSizing: "border-box", padding: "9px 13px", border: `1px solid ${fecha ? "rgba(232,118,45,.45)" : "var(--hairline, #CBD5E1)"}`, borderRadius: 10, fontSize: 13.5, fontFamily: "inherit", outline: "none", background: "var(--surface, #F8FAFC)", colorScheme: "light" }} />
+        </div>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar código, proveedor, proyecto…"
+          style={{ flex: "1 1 220px", minWidth: 0, padding: "9px 13px", border: "1px solid var(--hairline, #CBD5E1)", borderRadius: 10, fontSize: 13.5, fontFamily: "inherit", outline: "none", background: "var(--surface, #F8FAFC)" }} />
+      </div>
+      {nCredito > 0 && <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "var(--text-2, #475569)", cursor: "pointer" }}>
+        <input type="checkbox" checked={soloCredito} onChange={e => setSoloCredito(e.target.checked)} style={{ accentColor: ORANGE_DARK, cursor: "pointer" }} />
+        Ver solo las de crédito ({nCredito})
+      </label>}
+
+      <div style={{ maxHeight: "46vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+        {ordenadas.length === 0 && <div style={{ padding: 30, textAlign: "center", color: "var(--text-3, #94A3B8)", fontSize: 13 }}>
+          {(candidatas || []).length === 0 ? "No hay solicitudes pendientes de pago fuera de la programación." : "Nada coincide con el filtro."}
+        </div>}
+        {ordenadas.map(p => {
+          const activo = sel.includes(p.id);
+          const credito = p.condicionPago === "credito";
+          return <label key={p.id} style={{
+            display: "grid", gridTemplateColumns: "22px minmax(0,1fr) auto", alignItems: "center", gap: 12,
+            padding: "10px 13px", borderRadius: 12, cursor: "pointer",
+            border: `1px solid ${activo ? "rgba(232,118,45,.45)" : "var(--hairline, #E2E8F0)"}`,
+            background: activo ? "rgba(232,118,45,.08)" : "var(--surface, #fff)",
+          }}>
+            <input type="checkbox" checked={activo} onChange={() => toggle(p.id)} style={{ width: 16, height: 16, accentColor: ORANGE_DARK, cursor: "pointer" }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3, #6E6862)" }}>{p.codigo || "—"}</span>
+                <Badge color={ccColor}>{p.projectCode}</Badge>
+                {credito && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg }}>Crédito</span>}
+                {credito && p.fechaPagoAcordada && <span style={{ fontSize: 10.5, color: C_AZUL.color, fontWeight: 700 }}>acordado {fmtCorta(p.fechaPagoAcordada)}</span>}
+              </div>
+              <div style={{ font: "700 13px/1.3 var(--sans)", color: "var(--text, #2C2A28)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider}</div>
+              <div style={{ fontSize: 11.5, color: "var(--text-3, #6E6862)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>
+            </div>
+            <div style={{ font: "800 14px/1.2 var(--display)", color: "var(--text, #2C2A28)", whiteSpace: "nowrap" }}>{fmtL(p.amount)}</div>
+          </label>;
+        })}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", borderTop: "1px solid var(--hairline, #E2E8F0)", paddingTop: 12 }}>
+        <span style={{ fontSize: 12.5, color: "var(--text-3, #6E6862)" }}>
+          {sel.length ? <>{sel.length} seleccionada{sel.length === 1 ? "" : "s"} · <b style={{ color: "var(--text, #2C2A28)" }}>{fmtL(totalSel)}</b>{fecha ? <> · a pagar el <b>{fmtCorta(fecha)}</b></> : ""}</> : "Ninguna seleccionada"}
+        </span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Btn>
+          <Btn variant="primary" disabled={!sel.length || !fecha || saving}
+            title={!fecha ? "Elegí primero la fecha de pago" : ""}
+            onClick={async () => { setSaving(true); try { await onAdd(sel, fecha); } finally { setSaving(false); } }}>
+            {saving ? "Programando…" : `Programar ${sel.length || ""}`.trim()}
+          </Btn>
+        </div>
+      </div>
+    </div>
+  </Modal>;
+}
+
 // ── PrioridadAddModal: nivel de módulo (mismo motivo que los otros forms —
 // definido adentro se remontaría en cada render y perdería lo tildado).
 // Elegir qué solicitudes entran a la cola de pago de Tesorería.
@@ -1070,6 +1171,9 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
     company: co, projectCode: "", provider: "", description: "",
     amount: "", quoteNumber: "", opsResponsible: userName || "",
     cierreResponsable: "", detalleMateriales: "",
+    // Condición de pago (21-sep-2026): "contado" | "credito". Las de crédito
+    // las calendariza Christian en "Cuentas por pagar".
+    condicionPago: "contado", fechaPagoAcordada: "",
     // GeoCost (9-sep-2026): de qué partida del presupuesto baja la compra.
     // Solo se exige si el proyecto tiene presupuesto en cc-presupuestos.
     partidaId: "", sobregiroJustificacion: "",
@@ -1242,6 +1346,31 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       </div>
       <Input label="N° de Cotizacion" value={f.quoteNumber} onChange={e => u("quoteNumber", e.target.value)} placeholder="Ej: COT-2026-0123" />
       <Input label="Monto total (Lempiras)" type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
+      {/* CONTADO o CRÉDITO (21-sep-2026, pedido de Gerson): las compras
+          grandes muchas veces vienen a crédito, y esas las CALENDARIZA
+          Christian en la pestaña "Cuentas por pagar". Acá solo se marca la
+          condición; la fecha acordada es una sugerencia para esa pestaña.
+          Las solicitudes viejas sin el campo se tratan como contado. */}
+      <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Condición de pago</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {[{ k: "contado", t: "Contado", d: "Se paga de una, entra a la cola normal de Tesorería" },
+            { k: "credito", t: "Crédito", d: "El proveedor nos dio plazo — se calendariza en Cuentas por pagar" }].map(o => {
+            const activo = (f.condicionPago || "contado") === o.k;
+            return <button key={o.k} type="button" title={o.d}
+              onClick={() => u("condicionPago", o.k)}
+              style={{ padding: "8px 18px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 800,
+                border: activo ? "1px solid transparent" : "1px solid #CBD5E1",
+                background: activo ? ORANGE_DARK : "#F8FAFC", color: activo ? "#fff" : "#475569" }}>{o.t}</button>;
+          })}
+        </div>
+        {(f.condicionPago || "contado") === "credito" && <div style={{ background: C_AZUL.bg, border: `1px solid rgba(29,95,175,.22)`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 12, color: C_AZUL.color, lineHeight: 1.5 }}>
+            Al aprobarla va a aparecer en <b>Cuentas por pagar</b> para programarle la fecha de pago.
+          </div>
+          <Input label="Fecha de pago acordada (opcional)" type="date" value={f.fechaPagoAcordada || ""} onChange={e => u("fechaPagoAcordada", e.target.value)} />
+        </div>}
+      </div>
       <Input label="Responsable de Operaciones" value={f.opsResponsible} onChange={e => u("opsResponsible", e.target.value)} placeholder="Quien valida por Operaciones" />
       {/* Dropdown de usuarios (20-ago-2026): el responsable de cierre ahora
           filtra el tablero "Por cerrar contable" — cada quien ve las suyas —
@@ -1856,6 +1985,19 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const [priSaving, setPriSaving] = useState(false);
   const [priModal, setPriModal] = useState(null);   // { t: "add" }
   const [priDrag, setPriDrag] = useState(null);     // índice que se está arrastrando
+  // ── CUENTAS POR PAGAR (21-sep-2026, pedido de Gerson) ───────────────────
+  // Christian le CALENDARIZA los pagos a Tesorería: las compras grandes que el
+  // proveedor nos da a crédito, y las que simplemente pueden esperar y no
+  // entran en Prioridades. Key propia `cp-cxp` (mismo criterio de ownership
+  // que cp-prioridades: reordenar/reprogramar no reescribe cp-purchases).
+  // Shape: [{ id: <purchaseId>, fecha: "YYYY-MM-DD", nota, addedBy, createdAt }].
+  // Acá el orden lo manda la FECHA, no el array — es un calendario, no una cola.
+  const [cxp, _setCxpRaw] = useState([]);
+  const cxpRef = useRef([]);
+  const setCxp = (v) => { cxpRef.current = v; _setCxpRaw(v); };
+  const [cxpSaving, setCxpSaving] = useState(false);
+  const [cxpModal, setCxpModal] = useState(null);   // { t: "add", soloCredito? }
+  const [cxpFiltro, setCxpFiltro] = useState("todas");  // todas|vencidas|semana|mes|despues
   // GeoCost (9-sep-2026): fuentes SOLO LECTURA para la partida del form.
   // Setters crudos a propósito: no son mutaciones locales, no deben frenar
   // el auto-refresh vía lastLocalMutAtRef.
@@ -2026,14 +2168,16 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
   useEffect(() => {
     (async () => {
-      const [p, cps, prov, desp, pri] = await Promise.all([
+      const [p, cps, prov, desp, pri, cxpIni] = await Promise.all([
         store.get("cp-purchases"),
         store.get("cp-projects"),
         store.get("cp-providers"),
         store.get("lg-despachos"),
         store.get("cp-prioridades"),
+        store.get("cp-cxp"),
       ]);
       if (Array.isArray(pri)) setPrioridades(pri.filter(x => x && x.id));
+      if (Array.isArray(cxpIni)) setCxp(cxpIni.filter(x => x && x.id));
       let purchasesArr = [];
       if (p) {
         // Migracion 1: asegurar treasuryStatus y deliveryStatus
@@ -2117,15 +2261,17 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       // Cambios locales recientes → no arriesgar pisarlos con una foto vieja.
       if (Date.now() - lastLocalMutAtRef.current < 8000) { console.log("[refresh] omitido: guardado local reciente"); return; }
       try {
-        const [p, desp, pri] = await Promise.all([
+        const [p, desp, pri, cxpN] = await Promise.all([
           store.get("cp-purchases"),
           store.get("lg-despachos"),
           store.getCloud("cp-prioridades"),
+          store.getCloud("cp-cxp"),
         ]);
         // Lista de prioridades: si Finanzas reordenó en otra máquina, al volver
         // a la pestaña se ve el orden nuevo. getCloud (no get) — es una lista
         // chiquita y compartida, el cache viejo acá solo confundiría.
         if (Array.isArray(pri) && Date.now() - lastLocalMutAtRef.current >= 8000) setPrioridades(pri.filter(x => x && x.id));
+        if (Array.isArray(cxpN) && Date.now() - lastLocalMutAtRef.current >= 8000) setCxp(cxpN.filter(x => x && x.id));
         if (Array.isArray(p)) {
           const migrated = p.map(x => ({
             ...x,
@@ -2159,7 +2305,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // propio refreshFromCloud se salta si hubo una mutación local hace <8 s.
     const latido = setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      if (!["ana", "prioridades", "list"].includes(secRef.current)) return;
+      if (!["ana", "prioridades", "cxp", "list"].includes(secRef.current)) return;
       refreshFromCloud();
     }, 60000);
     return () => {
@@ -2681,18 +2827,23 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   //     pega al final); lo que yo saqué a propósito no revive, porque estaba
   //     en mi lista previa.
   //   · verify releyendo la nube: todos MIS ids tienen que estar.
-  const sPri = async (next) => {
-    const previa = prioridadesRef.current || [];
-    setPrioridades(next);
-    setPriSaving(true);
+  // ── Guardado de las LISTAS PROPIAS de GeoShopping (cp-prioridades, cp-cxp) ──
+  // Arrays chiquitos de {id, ...} cuyo dueño es este módulo. Mismas reglas de
+  // siempre: pre-fetch con getCloud (si la nube no responde NO se guarda y se
+  // revierte la pantalla), RESCATE de lo que otro agregó y yo nunca tuve (lo
+  // que yo saqué a propósito no revive, porque estaba en mi lista previa) y
+  // verify releyendo la nube.
+  const sListaPropia = async ({ key, next, previa, setLista, setSaving, etiqueta }) => {
+    setLista(next);
+    setSaving(true);
     lastLocalMutAtRef.current = Date.now();
     try {
       let cloud;
-      try { cloud = await store.getCloud("cp-prioridades"); }
+      try { cloud = await store.getCloud(key); }
       catch (e) {
-        console.error("[prioridades] nube no responde:", e?.message || e);
-        setPrioridades(previa);
-        alert("⚠️ No hay conexión con la nube.\n\nNo se guardó el cambio en la lista de prioridades. Esperá unos segundos y volvé a intentar.");
+        console.error(`[${key}] nube no responde:`, e?.message || e);
+        setLista(previa);
+        alert(`⚠️ No hay conexión con la nube.\n\nNo se guardó el cambio en ${etiqueta}. Esperá unos segundos y volvé a intentar.`);
         return false;
       }
       const cloudArr = Array.isArray(cloud) ? cloud : [];
@@ -2700,27 +2851,36 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       const idsPrevios = new Set(previa.map(x => x.id));
       const ajenas = cloudArr.filter(c => c && c.id && !idsMios.has(c.id) && !idsPrevios.has(c.id));
       const merged = [...next, ...ajenas];
-      const ok = await store.set("cp-prioridades", merged);
+      const ok = await store.set(key, merged);
       if (!ok) {
-        setPrioridades(previa);
-        alert("⚠️ No se pudo guardar la lista de prioridades. Volvé a intentar.");
+        setLista(previa);
+        alert(`⚠️ No se pudo guardar ${etiqueta}. Volvé a intentar.`);
         return false;
       }
       let verify;
-      try { verify = await store.getCloud("cp-prioridades"); } catch { verify = null; }
+      try { verify = await store.getCloud(key); } catch { verify = null; }
       if (Array.isArray(verify)) {
         const enNube = new Set(verify.map(x => x?.id));
         const faltan = next.filter(x => !enNube.has(x.id));
         if (faltan.length) {
-          alert(`⚠️ La lista se guardó incompleta (${faltan.length} solicitud(es) no quedaron en la nube). Recargá la página y revisá antes de seguir.`);
+          alert(`⚠️ ${etiqueta} se guardó incompleta (${faltan.length} solicitud(es) no quedaron en la nube). Recargá la página y revisá antes de seguir.`);
           return false;
         }
       }
-      setPrioridades(merged);
+      setLista(merged);
       lastLocalMutAtRef.current = Date.now();
       return true;
-    } finally { setPriSaving(false); }
+    } finally { setSaving(false); }
   };
+
+  const sPri = (next) => sListaPropia({
+    key: "cp-prioridades", next, previa: prioridadesRef.current || [],
+    setLista: setPrioridades, setSaving: setPriSaving, etiqueta: "la lista de prioridades",
+  });
+  const sCxp = (next) => sListaPropia({
+    key: "cp-cxp", next, previa: cxpRef.current || [],
+    setLista: setCxp, setSaving: setCxpSaving, etiqueta: "la programación de pagos",
+  });
 
   // ── SALIDAS ALTERNATIVAS DEL KANBAN DE ANA (ago 2026) ──
   // Hasta ahora una compra pagada SOLO salia de "Por coordinar" mandandola a
@@ -5694,6 +5854,22 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       sPri(prioridades.filter(e => !fuera.has(e.id)));
     };
 
+    // FECHA DE PAGO REQUERIDA (21-sep-2026, pedido de Gerson): hasta cuándo
+    // aguanta. Se compara como STRING YYYY-MM-DD contra hoy LOCAL — `new Date`
+    // sobre una fecha pura es medianoche UTC y en Honduras corría un día.
+    const hoyLocal = new Date().toLocaleDateString("en-CA");
+    const setFechaReq = (id, v) => sPri(prioridades.map(en => en.id === id ? { ...en, fechaRequerida: v || "" } : en));
+    const estadoFecha = (fr) => {
+      if (!fr) return null;
+      if (fr < hoyLocal) {
+        const d = Math.round((Date.parse(hoyLocal + "T00:00:00Z") - Date.parse(fr + "T00:00:00Z")) / 86400000);
+        return { txt: d === 1 ? "Se pasó 1 día" : `Se pasó ${d} días`, c: C_ROJO };
+      }
+      if (fr === hoyLocal) return { txt: "Pagar hoy", c: C_ULTRA };
+      const d = Math.round((Date.parse(fr + "T00:00:00Z") - Date.parse(hoyLocal + "T00:00:00Z")) / 86400000);
+      return { txt: d === 1 ? "Mañana" : `En ${d} días`, c: d <= 3 ? C_AMARILLO : C_GRIS };
+    };
+
     const chip = (txt, c) => <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: c.color, background: c.bg, whiteSpace: "nowrap", letterSpacing: ".01em" }}>{txt}</span>;
 
     const iconBtn = (txt, onClick, title, activo) => <button
@@ -5751,6 +5927,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             <Badge color={cc.color}>{p.projectCode}</Badge>
             {e.urgente && chip("Urgente", C_ULTRA)}
             {venc && chip("Vencida", C_ROJO)}
+            {(() => { const ef = estadoFecha(e.fechaRequerida); return ef ? chip(`${fmtCorta(e.fechaRequerida)} · ${ef.txt}`, ef.c) : null; })()}
           </div>
           <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider}</div>
           <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>
@@ -5767,7 +5944,11 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           </div>
         </div>}
         {/* Acciones */}
-        {canEditPri && <div style={{ display: "flex", alignItems: "center", gap: 5, gridColumn: isMobile ? "1 / -1" : undefined, justifyContent: isMobile ? "flex-end" : undefined }}>
+        {canEditPri && <div onClick={ev => ev.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 5, gridColumn: isMobile ? "1 / -1" : undefined, justifyContent: isMobile ? "flex-end" : undefined, flexWrap: "wrap" }}>
+          {/* Hasta cuándo aguanta esta solicitud */}
+          <input type="date" value={e.fechaRequerida || ""} onChange={ev => setFechaReq(e.id, ev.target.value)}
+            title="Fecha de pago requerida" aria-label={`Fecha de pago requerida de ${p.codigo || p.provider}`} disabled={priSaving}
+            style={{ padding: "5px 8px", border: "1px solid var(--hairline)", borderRadius: 9, fontSize: 11, fontFamily: "inherit", background: "var(--surface)", color: "var(--text-2)", colorScheme: "light" }} />
           {iconBtn("↑", () => mover(e.id, -1), "Subir")}
           {iconBtn("↓", () => mover(e.id, 1), "Bajar")}
           {iconBtn("!", () => toggleUrgente(e.id), e.urgente ? "Quitar urgente" : "Marcar urgente", e.urgente)}
@@ -5841,6 +6022,210 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         const ahora = new Date().toISOString();
         const ok = await sPri([...prioridades, ...ids.map(id => ({ id, urgente: false, addedBy: userName || "", createdAt: ahora }))]);
         if (ok) setPriModal(null);
+      }}
+    />;
+  };
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // CUENTAS POR PAGAR (21-sep-2026, pedido de Gerson)
+  // ═════════════════════════════════════════════════════════════════════════
+  // Christian le CALENDARIZA los pagos a Tesorería. Dos casos:
+  //   · Las compras grandes que el proveedor nos dio a CRÉDITO (marcadas en la
+  //     solicitud) — hay que decirle a Carolina qué día toca pagarlas.
+  //   · Las que simplemente PUEDEN ESPERAR y no entran en Prioridades.
+  // Diferencia con Prioridades: allá el orden del array es la cola de urgencia;
+  // acá manda la FECHA — es un calendario, no una cola. Key propia `cp-cxp`.
+  const renderCxp = () => {
+    const porIdGlobal = new Map(purchases.map(p => [p.id, p]));
+    const visibles = cxp.map(e => ({ e, p: porIdGlobal.get(e.id) })).filter(x => x.p && x.p.company === co);
+    const pendientes = visibles.filter(x => !esPagada(x.p));
+    const pagadas = visibles.filter(x => esPagada(x.p));
+    const huerfanas = cxp.filter(e => !porIdGlobal.has(e.id));
+
+    // Créditos aprobados que todavía nadie calendarizó: el hueco que esta
+    // pestaña existe para tapar.
+    const enCxp = new Set(cxp.map(e => e.id));
+    const sinProgramar = cp.filter(p => p.condicionPago === "credito" && !esPagada(p) && p.status !== "borrador" && !enCxp.has(p.id));
+
+    const hoyL = new Date().toLocaleDateString("en-CA");
+    const finSemana = (() => { const d = new Date(); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow + 6); return d.toLocaleDateString("en-CA"); })();
+    const finMes = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth() + 1, 0).toLocaleDateString("en-CA"); })();
+
+    const clase = (f) => !f ? "sinfecha" : f < hoyL ? "vencidas" : f <= finSemana ? "semana" : f <= finMes ? "mes" : "despues";
+    const FILTROS = [
+      { k: "todas", label: "Todas" },
+      { k: "vencidas", label: "Se pasaron" },
+      { k: "semana", label: "Esta semana" },
+      { k: "mes", label: "Este mes" },
+      { k: "despues", label: "Más adelante" },
+    ];
+    const cuenta = (k) => k === "todas" ? pendientes.length : pendientes.filter(x => clase(x.e.fecha) === k).length;
+    const filas = cxpFiltro === "todas" ? pendientes : pendientes.filter(x => clase(x.e.fecha) === cxpFiltro);
+
+    const totalDe = (arr) => arr.reduce((s, x) => s + (Number(x.p.amount) || 0), 0);
+    const nVencidas = pendientes.filter(x => clase(x.e.fecha) === "vencidas").length;
+
+    const setFecha = (id, v) => sCxp(cxp.map(en => en.id === id ? { ...en, fecha: v || "" } : en));
+    const quitar = (id) => sCxp(cxp.filter(en => en.id !== id));
+    const limpiar = () => {
+      const fuera = new Set([...pagadas.map(x => x.e.id), ...huerfanas.map(e => e.id)]);
+      if (!fuera.size) return;
+      if (!confirm(`¿Quitar ${fuera.size} solicitud(es) ya pagadas de la programación?`)) return;
+      sCxp(cxp.filter(en => !fuera.has(en.id)));
+    };
+    const aPrioridades = (p) => {
+      if (prioridades.some(en => en.id === p.id)) { setSec("prioridades"); return; }
+      sPri([...prioridades, { id: p.id, urgente: false, addedBy: userName || "", createdAt: new Date().toISOString() }]);
+      setSec("prioridades");
+    };
+
+    // Agrupado por fecha de pago; sin fecha al final.
+    const grupos = (() => {
+      const m = {};
+      filas.forEach(x => { const k = x.e.fecha || "—"; (m[k] = m[k] || []).push(x); });
+      return Object.keys(m).sort((a, b) => a === "—" ? 1 : b === "—" ? -1 : a.localeCompare(b))
+        .map(f => ({ fecha: f, items: m[f].slice().sort((a, b) => (Number(b.p.amount) || 0) - (Number(a.p.amount) || 0)) }));
+    })();
+
+    const pill = (t, activo, onClick, n) => (
+      <button key={t} onClick={onClick} aria-pressed={activo} style={{
+        padding: "5px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
+        border: activo ? "1px solid transparent" : "1px solid var(--hairline)",
+        background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)",
+        fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6,
+      }}>{t}{n != null && <span style={{ fontSize: 10.5, opacity: activo ? .85 : .6, fontVariantNumeric: "tabular-nums" }}>{n}</span>}</button>
+    );
+
+    const tarjeta = ({ e, p }) => {
+      const cl = clase(e.fecha);
+      const tono = cl === "vencidas" ? C_ROJO : cl === "semana" ? C_ULTRA : null;
+      const enPri = prioridades.some(x => x.id === p.id);
+      return <div key={e.id} className="gt-vidrio gt-vidrio-hover" style={{
+        padding: isMobile ? "12px 14px" : "13px 18px",
+        display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) auto auto",
+        alignItems: "center", gap: isMobile ? 10 : 16,
+        background: tono ? tono.bg : undefined, borderColor: tono ? tono.borde : undefined,
+      }}>
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4, cursor: "pointer" }}
+          onClick={() => irASolicitud(p)} role="button" tabIndex={0}
+          onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); irASolicitud(p); } }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+            <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".02em" }}>{p.codigo || "—"}</span>
+            <Badge color={cc.color}>{p.projectCode}</Badge>
+            {p.condicionPago === "credito" && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg }}>Crédito</span>}
+            {enPri && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_ULTRA.color, background: C_ULTRA.bg }}>También en Prioridades</span>}
+          </div>
+          <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>
+        </div>
+        <div style={{ textAlign: isMobile ? "left" : "right", whiteSpace: "nowrap" }}>
+          <div style={{ font: "800 16px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(p.amount)}</div>
+        </div>
+        {canEditPri && <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", justifyContent: isMobile ? "flex-end" : undefined }}>
+          <input type="date" value={e.fecha || ""} onChange={ev => setFecha(e.id, ev.target.value)} disabled={cxpSaving}
+            title="Fecha en que hay que pagarla" aria-label={`Fecha de pago de ${p.codigo || p.provider}`}
+            style={{ padding: "5px 8px", border: "1px solid var(--hairline)", borderRadius: 9, fontSize: 11, fontFamily: "inherit", background: "var(--surface)", color: "var(--text-2)", colorScheme: "light" }} />
+          <button onClick={() => aPrioridades(p)} disabled={cxpSaving} title={enPri ? "Ver en Prioridades" : "Pasarla a la cola de Prioridades"}
+            style={{ height: 30, padding: "0 11px", borderRadius: 9, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-3)", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+            {enPri ? "Ver" : "A prioridades"}
+          </button>
+          <button onClick={() => quitar(e.id)} disabled={cxpSaving} title="Quitar de la programación" aria-label="Quitar de la programación"
+            style={{ width: 30, height: 30, borderRadius: 9, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-3)", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+        </div>}
+      </div>;
+    };
+
+    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+      {/* Resumen: lo que de verdad necesita saber Tesorería */}
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+        {[
+          { v: pendientes.length, l: "programadas" },
+          { v: fmtL(totalDe(pendientes)), l: "total por pagar" },
+          { v: fmtL(totalDe(pendientes.filter(x => clase(x.e.fecha) === "vencidas" || clase(x.e.fecha) === "semana"))), l: "vence esta semana", c: "var(--naranja-tinta)" },
+          { v: nVencidas, l: "se pasaron de fecha", c: nVencidas ? C_ROJO.color : undefined },
+        ].map((x, i, arr) => (
+          <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 45%" : 1, minWidth: 0 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.v}</div>
+              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
+            </div>
+            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
+          </div>
+        ))}
+      </div>
+
+      {/* Créditos aprobados sin calendarizar */}
+      {canEditPri && sinProgramar.length > 0 && <div className="gt-vidrio" style={{ padding: "13px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: C_AZUL.bg, borderColor: "rgba(29,95,175,.22)" }}>
+        <span style={{ fontSize: 13, color: C_AZUL.color, fontWeight: 600, flex: 1, minWidth: 200 }}>
+          Hay <b>{sinProgramar.length}</b> solicitud{sinProgramar.length === 1 ? "" : "es"} a crédito sin fecha de pago — {fmtL(sinProgramar.reduce((s, p) => s + (Number(p.amount) || 0), 0))}
+        </span>
+        <Btn small variant="info" onClick={() => setCxpModal({ t: "add", soloCredito: true })}>Programarlas</Btn>
+      </div>}
+
+      {/* Acciones + filtros */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
+          {FILTROS.map(f => pill(f.label, cxpFiltro === f.k, () => setCxpFiltro(f.k), cuenta(f.k)))}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {cxpSaving && <span style={{ fontSize: 11.5, color: "var(--naranja-tinta)", fontWeight: 700 }}>Guardando…</span>}
+          {canEditPri && (pagadas.length > 0 || huerfanas.length > 0) && <Btn small variant="ghost" onClick={limpiar}>Quitar pagadas ({pagadas.length + huerfanas.length})</Btn>}
+          {canEditPri && <Btn variant="primary" onClick={() => setCxpModal({ t: "add" })}>+ Programar pago</Btn>}
+        </div>
+      </div>
+
+      {/* El calendario */}
+      {filas.length === 0
+        ? <div className="gt-vidrio" style={{ padding: "38px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 13.5 }}>
+            {pendientes.length === 0
+              ? (canEditPri ? "Todavía no hay pagos programados. Agregá las solicitudes a crédito y las que pueden esperar." : "Todavía no hay pagos programados.")
+              : "Nada en este rango."}
+          </div>
+        : grupos.map(g => {
+          const cl = clase(g.fecha === "—" ? "" : g.fecha);
+          const suma = g.items.reduce((s, x) => s + (Number(x.p.amount) || 0), 0);
+          return <div key={g.fecha} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
+              <span className="gt-label" style={{ color: cl === "vencidas" ? C_ROJO.color : "var(--text-2)", fontSize: 10.5 }}>
+                {g.fecha === "—" ? "Sin fecha" : fmtLarga(g.fecha)}
+              </span>
+              {cl === "vencidas" && <span style={{ fontSize: 10.5, fontWeight: 800, color: C_ROJO.color }}>se pasó</span>}
+              <span style={{ fontSize: 11, color: "var(--text-3)" }}>{g.items.length} pago{g.items.length === 1 ? "" : "s"}</span>
+              <span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--naranja-tinta)" }}>{fmtL(suma)}</span>
+            </div>
+            {g.items.map(tarjeta)}
+          </div>;
+        })}
+
+      {/* Ya pagadas */}
+      {pagadas.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+        <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 4 }}>Ya pagadas ({pagadas.length})</div>
+        {pagadas.map(({ e, p }) => <div key={e.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0}
+          onClick={() => irASolicitud(p)} onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); irASolicitud(p); } }}
+          style={{ padding: "10px 18px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer", background: C_VERDE.bg, borderColor: "rgba(23,114,67,.18)", flexWrap: "wrap" }}>
+          <span style={{ color: C_VERDE.color, fontWeight: 800, fontSize: 14 }}>✓</span>
+          <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: C_VERDE.color }}>{p.codigo || "—"}</span>
+          <span style={{ font: "700 13px/1 var(--sans)", color: "var(--text-2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider}</span>
+          <span style={{ font: "700 13px/1 var(--sans)", color: C_VERDE.color }}>{fmtL(p.amount)}</span>
+        </div>)}
+      </div>}
+    </div>;
+  };
+
+  // Modal para programar pagos: lo no pagado que todavía no está programado.
+  const renderCxpModal = () => {
+    if (!cxpModal || cxpModal.t !== "add") return null;
+    const yaEsta = new Set(cxp.map(e => e.id));
+    let candidatas = cp.filter(p => !esPagada(p) && p.status !== "borrador" && !yaEsta.has(p.id));
+    if (cxpModal.soloCredito) candidatas = candidatas.filter(p => p.condicionPago === "credito");
+    return <CxpAddModal
+      candidatas={candidatas}
+      ccColor={cc.color}
+      onClose={() => setCxpModal(null)}
+      onAdd={async (ids, fecha) => {
+        const ahora = new Date().toISOString();
+        const ok = await sCxp([...cxp, ...ids.map(id => ({ id, fecha, nota: "", addedBy: userName || "", createdAt: ahora }))]);
+        if (ok) setCxpModal(null);
       }}
     />;
   };
@@ -6147,6 +6532,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // apartado al lado de solicitudes, o antes mejor dicho"): es la cola de
     // pago que Finanzas le ordena a Tesorería.
     { id: "prioridades", label: "Prioridades" },
+    // "Cuentas por pagar" va DESPUÉS de Prioridades (21-sep): es la
+    // calendarización de lo que puede esperar y de lo que vino a crédito.
+    { id: "cxp", label: "Cuentas por pagar" },
     { id: "list", label: "Solicitudes" },   // 2ª pestaña (3-sep, pedido de Gerson)
     // "costos" se retiró (31-ago, pedido de Gerson: "es lo mismo que el
     // Dashboard y nos quita espacio") — el Reporte ejecutivo PDF se genera
@@ -6171,7 +6559,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     : allNav.filter(n => {
         if (n.id === "resumen") return canSeeResumen;
         if (n.id === "dashboard") return canSeeDashboard;
-        if (n.id === "prioridades") return canSeePri;
+        if (n.id === "prioridades" || n.id === "cxp") return canSeePri;
         return true;
       });
   const roleLabel = isAdmin ? "Operaciones"
@@ -6257,6 +6645,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{
         sec === "dashboard" ? renderDashboard()
           : sec === "prioridades" ? renderPrioridades()
+          : sec === "cxp" ? renderCxp()
           : sec === "resumen" ? renderSupplyChain()
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()
@@ -6272,6 +6661,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         resto de modales (nuevo/editar/pagar/etc.) sigue bloqueado para ellos. */}
     {(!canViewOnly || modal?.t === "detail") && renderModal()}
     {renderPriModal()}
+    {renderCxpModal()}
     {modalRezagadas()}
     {visor && <VisorArchivo archivo={visor} onClose={() => setVisor(null)} />}
   </div>;
