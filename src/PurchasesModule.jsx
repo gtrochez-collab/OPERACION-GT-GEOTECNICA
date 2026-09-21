@@ -1010,10 +1010,14 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
 }
 
 // ── CxpAddModal: nivel de módulo (si se define adentro se remonta en cada
-// render y pierde lo tildado). Programar el pago de solicitudes: se eligen y
-// se les pone la fecha en que hay que pagarlas.
+// render y pierde lo tildado). Programar pagos: se eligen solicitudes, se les
+// pone la fecha y —cuando la solicitud es PLAN DE PAGOS— cuánto se abona.
+//
+// `candidatas` viene con `yaProgramado` y `resta` ya calculados por el módulo:
+// una solicitud a plan de pagos sigue apareciendo mientras le falte por
+// programar, así el 2º y 3er abono se agregan desde el mismo lugar.
 function CxpAddModal({ candidatas, ccColor, onClose, onAdd }) {
-  const [sel, setSel] = useState([]);
+  const [sel, setSel] = useState({});       // { [purchaseId]: montoTexto }
   const [q, setQ] = useState("");
   const [fecha, setFecha] = useState("");
   const [soloCredito, setSoloCredito] = useState(false);
@@ -1031,9 +1035,20 @@ function CxpAddModal({ candidatas, ccColor, onClose, onAdd }) {
   const ordenadas = lista.slice().sort((a, b) =>
     (b.condicionPago === "credito") - (a.condicionPago === "credito")
     || String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
-  const toggle = (id) => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
-  const totalSel = (candidatas || []).filter(p => sel.includes(p.id)).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+  const esPlan = (p) => p.condicionPago === "credito" && p.tipoCredito === "plan";
+  const toggle = (p) => setSel(s => {
+    if (p.id in s) { const { [p.id]: _, ...resto } = s; return resto; }
+    // Al tildarla se propone lo que falta; en plan de pagos se puede cambiar.
+    return { ...s, [p.id]: String(p.resta ?? p.amount ?? "") };
+  });
+  const setMonto = (id, v) => setSel(s => ({ ...s, [id]: v }));
+
+  const ids = Object.keys(sel);
+  const totalSel = ids.reduce((s, id) => s + (Number(sel[id]) || 0), 0);
   const nCredito = (candidatas || []).filter(p => p.condicionPago === "credito").length;
+  // Ningún abono puede pasarse de lo que falta ni ser 0.
+  const invalidas = ordenadas.filter(p => (p.id in sel) && (!(Number(sel[p.id]) > 0) || Number(sel[p.id]) > (p.resta ?? p.amount ?? 0) + 0.005));
 
   return <Modal title="Programar pagos" onClose={saving ? () => {} : onClose} wide>
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1053,43 +1068,64 @@ function CxpAddModal({ candidatas, ccColor, onClose, onAdd }) {
 
       <div style={{ maxHeight: "46vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
         {ordenadas.length === 0 && <div style={{ padding: 30, textAlign: "center", color: "var(--text-3, #94A3B8)", fontSize: 13 }}>
-          {(candidatas || []).length === 0 ? "No hay solicitudes pendientes de pago fuera de la programación." : "Nada coincide con el filtro."}
+          {(candidatas || []).length === 0 ? "No hay solicitudes pendientes de programar." : "Nada coincide con el filtro."}
         </div>}
         {ordenadas.map(p => {
-          const activo = sel.includes(p.id);
-          const credito = p.condicionPago === "credito";
-          return <label key={p.id} style={{
+          const activo = p.id in sel;
+          const plan = esPlan(p);
+          const malMonto = activo && (!(Number(sel[p.id]) > 0) || Number(sel[p.id]) > (p.resta ?? p.amount ?? 0) + 0.005);
+          return <div key={p.id} style={{
             display: "grid", gridTemplateColumns: "22px minmax(0,1fr) auto", alignItems: "center", gap: 12,
-            padding: "10px 13px", borderRadius: 12, cursor: "pointer",
-            border: `1px solid ${activo ? "rgba(232,118,45,.45)" : "var(--hairline, #E2E8F0)"}`,
-            background: activo ? "rgba(232,118,45,.08)" : "var(--surface, #fff)",
+            padding: "10px 13px", borderRadius: 12,
+            border: `1px solid ${malMonto ? "rgba(192,57,43,.45)" : activo ? "rgba(232,118,45,.45)" : "var(--hairline, #E2E8F0)"}`,
+            background: malMonto ? C_ROJO.bg : activo ? "rgba(232,118,45,.08)" : "var(--surface, #fff)",
           }}>
-            <input type="checkbox" checked={activo} onChange={() => toggle(p.id)} style={{ width: 16, height: 16, accentColor: ORANGE_DARK, cursor: "pointer" }} />
-            <div style={{ minWidth: 0 }}>
+            <input type="checkbox" checked={activo} onChange={() => toggle(p)} aria-label={`Programar ${p.codigo || p.provider}`}
+              style={{ width: 16, height: 16, accentColor: ORANGE_DARK, cursor: "pointer" }} />
+            <div style={{ minWidth: 0, cursor: "pointer" }} onClick={() => toggle(p)}>
               <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                 <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3, #6E6862)" }}>{p.codigo || "—"}</span>
                 <Badge color={ccColor}>{p.projectCode}</Badge>
-                {credito && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg }}>Crédito</span>}
-                {credito && p.fechaPagoAcordada && <span style={{ fontSize: 10.5, color: C_AZUL.color, fontWeight: 700 }}>acordado {fmtCorta(p.fechaPagoAcordada)}</span>}
+                {p.condicionPago === "credito" && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg }}>
+                  {plan ? "Plan de pagos" : "Crédito"}
+                </span>}
               </div>
               <div style={{ font: "700 13px/1.3 var(--sans)", color: "var(--text, #2C2A28)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider}</div>
               <div style={{ fontSize: 11.5, color: "var(--text-3, #6E6862)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>
+              {p.yaProgramado > 0 && <div style={{ fontSize: 10.5, color: C_AZUL.color, fontWeight: 700, marginTop: 3 }}>
+                Ya programado {fmtL(p.yaProgramado)} de {fmtL(p.amount)} — falta {fmtL(p.resta)}
+              </div>}
             </div>
-            <div style={{ font: "800 14px/1.2 var(--display)", color: "var(--text, #2C2A28)", whiteSpace: "nowrap" }}>{fmtL(p.amount)}</div>
-          </label>;
+            <div style={{ textAlign: "right", whiteSpace: "nowrap", minWidth: 128 }}>
+              {activo && plan ? <>
+                <label style={{ fontSize: 9.5, fontWeight: 800, color: "var(--text-3, #6E6862)", textTransform: "uppercase", letterSpacing: ".04em", display: "block", marginBottom: 3 }}>Abono</label>
+                <input type="number" step="0.01" min="0" value={sel[p.id]} onChange={e => setMonto(p.id, e.target.value)}
+                  aria-label={`Monto a abonar de ${p.codigo || p.provider}`}
+                  style={{ width: 120, boxSizing: "border-box", padding: "6px 9px", textAlign: "right", border: `1px solid ${malMonto ? "rgba(192,57,43,.45)" : "var(--hairline, #CBD5E1)"}`, borderRadius: 9, fontSize: 13, fontWeight: 700, fontFamily: "inherit", outline: "none", background: "#fff" }} />
+                <div style={{ fontSize: 9.5, color: malMonto ? C_ROJO.color : "var(--text-3, #6E6862)", marginTop: 3 }}>
+                  {malMonto ? `máximo ${fmtL(p.resta)}` : `de ${fmtL(p.resta)}`}
+                </div>
+              </> : <>
+                <div style={{ font: "800 14px/1.2 var(--display)", color: "var(--text, #2C2A28)" }}>{fmtL(p.resta ?? p.amount)}</div>
+                {plan && <div style={{ fontSize: 9.5, color: "var(--text-3, #6E6862)", marginTop: 3 }}>tildala para abonar</div>}
+              </>}
+            </div>
+          </div>;
         })}
       </div>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", borderTop: "1px solid var(--hairline, #E2E8F0)", paddingTop: 12 }}>
-        <span style={{ fontSize: 12.5, color: "var(--text-3, #6E6862)" }}>
-          {sel.length ? <>{sel.length} seleccionada{sel.length === 1 ? "" : "s"} · <b style={{ color: "var(--text, #2C2A28)" }}>{fmtL(totalSel)}</b>{fecha ? <> · a pagar el <b>{fmtCorta(fecha)}</b></> : ""}</> : "Ninguna seleccionada"}
+        <span style={{ fontSize: 12.5, color: invalidas.length ? C_ROJO.color : "var(--text-3, #6E6862)" }}>
+          {invalidas.length ? "Revisá los montos marcados en rojo"
+            : ids.length ? <>{ids.length} pago{ids.length === 1 ? "" : "s"} · <b style={{ color: "var(--text, #2C2A28)" }}>{fmtL(totalSel)}</b>{fecha ? <> · el <b>{fmtCorta(fecha)}</b></> : ""}</>
+              : "Ninguna seleccionada"}
         </span>
         <div style={{ display: "flex", gap: 8 }}>
           <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Btn>
-          <Btn variant="primary" disabled={!sel.length || !fecha || saving}
+          <Btn variant="primary" disabled={!ids.length || !fecha || !!invalidas.length || saving}
             title={!fecha ? "Elegí primero la fecha de pago" : ""}
-            onClick={async () => { setSaving(true); try { await onAdd(sel, fecha); } finally { setSaving(false); } }}>
-            {saving ? "Programando…" : `Programar ${sel.length || ""}`.trim()}
+            onClick={async () => { setSaving(true); try { await onAdd(ids.map(id => ({ purchaseId: id, monto: Number(sel[id]) || 0 })), fecha); } finally { setSaving(false); } }}>
+            {saving ? "Programando…" : `Programar ${ids.length || ""}`.trim()}
           </Btn>
         </div>
       </div>
@@ -1172,8 +1208,9 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
     amount: "", quoteNumber: "", opsResponsible: userName || "",
     cierreResponsable: "", detalleMateriales: "",
     // Condición de pago (21-sep-2026): "contado" | "credito". Las de crédito
-    // las calendariza Christian en "Cuentas por pagar".
-    condicionPago: "contado", fechaPagoAcordada: "",
+    // las calendariza Christian en "Cuentas por pagar"; `tipoCredito` dice si
+    // es un solo pago o un plan de abonos (ahí se programa cada uno).
+    condicionPago: "contado", tipoCredito: "unico",
     // GeoCost (9-sep-2026): de qué partida del presupuesto baja la compra.
     // Solo se exige si el proyecto tiene presupuesto en cc-presupuestos.
     partidaId: "", sobregiroJustificacion: "",
@@ -1364,11 +1401,24 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
                 background: activo ? ORANGE_DARK : "#F8FAFC", color: activo ? "#fff" : "#475569" }}>{o.t}</button>;
           })}
         </div>
-        {(f.condicionPago || "contado") === "credito" && <div style={{ background: C_AZUL.bg, border: `1px solid rgba(29,95,175,.22)`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ fontSize: 12, color: C_AZUL.color, lineHeight: 1.5 }}>
-            Al aprobarla va a aparecer en <b>Cuentas por pagar</b> para programarle la fecha de pago.
+        {(f.condicionPago || "contado") === "credito" && <div style={{ background: C_AZUL.bg, border: `1px solid rgba(29,95,175,.22)`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 12, color: C_AZUL.color, fontWeight: 700 }}>¿Cómo se paga el crédito?</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {[{ k: "unico", t: "Un solo pago", d: "Se paga completa en la fecha que se programe" },
+              { k: "plan", t: "Plan de pagos", d: "Se abona por partes — en Cuentas por pagar se programa cada abono" }].map(o => {
+              const activo = (f.tipoCredito || "unico") === o.k;
+              return <button key={o.k} type="button" title={o.d}
+                onClick={() => u("tipoCredito", o.k)}
+                style={{ padding: "7px 16px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 800,
+                  border: activo ? "1px solid transparent" : "1px solid rgba(29,95,175,.30)",
+                  background: activo ? C_AZUL.color : "#fff", color: activo ? "#fff" : C_AZUL.color }}>{o.t}</button>;
+            })}
           </div>
-          <Input label="Fecha de pago acordada (opcional)" type="date" value={f.fechaPagoAcordada || ""} onChange={e => u("fechaPagoAcordada", e.target.value)} />
+          <div style={{ fontSize: 11.5, color: C_AZUL.color, lineHeight: 1.5, opacity: .9 }}>
+            {(f.tipoCredito || "unico") === "plan"
+              ? <>Al aprobarla va a aparecer en <b>Cuentas por pagar</b> para programar cada abono con su fecha y su monto.</>
+              : <>Al aprobarla va a aparecer en <b>Cuentas por pagar</b> para ponerle la fecha de pago.</>}
+          </div>
         </div>}
       </div>
       <Input label="Responsable de Operaciones" value={f.opsResponsible} onChange={e => u("opsResponsible", e.target.value)} placeholder="Quien valida por Operaciones" />
@@ -1998,6 +2048,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const [cxpSaving, setCxpSaving] = useState(false);
   const [cxpModal, setCxpModal] = useState(null);   // { t: "add", soloCredito? }
   const [cxpFiltro, setCxpFiltro] = useState("todas");  // todas|vencidas|semana|mes|despues
+  // Calendario de Pago: mes a la vista y día elegido (partes LOCALES —
+  // toISOString() es UTC y las últimas 6 h del mes saltaba al siguiente).
+  const [calMes, setCalMes] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
+  const [calDia, setCalDia] = useState("");
   // GeoCost (9-sep-2026): fuentes SOLO LECTURA para la partida del form.
   // Setters crudos a propósito: no son mutaciones locales, no deben frenar
   // el auto-refresh vía lastLocalMutAtRef.
@@ -2305,7 +2359,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // propio refreshFromCloud se salta si hubo una mutación local hace <8 s.
     const latido = setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      if (!["ana", "prioridades", "cxp", "list"].includes(secRef.current)) return;
+      if (!["ana", "prioridades", "cxp", "calendario", "list"].includes(secRef.current)) return;
       refreshFromCloud();
     }, 60000);
     return () => {
@@ -5931,6 +5985,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           </div>
           <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider}</div>
           <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>
+          {/* Quién la puso en la cola (21-sep-2026, pedido de Gerson: "si
+              Arturo la puso en prioridad que salga que fue él"). */}
+          {e.addedBy && <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>la priorizó {e.addedBy}</div>}
           {isMobile && <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 3 }}>
             <span style={{ font: "800 15px/1 var(--display)", color: "var(--text)" }}>{fmtL(p.amount)}</span>
             <span style={{ fontSize: 11, color: venc ? C_ROJO.color : "var(--text-3)", fontWeight: venc ? 800 : 500 }}>{dias != null ? `${dias} días` : ""}</span>
@@ -6031,21 +6088,31 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // ═════════════════════════════════════════════════════════════════════════
   // Christian le CALENDARIZA los pagos a Tesorería. Dos casos:
   //   · Las compras grandes que el proveedor nos dio a CRÉDITO (marcadas en la
-  //     solicitud) — hay que decirle a Carolina qué día toca pagarlas.
+  //     solicitud como "un solo pago" o "plan de pagos").
   //   · Las que simplemente PUEDEN ESPERAR y no entran en Prioridades.
   // Diferencia con Prioridades: allá el orden del array es la cola de urgencia;
-  // acá manda la FECHA — es un calendario, no una cola. Key propia `cp-cxp`.
+  // acá manda la FECHA — es un calendario, no una cola.
+  //
+  // ABONOS (21-sep-2026): una entrada de `cp-cxp` es UN PAGO PROGRAMADO, no una
+  // solicitud. Una solicitud a "plan de pagos" tiene VARIAS entradas (ej. una
+  // de L 800,000 abonada en 3 partes). Por eso `id` es el id del abono y
+  // `purchaseId` apunta a la solicitud — `sListaPropia` mergea por `id`, así
+  // que cada abono viaja solo. Las de pago único llevan una sola entrada con
+  // el monto completo.
+  const cxpDe = (purchaseId) => cxp.filter(e => e.purchaseId === purchaseId);
+  const cxpProgramado = (purchaseId) => cxpDe(purchaseId).reduce((s, e) => s + (Number(e.monto) || 0), 0);
+
   const renderCxp = () => {
     const porIdGlobal = new Map(purchases.map(p => [p.id, p]));
-    const visibles = cxp.map(e => ({ e, p: porIdGlobal.get(e.id) })).filter(x => x.p && x.p.company === co);
+    const visibles = cxp.map(e => ({ e, p: porIdGlobal.get(e.purchaseId) })).filter(x => x.p && x.p.company === co);
     const pendientes = visibles.filter(x => !esPagada(x.p));
     const pagadas = visibles.filter(x => esPagada(x.p));
-    const huerfanas = cxp.filter(e => !porIdGlobal.has(e.id));
+    const huerfanas = cxp.filter(e => !porIdGlobal.has(e.purchaseId));
 
-    // Créditos aprobados que todavía nadie calendarizó: el hueco que esta
-    // pestaña existe para tapar.
-    const enCxp = new Set(cxp.map(e => e.id));
-    const sinProgramar = cp.filter(p => p.condicionPago === "credito" && !esPagada(p) && p.status !== "borrador" && !enCxp.has(p.id));
+    // Créditos aprobados a los que todavía les falta programar plata: el hueco
+    // que esta pestaña existe para tapar.
+    const sinProgramar = cp.filter(p => p.condicionPago === "credito" && !esPagada(p) && p.status !== "borrador"
+      && cxpProgramado(p.id) < (Number(p.amount) || 0) - 0.005);
 
     const hoyL = new Date().toLocaleDateString("en-CA");
     const finSemana = (() => { const d = new Date(); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow + 6); return d.toLocaleDateString("en-CA"); })();
@@ -6053,7 +6120,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
     const clase = (f) => !f ? "sinfecha" : f < hoyL ? "vencidas" : f <= finSemana ? "semana" : f <= finMes ? "mes" : "despues";
     const FILTROS = [
-      { k: "todas", label: "Todas" },
+      { k: "todas", label: "Todos" },
       { k: "vencidas", label: "Se pasaron" },
       { k: "semana", label: "Esta semana" },
       { k: "mes", label: "Este mes" },
@@ -6062,15 +6129,16 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const cuenta = (k) => k === "todas" ? pendientes.length : pendientes.filter(x => clase(x.e.fecha) === k).length;
     const filas = cxpFiltro === "todas" ? pendientes : pendientes.filter(x => clase(x.e.fecha) === cxpFiltro);
 
-    const totalDe = (arr) => arr.reduce((s, x) => s + (Number(x.p.amount) || 0), 0);
+    const totalDe = (arr) => arr.reduce((s, x) => s + (Number(x.e.monto) || 0), 0);
     const nVencidas = pendientes.filter(x => clase(x.e.fecha) === "vencidas").length;
 
     const setFecha = (id, v) => sCxp(cxp.map(en => en.id === id ? { ...en, fecha: v || "" } : en));
+    const setMonto = (id, v) => sCxp(cxp.map(en => en.id === id ? { ...en, monto: Number(v) || 0 } : en));
     const quitar = (id) => sCxp(cxp.filter(en => en.id !== id));
     const limpiar = () => {
       const fuera = new Set([...pagadas.map(x => x.e.id), ...huerfanas.map(e => e.id)]);
       if (!fuera.size) return;
-      if (!confirm(`¿Quitar ${fuera.size} solicitud(es) ya pagadas de la programación?`)) return;
+      if (!confirm(`¿Quitar ${fuera.size} pago(s) de solicitudes ya pagadas de la programación?`)) return;
       sCxp(cxp.filter(en => !fuera.has(en.id)));
     };
     const aPrioridades = (p) => {
@@ -6084,7 +6152,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       const m = {};
       filas.forEach(x => { const k = x.e.fecha || "—"; (m[k] = m[k] || []).push(x); });
       return Object.keys(m).sort((a, b) => a === "—" ? 1 : b === "—" ? -1 : a.localeCompare(b))
-        .map(f => ({ fecha: f, items: m[f].slice().sort((a, b) => (Number(b.p.amount) || 0) - (Number(a.p.amount) || 0)) }));
+        .map(f => ({ fecha: f, items: m[f].slice().sort((a, b) => (Number(b.e.monto) || 0) - (Number(a.e.monto) || 0)) }));
     })();
 
     const pill = (t, activo, onClick, n) => (
@@ -6100,6 +6168,11 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       const cl = clase(e.fecha);
       const tono = cl === "vencidas" ? C_ROJO : cl === "semana" ? C_ULTRA : null;
       const enPri = prioridades.some(x => x.id === p.id);
+      const abonos = cxpDe(p.id);
+      const plan = p.condicionPago === "credito" && p.tipoCredito === "plan";
+      const nAbono = plan ? abonos.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha))).findIndex(a => a.id === e.id) + 1 : 0;
+      const programado = cxpProgramado(p.id);
+      const parcial = (Number(e.monto) || 0) < (Number(p.amount) || 0) - 0.005;
       return <div key={e.id} className="gt-vidrio gt-vidrio-hover" style={{
         padding: isMobile ? "12px 14px" : "13px 18px",
         display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) auto auto",
@@ -6112,14 +6185,24 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
             <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".02em" }}>{p.codigo || "—"}</span>
             <Badge color={cc.color}>{p.projectCode}</Badge>
-            {p.condicionPago === "credito" && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg }}>Crédito</span>}
+            {plan
+              ? <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg }}>Abono {nAbono} de {abonos.length}</span>
+              : p.condicionPago === "credito" && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg }}>Crédito</span>}
             {enPri && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_ULTRA.color, background: C_ULTRA.bg }}>También en Prioridades</span>}
           </div>
           <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider}</div>
           <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>
+          <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+            {parcial && <>de {fmtL(p.amount)} · programado {fmtL(programado)} · falta {fmtL((Number(p.amount) || 0) - programado)} · </>}
+            {e.addedBy ? `programó ${e.addedBy}` : ""}
+          </div>
         </div>
         <div style={{ textAlign: isMobile ? "left" : "right", whiteSpace: "nowrap" }}>
-          <div style={{ font: "800 16px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(p.amount)}</div>
+          {canEditPri
+            ? <input type="number" step="0.01" min="0" value={e.monto ?? ""} onChange={ev => setMonto(e.id, ev.target.value)} disabled={cxpSaving}
+                aria-label={`Monto a pagar de ${p.codigo || p.provider}`} title="Monto de este pago"
+                style={{ width: 128, boxSizing: "border-box", padding: "6px 9px", textAlign: "right", border: "1px solid var(--hairline)", borderRadius: 9, font: "800 14px/1.2 var(--display)", fontFamily: "inherit", outline: "none", background: "var(--surface)", color: "var(--text)" }} />
+            : <div style={{ font: "800 16px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(e.monto)}</div>}
         </div>
         {canEditPri && <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", justifyContent: isMobile ? "flex-end" : undefined }}>
           <input type="date" value={e.fecha || ""} onChange={ev => setFecha(e.id, ev.target.value)} disabled={cxpSaving}
@@ -6129,7 +6212,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             style={{ height: 30, padding: "0 11px", borderRadius: 9, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-3)", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
             {enPri ? "Ver" : "A prioridades"}
           </button>
-          <button onClick={() => quitar(e.id)} disabled={cxpSaving} title="Quitar de la programación" aria-label="Quitar de la programación"
+          <button onClick={() => quitar(e.id)} disabled={cxpSaving} title="Quitar este pago de la programación" aria-label="Quitar este pago"
             style={{ width: 30, height: 30, borderRadius: 9, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-3)", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
         </div>}
       </div>;
@@ -6139,9 +6222,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       {/* Resumen: lo que de verdad necesita saber Tesorería */}
       <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
         {[
-          { v: pendientes.length, l: "programadas" },
+          { v: pendientes.length, l: "pagos programados" },
           { v: fmtL(totalDe(pendientes)), l: "total por pagar" },
-          { v: fmtL(totalDe(pendientes.filter(x => clase(x.e.fecha) === "vencidas" || clase(x.e.fecha) === "semana"))), l: "vence esta semana", c: "var(--naranja-tinta)" },
+          { v: fmtL(totalDe(pendientes.filter(x => ["vencidas", "semana"].includes(clase(x.e.fecha))))), l: "vence esta semana", c: "var(--naranja-tinta)" },
           { v: nVencidas, l: "se pasaron de fecha", c: nVencidas ? C_ROJO.color : undefined },
         ].map((x, i, arr) => (
           <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 45%" : 1, minWidth: 0 }}>
@@ -6154,12 +6237,12 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         ))}
       </div>
 
-      {/* Créditos aprobados sin calendarizar */}
+      {/* Créditos a los que les falta programar plata */}
       {canEditPri && sinProgramar.length > 0 && <div className="gt-vidrio" style={{ padding: "13px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: C_AZUL.bg, borderColor: "rgba(29,95,175,.22)" }}>
         <span style={{ fontSize: 13, color: C_AZUL.color, fontWeight: 600, flex: 1, minWidth: 200 }}>
-          Hay <b>{sinProgramar.length}</b> solicitud{sinProgramar.length === 1 ? "" : "es"} a crédito sin fecha de pago — {fmtL(sinProgramar.reduce((s, p) => s + (Number(p.amount) || 0), 0))}
+          Hay <b>{sinProgramar.length}</b> solicitud{sinProgramar.length === 1 ? "" : "es"} a crédito con pagos sin programar — falta {fmtL(sinProgramar.reduce((s, p) => s + Math.max(0, (Number(p.amount) || 0) - cxpProgramado(p.id)), 0))}
         </span>
-        <Btn small variant="info" onClick={() => setCxpModal({ t: "add", soloCredito: true })}>Programarlas</Btn>
+        <Btn small variant="info" onClick={() => setCxpModal({ t: "add", soloCredito: true })}>Programarlos</Btn>
       </div>}
 
       {/* Acciones + filtros */}
@@ -6183,7 +6266,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           </div>
         : grupos.map(g => {
           const cl = clase(g.fecha === "—" ? "" : g.fecha);
-          const suma = g.items.reduce((s, x) => s + (Number(x.p.amount) || 0), 0);
+          const suma = g.items.reduce((s, x) => s + (Number(x.e.monto) || 0), 0);
           return <div key={g.fecha} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
               <span className="gt-label" style={{ color: cl === "vencidas" ? C_ROJO.color : "var(--text-2)", fontSize: 10.5 }}>
@@ -6206,28 +6289,199 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           <span style={{ color: C_VERDE.color, fontWeight: 800, fontSize: 14 }}>✓</span>
           <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: C_VERDE.color }}>{p.codigo || "—"}</span>
           <span style={{ font: "700 13px/1 var(--sans)", color: "var(--text-2)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.provider}</span>
-          <span style={{ font: "700 13px/1 var(--sans)", color: C_VERDE.color }}>{fmtL(p.amount)}</span>
+          <span style={{ font: "700 13px/1 var(--sans)", color: C_VERDE.color }}>{fmtL(e.monto)}</span>
         </div>)}
       </div>}
     </div>;
   };
 
-  // Modal para programar pagos: lo no pagado que todavía no está programado.
+  // Modal para programar pagos. Una solicitud sigue apareciendo mientras le
+  // FALTE plata por programar (así se agrega el 2º y 3er abono de un plan).
   const renderCxpModal = () => {
     if (!cxpModal || cxpModal.t !== "add") return null;
-    const yaEsta = new Set(cxp.map(e => e.id));
-    let candidatas = cp.filter(p => !esPagada(p) && p.status !== "borrador" && !yaEsta.has(p.id));
+    let candidatas = cp
+      .filter(p => !esPagada(p) && p.status !== "borrador")
+      .map(p => {
+        const yaProgramado = cxpProgramado(p.id);
+        return { ...p, yaProgramado, resta: Math.max(0, (Number(p.amount) || 0) - yaProgramado) };
+      })
+      .filter(p => p.resta > 0.005);
     if (cxpModal.soloCredito) candidatas = candidatas.filter(p => p.condicionPago === "credito");
     return <CxpAddModal
       candidatas={candidatas}
       ccColor={cc.color}
       onClose={() => setCxpModal(null)}
-      onAdd={async (ids, fecha) => {
+      onAdd={async (items, fecha) => {
         const ahora = new Date().toISOString();
-        const ok = await sCxp([...cxp, ...ids.map(id => ({ id, fecha, nota: "", addedBy: userName || "", createdAt: ahora }))]);
+        const ok = await sCxp([...cxp, ...items.map((it, i) => ({
+          id: `${Date.now().toString(36)}${i}${Math.random().toString(36).slice(2, 6)}`,
+          purchaseId: it.purchaseId, fecha, monto: it.monto,
+          addedBy: userName || "", createdAt: ahora,
+        }))]);
         if (ok) setCxpModal(null);
       }}
     />;
+  };
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // CALENDARIO DE PAGO (21-sep-2026, pedido de Gerson)
+  // ═════════════════════════════════════════════════════════════════════════
+  // "Un cuarto a la izquierda de la página el calendario del mes; si apretás
+  //  una fecha, a la derecha te salen las solicitudes de pago tanto de
+  //  Prioridades como de Cuentas por pagar que han programado Arturo y
+  //  Christian."
+  // Une las DOS fuentes en una sola vista de día:
+  //   · `cp-cxp`    → pagos programados (con su monto; los abonos de un plan
+  //                   cuentan por separado).
+  //   · `cp-prioridades` → las que tienen `fechaRequerida` (hasta cuándo
+  //                   aguantan). Se muestran aparte porque son un COMPROMISO,
+  //                   no un pago programado: no suman al total del día.
+  const renderCalendario = () => {
+    const porIdGlobal = new Map(purchases.map(p => [p.id, p]));
+    const dePagina = (p) => p && p.company === co && !esPagada(p);
+
+    // Eventos por día: { [YYYY-MM-DD]: { pagos: [...], requeridas: [...] } }
+    const porDia = {};
+    const push = (f, tipo, obj) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(f || ""))) return;
+      (porDia[f] = porDia[f] || { pagos: [], requeridas: [] })[tipo].push(obj);
+    };
+    cxp.forEach(e => { const p = porIdGlobal.get(e.purchaseId); if (dePagina(p)) push(e.fecha, "pagos", { e, p }); });
+    prioridades.forEach(e => { const p = porIdGlobal.get(e.id); if (dePagina(p)) push(e.fechaRequerida, "requeridas", { e, p }); });
+
+    const hoyL = new Date().toLocaleDateString("en-CA");
+    const [y, m] = calMes.split("-").map(Number);
+    const primero = new Date(y, m - 1, 1);
+    const diasEnMes = new Date(y, m, 0).getDate();
+    const offset = (primero.getDay() + 6) % 7;   // lunes = 0
+    const ymdDe = (d) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const mesLabel = primero.toLocaleDateString("es-HN", { month: "long", year: "numeric" });
+    const irMes = (delta) => {
+      const d = new Date(y, m - 1 + delta, 1);
+      setCalMes(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    };
+    const totalDia = (f) => (porDia[f]?.pagos || []).reduce((s, x) => s + (Number(x.e.monto) || 0), 0);
+    const totalMes = Object.keys(porDia).filter(f => f.startsWith(calMes)).reduce((s, f) => s + totalDia(f), 0);
+    const nMes = Object.keys(porDia).filter(f => f.startsWith(calMes)).reduce((s, f) => s + porDia[f].pagos.length, 0);
+
+    const sel = calDia && porDia[calDia] ? porDia[calDia] : { pagos: [], requeridas: [] };
+
+    const filaDetalle = ({ e, p }, tipo) => <div key={(tipo === "pagos" ? "c" : "p") + e.id} className="gt-vidrio gt-vidrio-hover"
+      role="button" tabIndex={0} onClick={() => irASolicitud(p)}
+      onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); irASolicitud(p); } }}
+      style={{ padding: "12px 16px", cursor: "pointer", display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 14, alignItems: "center",
+        background: tipo === "requeridas" ? C_ULTRA.bg : undefined, borderColor: tipo === "requeridas" ? C_ULTRA.borde : undefined }}>
+      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+          <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3)" }}>{p.codigo || "—"}</span>
+          <Badge color={cc.color}>{p.projectCode}</Badge>
+          {tipo === "requeridas"
+            ? <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_ULTRA.color, background: "#fff" }}>Prioridades · fecha tope</span>
+            : (p.condicionPago === "credito" && p.tipoCredito === "plan")
+              ? <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg }}>Abono de {fmtL(p.amount)}</span>
+              : null}
+        </div>
+        <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", wordBreak: "break-word" }}>{p.provider}</div>
+        <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>
+        {e.addedBy && <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+          {tipo === "pagos" ? "programó" : "la priorizó"} {e.addedBy}
+        </div>}
+      </div>
+      <div style={{ font: "800 16px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)", whiteSpace: "nowrap" }}>
+        {fmtL(tipo === "pagos" ? e.monto : p.amount)}
+      </div>
+    </div>;
+
+    return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(280px, 1fr) minmax(0, 3fr)", gap: 16, alignItems: "start" }}>
+      {/* ── El mes ── */}
+      <div className="gt-vidrio" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <button onClick={() => irMes(-1)} aria-label="Mes anterior" style={{ width: 30, height: 30, borderRadius: 9, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-3)", cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>‹</button>
+          <div style={{ textAlign: "center", minWidth: 0 }}>
+            <div style={{ font: "800 15px/1.2 var(--display)", color: "var(--text)", textTransform: "capitalize" }}>{mesLabel}</div>
+            <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 2 }}>{nMes} pago{nMes === 1 ? "" : "s"} · {fmtL(totalMes)}</div>
+          </div>
+          <button onClick={() => irMes(1)} aria-label="Mes siguiente" style={{ width: 30, height: 30, borderRadius: 9, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-3)", cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>›</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 4 }}>
+          {["L", "M", "M", "J", "V", "S", "D"].map((d, i) => (
+            <div key={i} style={{ textAlign: "center", font: "800 9.5px/1 var(--mono, ui-monospace)", color: "var(--text-faint)", padding: "2px 0 6px" }}>{d}</div>
+          ))}
+          {Array.from({ length: offset }, (_, i) => <div key={`v${i}`} />)}
+          {Array.from({ length: diasEnMes }, (_, i) => {
+            const d = i + 1;
+            const f = ymdDe(d);
+            const ev = porDia[f];
+            const nPagos = ev?.pagos.length || 0;
+            const nReq = ev?.requeridas.length || 0;
+            const activo = calDia === f;
+            const esHoy = f === hoyL;
+            const atrasado = nPagos > 0 && f < hoyL;
+            return <button key={d} onClick={() => setCalDia(activo ? "" : f)} aria-pressed={activo}
+              title={nPagos || nReq ? `${nPagos} pago(s)${nReq ? ` · ${nReq} con fecha tope` : ""} — ${fmtL(totalDia(f))}` : ""}
+              style={{
+                aspectRatio: "1", minHeight: 34, borderRadius: 10, cursor: "pointer", fontFamily: "inherit",
+                border: esHoy && !activo ? `1px solid ${ORANGE}` : "1px solid transparent",
+                background: activo ? CHARCOAL : atrasado ? C_ROJO.bg : nPagos ? C_ULTRA.bg : nReq ? "rgba(44,42,40,.04)" : "transparent",
+                color: activo ? "#fff" : atrasado ? C_ROJO.color : "var(--text-2)",
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, padding: 0,
+              }}>
+              <span style={{ font: `${nPagos || nReq ? 800 : 500} 12px/1 var(--sans)` }}>{d}</span>
+              {(nPagos > 0 || nReq > 0) && <span style={{ display: "flex", gap: 2 }}>
+                {nPagos > 0 && <span style={{ width: 4, height: 4, borderRadius: "50%", background: activo ? "#fff" : atrasado ? C_ROJO.color : ORANGE }} />}
+                {nReq > 0 && <span style={{ width: 4, height: 4, borderRadius: "50%", background: activo ? "rgba(255,255,255,.6)" : "var(--text-faint)" }} />}
+              </span>}
+            </button>;
+          })}
+        </div>
+
+        {/* Leyenda mínima */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 5, borderTop: "1px solid var(--hairline)", paddingTop: 11 }}>
+          {[{ c: ORANGE, t: "Pago programado" }, { c: C_ROJO.color, t: "Se pasó de fecha" }, { c: "var(--text-faint)", t: "Fecha tope de Prioridades" }].map(l => (
+            <div key={l.t} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 10.5, color: "var(--text-3)" }}>
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: l.c, flexShrink: 0 }} />{l.t}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── El día ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
+        {!calDia
+          ? <div className="gt-vidrio" style={{ padding: "52px 24px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>
+              Tocá un día del calendario para ver qué se paga ese día.
+            </div>
+          : <>
+            <div className="gt-vidrio" style={{ padding: "13px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ font: "800 16px/1.2 var(--display)", color: "var(--text)" }}>{fmtLarga(calDia)}</div>
+                <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 3 }}>
+                  {sel.pagos.length} pago{sel.pagos.length === 1 ? "" : "s"}{sel.requeridas.length ? ` · ${sel.requeridas.length} con fecha tope` : ""}
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ font: "800 19px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--naranja-tinta)" }}>{fmtL(totalDia(calDia))}</div>
+                <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 2 }}>a pagar ese día</div>
+              </div>
+            </div>
+
+            {sel.pagos.length === 0 && sel.requeridas.length === 0 && <div className="gt-vidrio" style={{ padding: "38px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 13.5 }}>
+              Nada programado para ese día.
+            </div>}
+
+            {sel.pagos.length > 0 && <>
+              <div className="gt-label" style={{ color: "var(--text-2)", fontSize: 10.5, marginTop: 2 }}>Cuentas por pagar</div>
+              {sel.pagos.slice().sort((a, b) => (Number(b.e.monto) || 0) - (Number(a.e.monto) || 0)).map(x => filaDetalle(x, "pagos"))}
+            </>}
+
+            {sel.requeridas.length > 0 && <>
+              <div className="gt-label" style={{ color: "var(--text-2)", fontSize: 10.5, marginTop: 6 }}>Prioridades — vencen ese día</div>
+              {sel.requeridas.slice().sort((a, b) => (Number(b.p.amount) || 0) - (Number(a.p.amount) || 0)).map(x => filaDetalle(x, "requeridas"))}
+            </>}
+          </>}
+      </div>
+    </div>;
   };
 
   const renderList = () => {
@@ -6535,6 +6789,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // "Cuentas por pagar" va DESPUÉS de Prioridades (21-sep): es la
     // calendarización de lo que puede esperar y de lo que vino a crédito.
     { id: "cxp", label: "Cuentas por pagar" },
+    { id: "calendario", label: "Calendario de Pago" },
     { id: "list", label: "Solicitudes" },   // 2ª pestaña (3-sep, pedido de Gerson)
     // "costos" se retiró (31-ago, pedido de Gerson: "es lo mismo que el
     // Dashboard y nos quita espacio") — el Reporte ejecutivo PDF se genera
@@ -6559,7 +6814,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     : allNav.filter(n => {
         if (n.id === "resumen") return canSeeResumen;
         if (n.id === "dashboard") return canSeeDashboard;
-        if (n.id === "prioridades" || n.id === "cxp") return canSeePri;
+        if (["prioridades", "cxp", "calendario"].includes(n.id)) return canSeePri;
         return true;
       });
   const roleLabel = isAdmin ? "Operaciones"
@@ -6646,6 +6901,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         sec === "dashboard" ? renderDashboard()
           : sec === "prioridades" ? renderPrioridades()
           : sec === "cxp" ? renderCxp()
+          : sec === "calendario" ? renderCalendario()
           : sec === "resumen" ? renderSupplyChain()
           : sec === "projects" ? renderProjects()
           : sec === "providers" ? renderProviders()

@@ -217,12 +217,35 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   para reprogramar, un botón **"A prioridades"** (la empuja a la cola urgente y
   navega allá; si ya está, solo navega) y la ✕. Las pagadas caen solas a la
   tira verde con "Quitar pagadas".
+  **ABONOS / PLAN DE PAGOS (21-sep-2026, 2ª pasada)**: una entrada de `cp-cxp`
+  es **UN PAGO PROGRAMADO, no una solicitud** — `{id (del abono), purchaseId,
+  fecha, monto, addedBy, createdAt}`. Una solicitud a "plan de pagos" tiene
+  VARIAS entradas (el caso de Gerson: L 800,000 abonados por partes). `id` es
+  el id del abono porque `sListaPropia` mergea por `id`: así cada abono viaja
+  solo. Helpers `cxpDe(purchaseId)` / `cxpProgramado(purchaseId)`. En el modal,
+  una solicitud sigue apareciendo **mientras le falte plata por programar**
+  (`resta = amount − yaProgramado`), así el 2º y 3er abono se agregan desde el
+  mismo lugar; si es plan de pagos aparece un input de monto (prellenado con lo
+  que falta) y NO deja pasarse ni poner 0. La tarjeta muestra "Abono N de M",
+  "de X · programado Y · falta Z" y el monto es editable en línea.
   **CONDICIÓN DE PAGO en la solicitud (21-sep-2026)**: campos aditivos
-  `condicionPago` ("contado" | "credito", default contado — las 441 viejas sin
-  el campo se leen como contado) y `fechaPagoAcordada` (sugerencia opcional).
-  Dos pills en el form; al elegir Crédito sale un aviso azul explicando que va
-  a aparecer en Cuentas por pagar. Es lo que alimenta el bloque de "créditos
-  sin calendarizar".
+  `condicionPago` ("contado" | "credito", default contado — las viejas sin el
+  campo se leen como contado) y `tipoCredito` ("unico" | "plan"). Dos pills
+  Contado/Crédito y, dentro de Crédito, dos más: **Un solo pago** / **Plan de
+  pagos** (Gerson: "que salga si es 1 solo pago o plan de pago y ya, de ahí que
+  ellos programen los pagos en cuentas por pagar"). `fechaPagoAcordada` se
+  RETIRÓ del form: la fecha se pone en Cuentas por pagar, no acá.
+  **CALENDARIO DE PAGO (21-sep-2026)**: `renderCalendario`, pestaña después de
+  Cuentas por pagar. Mes en la columna izquierda (~1/4) y el detalle del día a
+  la derecha, como lo pidió. Une las DOS fuentes: `cp-cxp` (pagos programados,
+  con monto — suman al total del día) y `cp-prioridades` con `fechaRequerida`
+  (fecha TOPE, un compromiso, no un pago: van aparte y NO suman). Cada día
+  lleva puntito naranja (pago), rojo (se pasó) o gris (fecha tope); hoy va con
+  borde naranja. Cada fila dice **quién lo programó / quién lo priorizó**.
+  Estados `calMes` / `calDia` con partes LOCALES.
+  **QUIÉN lo agregó (21-sep-2026)**: las tarjetas de Prioridades muestran "la
+  priorizó <fulano>" y las de Cuentas por pagar "programó <fulano>", leyendo el
+  `addedBy` que ya se guardaba.
   **FECHA DE PAGO REQUERIDA en Prioridades (21-sep-2026)**: campo aditivo
   `fechaRequerida` en las entradas de `cp-prioridades`, con datepicker en cada
   tarjeta y un chip que dice cuánto falta ("En 2 días" gris/ámbar · "Pagar hoy"
