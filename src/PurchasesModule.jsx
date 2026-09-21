@@ -1771,7 +1771,7 @@ function SendPickupFormImpl({ purchase, provider, setModal, enviarAOrdenRecogida
 }
 
 // ── MODULO ──
-export default function PurchasesModule({ userRole, userName, onBack, onLogout }) {
+export default function PurchasesModule({ userRole, userName, userKey, onBack, onLogout }) {
   const isAdmin = userRole === "admin";
   const isTesoreria = userRole === "tesoreria";
   const isGerencia = userRole === "gerencia";
@@ -1918,6 +1918,42 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
   const [coordVista, setCoordVista] = useState("proyecto");  // proyecto | espera
   const [coordQ, setCoordQ] = useState("");
   const [coordProy, setCoordProy] = useState("");        // filtro por proyecto
+  // ── "¡ Pago nuevo!" (21-sep-2026, pedido de Gerson) ──────────────────────
+  // Cuando la Lic. Carolina paga algo, un "!" naranja al lado del proyecto le
+  // avisa a Ana que hay algo que todavía no vio ahí. Se guarda EN LOCALSTORAGE
+  // (por usuario, `gt-coord-visto-<userKey>`), no en Supabase: es "lo que YO ya
+  // miré", cada quien tiene la suya, y no hace falta sincronizarla entre
+  // dispositivos — si Ana lo ve en la compu, en el teléfono lo puede volver a
+  // ver, no pasa nada.
+  const vistoKey = `gt-coord-visto-${userKey || "anon"}`;
+  const [coordVisto, _setCoordVistoRaw] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem(vistoKey) || "null"); return v && typeof v === "object" ? v : null; }
+    catch { return null; }
+  });
+  const setCoordVisto = (next) => {
+    _setCoordVistoRaw(next);
+    try { localStorage.setItem(vistoKey, JSON.stringify(next)); } catch {}
+  };
+  // Momento REAL en que se registró el pago — no `paidAt` (esa es una fecha
+  // pura, sin hora, así que dos pagos del mismo día no se podrían distinguir).
+  // Se lee del audit `paid` que deja `registrarPago`, con su `at` ISO completo.
+  const horaPagada = (p) => {
+    const ult = [...(p.audit || [])].reverse().find(a => a.action === "paid");
+    return ult?.at || (p.paidAt ? `${String(p.paidAt).slice(0, 10)}T00:00:00.000Z` : p.createdAt);
+  };
+  // Baseline la PRIMERA vez que se activa esta función: todo lo pendiente
+  // actual queda "visto" de una — si no, el día que esto sale a producción se
+  // prende medio tablero de golpe con compras viejas que Ana ya conocía.
+  useEffect(() => {
+    if (coordVisto !== null || !loaded) return;
+    const ahora = new Date().toISOString();
+    const porProyecto = {};
+    purchases.forEach(p => { porProyecto[p.projectCode || "SIN PROYECTO"] = ahora; });
+    setCoordVisto(porProyecto);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, coordVisto]);
+  // Marcar un proyecto como visto AHORA (al abrirlo, o al expandir todo).
+  const marcarVisto = (proyecto) => setCoordVisto({ ...(coordVisto || {}), [proyecto]: new Date().toISOString() });
   // Proyectos DESPLEGADOS (21-sep-2026, "que se puedan compactar para que no
   // sea ese listón"). Vacío = todo compacto: la pestaña arranca como un índice
   // de una fila por proyecto. Se recuerda en localStorage —preferencia de
@@ -5084,21 +5120,29 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       const m = {};
       filas.forEach(p => { const k = p.projectCode || "SIN PROYECTO"; (m[k] = m[k] || []).push(p); });
       return Object.entries(m)
-        .map(([proyecto, items]) => ({
-          proyecto,
-          items: items.slice().sort(porEspera),
-          monto: items.reduce((s, p) => s + (Number(p.amount) || 0), 0),
-          espera: items.reduce((mx, p) => Math.max(mx, diasDesdePago(p) ?? 0), 0),
-        }))
-        .sort((a, b) => b.espera - a.espera || b.items.length - a.items.length || a.proyecto.localeCompare(b.proyecto));
+        .map(([proyecto, items]) => {
+          const desde = coordVisto?.[proyecto];
+          const nuevos = desde ? items.filter(p => horaPagada(p) > desde).length : 0;
+          return {
+            proyecto,
+            items: items.slice().sort(porEspera),
+            monto: items.reduce((s, p) => s + (Number(p.amount) || 0), 0),
+            espera: items.reduce((mx, p) => Math.max(mx, diasDesdePago(p) ?? 0), 0),
+            nuevos,
+          };
+        })
+        // Con pago nuevo primero: es lo que Ana tiene que revisar YA.
+        .sort((a, b) => (b.nuevos > 0) - (a.nuevos > 0) || b.espera - a.espera || b.items.length - a.items.length || a.proyecto.localeCompare(b.proyecto));
     })();
     // Con un proyecto filtrado se abre solo: filtrar a uno y verlo cerrado no
     // tendría sentido. Si no, manda lo que el usuario dejó abierto.
     const estaAbierto = (proy) => !!coordProy || coordAbiertos.includes(proy);
     const todosAbiertos = grupos.length > 0 && grupos.every(g => coordAbiertos.includes(g.proyecto));
-    const toggleGrupo = (proy) => abrirCoord(
-      coordAbiertos.includes(proy) ? coordAbiertos.filter(x => x !== proy) : [...coordAbiertos, proy]
-    );
+    const toggleGrupo = (proy) => {
+      const abriendo = !coordAbiertos.includes(proy);
+      abrirCoord(abriendo ? [...coordAbiertos, proy] : coordAbiertos.filter(x => x !== proy));
+      if (abriendo) marcarVisto(proy);   // al abrirlo, Ana ya lo vio
+    };
 
     const pill = (t, activo, onClick, title) => (
       <button key={t} onClick={onClick} title={title} aria-pressed={activo} style={{
@@ -5125,13 +5169,20 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
       const prov = findProviderByName(p.provider);
       const dias = diasDesdePago(p);
       const tel = prov?.phones?.[0];
+      const desdeProy = coordVisto?.[p.projectCode || "SIN PROYECTO"];
+      const esNueva = !!desdeProy && horaPagada(p) > desdeProy;
       return <div key={p.id} className="gt-vidrio" style={{
         padding: isMobile ? "13px 14px" : "14px 18px",
         display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) auto",
         gap: isMobile ? 12 : 18, alignItems: "center",
+        background: esNueva ? C_ULTRA.bg : undefined, borderColor: esNueva ? C_ULTRA.borde : undefined,
       }}>
         {/* Qué es */}
         <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+          {esNueva && <span style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 9px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: C_ULTRA.color, background: "#fff" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 13, height: 13, borderRadius: "50%", background: ORANGE, color: "#fff", fontSize: 9, fontWeight: 900 }}>!</span>
+            Pago nuevo
+          </span>}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".02em" }}>{p.codigo || "—"}</span>
             {dias != null && <span style={{ fontSize: 10.5, color: dias > 7 ? "var(--naranja-tinta)" : "var(--text-3)", fontWeight: dias > 7 ? 800 : 500 }}>
@@ -5201,7 +5252,11 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
           {coordVista === "proyecto" && grupos.length > 1 && (
             todosAbiertos
               ? pill("Compactar todo", false, () => abrirCoord([]), "Dejar solo la fila de cada proyecto")
-              : pill("Expandir todo", false, () => abrirCoord(grupos.map(g => g.proyecto)), "Abrir todos los proyectos")
+              : pill("Expandir todo", false, () => {
+                  abrirCoord(grupos.map(g => g.proyecto));
+                  const ahora = new Date().toISOString();
+                  setCoordVisto({ ...(coordVisto || {}), ...Object.fromEntries(grupos.map(g => [g.proyecto, ahora])) });
+                }, "Abrir todos los proyectos")
           )}
           <input value={coordQ} onChange={e => setCoordQ(e.target.value)} placeholder="Buscar código, proveedor, material…"
             style={{ flex: "0 1 250px", minWidth: 150, marginLeft: "auto", padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", outline: "none", background: "var(--surface)" }} />
@@ -5209,7 +5264,7 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
         {/* Filtro por PROYECTO */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 48 : 0 }}>Proyecto</span>
-          <select value={coordProy} onChange={e => setCoordProy(e.target.value)}
+          <select value={coordProy} onChange={e => { setCoordProy(e.target.value); if (e.target.value) marcarVisto(e.target.value); }}
             style={{ padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: coordProy ? "rgba(232,118,45,.08)" : "var(--surface)", fontWeight: coordProy ? 700 : 400, color: "var(--text-2)", maxWidth: "100%" }}>
             <option value="">Todos los proyectos</option>
             {proyectosDisponibles.map(([nombre, n]) => <option key={nombre} value={nombre}>{nombre} ({n})</option>)}
@@ -5239,14 +5294,19 @@ export default function PurchasesModule({ userRole, userName, onBack, onLogout }
             return <div key={g.proyecto} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
               {/* Fila del proyecto: compacta se lee como índice; click abre */}
               <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} aria-expanded={abierto}
-                aria-label={`${abierto ? "Compactar" : "Abrir"} ${g.proyecto}`}
+                aria-label={`${abierto ? "Compactar" : "Abrir"} ${g.proyecto}${g.nuevos ? ` — ${g.nuevos} pago(s) nuevo(s) sin ver` : ""}`}
                 onClick={() => toggleGrupo(g.proyecto)}
                 onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleGrupo(g.proyecto); } }}
-                style={{ padding: isMobile ? "11px 14px" : "11px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: abierto ? "rgba(232,118,45,.05)" : undefined }}>
+                style={{ padding: isMobile ? "11px 14px" : "11px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: g.nuevos ? C_ULTRA.bg : abierto ? "rgba(232,118,45,.05)" : undefined, border: g.nuevos ? `1px solid ${C_ULTRA.borde}` : undefined }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden
                   style={{ color: "var(--text-3)", flexShrink: 0, transform: abierto ? "rotate(90deg)" : "none", transition: "transform .18s var(--curva)" }}><path d="M9 18l6-6-6-6" /></svg>
+                {/* Pago nuevo que Ana no ha visto (21-sep-2026, pedido de Gerson):
+                    "!" naranja al lado del proyecto. Se apaga solo al abrirlo. */}
+                {g.nuevos > 0 && <span title={`${g.nuevos} pago${g.nuevos === 1 ? "" : "s"} nuevo${g.nuevos === 1 ? "" : "s"} de Tesorería`}
+                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: "50%", background: ORANGE, color: "#fff", fontSize: 11, fontWeight: 900, flexShrink: 0 }}>!</span>}
                 <span style={{ font: "800 13px/1.2 var(--sans)", color: "var(--text)", letterSpacing: ".01em", minWidth: 0, wordBreak: "break-word" }}>{g.proyecto}</span>
                 <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{g.items.length} por coordinar</span>
+                {g.nuevos > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C_ULTRA.color, whiteSpace: "nowrap" }}>{g.nuevos} nuevo{g.nuevos === 1 ? "" : "s"}</span>}
                 <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   {g.espera > 7 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C_ROJO.color, whiteSpace: "nowrap" }}>la más vieja, {g.espera} d</span>}
                   <span style={{ font: "800 14px/1 var(--display)", color: "var(--naranja-tinta)", whiteSpace: "nowrap" }}>{fmtL(g.monto)}</span>

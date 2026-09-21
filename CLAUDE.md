@@ -266,6 +266,24 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   desaparecerían los demás del select) y trae el conteo; con un proyecto
   filtrado el grupo se abre SOLO (filtrar a uno y verlo cerrado no tendría
   sentido). Botón "Limpiar" cuando hay algún filtro puesto.
+  **"¡ Pago nuevo!" (21-sep-2026, pedido de Gerson)**: "un '!' naranja al lado
+  de cada proyecto cuando la Lic. Carolina haga un pago nuevo que Ana no ha
+  visto". `coordVisto` = `{ [proyecto]: isoTimestamp }` en **localStorage**
+  (`gt-coord-visto-<userKey>`, por usuario — cada quien la suya, NO va a
+  Supabase: es "lo que YO ya miré", no un dato del negocio). `horaPagada(p)`
+  lee el `at` (ISO completo) del audit `paid` que deja `registrarPago` — NO
+  `paidAt`, que es una fecha PURA sin hora y no distinguiría dos pagos del
+  mismo día. Un proyecto con algo pagado DESPUÉS de `coordVisto[proyecto]`
+  muestra el círculo "!" naranja + fondo `C_ULTRA` en su fila y sube al tope
+  del orden (antes que "la más vieja"); dentro, la tarjeta del ítem nuevo
+  lleva su propio badge "Pago nuevo". Se apaga solo con el gesto de VER: abrir
+  el grupo, "Expandir todo", o elegirlo en el filtro de proyecto — todos
+  llaman a `marcarVisto(proyecto)`. **Baseline** (`useEffect` con `loaded`): la
+  primera vez que corre esta función en cada navegador, TODO lo pendiente
+  actual queda "visto" de una — si no, el día que salió a producción se
+  hubiera prendido medio tablero de golpe con compras viejas que Ana ya
+  conocía. `moduleProps` de App.jsx ahora lleva `userKey` (el username) para
+  que estas keys por-usuario cuelguen de algo estable.
   **LATIDO de 60 s (21-sep-2026)**: el auto-refresh solo corría con el evento
   `focus`, así que si Ana dejaba "Por coordinar" abierta toda la mañana no veía
   los pagos nuevos de Carolina. Ahora un `setInterval` de 60 s llama a

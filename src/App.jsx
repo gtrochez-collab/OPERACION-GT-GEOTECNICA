@@ -281,7 +281,9 @@ export default function App() {
   ) : null;
 
   // ── Modulo activo ──
-  const moduleProps = { userRole: user.role, userName: user.label, onBack: () => setActiveModule(null), onLogout: logout };
+  // `userKey` = el username (estable, sin acentos): las keys por-usuario
+  // (tareas, "visto" de la bandeja de compras) cuelgan de él.
+  const moduleProps = { userRole: user.role, userName: user.label, userKey: user.username, onBack: () => setActiveModule(null), onLogout: logout };
   // Wrapper con la animación de entrada. key=activeModule para que al cambiar
   // de módulo vuelva a entrar. El transform del keyframe dura 560 ms: los
   // position:fixed del módulo (brillos, modales) se referencian al wrapper
@@ -301,7 +303,7 @@ export default function App() {
   if (activeModule === "geosafety") return conEntrada(<SafetyModule {...moduleProps} />);
   if (activeModule === "geoclock") return conEntrada(<GeoClockModule {...moduleProps} />);
   if (activeModule === "geocost") return conEntrada(<GeoCostModule {...moduleProps} />);
-  if (activeModule === "tareas") return conEntrada(<TasksModule {...moduleProps} userKey={user.username} />);
+  if (activeModule === "tareas") return conEntrada(<TasksModule {...moduleProps} />);
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
 
   const availableModules = MODULES.filter((m) => m.roles.includes(user.role));
