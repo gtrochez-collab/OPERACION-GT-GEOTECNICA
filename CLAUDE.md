@@ -278,7 +278,11 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   del orden (antes que "la más vieja"); dentro, la tarjeta del ítem nuevo
   lleva su propio badge "Pago nuevo". Se apaga solo con el gesto de VER: abrir
   el grupo, "Expandir todo", o elegirlo en el filtro de proyecto — todos
-  llaman a `marcarVisto(proyecto)`. **Baseline** (`useEffect` con `loaded`): la
+  llaman a `marcarVisto(proyecto)`. **Solo Ana** (`isAsistenteCompras`) — el
+  aviso, el baseline y sus escrituras a localStorage se gatean a ese rol: sin
+  eso, a Gerson o Christian les salía su propio "!" al abrir la pestaña, cuando
+  el aviso es para quien de verdad coordina la salida. **Baseline** (`useEffect`
+  con `loaded`): la
   primera vez que corre esta función en cada navegador, TODO lo pendiente
   actual queda "visto" de una — si no, el día que salió a producción se
   hubiera prendido medio tablero de golpe con compras viejas que Ana ya

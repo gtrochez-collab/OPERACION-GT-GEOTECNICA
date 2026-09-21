@@ -1945,7 +1945,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // actual queda "visto" de una — si no, el día que esto sale a producción se
   // prende medio tablero de golpe con compras viejas que Ana ya conocía.
   useEffect(() => {
-    if (coordVisto !== null || !loaded) return;
+    if (coordVisto !== null || !loaded || !isAsistenteCompras) return;   // solo Ana la usa
     const ahora = new Date().toISOString();
     const porProyecto = {};
     purchases.forEach(p => { porProyecto[p.projectCode || "SIN PROYECTO"] = ahora; });
@@ -5121,7 +5121,11 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       filas.forEach(p => { const k = p.projectCode || "SIN PROYECTO"; (m[k] = m[k] || []).push(p); });
       return Object.entries(m)
         .map(([proyecto, items]) => {
-          const desde = coordVisto?.[proyecto];
+          // Solo a Ana (21-sep-2026, pedido de Gerson: "solo a Ana, porque es
+          // ella quien usa ese apartado") — si no, a cualquiera que abriera
+          // esta pestaña (Gerson, Christian) le salía su propio "!", cuando el
+          // aviso es para quien de verdad tiene que coordinar la salida.
+          const desde = isAsistenteCompras ? coordVisto?.[proyecto] : null;
           const nuevos = desde ? items.filter(p => horaPagada(p) > desde).length : 0;
           return {
             proyecto,
@@ -5169,7 +5173,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       const prov = findProviderByName(p.provider);
       const dias = diasDesdePago(p);
       const tel = prov?.phones?.[0];
-      const desdeProy = coordVisto?.[p.projectCode || "SIN PROYECTO"];
+      const desdeProy = isAsistenteCompras ? coordVisto?.[p.projectCode || "SIN PROYECTO"] : null;
       const esNueva = !!desdeProy && horaPagada(p) > desdeProy;
       return <div key={p.id} className="gt-vidrio" style={{
         padding: isMobile ? "13px 14px" : "14px 18px",
