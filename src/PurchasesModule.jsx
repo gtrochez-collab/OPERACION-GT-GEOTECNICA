@@ -2049,10 +2049,13 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const [cxpSaving, setCxpSaving] = useState(false);
   const [cxpModal, setCxpModal] = useState(null);   // { t: "add", soloCredito? }
   const [cxpFiltro, setCxpFiltro] = useState("todas");  // todas|vencidas|semana|mes|despues
-  // Calendario de Pago: mes a la vista y día elegido (partes LOCALES —
-  // toISOString() es UTC y las últimas 6 h del mes saltaba al siguiente).
-  const [calMes, setCalMes] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
-  const [calDia, setCalDia] = useState("");
+  // Calendario de Pago (23-sep-2026, pedido de Gerson: "que al entrar ya te
+  // cargue las del día de hoy"): arranca en el mes Y EL DÍA de hoy, con las
+  // solicitudes de ese día ya abiertas a la derecha — no hace falta tocar
+  // nada. `hoyISO()` (no `new Date()` a secas): es la fecha de HONDURAS, el
+  // mismo bug de las 6pm que ya corregimos en el resto del sistema.
+  const [calMes, setCalMes] = useState(() => hoyISO().slice(0, 7));
+  const [calDia, setCalDia] = useState(() => hoyISO());
   // GeoCost (9-sep-2026): fuentes SOLO LECTURA para la partida del form.
   // Setters crudos a propósito: no son mutaciones locales, no deben frenar
   // el auto-refresh vía lastLocalMutAtRef.

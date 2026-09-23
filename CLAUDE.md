@@ -242,7 +242,9 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (fecha TOPE, un compromiso, no un pago: van aparte y NO suman). Cada día
   lleva puntito naranja (pago), rojo (se pasó) o gris (fecha tope); hoy va con
   borde naranja. Cada fila dice **quién lo programó / quién lo priorizó**.
-  Estados `calMes` / `calDia` con partes LOCALES.
+  Estados `calMes` / `calDia` inicializados en `hoyISO()` (23-sep-2026: "que
+  al entrar ya te cargue las del día de hoy" — arranca en el mes Y el día de
+  hoy, con el detalle de la derecha ya abierto).
   **QUIÉN lo agregó (21-sep-2026)**: las tarjetas de Prioridades muestran "la
   priorizó <fulano>" y las de Cuentas por pagar "programó <fulano>", leyendo el
   `addedBy` que ya se guardaba.
