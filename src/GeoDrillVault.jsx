@@ -20,6 +20,7 @@ import { store } from "./supabase.js";
 import { VisorArchivo } from "./visor-archivo.jsx";
 import { BRAND, FONT, R } from "./theme.js";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
+import { hoyISO } from "./fechas.js";
 
 // ── Hook responsive ──
 // Devuelve true cuando el viewport es < breakpoint px. Solo se usa en este modulo:
@@ -1307,7 +1308,7 @@ function QRScannerModal({ onScan, onClose }) {
 function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, machines }) {
   const isMobile = useIsMobile();
   const cols2 = isMobile ? "1fr" : "1fr 1fr";
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hoyISO();
   const [f, setF] = useState({
     fecha: today,
     itemId: preselectedCaja?.id || "",
@@ -1515,7 +1516,7 @@ function SalidaForm({ items, tools, preselectedCaja, userName, onSave, onClose, 
 function EntradaForm({ items, userName, onSave, onClose }) {
   const isMobile = useIsMobile();
   const cols2 = isMobile ? "1fr" : "1fr 1fr";
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hoyISO();
   const [f, setF] = useState({
     fecha: today,
     itemId: "",

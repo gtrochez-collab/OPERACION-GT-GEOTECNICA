@@ -17,6 +17,7 @@ import {
   CATEGORIAS, MODULOS_PARTIDA, UNIDADES, RENGLONES_MOV_DEFAULT, TIPOS_MOV, TASA_DEFAULT,
   num, hnlToUsd, usdToHnl, montoPartida, partidasParaModulo, PLANTILLA_VILLA_SAN_MIGUEL,
 } from "./geocost-calc.js";
+import { hoyISO } from "./fechas.js";
 
 // ── Estados de una movilización (flujo de colores igual a GeoShopping) ──
 export const ESTADOS_MOV = {
@@ -42,11 +43,6 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // número guardado → texto para input controlado ("" si no hay)
 const str = (x) => (x == null || x === "" || Number(x) === 0) ? "" : String(x);
 const normMaq = (s) => String(s || "").replace(/[\s-]/g, "").toUpperCase();
-// Hoy en Tegucigalpa (YYYY-MM-DD) — nunca la hora local del dispositivo
-const hoyISO = () => {
-  try { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Tegucigalpa", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()); }
-  catch { return new Date().toISOString().slice(0, 10); }
-};
 // Días de calendario entre dos "YYYY-MM-DD" (en UTC para que no corran). SIN +1:
 // 9-sep → 14-oct = 35 días, igual que la ficha que Gerson armaba y que el PDF.
 const diasEntre = (a, b) => {

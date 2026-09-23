@@ -3,6 +3,7 @@ import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, findProject, resolveShort, projectName, projectCode } from "./projects.js";
 import { esFeriadoQuincena, nombreFeriado } from "./holidays.js";
+import { hoyISO } from "./fechas.js";
 
 // Marca Geotecnica — colores corporativos
 const ORANGE = "#E8762D";
@@ -5387,7 +5388,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const AltaForm = ({ onSave }) => {
     const [f, setF] = useState({
       company: co, fullName: "", dni: "", position: "", department: "Operaciones",
-      contractType: "permanent", startDate: new Date().toISOString().slice(0, 10),
+      contractType: "permanent", startDate: hoyISO(),
       endDate: "", salary: "", bonificacion: 0, motivo: "Contratacion nueva", notas: "",
       excepcional: false, payrollEffectiveDate: "",
     });
@@ -5667,7 +5668,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
 
   const BajaForm = ({ onSave }) => {
     const [f, setF] = useState({
-      employeeId: "", date: new Date().toISOString().slice(0, 10),
+      employeeId: "", date: hoyISO(),
       motivo: "Renuncia voluntaria", notas: "",
     });
     const u = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -6000,7 +6001,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       root = parent;
     }
     // Sumar todos los contratos descendientes desde la raiz
-    const today = new Date().toISOString().slice(0, 10);
+    const today = hoyISO();
     let total = 0;
     const stack = [root];
     while (stack.length) {
@@ -6027,7 +6028,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   //      reporte de Movimientos refleja el cambio de grupo (B → A/C).
   const PermanenciaForm = ({ contract }) => {
     const emp = ce.find(x => x.id === contract.employeeId);
-    const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+    const [fecha, setFecha] = useState(hoyISO());
     const [salario, setSalario] = useState(contract.salary ?? emp?.salary ?? "");
     const [bonif, setBonif] = useState(contract.bonificacion ?? emp?.bonificacion ?? 0);
     const [notas, setNotas] = useState("");
@@ -6096,7 +6097,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       employeeId: parent?.employeeId || presetEmpId || "",
       company: parent?.company || presetEmp?.company || co,
       contractType: parent?.contractType || presetEmp?.contractType || (co === "geotecnica" ? "permanent" : "temporary"),
-      startDate: parent ? (parent.endDate ? new Date(new Date(parent.endDate).getTime() + 86400000).toISOString().slice(0, 10) : "") : (presetEmp?.startDate || new Date().toISOString().slice(0, 10)),
+      startDate: parent ? (parent.endDate ? new Date(new Date(parent.endDate).getTime() + 86400000).toISOString().slice(0, 10) : "") : (presetEmp?.startDate || hoyISO()),
       endDate: presetEmp?.endDate || "",
       salary: parent?.salary || presetEmp?.salary || "",
       bonificacion: parent?.bonificacion || presetEmp?.bonificacion || 0,
@@ -6498,7 +6499,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
                 employeeId: emp.id,
                 company: emp.company,
                 contractType: emp.contractType,
-                startDate: emp.startDate || new Date().toISOString().slice(0, 10),
+                startDate: emp.startDate || hoyISO(),
                 endDate: emp.contractType === "temporary" ? (emp.endDate || "") : "",
                 salary: Number(emp.salary) || 0,
                 bonificacion: Number(emp.bonificacion) || 0,
@@ -6590,7 +6591,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       employeeId: presetEmpId || "",
       description: "",
       amount: "",
-      startDate: new Date().toISOString().slice(0, 10),
+      startDate: hoyISO(),
       hasEndDate: false,
       endDate: "",
     });
@@ -6651,7 +6652,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   };
 
   const renderBonuses = () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = hoyISO();
     const activos = cbn.filter(b => b.status === "active");
     const indefinidos = activos.filter(b => !b.endDate);
     const finitos = activos.filter(b => b.endDate);

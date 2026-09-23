@@ -11,6 +11,7 @@ import { C_VERDE, C_AMARILLO } from "./geocost-ui.jsx";
 // Visor de archivos en la app (10-sep-2026): las fichas se abrían con window.open
 // DESPUÉS del await y el navegador bloqueaba el popup (caso Arturo).
 import { VisorArchivo } from "./visor-archivo.jsx";
+import { hoyISO } from "./fechas.js";
 
 // Marca Geotecnica
 const ORANGE = "#E8762D";
@@ -1174,7 +1175,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
 function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
   const [f, setF] = useState({
     paymentMethod: purchase.paymentMethod || "Transferencia BAC",
-    paymentDate: purchase.paymentDate || new Date().toISOString().slice(0, 10),
+    paymentDate: purchase.paymentDate || hoyISO(),
     treasuryNotes: purchase.treasuryNotes || "",
     receiptFile: purchase.receiptFile || null,
   });

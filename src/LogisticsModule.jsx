@@ -24,6 +24,7 @@ import { generateFichaPDF, restoreFiles } from "./PurchasesModule.jsx";
 // Visor de archivos en la app (10-sep-2026): la ficha se abría con window.open
 // DESPUÉS del await y el navegador bloqueaba el popup.
 import { VisorArchivo } from "./visor-archivo.jsx";
+import { hoyISO } from "./fechas.js";
 
 // ── Hook responsive ──
 function useIsMobile(breakpoint = 768) {
@@ -456,7 +457,7 @@ function MaintenanceFormImpl({ vehicle, vehicles, prefilledDescription, prefille
   const [f, setF] = useState({
     vehicleId: vehicle?.id || "",
     type: "correctivo",
-    fecha: new Date().toISOString().slice(0, 10),
+    fecha: hoyISO(),
     kmAlRealizar: vehicle?.kmActual || "",
     description: prefilledDescription || "",
     workshop: "",
@@ -1039,7 +1040,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     // El modal de edicion tambien puede dejarlo entregado/cerrado: estampar
     // fechaEjecutada (cuenta en "Entregados hoy") igual que updateDespachoEstado.
     const rec2 = (rec.estado === "entregado" || rec.estado === "cerrado") && !rec.fechaEjecutada
-      ? { ...rec, fechaEjecutada: new Date().toISOString().slice(0, 10) } : rec;
+      ? { ...rec, fechaEjecutada: hoyISO() } : rec;
     const ok = await saveDespachosWithMerge((base) => {
       const existe = base.find(d => d.id === rec2.id);
       return existe ? base.map(d => d.id === rec2.id ? rec2 : d) : [...base, rec2];
@@ -1120,7 +1121,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     await saveDespachosWithMerge((base) => base.map(d => d.id === id ? {
       ...d,
       estado: nuevoEstado,
-      fechaEjecutada: (nuevoEstado === "entregado" || nuevoEstado === "cerrado") ? (d.fechaEjecutada || new Date().toISOString().slice(0, 10)) : d.fechaEjecutada,
+      fechaEjecutada: (nuevoEstado === "entregado" || nuevoEstado === "cerrado") ? (d.fechaEjecutada || hoyISO()) : d.fechaEjecutada,
       updatedAt: new Date().toISOString(),
     } : d), { label: `updateEstado ${id}->${nuevoEstado}` });
     // "cancelado" tambien re-evalua (fix review): si el hermano cancelado era
@@ -1158,7 +1159,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       motorista: extras.motorista || "",
       fechaNecesaria: extras.fechaNecesaria || "",
       fechaProgramada: fechaProg || "",
-      fechaEjecutada: fechaEjec || (estado === "entregado" || estado === "cerrado" ? new Date().toISOString().slice(0, 10) : ""),
+      fechaEjecutada: fechaEjec || (estado === "entregado" || estado === "cerrado" ? hoyISO() : ""),
       estado,
       notas: extras.notas || "",
       createdAt: new Date().toISOString(),
@@ -1777,7 +1778,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     const totalPorHacer = despachos.filter(d => d.estado === "pendiente").length + comprasPendientes.length;
     const totalProgramados = despachos.filter(d => d.estado === "programado").length;
     const totalEnRuta = despachos.filter(d => d.estado === "en_ruta").length;
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = hoyISO();
     const entregadosHoy = despachos.filter(d => d.estado === "entregado" && d.fechaEjecutada === hoy).length;
 
     // Despacho row (tabla compartida entre sub-tabs)
@@ -2048,7 +2049,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
                     setModal({ t: "desp-program", source: { kind: "compra", purchase: p } });
                   } else if (val === "entregado") {
                     if (!confirm(`Marcar como YA ENTREGADO la compra de ${p.provider}?`)) return;
-                    await quickCreateFromCompra(p, "entregado", "", new Date().toISOString().slice(0, 10));
+                    await quickCreateFromCompra(p, "entregado", "", hoyISO());
                   }
                   // si vuelven a "pendiente" no se hace nada (ya esta pendiente)
                 }}

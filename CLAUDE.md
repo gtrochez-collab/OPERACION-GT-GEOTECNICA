@@ -963,6 +963,28 @@ escritor GeoClock), `gc-firma-<markId>` (firma JPEG), `gc-tardies`
 separado a propósito para que tablet y RRHH nunca compitan por una key.
 
 ## Convenciones críticas
+- **FECHAS: `hoyISO()` de `src/fechas.js`, NUNCA `new Date().toISOString().slice(0,10)`**
+  (23-sep-2026, lo cazó Gerson). `toISOString()` es **UTC**: en Honduras (UTC-6)
+  desde las **6:00 p.m.** ya devuelve el día SIGUIENTE. El caso: la Lic. Carolina
+  registró el pago de INVERSIONES PINEDA el 22-sep a las 10:04 p.m. y el campo
+  "Fecha del pago" venía pre-llenado con 23-sep, así que quedó fechado el 23 —
+  y Supply Chain (que agrupa por `paymentDate`, correctamente) lo mostró el 23.
+  El bug NO estaba en Supply Chain sino en el DEFAULT del form de pago. Estaba
+  repetido en **18 lugares** (HRModule ×8, LogisticsModule ×6, GeoDrillVault ×2,
+  PurchasesModule ×1, MachinesModule ×1) — todos migrados a `hoyISO()`, que usa
+  `Intl` con `timeZone: "America/Tegucigalpa"` (no `toLocaleDateString` a secas:
+  así da la fecha de Honduras aunque la laptop esté en otra zona, mismo criterio
+  que `ahoraTegus()` de GeoClock). `diaHN(iso)` convierte cualquier timestamp al
+  día de Honduras. ⚠ ÚNICA excepción legítima que quedó: la aritmética sobre una
+  fecha PURA (`new Date(endDate).getTime() + 86400000` en ContractForm) — ahí
+  UTC es correcto porque la entrada ya es medianoche UTC.
+  **Datos históricos**: 133 pagos de cp-purchases (L 5.08M) quedaron fechados un
+  día adelante. Se auditó: **ninguno cruza de mes**, así que los reportes
+  mensuales y el cierre contable NO están distorsionados — solo el día exacto.
+  NO se corrigieron en masa: es data contable y no se puede distinguir "el
+  default la traicionó" de "eligió el día siguiente a propósito" (la
+  transferencia puede aplicarse al otro día). Si hace falta, se corrigen una por
+  una desde el propio form de pago.
 - **Guardado robusto**: nunca fire-and-forget en datos importantes. Patrón:
   `const ok = await store.set(...)` → si falla, alert + mantener modal abierto.
 - **Guardia anti-pisada del auto-refresh (20-ago-2026)** — la VERDADERA causa
