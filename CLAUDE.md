@@ -477,7 +477,9 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   · Semana pasada · Este mes · Todo, chips por etapa, "ver cerradas" y
   buscador. Click en una tarjeta abre esa solicitud. `etapaDe()` quedó
   INTACTA (la clasificación auditada en ago-2026); los estados se redujeron a
-  `scModo`/`scEtapa`/`scQ`/`scVerCerradas`. El texto de abajo describe la v2,
+  `scModo`/`scEtapa`/`scQ`/`scVerCerradas`. Se retiró la tira resumen
+  (23-sep-2026, Gerson: "no necesito ese cuadrito") — quedan solo los filtros
+  y la lista agrupada por día. El texto de abajo describe la v2,
   que ya no existe — se conserva solo por el detalle de la lógica de etapas.
   **SUPPLY CHAIN — presentación v2 (3-sep, RETIRADA el 18-sep)**: sin título, filtro compacto
   en una fila (se quitaron el select de proyecto y el input de

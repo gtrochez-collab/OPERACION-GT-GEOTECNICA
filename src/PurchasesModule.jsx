@@ -5189,23 +5189,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     };
 
     return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
-      {/* Resumen */}
-      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
-        {[
-          { v: base.length, l: "compras pagadas" },
-          { v: fmtL(total), l: "monto pagado" },
-          { v: dias.filter(d => d !== "—").length, l: "días con pago" },
-          { v: base.filter(r => r.k !== "cerrada").length, l: "todavía en cadena", c: "var(--naranja-tinta)" },
-        ].map((x, i, arr) => (
-          <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 40%" : 1, minWidth: 0 }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap" }}>{x.v}</div>
-              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
-            </div>
-            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
-          </div>
-        ))}
-      </div>
+      {/* Resumen (21-sep-2026: retirado a pedido de Gerson — "no necesito ese
+          cuadrito"). `total`/`dias` quedan calculados por si se retoma. */}
 
       {/* Filtros: cuándo se pagó · en qué etapa está · buscador */}
       <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", flexDirection: "column", gap: 9 }}>
