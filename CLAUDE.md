@@ -353,6 +353,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   son cola de trabajo (`ana`, `prioridades`, `list`) — la sección se lee de
   `secRef` porque el effect corre con deps `[]` y su closure congelaría el
   `sec` inicial. Sigue respetando la guardia de 8 s por mutación local.
+  **SERVICIOS DE PROVEEDOR (23-sep-2026, SOLO GeoShopping)** — a Ana se le
+  acumulaban en Por coordinar los colados de Concremix, la topografía, etc.:
+  un servicio no tiene material que mover ni ficha de recibido. Campo aditivo
+  `tipoCompra` ("material" default | "servicio"; las viejas sin campo =
+  material) con pills **Material / Servicio de proveedor** en el form, antes
+  de Condición de pago. Al PAGAR (`PaymentFormImpl`), si es servicio y no
+  tiene camino decidido, queda `deliveryStatus: "cerrado"` + `delivery
+  {cerradaSinFicha, esServicio, closedBy: "Automático al pagar (servicio)"}`
+  + audit `closed_no_ficha` → cae DIRECTO en Por cerrar contable (mismo
+  camino que las 54 "cerradas sin ficha" que ya existían; `clasificar()` no
+  se tocó). En la bandeja, el botón "Sin ficha" pasó a **"Es servicio"**: un
+  solo confirm, y además marca `tipoCompra: "servicio"` (sirve para las que
+  ya estaban acumuladas). Chip azul "Servicio" en la tabla de Solicitudes.
+  ⚠ GeoMachinery NO se tocó a propósito (Gerson: "aún nada a geomachinery").
   **PROYECTOS rediseñado (18-sep-2026)** — Gerson: "qué horrible se ven, quiero
   que se vean como en GeoCost". `renderProjects` usa las mismas piezas que
   `renderProyectosGrid` de GeoCostModule: tarjetas `.gt-vidrio gt-vidrio-hover`

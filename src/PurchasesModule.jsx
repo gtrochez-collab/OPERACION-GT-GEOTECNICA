@@ -1212,6 +1212,11 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
     // las calendariza Christian en "Cuentas por pagar"; `tipoCredito` dice si
     // es un solo pago o un plan de abonos (ahí se programa cada uno).
     condicionPago: "contado", tipoCredito: "unico",
+    // Tipo de compra (23-sep-2026): "material" | "servicio". Los servicios de
+    // proveedor (colado de concreto, topografía, rentas…) los gestionan Gerson
+    // o Christian directo: al pagarse se saltan "Por coordinar" y caen en
+    // "Por cerrar contable" sin pasar por Ana ni Logística.
+    tipoCompra: "material",
     // GeoCost (9-sep-2026): de qué partida del presupuesto baja la compra.
     // Solo se exige si el proyecto tiene presupuesto en cc-presupuestos.
     partidaId: "", sobregiroJustificacion: "",
@@ -1389,6 +1394,27 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           Christian en la pestaña "Cuentas por pagar". Acá solo se marca la
           condición; la fecha acordada es una sugerencia para esa pestaña.
           Las solicitudes viejas sin el campo se tratan como contado. */}
+      {/* TIPO DE COMPRA (23-sep-2026, pedido de Gerson): los servicios de
+          proveedor no se coordinan ni llevan ficha de recibido — al pagarse
+          van directo a "Por cerrar contable". Default Material = lo de
+          siempre: si alguien se olvida de marcarla, cae con Ana como antes. */}
+      <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Tipo de compra</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {[{ k: "material", t: "Material", d: "Se coordina la entrega (Ana → Logística) y lleva ficha de recibido" },
+            { k: "servicio", t: "Servicio de proveedor", d: "Colado de concreto, topografía, rentas… — no se coordina ni lleva ficha" }].map(o => {
+            const activo = (f.tipoCompra || "material") === o.k;
+            return <button key={o.k} type="button" title={o.d}
+              onClick={() => u("tipoCompra", o.k)}
+              style={{ padding: "8px 18px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 800,
+                border: activo ? "1px solid transparent" : "1px solid #CBD5E1",
+                background: activo ? ORANGE_DARK : "#F8FAFC", color: activo ? "#fff" : "#475569" }}>{o.t}</button>;
+          })}
+        </div>
+        {(f.tipoCompra || "material") === "servicio" && <div style={{ fontSize: 11.5, color: C_AZUL.color, background: C_AZUL.bg, border: "1px solid rgba(29,95,175,.22)", borderRadius: 10, padding: "9px 12px", lineHeight: 1.5 }}>
+          Cuando la Lic. la pague va directo a <b>Por cerrar contable</b> — no pasa por Ana ni por Logística, y no se le pide ficha de recibido.
+        </div>}
+      </div>
       <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8 }}>
         <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Condición de pago</label>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1613,19 +1639,37 @@ function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
         if (hasReceipt) console.log("Receipt file:", f.receiptFile?.name, "size:", f.receiptFile?.size, "type:", f.receiptFile?.type);
         setSaving(true);
         try {
+          // SERVICIO DE PROVEEDOR (23-sep-2026): al pagarse queda CERRADO sin
+          // ficha — exactamente lo que hacía a mano el botón "Sin ficha" de
+          // Ana, pero automático. Así todos los tableros (Por coordinar, Por
+          // cerrar contable, Supply Chain, el candado de Logística) lo leen
+          // como ya resuelto sin tocar su lógica. Solo si la entrega todavía
+          // no avanzó: nunca pisa una ficha adjunta ni una entrega del
+          // proveedor ya en curso.
+          const esServicio = purchase.tipoCompra === "servicio"
+            && (!purchase.deliveryStatus || purchase.deliveryStatus === "pendiente_entrega");
           const rec = {
             ...purchase, ...f,
             status: hasReceipt ? "finalizado" : "pagado",
             treasuryStatus: "pagada",
-            deliveryStatus: purchase.deliveryStatus || "pendiente_entrega",
-            delivery: purchase.delivery || {},
+            deliveryStatus: esServicio ? "cerrado" : (purchase.deliveryStatus || "pendiente_entrega"),
+            delivery: esServicio ? {
+              ...(purchase.delivery || {}),
+              cerradaSinFicha: true,
+              esServicio: true,
+              closingNotes: "Servicio de proveedor — no lleva ficha de recibido",
+              closedBy: "Automático al pagar (servicio)",
+              closedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            } : (purchase.delivery || {}),
             paidAt: new Date(f.paymentDate).toISOString(),
             finalizedAt: hasReceipt ? new Date().toISOString() : purchase.finalizedAt || null,
           };
           const note = hasReceipt
             ? `Pago ${f.paymentMethod} registrado con comprobante — FINALIZADA`
             : `Pago ${f.paymentMethod} registrado sin comprobante`;
-          const saved = addAudit(rec, "paid", note);
+          let saved = addAudit(rec, "paid", note);
+          if (esServicio) saved = addAudit(saved, "closed_no_ficha", "Servicio de proveedor: pasa directo a Por cerrar contable (no se coordina ni lleva ficha)");
           console.log("Llamando updatePurchase...");
           const ok = await updatePurchase(saved);
           console.log("updatePurchase devolvio:", ok);
@@ -3000,29 +3044,33 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     return ok;
   };
 
+  // "ES SERVICIO" (23-sep-2026 — antes "Sin ficha"): saca de "Por coordinar"
+  // una compra que en realidad es un servicio de proveedor (colado de
+  // concreto, topografía, rentas…) y la manda a "Por cerrar contable" sin
+  // pedir ficha. Es el mismo cierre que ahora se hace SOLO al pagar cuando la
+  // solicitud viene marcada como Servicio; este botón queda para el acumulado
+  // viejo y para las que alguien olvidó marcar. Un solo confirm — antes pedía
+  // además un prompt con el motivo y a Ana le costaba 2 ventanas por compra.
+  // Marca también `tipoCompra: "servicio"` para que quede bien clasificada.
   const cerrarSinFicha = async (purchase) => {
-    // Doble paso a proposito: cerrar saca la compra de TODOS los tableros.
-    if (!confirm(`¿CERRAR sin ficha de recibido?\n\n${purchase.provider} — ${purchase.description}\n${fmtL(Number(purchase.amount) || 0)}\n\nSale de los pendientes y no se le pedirá ficha. Usalo para rentas, servicios y pagos que no llevan acta de entrega.`)) return false;
-    const motivo = prompt(
-      `¿Por qué no lleva ficha? (queda en el historial)`,
-      "Pago de servicio / renta — no requiere ficha"
-    );
-    if (motivo === null) return false; // canceló
+    if (!confirm(`¿Es un SERVICIO de proveedor?\n\n${purchase.provider} — ${purchase.description}\n${fmtL(Number(purchase.amount) || 0)}\n\nSale de Por coordinar y pasa a Por cerrar contable. No se coordina ni se le pide ficha de recibido.`)) return false;
     const rec = {
       ...purchase,
+      tipoCompra: "servicio",
       deliveryStatus: "cerrado",
       delivery: {
         ...(purchase.delivery || {}),
         cerradaSinFicha: true,
-        closingNotes: motivo.trim() || "Cerrada sin ficha de recibido",
+        esServicio: true,
+        closingNotes: "Servicio de proveedor — no lleva ficha de recibido",
         closedBy: userName,
         closedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
     };
-    const saved = addAudit(rec, "closed_no_ficha", motivo.trim() || "Cerrada sin ficha de recibido");
+    const saved = addAudit(rec, "closed_no_ficha", `Marcada como servicio de proveedor por ${userName || "—"}: pasa a Por cerrar contable`);
     const ok = await updatePurchase(saved);
-    if (!ok) alert("⚠️ Se cerró en este dispositivo pero NO se sincronizó a la nube. Reintentá.");
+    if (!ok) alert("⚠️ Se marcó en este dispositivo pero NO se sincronizó a la nube. Reintentá.");
     return ok;
   };
 
@@ -5435,7 +5483,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         {canSendToLogistics && <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end", flexShrink: 0 }}>
           {salida("Logística", () => setModal({ t: "send-pickup", d: p }), T_LOG, "Nosotros la vamos a traer — se crea la orden de recogida")}
           {salida("Proveedor", () => setModal({ t: "entrega-directa", d: p }), T_PROV, "El proveedor la lleva al proyecto")}
-          {salida("Sin ficha", () => cerrarSinFicha(p), T_SIN, "Rentas, servicios y pagos que no llevan ficha de recibido")}
+          {salida("Es servicio", () => cerrarSinFicha(p), T_SIN, "Servicio de proveedor (colado, topografía, rentas…): pasa a Por cerrar contable sin ficha")}
         </div>}
       </div>;
     };
@@ -6663,6 +6711,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               <td style={TD}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
                   <StatusBadge status={p.status} />
+                  {/* Servicio de proveedor (23-sep-2026): no se coordina ni lleva ficha */}
+                  {p.tipoCompra === "servicio" && <span title="Servicio de proveedor — al pagarse va directo a Por cerrar contable" style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg, whiteSpace: "nowrap" }}>Servicio</span>}
                   {/* VENCIDA: +2 semanas sin pago (18-sep-2026) */}
                   {venc && <span title={`Lleva ${diasV} días sin pago`} style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_ROJO.color, background: C_ROJO.bg, border: `1px solid ${C_ROJO.borde}`, whiteSpace: "nowrap" }}>Vencida · {diasV} d</span>}
                   <TreasuryBadge status={p.treasuryStatus} />
