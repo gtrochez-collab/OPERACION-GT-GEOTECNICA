@@ -358,10 +358,23 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   `renderProyectosGrid` de GeoCostModule: tarjetas `.gt-vidrio gt-vidrio-hover`
   clickeables (abren las solicitudes de ese proyecto), nombre en `var(--display)`,
   código en mono, barra de avance carbón (pagado) + naranja (por pagar), y dos
-  columnas Por pagar / Pagado. Cajita punteada al final para "Nuevo proyecto".
-  Se retiraron los StatCards de colores sueltos (→ tira resumen en vidrio) y el
-  chip "NUEVO" (lo traía casi todo proyecto: puro ruido). Chips que quedan:
-  "N vencidas" (rojo) y "Sin código" (gris). La lógica no cambió.
+  columnas Por pagar / Pagado. Se retiraron los StatCards de colores sueltos
+  (→ tira resumen en vidrio) y el chip "NUEVO" (lo traía casi todo proyecto:
+  puro ruido). Chips que quedan: "N vencidas" (rojo) y "Sin código" (gris).
+  **De grilla a LISTA + buscador (23-sep-2026)** — Gerson: "no me gusta como se
+  ven en ventanitas como kanban, muy desordenadas — cajitas largas de vidrio,
+  un buscador porque cada vez son más". La grilla de tarjetas cuadradas
+  (`repeat(auto-fill, minmax(300px,1fr))`) se volvió un mosaico sin orden de
+  lectura pasados los 20+ proyectos: cada fila del grid traía una cantidad
+  distinta de tarjetas y el ojo saltaba sin patrón. Ahora `fila()` (antes
+  `tarjeta()`) es una fila `.gt-vidrio` LARGA por proyecto — la misma info de
+  siempre (nombre, código, chips, barra de avance, por pagar/pagado, archivo de
+  Costos, editar/borrar) acomodada en horizontal en vez de apilada en un
+  cuadrado — en una sola columna (`gridTemplateColumns: minmax(0,1fr)`), así se
+  lee de arriba a abajo como una lista. Buscador `proyQ` arriba (nombre, código
+  o proyecto — mismo patrón que `provQ` de Proveedores) con botón Limpiar. El
+  botón "+ Nuevo proyecto" se movió de la cajita punteada al final a la barra
+  del buscador. La lógica no cambió.
   **Fix — partida de MOVILIZACIÓN en las solicitudes (18-sep-2026)**: Gerson
   pagó una movilización de Villa San Miguel POR SOLICITUDES (no por el flujo de
   GeoCost) y el Select no le ofrecía la partida "Generales · Movilización".

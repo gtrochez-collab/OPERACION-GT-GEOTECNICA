@@ -2113,6 +2113,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const [contaResp, setContaResp] = useState("");
   // Filtros del archivo de cerradas contablemente (mes de cierre / proyecto / texto)
   const [provQ, setProvQ] = useState("");   // buscador de proveedores
+  const [proyQ, setProyQ] = useState("");   // buscador de proyectos (23-sep-2026)
   // ── Bandeja "Por coordinar" (21-sep-2026) ──
   const [coordMes, setCoordMes] = useState("");          // filtro por mes de pago
   const [coordVista, setCoordVista] = useState("proyecto");  // proyecto | espera
@@ -4063,6 +4064,17 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // colores sueltos — solo la paleta blanco/gris/naranja/carbón + el verde
   // del semáforo para lo ya pagado. La LÓGICA (stats, subir archivo de
   // Costos, editar/borrar proyecto, ir a sus solicitudes) quedó igual.
+  // ── PROYECTOS (rediseño 23-sep-2026, pedido de Gerson: "no me gusta como se
+  // ven en ventanitas como kanban, muy desordenadas — cajitas largas de
+  // vidrio con toda la info, y un buscador porque cada vez son más") ────────
+  // Antes era una grilla de tarjetas cuadradas (`repeat(auto-fill, minmax(300px,1fr))`):
+  // con 24+ proyectos ya no se leía en orden, cada fila del mosaico tenía una
+  // cantidad distinta de tarjetas y el ojo saltaba sin patrón. Ahora es una
+  // LISTA: una fila larga de vidrio por proyecto, toda la misma info de
+  // siempre acomodada en horizontal — se lee de arriba a abajo, no como
+  // mosaico. Buscador arriba (por nombre, código o proyecto) como el de
+  // Proveedores. La lógica (stats, subir archivo, editar/borrar, ir a las
+  // solicitudes) quedó igual.
   const renderProjects = () => {
     const projectStats = allProjects.map(proj => {
       const ps = cp.filter(x => x.projectCode === proj.short);
@@ -4085,6 +4097,11 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // Los que tienen movimiento primero; dentro de cada grupo, alfabético
     // (allProjects ya viene ordenado).
     const ordenados = [...projectStats.filter(p => p.count > 0), ...projectStats.filter(p => p.count === 0)];
+    const txt = proyQ.trim().toLowerCase();
+    const filtrados = !txt ? ordenados : ordenados.filter(p =>
+      String(p.project.short || "").toLowerCase().includes(txt)
+      || String(p.project.name || "").toLowerCase().includes(txt)
+      || String(p.project.code || "").toLowerCase().includes(txt));
 
     const empresa = {
       total: projectStats.reduce((s, p) => s + p.total, 0),
@@ -4100,69 +4117,66 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       upsertProjectMeta(short, { costsRequestFile: null });
     };
 
-    const chipMini = (txt, c) => <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 9px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: c.color, background: c.bg, whiteSpace: "nowrap", letterSpacing: ".02em" }}>{txt}</span>;
+    const chipMini = (txt2, c) => <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 9px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: c.color, background: c.bg, whiteSpace: "nowrap", letterSpacing: ".02em" }}>{txt2}</span>;
 
-    const tarjeta = ({ project, count, total, pendingAmt, paidAmt, pendingCount, paidCount, draftCount, finalizedCount, vencidas }, i) => {
+    const fila = ({ project, count, total, pendingAmt, paidAmt, pendingCount, paidCount, vencidas }) => {
       const abrir = () => { setFilter({ ver: "todas", project: project.short, provider: "", mes: "" }); setListOrden("estado"); setSec("list"); };
       const pct = total > 0 ? paidAmt / total : 0;
       return <div key={project.short}
-        className="gt-vidrio gt-vidrio-hover gt-sube"
+        className="gt-vidrio gt-vidrio-hover"
         role={count > 0 ? "button" : undefined} tabIndex={count > 0 ? 0 : undefined}
         aria-label={count > 0 ? `Ver las ${count} solicitudes de ${project.short}` : undefined}
         onClick={count > 0 ? abrir : undefined}
         onKeyDown={count > 0 ? (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); abrir(); } } : undefined}
-        style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14, cursor: count > 0 ? "pointer" : "default", opacity: count > 0 ? 1 : .72, animationDelay: `${Math.min(i, 12) * 45}ms` }}>
+        style={{ padding: isMobile ? "14px 16px" : "16px 22px", display: "flex", flexDirection: "column", gap: 12, cursor: count > 0 ? "pointer" : "default", opacity: count > 0 ? 1 : .72 }}>
 
-        {/* Encabezado */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ font: "800 17px/1.15 var(--display)", letterSpacing: "-.015em", color: "var(--text)", wordBreak: "break-word" }}>{project.short}</div>
-            <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 4, lineHeight: 1.35 }}>{project.name}</div>
-            <div style={{ font: "500 10.5px/1 var(--mono, ui-monospace)", color: "var(--text-3)", marginTop: 5, letterSpacing: ".02em" }}>
-              {project.code || "código contable pendiente"}
+        {/* Fila principal: nombre — barra — cifras, todo horizontal */}
+        <div style={{ display: "flex", alignItems: isMobile ? "flex-start" : "center", gap: isMobile ? 10 : 24, flexWrap: isMobile ? "wrap" : "nowrap" }}>
+          {/* Identidad del proyecto */}
+          <div style={{ minWidth: isMobile ? "100%" : 220, flex: isMobile ? "1 1 100%" : "0 0 auto" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ font: "800 15px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{project.short}</span>
+              {vencidas > 0 && chipMini(`${vencidas} vencida${vencidas === 1 ? "" : "s"}`, C_ROJO)}
+              {!project.code && chipMini("Sin código", C_GRIS)}
             </div>
+            <div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 3, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: isMobile ? "normal" : "nowrap" }}>{project.name}</div>
+            <div style={{ font: "500 10px/1 var(--mono, ui-monospace)", color: "var(--text-3)", marginTop: 4 }}>{project.code || "código contable pendiente"}</div>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0 }}>
-            {/* "Nuevo" (isCustom) se retiró: lo trae casi todo proyecto, no
-                informaba nada y era puro ruido. Quedan los dos accionables. */}
-            {vencidas > 0 && chipMini(`${vencidas} vencida${vencidas === 1 ? "" : "s"}`, C_ROJO)}
-            {!project.code && chipMini("Sin código", C_GRIS)}
-          </div>
-        </div>
 
-        {/* Avance de pago: carbón lo pagado, naranja lo que falta */}
-        {count > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ height: 7, borderRadius: 999, background: "rgba(44,42,40,.07)", overflow: "hidden", display: "flex" }}>
-            <div style={{ width: `${Math.round(pct * 100)}%`, background: CHARCOAL, transition: "width .6s var(--curva)" }} />
-            <div style={{ flex: 1, background: pendingAmt > 0 ? ORANGE : "transparent" }} />
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", font: "500 10px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".04em", textTransform: "uppercase" }}>
-            <span>{Math.round(pct * 100)} % pagado</span>
-            <span>{count} solicitud{count === 1 ? "" : "es"}</span>
-          </div>
-        </div>}
+          {/* Barra de avance — se estira a lo ancho de la fila */}
+          {count > 0 && <div style={{ flex: isMobile ? "1 1 100%" : 1, minWidth: isMobile ? "100%" : 120, display: "flex", flexDirection: "column", gap: 5 }}>
+            <div style={{ height: 8, borderRadius: 999, background: "rgba(44,42,40,.07)", overflow: "hidden", display: "flex" }}>
+              <div style={{ width: `${Math.round(pct * 100)}%`, background: CHARCOAL, transition: "width .6s var(--curva)" }} />
+              <div style={{ flex: 1, background: pendingAmt > 0 ? ORANGE : "transparent" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", font: "500 9.5px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".03em", textTransform: "uppercase" }}>
+              <span>{Math.round(pct * 100)} % pagado</span>
+              <span>{count} solicitud{count === 1 ? "" : "es"}</span>
+            </div>
+          </div>}
 
-        {/* Cifras */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-          <div>
-            <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Por pagar</div>
-            <div style={{ font: "800 17px/1.1 var(--display)", letterSpacing: "-.015em", marginTop: 5, color: pendingAmt > 0 ? "var(--naranja-tinta)" : "var(--text-3)" }}>{fmtL(pendingAmt)}</div>
-            {pendingCount > 0 && <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 2 }}>{pendingCount} solicitud{pendingCount === 1 ? "" : "es"}</div>}
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Pagado</div>
-            <div style={{ font: "800 17px/1.1 var(--display)", letterSpacing: "-.015em", marginTop: 5, color: paidAmt > 0 ? C_VERDE.color : "var(--text-3)" }}>{fmtL(paidAmt)}</div>
-            {paidCount > 0 && <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 2 }}>{paidCount} solicitud{paidCount === 1 ? "" : "es"}</div>}
+          {/* Cifras — a la derecha en escritorio */}
+          <div style={{ display: "flex", gap: isMobile ? 20 : 28, flexShrink: 0, marginLeft: isMobile ? 0 : "auto" }}>
+            <div style={{ textAlign: isMobile ? "left" : "right" }}>
+              <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Por pagar</div>
+              <div style={{ font: "800 15px/1.15 var(--display)", letterSpacing: "-.01em", marginTop: 3, color: pendingAmt > 0 ? "var(--naranja-tinta)" : "var(--text-3)", whiteSpace: "nowrap" }}>{fmtL(pendingAmt)}</div>
+              {pendingCount > 0 && <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 1 }}>{pendingCount} sol.</div>}
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Pagado</div>
+              <div style={{ font: "800 15px/1.15 var(--display)", letterSpacing: "-.01em", marginTop: 3, color: paidAmt > 0 ? C_VERDE.color : "var(--text-3)", whiteSpace: "nowrap" }}>{fmtL(paidAmt)}</div>
+              {paidCount > 0 && <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 1 }}>{paidCount} sol.</div>}
+            </div>
           </div>
         </div>
 
         {/* Solicitud original de Costos + acciones (no propagan el click) */}
-        <div onClick={e => e.stopPropagation()} style={{ borderTop: "1px solid var(--hairline)", paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-          <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Solicitud original (Costos)</div>
-          {project.costsRequestFile ? <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <div style={{ flex: 1, minWidth: 110 }}>
-              <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-2)", wordBreak: "break-all", lineHeight: 1.3 }}>{project.costsRequestFile.name}</div>
-              <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 2 }}>{fmtMB(project.costsRequestFile.size)}</div>
+        <div onClick={e => e.stopPropagation()} style={{ borderTop: "1px solid var(--hairline)", paddingTop: 11, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, flexShrink: 0 }}>Solicitud original (Costos)</div>
+          {project.costsRequestFile ? <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+            <div style={{ minWidth: 90 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-2)", wordBreak: "break-all", lineHeight: 1.3 }}>{project.costsRequestFile.name}</div>
+              <div style={{ fontSize: 9.5, color: "var(--text-3)", marginTop: 1 }}>{fmtMB(project.costsRequestFile.size)}</div>
             </div>
             <Btn small variant="ghost" onClick={() => {
               const f = project.costsRequestFile;
@@ -4170,8 +4184,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               else { const a = document.createElement("a"); a.href = f.dataUrl; a.download = f.name; a.click(); }
             }}>Ver</Btn>
             {canCreate && <Btn small variant="ghost" onClick={() => removeCostsFile(project.short)} title="Quitar el archivo">✕</Btn>}
-          </div> : <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Sin archivo adjunto</div>}
-          {canCreate && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          </div> : <div style={{ fontSize: 11, color: "var(--text-3)", flex: 1 }}>Sin archivo adjunto</div>}
+          {canCreate && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginLeft: isMobile ? 0 : "auto" }}>
             <input type="file" accept=".pdf,image/*,.xls,.xlsx,.doc,.docx" style={{ display: "none" }} id={`costs-${project.short}`} onChange={async (e) => {
               const file = e.target.files?.[0]; if (!file) return;
               if (file.size > 2 * 1024 * 1024) { alert(`❌ ${fmtMB(file.size)}. Maximo 2 MB. Reduci el PDF en https://smallpdf.com/compress-pdf`); e.target.value = ""; return; }
@@ -4183,7 +4197,6 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             <Btn small variant="ghost" onClick={() => document.getElementById(`costs-${project.short}`).click()}>
               {project.costsRequestFile ? "Reemplazar" : "+ Subir archivo"}
             </Btn>
-            <div style={{ flex: 1 }} />
             <Btn small variant="ghost" onClick={() => setModal({ t: "edit-project", d: project })} title="Editar proyecto">Editar</Btn>
             <Btn small variant="ghost" disabled={count > 0} onClick={() => deleteProject(project.short)}
               title={count > 0 ? `No se puede borrar: tiene ${count} solicitud(es)` : "Eliminar proyecto"}>🗑</Btn>
@@ -4211,18 +4224,20 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16, alignItems: "start" }}>
-        {ordenados.map(tarjeta)}
-        {canCreate && <div role="button" tabIndex={0}
-          onClick={() => setModal({ t: "new-project" })}
-          onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); setModal({ t: "new-project" }); } }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = ORANGE; e.currentTarget.style.color = "var(--naranja-tinta)"; e.currentTarget.style.background = "rgba(232,118,45,.05)"; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(44,42,40,.18)"; e.currentTarget.style.color = "var(--text-3)"; e.currentTarget.style.background = "rgba(255,255,255,.35)"; }}
-          style={{ minHeight: 190, border: "1.5px dashed rgba(44,42,40,.18)", borderRadius: 18, color: "var(--text-3)", background: "rgba(255,255,255,.35)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, transition: "border-color .25s, color .25s, background .25s" }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
-          <div style={{ font: "700 14px/1 var(--sans)" }}>Nuevo proyecto</div>
-        </div>}
+      {/* Buscador + nuevo proyecto */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <input value={proyQ} onChange={e => setProyQ(e.target.value)} placeholder="Buscar proyecto por nombre o código…"
+          style={{ flex: "1 1 260px", minWidth: 200, padding: "9px 14px", border: "1px solid var(--hairline)", borderRadius: 12, fontSize: 13, fontFamily: "inherit", outline: "none", background: "var(--surface)", color: "var(--text)" }} />
+        {proyQ && <Btn small variant="ghost" onClick={() => setProyQ("")}>Limpiar</Btn>}
+        {canCreate && <Btn variant="primary" onClick={() => setModal({ t: "new-project" })} style={{ marginLeft: "auto" }}>+ Nuevo proyecto</Btn>}
       </div>
+
+      {/* La lista */}
+      {filtrados.length === 0
+        ? <div className="gt-vidrio" style={{ padding: "38px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 13.5 }}>Ningún proyecto coincide con "{proyQ}".</div>
+        : <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+            {filtrados.map(fila)}
+          </div>}
     </div>;
   };
 
