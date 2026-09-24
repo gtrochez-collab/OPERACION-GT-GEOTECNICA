@@ -528,7 +528,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   que sigue EN CAMINO — se excluyen `por_cerrar` y `cerrada` (`FUERA_SC`;
   Gerson: "si ya pasó a por cerrar con conta significa que ya se entregó, eso
   lo reviso yo allá"; se retiró el check "ver cerradas"). Quedan por
-  coordinar, en logística, con el proveedor y falta ficha. El filtro de etapa
+  coordinar, en logística y con el proveedor (`falta_ficha` también se sacó el
+  mismo día: con el candado de GeoLogistics esa etapa solo la llenan 98
+  despachos VIEJOS —jun-ago— entregados sin ficha, y Gerson los revisa uno a
+  uno en Por cerrar contable con el botón rojo **"Sin ficha de Logística
+  (N)"** (`contaSoloSinFicha`: muestra SOLO esas, de TODOS los meses — con el
+  default del mes actual quedaban escondidas). El filtro de etapa
   es MULTI-selección (`scEtapas` array, [] = todas): "ver las que están en
   logística y por coordinar al mismo tiempo". El texto de abajo describe la v2,
   que ya no existe — se conserva solo por el detalle de la lógica de etapas.

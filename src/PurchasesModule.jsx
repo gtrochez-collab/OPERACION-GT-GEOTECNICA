@@ -2154,6 +2154,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // pero queda accesible eligiendo el mes o "Todos".
   const [contaMes, setContaMes] = useState(() => new Date().toISOString().slice(0, 7));
   // Filtro por responsable de cierre en "Por cerrar contable" (supervisores)
+  const [contaSoloSinFicha, setContaSoloSinFicha] = useState(false);   // Por cerrar: solo "Sin ficha de Logística", todos los meses
   const [contaResp, setContaResp] = useState("");
   // Filtros del archivo de cerradas contablemente (mes de cierre / proyecto / texto)
   const [provQ, setProvQ] = useState("");   // buscador de proveedores
@@ -5182,7 +5183,12 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       todo:     { label: "Todo",          desde: null, hasta: null },
     };
     const rango = RANGOS[scModo] || RANGOS.semana;
-    const FUERA_SC = ["por_cerrar", "cerrada"];
+    // 24-sep-2026: también "falta_ficha" — Gerson: "en Supply Chain solo
+    // por coordinar, en logística y lo del proveedor". Hoy el candado de
+    // GeoLogistics no deja marcar entregado sin ficha, así que esa etapa solo
+    // la llenan despachos viejos (antes del 19-ago); esos se revisan uno a
+    // uno en Por cerrar contable (filtro "Sin ficha de Logística").
+    const FUERA_SC = ["por_cerrar", "cerrada", "falta_ficha"];
 
     // La fecha que manda acá es la del PAGO (es "el día que Carolina pagó").
     // Las pagadas viejas sin paidAt caen a paymentDate; si no tienen ninguna,
@@ -5944,9 +5950,15 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // Meses disponibles (con algo por cerrar o cerrado), para el selector.
     const mesDe = (x) => String(x.paidAt || x.createdAt || "").slice(0, 7);
     const mesesDisponibles = [...new Set(cp.filter(x => clasificar(x)).map(mesDe).filter(Boolean))].sort().reverse();
-    const enMes = (x) => !contaMes || mesDe(x) === contaMes;
+    // "Sin ficha de Logística" (24-sep-2026): las compras cuyo despacho quedó
+    // entregado SIN ficha (casi todas de antes del candado del 19-ago). Gerson
+    // las quiere revisar una a una, así que el filtro ignora el mes — con el
+    // default del mes actual quedaban escondidas (se pagaron jun-ago).
+    const soloSinFicha = contaSoloSinFicha;
+    const enMes = (x) => soloSinFicha || !contaMes || mesDe(x) === contaMes;
+    const nSinFichaTodas = cp.filter(paraMi).filter(p => clasificar(p) === "falta_logistica").length;
     const grupos = {}; const totales = { lista: 0, falta_logistica: 0, falta_proveedor: 0, en_camino: 0, cerrada: 0 };
-    cp.filter(enMes).filter(paraMi).forEach(p => { const b = clasificar(p); if (!b) return; const k = p.projectCode || "__sin__"; (grupos[k] = grupos[k] || { lista: [], falta_logistica: [], falta_proveedor: [], en_camino: [], cerrada: [] })[b].push(p); totales[b]++; });
+    cp.filter(enMes).filter(paraMi).forEach(p => { const b = clasificar(p); if (!b) return; if (soloSinFicha && b !== "falta_logistica") return; const k = p.projectCode || "__sin__"; (grupos[k] = grupos[k] || { lista: [], falta_logistica: [], falta_proveedor: [], en_camino: [], cerrada: [] })[b].push(p); totales[b]++; });
     const abiertas = totales.lista + totales.falta_logistica + totales.falta_proveedor + totales.en_camino;
     const keys = Object.keys(grupos).filter(k => grupos[k].lista.length + grupos[k].falta_logistica.length + grupos[k].falta_proveedor.length + grupos[k].en_camino.length > 0)
       .sort((a, b) => (a === "__sin__" ? 1 : b === "__sin__" ? -1 : a.localeCompare(b)));
@@ -6007,11 +6019,17 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>📅 Mes de pago:</span>
-        <select value={contaMes} onChange={e => setContaMes(e.target.value)} style={{ padding: "7px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", fontFamily: "inherit" }}>
+        <select value={contaMes} disabled={soloSinFicha} title={soloSinFicha ? "Con \"Sin ficha de Logística\" se ven todos los meses" : undefined} onChange={e => setContaMes(e.target.value)} style={{ padding: "7px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", fontFamily: "inherit", opacity: soloSinFicha ? .5 : 1 }}>
           <option value="">Todos los meses</option>
           {mesesDisponibles.map(m => <option key={m} value={m}>{(() => { const [y, mm] = m.split("-").map(Number); return new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); })()}</option>)}
         </select>
-        {contaMes && !mesesDisponibles.includes(contaMes) && <span style={{ fontSize: 11, color: "#94A3B8", fontStyle: "italic" }}>sin compras pagadas este mes — elegí otro</span>}
+        {nSinFichaTodas > 0 && <button onClick={() => setContaSoloSinFicha(!soloSinFicha)} aria-pressed={soloSinFicha}
+          title="Solo las que Logística marcó entregadas SIN subir la ficha — de todos los meses"
+          style={{ padding: "6px 13px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap",
+            border: soloSinFicha ? "1px solid transparent" : `1px solid ${C_ROJO.borde}`, background: soloSinFicha ? C_ROJO.color : C_ROJO.bg, color: soloSinFicha ? "#fff" : C_ROJO.color }}>
+          Sin ficha de Logística ({nSinFichaTodas}){soloSinFicha ? " ×" : ""}
+        </button>}
+        {!soloSinFicha && contaMes && !mesesDisponibles.includes(contaMes) && <span style={{ fontSize: 11, color: "#94A3B8", fontStyle: "italic" }}>sin compras pagadas este mes — elegí otro</span>}
         {esSupervisorConta
           ? <select value={contaResp} onChange={e => setContaResp(e.target.value)} style={{ padding: "7px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: contaResp ? "#F0FDF4" : "#fff", fontFamily: "inherit", fontWeight: contaResp ? 700 : 400 }}>
               <option value="">👤 Responsable: todos</option>
