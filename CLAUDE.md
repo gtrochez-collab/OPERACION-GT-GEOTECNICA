@@ -1210,3 +1210,17 @@ interna sigue siendo "plantel" por compatibilidad de fichas guardadas).
   (por eso el ReferenceError de PayrollGen vivió inadvertido desde mayo).
 - Ideas futuras: reasignación por día en grid HE, workflow Node 24 en
   deploy.yml, mover auth a Supabase, GeoClock como app móvil.
+- **INVESTIGAR (24-sep-2026): botón "Proveedor" parece BORRAR una ficha ya
+  subida.** Caso real: MAT-2026-0284 (Multitornillos, Retención-Aurea).
+  Logística subió la ficha firmada el 7-sep (`delivery.fichaFile` con
+  contenido). El 12-sep Ana marcó la compra como "La entrega el proveedor"
+  desde Por coordinar (modal `entrega-directa`) — y `delivery.fichaFile`
+  quedó en `null`, solo sobrevivió `fichaUploadedAt`. La compra quedó en
+  Entregas de proveedor pidiendo una ficha que ya existía. Sospecha: el modal
+  de entrega directa arma el objeto `delivery` desde cero (o con un shape que
+  no preserva `fichaFile`) en vez de mergear sobre el `delivery` existente.
+  Revisar el handler del modal `entrega-directa` en PurchasesModule.jsx
+  (busca dónde se construye `delivery` con `entregaDirecta: true`) — debería
+  hacer `{...(purchase.delivery||{}), entregaDirecta:true, arrivalAt, ...}`
+  y NO pisar `fichaFile`/`fichaUploadedAt` si ya estaban. Pendiente de
+  confirmar con más casos si es un patrón o fue aislado.
