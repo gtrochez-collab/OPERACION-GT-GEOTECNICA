@@ -11,7 +11,7 @@ import { fmtUSD } from "./geocost-ui.jsx";
 // Visor de archivos en la app (10-sep-2026): las fichas se abrían con window.open
 // DESPUÉS del await y el navegador bloqueaba el popup (caso Arturo).
 import { VisorArchivo } from "./visor-archivo.jsx";
-import { hoyISO } from "./fechas.js";
+import { hoyISO, diaHN } from "./fechas.js";
 
 // Marca Geotecnica
 const ORANGE = "#E8762D";
@@ -2211,6 +2211,19 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     setCoordAbiertos(lista);
     try { localStorage.setItem("gt-coord-abiertos", JSON.stringify(lista)); } catch {}
   };
+  // ENTREGAS DE PROVEEDOR (24-sep-2026): mismo patrón que Por coordinar —
+  // grupos compactables por proyecto (localStorage, preferencia de pantalla),
+  // buscador y filtro de proyecto.
+  const [entQ, setEntQ] = useState("");
+  const [entProy, setEntProy] = useState("");
+  const [entAbiertos, setEntAbiertos] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem("gt-entregas-abiertos") || "[]"); return Array.isArray(v) ? v : []; }
+    catch { return []; }
+  });
+  const abrirEnt = (lista) => {
+    setEntAbiertos(lista);
+    try { localStorage.setItem("gt-entregas-abiertos", JSON.stringify(lista)); } catch {}
+  };
   const [rez, setRez] = useState(null);       // modal de cierre de rezagadas
   const [rezSaving, setRezSaving] = useState(false);
   const [cerrMes, setCerrMes] = useState("");
@@ -2246,9 +2259,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // proyecto, responsable y orden por atraso se retiraron con la v2 —
   // Gerson: "qué desorden, no dan ganas de ver eso".
   const [scModo, setScModo] = useState("semana");       // semana | anterior | mes | todo
-  const [scEtapa, setScEtapa] = useState("");
+  // Etapas elegidas (24-sep-2026: MULTI-selección — "ver solo las que están
+  // en logística y por coordinar al mismo tiempo"). [] = todas.
+  const [scEtapas, setScEtapas] = useState([]);
   const [scQ, setScQ] = useState("");
-  const [scVerCerradas, setScVerCerradas] = useState(false);
   // Mes de las metricas mensuales del Dashboard ("" = mes actual).
   const [dashMonth, setDashMonth] = useState("");
   // Los gráficos del Dashboard "cargan" al entrar (1-sep: "que haya el
@@ -5168,6 +5182,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       todo:     { label: "Todo",          desde: null, hasta: null },
     };
     const rango = RANGOS[scModo] || RANGOS.semana;
+    const FUERA_SC = ["por_cerrar", "cerrada"];
 
     // La fecha que manda acá es la del PAGO (es "el día que Carolina pagó").
     // Las pagadas viejas sin paidAt caen a paymentDate; si no tienen ninguna,
@@ -5185,9 +5200,13 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const txt = scQ.trim().toLowerCase();
     const base = todas
       .filter(enRango)
-      .filter(r => scVerCerradas || r.k !== "cerrada" || scEtapa === "cerrada")
+      // Supply Chain = lo que sigue EN CAMINO (24-sep-2026, Gerson: "a mí me
+      // interesa ver cuando la Lic. las paga, si están paradas en por
+      // coordinar, en logística o con el proveedor"). Lo que ya llegó a Por
+      // cerrar con conta ya se entregó — eso lo revisa él en esa pestaña.
+      .filter(r => !FUERA_SC.includes(r.k))
       .filter(r => !txt || [r.x.codigo, r.x.provider, r.x.description, r.x.projectCode].some(v => String(v || "").toLowerCase().includes(txt)));
-    const filas = scEtapa ? base.filter(r => r.k === scEtapa) : base;
+    const filas = scEtapas.length ? base.filter(r => scEtapas.includes(r.k)) : base;
 
     // Agrupado por día de pago, lo más reciente arriba.
     const porDia = {};
@@ -5264,13 +5283,12 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 58 : 0 }}>Etapa</span>
-          {pill(`Todas (${base.length})`, !scEtapa, () => setScEtapa(""))}
-          {ETAPAS.filter(e => e.k !== "esperando_pago" && (conteoEtapa[e.k] || scEtapa === e.k)).map(e =>
-            pill(`${e.label} (${conteoEtapa[e.k] || 0})`, scEtapa === e.k, () => setScEtapa(scEtapa === e.k ? "" : e.k)))}
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-2)", cursor: "pointer", whiteSpace: "nowrap" }}>
-            <input type="checkbox" checked={scVerCerradas} onChange={e => { setScVerCerradas(e.target.checked); if (!e.target.checked && scEtapa === "cerrada") setScEtapa(""); }} style={{ accentColor: ORANGE_DARK, cursor: "pointer" }} />
-            ver cerradas
-          </label>
+          {pill(`Todas (${base.length})`, scEtapas.length === 0, () => setScEtapas([]))}
+          {/* Multi-selección: cada pill se prende/apaga sola. */}
+          {ETAPAS.filter(e => e.k !== "esperando_pago" && !FUERA_SC.includes(e.k) && (conteoEtapa[e.k] || scEtapas.includes(e.k))).map(e =>
+            pill(`${e.label} (${conteoEtapa[e.k] || 0})`, scEtapas.includes(e.k),
+              () => setScEtapas(scEtapas.includes(e.k) ? scEtapas.filter(k => k !== e.k) : [...scEtapas, e.k]),
+              "Podés elegir varias a la vez"))}
           <input value={scQ} onChange={e => setScQ(e.target.value)} placeholder="Buscar código, proveedor, material…"
             style={{ flex: "0 1 260px", minWidth: 150, marginLeft: "auto", padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", outline: "none", background: "var(--surface)" }} />
         </div>
@@ -5588,62 +5606,206 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     </div>;
   };
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ENTREGAS DE PROVEEDOR (rediseño 24-sep-2026, pedido de Gerson: "ponele la
+  // estética que ya hemos puesto en los demás, que sea como Por coordinar, que
+  // se pueda compactar por proyecto y tenga las opciones que ya tiene")
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Qué pasa acá: Ana eligió "Proveedor" en Por coordinar → el proveedor lleva
+  // el material directo al proyecto. Ana descarga la ficha en blanco, se la
+  // manda al ingeniero que recibe y, cuando vuelve firmada, la sube → la compra
+  // pasa sola a Por cerrar contable. Si el proveedor no cumple, "No la entrega"
+  // la devuelve a Por coordinar. La LÓGICA (qué entra, uploadFichaFromCard,
+  // revertirEntregaDirecta, modal entrega-directa) NO cambió: solo presentación.
   const renderEntregasProveedor = () => {
     const activas = cp.filter(p => (p.status === "pagado" || p.status === "finalizado") && p.deliveryStatus === "entrega_proveedor" && !yaCerradaConta(p));
-    const grupos = {};
-    activas.forEach(p => { const k = p.projectCode || "__sin__"; (grupos[k] = grupos[k] || []).push(p); });
-    const keys = Object.keys(grupos).sort((a, b) => (a === "__sin__" ? 1 : b === "__sin__" ? -1 : a.localeCompare(b)));
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ background: "#CCFBF1", border: "1px solid #5EEAD4", borderRadius: 12, padding: 14, fontSize: 13, color: "#134E4A" }}>
-        🏪 <b>Entregas de proveedor:</b> el proveedor lleva el producto directo al proyecto. Tu responsabilidad: descargá la <b>ficha en blanco</b>, mandásela al ingeniero que recibe, y cuando te la devuelva <b>firmada</b> la subís acá — la compra pasa sola a <b>Por cerrar contablemente</b>. Si el proveedor no cumple, "🚛 No la entrega" la devuelve a Por coordinar.
-      </div>
-      {keys.length === 0
-        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 60, textAlign: "center", color: "#94A3B8" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>🏪</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: CHARCOAL, marginBottom: 4 }}>Sin entregas de proveedor pendientes</div>
-            <div style={{ fontSize: 13 }}>Cuando marqués "La entrega el proveedor" en Por coordinar, la compra aparece acá hasta que subás la ficha firmada.</div>
+    const hoy = hoyISO();
+    // Estado de la llegada, comparando DÍAS de Honduras (arrivalAt es un
+    // timestamp completo; new Date() en crudo mezclaría zonas).
+    const llegadaDe = (p) => {
+      const iso = p.delivery?.arrivalAt;
+      if (!iso) return { k: "sin", dia: "" };
+      const dia = diaHN(iso);
+      if (dia < hoy) return { k: "atrasada", dia };
+      if (dia === hoy) return { k: "hoy", dia };
+      return { k: "proxima", dia };
+    };
+    const fmtLlega = (iso) => {
+      const d = new Date(iso);
+      if (isNaN(d)) return "";
+      const f = d.toLocaleDateString("es-HN", { timeZone: "America/Tegucigalpa", weekday: "short", day: "numeric", month: "short" });
+      const h = d.toLocaleTimeString("es-HN", { timeZone: "America/Tegucigalpa", hour: "numeric", minute: "2-digit" });
+      return `${f} · ${h}`;
+    };
+    const diasAtraso = (dia) => Math.max(0, Math.round((Date.parse(hoy + "T00:00:00Z") - Date.parse(dia + "T00:00:00Z")) / 86400000));
+
+    const proyectosDisponibles = (() => {
+      const m = {};
+      activas.forEach(p => { const k = p.projectCode || "SIN PROYECTO"; m[k] = (m[k] || 0) + 1; });
+      return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], "es", { sensitivity: "base" }));
+    })();
+    const txt = entQ.trim().toLowerCase();
+    const filas = activas
+      .filter(p => !entProy || (p.projectCode || "SIN PROYECTO") === entProy)
+      .filter(p => !txt || [p.codigo, p.provider, p.description, p.projectCode].some(v => String(v || "").toLowerCase().includes(txt)));
+
+    const monto = filas.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const nAtrasadas = filas.filter(p => llegadaDe(p).k === "atrasada").length;
+    const nHoy = filas.filter(p => llegadaDe(p).k === "hoy").length;
+
+    // Dentro del proyecto: la que debió llegar primero va arriba; sin fecha al final.
+    const porLlegada = (a, b) => (a.delivery?.arrivalAt || "9999").localeCompare(b.delivery?.arrivalAt || "9999");
+    const grupos = (() => {
+      const m = {};
+      filas.forEach(p => { const k = p.projectCode || "SIN PROYECTO"; (m[k] = m[k] || []).push(p); });
+      return Object.entries(m)
+        .map(([proyecto, items]) => ({
+          proyecto,
+          items: items.slice().sort(porLlegada),
+          monto: items.reduce((s, p) => s + (Number(p.amount) || 0), 0),
+          atrasadas: items.filter(p => llegadaDe(p).k === "atrasada").length,
+          hoy: items.filter(p => llegadaDe(p).k === "hoy").length,
+        }))
+        // Lo atrasado sube solo, después lo que llega hoy, después alfabético.
+        .sort((a, b) => b.atrasadas - a.atrasadas || b.hoy - a.hoy || a.proyecto.localeCompare(b.proyecto, "es", { sensitivity: "base" }));
+    })();
+    const estaAbierto = (proy) => !!entProy || entAbiertos.includes(proy);
+    const todosAbiertos = grupos.length > 0 && grupos.every(g => entAbiertos.includes(g.proyecto));
+    const toggleGrupo = (proy) => abrirEnt(entAbiertos.includes(proy) ? entAbiertos.filter(x => x !== proy) : [...entAbiertos, proy]);
+
+    const pill = (t, activo, onClick, title) => (
+      <button key={t} onClick={onClick} title={title} aria-pressed={activo} style={{
+        padding: "5px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
+        border: activo ? "1px solid transparent" : "1px solid var(--hairline)",
+        background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)",
+        fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap",
+      }}>{t}</button>
+    );
+    const enlace = (t, onClick, color, title) => (
+      <button onClick={onClick} title={title}
+        style={{ background: "none", border: "none", padding: 0, fontSize: 11, color: color || "var(--text-3)", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>{t}</button>
+    );
+    const chipLlegada = (p) => {
+      const l = llegadaDe(p);
+      const c = l.k === "atrasada" ? C_ROJO : l.k === "hoy" ? C_NARANJA_CHIP : l.k === "proxima" ? C_AZUL : C_GRIS;
+      const t = l.k === "atrasada" ? `Debió llegar${diasAtraso(l.dia) ? ` · hace ${diasAtraso(l.dia)} d` : ""}`
+        : l.k === "hoy" ? "Llega hoy" : l.k === "proxima" ? "Llega" : "Sin fecha de llegada";
+      return <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 10px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: c.color, background: c.bg, whiteSpace: "nowrap" }}>
+        {t}{p.delivery?.arrivalAt && <span style={{ fontWeight: 600, opacity: .85 }}>{fmtLlega(p.delivery.arrivalAt)}</span>}
+      </span>;
+    };
+
+    const tarjeta = (p) => {
+      const l = llegadaDe(p);
+      const inputId = `entrega-ficha-${p.id}`;
+      return <div key={p.id} className="gt-vidrio" style={{
+        padding: isMobile ? "13px 14px" : "14px 18px",
+        display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) auto",
+        gap: isMobile ? 12 : 18, alignItems: "center",
+        background: l.k === "atrasada" ? C_ROJO.bg : undefined, borderColor: l.k === "atrasada" ? C_ROJO.borde : undefined,
+      }}>
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".02em" }}>{p.codigo || "—"}</span>
+            {chipLlegada(p)}
+            <span style={{ marginLeft: "auto", font: "800 15px/1 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(p.amount)}</span>
           </div>
-        : keys.map(key => <div key={key} style={{ background: "#F8F2E6", borderRadius: 12, padding: 14, border: "1px solid #E8E1D3" }}>
-            <div style={{ fontWeight: 800, fontSize: 14, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.5, borderBottom: "3px solid #0F766E", paddingBottom: 8, marginBottom: 10, display: "flex", justifyContent: "space-between" }}>
-              <span>{key === "__sin__" ? "SIN PROYECTO" : key}</span><Badge color="#0F766E">{grupos[key].length}</Badge>
+          <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", wordBreak: "break-word" }}>{p.provider}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>
+          {(p.delivery?.arrivalContacto || p.delivery?.arrivalNotas || p.cierreResponsable) && <div style={{ fontSize: 11, color: "var(--text-3)", display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {p.delivery?.arrivalContacto && <span>Recibe: <b style={{ color: "var(--text-2)" }}>{p.delivery.arrivalContacto}</b></span>}
+            {p.delivery?.arrivalNotas && <span>{p.delivery.arrivalNotas}</span>}
+            {p.cierreResponsable && <span>Cierra con conta: <b style={{ color: "var(--text-2)" }}>{p.cierreResponsable}</b></span>}
+          </div>}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 2 }}>
+            {canSendToLogistics && enlace("Cambiar fecha/hora", () => setModal({ t: "entrega-directa", d: p }), C_AZUL.color)}
+            {canSendToLogistics && enlace("No la entrega", () => revertirEntregaDirecta(p), undefined, "El proveedor no cumple — vuelve a Por coordinar")}
+            {enlace("Ver solicitud", () => setModal({ t: "detail", d: p }))}
+            {puedeBorrarSolicitud && <>
+              {enlace("Cerrar rezagada", () => setRez({ modo: "una", purchase: p, quien: "", otro: "", nota: "" }), "var(--text-faint)", "Cerrar contablemente (rezagada del flujo anterior)")}
+              <button onClick={() => borrarSolicitudCompleta(p)} title="Borrar esta solicitud por completo"
+                style={{ background: "none", border: "none", padding: 0, fontSize: 11, color: "var(--text-faint)", cursor: "pointer", fontFamily: "inherit" }}>🗑</button>
+            </>}
+          </div>
+        </div>
+        {/* Las dos acciones de Ana: ficha en blanco → al ingeniero; firmada → acá */}
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end", flexShrink: 0 }}>
+          <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { if (!e?.isStaleChunk) alert("No se pudo generar la ficha: " + (e?.message || e)); } }}
+            title="Descargala y mandásela al ingeniero que recibe"
+            style={{ padding: "7px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-2)", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>Ficha en blanco</button>
+          {canSendToLogistics && <>
+            <input type="file" accept=".pdf,image/*" id={inputId} style={{ display: "none" }}
+              onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ""; const ok = await uploadFichaFromCard(p, f); if (ok) alert("✓ Ficha firmada subida.\nLa compra pasó a Por cerrar contable."); }} />
+            <label htmlFor={inputId} title="La que te devolvió firmada el ingeniero — la compra pasa a Por cerrar contable"
+              style={{ padding: "7px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", border: "1px solid transparent", background: ORANGE, color: "#fff", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap", display: "inline-block" }}>Subir ficha firmada</label>
+          </>}
+        </div>
+      </div>;
+    };
+
+    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+      {/* Resumen */}
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+        {[
+          { v: filas.length, l: "con el proveedor", c: C_AZUL.color },
+          { v: fmtL(monto), l: "en camino" },
+          { v: grupos.length, l: "proyectos" },
+          { v: nHoy, l: "llegan hoy", c: nHoy ? "var(--naranja-tinta)" : undefined },
+          { v: nAtrasadas, l: "debieron llegar", c: nAtrasadas ? C_ROJO.color : undefined },
+          { v: "", l: "por cerrar contable →", go: "conta" },
+        ].map((x, i, arr) => (
+          <div key={x.l} onClick={x.go ? () => setSec(x.go) : undefined}
+            style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 45%" : 1, minWidth: 0, cursor: x.go ? "pointer" : "default" }}>
+            <div style={{ minWidth: 0 }}>
+              {x.v !== "" && <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.v}</div>}
+              <div className="gt-label" style={{ color: x.go ? "var(--naranja-tinta)" : "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 10 }}>
-              {grupos[key]
-                .sort((a, b) => (a.delivery?.arrivalAt || "").localeCompare(b.delivery?.arrivalAt || ""))
-                .map(p => {
-                  const llega = p.delivery?.arrivalAt ? new Date(p.delivery.arrivalAt) : null;
-                  const atrasada = llega && llega < new Date();
-                  return <div key={p.id} style={{ background: "#fff", border: `1px solid ${atrasada ? "#FCD34D" : "#5EEAD4"}`, borderLeft: `3px solid ${atrasada ? "#B45309" : "#0F766E"}`, borderRadius: 8, padding: 12 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <Badge color={atrasada ? "#B45309" : "#0F766E"}>{atrasada ? "⚠ Debió llegar" : "🏪 Llega directo"}</Badge>
-                      {puedeBorrarSolicitud && <span style={{ display: "flex", gap: 6, marginLeft: "auto", marginRight: 6 }}>
-                        <span role="button" title="Cerrar contablemente (rezagada del flujo anterior)" onClick={() => setRez({ modo: "una", purchase: p, quien: "", otro: "", nota: "" })} style={{ cursor: "pointer", fontSize: 12, opacity: 0.6 }}>✅</span>
-                        <span role="button" title="Borrar esta solicitud por completo (solo vos)" onClick={() => borrarSolicitudCompleta(p)} style={{ cursor: "pointer", fontSize: 12, opacity: 0.45 }}>🗑</span>
-                      </span>}
-                      {llega && <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>📅 {llega.toLocaleDateString("es-HN", { day: "2-digit", month: "short" })} · {llega.toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}</span>}
-                    </div>
-                    {p.codigo && <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", fontFamily: "ui-monospace, Menlo, monospace", marginTop: 5 }}>{p.codigo}</div>}
-                    <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 2 }}>{p.provider}</div>
-                    <div style={{ fontSize: 11.5, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
-                    {p.amount && <div style={{ fontSize: 11, color: "#059669", fontWeight: 700, marginTop: 4 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</div>}
-                    {p.cierreResponsable && <div style={{ fontSize: 10.5, color: "#0F766E", marginTop: 3 }}>🧾 Cierra con conta: <b>{p.cierreResponsable}</b></div>}
-                    {(p.delivery?.arrivalContacto || p.delivery?.arrivalNotas) && <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 4, paddingTop: 4, borderTop: "1px dashed #E2E8F0" }}>{[p.delivery?.arrivalContacto ? `👤 ${p.delivery.arrivalContacto}` : "", p.delivery?.arrivalNotas || ""].filter(Boolean).join(" · ")}</div>}
-                    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-                      <button onClick={async () => { try { await generateFichaPDF(p, getProject(p.projectCode), COMPANIES[p.company]?.name); } catch (e) { if (!e?.isStaleChunk) alert("No se pudo: " + e.message); } }} style={{ background: "transparent", color: CHARCOAL, border: "1px solid #CBD5E1", padding: "6px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Descargar ficha en blanco (mandala al ingeniero)</button>
-                      {canSendToLogistics && <>
-                        <input type="file" accept=".pdf,image/*" id={`entrega-ficha-${p.id}`} style={{ display: "none" }}
-                          onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ""; const ok = await uploadFichaFromCard(p, f); if (ok) alert("✓ Ficha firmada subida.\nLa compra pasó a Por cerrar contablemente."); }} />
-                        <label htmlFor={`entrega-ficha-${p.id}`} style={{ background: "#0F766E", color: "#fff", padding: "7px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", display: "block" }}>📎 Subir ficha FIRMADA por el ingeniero</label>
-                        <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
-                          <button onClick={() => setModal({ t: "entrega-directa", d: p })} style={{ background: "none", border: "none", color: "#0891B2", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: 0 }}>✏️ Cambiar fecha/hora</button>
-                          <button onClick={() => revertirEntregaDirecta(p)} style={{ background: "none", border: "none", color: "#B45309", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: 0 }}>🚛 No la entrega</button>
-                        </div>
-                      </>}
-                    </div>
-                  </div>;
-                })}
-            </div>
-          </div>)}
+            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
+          </div>
+        ))}
+      </div>
+
+      {/* Filtros */}
+      <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Proyecto</span>
+        <select value={entProy} onChange={e => setEntProy(e.target.value)}
+          style={{ padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: entProy ? "rgba(232,118,45,.08)" : "var(--surface)", fontWeight: entProy ? 700 : 400, color: "var(--text-2)", maxWidth: "100%" }}>
+          <option value="">Todos los proyectos</option>
+          {proyectosDisponibles.map(([nombre, n]) => <option key={nombre} value={nombre}>{nombre} ({n})</option>)}
+        </select>
+        {!entProy && grupos.length > 1 && (todosAbiertos
+          ? pill("Compactar todo", false, () => abrirEnt([]), "Dejar solo la fila de cada proyecto")
+          : pill("Expandir todo", false, () => abrirEnt(grupos.map(g => g.proyecto)), "Abrir todos los proyectos"))}
+        {(entProy || entQ) && <Btn small variant="ghost" onClick={() => { setEntProy(""); setEntQ(""); }}>Limpiar</Btn>}
+        <input value={entQ} onChange={e => setEntQ(e.target.value)} placeholder="Buscar código, proveedor, material…"
+          style={{ flex: "0 1 250px", minWidth: 150, marginLeft: "auto", padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", outline: "none", background: "var(--surface)" }} />
+      </div>
+
+      {filas.length === 0
+        ? <div className="gt-vidrio" style={{ padding: "44px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>
+            {activas.length === 0 ? "Nada con el proveedor. Cuando en Por coordinar elijás \"Proveedor\", la compra cae acá hasta que subás la ficha firmada." : "Nada con estos filtros."}
+          </div>
+        : grupos.map(g => {
+            const abierto = estaAbierto(g.proyecto);
+            return <div key={g.proyecto} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+              <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} aria-expanded={abierto}
+                aria-label={`${abierto ? "Compactar" : "Abrir"} ${g.proyecto}`}
+                onClick={() => toggleGrupo(g.proyecto)}
+                onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleGrupo(g.proyecto); } }}
+                style={{ padding: isMobile ? "11px 14px" : "11px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: abierto ? "rgba(232,118,45,.05)" : undefined }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden
+                  style={{ color: "var(--text-3)", flexShrink: 0, transform: abierto ? "rotate(90deg)" : "none", transition: "transform .18s var(--curva)" }}><path d="M9 18l6-6-6-6" /></svg>
+                <span style={{ font: "800 13px/1.2 var(--sans)", color: "var(--text)", letterSpacing: ".01em", minWidth: 0, wordBreak: "break-word" }}>{g.proyecto}</span>
+                <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{g.items.length} con el proveedor</span>
+                <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  {g.atrasadas > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C_ROJO.color, whiteSpace: "nowrap" }}>{g.atrasadas} debi{g.atrasadas === 1 ? "ó" : "eron"} llegar</span>}
+                  {g.hoy > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: "var(--naranja-tinta)", whiteSpace: "nowrap" }}>{g.hoy} llega{g.hoy === 1 ? "" : "n"} hoy</span>}
+                  <span style={{ font: "800 14px/1 var(--display)", color: "var(--naranja-tinta)", whiteSpace: "nowrap" }}>{fmtL(g.monto)}</span>
+                </span>
+              </div>
+              {abierto && g.items.map(tarjeta)}
+            </div>;
+          })}
     </div>;
   };
 
@@ -6836,6 +6998,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // Sin emojis (rediseño 31-ago): pestañas de texto limpio, estilo IST.
   const allNav = [
     { id: "dashboard", label: "Dashboard" },
+    // Calendario de Pago va JUSTO después del Dashboard (24-sep-2026, pedido
+    // de Gerson).
+    { id: "calendario", label: "Calendario de Pago" },
     // "Prioridades" va ANTES de Solicitudes (18-sep, pedido de Gerson: "un
     // apartado al lado de solicitudes, o antes mejor dicho"): es la cola de
     // pago que Finanzas le ordena a Tesorería.
@@ -6843,7 +7008,6 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // "Cuentas por pagar" va DESPUÉS de Prioridades (21-sep): es la
     // calendarización de lo que puede esperar y de lo que vino a crédito.
     { id: "cxp", label: "Cuentas por pagar" },
-    { id: "calendario", label: "Calendario de Pago" },
     { id: "list", label: "Solicitudes" },   // 2ª pestaña (3-sep, pedido de Gerson)
     // "costos" se retiró (31-ago, pedido de Gerson: "es lo mismo que el
     // Dashboard y nos quita espacio") — el Reporte ejecutivo PDF se genera

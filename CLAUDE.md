@@ -367,6 +367,24 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   solo confirm, y además marca `tipoCompra: "servicio"` (sirve para las que
   ya estaban acumuladas). Chip azul "Servicio" en la tabla de Solicitudes.
   ⚠ GeoMachinery NO se tocó a propósito (Gerson: "aún nada a geomachinery").
+  **ENTREGAS DE PROVEEDOR rediseñada (24-sep-2026)** — Gerson: "qué feo como
+  eran antes, ponele la estética de los demás y que sea como Por coordinar".
+  `renderEntregasProveedor` usa el MISMO patrón de la bandeja: tira resumen en
+  vidrio (con el proveedor · monto · proyectos · llegan hoy · debieron llegar ·
+  acceso a Por cerrar contable), filtro por proyecto + buscador + Expandir/
+  Compactar todo, y grupos COMPACTABLES por proyecto (`entAbiertos` en
+  localStorage `gt-entregas-abiertos`, preferencia de pantalla; con un
+  proyecto filtrado se abre solo). Los proyectos con atrasadas suben primero,
+  luego los que reciben hoy. Tarjeta: código · chip de llegada (AZUL "Llega"
+  · NARANJA "Llega hoy" · ROJO "Debió llegar · hace N d", comparando DÍAS de
+  Honduras con `diaHN(arrivalAt)` vs `hoyISO()`) · monto · proveedor · qué se
+  compró · quién recibe / cierra con conta; a la derecha las dos acciones de
+  Ana: **Ficha en blanco** (ghost) y **Subir ficha firmada** (naranja); como
+  enlaces: Cambiar fecha/hora, No la entrega, Ver solicitud y las solo-Gerson.
+  Se retiró el banner teal explicativo. La lógica (qué entra, uploadFichaFromCard,
+  revertirEntregaDirecta, modal entrega-directa) NO cambió.
+  **Orden de pestañas (24-sep-2026)**: Calendario de Pago va JUSTO después del
+  Dashboard (antes iba después de Cuentas por pagar).
   **PROYECTOS rediseñado (18-sep-2026)** — Gerson: "qué horrible se ven, quiero
   que se vean como en GeoCost". `renderProjects` usa las mismas piezas que
   `renderProyectosGrid` de GeoCostModule: tarjetas `.gt-vidrio gt-vidrio-hover`
@@ -504,9 +522,15 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   · Semana pasada · Este mes · Todo, chips por etapa, "ver cerradas" y
   buscador. Click en una tarjeta abre esa solicitud. `etapaDe()` quedó
   INTACTA (la clasificación auditada en ago-2026); los estados se redujeron a
-  `scModo`/`scEtapa`/`scQ`/`scVerCerradas`. Se retiró la tira resumen
+  `scModo`/`scEtapas`/`scQ`. Se retiró la tira resumen
   (23-sep-2026, Gerson: "no necesito ese cuadrito") — quedan solo los filtros
-  y la lista agrupada por día. El texto de abajo describe la v2,
+  y la lista agrupada por día. **24-sep-2026**: Supply Chain muestra SOLO lo
+  que sigue EN CAMINO — se excluyen `por_cerrar` y `cerrada` (`FUERA_SC`;
+  Gerson: "si ya pasó a por cerrar con conta significa que ya se entregó, eso
+  lo reviso yo allá"; se retiró el check "ver cerradas"). Quedan por
+  coordinar, en logística, con el proveedor y falta ficha. El filtro de etapa
+  es MULTI-selección (`scEtapas` array, [] = todas): "ver las que están en
+  logística y por coordinar al mismo tiempo". El texto de abajo describe la v2,
   que ya no existe — se conserva solo por el detalle de la lógica de etapas.
   **SUPPLY CHAIN — presentación v2 (3-sep, RETIRADA el 18-sep)**: sin título, filtro compacto
   en una fila (se quitaron el select de proyecto y el input de
