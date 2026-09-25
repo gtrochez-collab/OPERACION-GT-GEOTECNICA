@@ -22,12 +22,13 @@ import {
   ORANGE, ORANGE_DARK, CHARCOAL, C_GRIS, C_VERDE, C_AMARILLO, C_NARANJA,
   useIsMobile, prefiereMenosMovimiento,
   fmtUSD, fmtL, fmtUSD0, fmtL0, fmtPct, fmtFecha,
-  uid, Select, Btn, Chip, Vidrio, Label, SEMAFORO,
+  uid, Select, Btn, Chip, Vidrio, Label, SEMAFORO, Modal, Textarea,
 } from "./geocost-ui.jsx";
+import { DividirItemsModal } from "./lineas-presupuesto.jsx";
 import {
   TASA_DEFAULT, num, hnlToUsd, montoPartida,
   opcionesPartidas, partidaMO, proyectosUnificados, nombreProyecto,
-  movimientosDeProyecto, resumenPresupuesto, siguienteCodigoMov,
+  movimientosDeProyecto, resumenPresupuesto, siguienteCodigoMov, disponibleDePartida,
 } from "./geocost-calc.js";
 import { VisorArchivo } from "./visor-archivo.jsx";
 import { PresupuestoForm, MovilizacionForm, MovilizacionDetalle, AjustesTasa, ESTADOS_MOV } from "./geocost-forms.jsx";
@@ -509,6 +510,36 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     } finally { setReclasificando(null); }
   };
 
+  // Dividir una compra en ítems del presupuesto (25-sep-2026). Mismo patrón
+  // que reclasificar: SIEMPRE sobre el array de la nube, por id, + verify.
+  // Solo cp-purchases: GeoMachinery todavía no maneja ítems.
+  const guardarItems = async (mov, { lineas, partidaId, sobregiroJustificacion }) => {
+    if (!puedeReclasificar || mov?.sourceKey !== "cp-purchases") return false;
+    const key = "cp-purchases";
+    const id = mov.origen?.id;
+    if (!id) return false;
+    try {
+      const c = await leerNube(key); if (!c.ok) return false;
+      if (!Array.isArray(c.value)) { alert("La nube no devolvió la lista de compras."); return false; }
+      if (!c.value.some(x => x.id === id)) { alert("La compra ya no está en la nube."); return false; }
+      const at = new Date().toISOString();
+      const nota = `Dividida en ${lineas.length} ítem${lineas.length === 1 ? "" : "s"}: ${lineas.map(l => l.nombre).join(" · ")}`;
+      const updated = c.value.map(x => x.id === id ? { ...x, lineas, partidaId, sobregiroJustificacion, audit: [...(x.audit || []), { action: "partida_reclasificada", by: userName, role: userRole, at, note: nota }] } : x);
+      const ok = await store.set(key, updated);
+      if (!ok) { alert("No se pudo guardar en la nube."); return false; }
+      const back = await store.getCloud(key);
+      const fila = Array.isArray(back) ? back.find(x => x.id === id) : null;
+      if (!fila || (fila.lineas || []).length !== lineas.length || !(fila.audit || []).some(a => a?.at === at)) { alert("VERIFICACIÓN FALLÓ: la nube no refleja los ítems."); return false; }
+      setCpPurchases(back);
+      stamp();
+      return true;
+    } catch (e) {
+      alert("Sin conexión con la nube: no se pudieron guardar los ítems.");
+      console.warn("[GeoCost] guardarItems falló", e);
+      return false;
+    }
+  };
+
   // ── PDFs ──
   const descargarFicha = async (r) => {
     if (pdfBusy) return; setPdfBusy(true);
@@ -580,7 +611,11 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
           <th style={TH}>Partida</th><th style={TH}>Estado</th><th style={{ ...TH, textAlign: "right" }}>L</th><th style={{ ...TH, textAlign: "right" }}>$</th>
         </tr></thead>
         <tbody>{movs.map(m => {
-          const reclasificable = puedeReclasificar && (m.fuente === "compras" || m.fuente === "maquinas") && m.sourceKey;
+          const reclasificable = puedeReclasificar && (m.fuente === "compras" || m.fuente === "maquinas") && m.sourceKey && !m.dividida;
+          // Dividir en ítems: solo compras de GeoShopping (25-sep-2026)
+          const divisible = puedeReclasificar && m.sourceKey === "cp-purchases";
+          const linkItems = (txt) => <button onClick={() => setModal({ t: "items", purchaseId: m.origen?.id, presId: pres.id })}
+            style={{ background: "none", border: "none", padding: 0, marginTop: 4, fontSize: 11, color: "var(--naranja-tinta)", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", fontWeight: 700 }}>{txt}</button>;
           const nombrePart = nombrePartidaDe(pres, m);
           const est = m.fuente === "mo" && m.enCurso ? ESTADO_COSTO.encurso : ESTADO_COSTO[m.estado] || ESTADO_COSTO.comprometido;
           const busy = !!reclasificando && reclasificando.id === m.origen?.id;
@@ -596,6 +631,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
               {reclasificable
                 ? <Select options={opcionesPartidas(pres, m.fuente === "maquinas" ? "maquinas" : "compras")} value={busy ? reclasificando.partidaId : (m.partidaId || "")} emptyLabel="Por clasificar" disabled={busy} onChange={e => reclasificar(m, e.target.value)} style={{ padding: "7px 10px", fontSize: 12.5, borderRadius: 10, opacity: busy ? .6 : 1, minWidth: 180 }} />
                 : nombrePart ? <span style={{ color: "var(--text)", fontWeight: 500 }}>{truncar(nombrePart, 40)}</span> : <span style={{ color: C_AMARILLO.color, fontWeight: 700 }}>Por clasificar</span>}
+              {divisible && <div>{linkItems(m.dividida ? "Editar ítems" : "Dividir en ítems")}</div>}
             </td>
             <td style={TD}><Chip c={est}>{est.label}</Chip></td>
             <td style={{ ...TD, ...MONO, textAlign: "right" }}>{fmtL(m.montoHNL)}</td>
@@ -621,50 +657,8 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   // dashAnim, patrón GeoShopping v4; paleta SOLO gris/naranja/carbón.
   // ═══════════════════════════════════════════════════════════════════════
   const renderDashboard = () => {
-    const tarjeta = (r, i) => {
-      const { pres, resumen: s } = r;
-      const cats = (s?.categorias || []).filter(c => num(c.presupuestoUSD) > 0);
-      const abrir = () => { setSec("proyectos"); setProyActivo(pres.projectCode); };
-      // Desktop: la tarjeta llena el alto disponible de su columna (mismo
-      // criterio que grafProyectos/grafMeses); el bloque de anillo+categorías
-      // se centra en el espacio que sobra en vez de quedar pegado arriba con
-      // un hueco abajo — Gerson: "que aprovechemos el espacio de la página".
-      const flexible = !isMobile;
-      return <div key={pres.id} className="gt-vidrio gt-vidrio-hover gt-sube" role="button" tabIndex={0} onClick={abrir} onKeyDown={onKeyActivar(abrir)} aria-label={`Abrir ${nombreDe(pres.projectCode)}`}
-        style={{ padding: 20, cursor: "pointer", display: "flex", flexDirection: "column", gap: 16, animationDelay: `${i * 70}ms`, ...(flexible ? { flex: "1 1 0", minHeight: 0 } : {}) }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexShrink: 0 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ font: "800 18px/1.15 var(--display)", letterSpacing: "-.015em", color: "var(--text)" }}>{nombreDe(pres.projectCode)}</div>
-            {pres.ficha?.codigo && <div style={{ ...MONO, fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>{pres.ficha.codigo}</div>}
-          </div>
-          {chipSem(s?.semaforo)}
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 16, ...(flexible ? { flex: 1, minHeight: 0, justifyContent: "center" } : {}) }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-            {anillo(s, { delay: i * 70 })}
-            <div style={{ display: "grid", gap: 9, minWidth: 0 }}>
-              {[["Ejecutado", s?.ejecutadoUSD, CHARCOAL], ["Comprometido", s?.comprometidoUSD, ORANGE], ["Disponible", s?.disponibleUSD, null]].map(([l, v, col]) => <div key={l} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: col || "rgba(44,42,40,.14)", flexShrink: 0 }} />
-                <div style={{ minWidth: 0 }}>
-                  <div className="gt-label" style={{ color: "var(--text-3)" }}>{l}</div>
-                  <div style={{ ...MONO, fontSize: 13.5, fontWeight: 700, color: num(v) < 0 && l === "Disponible" ? ORANGE_DARK : "var(--text)", marginTop: 2 }}>{fmtUSD0(num(v))}</div>
-                </div>
-              </div>)}
-            </div>
-          </div>
-          {cats.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 7 }}>
-            {cats.map((c, j) => <div key={c.categoria}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--text-3)", marginBottom: 3 }}>
-                <span style={{ fontWeight: 600 }}>{c.categoria}</span>
-                <span style={MONO}>{fmtPct(num(c.pct))}</span>
-              </div>
-              {barraDoble(c, { alto: 6, delay: i * 70 + j * 60 })}
-            </div>)}
-          </div>}
-        </div>
-      </div>;
-    };
-
+    // (25-sep-2026) Las tarjetas con anillo por proyecto se retiraron del
+    // Dashboard: las reemplazó ruedaProyectos() (una sola dona para todos).
     // ── Piezas comunes de las gráficas ──
     const trans = (prop, ms, delay = 0) => reduceMotion ? "none" : cssAnim(prop, ms, delay);
     const puntoLeyenda = (color, txt) => <span key={txt} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: "var(--text-2)", whiteSpace: "nowrap" }}>
@@ -790,6 +784,77 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       </div>;
     };
 
+    // ── Gastado por proyecto: UNA ruedita con todos (25-sep-2026) ──
+    // Gerson: "ahorita son 2 proyectos pero serán más, no pueden irse montando
+    // todos ahí — mejor una ruedita con cuánto ha gastado cada proyecto". Las
+    // tarjetas con anillo (una por proyecto, apiladas) no escalaban y con
+    // nombres largos el título se encimaba con el anillo. Ahora: una dona
+    // donde cada tajada es lo EJECUTADO de un proyecto y, abajo, la lista de
+    // proyectos (scrollea dentro de la tarjeta si son muchos) con su monto y
+    // cuánto de su presupuesto lleva. Click en una fila abre el proyecto.
+    const PALETA = [CHARCOAL, ORANGE, "#9A928A", "#F2B48A", "#5E5954", ORANGE_DARK, "#CFC8BF", "#E8A06A"];
+    const ruedaProyectos = () => {
+      const flexible = !isMobile;
+      const filas = activos.map((r, i) => ({ r, ej: num(r.resumen?.ejecutadoUSD) }))
+        .sort((a, b) => b.ej - a.ej).map((x, i) => ({ ...x, color: PALETA[i % PALETA.length] }));
+      const total = filas.reduce((s2, x) => s2 + x.ej, 0);
+      const R = 74, ST = 20, SIZE = (R + ST) * 2, CX = SIZE / 2, C = 2 * Math.PI * R;
+      let acum = 0;
+      const tajadas = total > 0 ? filas.filter(x => x.ej > 0).map((x, i) => {
+        const f = x.ej / total;
+        const seg = { ...x, f, desde: acum };
+        acum += f;
+        return seg;
+      }) : [];
+      return <div className="gt-vidrio gt-sube" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column", height: flexible ? "100%" : undefined, animationDelay: "80ms" }}>
+        {cabecera("Gastado por proyecto")}
+        <div style={{ display: "flex", justifyContent: "center", padding: "4px 0 16px", flexShrink: 0 }}>
+          <div style={{ position: "relative", width: SIZE, height: SIZE }}>
+            <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ transform: "rotate(-90deg)" }} aria-hidden>
+              <circle cx={CX} cy={CX} r={R} fill="none" stroke="rgba(44,42,40,.08)" strokeWidth={ST} />
+              {tajadas.map((t, i) => {
+                // 1.5px de aire entre tajadas (solo si hay más de una)
+                const gap = tajadas.length > 1 ? 1.5 : 0;
+                const largo = Math.max(0, t.f * C - gap);
+                return <circle key={t.r.pres.id} cx={CX} cy={CX} r={R} fill="none" stroke={t.color} strokeWidth={ST}
+                  strokeDasharray={dashAnim ? `${largo} ${C}` : `0 ${C}`} strokeDashoffset={-t.desde * C}
+                  style={{ transition: trans("stroke-dasharray", 1200, i * 90) }}>
+                  <title>{`${nombreDe(t.r.pres.projectCode)}: ${fmtUSD0(t.ej)} (${fmtPct(t.f)})`}</title>
+                </circle>;
+              })}
+            </svg>
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
+              <div style={{ font: "800 21px/1.1 var(--display)", letterSpacing: "-.02em", color: "var(--text)" }}>{fmtUSD0(total)}</div>
+              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 4 }}>ejecutado</div>
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 2, alignContent: "start", ...(flexible ? { flex: 1, minHeight: 0, overflowY: "auto", scrollbarWidth: "thin" } : {}) }}>
+          {filas.map(({ r, ej, color }) => {
+            const { pres, resumen: s2 } = r;
+            const abrir = () => { setSec("proyectos"); setProyActivo(pres.projectCode); };
+            const partTotal = total > 0 ? ej / total : 0;
+            return <div key={pres.id} className="cc-fila" role="button" tabIndex={0} onClick={abrir} onKeyDown={onKeyActivar(abrir)} aria-label={`Abrir ${nombreDe(pres.projectCode)}`}
+              style={{ display: "grid", gridTemplateColumns: "10px minmax(0,1fr) auto", gap: 10, alignItems: "center", padding: "8px 8px" }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: color }} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nombreDe(pres.projectCode)}</div>
+                <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 2, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span>{fmtPct(num(s2?.pct))} de su presupuesto</span>
+                  {s2?.semaforo && s2.semaforo !== "ok" && chipSem(s2.semaforo)}
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ ...MONO, fontSize: 12.5, fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{fmtUSD0(ej)}</div>
+                <div style={{ ...MONO, fontSize: 10.5, color: "var(--text-3)", marginTop: 2 }}>{fmtPct(partTotal)}</div>
+              </div>
+            </div>;
+          })}
+        </div>
+        {total <= 0 && vacioTxt("Sin gasto ejecutado todavía", { textAlign: "center", marginTop: 6 })}
+      </div>;
+    };
+
     if (activos.length === 0) return <Vidrio className="gt-sube" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "38px 20px", textAlign: "center" }}>
       <div style={{ width: 52, height: 52, borderRadius: 16, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center" }}><IconoGeoCost size={26} /></div>
       <div style={{ font: "800 17px/1.2 var(--display)", color: "var(--text)" }}>Todavía no hay presupuestos</div>
@@ -807,7 +872,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     // llenar ese espacio. En el teléfono se apilan con su alto natural.
     return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(3, minmax(0,1fr))", gridTemplateRows: isMobile ? undefined : "minmax(560px, auto)", gap: 16, alignItems: "stretch" }}>
       {grafProyectos()}
-      <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, height: isMobile ? undefined : "100%" }}>{activos.map(tarjeta)}</div>
+      {ruedaProyectos()}
       {grafMeses()}
     </div>;
   };
@@ -933,7 +998,9 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
           {(cat.partidas || []).map((p, pi) => {
             const abierta = partidaAbierta === p.id;
             const toggle = () => setPartidaAbierta(abierta ? null : p.id);
-            const sub = [p.unidad, num(p.cantidad) > 0 ? num(p.cantidad).toLocaleString("es-HN") : null, num(p.pu) > 0 ? `P.U. ${fmtUSD(num(p.pu))}` : null].filter(Boolean).join(" · ");
+            // "95 Lance · P.U. $ 5.03" — cantidad Y unidad juntas, como las lee el PM.
+            const cantUni = [num(p.cantidad) > 0 ? num(p.cantidad).toLocaleString("es-HN") : null, p.unidad].filter(Boolean).join(" ");
+            const sub = [cantUni, num(p.pu) > 0 ? `P.U. ${fmtUSD(num(p.pu))}` : null].filter(Boolean).join(" · ");
             return <div key={p.id}>
               <div className="cc-fila" role="button" tabIndex={0} aria-expanded={abierta} onClick={toggle} onKeyDown={onKeyActivar(toggle)}
                 style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1.4fr) minmax(160px, 1fr) auto", gap: isMobile ? 8 : 18, alignItems: "center", padding: "10px 10px" }}>
@@ -1056,6 +1123,18 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   const renderModal = () => {
     if (!modal) return null;
     const cerrar = () => setModal(null);
+    if (modal.t === "items") {
+      const pres = presupuestos.find(p => p.id === modal.presId);
+      const purchase = cpPurchases.find(x => x.id === modal.purchaseId);
+      if (!pres || !purchase || !puedeReclasificar) return null;
+      // Disponible de cada partida SIN contar esta misma compra
+      const r = resumenes.find(x => x.pres.id === pres.id);
+      const movsSin = (r?.movs || []).filter(mv => mv.origen?.id !== purchase.id);
+      const disponibleDe = (pid) => disponibleDePartida({ pres, partidaId: pid, movs: movsSin });
+      const mov = { sourceKey: "cp-purchases", origen: purchase };
+      return <DividirItemsModal purchase={purchase} pres={pres} tasa={tasa} disponibleDe={disponibleDe} onClose={cerrar}
+        onSave={(datos) => guardarItems(mov, datos)} Modal={Modal} Textarea={Textarea} Btn={Btn} />;
+    }
     if (modal.t === "tasa") return <AjustesTasa config={config || { tasa: TASA_DEFAULT }} puedeEditar={puedeTasa} onSave={guardarConfig} onClose={cerrar} />;
     if (modal.t === "presupuesto") {
       if (!puedeEditarPresupuesto) return null;

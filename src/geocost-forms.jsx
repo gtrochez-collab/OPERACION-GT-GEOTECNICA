@@ -115,7 +115,10 @@ const Dato = ({ label, children, mono }) => <div style={{ minWidth: 0 }}>
 // ═══════════════════════════════════════════════════════════════════════════
 // PRESUPUESTO — proyecto + partidas (USD) + ficha
 // ═══════════════════════════════════════════════════════════════════════════
-const filaPartidaVacia = (base = {}) => ({ id: uid(), categoria: "Generales", nombre: "", unidad: "Global", cantidad: "1", pu: "", monto: "", modulo: "compras", nota: "", ...base });
+// Unidad VACÍA por defecto (25-sep-2026): con "Global" pre-llenado, las 51
+// partidas de Torre Adobe quedaron todas en "Global" aunque el PM las manda en
+// Lance, Cubeta, Rollo, m… — la unidad se escribe tal cual el presupuesto.
+const filaPartidaVacia = (base = {}) => ({ id: uid(), categoria: "Generales", nombre: "", unidad: "", cantidad: "1", pu: "", monto: "", modulo: "compras", nota: "", ...base });
 const filaMaterialVacia = () => ({ id: uid(), descripcion: "", cantidad: "", unidad: "" });
 // partida guardada (números) → fila editable (strings). Si cantidad y pu vienen, el monto se calcula.
 const partidaAFila = (p) => {

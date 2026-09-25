@@ -973,6 +973,61 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   sección de GeoCost llevan `gridTemplateColumns: minmax(0,1fr)` (la tabla de
   Movimientos estiraba TODA la vista a 1124px en el teléfono); `cc-file-` se
   agregó a SKIP_LOCAL_PREFIXES y EVICTION_PRIORITY_PREFIXES de supabase.js.
+  **ÍTEMS DEL PRESUPUESTO en las solicitudes (25-sep-2026, pedido de
+  Gerson)** — "solo se debería comprar lo que está en la receta del pastel
+  que me pasa el PM". Caso real: MAT-2026-0422 (Torre Adobe) traía tubo PVC
+  4" + poliducto negro, que en el presupuesto son partidas DISTINTAS, y una
+  solicitud solo podía ir a UNA partida. Ahora una solicitud lleva
+  `lineas: [{id, partidaId, categoria, nombre, unidad, cantidad, monto}]`
+  (campo ADITIVO en cp-purchases; nombre/unidad van COPIADOS del presupuesto
+  al guardar). `monto` es el de la cotización; el TOTAL que manda sigue
+  siendo `amount` (lo que paga Tesorería): `repartirLineas` (geocost-calc)
+  le da a cada partida la PROPORCIÓN de su ítem — así el ISV, el flete o un
+  descuento se reparten solos, y el último ítem se lleva el redondeo para
+  cuadrar al centavo. `movimientosCompras` emite UN movimiento por ítem (id
+  `<compraId>::<lineaId>`, `dividida: true`); sin `lineas` válidas la compra
+  sigue como antes con su `partidaId` único (compatibilidad total).
+  `partidaId` se sigue llenando con la partida de MÁS plata (para lo que aún
+  lee una sola). Componente compartido **`src/lineas-presupuesto.jsx`**:
+  `LineasPresupuesto` (pills de categoría con las que tiene el presupuesto →
+  "+ Agregar ítem de X" → select SOLO con los ítems de esa categoría,
+  cantidad con la unidad del PM, monto L; disponible por ítem y aviso si lo
+  pasa; suma de ítems y aviso si difiere del total), `evaluarLineas`,
+  `errorLineas`, `lineasParaGuardar`, `descripcionDeLineas`,
+  `lineasIniciales` y `DividirItemsModal`. Se usa en: (1) **form de
+  solicitud** de GeoShopping cuando el proyecto tiene presupuesto con ítems
+  comprables (si no, el form es IDÉNTICO a antes, texto libre) — el textarea
+  pasa a "Detalle adicional (opcional)" (`detalleExtra`) y `description` se
+  ARMA con los ítems ("5 Lance × Tubo PVC…", un renglón por ítem) + ese
+  detalle; al editar una VIEJA de texto libre, su descripción original cae
+  en el detalle para no perderse; (2) **Corregir compra pagada** (Gerson/
+  Christian) — reparte en ítems SIN tocar la descripción ni el pago;
+  (3) **GeoCost → Movimientos**: enlace "Dividir en ítems" / "Editar ítems"
+  bajo la partida de cada compra de GeoShopping (`guardarItems`: getCloud →
+  map por id → set → verify, audit `partida_reclasificada`, que `sP` de
+  GeoShopping RESCATA junto con `lineas`). Las filas ya divididas muestran
+  el nombre de la partida (no el select de reclasificar). Los ítems de
+  Personal (módulo `mo`) no se ofrecen: la MO sale de GeoTeam. Sobregiro:
+  por partida, sumado; UNA justificación por solicitud. ⚠ **GeoMachinery NO
+  tiene ítems todavía** (sigue con una partida; "Dividir" solo aparece en
+  compras de GeoShopping porque el `sP` de GeoMachinery no rescata `lineas`).
+  **Dashboard v4 (25-sep-2026)**: la columna del medio (una tarjeta con
+  anillo POR proyecto, apiladas) no escalaba — "ahorita son 2 pero serán
+  más" — y con nombres largos el título se encimaba con el anillo. La
+  reemplaza `ruedaProyectos()`: UNA dona "Gastado por proyecto" (cada tajada
+  = EJECUTADO de un proyecto, `PALETA` carbón/naranja/grises, total al
+  centro) + la lista de proyectos debajo (scrollea dentro de la tarjeta) con
+  su monto, su % del total y "N % de su presupuesto"; click abre el proyecto.
+  **Unidades (25-sep-2026)**: el form de presupuesto traía "Global"
+  pre-llenado en cada partida nueva y las 51 de Torre Adobe quedaron en
+  "Global" aunque el PM las manda en Lance, Cubeta, Rollo, m… — ahora la
+  unidad nace VACÍA y `UNIDADES` (sugerencias del datalist, texto libre)
+  suma las del PM. Datos de Torre Adobe corregidos directo en la nube el
+  25-sep con las unidades del presupuesto de ingeniería (37 de 51; las 14
+  que no se veían en las capturas quedaron en blanco para llenarlas a mano)
+  y su partida de mano de obra pasó de módulo `compras` a `mo` (la MO de
+  GeoTeam caía en "Por clasificar"). En Proyectos la partida se lee "95
+  Lance · P.U. $ 5.03".
   **Acceso de Arturo/Christian a presupuestos (16-sep-2026, pedido de
   Gerson)**: `puedeEditarPresupuesto` pasó de `isAdmin` a
   `isAdmin || isCostos || isComprasOps` — Arturo (rol `compras_ops`, antes

@@ -23,7 +23,10 @@ export const MODULOS_PARTIDA = {
   movilizacion: "Movilización",
   libre: "Libre (compras o máquinas)",
 };
-export const UNIDADES = ["Global", "Ton", "kg", "m3", "m2", "m", "Galón", "Litro", "Unidad", "Lance 9 m", "Lance 12 m", "Rollo", "Pie-tablar", "Bolsa", "Viaje", "Hora", "Día", "Servicio"];
+// Sugerencias del campo Unidad (es texto libre: se escribe la del PM tal cual).
+// 25-sep-2026: se sumaron las que trae el presupuesto de ingeniería (Lance,
+// Cubeta, Und…) — Gerson: "las unidades tienen que ser sí o sí iguales".
+export const UNIDADES = ["Global", "Unidad", "Und", "Lance", "Lance 9 m", "Lance 12 m", "Cubeta", "Bolsa", "Rollo", "Galón", "Litro", "m", "m2", "m3", "Ton", "kg", "Yarda", "Pie-Tab", "Pie-tablar", "Caja", "Par", "Juego", "Viaje", "Hora", "Día", "Servicio"];
 export const RENGLONES_MOV_DEFAULT = ["Combustible (ida y vuelta)", "Peajes", "Mano de obra conductor", "Imprevistos"];
 // Tipo de movilización (11-sep-2026): "propia" = la hacemos nosotros (solicitud
 // de fondos con renglones y conductor); "proveedor" = la hace un tercero (UN
@@ -353,15 +356,58 @@ export const calcCostoMOPuro = ({ sheet, emps, hes, heSalBase, resolveProj }) =>
 //   descripcion, detalle, partidaId|null, estado: "comprometido"|"ejecutado",
 //   montoHNL, montoUSD, enCurso, origen, sourceKey }
 // =====================================================================
+// ── ÍTEMS DEL PRESUPUESTO en una compra (25-sep-2026, pedido de Gerson) ──
+// Una cotización trae varias cosas que en el presupuesto del PM son partidas
+// DISTINTAS (caso MAT-2026-0422: tubo PVC 4" + poliducto negro). Por eso una
+// solicitud puede llevar `lineas: [{id, partidaId, cantidad, monto}]` — cada
+// ítem elegido de la lista del presupuesto, con su monto en L tal cual la
+// cotización. El TOTAL que manda es `amount` (lo que Tesorería paga): cada
+// partida se lleva la PROPORCIÓN de su ítem, así el ISV, el flete o un
+// descuento se reparten solos entre las partidas sin que nadie los calcule.
+// Sin `lineas` válidas la compra sigue como siempre: una sola `partidaId`.
+export const lineasValidas = (p) => (Array.isArray(p?.lineas) ? p.lineas : []).filter(l => l && l.partidaId && num(l.monto) > 0);
+// Reparte `total` entre las líneas según su monto. El último ítem se lleva el
+// redondeo para que la suma cuadre al centavo con el total.
+export const repartirLineas = (lineas, total) => {
+  const ls = (lineas || []).filter(l => l && num(l.monto) > 0);
+  const suma = ls.reduce((s, l) => s + num(l.monto), 0);
+  if (!ls.length || suma <= 0) return [];
+  let acumulado = 0;
+  return ls.map((l, i) => {
+    const parte = i === ls.length - 1 ? round2(num(total) - acumulado) : round2(num(total) * num(l.monto) / suma);
+    acumulado = round2(acumulado + parte);
+    return { ...l, montoHNL: parte };
+  });
+};
+
 export const movimientosCompras = ({ purchases, projectCode, tasa, fuente = "compras", machines = [], customProjects = [] }) => {
   if (!projectCode) return [];
   const maq = (id) => (machines || []).find(x => x && x.id === id);
-  return (purchases || []).filter(p => p && mismoProyecto(p.projectCode, projectCode, customProjects)).map(p => {
+  return (purchases || []).filter(p => p && mismoProyecto(p.projectCode, projectCode, customProjects)).flatMap(p => {
     const estado = estadoCompraCosto(p);
     const montoHNL = num(p.amount);
-    if (!estado || montoHNL <= 0) return null;
+    if (!estado || montoHNL <= 0) return [];
     const mq = fuente === "maquinas" && p.machineId ? maq(p.machineId) : null;
-    return {
+    const lineas = lineasValidas(p);
+    // Con ítems: UN movimiento por ítem, cada uno a su partida.
+    if (lineas.length) return repartirLineas(lineas, montoHNL).map((l, i, arr) => ({
+      id: `${p.id}::${l.id || i}`,
+      fuente,
+      ref: p.codigo || p.id,
+      fecha: fechaCompraCosto(p),
+      // "5 × Tubo PVC de 4"…" (nombre y cantidad se guardan con el ítem)
+      descripcion: [num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")} ×` : null, l.nombre].filter(Boolean).join(" ") || p.description || "",
+      detalle: [p.provider, arr.length > 1 ? `ítem ${i + 1} de ${arr.length}` : null, mq?.nombre].filter(Boolean).join(" · "),
+      partidaId: l.partidaId,
+      estado,
+      montoHNL: l.montoHNL,
+      montoUSD: hnlToUsd(l.montoHNL, tasa),
+      enCurso: false,
+      origen: p,
+      sourceKey: fuente === "maquinas" ? "mq-purchases" : "cp-purchases",
+      dividida: true,
+    }));
+    return [{
       id: p.id,
       fuente,
       ref: p.codigo || p.id,
@@ -375,8 +421,8 @@ export const movimientosCompras = ({ purchases, projectCode, tasa, fuente = "com
       enCurso: false,
       origen: p,
       sourceKey: fuente === "maquinas" ? "mq-purchases" : "cp-purchases",
-    };
-  }).filter(Boolean);
+    }];
+  });
 };
 
 // Un movimiento por hoja de asistencia (ambas empresas) cuyo costo para el

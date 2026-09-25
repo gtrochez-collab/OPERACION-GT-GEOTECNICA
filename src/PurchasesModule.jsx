@@ -6,7 +6,8 @@ import { safeDynamicImport } from "./lazyLoad.js";
 import { USERS } from "./users.js";
 // GeoCost (9-sep-2026): partida del presupuesto y sobregiro en la solicitud.
 // Lógica pura (sin store) — acá solo se LEE cc-presupuestos/cc-config.
-import { opcionesPartidas, disponibleDePartida, movimientosDeProyecto, hnlToUsd, num, TASA_DEFAULT } from "./geocost-calc.js";
+import { opcionesPartidas, disponibleDePartida, movimientosDeProyecto, hnlToUsd, num, TASA_DEFAULT, repartirLineas } from "./geocost-calc.js";
+import { LineasPresupuesto, evaluarLineas, errorLineas, lineasParaGuardar, descripcionDeLineas, lineasIniciales } from "./lineas-presupuesto.jsx";
 import { fmtUSD } from "./geocost-ui.jsx";
 // Visor de archivos en la app (10-sep-2026): las fichas se abrían con window.open
 // DESPUÉS del await y el navegador bloqueaba el popup (caso Arturo).
@@ -913,6 +914,9 @@ function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, ren
 function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tasa, calcDisponible, updatePurchase, addAudit, userName }) {
   const [projectCode, setProjectCode] = useState(purchase.projectCode || "");
   const [partidaId, setPartidaId] = useState(purchase.partidaId || "");
+  // Ítems del presupuesto (25-sep-2026): la corrección reparte la compra entre
+  // varias partidas igual que el form de solicitud.
+  const [lineas, setLineas] = useState(() => lineasIniciales(purchase));
   const [motivo, setMotivo] = useState("");
   const [justif, setJustif] = useState(purchase.sobregiroJustificacion || "");
   const [saving, setSaving] = useState(false);
@@ -930,8 +934,11 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
   const montoUSD = hnlToUsd(num(purchase.amount), tasaN);
   const sobregiro = disp && montoUSD > disp.disponibleUSD ? montoUSD - disp.disponibleUSD : 0;
 
+  const modoItems = !!pres && !sinElegibles;
+  const evL = modoItems ? evaluarLineas({ pres, lineas, montoTotal: purchase.amount, tasa: tasaN, disponibleDe: (pid) => calcDisponible ? calcDisponible(projectCode, pid, purchase.id) : null }) : null;
+  const firmaLineas = (ls) => JSON.stringify((ls || []).filter(l => l.partidaId && num(l.monto) > 0).map(l => [l.partidaId, num(l.monto), num(l.cantidad)]));
   const cambioProyecto = projectCode !== (purchase.projectCode || "");
-  const cambioPartida = (partidaId || "") !== (purchase.partidaId || "");
+  const cambioPartida = modoItems ? firmaLineas(lineas) !== firmaLineas(lineasIniciales(purchase)) : (partidaId || "") !== (purchase.partidaId || "");
   const hayCambio = cambioProyecto || cambioPartida;
 
   const nombrePartida = (id, presu) => {
@@ -953,7 +960,7 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
 
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Proyecto</label>
-      <select value={projectCode} onChange={e => { const v = e.target.value; setProjectCode(v); if (v !== purchase.projectCode) setPartidaId(""); else setPartidaId(purchase.partidaId || ""); }}
+      <select value={projectCode} onChange={e => { const v = e.target.value; setProjectCode(v); if (v !== purchase.projectCode) { setPartidaId(""); setLineas([]); } else { setPartidaId(purchase.partidaId || ""); setLineas(lineasIniciales(purchase)); } }}
         style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }}>
         <option value="">—</option>
         {(allProjects || []).map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}</option>)}
@@ -963,14 +970,12 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
     {pres && sinElegibles && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>
       El presupuesto no tiene partida para compras — quedará por clasificar en GeoCost
     </div>}
-    {pres && !sinElegibles && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <Select label="Partida del presupuesto *" emptyLabel="— Elegí la partida —" options={opcionesSel} value={partidaSel ? partidaId : ""} onChange={e => setPartidaId(e.target.value)} />
-      {disp && <div style={{ fontSize: 12, fontWeight: 600, color: disp.disponibleUSD >= 0 ? C_VERDE.color : C_AMARILLO.color }}>
-        Disponible: {fmtUSD(disp.disponibleUSD)} · {fmtL(disp.disponibleUSD * tasaN)}
-      </div>}
-      {sobregiro > 0 && <div style={{ background: C_ULTRA.bg, border: `1px solid ${C_ULTRA.borde}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 700, color: C_ULTRA.color }}>Sobrepasa la partida en {fmtUSD(sobregiro)}</div>
-        <Textarea label="Justificación del sobregiro *" value={justif} onChange={e => setJustif(e.target.value)} placeholder="Por qué se carga igual a esta partida" />
+    {modoItems && <div style={{ display: "flex", flexDirection: "column", gap: 8, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14 }}>
+      <LineasPresupuesto pres={pres} lineas={lineas} onChange={setLineas} montoTotal={purchase.amount} tasa={tasaN}
+        disponibleDe={(pid) => calcDisponible ? calcDisponible(projectCode, pid, purchase.id) : null} isMobile={typeof window !== "undefined" && window.innerWidth < 640} />
+      {evL.sobregiroUSD > 0 && <div style={{ background: C_ULTRA.bg, border: `1px solid ${C_ULTRA.borde}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: C_ULTRA.color }}>Sobrepasa el presupuesto en {fmtUSD(evL.sobregiroUSD)}</div>
+        <Textarea label="Justificación del sobregiro *" value={justif} onChange={e => setJustif(e.target.value)} placeholder="Por qué se carga igual" />
       </div>}
     </div>}
     {!pres && projectCode && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>
@@ -983,20 +988,24 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
       <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cancelar</Btn>
       <Btn variant="success" disabled={saving || !hayCambio} onClick={async () => {
         if (!projectCode) return alert("Elegí el proyecto.");
-        if (pres && !sinElegibles && !partidaSel) return alert("Elegí la partida del presupuesto.");
-        if (sobregiro > 0 && String(justif || "").trim().length < 5) return alert("Sobrepasa la partida: escribí la justificación del sobregiro (mínimo 5 caracteres).");
+        if (modoItems) { const e = errorLineas(evL, { justificacion: justif, montoTotal: purchase.amount }); if (e) return alert(e + "."); }
         if (String(motivo || "").trim().length < 5) return alert("Escribí el motivo de la corrección (mínimo 5 caracteres).");
         setSaving(true);
         try {
           const antesProy = purchase.projectCode || "—";
           const antesPart = nombrePartida(purchase.partidaId, presOriginal);
-          const ahoraPart = sinElegibles || !pres ? "Por clasificar" : nombrePartida(partidaId, pres);
-          // PARCHE: se copia la compra tal cual y solo se pisan 3 campos.
+          const lineasG = modoItems ? lineasParaGuardar(pres, lineas) : [];
+          const ahoraPart = !modoItems ? "Por clasificar"
+            : lineasG.length > 1 ? `${lineasG.length} ítems (${lineasG.map(l => l.nombre).join(", ")})` : nombrePartida(evL.principal, pres);
+          // PARCHE: se copia la compra tal cual y solo se pisan los campos de
+          // costo (proyecto, ítems/partida, sobregiro). La descripción NO se
+          // toca: la compra ya se pagó y su ficha ya circuló con ese texto.
           const rec = {
             ...purchase,
             projectCode,
-            partidaId: (!pres || sinElegibles) ? "" : (partidaId || ""),
-            sobregiroJustificacion: pres && sobregiro > 0 ? String(justif || "").trim() : "",
+            lineas: lineasG,
+            partidaId: modoItems ? evL.principal : "",
+            sobregiroJustificacion: modoItems && evL.sobregiroUSD > 0 ? String(justif || "").trim() : "",
           };
           // Mismo tipo de audit que usa GeoCost al reclasificar: así `sP` lo
           // RESCATA si otra pestaña guarda encima con una foto vieja.
@@ -1255,8 +1264,21 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   const dispCC = partidaSel && calcDisponible ? calcDisponible(f.projectCode, f.partidaId, purchase?.id) : null;
   const montoUSD = hnlToUsd(num(f.amount), tasaCC);
   const sobregiroCC = dispCC && num(f.amount) > 0 && montoUSD > dispCC.disponibleUSD ? montoUSD - dispCC.disponibleUSD : 0;
+  // ── ÍTEMS DEL PRESUPUESTO (25-sep-2026) ──
+  // Con presupuesto activo, "qué se compra" ya no es texto libre: se eligen los
+  // ítems de la receta del PM (cada uno a su partida). El texto libre queda
+  // como "detalle adicional" opcional. Ver src/lineas-presupuesto.jsx.
+  const modoItems = !!presConPartidas && !sinElegiblesCC;
+  const lineasForm = Array.isArray(f.lineas) ? f.lineas : lineasIniciales(f);
+  const dispDe = (pid) => calcDisponible ? calcDisponible(f.projectCode, pid, purchase?.id) : null;
+  // Al editar una solicitud VIEJA (texto libre) su descripción original pasa a
+  // "detalle adicional" — si no, al guardar se perdía lo que se había escrito.
+  const extraForm = f.detalleExtra !== undefined ? f.detalleExtra
+    : (Array.isArray(purchase?.lineas) && purchase.lineas.length ? "" : (purchase?.description || ""));
+  const evL = modoItems ? evaluarLineas({ pres: presConPartidas, lineas: lineasForm, montoTotal: f.amount, tasa: tasaCC, disponibleDe: dispDe }) : null;
   // Validación compartida por "Guardar borrador" y "Aprobar": null = OK.
   const errorPartidaCC = () => {
+    if (modoItems) return errorLineas(evL, { justificacion: f.sobregiroJustificacion, montoTotal: f.amount });
     if (!presConPartidas || sinElegiblesCC) return null;
     if (!partidaSel) return "Elegí la partida del presupuesto de la que baja esta compra";
     if (sobregiroCC > 0 && String(f.sobregiroJustificacion || "").trim().length < 5) return "Sobrepasa la partida: escribí la justificación del sobregiro (mínimo 5 caracteres)";
@@ -1267,10 +1289,27 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   // corrige y ya no sobrepasa (o el proyecto cambia a uno sin presupuesto), el
   // texto viejo NO debe viajar con la compra (#20). Sin partida elegible se
   // guarda "" para que GeoCost la muestre en "Por clasificar" (#5).
-  const camposCC = () => ({
-    partidaId: sinElegiblesCC ? "" : (f.partidaId || ""),
-    sobregiroJustificacion: presConPartidas && sobregiroCC > 0 ? String(f.sobregiroJustificacion || "").trim() : "",
-  });
+  const camposCC = () => {
+    if (modoItems) {
+      const lineas = lineasParaGuardar(presConPartidas, lineasForm);
+      const extra = String(extraForm || "").trim();
+      return {
+        lineas,
+        partidaId: evL.principal,
+        sobregiroJustificacion: evL.sobregiroUSD > 0 ? String(f.sobregiroJustificacion || "").trim() : "",
+        // La descripción se ARMA con los ítems (+ el detalle opcional): la
+        // leen la tabla, la ficha de entrega, los despachos y los reportes.
+        description: [descripcionDeLineas(lineas), extra].filter(Boolean).join("\n"),
+        detalleExtra: extra,
+      };
+    }
+    // Sin presupuesto (o cambió a un proyecto sin él): fuera los ítems.
+    return {
+      lineas: [],
+      partidaId: sinElegiblesCC ? "" : (f.partidaId || ""),
+      sobregiroJustificacion: presConPartidas && sobregiroCC > 0 ? String(f.sobregiroJustificacion || "").trim() : "",
+    };
+  };
 
   // Registra el proveedor de la solicitud en cp-providers (base COMPARTIDA por
   // los dos módulos). Si ya existe, solo completa los huecos — nunca pisa lo
@@ -1325,7 +1364,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         <select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} value={f.projectCode} onChange={e => {
           // Cambiar de proyecto suelta la partida (es de OTRO presupuesto).
           const v = e.target.value;
-          setF(p => ({ ...p, projectCode: v, partidaId: p.projectCode === v ? p.partidaId : "" }));
+          setF(p => p.projectCode === v ? p : ({ ...p, projectCode: v, partidaId: "", lineas: [] }));
         }}>
           <option value="">—</option>
           {allProjects.map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}{p.isCustom ? " (nuevo)" : ""}{p.code ? "" : " · sin codigo"}</option>)}
@@ -1337,16 +1376,8 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       {presConPartidas && sinElegiblesCC && <div style={{ gridColumn: "1/-1", fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>
         El presupuesto no tiene partida para compras — quedará por clasificar en GeoCost
       </div>}
-      {presConPartidas && !sinElegiblesCC && <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8 }}>
-        <Select label="Partida del presupuesto *" emptyLabel="— Elegí la partida —" options={opcionesSelectCC} value={partidaSel ? f.partidaId : ""} onChange={e => u("partidaId", e.target.value)} />
-        {dispCC && <div style={{ fontSize: 12, fontWeight: 600, color: dispCC.disponibleUSD >= 0 ? C_VERDE.color : C_AMARILLO.color }}>
-          Disponible: {fmtUSD(dispCC.disponibleUSD)} · {fmtL(dispCC.disponibleUSD * tasaCC)}
-        </div>}
-        {sobregiroCC > 0 && <div style={{ background: "rgba(232,118,45,.10)", border: "1px solid rgba(232,118,45,.35)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, color: "#A94E16" }}>Sobrepasa la partida en {fmtUSD(sobregiroCC)}</div>
-          <Textarea label="Justificación del sobregiro *" value={f.sobregiroJustificacion || ""} onChange={e => u("sobregiroJustificacion", e.target.value)} placeholder="Por qué se aprueba igual" />
-        </div>}
-      </div>}
+      {/* Con presupuesto: los ítems van más abajo, después del monto total
+          (el reparto se calcula contra ese total). */}
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Proveedor</span>
@@ -1463,9 +1494,18 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           tabla, las cards, la ficha de entrega, los despachos y los
           reportes). `detalleMateriales` queda solo en las solicitudes viejas
           que ya lo tenían. */}
-      <div style={{ gridColumn: "1/-1" }}>
-        <Textarea label="Qué se está comprando (tal cual la cotización) *" value={f.description} onChange={e => u("description", e.target.value)} placeholder={"Un renglón por ítem, como viene en la cotización:\n2 × Sacos de cemento 42.5 kg\n10 × Varilla 3/8 grado 60"} />
-      </div>
+      {modoItems
+        ? <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 10, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14 }}>
+            <LineasPresupuesto pres={presConPartidas} lineas={lineasForm} onChange={ls => u("lineas", ls)} montoTotal={f.amount} tasa={tasaCC} disponibleDe={dispDe} isMobile={typeof window !== "undefined" && window.innerWidth < 640} />
+            {evL.sobregiroUSD > 0 && <div style={{ background: "rgba(232,118,45,.10)", border: "1px solid rgba(232,118,45,.35)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#A94E16" }}>Sobrepasa el presupuesto en {fmtUSD(evL.sobregiroUSD)}</div>
+              <Textarea label="Justificación del sobregiro *" value={f.sobregiroJustificacion || ""} onChange={e => u("sobregiroJustificacion", e.target.value)} placeholder="Por qué se aprueba igual" />
+            </div>}
+            <Textarea label="Detalle adicional (opcional)" value={extraForm || ""} onChange={e => u("detalleExtra", e.target.value)} placeholder="Marca, medida exacta, algo que la cotización diga distinto…" />
+          </div>
+        : <div style={{ gridColumn: "1/-1" }}>
+            <Textarea label="Qué se está comprando (tal cual la cotización) *" value={f.description} onChange={e => u("description", e.target.value)} placeholder={"Un renglón por ítem, como viene en la cotización:\n2 × Sacos de cemento 42.5 kg\n10 × Varilla 3/8 grado 60"} />
+          </div>}
 
       {/* FICHA DEL PROVEEDOR (20-ago-2026, pedido de Gerson) ─────────────────
           Si el nombre escrito no está en la base, se avisa y con un check se
@@ -1547,7 +1587,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         </div>}
         <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cancelar</Btn>
         <Btn variant="warn" disabled={saving} onClick={async () => {
-          if (!f.projectCode || !f.provider || !f.description || !f.amount) return alert("Complete proyecto, proveedor, descripcion y monto");
+          if (!f.projectCode || !f.provider || (!modoItems && !f.description) || !f.amount) return alert(modoItems ? "Complete proyecto, proveedor y monto" : "Complete proyecto, proveedor, descripcion y monto");
           { const eCC = errorPartidaCC(); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
           setSaving(true);
           try {
@@ -1564,7 +1604,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           }
         }}>{saving ? "..." : "💾 Guardar borrador"}</Btn>
         <Btn variant="success" disabled={saving} onClick={async () => {
-          if (!f.projectCode || !f.provider || !f.description || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert("Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
+          if (!f.projectCode || !f.provider || (!modoItems && !f.description) || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert(modoItems ? "Para aprobar: complete proyecto, proveedor, monto, N° cotizacion y responsable" : "Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
           { const eCC = errorPartidaCC(); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
           if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
           setSaving(true);
@@ -2508,7 +2548,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         const nuevas = (c.audit || []).filter(a => a?.action === "partida_reclasificada" && !atsLocal.has(a.at));
         if (!nuevas.length) return p;
         rescatadas++;
-        return { ...p, partidaId: c.partidaId, sobregiroJustificacion: c.sobregiroJustificacion ?? p.sobregiroJustificacion, audit: [...(p.audit || []), ...nuevas] };
+        // `lineas` (25-sep-2026): "Dividir en ítems" de GeoCost reparte la compra
+        // entre varias partidas — viaja junto con la partida principal.
+        return { ...p, partidaId: c.partidaId, lineas: Array.isArray(c.lineas) ? c.lineas : p.lineas, sobregiroJustificacion: c.sobregiroJustificacion ?? p.sobregiroJustificacion, audit: [...(p.audit || []), ...nuevas] };
       });
       if (rescatadas > 0) console.log(`[sP] partidas rescatadas de GeoCost: ${rescatadas}`);
 
@@ -3864,6 +3906,26 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             const presCC = (presupuestos || []).find(x => x.projectCode === p.projectCode);
             if (!presCC) return null;
             const partida = (presCC.partidas || []).find(x => x.id === p.partidaId);
+            // Con ítems (25-sep-2026): cada ítem a su partida, con la parte del
+            // total que le toca (el ISV/flete se reparte proporcional).
+            const ls = Array.isArray(p.lineas) ? p.lineas.filter(l => l && l.partidaId && num(l.monto) > 0) : [];
+            if (ls.length) {
+              const rep = repartirLineas(ls, num(p.amount));
+              return <div style={{ gridColumn: "1/-1" }}>
+                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>Ítems del presupuesto</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {rep.map(l => {
+                    const pt = (presCC.partidas || []).find(x => x.id === l.partidaId);
+                    return <div key={l.id} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 12.5 }}>
+                      <span style={{ fontWeight: 700, color: "#0f172a", minWidth: 0, flex: 1 }}>{num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")} ${l.unidad || ""} × ` : ""}{pt?.nombre || l.nombre || "(partida borrada)"}</span>
+                      <span style={{ color: "#64748b", fontSize: 11 }}>{pt?.categoria || l.categoria || ""}</span>
+                      <span style={{ fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(l.montoHNL)}</span>
+                    </div>;
+                  })}
+                </div>
+                {p.sobregiroJustificacion && <div style={{ fontSize: 11.5, fontStyle: "italic", color: "#6E6862", marginTop: 4 }}>Sobregiro: {p.sobregiroJustificacion}</div>}
+              </div>;
+            }
             return <div>
               <div style={{ fontSize: 11, color: "#64748b" }}>Partida</div>
               {partida
