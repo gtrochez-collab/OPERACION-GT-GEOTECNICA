@@ -91,12 +91,27 @@ const ordenCategorias = (partidas) => {
   const vistas = [...new Set(partidas.map(p => p.categoria || "Otros"))];
   return [...CATEGORIAS.filter(c => vistas.includes(c)), ...vistas.filter(c => !CATEGORIAS.includes(c))];
 };
+// ── SOLUCIONES (25-sep-2026, caso Aurea Edificio Corporativo 2da Etapa) ──
+// Un presupuesto del PM puede venir dividido por SOLUCIÓN (1. Muro anclado ·
+// 2. Pantalla de pilotes · 3. Anclajes activos · 4. Otros), cada una con sus
+// propias categorías y partidas — y el mismo ítem (Varilla No.5, Geodrén…)
+// puede repetirse en varias. `partida.solucion` (texto, ADITIVO): vacío en los
+// presupuestos de una sola solución, que se ven y funcionan igual que antes.
+export const solucionesDe = (pres) => [...new Set((pres?.partidas || []).map(p => String(p.solucion || "").trim()).filter(Boolean))];
+export const tieneSoluciones = (pres) => solucionesDe(pres).length > 1;
+
 export const opcionesPartidas = (pres, modulo) => {
   const ps = partidasParaModulo(pres, modulo);
-  return ordenCategorias(ps).map(cat => ({
-    group: cat,
-    options: ps.filter(p => (p.categoria || "Otros") === cat).map(p => ({ value: p.id, label: p.nombre || "(sin nombre)" })),
-  })).filter(g => g.options.length);
+  // Con varias soluciones el grupo dice las dos cosas ("Muro anclado ·
+  // Materiales"): si no, dos "Varilla No.5" quedaban juntas sin distinguirse.
+  const sols = tieneSoluciones(pres) ? solucionesDe(pres) : [null];
+  return sols.flatMap(sol => {
+    const deSol = sol === null ? ps : ps.filter(p => String(p.solucion || "").trim() === sol);
+    return ordenCategorias(deSol).map(cat => ({
+      group: sol === null ? cat : `${sol} · ${cat}`,
+      options: deSol.filter(p => (p.categoria || "Otros") === cat).map(p => ({ value: p.id, label: p.nombre || "(sin nombre)" })),
+    }));
+  }).filter(g => g.options.length);
 };
 
 // ── Proyectos ────────────────────────────────────────────────────────
@@ -552,12 +567,28 @@ export const resumenPresupuesto = (pres, movs, hoy) => {
   const partidasBase = pres?.partidas || [];
   const idx = new Map(partidasBase.map(p => [p.id, p]));
   const pMO = partidaMO(pres);
+  // Varias partidas de MO (una por solución): la MO de GeoTeam es por
+  // PROYECTO, no por solución, así que se reparte proporcional a lo que cada
+  // una presupuestó (25-sep-2026).
+  const pMOs = partidasBase.filter(p => p.modulo === "mo");
+  const pesoMO = pMOs.reduce((s, p) => s + montoPartida(p), 0);
   const porPartida = new Map(partidasBase.map(p => [p.id, []]));
   const sinClas = [];
   const asignados = [];
   (movs || []).forEach(mv => {
     if (!mv || !mv.estado) return;
     let pid = mv.partidaId && idx.has(mv.partidaId) ? mv.partidaId : null;
+    if (!pid && mv.fuente === "mo" && pMOs.length > 1 && pesoMO > 0) {
+      pMOs.forEach(p => {
+        const w = montoPartida(p) / pesoMO;
+        if (w <= 0) return;
+        const m2 = { ...mv, id: `${mv.id}::${p.id}`, partidaId: p.id, partidaNombre: p.nombre || "", montoHNL: mv.montoHNL * w, montoUSD: mv.montoUSD * w,
+          detalle: [mv.detalle, `${String(p.solucion || "").trim() || p.nombre}: ${Math.round(w * 100)} %`].filter(Boolean).join(" · ") };
+        asignados.push(m2);
+        porPartida.get(p.id).push(m2);
+      });
+      return;
+    }
     if (!pid && mv.fuente === "mo" && pMO) pid = pMO.id;
     const m2 = { ...mv, partidaId: pid, partidaNombre: pid ? (idx.get(pid).nombre || "") : null };
     asignados.push(m2);
@@ -574,6 +605,18 @@ export const resumenPresupuesto = (pres, movs, hoy) => {
   });
   const presupuestoUSD = totalPresupuesto(pres);
   const sinClasificar = { ...sumar(sinClas), movs: sinClas };
+  // Por solución (solo si el presupuesto trae más de una): cada una con sus
+  // categorías. Las partidas sin solución caen a "General".
+  const soluciones = tieneSoluciones(pres) ? [...solucionesDe(pres), ...(partidas.some(p => !String(p.solucion || "").trim()) ? [""] : [])].map(sol => {
+    const ps = partidas.filter(p => String(p.solucion || "").trim() === sol);
+    const cats = ordenCategorias(ps).map(cat => {
+      const pc = ps.filter(p => (p.categoria || "Otros") === cat);
+      const pres2 = round2(pc.reduce((s, p) => s + p.montoUSD, 0));
+      return { categoria: cat, ...conPct(pres2, sumar(pc.flatMap(p => p.movs))), partidas: pc };
+    });
+    const presSol = round2(ps.reduce((s, p) => s + p.montoUSD, 0));
+    return { solucion: sol || "General", ...conPct(presSol, sumar(ps.flatMap(p => p.movs))), categorias: cats };
+  }) : [];
   // últimos 6 meses (ancla: hoy en Honduras) por fecha del movimiento
   const ancla = mesDe(hoy || hoyTegus());
   const meses = [5, 4, 3, 2, 1, 0].map(n => restarMeses(ancla, n));
@@ -584,6 +627,7 @@ export const resumenPresupuesto = (pres, movs, hoy) => {
   return {
     ...conPct(presupuestoUSD, sumar(asignados)),
     categorias,
+    soluciones,
     partidas,
     sinClasificar,
     porMes,

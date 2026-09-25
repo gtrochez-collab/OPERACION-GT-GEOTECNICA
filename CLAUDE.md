@@ -245,6 +245,22 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Estados `calMes` / `calDia` inicializados en `hoyISO()` (23-sep-2026: "que
   al entrar ya te cargue las del día de hoy" — arranca en el mes Y el día de
   hoy, con el detalle de la derecha ya abierto).
+  **FECHA REQUERIDA + "Va a" en la solicitud (25-sep-2026, pedido de
+  Finanzas)**: campos aditivos `fechaPagoRequerida` (YYYY-MM-DD, OBLIGATORIA
+  para aprobar) y `destinoPago` ("normal" | "prioridad" | "cxp"; sin elegir:
+  crédito → cxp, si no normal). TODAS entran al Calendario de Pago. Al
+  APROBAR, `encolarPago(saved)` (a nivel del módulo, se pasa como prop a
+  PurchaseFormImpl) la agrega SOLA: prioridad → al final de `cp-prioridades`
+  con `fechaRequerida`; cxp → UN pago por el total en esa fecha en `cp-cxp`
+  (si ya tiene uno, solo le mueve la fecha; si ya tiene varios abonos, no la
+  toca). Idempotente, vía `sPri`/`sCxp` (sListaPropia). Normal no escribe
+  nada: `renderCalendario` la lee directo (chip gris "Pago requerido", "la
+  pidió <responsable>") salvo que ya esté en Prioridades con fecha o en CxP.
+  **Volver a la pestaña de origen (25-sep-2026, pedido de la Lic.
+  Carolina)**: `irASolicitud` guarda en `volverARef` la pestaña desde donde
+  se abrió (Prioridades, Cuentas por pagar o Calendario) y un effect sobre
+  `modal` regresa ahí al CERRARSE el modal — incluso después de registrar el
+  pago desde el detalle.
   **QUIÉN lo agregó (21-sep-2026)**: las tarjetas de Prioridades muestran "la
   priorizó <fulano>" y las de Cuentas por pagar "programó <fulano>", leyendo el
   `addedBy` que ya se guardaba.
@@ -1028,6 +1044,35 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   y su partida de mano de obra pasó de módulo `compras` a `mo` (la MO de
   GeoTeam caía en "Por clasificar"). En Proyectos la partida se lee "95
   Lance · P.U. $ 5.03".
+  **VARIAS SOLUCIONES en un presupuesto (25-sep-2026, caso Aurea Edificio
+  Corporativo 2da Etapa, HR-20-3-22)**: el PM manda algunos presupuestos
+  divididos por SOLUCIÓN (1. Muro anclado · 2. Pantalla de pilotes · 3.
+  Anclajes activos · 4. Otros), cada una con sus categorías, y el MISMO ítem
+  se repite en varias con su propio monto. Campo ADITIVO `partida.solucion`
+  (texto; vacío = presupuesto de una sola solución, que se ve y funciona
+  igual que antes). Helpers `solucionesDe(pres)` / `tieneSoluciones(pres)`.
+  PresupuestoForm: check "El proyecto tiene varias soluciones" → columna
+  Solución (datalist con las ya usadas; "+ Partida" copia la de la fila
+  anterior) y subtotal por solución; con el check, toda partida DEBE tener
+  solución. Partidas en **$0 con nombre SÍ se aceptan** (antes el form las
+  rechazaba): así vienen los "Materiales (CLIENTE)" del PM — nota "Material
+  del cliente". `resumenPresupuesto` devuelve `soluciones: [{solucion,
+  ...pct, categorias}]` y el detalle de GeoCost agrupa solución → categoría
+  → partida con pills "Todas las soluciones / Muro anclado · 12 %…"
+  (`solFiltro`). `opcionesPartidas` rotula los grupos "Solución ·
+  Categoría". **MO con varias partidas `mo`** (una por solución): la MO de
+  GeoTeam es por PROYECTO, así que se reparte PROPORCIONAL a lo que cada una
+  presupuestó (el detalle del movimiento dice "Muro anclado: 69 %").
+  En la solicitud (`LineasPresupuesto`) primero se elige la SOLUCIÓN (pills
+  carbón), después la categoría y el ítem; la línea guarda `solucion`.
+  Aurea 2da Etapa se cargó el 25-sep directo en la nube, TAL CUAL el PM: 88
+  partidas, $238,382.87 (71,905.38 + 111,746.03 + 40,221.95 + 14,509.51 —
+  cuadrado al centavo), incluye los materiales del cliente en $0 y la
+  "Recarga acetileno" repetida de Anclajes activos ($30.28, así viene; por el
+  precio parece oxígeno). Varilla #11 G60: cantidad 30.612657 Ton para que ×
+  1,050 dé exacto $32,143.29. El PM usa tasa 26.89; GeoCost la global 27.
+  Torre Adobe (mismo día): las 14 unidades que faltaban completadas y los 5
+  materiales importados pasados de "Otros" a Materiales.
   **Acceso de Arturo/Christian a presupuestos (16-sep-2026, pedido de
   Gerson)**: `puedeEditarPresupuesto` pasó de `isAdmin` a
   `isAdmin || isCostos || isComprasOps` — Arturo (rol `compras_ops`, antes

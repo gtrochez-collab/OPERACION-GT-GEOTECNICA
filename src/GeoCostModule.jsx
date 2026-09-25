@@ -195,6 +195,8 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   const [sec, setSec] = useState("dashboard");
   const [proyActivo, setProyActivo] = useState(null);
   const [partidaAbierta, setPartidaAbierta] = useState(null);
+  // Detalle de un presupuesto con VARIAS soluciones: cuál se ve ("todas" = todas agrupadas)
+  const [solFiltro, setSolFiltro] = useState("todas");
   const [filtroFuente, setFiltroFuente] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [movEstado, setMovEstado] = useState("todas");
@@ -985,8 +987,23 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
         <div style={{ padding: "0 8px 8px" }}>{tablaMovs(pres, sinClas.movs, { compacta: true })}</div>
       </Vidrio>}
 
-      {/* Categorías → partidas */}
-      {(s?.categorias || []).map((cat, ci) => <Vidrio key={cat.categoria} className="gt-sube" style={{ padding: "16px 20px", animationDelay: `${ci * 60}ms` }}>
+      {/* Categorías → partidas; con varias soluciones, agrupadas por solución
+          (25-sep-2026) con pills para ver una sola. */}
+      {(s?.soluciones || []).length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <button className="cc-pill" aria-pressed={!s.soluciones.some(x => x.solucion === solFiltro)} onClick={() => setSolFiltro("todas")}>Todas las soluciones</button>
+        {s.soluciones.map(x => <button key={x.solucion} className="cc-pill" aria-pressed={solFiltro === x.solucion} onClick={() => setSolFiltro(x.solucion)}>{x.solucion} · {fmtPct(num(x.pct))}</button>)}
+      </div>}
+      {((s?.soluciones || []).length > 0
+        ? s.soluciones.filter(x => !s.soluciones.some(y => y.solucion === solFiltro) || x.solucion === solFiltro)
+        : [{ solucion: null, categorias: s?.categorias || [] }]).map((sol, si) => <div key={sol.solucion || "_"} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
+      {sol.solucion && <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap", padding: "10px 4px 0" }}>
+        <div style={{ font: "800 19px/1.15 var(--display)", letterSpacing: "-.015em", color: "var(--text)" }}>{sol.solucion}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ ...MONO, fontSize: 13, color: "var(--text-2)" }}><b style={{ color: "var(--text)" }}>{fmtUSD0(num(sol.usadoUSD))}</b> / {fmtUSD0(num(sol.presupuestoUSD))}</span>
+          {chipSem(sol.semaforo)}
+        </div>
+      </div>}
+      {(sol.categorias || []).map((cat, ci) => <Vidrio key={cat.categoria} className="gt-sube" style={{ padding: "16px 20px", animationDelay: `${ci * 60}ms` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
           <div style={{ font: "800 15px/1 var(--display)", color: "var(--text)" }}>{cat.categoria}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1019,6 +1036,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
           })}
         </div>
       </Vidrio>)}
+      </div>)}
 
       {/* Movimientos */}
       <Vidrio className="gt-sube" style={{ padding: "16px 20px" }}>

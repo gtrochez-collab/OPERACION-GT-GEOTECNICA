@@ -20,6 +20,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { useState } from "react";
 import { num, hnlToUsd, partidasParaModulo, repartirLineas, lineasValidas, CATEGORIAS } from "./geocost-calc.js";
+const solDe = (p) => String(p?.solucion || "").trim();
 
 const ORANGE_DARK = "#C75F1F";
 const C_VERDE = { color: "#177243" };
@@ -90,7 +91,7 @@ export const lineasParaGuardar = (pres, lineas) => {
   const byId = new Map((pres?.partidas || []).map(p => [p.id, p]));
   return (lineas || []).filter(l => l && l.partidaId && byId.has(l.partidaId) && num(l.monto) > 0).map(l => {
     const p = byId.get(l.partidaId);
-    return { id: l.id && l.id !== "legacy" ? l.id : uidL(), partidaId: l.partidaId, categoria: p.categoria || "Otros", nombre: p.nombre || "", unidad: p.unidad || "", cantidad: num(l.cantidad), monto: r2(num(l.monto)) };
+    return { id: l.id && l.id !== "legacy" ? l.id : uidL(), partidaId: l.partidaId, ...(solDe(p) ? { solucion: solDe(p) } : {}), categoria: p.categoria || "Otros", nombre: p.nombre || "", unidad: p.unidad || "", cantidad: num(l.cantidad), monto: r2(num(l.monto)) };
   });
 };
 // "5 Lance × Varilla No.3…" — un renglón por ítem. Es lo que leen la tabla,
@@ -115,25 +116,42 @@ const LBL = { fontSize: 12, fontWeight: 600, color: "#475569" };
 export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, disponibleDe, isMobile = false }) {
   const partidas = partidasCompra(pres, lineas);
   const byId = new Map(partidas.map(p => [p.id, p]));
-  const cats = categoriasDe(partidas);
-  const [cat, setCat] = useState(() => {
-    const primera = (lineas || []).map(l => byId.get(l.partidaId)).find(Boolean);
-    return primera?.categoria || (cats.includes("Materiales") ? "Materiales" : cats[0]) || "Otros";
-  });
+  // SOLUCIONES (25-sep-2026): si el presupuesto viene dividido (Muro anclado ·
+  // Pantalla de pilotes…), primero se elige la solución y después la categoría
+  // — el mismo ítem puede estar en varias y cada una tiene su presupuesto.
+  const sols = [...new Set(partidas.map(solDe).filter(Boolean))];
+  const multi = sols.length > 1;
+  const primera = (lineas || []).map(l => byId.get(l.partidaId)).find(Boolean);
+  const [sol, setSol] = useState(() => (primera && solDe(primera)) || sols[0] || "");
+  const solEf = multi ? (sols.includes(sol) ? sol : sols[0]) : "";
+  const deSol = multi ? partidas.filter(p => solDe(p) === solEf) : partidas;
+  const cats = categoriasDe(deSol);
+  const [catSel, setCat] = useState(() => primera?.categoria || "Materiales");
+  const cat = cats.includes(catSel) ? catSel : (cats.includes("Materiales") ? "Materiales" : cats[0]) || "Otros";
   const ev = evaluarLineas({ pres, lineas, montoTotal, tasa, disponibleDe });
   const upd = (id, k, v) => onChange((lineas || []).map(l => l.id === id ? { ...l, [k]: v } : l));
   const quitar = (id) => onChange((lineas || []).filter(l => l.id !== id));
-  const agregar = () => onChange([...(lineas || []), { id: uidL(), partidaId: "", cantidad: "", monto: "", categoria: cat }]);
+  const agregar = () => onChange([...(lineas || []), { id: uidL(), partidaId: "", cantidad: "", monto: "", categoria: cat, solucion: solEf }]);
   const catDeLinea = (l) => byId.get(l.partidaId)?.categoria || l.categoria || cat;
+  const solDeLinea = (l) => multi ? (solDe(byId.get(l.partidaId)) || l.solucion || solEf) : "";
   const dif = num(montoTotal) > 0 ? r2(num(montoTotal) - ev.suma) : 0;
 
   return <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <label style={LBL}>Qué se compra — ítems del presupuesto *</label>
+      {multi && <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", letterSpacing: .4, marginRight: 2 }}>Solución</span>
+        {sols.map(x => {
+          const activo = x === solEf;
+          return <button key={x} type="button" onClick={() => setSol(x)} aria-pressed={activo}
+            style={{ padding: "6px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 800,
+              border: activo ? "1px solid transparent" : "1px solid #CBD5E1", background: activo ? "#2C2A28" : "#F8FAFC", color: activo ? "#fff" : "#475569" }}>{x}</button>;
+        })}
+      </div>}
       <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
         {cats.map(c => {
           const activo = c === cat;
-          const n = partidas.filter(p => (p.categoria || "Otros") === c).length;
+          const n = deSol.filter(p => (p.categoria || "Otros") === c).length;
           return <button key={c} type="button" onClick={() => setCat(c)} aria-pressed={activo}
             style={{ padding: "6px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 800,
               border: activo ? "1px solid transparent" : "1px solid #CBD5E1", background: activo ? ORANGE_DARK : "#F8FAFC", color: activo ? "#fff" : "#475569" }}>
@@ -150,13 +168,14 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
       {(lineas || []).map(l => {
         const p = byId.get(l.partidaId);
         const c = catDeLinea(l);
-        const opciones = partidas.filter(x => (x.categoria || "Otros") === c);
+        const sl = solDeLinea(l);
+        const opciones = partidas.filter(x => (x.categoria || "Otros") === c && (!multi || solDe(x) === sl));
         const disp = l.partidaId && disponibleDe ? disponibleDe(l.partidaId) : null;
         const pp = ev.porPartida.find(x => x.partidaId === l.partidaId);
         return <div key={l.id} style={{ display: "flex", flexDirection: "column", gap: 4, background: pp?.sobregiroUSD > 0 ? C_ULTRA.bg : "transparent", borderRadius: 10, padding: 6, margin: -6 }}>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) 28px" : "minmax(0,1fr) 120px 140px 28px", gap: 8, alignItems: "center" }}>
             <select value={l.partidaId || ""} onChange={e => upd(l.id, "partidaId", e.target.value)} style={{ ...INPUT, gridColumn: isMobile ? "1" : undefined, color: l.partidaId ? "#0f172a" : "#94A3B8" }}>
-              <option value="">— Elegí el ítem ({c}) —</option>
+              <option value="">— Elegí el ítem ({multi ? `${sl} · ${c}` : c}) —</option>
               {opciones.map(x => <option key={x.id} value={x.id}>{x.nombre}{x.unidad ? ` · ${x.unidad}` : ""}</option>)}
             </select>
             {isMobile && <button type="button" onClick={() => quitar(l.id)} title="Quitar ítem" style={{ background: "none", border: "none", color: "#94A3B8", fontSize: 16, cursor: "pointer", padding: 0 }}>✕</button>}
@@ -168,7 +187,7 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
             {!isMobile && <button type="button" onClick={() => quitar(l.id)} title="Quitar ítem" style={{ background: "none", border: "none", color: "#94A3B8", fontSize: 16, cursor: "pointer", padding: 0 }}>✕</button>}
           </div>
           {disp && <div style={{ fontSize: 11, fontWeight: 600, color: num(disp.disponibleUSD) >= 0 ? C_VERDE.color : C_AMARILLO.color, paddingLeft: 2 }}>
-            Disponible en el presupuesto: {fU(disp.disponibleUSD)} · {fL(num(disp.disponibleUSD) * num(tasa))}
+            {multi && <span style={{ color: "#64748b" }}>{sl} · </span>}Disponible en el presupuesto: {fU(disp.disponibleUSD)} · {fL(num(disp.disponibleUSD) * num(tasa))}
             {pp?.sobregiroUSD > 0 && <span style={{ color: C_ULTRA.color, fontWeight: 800 }}> — esta compra lo pasa por {fU(pp.sobregiroUSD)}</span>}
           </div>}
         </div>;
@@ -178,7 +197,7 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
     <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
       <button type="button" onClick={agregar}
         style={{ padding: "7px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 800, border: "1px dashed #CBD5E1", background: "#fff", color: "#475569" }}>
-        + Agregar ítem de {cat}
+        + Agregar ítem de {multi ? `${solEf} · ${cat}` : cat}
       </button>
       {ev.suma > 0 && <span style={{ marginLeft: "auto", fontSize: 12.5, color: "#475569" }}>Suma de ítems: <b style={{ color: "#0f172a" }}>{fL(ev.suma)}</b></span>}
     </div>

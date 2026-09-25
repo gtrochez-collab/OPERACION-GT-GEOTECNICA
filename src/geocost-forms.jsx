@@ -123,7 +123,7 @@ const filaMaterialVacia = () => ({ id: uid(), descripcion: "", cantidad: "", uni
 // partida guardada (números) → fila editable (strings). Si cantidad y pu vienen, el monto se calcula.
 const partidaAFila = (p) => {
   const calc = num(p.cantidad) > 0 && num(p.pu) > 0;
-  return { id: p.id || uid(), categoria: p.categoria || "Generales", nombre: p.nombre || "", unidad: p.unidad || "", cantidad: str(p.cantidad), pu: str(p.pu), monto: calc ? "" : str(p.monto), modulo: p.modulo || "libre", nota: p.nota || "" };
+  return { id: p.id || uid(), solucion: p.solucion || "", categoria: p.categoria || "Generales", nombre: p.nombre || "", unidad: p.unidad || "", cantidad: str(p.cantidad), pu: str(p.pu), monto: calc ? "" : str(p.monto), modulo: p.modulo || "libre", nota: p.nota || "" };
 };
 const fichaDesde = (fi) => {
   const f = fi || {};
@@ -142,12 +142,20 @@ const OPC_MODULOS = Object.entries(MODULOS_PARTIDA).map(([value, label]) => ({ v
 // la versión anterior (968 + gaps) dejaba Módulo y la ✕ fuera sin barra visible.
 const COLS_PARTIDA = "118px minmax(170px,1fr) 96px 80px 96px 104px 140px 30px";
 const MIN_TABLA_PARTIDA = 890;
+// Con varias soluciones (25-sep-2026) se antepone la columna "Solución".
+const COLS_PARTIDA_SOL = "140px " + COLS_PARTIDA;
+const MIN_TABLA_PARTIDA_SOL = MIN_TABLA_PARTIDA + 148;
 
 export function PresupuestoForm({ pres, proyectos = [], machines = [], tasa = TASA_DEFAULT, userName, onSave, onClose }) {
   const isMobile = useIsMobile();
   const edicion = !!pres;
   const [projectCode, setProjectCode] = useState(pres?.projectCode || "");
   const [partidas, setPartidas] = useState(() => (pres?.partidas || []).map(partidaAFila));
+  // VARIAS SOLUCIONES (25-sep-2026, caso Aurea 2da Etapa): el PM manda el
+  // presupuesto dividido por solución (Muro anclado · Pantalla de pilotes ·
+  // Anclajes activos…). Con el check prendido cada partida lleva su solución.
+  const [multiSol, setMultiSol] = useState(() => (pres?.partidas || []).some(p => String(p.solucion || "").trim()));
+  const solucionesUsadas = useMemo(() => [...new Set(partidas.map(r => String(r.solucion || "").trim()).filter(Boolean))], [partidas]);
   const [ficha, setFicha] = useState(() => fichaDesde(pres?.ficha));
   const [abierta, setAbierta] = useState({ partidas: true, ficha: !!(pres?.ficha?.cliente || pres?.ficha?.codigo) });
   const [saving, setSaving] = useState(false);
@@ -155,7 +163,7 @@ export function PresupuestoForm({ pres, proyectos = [], machines = [], tasa = TA
   const uF = (k, v) => setFicha(f => ({ ...f, [k]: v }));
   const uP = (id, k, v) => setPartidas(ps => ps.map(r => r.id === id ? { ...r, [k]: v } : r));
   const quitarP = (id) => setPartidas(ps => ps.filter(r => r.id !== id));
-  const agregarP = () => setPartidas(ps => { const ult = ps[ps.length - 1]; return [...ps, filaPartidaVacia({ categoria: ult?.categoria || "Generales", modulo: ult?.modulo || "compras" })]; });
+  const agregarP = () => setPartidas(ps => { const ult = ps[ps.length - 1]; return [...ps, filaPartidaVacia({ solucion: ult?.solucion || "", categoria: ult?.categoria || "Generales", modulo: ult?.modulo || "compras" })]; });
   const uM = (id, k, v) => setFicha(f => ({ ...f, materiales: f.materiales.map(m => m.id === id ? { ...m, [k]: v } : m) }));
   const quitarM = (id) => setFicha(f => ({ ...f, materiales: f.materiales.filter(m => m.id !== id) }));
   const agregarM = () => setFicha(f => ({ ...f, materiales: [...f.materiales, filaMaterialVacia()] }));
@@ -188,13 +196,20 @@ export function PresupuestoForm({ pres, proyectos = [], machines = [], tasa = TA
     if (saving) return;
     if (!projectCode) return alert("Elegí el proyecto.");
     const vacias = [], malas = [], limpias = [];
+    const sinSol = [];
     partidas.forEach((r, i) => {
       const nombre = (r.nombre || "").trim(); const monto = montoFila(r);
       if (!nombre && monto <= 0 && !num(r.pu)) return vacias.push(i);           // fila sin nada: se descarta
-      if (!nombre || monto <= 0) return malas.push(`${i + 1}${nombre ? ` (${nombre})` : ""}`);
-      limpias.push({ id: r.id, categoria: r.categoria || "Otros", nombre, unidad: (r.unidad || "").trim(), cantidad: num(r.cantidad), pu: num(r.pu), monto: round2(monto), modulo: r.modulo || "libre", nota: (r.nota || "").trim() });
+      // Con nombre y en $0 SÍ vale (25-sep-2026): el PM manda así los
+      // "Materiales (CLIENTE)" — los pone el cliente, van en el presupuesto
+      // tal cual pero no nos cuestan. Sin nombre no.
+      if (!nombre) return malas.push(`${i + 1}`);
+      const solucion = multiSol ? String(r.solucion || "").trim() : "";
+      if (multiSol && !solucion) sinSol.push(`${i + 1} (${nombre})`);
+      limpias.push({ id: r.id, ...(solucion ? { solucion } : {}), categoria: r.categoria || "Otros", nombre, unidad: (r.unidad || "").trim(), cantidad: num(r.cantidad), pu: num(r.pu), monto: round2(monto), modulo: r.modulo || "libre", nota: (r.nota || "").trim() });
     });
-    if (malas.length) return alert(`Falta nombre o monto en la partida ${malas.join(", ")}.`);
+    if (malas.length) return alert(`Falta el nombre en la partida ${malas.join(", ")}.`);
+    if (sinSol.length) return alert(`Falta la solución en la partida ${sinSol.slice(0, 6).join(", ")}${sinSol.length > 6 ? "…" : ""}.`);
     if (!limpias.length) return alert("Agregá al menos una partida con nombre y monto.");
     if (ficha.fechaInicio && ficha.fechaFin && ficha.fechaFin < ficha.fechaInicio) return alert("La fecha de fin es anterior al inicio.");
     if (vacias.length) alert(`Se descarta${vacias.length > 1 ? "n" : ""} ${vacias.length} fila${vacias.length > 1 ? "s" : ""} vacía${vacias.length > 1 ? "s" : ""}.`);
@@ -215,6 +230,7 @@ export function PresupuestoForm({ pres, proyectos = [], machines = [], tasa = TA
     const calc = esCalculada(r);
     const L = (t) => lbl ? t : undefined;
     return {
+      solucion:  <Input label={L("Solución")} value={r.solucion || ""} list="gc-soluciones-pres" onChange={e => uP(r.id, "solucion", e.target.value)} placeholder="Ej. Muro anclado" style={CELDA} />,
       categoria: <Select label={L("Categoría")} options={CATEGORIAS} value={r.categoria} onChange={e => uP(r.id, "categoria", e.target.value)} style={CELDA} />,
       nombre:    <Input label={L("Partida")} value={r.nombre} onChange={e => uP(r.id, "nombre", e.target.value)} placeholder="Nombre de la partida" style={CELDA} />,
       unidad:    <Input label={L("Unidad")} value={r.unidad} list="gc-unidades" onChange={e => uP(r.id, "unidad", e.target.value)} placeholder="Unidad" style={CELDA} />,
@@ -229,6 +245,7 @@ export function PresupuestoForm({ pres, proyectos = [], machines = [], tasa = TA
   return <Modal title={edicion ? "Editar presupuesto" : "Nuevo presupuesto"} wide fondoCierra={false} onClose={saving ? undefined : onClose}>
     <datalist id="gc-unidades">{UNIDADES.map(u => <option key={u} value={u} />)}</datalist>
     <datalist id="gc-soluciones">{SOLUCIONES.map(s => <option key={s} value={s} />)}</datalist>
+    <datalist id="gc-soluciones-pres">{solucionesUsadas.map(s => <option key={s} value={s} />)}</datalist>
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
       {/* A) Proyecto */}
@@ -242,22 +259,27 @@ export function PresupuestoForm({ pres, proyectos = [], machines = [], tasa = TA
       {/* B) Partidas */}
       <Seccion titulo="Partidas" sub={`${partidas.length} · ${fmtUSD0(total)}`} abierta={abierta.partidas} onToggle={() => setAbierta(a => ({ ...a, partidas: !a.partidas }))}
         derecha={<Btn variant="ghost" small onClick={agregarP}><Ico d={ICO.mas} size={13} /> Partida</Btn>}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#5C5853", cursor: "pointer", fontWeight: 600 }}>
+          <input type="checkbox" checked={multiSol} onChange={e => setMultiSol(e.target.checked)} style={{ accentColor: "#C75F1F", width: 15, height: 15 }} />
+          El proyecto tiene varias soluciones (el PM manda el presupuesto dividido: muro anclado, pantalla de pilotes…)
+        </label>
         {!partidas.length && <div style={{ textAlign: "center", padding: "14px 0", color: "#6E6862", fontSize: 13 }}>Sin partidas todavía.</div>}
         {!!partidas.length && (isMobile
           ? <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {/* minmax(0,1fr): con "1fr 1fr" los Select de opciones largas inflaban el track y la tarjeta se salía del modal */}
               {partidas.map(r => { const c = ctrl(r, true); return <div key={r.id} style={{ ...SUNK, display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 8 }}>
                 <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, alignItems: "flex-end" }}><div style={{ flex: 1, minWidth: 0 }}>{c.nombre}</div>{c.quitar}</div>
+                {multiSol && <div style={{ gridColumn: "1 / -1" }}>{c.solucion}</div>}
                 {c.categoria}{c.modulo}{c.unidad}{c.cantidad}{c.pu}{c.monto}
               </div>; })}
             </div>
           : <div style={{ overflowX: "auto", paddingBottom: 4 }}>
-              <div style={{ minWidth: MIN_TABLA_PARTIDA }}>
-                <div style={{ display: "grid", gridTemplateColumns: COLS_PARTIDA, gap: 8, padding: "0 2px 6px" }}>
-                  {["Categoría", "Partida", "Unidad", "Cant.", "P.U. $", "Monto $", "Módulo", ""].map((h, i) => <Label key={i}>{h}</Label>)}
+              <div style={{ minWidth: multiSol ? MIN_TABLA_PARTIDA_SOL : MIN_TABLA_PARTIDA }}>
+                <div style={{ display: "grid", gridTemplateColumns: multiSol ? COLS_PARTIDA_SOL : COLS_PARTIDA, gap: 8, padding: "0 2px 6px" }}>
+                  {[...(multiSol ? ["Solución"] : []), "Categoría", "Partida", "Unidad", "Cant.", "P.U. $", "Monto $", "Módulo", ""].map((h, i) => <Label key={i}>{h}</Label>)}
                 </div>
-                {partidas.map(r => { const c = ctrl(r, false); return <div key={r.id} style={{ display: "grid", gridTemplateColumns: COLS_PARTIDA, gap: 8, alignItems: "center", padding: "3px 2px" }}>
-                  {c.categoria}{c.nombre}{c.unidad}{c.cantidad}{c.pu}{c.monto}{c.modulo}{c.quitar}
+                {partidas.map(r => { const c = ctrl(r, false); return <div key={r.id} style={{ display: "grid", gridTemplateColumns: multiSol ? COLS_PARTIDA_SOL : COLS_PARTIDA, gap: 8, alignItems: "center", padding: "3px 2px" }}>
+                  {multiSol && c.solucion}{c.categoria}{c.nombre}{c.unidad}{c.cantidad}{c.pu}{c.monto}{c.modulo}{c.quitar}
                 </div>; })}
               </div>
             </div>)}
@@ -266,6 +288,9 @@ export function PresupuestoForm({ pres, proyectos = [], machines = [], tasa = TA
           <span style={{ font: "800 22px/1 var(--display)", letterSpacing: "-.01em" }}>{fmtUSD(total)}</span>
           <span style={{ fontSize: 12, color: "#6E6862", ...MONO }}>{fmtL(usdToHnl(total, tasa))} · L {Number(tasa).toFixed(2)} / $</span>
         </div>
+        {multiSol && solucionesUsadas.length > 0 && <div style={{ display: "flex", justifyContent: "flex-end", gap: 14, flexWrap: "wrap", fontSize: 12, color: "#5C5853" }}>
+          {solucionesUsadas.map(sol => <span key={sol}>{sol}: <b style={MONO}>{fmtUSD(partidas.filter(r => String(r.solucion || "").trim() === sol).reduce((a, r) => a + montoFila(r), 0))}</b></span>)}
+        </div>}
       </Seccion>
 
       {/* C) Ficha */}

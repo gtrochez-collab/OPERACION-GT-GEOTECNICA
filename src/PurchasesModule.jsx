@@ -1211,7 +1211,7 @@ function PrioridadAddModal({ candidatas, ccColor, onClose, onAdd }) {
   </Modal>;
 }
 
-function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, providers, addAudit, saveOrAlert, upsertProvider, presupuestos, tasa, calcDisponible }) {
+function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, providers, addAudit, saveOrAlert, upsertProvider, presupuestos, tasa, calcDisponible, encolarPago }) {
   const [saving, setSaving] = useState(false);
   const [f, setF] = useState(purchase || {
     company: co, projectCode: "", provider: "", description: "",
@@ -1239,6 +1239,8 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   });
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const linkedProject = getProject(f.projectCode);
+  // Destino del pago: si nadie lo eligió, crédito → Cuentas por pagar; si no, normal.
+  const destinoForm = f.destinoPago || ((f.condicionPago || "contado") === "credito" ? "cxp" : "normal");
 
   // ── GeoCost: partida + sobregiro (9-sep-2026) ──
   // Solo aplica si el proyecto elegido tiene presupuesto ACTIVO; si no, el
@@ -1479,6 +1481,27 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           </div>
         </div>}
       </div>
+      {/* FECHA REQUERIDA + DESTINO DEL PAGO (25-sep-2026, pedido de Finanzas):
+          todas entran al Calendario de Pago con esa fecha; si es Prioridad o
+          Cuenta por pagar, al APROBARLA se agrega sola a esa pestaña (ya no
+          hay que ir a meterla a mano). Normal = solo calendario. */}
+      <div style={{ gridColumn: "1/-1", display: "grid", gridTemplateColumns: "minmax(160px, 220px) minmax(0,1fr)", gap: 14, alignItems: "end" }}>
+        <Input label="Fecha en que se requiere el pago *" type="date" value={f.fechaPagoRequerida || ""} onChange={e => u("fechaPagoRequerida", e.target.value)} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Va a</label>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {[{ k: "normal", t: "Normal", d: "Solo entra al Calendario de Pago con su fecha" },
+              { k: "prioridad", t: "Prioridades", d: "Entra a la cola de Prioridades de la Lic. Carolina con esa fecha tope" },
+              { k: "cxp", t: "Cuentas por pagar", d: "Se programa el pago para esa fecha en Cuentas por pagar" }].map(o => {
+              const activo = destinoForm === o.k;
+              return <button key={o.k} type="button" title={o.d} onClick={() => u("destinoPago", o.k)}
+                style={{ padding: "8px 16px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 800,
+                  border: activo ? "1px solid transparent" : "1px solid #CBD5E1",
+                  background: activo ? ORANGE_DARK : "#F8FAFC", color: activo ? "#fff" : "#475569" }}>{o.t}</button>;
+            })}
+          </div>
+        </div>
+      </div>
       <Input label="Responsable de Operaciones" value={f.opsResponsible} onChange={e => u("opsResponsible", e.target.value)} placeholder="Quien valida por Operaciones" />
       {/* Dropdown de usuarios (20-ago-2026): el responsable de cierre ahora
           filtra el tablero "Por cerrar contable" — cada quien ve las suyas —
@@ -1591,7 +1614,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           { const eCC = errorPartidaCC(); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
           setSaving(true);
           try {
-            const rec = { ...f, ...camposCC(), id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "borrador", treasuryStatus: null };
+            const rec = { ...f, ...camposCC(), destinoPago: destinoForm, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "borrador", treasuryStatus: null };
             await registrarProveedorSiNuevo(rec);
             const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
             const next = purchase
@@ -1606,10 +1629,11 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         <Btn variant="success" disabled={saving} onClick={async () => {
           if (!f.projectCode || !f.provider || (!modoItems && !f.description) || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert(modoItems ? "Para aprobar: complete proyecto, proveedor, monto, N° cotizacion y responsable" : "Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
           { const eCC = errorPartidaCC(); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
+          if (!f.fechaPagoRequerida) return alert("Para aprobar: poné la fecha en que se requiere el pago (entra al Calendario de Pago).");
           if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
           setSaving(true);
           try {
-            const rec = { ...f, ...camposCC(), id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
+            const rec = { ...f, ...camposCC(), destinoPago: destinoForm, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
             await registrarProveedorSiNuevo(rec);
             const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
             const next = purchase
@@ -1618,7 +1642,11 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             const ok = await saveOrAlert(next);
             if (ok) {
               setModal(null);
-              alert("✓ Solicitud aprobada. Paso a Tesoreria como 'Pendiente Lic. Carolina'.");
+              // Prioridades / Cuentas por pagar: se agrega sola (best effort —
+              // la solicitud ya quedó guardada; si esto falla, avisa y se
+              // puede agregar a mano desde esa pestaña).
+              const donde = encolarPago ? await encolarPago(saved) : null;
+              alert(`✓ Solicitud aprobada. Paso a Tesoreria como 'Pendiente Lic. Carolina'.${donde ? `\n\nSe agregó a ${donde} para el ${saved.fechaPagoRequerida}.` : ""}`);
             }
           } finally {
             setSaving(false);
@@ -2097,6 +2125,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const setDespachos = (v) => { lastLocalMutAtRef.current = Date.now(); _setDespachosRaw(v); };
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
+  const volverARef = useRef(null);   // pestaña a la que se regresa al cerrar la solicitud (irASolicitud)
+  useEffect(() => {
+    if (modal === null && volverARef.current) { setSec(volverARef.current); volverARef.current = null; }
+  }, [modal]);
   // Visor de archivos en la app (10-sep-2026): UN estado a nivel de módulo para
   // lo que abren Proyectos, Cerradas y los FileSlot del DetailView (que se
   // remonta con cada refresh — un visor local ahí se cerraría solo).
@@ -3042,6 +3074,37 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     setLista: setCxp, setSaving: setCxpSaving, etiqueta: "la programación de pagos",
   });
 
+  // Al APROBAR una solicitud (25-sep-2026, pedido de Finanzas): según su
+  // `destinoPago` entra sola a Prioridades (con su fecha tope) o a Cuentas por
+  // pagar (un pago por el total, en su fecha — si es plan de pagos, Christian
+  // ajusta el monto y agrega los demás abonos). "normal" no toca nada: el
+  // Calendario la lee directo de `fechaPagoRequerida`. Idempotente: si ya
+  // está, solo actualiza la fecha. Devuelve el nombre de la pestaña o null.
+  const encolarPago = async (p) => {
+    const fecha = p?.fechaPagoRequerida || "";
+    const ahora = new Date().toISOString();
+    if (p?.destinoPago === "prioridad") {
+      const cur = prioridadesRef.current || [];
+      const ya = cur.find(e => e.id === p.id);
+      if (ya && (ya.fechaRequerida || "") === fecha) return "Prioridades";
+      const next = ya ? cur.map(e => e.id === p.id ? { ...e, fechaRequerida: fecha } : e)
+        : [...cur, { id: p.id, urgente: false, addedBy: userName, createdAt: ahora, fechaRequerida: fecha }];
+      return (await sPri(next)) ? "Prioridades" : null;
+    }
+    if (p?.destinoPago === "cxp") {
+      const cur = cxpRef.current || [];
+      const suyas = cur.filter(e => e.purchaseId === p.id);
+      if (suyas.length > 1) return "Cuentas por pagar";          // plan de abonos ya armado: no se toca
+      if (suyas.length === 1) {
+        if (!fecha || suyas[0].fecha === fecha) return "Cuentas por pagar";
+        return (await sCxp(cur.map(e => e.id === suyas[0].id ? { ...e, fecha } : e))) ? "Cuentas por pagar" : null;
+      }
+      const next = [...cur, { id: uid(), purchaseId: p.id, fecha: fecha || hoyISO(), monto: Number(p.amount) || 0, nota: "", addedBy: userName, createdAt: ahora }];
+      return (await sCxp(next)) ? "Cuentas por pagar" : null;
+    }
+    return null;
+  };
+
   // ── SALIDAS ALTERNATIVAS DEL KANBAN DE ANA (ago 2026) ──
   // Hasta ahora una compra pagada SOLO salia de "Por coordinar" mandandola a
   // Logistica. Dos casos reales de la empresa no encajaban ahi:
@@ -3918,7 +3981,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
                     const pt = (presCC.partidas || []).find(x => x.id === l.partidaId);
                     return <div key={l.id} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 12.5 }}>
                       <span style={{ fontWeight: 700, color: "#0f172a", minWidth: 0, flex: 1 }}>{num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")} ${l.unidad || ""} × ` : ""}{pt?.nombre || l.nombre || "(partida borrada)"}</span>
-                      <span style={{ color: "#64748b", fontSize: 11 }}>{pt?.categoria || l.categoria || ""}</span>
+                      <span style={{ color: "#64748b", fontSize: 11 }}>{[pt?.solucion || l.solucion, pt?.categoria || l.categoria].filter(Boolean).join(" · ")}</span>
                       <span style={{ fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(l.montoHNL)}</span>
                     </div>;
                   })}
@@ -6146,7 +6209,13 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // Lleva a la solicitud en la pestaña Solicitudes y le abre el detalle.
   // Limpia los filtros para que la fila quede visible detrás del modal (si no,
   // al cerrar podía caer en una vista donde esa solicitud está filtrada).
+  // Al CERRAR la solicitud se vuelve a la pestaña de donde vino (25-sep-2026,
+  // pedido de la Lic. Carolina: "cuando la cierro quiero volver a estar en
+  // Prioridades, no quedar en Solicitudes"). Vale para Prioridades, Cuentas
+  // por pagar y Calendario: si en el detalle abre el pago y lo registra, al
+  // cerrarse ese modal también regresa.
   const irASolicitud = (p) => {
+    if (sec !== "list") volverARef.current = sec;
     setFilter({ ver: "todas", project: "", provider: "", mes: "" });
     setListOrden("estado");
     setSec("list");
@@ -6642,6 +6711,15 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     };
     cxp.forEach(e => { const p = porIdGlobal.get(e.purchaseId); if (dePagina(p)) push(e.fecha, "pagos", { e, p }); });
     prioridades.forEach(e => { const p = porIdGlobal.get(e.id); if (dePagina(p)) push(e.fechaRequerida, "requeridas", { e, p }); });
+    // "Normal" (25-sep-2026): toda solicitud con fecha requerida entra al
+    // calendario aunque no esté en Prioridades ni en Cuentas por pagar (si ya
+    // está en alguna de las dos, sale por esa y no se duplica).
+    const enPri = new Set(prioridades.filter(e => e.fechaRequerida).map(e => e.id));
+    const enCxp = new Set(cxp.map(e => e.purchaseId));
+    purchases.forEach(p => {
+      if (!dePagina(p) || p.status === "borrador" || !p.fechaPagoRequerida || enPri.has(p.id) || enCxp.has(p.id)) return;
+      push(p.fechaPagoRequerida, "requeridas", { e: { id: "n-" + p.id, addedBy: p.opsResponsible || "" }, p, normal: true });
+    });
 
     const hoyL = new Date().toLocaleDateString("en-CA");
     const [y, m] = calMes.split("-").map(Number);
@@ -6660,16 +6738,18 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
     const sel = calDia && porDia[calDia] ? porDia[calDia] : { pagos: [], requeridas: [] };
 
-    const filaDetalle = ({ e, p }, tipo) => <div key={(tipo === "pagos" ? "c" : "p") + e.id} className="gt-vidrio gt-vidrio-hover"
+    const filaDetalle = ({ e, p, normal }, tipo) => <div key={(tipo === "pagos" ? "c" : "p") + e.id} className="gt-vidrio gt-vidrio-hover"
       role="button" tabIndex={0} onClick={() => irASolicitud(p)}
       onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); irASolicitud(p); } }}
       style={{ padding: "12px 16px", cursor: "pointer", display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 14, alignItems: "center",
-        background: tipo === "requeridas" ? C_ULTRA.bg : undefined, borderColor: tipo === "requeridas" ? C_ULTRA.borde : undefined }}>
+        background: tipo === "requeridas" && !normal ? C_ULTRA.bg : undefined, borderColor: tipo === "requeridas" && !normal ? C_ULTRA.borde : undefined }}>
       <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
           <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3)" }}>{p.codigo || "—"}</span>
           <Badge color={cc.color}>{p.projectCode}</Badge>
-          {tipo === "requeridas"
+          {tipo === "requeridas" && normal
+            ? <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_GRIS.color, background: C_GRIS.bg }}>Pago requerido</span>
+            : tipo === "requeridas"
             ? <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_ULTRA.color, background: "#fff" }}>Prioridades · fecha tope</span>
             : (p.condicionPago === "credito" && p.tipoCredito === "plan")
               ? <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg }}>Abono de {fmtL(p.amount)}</span>
@@ -6678,7 +6758,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", wordBreak: "break-word" }}>{p.provider}</div>
         <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>
         {e.addedBy && <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
-          {tipo === "pagos" ? "programó" : "la priorizó"} {e.addedBy}
+          {tipo === "pagos" ? "programó" : normal ? "la pidió" : "la priorizó"} {e.addedBy}
         </div>}
       </div>
       <div style={{ font: "800 16px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)", whiteSpace: "nowrap" }}>
@@ -6732,7 +6812,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
         {/* Leyenda mínima */}
         <div style={{ display: "flex", flexDirection: "column", gap: 5, borderTop: "1px solid var(--hairline)", paddingTop: 11 }}>
-          {[{ c: ORANGE, t: "Pago programado" }, { c: C_ROJO.color, t: "Se pasó de fecha" }, { c: "var(--text-faint)", t: "Fecha tope de Prioridades" }].map(l => (
+          {[{ c: ORANGE, t: "Pago programado" }, { c: C_ROJO.color, t: "Se pasó de fecha" }, { c: "var(--text-faint)", t: "Fecha requerida / tope de Prioridades" }].map(l => (
             <div key={l.t} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 10.5, color: "var(--text-3)" }}>
               <span style={{ width: 5, height: 5, borderRadius: "50%", background: l.c, flexShrink: 0 }} />{l.t}
             </div>
@@ -6770,7 +6850,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             </>}
 
             {sel.requeridas.length > 0 && <>
-              <div className="gt-label" style={{ color: "var(--text-2)", fontSize: 10.5, marginTop: 6 }}>Prioridades — vencen ese día</div>
+              <div className="gt-label" style={{ color: "var(--text-2)", fontSize: 10.5, marginTop: 6 }}>Se requiere pagar ese día</div>
               {sel.requeridas.slice().sort((a, b) => (Number(b.p.amount) || 0) - (Number(a.p.amount) || 0)).map(x => filaDetalle(x, "requeridas"))}
             </>}
           </>}
@@ -6989,8 +7069,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     if (!modal) return null;
     const m = modal;
     switch (m.t) {
-      case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} /></Modal>;
-      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} /></Modal>;
+      case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} /></Modal>;
+      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
       case "corregir": return <Modal title={`Corregir proyecto / partida — ${m.d.codigo || m.d.provider}`} onClose={() => setModal(null)} wide><CorreccionFormImpl purchase={m.d} setModal={setModal} allProjects={allProjects} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} updatePurchase={updatePurchase} addAudit={addAudit} userName={userName} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
