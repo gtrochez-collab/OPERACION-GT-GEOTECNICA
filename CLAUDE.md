@@ -429,6 +429,36 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   mes siguiente la noche del último día). Auditado con la nube el 28-sep:
   sep-2026 = 131 por cerrar (84 listas, 9 proveedor, 38 con logística), 17
   cerradas — igual que la vista vieja.
+  **ACCOUNTING (28-sep-2026, pedido de Gerson)**: "Por cerrar contable" y
+  "Cerradas" se juntaron en UNA pestaña **Accounting** (`sec` "accounting")
+  cuya entrada son dos cajas grandes de vidrio (`renderAccounting`: por
+  cerrar con monto + chips "N listas" / "N sin ficha"; cerradas con monto y
+  "N este mes"); click → la vista, que lleva "← Accounting" arriba
+  (`volverAccounting()`). Por dentro siguen siendo las secciones "conta" y
+  "cerradas" (todos los `setSec("conta")` de Por coordinar/Entregas siguen
+  sirviendo); la pestaña se marca activa en las tres. La clasificación del
+  cierre vive UNA vez a nivel del componente (`clasificarConta`,
+  `despachoDeConta`, `esSupervisorConta`, `esMiaConta`) y la usan la entrada
+  y el tablero, así los números cuadran. Ana ve Accounting (antes "conta").
+  **CERRADAS rediseñada (28-sep-2026)**: mismo patrón que Por cerrar — tira
+  resumen (cerradas · monto · proyectos · con factura · paquete completo ·
+  rezagadas), filtros mes de CIERRE / proyecto / "Cerró: X" (`cerrQuien`) /
+  buscador / Expandir-Compactar / Limpiar, grupos compactables por proyecto
+  (`cerrAbiertos`, localStorage `gt-cerr-abiertos`; lo más reciente arriba) y
+  tarjeta-fila con chip del tipo (VERDE con factura · AZUL paquete completo ·
+  GRIS rezagada), quién cerró y cuándo, y botones Factura · Paquete · PDF ·
+  Ver solicitud · Reabrir (admin/Ana) · 🗑 (solo Gerson). Se retiró el banner
+  verde. La lógica no cambió.
+  **PROVEEDORES rediseñada (28-sep-2026)**: tira resumen (proveedores · con
+  datos completos · datos incompletos · con constancia — los dos últimos
+  filtran), barra con pills Todos / Datos incompletos / Con constancia
+  (`provFiltro`), buscador `provQ`, "+ Agregar proveedor"; lista de filas de
+  vidrio AGRUPADA POR LETRA (A, B, C…, acentos normalizados) con 4 columnas:
+  nombre + RTN + chips (Datos incompletos ámbar / Constancia verde) ·
+  contacto · primera cuenta bancaria (+N más) · **cuánto se le ha pagado y
+  cuántas compras** (de cp-purchases por nombre). Click = editar (mismos
+  permisos `canManageProviders`). Se retiró el banner azul. "Datos
+  incompletos" = sin teléfono O sin cuenta (misma regla que el badge viejo).
   **PROYECTOS rediseñado (18-sep-2026)** — Gerson: "qué horrible se ven, quiero
   que se vean como en GeoCost". `renderProjects` usa las mismas piezas que
   `renderProyectosGrid` de GeoCostModule: tarjetas `.gt-vidrio gt-vidrio-hover`

@@ -2243,6 +2243,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const [contaResp, setContaResp] = useState("");
   // Filtros del archivo de cerradas contablemente (mes de cierre / proyecto / texto)
   const [provQ, setProvQ] = useState("");   // buscador de proveedores
+  const [provFiltro, setProvFiltro] = useState("");   // "" | "incompletos" | "constancia"
   const [proyQ, setProyQ] = useState("");   // buscador de proyectos (23-sep-2026)
   // ── Bandeja "Por coordinar" (21-sep-2026) ──
   const [coordMes, setCoordMes] = useState("");          // filtro por mes de pago
@@ -2313,6 +2314,15 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const [rez, setRez] = useState(null);       // modal de cierre de rezagadas
   const [rezSaving, setRezSaving] = useState(false);
   const [cerrMes, setCerrMes] = useState("");
+  const [cerrQuien, setCerrQuien] = useState("");   // Cerradas: quién cerró (28-sep-2026)
+  const [cerrAbiertos, setCerrAbiertos] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem("gt-cerr-abiertos") || "[]"); return Array.isArray(v) ? v : []; }
+    catch { return []; }
+  });
+  const abrirCerr = (lista) => {
+    setCerrAbiertos(lista);
+    try { localStorage.setItem("gt-cerr-abiertos", JSON.stringify(lista)); } catch {}
+  };
   const [cerrProy, setCerrProy] = useState("");
   const [cerrQ, setCerrQ] = useState("");
   // Mes del reporte ejecutivo de materiales (pestaña Costos).
@@ -4445,84 +4455,127 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // ─────────────────────────────────────────────────────────────────────────
   // PROVEEDORES — CRUD compartido entre admin/costos/Ana
   // ─────────────────────────────────────────────────────────────────────────
+  // ── PROVEEDORES (rediseño 28-sep-2026, pedido de Gerson: "ordenámelo en la
+  // misma estética") — lista de filas de vidrio agrupada por LETRA, con tira
+  // resumen, buscador y filtro de los que tienen datos incompletos. Cada fila
+  // dice cuántas compras tiene y cuánto se le ha pagado. Click = editar (los
+  // mismos permisos de siempre: canManageProviders). La lógica no cambió.
   const renderProviders = () => {
-    // Buscador (19-ago-2026): con 114 proveedores la grilla era imposible de
-    // recorrer a ojo. Busca por nombre, RTN, contacto, teléfono o banco.
     const q = provQ.trim().toLowerCase();
+    const incompletoDe = (p) => !p.phones?.length || !p.bankAccounts?.length;
+    // Compras por proveedor (por nombre, sin mayúsculas): cuántas y cuánto pagado
+    const porProv = {};
+    cp.forEach(x => {
+      const k = String(x.provider || "").trim().toLowerCase();
+      if (!k) return;
+      const a = porProv[k] = porProv[k] || { n: 0, pagado: 0 };
+      a.n++;
+      if (x.status === "pagado" || x.status === "finalizado") a.pagado += Number(x.amount) || 0;
+    });
+    const statsDe = (p) => porProv[String(p.name || "").trim().toLowerCase()] || { n: 0, pagado: 0 };
+    const nIncompletos = providers.filter(incompletoDe).length;
+    const nConstancia = providers.filter(p => p.constanciaFile?.fileId).length;
     const sorted = providers.slice()
+      .filter(p => provFiltro !== "incompletos" || incompletoDe(p))
+      .filter(p => provFiltro !== "constancia" || p.constanciaFile?.fileId)
       .filter(p => {
         if (!q) return true;
         const campos = [p.name, p.rtn, p.contactName, p.contactEmail, ...(p.phones || []),
           ...(p.bankAccounts || []).flatMap(b => [b.bank, b.number, b.holder])];
         return campos.some(v => String(v || "").toLowerCase().includes(q));
       })
-      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 14, fontSize: 13, color: "#1E40AF" }}>
-        🏢 <b>{providers.length} proveedores registrados.</b> Cada compra que se crea con un proveedor nuevo se agrega aqui automaticamente para que <b>{isAsistenteCompras ? "vos completes" : "Ana complete"}</b> los datos (telefonos, cuentas bancarias, contacto). En la nueva solicitud aparecen como dropdown.
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 240 }}>
-          <input
-            value={provQ}
-            onChange={e => setProvQ(e.target.value)}
-            placeholder="🔍 Buscar proveedor por nombre, RTN, contacto o banco…"
-            style={{ flex: 1, minWidth: 200, padding: "9px 14px", border: "1px solid #CBD5E1", borderRadius: 10, fontSize: 13, fontFamily: "inherit" }}
-          />
-          {provQ && <Btn small variant="ghost" onClick={() => setProvQ("")}>× Limpiar</Btn>}
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "es", { sensitivity: "base" }));
+    const letraDe = (p) => {
+      const c = String(p.name || "").trim().charAt(0).toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+      return /[A-Z]/.test(c) ? c : "#";
+    };
+    const letras = [];
+    sorted.forEach(p => { const l = letraDe(p); if (!letras.length || letras[letras.length - 1].l !== l) letras.push({ l, items: [] }); letras[letras.length - 1].items.push(p); });
+    const pill = (tx, activo, onClick) => <button key={tx} onClick={onClick} aria-pressed={activo} style={{
+      padding: "5px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", border: activo ? "1px solid transparent" : "1px solid var(--hairline)",
+      background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap" }}>{tx}</button>;
+
+    const fila = (p) => {
+      const inc = incompletoDe(p);
+      const st = statsDe(p);
+      const cuentas = p.bankAccounts || [];
+      const abrir = () => canManageProviders && setModal({ t: "provider-edit", d: p });
+      return <div key={p.id} className={`gt-vidrio${canManageProviders ? " gt-vidrio-hover" : ""}`} role={canManageProviders ? "button" : undefined} tabIndex={canManageProviders ? 0 : undefined}
+        onClick={abrir} onKeyDown={(ev) => { if (canManageProviders && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); abrir(); } }}
+        style={{ padding: isMobile ? "12px 14px" : "13px 18px", cursor: canManageProviders ? "pointer" : "default",
+          display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.3fr) minmax(0,1fr) minmax(0,1.2fr) auto", gap: isMobile ? 8 : 18, alignItems: "center" }}>
+        {/* Quién es */}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", wordBreak: "break-word" }}>{p.name}</span>
+            {inc && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: C_AMARILLO.color, background: C_AMARILLO.bg, whiteSpace: "nowrap" }}>Datos incompletos</span>}
+            {p.constanciaFile?.fileId && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: C_VERDE.color, background: C_VERDE.bg, whiteSpace: "nowrap" }} title="Tiene subida la constancia de pagos a cuenta">Constancia</span>}
+          </div>
+          {p.rtn && <div style={{ font: "600 11px/1.3 var(--mono, ui-monospace)", color: "var(--text-3)", marginTop: 3 }}>RTN {p.rtn}</div>}
         </div>
-        <span style={{ fontSize: 13, color: "#64748b" }}>
-          {provQ
-            ? `${sorted.length} de ${providers.length} proveedores`
-            : `${providers.filter(p => p.autoImported && !p.phones?.length && !p.bankAccounts?.length).length} sin datos completos`}
-        </span>
-        {canManageProviders && <Btn variant="primary" onClick={() => setModal({ t: "provider-new" })}>+ Agregar proveedor</Btn>}
+        {/* Contacto */}
+        <div style={{ minWidth: 0, fontSize: 11.5, color: "var(--text-2)", display: "flex", flexDirection: "column", gap: 2 }}>
+          {p.contactName && <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.contactName}</span>}
+          {p.phones?.length > 0 && <span style={{ color: "var(--text-3)" }}>{p.phones.join(" · ")}</span>}
+          {p.contactEmail && <span style={{ color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.contactEmail}</span>}
+          {!p.contactName && !p.phones?.length && !p.contactEmail && <span style={{ color: "var(--text-faint)", fontStyle: "italic" }}>Sin contacto</span>}
+        </div>
+        {/* Banco */}
+        <div style={{ minWidth: 0, fontSize: 11.5, color: "var(--text-2)", display: "flex", flexDirection: "column", gap: 2 }}>
+          {cuentas.length > 0
+            ? <>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><b>{cuentas[0].bank || "—"}</b>{cuentas[0].type ? ` · ${cuentas[0].type}` : ""}</span>
+              {cuentas[0].number && <span style={{ font: "600 11px/1.3 var(--mono, ui-monospace)", color: "var(--text-3)" }}>{cuentas[0].number}</span>}
+              {cuentas.length > 1 && <span style={{ fontSize: 10.5, color: "var(--text-3)" }}>+{cuentas.length - 1} cuenta{cuentas.length > 2 ? "s" : ""} más</span>}
+            </>
+            : <span style={{ color: "var(--text-faint)", fontStyle: "italic" }}>Sin cuenta bancaria</span>}
+        </div>
+        {/* Compras */}
+        <div style={{ textAlign: isMobile ? "left" : "right", whiteSpace: "nowrap" }}>
+          <div style={{ font: "800 14px/1.15 var(--display)", color: st.pagado > 0 ? "var(--text)" : "var(--text-faint)" }}>{st.pagado > 0 ? fmtL(st.pagado) : "—"}</div>
+          <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 2 }}>{st.n} compra{st.n === 1 ? "" : "s"}</div>
+        </div>
+      </div>;
+    };
+
+    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+        {[
+          { v: providers.length, l: "proveedores", on: () => setProvFiltro("") },
+          { v: providers.length - nIncompletos, l: "con datos completos", c: C_VERDE.color },
+          { v: nIncompletos, l: "datos incompletos", c: nIncompletos ? C_AMARILLO.color : undefined, on: () => setProvFiltro(provFiltro === "incompletos" ? "" : "incompletos") },
+          { v: nConstancia, l: "con constancia", on: () => setProvFiltro(provFiltro === "constancia" ? "" : "constancia") },
+        ].map((x, i, arr) => (
+          <div key={x.l} onClick={x.on} role={x.on ? "button" : undefined} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 45%" : 1, minWidth: 0, cursor: x.on ? "pointer" : "default" }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)" }}>{x.v}</div>
+              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
+            </div>
+            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
+          </div>
+        ))}
+      </div>
+      <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {pill("Todos", !provFiltro, () => setProvFiltro(""))}
+        {pill(`Datos incompletos (${nIncompletos})`, provFiltro === "incompletos", () => setProvFiltro(provFiltro === "incompletos" ? "" : "incompletos"))}
+        {pill(`Con constancia (${nConstancia})`, provFiltro === "constancia", () => setProvFiltro(provFiltro === "constancia" ? "" : "constancia"))}
+        <input value={provQ} onChange={e => setProvQ(e.target.value)} placeholder="Buscar por nombre, RTN, contacto o banco…"
+          style={{ flex: "1 1 240px", minWidth: 180, marginLeft: isMobile ? 0 : "auto", padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", outline: "none", background: "var(--surface)" }} />
+        {(provQ || provFiltro) && <Btn small variant="ghost" onClick={() => { setProvQ(""); setProvFiltro(""); }}>Limpiar</Btn>}
+        {canManageProviders && <button onClick={() => setModal({ t: "provider-new" })}
+          style={{ padding: "7px 16px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 800, border: "1px solid transparent", background: ORANGE, color: "#fff", whiteSpace: "nowrap" }}>+ Agregar proveedor</button>}
       </div>
       {sorted.length === 0
-        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 40, textAlign: "center", color: "#94A3B8" }}>
-            {provQ ? `Ningún proveedor coincide con "${provQ}".` : "Aun no hay proveedores. Click en + Agregar proveedor."}
+        ? <div className="gt-vidrio" style={{ padding: "44px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>
+            {provQ || provFiltro ? "Ningún proveedor coincide con la búsqueda." : "Aún no hay proveedores. Tocá + Agregar proveedor."}
           </div>
-        : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 14 }}>
-            {sorted.map(p => {
-              const incompleto = !p.phones?.length || !p.bankAccounts?.length;
-              return <div
-                key={p.id}
-                onClick={() => canManageProviders && setModal({ t: "provider-edit", d: p })}
-                style={{
-                  background: "#fff",
-                  border: `1px solid ${incompleto ? "#F59E0B" : "#E2E8F0"}`,
-                  borderLeft: `4px solid ${incompleto ? "#F59E0B" : cc.color}`,
-                  borderRadius: 12,
-                  padding: 16,
-                  cursor: canManageProviders ? "pointer" : "default",
-                  transition: "all 0.15s",
-                }}
-                onMouseEnter={e => canManageProviders && (e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)")}
-                onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                  <div style={{ fontWeight: 800, fontSize: 15, color: CHARCOAL, lineHeight: 1.3, flex: 1 }}>{p.name}</div>
-                  {incompleto && <Badge color="#F59E0B">⚠️ Sin datos</Badge>}
-                  {p.autoImported && !incompleto && <Badge color="#64748b">Auto</Badge>}
-                </div>
-                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#475569" }}>
-                  {p.rtn && <div style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, color: "#64748b" }}>RTN: {p.rtn}</div>}
-                  {p.contactName && <div>👤 {p.contactName}</div>}
-                  {p.phones?.length > 0 && <div>📞 {p.phones.join(" · ")}</div>}
-                  {p.contactEmail && <div>✉️ {p.contactEmail}</div>}
-                  {p.bankAccounts?.length > 0 && <div style={{ marginTop: 4, paddingTop: 6, borderTop: "1px dashed #E2E8F0", display: "flex", flexDirection: "column", gap: 3 }}>
-                    {p.bankAccounts.map((b, idx) => (
-                      <div key={idx} style={{ fontSize: 11, lineHeight: 1.4 }}>
-                        🏦 <b>{b.bank || "—"}</b> {b.type && `· ${b.type}`} {b.holder && `· ${b.holder}`}
-                        {b.number && <div style={{ fontFamily: "ui-monospace, Menlo, monospace", color: "#475569", marginLeft: 18 }}>{b.number}</div>}
-                      </div>
-                    ))}
-                  </div>}
-                  {(!p.phones?.length && !p.bankAccounts?.length) && <div style={{ fontStyle: "italic", color: "#94A3B8" }}>Sin telefono ni cuenta bancaria — click para completar</div>}
-                </div>
-              </div>;
-            })}
-          </div>}
+        : letras.map(g => <div key={g.l} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "6px 4px 0" }}>
+              <span style={{ font: "800 17px/1 var(--display)", color: "var(--naranja-tinta)" }}>{g.l}</span>
+              <span style={{ fontSize: 11, color: "var(--text-3)" }}>{g.items.length}</span>
+            </div>
+            {g.items.map(fila)}
+          </div>)}
     </div>;
   };
 
@@ -5964,22 +6017,92 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // cerró, con filtros por MES de cierre y por PROYECTO. Se separó de "Por
   // cerrar" para que ese tablero quede solo con lo pendiente.
   // ─────────────────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ACCOUNTING (28-sep-2026, pedido de Gerson): "Por cerrar contable" y
+  // "Cerradas" viven en UNA pestaña. La entrada son dos cajas grandes de
+  // vidrio; click → su vista (con "← Accounting" para volver). Por dentro
+  // siguen siendo las secciones "conta" y "cerradas" de siempre, así todos
+  // los accesos directos (Por coordinar, Entregas…) llegan igual.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const volverAccounting = () => <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+    <button onClick={() => setSec("accounting")} style={{ padding: "6px 13px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 800, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-2)" }}>← Accounting</button>
+    <span style={{ font: "800 16px/1.2 var(--display)", color: "var(--text)", letterSpacing: "-.01em" }}>{sec === "cerradas" ? "Cerradas" : "Por cerrar contable"}</span>
+  </div>;
+
+  const renderAccounting = () => {
+    const mias = cp.filter(p => esSupervisorConta || esMiaConta(p));
+    let nPor = 0, montoPor = 0, nListas = 0, nSinFicha = 0;
+    mias.forEach(p => {
+      const t = clasificarConta(p);
+      if (!t || t === "cerrada") return;
+      nPor++; montoPor += Number(p.amount) || 0;
+      if (t === "lista") nListas++;
+      if (t === "falta_logistica") nSinFicha++;
+    });
+    const cerradas = cp.filter(yaCerradaConta);
+    const mesHoy = hoyISO().slice(0, 7);
+    const cerradasMes = cerradas.filter(p => String(p.conta?.cerradoAt || "").slice(0, 7) === mesHoy);
+    const montoCerr = cerradas.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const caja = (titulo, sub, n, detalle, onClick, acento, extra) => <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={onClick}
+      onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onClick(); } }}
+      style={{ padding: isMobile ? "22px 20px" : "30px 32px", cursor: "pointer", display: "flex", flexDirection: "column", gap: 14, minHeight: isMobile ? 0 : 240, justifyContent: "space-between" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+        <div>
+          <div style={{ font: `800 ${isMobile ? 21 : 26}px/1.1 var(--display)`, letterSpacing: "-.02em", color: "var(--text)" }}>{titulo}</div>
+          <div style={{ fontSize: 13, color: "var(--text-3)", marginTop: 6 }}>{sub}</div>
+        </div>
+        <span style={{ width: 38, height: 38, borderRadius: 12, background: acento.bg, color: acento.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 18, fontWeight: 800 }}>→</span>
+      </div>
+      <div>
+        <div style={{ font: `800 ${isMobile ? 34 : 44}px/1 var(--display)`, letterSpacing: "-.03em", color: acento.color }}>{n}</div>
+        <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6, fontWeight: 600 }}>{detalle}</div>
+        {extra && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>{extra}</div>}
+      </div>
+    </div>;
+    const chip = (t, c) => <span key={t} style={{ padding: "3px 11px", borderRadius: 999, fontSize: 11, fontWeight: 800, color: c.color, background: c.bg }}>{t}</span>;
+    return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: 16 }}>
+      {caja("Por cerrar contable", esSupervisorConta ? "Todas las compras pagadas que falta cerrar con Contabilidad" : "Las tuyas y las que no tienen responsable",
+        nPor, `${fmtL(montoPor)} en cierre`, () => setSec("conta"), C_ULTRA,
+        [nListas > 0 && chip(`${nListas} listas para cerrar`, C_VERDE), nSinFicha > 0 && chip(`${nSinFicha} sin ficha de Logística`, C_ROJO)].filter(Boolean))}
+      {caja("Cerradas", "El archivo de lo que ya se entregó a Contabilidad",
+        cerradas.length, `${fmtL(montoCerr)} cerrado`, () => setSec("cerradas"), C_VERDE,
+        [chip(`${cerradasMes.length} cerradas este mes`, C_GRIS)])}
+    </div>;
+  };
+
+  // ── CERRADAS (rediseño 28-sep-2026) — archivo agrupado por proyecto, con
+  // los mismos filtros y estética que Por cerrar contable. La lógica de
+  // antes quedó igual: ver factura/paquete (visor en la app), re-descargar
+  // el PDF, reabrir (admin/Ana) y borrar (solo Gerson).
   const renderCerradas = () => {
-    const esCerrada = (p) => yaCerradaConta(p);
-    const todas = cp.filter(esCerrada);
+    const todas = cp.filter(yaCerradaConta);
     const mesDeCierre = (p) => String(p.conta?.cerradoAt || "").slice(0, 7);
     const meses = [...new Set(todas.map(mesDeCierre).filter(Boolean))].sort().reverse();
-    const proyectos = [...new Set(todas.map(p => p.projectCode || "SIN PROYECTO"))].sort();
-    const lista = todas
-      .filter(p => !cerrMes || mesDeCierre(p) === cerrMes)
+    const quienes = [...new Set(todas.map(p => p.conta?.cerradoPor).filter(Boolean))].sort();
+    const tipoDe = (p) => p.conta?.legacy ? "rezagada" : p.conta?.fileId ? "paquete" : "factura";
+    const TIPO_C = { factura: { l: "Con factura", c: C_VERDE }, paquete: { l: "Paquete completo", c: C_AZUL }, rezagada: { l: "Rezagada", c: C_GRIS } };
+    const base = todas.filter(p => !cerrMes || mesDeCierre(p) === cerrMes).filter(p => !cerrQuien || p.conta?.cerradoPor === cerrQuien);
+    const proyectosDisponibles = (() => {
+      const m = {};
+      base.forEach(p => { const k = p.projectCode || "SIN PROYECTO"; m[k] = (m[k] || 0) + 1; });
+      return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], "es", { sensitivity: "base" }));
+    })();
+    const t = cerrQ.trim().toLowerCase();
+    const lista = base
       .filter(p => !cerrProy || (p.projectCode || "SIN PROYECTO") === cerrProy)
-      .filter(p => {
-        if (!cerrQ.trim()) return true;
-        const t = cerrQ.trim().toLowerCase();
-        return [p.codigo, p.provider, p.description, p.projectCode].some(v => String(v || "").toLowerCase().includes(t));
-      })
-      .sort((a, b) => String(b.conta?.cerradoAt || "").localeCompare(String(a.conta?.cerradoAt || "")));
+      .filter(p => !t || [p.codigo, p.provider, p.description, p.projectCode, p.conta?.cerradoPor].some(v => String(v || "").toLowerCase().includes(t)));
     const total = lista.reduce((sm, p) => sm + (Number(p.amount) || 0), 0);
+    const grupos = (() => {
+      const m = {};
+      lista.forEach(p => { const k = p.projectCode || "SIN PROYECTO"; (m[k] = m[k] || []).push(p); });
+      return Object.entries(m).map(([proyecto, items]) => ({
+        proyecto, items: items.slice().sort((a, b) => String(b.conta?.cerradoAt || "").localeCompare(String(a.conta?.cerradoAt || ""))),
+        monto: items.reduce((s, p) => s + (Number(p.amount) || 0), 0),
+      })).sort((a, b) => (a.proyecto === "SIN PROYECTO") - (b.proyecto === "SIN PROYECTO") || a.proyecto.localeCompare(b.proyecto, "es", { sensitivity: "base" }));
+    })();
+    const estaAbierto = (proy) => !!cerrProy || cerrAbiertos.includes(proy);
+    const todosAbiertos = grupos.length > 0 && grupos.every(g => cerrAbiertos.includes(g.proyecto));
+    const toggleGrupo = (proy) => abrirCerr(cerrAbiertos.includes(proy) ? cerrAbiertos.filter(x => x !== proy) : [...cerrAbiertos, proy]);
     const verArchivo = async (ref) => {
       if (!ref?.fileId) return alert("Sin archivo adjunto.");
       try {
@@ -5988,76 +6111,102 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         setVisor({ ...full, name: full.name || ref.name }); // visor en la app (10-sep-2026)
       } catch (e) { alert("Error: " + e.message); }
     };
-    const mesLabel = (m) => { const [y2, m2] = m.split("-").map(Number); const t = new Date(y2, m2 - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ background: "#DCFCE7", border: "1px solid #6EE7B7", borderRadius: 12, padding: 14, fontSize: 13, color: "#065F46" }}>
-        ✅ <b>Archivo de compras cerradas contablemente.</b> Acá queda todo lo que ya se entregó a Contabilidad con su factura. Filtrá por mes de cierre o por proyecto para consultarlas.
+    const mesLbl = (m) => { const [y2, m2] = m.split("-").map(Number); const tx = new Date(y2, m2 - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return tx.charAt(0).toUpperCase() + tx.slice(1); };
+    const SELECT = { padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: "var(--surface)", color: "var(--text-2)", maxWidth: "100%" };
+    const pill = (tx, activo, onClick, title) => <button key={tx} onClick={onClick} title={title} aria-pressed={activo} style={{
+      padding: "5px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", border: activo ? "1px solid transparent" : "1px solid var(--hairline)",
+      background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap" }}>{tx}</button>;
+    const boton = (tx, onClick, tono = "ghost", title) => <button onClick={onClick} title={title} style={{
+      padding: "6px 13px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap",
+      border: tono === "rojo" ? `1px solid ${C_ROJO.borde}` : "1px solid var(--hairline)", background: tono === "rojo" ? C_ROJO.bg : "var(--surface)", color: tono === "rojo" ? C_ROJO.color : "var(--text-2)" }}>{tx}</button>;
+    const fechaCierre = (p) => p.conta?.cerradoAt ? new Date(p.conta.cerradoAt).toLocaleDateString("es-HN", { timeZone: "America/Tegucigalpa", day: "numeric", month: "short", year: "numeric" }) : "—";
+
+    const tarjeta = (p) => {
+      const tc = TIPO_C[tipoDe(p)];
+      return <div key={p.id} className="gt-vidrio" style={{ padding: isMobile ? "13px 14px" : "14px 18px", display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) auto", gap: isMobile ? 12 : 18, alignItems: "center" }}>
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".02em" }}>{p.codigo || "—"}</span>
+            <span style={{ padding: "2px 10px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: tc.c.color, background: tc.c.bg, whiteSpace: "nowrap" }}>{tc.l}</span>
+            <span style={{ fontSize: 10.5, color: "var(--text-3)" }}>cerró {p.conta?.cerradoPor || "—"} · {fechaCierre(p)}</span>
+            <span style={{ marginLeft: "auto", font: "800 15px/1 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(p.amount)}</span>
+          </div>
+          <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", wordBreak: "break-word" }}>{p.provider}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>
+          {p.conta?.legacy && p.conta?.nota && <div style={{ fontSize: 11, color: "var(--text-3)", fontStyle: "italic" }}>{p.conta.nota}</div>}
+        </div>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end" }}>
+          {p.conta?.facturaFile?.fileId && boton("Factura", () => verArchivo(p.conta.facturaFile))}
+          {p.conta?.fileId && boton("Paquete", () => verArchivo({ fileId: p.conta.fileId, type: p.conta.type }))}
+          {boton("PDF", () => imprimirPaqueteConta(p), "ghost", "Re-descargar el paquete de cierre")}
+          {boton("Ver solicitud", () => setModal({ t: "detail", d: p }))}
+          {(isAdmin || isAsistenteCompras) && boton("Reabrir", () => reabrirCierreConta(p), "rojo", "Vuelve a Por cerrar contable")}
+          {puedeBorrarSolicitud && boton("🗑", () => borrarSolicitudCompleta(p), "rojo", "Borrar esta solicitud por completo (solo vos)")}
+        </div>
+      </div>;
+    };
+
+    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+      {volverAccounting()}
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+        {[
+          { v: lista.length, l: "cerradas", c: C_VERDE.color },
+          { v: fmtL(total), l: "monto cerrado" },
+          { v: grupos.length, l: "proyectos" },
+          { v: lista.filter(p => tipoDe(p) === "factura").length, l: "con factura" },
+          { v: lista.filter(p => tipoDe(p) === "paquete").length, l: "paquete completo" },
+          { v: lista.filter(p => tipoDe(p) === "rezagada").length, l: "rezagadas" },
+        ].map((x, i, arr) => (
+          <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 45%" : 1, minWidth: 0 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.v}</div>
+              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
+            </div>
+            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
+          </div>
+        ))}
       </div>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 14px" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <label style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4 }}>Mes de cierre</label>
-          <select value={cerrMes} onChange={e => setCerrMes(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", fontFamily: "inherit" }}>
-            <option value="">Todos los meses</option>
-            {meses.map(m => <option key={m} value={m}>{mesLabel(m)}</option>)}
-          </select>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <label style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4 }}>Proyecto</label>
-          <select value={cerrProy} onChange={e => setCerrProy(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", fontFamily: "inherit", minWidth: 180 }}>
-            <option value="">Todos los proyectos</option>
-            {proyectos.map(pr2 => <option key={pr2} value={pr2}>{pr2}</option>)}
-          </select>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 200 }}>
-          <label style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4 }}>Buscar</label>
-          <input value={cerrQ} onChange={e => setCerrQ(e.target.value)} placeholder="Código, proveedor o descripción…" style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }} />
-        </div>
-        {(cerrMes || cerrProy || cerrQ) && <Btn small variant="ghost" onClick={() => { setCerrMes(""); setCerrProy(""); setCerrQ(""); }}>Limpiar</Btn>}
-      </div>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 18px", minWidth: 160 }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: "#059669" }}>{lista.length}</div>
-          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>Compras cerradas</div>
-        </div>
-        <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 18px", minWidth: 180 }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: CHARCOAL }}>{fmtL(total)}</div>
-          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>Monto cerrado</div>
-        </div>
+      <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Cerradas en</span>
+        <select value={cerrMes} onChange={e => setCerrMes(e.target.value)} style={{ ...SELECT, fontWeight: cerrMes ? 700 : 400 }}>
+          <option value="">Todos los meses</option>
+          {meses.map(m => <option key={m} value={m}>{mesLbl(m)}</option>)}
+        </select>
+        <select value={cerrProy} onChange={e => setCerrProy(e.target.value)} style={{ ...SELECT, background: cerrProy ? "rgba(232,118,45,.08)" : "var(--surface)", fontWeight: cerrProy ? 700 : 400 }}>
+          <option value="">Todos los proyectos</option>
+          {proyectosDisponibles.map(([n, c]) => <option key={n} value={n}>{n} ({c})</option>)}
+        </select>
+        <select value={cerrQuien} onChange={e => setCerrQuien(e.target.value)} style={{ ...SELECT, fontWeight: cerrQuien ? 700 : 400 }}>
+          <option value="">Cerró: todos</option>
+          {quienes.map(n => <option key={n} value={n}>Cerró: {n}</option>)}
+        </select>
+        {!cerrProy && grupos.length > 1 && (todosAbiertos
+          ? pill("Compactar todo", false, () => abrirCerr([]))
+          : pill("Expandir todo", false, () => abrirCerr(grupos.map(g => g.proyecto))))}
+        {(cerrMes || cerrProy || cerrQ || cerrQuien) && <Btn small variant="ghost" onClick={() => { setCerrMes(""); setCerrProy(""); setCerrQ(""); setCerrQuien(""); }}>Limpiar</Btn>}
+        <input value={cerrQ} onChange={e => setCerrQ(e.target.value)} placeholder="Buscar código, proveedor, quién cerró…"
+          style={{ flex: "0 1 250px", minWidth: 150, marginLeft: "auto", padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", outline: "none", background: "var(--surface)" }} />
       </div>
       {lista.length === 0
-        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 50, textAlign: "center", color: "#94A3B8" }}>
-            <div style={{ fontSize: 36, marginBottom: 10 }}>🗂️</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: CHARCOAL }}>{todas.length === 0 ? "Todavía no hay compras cerradas contablemente" : "Ninguna coincide con el filtro"}</div>
+        ? <div className="gt-vidrio" style={{ padding: "44px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>
+            {todas.length === 0 ? "Todavía no hay compras cerradas contablemente." : "Ninguna coincide con los filtros."}
           </div>
-        : <div style={{ overflowX: "auto", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-              <thead><tr style={{ background: "#F1F5F9" }}>
-                {["Código", "Cerrada", "Proyecto", "Proveedor", "Descripción", "Monto", "Cerró", "Documentos"].map(h => (
-                  <th key={h} style={{ textAlign: h === "Monto" ? "right" : "left", padding: "9px 12px", fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>))}
-              </tr></thead>
-              <tbody>
-                {lista.map(p => (
-                  <tr key={p.id} style={{ borderTop: "1px solid #F1F5F9" }}>
-                    <td style={{ padding: "8px 12px", fontWeight: 800, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11.5, color: CHARCOAL, whiteSpace: "nowrap" }}>{p.codigo || "—"}</td>
-                    <td style={{ padding: "8px 12px", color: "#64748b", whiteSpace: "nowrap" }}>{p.conta?.cerradoAt ? new Date(p.conta.cerradoAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</td>
-                    <td style={{ padding: "8px 12px", fontWeight: 600 }}>{p.projectCode || "—"}</td>
-                    <td style={{ padding: "8px 12px" }}>{p.provider}</td>
-                    <td style={{ padding: "8px 12px", color: "#475569", maxWidth: 300 }}>{String(p.description || "").slice(0, 90)}</td>
-                    <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(p.amount)}</td>
-                    <td style={{ padding: "8px 12px", fontSize: 11, color: "#64748b", whiteSpace: "nowrap" }}>{p.conta?.cerradoPor || "—"}</td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
-                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                        {p.conta?.facturaFile?.fileId && <Btn small variant="ghost" onClick={() => verArchivo(p.conta.facturaFile)}>🧾 Factura</Btn>}
-                        {p.conta?.fileId && <Btn small variant="ghost" onClick={() => verArchivo({ fileId: p.conta.fileId, type: p.conta.type })}>📦 Paquete</Btn>}
-                        <Btn small variant="ghost" onClick={() => imprimirPaqueteConta(p)}>📥 PDF</Btn>
-                        {(isAdmin || isAsistenteCompras) && <Btn small variant="danger" onClick={() => reabrirCierreConta(p)}>↩</Btn>}
-                        {puedeBorrarSolicitud && <Btn small variant="danger" onClick={() => borrarSolicitudCompleta(p)}>🗑</Btn>}
-                      </div>
-                    </td>
-                  </tr>))}
-              </tbody>
-            </table>
-          </div>}
+        : grupos.map(g => {
+            const abierto = estaAbierto(g.proyecto);
+            return <div key={g.proyecto} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+              <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} aria-expanded={abierto} aria-label={`${abierto ? "Compactar" : "Abrir"} ${g.proyecto}`}
+                onClick={() => toggleGrupo(g.proyecto)}
+                onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleGrupo(g.proyecto); } }}
+                style={{ padding: isMobile ? "11px 14px" : "11px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: abierto ? "rgba(232,118,45,.05)" : undefined }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden
+                  style={{ color: "var(--text-3)", flexShrink: 0, transform: abierto ? "rotate(90deg)" : "none", transition: "transform .18s var(--curva)" }}><path d="M9 18l6-6-6-6" /></svg>
+                <span style={{ font: "800 13px/1.2 var(--sans)", color: "var(--text)", letterSpacing: ".01em", minWidth: 0, wordBreak: "break-word" }}>{g.proyecto}</span>
+                <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{g.items.length} cerrada{g.items.length === 1 ? "" : "s"}</span>
+                <span style={{ marginLeft: "auto", font: "800 14px/1 var(--display)", color: C_VERDE.color, whiteSpace: "nowrap" }}>{fmtL(g.monto)}</span>
+              </div>
+              {abierto && g.items.map(tarjeta)}
+            </div>;
+          })}
     </div>;
   };
 
@@ -6076,29 +6225,35 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // quién ve TODO — ahora solo Gerson (admin) y la Lic. Carolina (tesorería);
   // los demás ven las suyas y las sin asignar.
   // ═══════════════════════════════════════════════════════════════════════════
+  // ── Clasificación del cierre contable (compartida por Por cerrar y la
+  // entrada de Accounting, así los números de las dos cuadran) ──
+  // Entra: pagada/finalizada con un CAMINO decidido (despacho de logística,
+  // entrega del proveedor, ficha adjunta o cerrada sin ficha). Las que siguen
+  // sin decidir viven en Por coordinar.
+  const despachoDeConta = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
+  const clasificarConta = (p) => {
+    if (p.status !== "pagado" && p.status !== "finalizado") return null;
+    if (yaCerradaConta(p)) return "cerrada";
+    if (p.deliveryStatus === "ficha_adjunta") return "lista";
+    if (p.deliveryStatus === "cerrado") return "lista"; // sin ficha (servicio/renta)
+    if (p.deliveryStatus === "entrega_proveedor") return "falta_proveedor";
+    const d = despachoDeConta(p.id);
+    if (d) return (d.estado === "entregado" || d.estado === "cerrado") ? "falta_logistica" : "en_camino";
+    return null; // sin camino decidido → sigue en Por coordinar
+  };
+  // ── QUIÉN VE QUÉ (28-sep-2026: "solo la Lic. Carolina y yo las vemos
+  // todas") — cada quien ve las compras donde ÉL es el responsable de cierre
+  // más las SIN ASIGNAR (para que nada quede invisible). Gerson y Carolina
+  // ven todas, con selector por responsable.
+  const esSupervisorConta = isAdmin || isTesoreria;
+  const esMiaConta = (z) => !z.cierreResponsable || z.cierreResponsable === userName;
+
   const renderConta = () => {
-    const despachoDe = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
-    // Entra a esta vista: pagada/finalizada que ya tiene un CAMINO decidido
-    // (despacho de logística, entrega del proveedor, ficha adjunta o cerrada
-    // sin ficha). Las que siguen sin decidir viven en Por coordinar.
-    const clasificar = (p) => {
-      if (p.status !== "pagado" && p.status !== "finalizado") return null;
-      if (yaCerradaConta(p)) return "cerrada";
-      if (p.deliveryStatus === "ficha_adjunta") return "lista";
-      if (p.deliveryStatus === "cerrado") return "lista"; // sin ficha (servicio/renta)
-      if (p.deliveryStatus === "entrega_proveedor") return "falta_proveedor";
-      const d = despachoDe(p.id);
-      if (d) return (d.estado === "entregado" || d.estado === "cerrado") ? "falta_logistica" : "en_camino";
-      return null; // sin camino decidido → sigue en Por coordinar
-    };
-    // ── QUIÉN VE QUÉ (28-sep-2026: "solo la Lic. Carolina y yo las vemos
-    // todas") — cada quien ve las compras donde ÉL es el responsable de cierre
-    // más las SIN ASIGNAR (para que nada quede invisible). Gerson y Carolina
-    // ven todas, con selector por responsable.
-    const esSupervisorConta = isAdmin || isTesoreria;
+    const despachoDe = despachoDeConta;
+    const clasificar = clasificarConta;
     const paraMi = (z) => esSupervisorConta
       ? (!contaResp || (contaResp === "__sin__" ? !z.cierreResponsable : z.cierreResponsable === contaResp))
-      : (!z.cierreResponsable || z.cierreResponsable === userName);
+      : esMiaConta(z);
     const RESP_OPCIONES = [...new Set(USERS.map(u2 => u2.label))].sort();
     const mesDe = (x) => String(x.paidAt || x.createdAt || "").slice(0, 7);
     const mesesDisponibles = [...new Set(cp.filter(x => clasificar(x)).map(mesDe).filter(Boolean))].sort().reverse();
@@ -6254,6 +6409,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     };
 
     return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+      {volverAccounting()}
       {/* Resumen — cada número filtra (o lleva a su pestaña) */}
       <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
         {[
@@ -7332,8 +7488,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     { id: "projects", label: "Proyectos" },
     { id: "ana", label: "Por coordinar" },
     { id: "entregas", label: "Entregas de proveedor" },
-    { id: "conta", label: "Por cerrar contable" },
-    { id: "cerradas", label: "Cerradas" },
+    // Accounting (28-sep-2026): Por cerrar contable + Cerradas en una sola
+    // pestaña con dos cajas de entrada (las secciones internas siguen siendo
+    // "conta" y "cerradas", por eso la pestaña se marca activa en las tres).
+    { id: "accounting", label: "Accounting" },
     { id: "providers", label: "Proveedores" },
   ];
   // Dashboard y Resumen (command center) solo para admin/gerencia/costos —
@@ -7344,7 +7502,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // Jorge (recepción) y Ana no tienen nada que hacer ahí.
   const canSeePri = canEditPri || isGerencia || isVisorCompras;
   const visibleNav = isAsistenteCompras
-    ? allNav.filter(n => n.id === "ana" || n.id === "entregas" || n.id === "conta" || n.id === "providers")
+    ? allNav.filter(n => n.id === "ana" || n.id === "entregas" || n.id === "accounting" || n.id === "providers")
     : allNav.filter(n => {
         if (n.id === "resumen") return canSeeResumen;
         if (n.id === "dashboard") return canSeeDashboard;
@@ -7405,7 +7563,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       scrollbarWidth: "thin",
     }}>
       {visibleNav.map(n => {
-        const active = sec === n.id;
+        const active = n.id === "accounting" ? ["accounting", "conta", "cerradas"].includes(sec) : sec === n.id;
         return <button
           key={n.id}
           onClick={() => setSec(n.id)}
@@ -7441,6 +7599,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           : sec === "providers" ? renderProviders()
           : sec === "ana" ? renderAnaKanban()
           : sec === "entregas" ? renderEntregasProveedor()
+          : sec === "accounting" ? renderAccounting()
           : sec === "conta" ? renderConta()
           : sec === "cerradas" ? renderCerradas()
           : renderList()
