@@ -401,6 +401,34 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   revertirEntregaDirecta, modal entrega-directa) NO cambió.
   **Orden de pestañas (24-sep-2026)**: Calendario de Pago va JUSTO después del
   Dashboard (antes iba después de Cuentas por pagar).
+  **POR CERRAR CONTABLE rediseñada (28-sep-2026)** — Gerson: "feo,
+  desordenado, nada user friendly; mismas funciones con la estética de los
+  demás". `renderConta` usa el patrón de Por coordinar / Entregas: tira
+  resumen en vidrio donde CADA número filtra (por cerrar · en cierre · listas
+  para cerrar · sin ficha de logística · falta ficha proveedor · cerradas →),
+  filtros (mes de PAGO, botón rojo "Sin ficha de Logística — todos los
+  meses", pills de tipo `contaTipo`, proyecto `contaProy`, responsable,
+  buscador `contaQ`, Expandir/Compactar, Limpiar, "Cerrar rezagadas en lote"
+  solo Gerson) y grupos COMPACTABLES por proyecto (`contaAbiertos`,
+  localStorage `gt-conta-abiertos`). Dentro de cada proyecto: primero las
+  LISTAS (se pueden cerrar ya), después sin ficha de logística, falta ficha
+  del proveedor y con logística; en cada tipo, la que más lleva pagada.
+  Tarjeta-fila: código · chip del tipo (VERDE lista / ROJO sin ficha de
+  Logística — fondo rojo clarito / ÁMBAR falta ficha proveedor / AZUL con
+  Logística) · "pagada hace N d" · monto, proveedor, qué se compró, quién la
+  entregó (sin ficha), select "Cierra" editable (updatePurchase + audit
+  `cierre_responsable`), enlaces Ver solicitud / Cerrar rezagada / 🗑; a la
+  derecha: **Paquete PDF** + **Subir factura y cerrar** (naranja) + "…o
+  subir el paquete completo" en las listas, "Ir a Entregas de proveedor →"
+  en las del proveedor. Se retiró el banner amarillo de "la regla del
+  cierre". La lógica (`clasificar`, uploadPaqueteConta, imprimirPaqueteConta,
+  rezagadas) NO cambió. ⚠ **Quién ve TODO cambió**: `esSupervisorConta` =
+  admin + tesorería (Gerson y la Lic. Carolina — "solo la Lic. y yo las
+  vemos todas"); antes era admin/gerencia/visor_compras. Los demás ven las
+  suyas + las sin asignar. `contaMes` arranca con `hoyISO()` (UTC corría al
+  mes siguiente la noche del último día). Auditado con la nube el 28-sep:
+  sep-2026 = 131 por cerrar (84 listas, 9 proveedor, 38 con logística), 17
+  cerradas — igual que la vista vieja.
   **PROYECTOS rediseñado (18-sep-2026)** — Gerson: "qué horrible se ven, quiero
   que se vean como en GeoCost". `renderProjects` usa las mismas piezas que
   `renderProyectosGrid` de GeoCostModule: tarjetas `.gt-vidrio gt-vidrio-hover`
@@ -1161,8 +1189,8 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   `cierreResponsable` ahora es dropdown de USERS (form + select inline en las
   cards de "Por cerrar contable", guardado con updatePurchase + audit). El
   tablero conta se FILTRA: no-supervisores ven SUS compras + las sin asignar;
-  supervisores (Purchases: admin/gerencia/visor_compras; Machines:
-  admin/gerencia) ven todas + selector por responsable (`contaResp`,
+  supervisores (Purchases: admin/tesorería desde el 28-sep-2026 — antes
+  admin/gerencia/visor_compras; Machines: admin/gerencia) ven todas + selector por responsable (`contaResp`,
   "__sin__" = sin asignar). Asignarle otra persona a una card la saca de tu
   vista al instante.
 - **Verify SEMÁNTICO, no por count** (20-ago-2026): comparar

@@ -2224,9 +2224,22 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // Filtro de mes de "Por cerrar contablemente" (por fecha de PAGO).
   // Default: mes actual — el histórico viejo no se le viene encima a nadie,
   // pero queda accesible eligiendo el mes o "Todos".
-  const [contaMes, setContaMes] = useState(() => new Date().toISOString().slice(0, 7));
+  const [contaMes, setContaMes] = useState(() => hoyISO().slice(0, 7));   // mes de Honduras (UTC corría al siguiente de noche el último día)
   // Filtro por responsable de cierre en "Por cerrar contable" (supervisores)
   const [contaSoloSinFicha, setContaSoloSinFicha] = useState(false);   // Por cerrar: solo "Sin ficha de Logística", todos los meses
+  // Por cerrar contable (rediseño 28-sep-2026): filtro por tipo, proyecto,
+  // texto y grupos desplegados (preferencia de pantalla en localStorage).
+  const [contaTipo, setContaTipo] = useState("");
+  const [contaProy, setContaProy] = useState("");
+  const [contaQ, setContaQ] = useState("");
+  const [contaAbiertos, setContaAbiertos] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem("gt-conta-abiertos") || "[]"); return Array.isArray(v) ? v : []; }
+    catch { return []; }
+  });
+  const abrirConta = (lista) => {
+    setContaAbiertos(lista);
+    try { localStorage.setItem("gt-conta-abiertos", JSON.stringify(lista)); } catch {}
+  };
   const [contaResp, setContaResp] = useState("");
   // Filtros del archivo de cerradas contablemente (mes de cierre / proyecto / texto)
   const [provQ, setProvQ] = useState("");   // buscador de proveedores
@@ -6048,6 +6061,21 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     </div>;
   };
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // POR CERRAR CONTABLE — rediseño 28-sep-2026 (pedido de Gerson: "feo,
+  // desordenado, nada user friendly — mismas funciones con la estética de los
+  // demás, cajitas de vidrio y mismos colores"). Mismo patrón que Por
+  // coordinar / Entregas de proveedor: tira resumen, filtros, grupos
+  // COMPACTABLES por proyecto (`contaAbiertos` en localStorage, preferencia de
+  // pantalla) y tarjetas-fila con la acción a la derecha.
+  // La LÓGICA no cambió: `clasificar` (lista · falta_logistica ·
+  // falta_proveedor · en_camino · cerrada), el filtro por mes de PAGO, el
+  // botón "Sin ficha de Logística (N)" de todos los meses, el responsable de
+  // cierre editable en la tarjeta, uploadPaqueteConta (factura o paquete),
+  // imprimirPaqueteConta, rezagadas y borrar. Lo único que cambió de fondo:
+  // quién ve TODO — ahora solo Gerson (admin) y la Lic. Carolina (tesorería);
+  // los demás ven las suyas y las sin asignar.
+  // ═══════════════════════════════════════════════════════════════════════════
   const renderConta = () => {
     const despachoDe = (purchaseId) => despachos.find(d => d.sourcePurchaseId === purchaseId);
     // Entra a esta vista: pagada/finalizada que ya tiene un CAMINO decidido
@@ -6063,137 +6091,265 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       if (d) return (d.estado === "entregado" || d.estado === "cerrado") ? "falta_logistica" : "en_camino";
       return null; // sin camino decidido → sigue en Por coordinar
     };
-    // ── FILTRO POR RESPONSABLE (20-ago-2026, pedido de Gerson) ──
-    // Cada quien ve SUS compras por cerrar (cierreResponsable === su nombre)
-    // más las SIN ASIGNAR (para que nada quede invisible hasta asignarlas).
-    // Los supervisores ven todas, con un selector para filtrar.
-    const esSupervisorConta = isAdmin || isGerencia || isVisorCompras;
+    // ── QUIÉN VE QUÉ (28-sep-2026: "solo la Lic. Carolina y yo las vemos
+    // todas") — cada quien ve las compras donde ÉL es el responsable de cierre
+    // más las SIN ASIGNAR (para que nada quede invisible). Gerson y Carolina
+    // ven todas, con selector por responsable.
+    const esSupervisorConta = isAdmin || isTesoreria;
     const paraMi = (z) => esSupervisorConta
       ? (!contaResp || (contaResp === "__sin__" ? !z.cierreResponsable : z.cierreResponsable === contaResp))
       : (!z.cierreResponsable || z.cierreResponsable === userName);
     const RESP_OPCIONES = [...new Set(USERS.map(u2 => u2.label))].sort();
-    // Meses disponibles (con algo por cerrar o cerrado), para el selector.
     const mesDe = (x) => String(x.paidAt || x.createdAt || "").slice(0, 7);
     const mesesDisponibles = [...new Set(cp.filter(x => clasificar(x)).map(mesDe).filter(Boolean))].sort().reverse();
-    // "Sin ficha de Logística" (24-sep-2026): las compras cuyo despacho quedó
-    // entregado SIN ficha (casi todas de antes del candado del 19-ago). Gerson
-    // las quiere revisar una a una, así que el filtro ignora el mes — con el
-    // default del mes actual quedaban escondidas (se pagaron jun-ago).
     const soloSinFicha = contaSoloSinFicha;
     const enMes = (x) => soloSinFicha || !contaMes || mesDe(x) === contaMes;
     const nSinFichaTodas = cp.filter(paraMi).filter(p => clasificar(p) === "falta_logistica").length;
-    const grupos = {}; const totales = { lista: 0, falta_logistica: 0, falta_proveedor: 0, en_camino: 0, cerrada: 0 };
-    cp.filter(enMes).filter(paraMi).forEach(p => { const b = clasificar(p); if (!b) return; if (soloSinFicha && b !== "falta_logistica") return; const k = p.projectCode || "__sin__"; (grupos[k] = grupos[k] || { lista: [], falta_logistica: [], falta_proveedor: [], en_camino: [], cerrada: [] })[b].push(p); totales[b]++; });
-    const abiertas = totales.lista + totales.falta_logistica + totales.falta_proveedor + totales.en_camino;
-    const keys = Object.keys(grupos).filter(k => grupos[k].lista.length + grupos[k].falta_logistica.length + grupos[k].falta_proveedor.length + grupos[k].en_camino.length > 0)
-      .sort((a, b) => (a === "__sin__" ? 1 : b === "__sin__" ? -1 : a.localeCompare(b)));
-    const cerradas = cp.filter(enMes).filter(paraMi).filter(p => clasificar(p) === "cerrada").sort((a, b) => String(b.conta?.cerradoAt || "").localeCompare(String(a.conta?.cerradoAt || "")));
-    const verCerradas = anaExpand["conta-cerradas"] === true;
     const puedeCerrarConta = isAdmin || isAsistenteCompras || isCostos;
 
-    const cardConta = (p, tipo) => {
+    // Días desde el pago (solo FECHAS — paidAt es medianoche UTC)
+    const hoyL = hoyISO();
+    const diasDesdePago = (p) => {
+      const y = String(p.paidAt || p.paymentDate || "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(y)) return null;
+      return Math.max(0, Math.floor((Date.parse(hoyL + "T00:00:00Z") - Date.parse(y + "T00:00:00Z")) / 86400000));
+    };
+
+    // Base del mes (y responsable) ANTES de los filtros de tipo/proyecto/texto:
+    // de ahí salen los contadores de la tira y el selector de proyecto.
+    const base = [];
+    let cerradasMes = 0;
+    cp.filter(enMes).filter(paraMi).forEach(p => {
+      const t = clasificar(p);
+      if (!t) return;
+      if (t === "cerrada") { cerradasMes++; return; }
+      if (soloSinFicha && t !== "falta_logistica") return;
+      base.push({ p, t });
+    });
+    const cuenta = (t) => base.filter(x => x.t === t).length;
+    const proyectosDisponibles = (() => {
+      const m = {};
+      base.forEach(({ p }) => { const k = p.projectCode || "SIN PROYECTO"; m[k] = (m[k] || 0) + 1; });
+      return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], "es", { sensitivity: "base" }));
+    })();
+    const txt = contaQ.trim().toLowerCase();
+    const filas = base
+      .filter(x => !contaTipo || x.t === contaTipo)
+      .filter(x => !contaProy || (x.p.projectCode || "SIN PROYECTO") === contaProy)
+      .filter(x => !txt || [x.p.codigo, x.p.provider, x.p.description, x.p.projectCode, x.p.cierreResponsable].some(v => String(v || "").toLowerCase().includes(txt)));
+    const monto = filas.reduce((s, x) => s + (Number(x.p.amount) || 0), 0);
+
+    // Dentro del proyecto: lo que se puede cerrar YA primero, después lo que
+    // está trabado; y en cada tipo la que más lleva pagada.
+    const ORDEN_T = { lista: 0, falta_logistica: 1, falta_proveedor: 2, en_camino: 3 };
+    const orden = (a, b) => ORDEN_T[a.t] - ORDEN_T[b.t] || (diasDesdePago(b.p) ?? -1) - (diasDesdePago(a.p) ?? -1);
+    const grupos = (() => {
+      const m = {};
+      filas.forEach(x => { const k = x.p.projectCode || "SIN PROYECTO"; (m[k] = m[k] || []).push(x); });
+      return Object.entries(m).map(([proyecto, items]) => ({
+        proyecto, items: items.slice().sort(orden),
+        monto: items.reduce((s, x) => s + (Number(x.p.amount) || 0), 0),
+        listas: items.filter(x => x.t === "lista").length,
+        sinFicha: items.filter(x => x.t === "falta_logistica").length,
+      })).sort((a, b) => (a.proyecto === "SIN PROYECTO") - (b.proyecto === "SIN PROYECTO") || a.proyecto.localeCompare(b.proyecto, "es", { sensitivity: "base" }));
+    })();
+    const estaAbierto = (proy) => !!contaProy || contaAbiertos.includes(proy);
+    const todosAbiertos = grupos.length > 0 && grupos.every(g => contaAbiertos.includes(g.proyecto));
+    const toggleGrupo = (proy) => abrirConta(contaAbiertos.includes(proy) ? contaAbiertos.filter(x => x !== proy) : [...contaAbiertos, proy]);
+
+    const pill = (t, activo, onClick, title) => (
+      <button key={t} onClick={onClick} title={title} aria-pressed={activo} style={{
+        padding: "5px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
+        border: activo ? "1px solid transparent" : "1px solid var(--hairline)",
+        background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)",
+        fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap",
+      }}>{t}</button>
+    );
+    const enlace = (t, onClick, color, title) => (
+      <button onClick={onClick} title={title}
+        style={{ background: "none", border: "none", padding: 0, fontSize: 11, color: color || "var(--text-3)", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>{t}</button>
+    );
+    const SELECT = { padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: "var(--surface)", color: "var(--text-2)", maxWidth: "100%" };
+    const mesLbl = (m) => { const [y, mm] = m.split("-").map(Number); const t = new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
+
+    // Cómo se ve cada tipo (semáforo de la casa)
+    const TIPO = {
+      lista:           { l: "Lista para cerrar",           c: C_VERDE },
+      falta_logistica: { l: "Sin ficha de Logística",      c: C_ROJO },
+      falta_proveedor: { l: "Falta ficha del proveedor",   c: C_AMARILLO },
+      en_camino:       { l: "Con Logística",               c: C_AZUL },
+    };
+
+    const tarjeta = ({ p, t }) => {
       const d = despachoDe(p.id);
-      const cfg = {
-        lista:           { badge: p.deliveryStatus === "cerrado" && !p.delivery?.fichaFile ? "🔒 Sin ficha (servicio/renta) — lista" : "✓ Ficha lista — armar paquete", c: "#059669", border: "#6EE7B7" },
-        falta_logistica: { badge: "⚠ SIN FICHA de recibido — LOGÍSTICA debe subirla", c: "#DC2626", border: "#FCA5A5" },
-        falta_proveedor: { badge: "🏪 Falta ficha firmada (la entrega el proveedor)", c: "#B45309", border: "#FCD34D" },
-        en_camino:       { badge: `🚚 Con Logística (${d?.estado || "pendiente"})`, c: "#0891B2", border: "#BAE6FD" },
-      }[tipo];
-      return <div key={p.id} style={{ background: "#fff", border: `1px solid ${cfg.border}`, borderLeft: `3px solid ${cfg.c}`, borderRadius: 8, padding: 12, position: "relative" }}>
-        {puedeBorrarSolicitud && <span style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6, lineHeight: 1 }}>
-          <span role="button" title="Cerrar contablemente esta rezagada del flujo anterior (solo vos)" onClick={() => setRez({ modo: "una", purchase: p, quien: "", otro: "", nota: "" })} style={{ cursor: "pointer", fontSize: 12, opacity: 0.6 }}>✅</span>
-          <span role="button" title="Borrar esta solicitud por completo (solo vos)" onClick={() => borrarSolicitudCompleta(p)} style={{ cursor: "pointer", fontSize: 12, opacity: 0.45 }}>🗑</span>
-        </span>}
-        <span style={{ display: "inline-block", background: cfg.c + "18", color: cfg.c, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, lineHeight: 1.35 }}>{cfg.badge}</span>
-        {p.codigo && <div style={{ fontSize: 10.5, fontWeight: 800, color: "#64748b", fontFamily: "ui-monospace, Menlo, monospace", marginTop: 5 }}>{p.codigo}</div>}
-        <div style={{ fontSize: 13, fontWeight: 800, color: CHARCOAL, marginTop: 2 }}>{p.provider}</div>
-        <div style={{ fontSize: 11.5, color: "#475569", marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
-        {p.amount && <div style={{ fontSize: 11, color: "#059669", fontWeight: 700, marginTop: 4 }}>L {Number(p.amount).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</div>}
-        <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 5 }}>
-          <span style={{ fontSize: 10.5, color: "#64748b", whiteSpace: "nowrap" }}>🧾 Cierra:</span>
-          <select value={p.cierreResponsable || ""}
-            onChange={async (e) => {
-              const v = e.target.value;
-              const saved = addAudit({ ...p, cierreResponsable: v }, "cierre_responsable", v ? `Responsable de cierre contable: ${v}` : "Responsable de cierre contable quitado");
-              const ok = await updatePurchase(saved);
-              if (!ok) alert("⚠️ No se pudo guardar el responsable — reintentá.");
-            }}
-            style={{ flex: 1, minWidth: 0, padding: "3px 6px", border: `1px solid ${p.cierreResponsable ? "#5EEAD4" : "#FCD34D"}`, borderRadius: 6, fontSize: 10.5, fontWeight: 700, color: p.cierreResponsable ? "#0F766E" : "#B45309", background: "#fff", fontFamily: "inherit", cursor: "pointer" }}>
-            <option value="">— sin asignar —</option>
-            {[...new Set([...USERS.map(u2 => u2.label), ...(p.cierreResponsable ? [p.cierreResponsable] : [])])].sort().map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
+      const dias = diasDesdePago(p);
+      const servicio = t === "lista" && p.deliveryStatus === "cerrado" && !p.delivery?.fichaFile;
+      const cfg = TIPO[t];
+      const chipTxt = t === "lista" ? (servicio ? "Lista · servicio sin ficha" : "Lista · ficha adjunta") : t === "en_camino" ? `Con Logística · ${d?.estado || "pendiente"}` : cfg.l;
+      const idF = `conta-fact-${p.id}`, idP = `conta-paq-${p.id}`;
+      return <div key={p.id} className="gt-vidrio" style={{
+        padding: isMobile ? "13px 14px" : "14px 18px",
+        display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) auto",
+        gap: isMobile ? 12 : 18, alignItems: "center",
+        background: t === "falta_logistica" ? C_ROJO.bg : undefined, borderColor: t === "falta_logistica" ? C_ROJO.borde : undefined,
+      }}>
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ font: "800 11px/1 var(--mono, ui-monospace)", color: "var(--text-3)", letterSpacing: ".02em" }}>{p.codigo || "—"}</span>
+            <span style={{ padding: "2px 10px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: cfg.c.color, background: t === "falta_logistica" ? "#fff" : cfg.c.bg, whiteSpace: "nowrap" }}>{chipTxt}</span>
+            {dias != null && <span style={{ fontSize: 10.5, color: "var(--text-3)" }}>pagada hace {dias} d</span>}
+            <span style={{ marginLeft: "auto", font: "800 15px/1 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(p.amount)}</span>
+          </div>
+          <div style={{ font: "700 13.5px/1.25 var(--sans)", color: "var(--text)", wordBreak: "break-word" }}>{p.provider}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>
+          {t === "falta_logistica" && d?.motorista && <div style={{ fontSize: 11, color: C_ROJO.color, fontWeight: 600 }}>
+            La entregó {d.motorista}{d.fechaEjecutada ? ` el ${d.fechaEjecutada}` : ""} — la ficha firmada la tiene Logística.
+          </div>}
+          {/* Responsable del cierre: editable acá mismo (queda en la bitácora) */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
+            <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Cierra</span>
+            <select value={p.cierreResponsable || ""}
+              onChange={async (e) => {
+                const v = e.target.value;
+                const saved = addAudit({ ...p, cierreResponsable: v }, "cierre_responsable", v ? `Responsable de cierre contable: ${v}` : "Responsable de cierre contable quitado");
+                const ok = await updatePurchase(saved);
+                if (!ok) alert("⚠️ No se pudo guardar el responsable — reintentá.");
+              }}
+              style={{ ...SELECT, padding: "4px 9px", fontSize: 11.5, fontWeight: 700, color: p.cierreResponsable ? "var(--text-2)" : C_AMARILLO.color, background: p.cierreResponsable ? "var(--surface)" : C_AMARILLO.bg }}>
+              <option value="">— sin asignar —</option>
+              {[...new Set([...USERS.map(u2 => u2.label), ...(p.cierreResponsable ? [p.cierreResponsable] : [])])].sort().map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+            {enlace("Ver solicitud", () => setModal({ t: "detail", d: p }))}
+            {puedeBorrarSolicitud && <>
+              {enlace("Cerrar rezagada", () => setRez({ modo: "una", purchase: p, quien: "", otro: "", nota: "" }), "var(--text-faint)", "Cerrar contablemente esta rezagada del flujo anterior (solo vos)")}
+              <button onClick={() => borrarSolicitudCompleta(p)} title="Borrar esta solicitud por completo (solo vos)"
+                style={{ background: "none", border: "none", padding: 0, fontSize: 11, color: "var(--text-faint)", cursor: "pointer", fontFamily: "inherit" }}>🗑</button>
+            </>}
+          </div>
         </div>
-        {tipo === "falta_logistica" && d?.motorista && <div style={{ fontSize: 10.5, color: "#B91C1C", marginTop: 3 }}>Entregada por {d.motorista}{d.fechaEjecutada ? ` el ${d.fechaEjecutada}` : ""} — la ficha firmada la tiene Logística.</div>}
-        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-          {tipo === "falta_proveedor" && <button onClick={() => setSec("entregas")} style={{ background: "transparent", color: "#0F766E", border: "1px solid #5EEAD4", padding: "6px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>→ Gestionarla en Entregas de proveedor</button>}
-          {tipo === "lista" && <>
-            <button onClick={() => imprimirPaqueteConta(p)} style={{ background: CHARCOAL, color: "#F0EBE3", border: "none", padding: "7px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }} title="Descarga UN PDF con portada, checklist y todos los documentos adjuntos">📥 Descargar paquete de cierre (PDF)</button>
+        {/* La acción que toca según el tipo */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 7, alignItems: isMobile ? "stretch" : "flex-end", flexShrink: 0 }}>
+          {t === "lista" && <>
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end" }}>
+              <button onClick={() => imprimirPaqueteConta(p)} title="Un PDF con portada, checklist y todos los documentos adjuntos"
+                style={{ padding: "7px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-2)", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>Paquete PDF</button>
+              {puedeCerrarConta && <>
+                <input type="file" accept=".pdf,image/*" id={idF} style={{ display: "none" }}
+                  onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ""; const ok = await uploadPaqueteConta(p, f, "factura"); if (ok) alert("✅ Factura subida — la compra quedó CERRADA CONTABLEMENTE.\n\nPasó a \"Cerradas\"."); }} />
+                <label htmlFor={idF} title="Escaneá la factura que trajo el proveedor — con eso la compra se cierra"
+                  style={{ padding: "7px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", border: "1px solid transparent", background: ORANGE, color: "#fff", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap", display: "inline-block" }}>Subir factura y cerrar</label>
+              </>}
+            </div>
             {puedeCerrarConta && <>
-              <input type="file" accept=".pdf,image/*" id={`conta-fact-${p.id}`} style={{ display: "none" }}
-                onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ""; const ok = await uploadPaqueteConta(p, f, "factura"); if (ok) alert("✅ Factura subida — la compra quedó CERRADA CONTABLEMENTE.\n\nPasó al apartado \"Cerradas contablemente\"."); }} />
-              <label htmlFor={`conta-fact-${p.id}`} style={{ background: "#059669", color: "#fff", padding: "8px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", display: "block" }} title="Escaneá SOLO la factura que trajo el proveedor — con eso la compra se cierra">🧾 Subir FACTURA escaneada (CIERRA la compra)</label>
-              <input type="file" accept=".pdf,image/*" id={`conta-paq-${p.id}`} style={{ display: "none" }}
+              <input type="file" accept=".pdf,image/*" id={idP} style={{ display: "none" }}
                 onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ""; const ok = await uploadPaqueteConta(p, f, "paquete"); if (ok) alert("✅ Paquete completo subido — la compra quedó CERRADA CONTABLEMENTE."); }} />
-              <label htmlFor={`conta-paq-${p.id}`} style={{ background: "transparent", color: "#059669", border: "1px solid #6EE7B7", padding: "5px 8px", borderRadius: 4, fontSize: 9.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textAlign: "center", display: "block" }} title="Alternativa: subir el paquete entero ya escaneado con todo adentro">…o el paquete completo escaneado</label>
+              <label htmlFor={idP} title="Alternativa: subir el paquete entero ya escaneado con todo adentro"
+                style={{ fontSize: 11, color: "var(--text-3)", cursor: "pointer", textDecoration: "underline" }}>…o subir el paquete completo escaneado</label>
             </>}
           </>}
+          {t === "falta_proveedor" && <button onClick={() => setSec("entregas")}
+            style={{ padding: "7px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", border: `1px solid ${C_AMARILLO.color}44`, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>Ir a Entregas de proveedor →</button>}
         </div>
       </div>;
     };
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>📅 Mes de pago:</span>
-        <select value={contaMes} disabled={soloSinFicha} title={soloSinFicha ? "Con \"Sin ficha de Logística\" se ven todos los meses" : undefined} onChange={e => setContaMes(e.target.value)} style={{ padding: "7px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", fontFamily: "inherit", opacity: soloSinFicha ? .5 : 1 }}>
-          <option value="">Todos los meses</option>
-          {mesesDisponibles.map(m => <option key={m} value={m}>{(() => { const [y, mm] = m.split("-").map(Number); return new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); })()}</option>)}
-        </select>
-        {nSinFichaTodas > 0 && <button onClick={() => setContaSoloSinFicha(!soloSinFicha)} aria-pressed={soloSinFicha}
-          title="Solo las que Logística marcó entregadas SIN subir la ficha — de todos los meses"
-          style={{ padding: "6px 13px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap",
-            border: soloSinFicha ? "1px solid transparent" : `1px solid ${C_ROJO.borde}`, background: soloSinFicha ? C_ROJO.color : C_ROJO.bg, color: soloSinFicha ? "#fff" : C_ROJO.color }}>
-          Sin ficha de Logística ({nSinFichaTodas}){soloSinFicha ? " ×" : ""}
-        </button>}
-        {!soloSinFicha && contaMes && !mesesDisponibles.includes(contaMes) && <span style={{ fontSize: 11, color: "#94A3B8", fontStyle: "italic" }}>sin compras pagadas este mes — elegí otro</span>}
-        {esSupervisorConta
-          ? <select value={contaResp} onChange={e => setContaResp(e.target.value)} style={{ padding: "7px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: contaResp ? "#F0FDF4" : "#fff", fontFamily: "inherit", fontWeight: contaResp ? 700 : 400 }}>
-              <option value="">👤 Responsable: todos</option>
-              <option value="__sin__">⚠ Sin asignar</option>
-              {RESP_OPCIONES.map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-          : <span style={{ fontSize: 11.5, color: "#0F766E", fontWeight: 700 }}>👤 Ves tus compras por cerrar y las sin asignar</span>}
-        {puedeBorrarSolicitud && <Btn small variant="success" style={{ marginLeft: "auto" }} onClick={() => setRez({ modo: "lote", hasta: "", quien: "", otro: "", nota: "cerradas con conta antes del nuevo flujo" })}
-          title="Cerrar de un golpe todas las compras viejas que ya cerraron con conta pero quedaron varadas en el sistema">✅ Cerrar rezagadas en lote</Btn>}
-      </div>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        {[["🧾", abiertas, "Por cerrar", "#B45309"], ["✓", totales.lista, "Con documentos listos", "#059669"], ["⚠", totales.falta_logistica, "Sin ficha de Logística", "#DC2626"], ["🏪", totales.falta_proveedor, "Falta ficha del proveedor", "#B45309"], ["✅", totales.cerrada, "Cerradas contablemente", "#64748b"]].map(([ic, n, lbl, c]) => (
-          <div key={lbl} style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "12px 16px", minWidth: 140 }}>
-            <div style={{ fontSize: 18 }}>{ic}</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: c, marginTop: 2 }}>{n}</div>
-            <div style={{ fontSize: 9.5, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>{lbl}</div>
-          </div>))}
-      </div>
-      <div style={{ background: "#FFFBEB", border: "1px solid #F59E0B", borderRadius: 12, padding: 14, fontSize: 13, color: "#78350F" }}>
-        🧾 <b>La regla del cierre:</b> con la ficha de recibido adjunta, imprimí el <b>paquete de cierre</b>, agregale la factura física y entregáselo a Contabilidad. Cuando conta te devuelva el paquete procesado, <b>subilo digitalizado acá</b> — solo eso cierra la compra. Las que dicen <b style={{ color: "#DC2626" }}>SIN FICHA de Logística</b> son responsabilidad de Logística: el motorista volvió con la ficha firmada y no la han subido.
-      </div>
-      {keys.length === 0
-        ? <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 60, textAlign: "center", color: "#94A3B8" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: CHARCOAL, marginBottom: 4 }}>Nada por cerrar contablemente</div>
-            <div style={{ fontSize: 13 }}>Cuando envíes una compra a Logística o al proveedor, aparece acá hasta que subás el paquete de cierre.</div>
+    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+      {/* Resumen — cada número filtra (o lleva a su pestaña) */}
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+        {[
+          { v: base.length, l: "por cerrar", c: "var(--naranja-tinta)", on: () => setContaTipo("") },
+          { v: fmtL(base.reduce((s, x) => s + (Number(x.p.amount) || 0), 0)), l: "en cierre" },
+          { v: cuenta("lista"), l: "listas para cerrar", c: cuenta("lista") ? C_VERDE.color : undefined, on: () => setContaTipo(contaTipo === "lista" ? "" : "lista") },
+          { v: cuenta("falta_logistica"), l: "sin ficha de logística", c: cuenta("falta_logistica") ? C_ROJO.color : undefined, on: () => setContaTipo(contaTipo === "falta_logistica" ? "" : "falta_logistica") },
+          { v: cuenta("falta_proveedor"), l: "falta ficha proveedor", c: cuenta("falta_proveedor") ? C_AMARILLO.color : undefined, on: () => setContaTipo(contaTipo === "falta_proveedor" ? "" : "falta_proveedor") },
+          { v: cerradasMes, l: "cerradas →", on: () => setSec("cerradas") },
+        ].map((x, i, arr) => (
+          <div key={x.l} onClick={x.on} role={x.on ? "button" : undefined}
+            style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 45%" : 1, minWidth: 0, cursor: x.on ? "pointer" : "default" }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: x.c || "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.v}</div>
+              <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
+            </div>
+            {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
           </div>
-        : keys.map(key => { const g = grupos[key]; const nAct = g.lista.length + g.falta_logistica.length + g.falta_proveedor.length + g.en_camino.length; return (
-          <div key={key} style={{ background: "#F8F2E6", borderRadius: 12, padding: 14, border: "1px solid #E8E1D3" }}>
-            <div style={{ fontWeight: 800, fontSize: 14, color: CHARCOAL, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.5, borderBottom: "3px solid #B45309", paddingBottom: 8, marginBottom: 10, display: "flex", justifyContent: "space-between" }}>
-              <span>{key === "__sin__" ? "SIN PROYECTO" : key}</span><Badge color="#B45309">{nAct}</Badge>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 10 }}>
-              {g.lista.map(p => cardConta(p, "lista"))}
-              {g.falta_logistica.map(p => cardConta(p, "falta_logistica"))}
-              {g.falta_proveedor.map(p => cardConta(p, "falta_proveedor"))}
-              {g.en_camino.map(p => cardConta(p, "en_camino"))}
-            </div>
-          </div>); })}
+        ))}
+      </div>
+
+      {/* Filtros */}
+      <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", flexDirection: "column", gap: 9 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 58 : 0 }}>Pagadas en</span>
+          <select value={contaMes} disabled={soloSinFicha} onChange={e => setContaMes(e.target.value)} title={soloSinFicha ? "Con \"Sin ficha de Logística\" se ven todos los meses" : undefined}
+            style={{ ...SELECT, opacity: soloSinFicha ? .5 : 1, fontWeight: contaMes ? 700 : 400 }}>
+            <option value="">Todos los meses</option>
+            {[...new Set([...mesesDisponibles, ...(contaMes ? [contaMes] : [])])].sort().reverse().map(m => <option key={m} value={m}>{mesLbl(m)}</option>)}
+          </select>
+          {nSinFichaTodas > 0 && <button onClick={() => setContaSoloSinFicha(!soloSinFicha)} aria-pressed={soloSinFicha}
+            title="Solo las que Logística marcó entregadas SIN subir la ficha — de todos los meses"
+            style={{ padding: "5px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap",
+              border: soloSinFicha ? "1px solid transparent" : `1px solid ${C_ROJO.borde}`, background: soloSinFicha ? C_ROJO.color : C_ROJO.bg, color: soloSinFicha ? "#fff" : C_ROJO.color }}>
+            Sin ficha de Logística — todos los meses ({nSinFichaTodas}){soloSinFicha ? " ×" : ""}
+          </button>}
+          {puedeBorrarSolicitud && <button onClick={() => setRez({ modo: "lote", hasta: "", quien: "", otro: "", nota: "cerradas con conta antes del nuevo flujo" })}
+            title="Cerrar de un golpe todas las compras viejas que ya cerraron con conta pero quedaron varadas en el sistema"
+            style={{ marginLeft: "auto", padding: "5px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap", border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-3)" }}>Cerrar rezagadas en lote</button>}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 58 : 0 }}>Ver</span>
+          {pill(`Todas (${base.length})`, !contaTipo, () => setContaTipo(""))}
+          {Object.entries(TIPO).filter(([k]) => cuenta(k) || contaTipo === k).map(([k, v]) => pill(`${v.l} (${cuenta(k)})`, contaTipo === k, () => setContaTipo(contaTipo === k ? "" : k)))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, minWidth: isMobile ? 58 : 0 }}>Proyecto</span>
+          <select value={contaProy} onChange={e => setContaProy(e.target.value)} style={{ ...SELECT, background: contaProy ? "rgba(232,118,45,.08)" : "var(--surface)", fontWeight: contaProy ? 700 : 400 }}>
+            <option value="">Todos los proyectos</option>
+            {proyectosDisponibles.map(([n, c]) => <option key={n} value={n}>{n} ({c})</option>)}
+          </select>
+          {esSupervisorConta
+            ? <select value={contaResp} onChange={e => setContaResp(e.target.value)} style={{ ...SELECT, background: contaResp ? "rgba(232,118,45,.08)" : "var(--surface)", fontWeight: contaResp ? 700 : 400 }}>
+                <option value="">Cierra: todos</option>
+                <option value="__sin__">Cierra: sin asignar</option>
+                {RESP_OPCIONES.map(n => <option key={n} value={n}>Cierra: {n}</option>)}
+              </select>
+            : <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>Ves las tuyas y las sin asignar</span>}
+          {!contaProy && grupos.length > 1 && (todosAbiertos
+            ? pill("Compactar todo", false, () => abrirConta([]), "Dejar solo la fila de cada proyecto")
+            : pill("Expandir todo", false, () => abrirConta(grupos.map(g => g.proyecto)), "Abrir todos los proyectos"))}
+          {(contaProy || contaQ || contaTipo || contaResp || soloSinFicha) && <Btn small variant="ghost" onClick={() => { setContaProy(""); setContaQ(""); setContaTipo(""); setContaResp(""); setContaSoloSinFicha(false); }}>Limpiar</Btn>}
+          <input value={contaQ} onChange={e => setContaQ(e.target.value)} placeholder="Buscar código, proveedor, responsable…"
+            style={{ flex: "0 1 250px", minWidth: 150, marginLeft: "auto", padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", outline: "none", background: "var(--surface)" }} />
+        </div>
+      </div>
+
+      {/* Los grupos por proyecto */}
+      {filas.length === 0
+        ? <div className="gt-vidrio" style={{ padding: "44px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>
+            {base.length === 0 ? "Nada por cerrar contablemente con este mes. Probá con \"Todos los meses\"." : "Nada con estos filtros."}
+          </div>
+        : <>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", padding: "0 4px" }}>{filas.length} compra{filas.length === 1 ? "" : "s"} · {fmtL(monto)}</div>
+          {grupos.map(g => {
+            const abierto = estaAbierto(g.proyecto);
+            return <div key={g.proyecto} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 9 }}>
+              <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} aria-expanded={abierto}
+                aria-label={`${abierto ? "Compactar" : "Abrir"} ${g.proyecto}`}
+                onClick={() => toggleGrupo(g.proyecto)}
+                onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleGrupo(g.proyecto); } }}
+                style={{ padding: isMobile ? "11px 14px" : "11px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: abierto ? "rgba(232,118,45,.05)" : undefined }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden
+                  style={{ color: "var(--text-3)", flexShrink: 0, transform: abierto ? "rotate(90deg)" : "none", transition: "transform .18s var(--curva)" }}><path d="M9 18l6-6-6-6" /></svg>
+                <span style={{ font: "800 13px/1.2 var(--sans)", color: "var(--text)", letterSpacing: ".01em", minWidth: 0, wordBreak: "break-word" }}>{g.proyecto}</span>
+                <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{g.items.length} por cerrar</span>
+                <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  {g.listas > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C_VERDE.color, whiteSpace: "nowrap" }}>{g.listas} lista{g.listas === 1 ? "" : "s"}</span>}
+                  {g.sinFicha > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C_ROJO.color, whiteSpace: "nowrap" }}>{g.sinFicha} sin ficha</span>}
+                  <span style={{ font: "800 14px/1 var(--display)", color: "var(--naranja-tinta)", whiteSpace: "nowrap" }}>{fmtL(g.monto)}</span>
+                </span>
+              </div>
+              {abierto && g.items.map(tarjeta)}
+            </div>;
+          })}
+        </>}
     </div>;
   };
 
