@@ -35,8 +35,9 @@ const fU = (n) => `$ ${nf2(n)}`;
 // Partidas que se pueden comprar desde Solicitudes (módulo compras + libre +
 // movilización), más las que la solicitud ya trae aunque hoy no califiquen
 // (reclasificadas desde GeoCost) — para no perderlas al editar.
-const partidasCompra = (pres, lineas) => {
-  const base = partidasParaModulo(pres, "compras");
+// `modulo`: "compras" (GeoShopping) o "maquinas" (GeoMachinery, 28-sep-2026).
+const partidasCompra = (pres, lineas, modulo = "compras") => {
+  const base = partidasParaModulo(pres, modulo);
   const ids = new Set(base.map(p => p.id));
   const extra = (pres?.partidas || []).filter(p => !ids.has(p.id) && (lineas || []).some(l => l.partidaId === p.id));
   return [...base, ...extra];
@@ -47,7 +48,7 @@ const categoriasDe = (partidas) => {
 };
 
 // ¿El presupuesto tiene algo que se pueda comprar? (si no, el form sigue como antes)
-export const hayItemsComprables = (pres) => partidasParaModulo(pres, "compras").length > 0;
+export const hayItemsComprables = (pres, modulo = "compras") => partidasParaModulo(pres, modulo).length > 0;
 
 // Lo que el form necesita para validar y guardar. `disponibleDe(partidaId)`
 // devuelve {disponibleUSD} SIN contar esta misma compra.
@@ -113,8 +114,8 @@ export { lineasValidas };
 const INPUT = { padding: "8px 11px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#F8FAFC", fontFamily: "inherit", outline: "none", minWidth: 0, width: "100%", boxSizing: "border-box" };
 const LBL = { fontSize: 12, fontWeight: 600, color: "#475569" };
 
-export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, disponibleDe, isMobile = false }) {
-  const partidas = partidasCompra(pres, lineas);
+export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, disponibleDe, isMobile = false, modulo = "compras" }) {
+  const partidas = partidasCompra(pres, lineas, modulo);
   const byId = new Map(partidas.map(p => [p.id, p]));
   // SOLUCIONES (25-sep-2026): si el presupuesto viene dividido (Muro anclado ·
   // Pantalla de pilotes…), primero se elige la solución y después la categoría
@@ -213,7 +214,7 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
 // pago, el estado ni la descripción de la compra. El guardado lo hace GeoCost
 // (getCloud → map por id → set → verify) con el audit `partida_reclasificada`,
 // el mismo que `sP` de GeoShopping rescata si otra pestaña guarda encima.
-export function DividirItemsModal({ purchase, pres, tasa, disponibleDe, onSave, onClose, Modal, Textarea, Btn }) {
+export function DividirItemsModal({ purchase, pres, tasa, disponibleDe, onSave, onClose, Modal, Textarea, Btn, modulo = "compras" }) {
   const [lineas, setLineas] = useState(() => lineasIniciales(purchase));
   const [justif, setJustif] = useState(purchase?.sobregiroJustificacion || "");
   const [saving, setSaving] = useState(false);
@@ -239,7 +240,7 @@ export function DividirItemsModal({ purchase, pres, tasa, disponibleDe, onSave, 
           <div style={{ font: "800 17px/1.2 var(--display)", whiteSpace: "nowrap" }}>{fL(purchase?.amount)}</div>
         </div>
       </div>
-      <LineasPresupuesto pres={pres} lineas={lineas} onChange={setLineas} montoTotal={purchase?.amount} tasa={tasa} disponibleDe={disponibleDe} isMobile={typeof window !== "undefined" && window.innerWidth < 640} />
+      <LineasPresupuesto pres={pres} lineas={lineas} onChange={setLineas} montoTotal={purchase?.amount} tasa={tasa} disponibleDe={disponibleDe} isMobile={typeof window !== "undefined" && window.innerWidth < 640} modulo={modulo} />
       {ev.sobregiroUSD > 0 && <div style={{ background: C_ULTRA.bg, border: `1px solid ${C_ULTRA.borde}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ fontSize: 12.5, fontWeight: 700, color: C_ULTRA.color }}>Sobrepasa el presupuesto en {fU(ev.sobregiroUSD)}</div>
         <Textarea label="Justificación del sobregiro *" value={justif} onChange={e => setJustif(e.target.value)} placeholder="Por qué se carga igual" />

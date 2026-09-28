@@ -1,7 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import HRModule from "./HRModule.jsx";
 import PurchasesModule from "./PurchasesModule.jsx";
-import MachinesModule from "./MachinesModule.jsx";
 import LogisticsModule from "./LogisticsModule.jsx";
 import GeoDrillVault from "./GeoDrillVault.jsx";
 import SafetyModule from "./SafetyModule.jsx";
@@ -297,7 +296,10 @@ export default function App() {
   );
   if (activeModule === "rrhh") return conEntrada(<HRModule {...moduleProps} />);
   if (activeModule === "compras-operaciones") return conEntrada(<PurchasesModule {...moduleProps} />);
-  if (activeModule === "maquinas") return conEntrada(<MachinesModule {...moduleProps} />);
+  // GeoMachinery = el MISMO módulo de GeoShopping en modo "maquinas" (28-sep-2026):
+  // misma estética y funcionamiento, sus keys mq-*, Fernando coordina, más
+  // sus pestañas Máquinas y Costos. Ver CFG_MODULO en PurchasesModule.jsx.
+  if (activeModule === "maquinas") return conEntrada(<PurchasesModule {...moduleProps} modo="maquinas" />);
   if (activeModule === "logistica") return conEntrada(<LogisticsModule {...moduleProps} />);
   if (activeModule === "geodrill-vault") return conEntrada(<GeoDrillVault {...moduleProps} />);
   if (activeModule === "geosafety") return conEntrada(<SafetyModule {...moduleProps} />);

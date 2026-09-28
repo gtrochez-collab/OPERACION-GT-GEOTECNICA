@@ -692,22 +692,46 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   CADA compra y su `detalleMateriales`. Mes por `paidAt`; las fechas se
   formatean con `timeZone:"UTC"` porque paidAt se guarda como medianoche UTC
   (sin eso mostraba el día anterior en Honduras).
-- `MachinesModule.jsx` (GeoMachinery) — espejo de GeoShopping para repuestos
-  (coordinador: Fernando). Mismo flujo completo incl. "Cerrar sin logística".
-  **19-ago-2026**: mismo flujo de cierre contable que GeoShopping (pestañas
-  Entregas de proveedor + Por cerrar contable, entrega_proveedor agregado a
-  sus DELIVERY_STATUSES, EntregaDirectaFormImpl a nivel de módulo, helpers
-  con key "mq-purchases" vía `subirYEnlazar`). Dashboard: sección **⚙️ Gasto
-  por máquina** del mes seleccionado (por paidAt, machineId → mq-machines,
-  desglose por proyecto, export CSV, aviso de pagos sin máquina vinculada) —
-  para el reporte mensual de costos de Gerson.
-  **Pestaña Costos + reporte ejecutivo (19-ago-2026)**: `renderCostosMaq` +
-  `exportMaquinasEjecutivoPDF` + `datosCostosMes` — por PROYECTO y por MÁQUINA
-  (cada máquina bajo el proyecto al que está asignada, con el detalle de cada
-  pago). **PERMISOS**: `canSeeCostosMaq` = admin/gerencia/costos — **Fernando
-  (coordinador_maquinas) NO ve la pestaña ni exporta**; sí ve el Dashboard y
-  elige el mes, pero el CSV de "Gasto por máquina" está gateado
-  (`canSeeCostosMaq || isVisorCompras` — a Arturo no se le quitó).
+- **GeoMachinery = `PurchasesModule` con `modo="maquinas"` (28-sep-2026, pedido
+  de Gerson: "aplicale la misma estética y funcionamiento que GeoShopping,
+  exactamente igual")**. `MachinesModule.jsx` se RETIRÓ (queda en el historial
+  de git); App.jsx monta `<PurchasesModule modo="maquinas" />`. Todo lo de
+  GeoShopping (vidrio, Prioridades, Cuentas por pagar, Calendario, Supply
+  Chain, Por coordinar, Entregas, Accounting, Proveedores, ítems del
+  presupuesto, fecha requerida, servicios…) es el MISMO código para los dos:
+  lo que se mejore en uno le llega al otro. Lo que cambia vive en
+  **`CFG_MODULO`** (a nivel de módulo en PurchasesModule): `key`
+  mq-purchases, `otraKey` cp-purchases (para el disponible de GeoCost),
+  `priKey` **mq-prioridades**, `cxpKey` **mq-cxp** (colas SEPARADAS por
+  módulo — decisión de Gerson), `prefijo` MAQ (`siguienteCodigo(lista, año,
+  prefijo)` y "Asignar códigos faltantes"), despachos `source: "maquinas"` /
+  `tipo: "repuesto_maquinas"`, `moduloPartida` "maquinas" (Select de partida,
+  `LineasPresupuesto modulo=` y `CorreccionFormImpl`), coordinador Fernando.
+  Roles en modo máquinas: `isCoordinadorMaquinas` (Fernando) crea/edita,
+  entrega, maneja proveedores y máquinas; `isAsistenteCompras` pasa a
+  significar "quien COORDINA en este módulo" (Ana en GeoShopping, Fernando en
+  GeoMachinery) → la bandeja, el aviso "!" de pago nuevo (solo él), cerrar
+  contable; `isAnaRol` es el rol crudo de Ana (permisos de proveedores/
+  logística). El menú reducido de Ana es SOLO en GeoShopping. Arturo
+  (compras_ops) es SOLO LECTURA en GeoMachinery (`isCostos` no lo incluye,
+  `isVisorCompras` sí). Fernando arranca en Solicitudes, ve Dashboard/Supply
+  Chain/Prioridades (solo mira) y NO ve Costos. Pestañas PROPIAS (solo
+  `esMaq`): **Máquinas** (`renderMachines` en vidrio: tarjeta por máquina con
+  foto, tipo, diámetro, solicitudes y lo pagado; `MachineFormImpl` a nivel de
+  módulo; `canManageMachines` = admin/costos/Fernando/Jorge; mq-machines con
+  `mergeById`) y **Costos** (`renderCostosMaq` en vidrio + `datosCostosMes` y
+  `exportMaquinasEjecutivoPDF` portados TAL CUAL; `canSeeCostosMaq` =
+  admin/gerencia/costos). El Dashboard suma la tarjeta "Gasto por máquina"
+  (con CSV) y su botón de reporte PDF usa el de maquinaria. El form trae
+  "Máquina vinculada (opcional)" (`machineId`) y el detalle la muestra. En Por
+  coordinar el tercer botón es **"Sin logística"** (su "Cerrar sin logística"
+  de siempre: `closed_no_logistics`, NO marca servicio). Header con la llave
+  inglesa. Las preferencias de pantalla en localStorage llevan sufijo `-mq`
+  (`gt-coord-abiertos-mq`, `gt-coord-visto-mq-<user>`…) para no mezclarse.
+  GeoCost ahora deja "Dividir en ítems" también en repuestos (mq-purchases).
+  Verificado el 28-sep montando el módulo con cada rol (admin, Fernando,
+  Carolina) sobre la data real, todas las pestañas sin errores, y GeoShopping
+  igual que antes.
 - `HRModule.jsx` (GeoTeam) — Empleados (fotos), Contratos (tabla por urgencia),
   Planilla, Asistencia (cuadrillas → grid 1/0/INC/DT/DT2/TF + override 1*),
   Horas Extras, Costos MO, Dashboard, KPI's, Llegadas tardías. Bonificaciones
@@ -1167,7 +1191,8 @@ los lee vía resolveShortHR), `cp-providers`, `cp-file-<id>` (archivos),
 `cp-prioridades` (cola de pago de Tesorería — GeoShopping es el dueño;
 el ORDEN del array es la prioridad), `cp-cxp` (calendarización de pagos: acá
 manda la FECHA, no el orden),
-`mq-purchases`, `mq-machines`, `lg-despachos` (compartido compras/máquinas/
+`mq-purchases`, `mq-machines`, `mq-prioridades` / `mq-cxp` (las colas de pago
+de GeoMachinery, separadas de las de GeoShopping), `lg-despachos` (compartido compras/máquinas/
 logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 `hr-he` (horas extras), `hr-pays`, `hr-contracts`, etc.
 `gt-todos-<username>` (tareas personales — las comparten la tarjeta TO-DOS de

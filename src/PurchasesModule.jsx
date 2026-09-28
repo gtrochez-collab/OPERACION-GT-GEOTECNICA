@@ -171,15 +171,44 @@ const fileKey = (fileId) => `cp-file-${fileId}`;
 // el proyecto se muestra SIEMPRE junto al código en la UI y en los PDF.
 const PREFIJO_CODIGO = "MAT";
 // Siguiente correlativo mirando los códigos ya asignados del mismo año.
-const siguienteCodigo = (lista, anio) => {
+// `prefijo`: "MAT" (GeoShopping) o "MAQ" (GeoMachinery — mismo código desde
+// el 28-sep-2026, ver CFG_MODULO).
+const siguienteCodigo = (lista, anio, prefijo = PREFIJO_CODIGO) => {
   const yy = anio || new Date().getFullYear();
-  const re = new RegExp(`^${PREFIJO_CODIGO}-${yy}-(\\d+)$`);
+  const re = new RegExp(`^${prefijo}-${yy}-(\\d+)$`);
   let max = 0;
   (lista || []).forEach(p => {
     const m = re.exec(String(p?.codigo || ""));
     if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; }
   });
-  return `${PREFIJO_CODIGO}-${yy}-${String(max + 1).padStart(4, "0")}`;
+  return `${prefijo}-${yy}-${String(max + 1).padStart(4, "0")}`;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UN SOLO CÓDIGO PARA GeoShopping Y GeoMachinery (28-sep-2026, pedido de
+// Gerson: "aplicale a GeoMachinery la misma estética y funcionamiento que
+// GeoShopping, exactamente igual"). GeoMachinery ES este mismo módulo con
+// `modo="maquinas"`: cambian las keys, el prefijo del código, quién coordina
+// (Fernando en vez de Ana) y se suman sus pestañas propias (Máquinas y
+// Costos). Todo lo demás —Prioridades, Cuentas por pagar, Calendario,
+// Supply Chain, Por coordinar, Entregas, Accounting, ítems del presupuesto—
+// es el MISMO código: lo que se mejore en uno le llega al otro.
+// Prioridades / CxP / Calendario van SEPARADOS por módulo (decisión de
+// Gerson): cada uno tiene su propia cola en su propia key.
+// ═══════════════════════════════════════════════════════════════════════════
+const CFG_MODULO = {
+  compras: {
+    nombre: "GeoShopping", key: "cp-purchases", otraKey: "mq-purchases",
+    priKey: "cp-prioridades", cxpKey: "cp-cxp", prefijo: "MAT",
+    despachoSource: "compra", despachoTipo: "material_compra", notaDespacho: "[Coord. con proveedor]",
+    moduloPartida: "compras", coordinador: "Ana", queSeCompra: "materiales",
+  },
+  maquinas: {
+    nombre: "GeoMachinery", key: "mq-purchases", otraKey: "cp-purchases",
+    priKey: "mq-prioridades", cxpKey: "mq-cxp", prefijo: "MAQ",
+    despachoSource: "maquinas", despachoTipo: "repuesto_maquinas", notaDespacho: "[Coord. con proveedor — Maquinas]",
+    moduloPartida: "maquinas", coordinador: "Fernando", queSeCompra: "repuestos",
+  },
 };
 
 
@@ -911,7 +940,7 @@ function ProjectFormImpl({ project, onSaved, allProjects, upsertProjectMeta, ren
 // `status: "borrador"` / `"validado"` y resetean `treasuryStatus`, así que
 // editar con él una compra pagada le borraría a Carolina el pago, la fecha y
 // el comprobante. Este form hace un PARCHE de tres campos y no toca nada más.
-function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tasa, calcDisponible, updatePurchase, addAudit, userName }) {
+function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tasa, calcDisponible, updatePurchase, addAudit, userName, moduloPartida = "compras" }) {
   const [projectCode, setProjectCode] = useState(purchase.projectCode || "");
   const [partidaId, setPartidaId] = useState(purchase.partidaId || "");
   // Ítems del presupuesto (25-sep-2026): la corrección reparte la compra entre
@@ -923,7 +952,7 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
 
   const pres = (presupuestos || []).find(x => x.projectCode === projectCode && x.estado !== "cerrado");
   const partidaSel = pres ? (pres.partidas || []).find(x => x.id === partidaId) : null;
-  const opciones = pres ? opcionesPartidas(pres, "compras") : [];
+  const opciones = pres ? opcionesPartidas(pres, moduloPartida) : [];
   const opcionesSel = (() => {
     const enOps = opciones.some(g => (g.options || []).some(o => o.value === partidaId));
     return !enOps && partidaSel ? [...opciones, { group: "Actual", options: [{ value: partidaSel.id, label: partidaSel.nombre || "(sin nombre)" }] }] : opciones;
@@ -971,7 +1000,7 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
       El presupuesto no tiene partida para compras — quedará por clasificar en GeoCost
     </div>}
     {modoItems && <div style={{ display: "flex", flexDirection: "column", gap: 8, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14 }}>
-      <LineasPresupuesto pres={pres} lineas={lineas} onChange={setLineas} montoTotal={purchase.amount} tasa={tasaN}
+      <LineasPresupuesto modulo={moduloPartida} pres={pres} lineas={lineas} onChange={setLineas} montoTotal={purchase.amount} tasa={tasaN}
         disponibleDe={(pid) => calcDisponible ? calcDisponible(projectCode, pid, purchase.id) : null} isMobile={typeof window !== "undefined" && window.innerWidth < 640} />
       {evL.sobregiroUSD > 0 && <div style={{ background: C_ULTRA.bg, border: `1px solid ${C_ULTRA.borde}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ fontSize: 12.5, fontWeight: 700, color: C_ULTRA.color }}>Sobrepasa el presupuesto en {fmtUSD(evL.sobregiroUSD)}</div>
@@ -1211,7 +1240,7 @@ function PrioridadAddModal({ candidatas, ccColor, onClose, onAdd }) {
   </Modal>;
 }
 
-function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, providers, addAudit, saveOrAlert, upsertProvider, presupuestos, tasa, calcDisponible, encolarPago }) {
+function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allProjects, purchases, providers, addAudit, saveOrAlert, upsertProvider, presupuestos, tasa, calcDisponible, encolarPago, prefijo = PREFIJO_CODIGO, moduloPartida = "compras", machines = null }) {
   const [saving, setSaving] = useState(false);
   const [f, setF] = useState(purchase || {
     company: co, projectCode: "", provider: "", description: "",
@@ -1255,7 +1284,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   // Si la compra ya trae una partida de otro módulo (reclasificada desde
   // GeoCost), se conserva como grupo "Actual" para no perderla al editar ni
   // dejar el select controlado en blanco (#18) — espejo de GeoMachinery.
-  const opcionesCC = presConPartidas ? opcionesPartidas(presConPartidas, "compras") : [];
+  const opcionesCC = presConPartidas ? opcionesPartidas(presConPartidas, moduloPartida) : [];
   const opcionesSelectCC = (() => {
     const enOps = opcionesCC.some(g => (g.options || []).some(o => o.value === f.partidaId));
     return !enOps && partidaSel ? [...opcionesCC, { group: "Actual", options: [{ value: partidaSel.id, label: partidaSel.nombre || "(sin nombre)" }] }] : opcionesCC;
@@ -1421,6 +1450,13 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         </datalist>
       </div>
       <Input label="N° de Cotizacion" value={f.quoteNumber} onChange={e => u("quoteNumber", e.target.value)} placeholder="Ej: COT-2026-0123" />
+      {/* GeoMachinery: la máquina o compresor al que va el repuesto (alimenta
+          "Gasto por máquina" y la pestaña Costos). */}
+      {machines && <div style={{ gridColumn: "1/-1" }}>
+        <Select label="Máquina vinculada (opcional)"
+          options={machines.slice().sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "")).map(m => ({ value: m.id, label: `${m.tipo === "compresor" ? "Compresor" : "Máquina"} — ${m.nombre}` }))}
+          emptyLabel="— Sin vincular —" value={f.machineId || ""} onChange={e => u("machineId", e.target.value)} />
+      </div>}
       <Input label="Monto total (Lempiras)" type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
       {/* CONTADO o CRÉDITO (21-sep-2026, pedido de Gerson): las compras
           grandes muchas veces vienen a crédito, y esas las CALENDARIZA
@@ -1434,7 +1470,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8 }}>
         <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Tipo de compra</label>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {[{ k: "material", t: "Material", d: "Se coordina la entrega (Ana → Logística) y lleva ficha de recibido" },
+          {[{ k: "material", t: prefijo === "MAQ" ? "Repuesto / material" : "Material", d: `Se coordina la entrega (${prefijo === "MAQ" ? "Fernando" : "Ana"} → Logística) y lleva ficha de recibido` },
             { k: "servicio", t: "Servicio de proveedor", d: "Colado de concreto, topografía, rentas… — no se coordina ni lleva ficha" }].map(o => {
             const activo = (f.tipoCompra || "material") === o.k;
             return <button key={o.k} type="button" title={o.d}
@@ -1445,7 +1481,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           })}
         </div>
         {(f.tipoCompra || "material") === "servicio" && <div style={{ fontSize: 11.5, color: C_AZUL.color, background: C_AZUL.bg, border: "1px solid rgba(29,95,175,.22)", borderRadius: 10, padding: "9px 12px", lineHeight: 1.5 }}>
-          Cuando la Lic. la pague va directo a <b>Por cerrar contable</b> — no pasa por Ana ni por Logística, y no se le pide ficha de recibido.
+          Cuando la Lic. la pague va directo a <b>Por cerrar contable</b> — no pasa por {prefijo === "MAQ" ? "Fernando" : "Ana"} ni por Logística, y no se le pide ficha de recibido.
         </div>}
       </div>
       <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1519,7 +1555,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           que ya lo tenían. */}
       {modoItems
         ? <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 10, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14 }}>
-            <LineasPresupuesto pres={presConPartidas} lineas={lineasForm} onChange={ls => u("lineas", ls)} montoTotal={f.amount} tasa={tasaCC} disponibleDe={dispDe} isMobile={typeof window !== "undefined" && window.innerWidth < 640} />
+            <LineasPresupuesto modulo={moduloPartida} pres={presConPartidas} lineas={lineasForm} onChange={ls => u("lineas", ls)} montoTotal={f.amount} tasa={tasaCC} disponibleDe={dispDe} isMobile={typeof window !== "undefined" && window.innerWidth < 640} />
             {evL.sobregiroUSD > 0 && <div style={{ background: "rgba(232,118,45,.10)", border: "1px solid rgba(232,118,45,.35)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, color: "#A94E16" }}>Sobrepasa el presupuesto en {fmtUSD(evL.sobregiroUSD)}</div>
               <Textarea label="Justificación del sobregiro *" value={f.sobregiroJustificacion || ""} onChange={e => u("sobregiroJustificacion", e.target.value)} placeholder="Por qué se aprueba igual" />
@@ -1614,7 +1650,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           { const eCC = errorPartidaCC(); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
           setSaving(true);
           try {
-            const rec = { ...f, ...camposCC(), destinoPago: destinoForm, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "borrador", treasuryStatus: null };
+            const rec = { ...f, ...camposCC(), destinoPago: destinoForm, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases, undefined, prefijo), status: "borrador", treasuryStatus: null };
             await registrarProveedorSiNuevo(rec);
             const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
             const next = purchase
@@ -1633,7 +1669,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
           setSaving(true);
           try {
-            const rec = { ...f, ...camposCC(), destinoPago: destinoForm, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
+            const rec = { ...f, ...camposCC(), destinoPago: destinoForm, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases, undefined, prefijo), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
             await registrarProveedorSiNuevo(rec);
             const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
             const next = purchase
@@ -1652,6 +1688,57 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             setSaving(false);
           }
         }}>{saving ? "..." : "✓ Aprobar y enviar a Tesoreria"}</Btn>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── MachineFormImpl (GeoMachinery, portado el 28-sep-2026 desde el viejo
+// MachinesModule — misma lógica, estética nueva). A NIVEL DE MÓDULO: dentro
+// del componente se remontaba y perdía la foto a medio subir.
+function MachineFormImpl({ machine, setModal, upsertMachine, deleteMachine }) {
+  const [f, setF] = useState(machine || {
+    id: "",
+    tipo: "maquina",            // "maquina" | "compresor"
+    nombre: "",
+    diametroTipo: "",           // "pequeño" | "grande" | "" (solo aplica si tipo=maquina)
+    diametroNotas: "",          // texto libre opcional (solo aplica si tipo=maquina)
+    foto: null,
+  });
+  const [saving, setSaving] = useState(false);
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const isEdit = !!machine;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <Select label="Tipo *" options={[{ value: "maquina", label: "Máquina" }, { value: "compresor", label: "Compresor" }]} emptyLabel="—" value={f.tipo} onChange={e => u("tipo", e.target.value)} />
+      <Input label="Nombre *" value={f.nombre} onChange={e => u("nombre", e.target.value)} placeholder="Ej: Perforadora #3, Compresor Atlas Copco" />
+    </div>
+    {f.tipo === "maquina" && <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
+      <Select label="Diámetro" options={[{ value: "pequeño", label: "Pequeño" }, { value: "grande", label: "Grande" }]} emptyLabel="—" value={f.diametroTipo || ""} onChange={e => u("diametroTipo", e.target.value)} />
+      <Input label="Notas del diámetro (opcional)" value={f.diametroNotas || ""} onChange={e => u("diametroNotas", e.target.value)} placeholder="Ej: 76mm HQ, 96mm PQ" />
+    </div>}
+    <FileSlot label="Foto de la máquina (opcional)" file={f.foto} canUpload accent={ORANGE} onUpload={fd => u("foto", fd)} onRemove={() => u("foto", null)} />
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, paddingTop: 12, borderTop: "1px solid #E2E8F0", alignItems: "center" }}>
+      <div>
+        {isEdit && deleteMachine && <Btn small variant="danger" onClick={async () => {
+          if (!confirm(`¿Eliminar la máquina "${f.nombre}"? Esta acción no se puede deshacer.`)) return;
+          const ok = await deleteMachine(f.id);
+          if (ok === false) return alert("⚠️ No se pudo eliminar en la nube. Reintentá.");
+          setModal(null);
+        }}>Eliminar máquina</Btn>}
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cancelar</Btn>
+        <Btn variant="success" disabled={saving} onClick={async () => {
+          if (!f.nombre?.trim()) return alert("El nombre es obligatorio");
+          if (!f.tipo) return alert("Seleccioná el tipo (máquina o compresor)");
+          setSaving(true);
+          try {
+            const ok = await upsertMachine({ ...f, nombre: f.nombre.trim() });
+            if (ok === false) return alert("⚠️ No se pudo guardar en la nube. Reintentá.");
+            setModal(null);
+          } finally { setSaving(false); }
+        }}>{saving ? "Guardando…" : (isEdit ? "Guardar" : "Crear máquina")}</Btn>
       </div>
     </div>
   </div>;
@@ -2063,17 +2150,31 @@ function SendPickupFormImpl({ purchase, provider, setModal, enviarAOrdenRecogida
 }
 
 // ── MODULO ──
-export default function PurchasesModule({ userRole, userName, userKey, onBack, onLogout }) {
+export default function PurchasesModule({ userRole, userName, userKey, onBack, onLogout, modo = "compras" }) {
+  // GeoShopping (modo "compras") o GeoMachinery (modo "maquinas") — ver CFG_MODULO.
+  const esMaq = modo === "maquinas";
+  const CFG = CFG_MODULO[esMaq ? "maquinas" : "compras"];
   const isAdmin = userRole === "admin";
   const isTesoreria = userRole === "tesoreria";
   const isGerencia = userRole === "gerencia";
   // compras_ops (Arturo Trochez, ago 2026) → MISMOS permisos que Christian
   // DENTRO de GeoShopping. Se maneja como isCostos aqui para no duplicar
   // reglas; en GeoMachinery sigue siendo solo lectura y NO tiene GeoTeam.
-  const isCostos = userRole === "costos" || userRole === "compras_ops";
+  const isCostos = userRole === "costos" || (!esMaq && userRole === "compras_ops");
   const isRecepcion = userRole === "recepcion";
-  const isAsistenteCompras = userRole === "asistente_compras";
-  const isVisorCompras = userRole === "visor_compras";   // solo lectura, acceso completo a Compras
+  // Lic. Fernando Diaz — coordinador de maquinaria: en GeoMachinery crea
+  // solicitudes, gestiona máquinas y es quien COORDINA las entregas (el rol
+  // que Ana tiene en GeoShopping).
+  const isCoordinadorMaquinas = esMaq && userRole === "coordinador_maquinas";
+  // `isAsistenteCompras` = "quien coordina las entregas en ESTE módulo": Ana
+  // en GeoShopping, Fernando en GeoMachinery. Decide la bandeja Por coordinar,
+  // el aviso "!" de pago nuevo (decisión de Gerson: solo el coordinador), el
+  // menú reducido (solo en GeoShopping — Fernando tiene permisos de admin en
+  // su módulo) y los permisos de cierre contable.
+  const isAnaRol = userRole === "asistente_compras";
+  const isAsistenteCompras = esMaq ? isCoordinadorMaquinas : isAnaRol;
+  // En GeoMachinery Arturo (compras_ops) sigue siendo SOLO LECTURA.
+  const isVisorCompras = userRole === "visor_compras" || (esMaq && userRole === "compras_ops");   // solo lectura
 
   // Permisos (segregacion de funciones):
   // admin → Operaciones: crea, edita borradores, valida, envia a Tesoreria, edita proyectos.
@@ -2089,12 +2190,14 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   //         pagadas) + Proveedores (CRUD). NO crea solicitudes, NO aprueba, NO paga.
   //         Su funcion: coordinar con proveedores la fecha de retiro y enviar la orden
   //         a Logistica cuando este confirmada. Cambio solicitado jun-2026.
-  const canCreate = isAdmin || isCostos;                                          // crear/editar/validar solicitudes + editar proyectos
+  const canCreate = isAdmin || isCostos || isCoordinadorMaquinas;                                          // crear/editar/validar solicitudes + editar proyectos
   const canPay = isTesoreria;                                                     // SOLO Carolina registra pago y cambia estado financiero
   const canViewOnly = isGerencia || isVisorCompras;                               // gerencia y visor de compras (Arturo) son read-only
-  const canEditDelivery = isAdmin || isCostos || isRecepcion;                     // subir/editar fichas de recibido
-  const canManageProviders = isAdmin || isCostos || isAsistenteCompras || isRecepcion;  // CRUD de proveedores (Ana primaria, Jorge tambien para no quedar trabados)
-  const canSendToLogistics = isAdmin || isCostos || isAsistenteCompras;           // crear orden de recogida desde compra pagada
+  const canEditDelivery = isAdmin || isCostos || isRecepcion || isCoordinadorMaquinas;                     // subir/editar fichas de recibido
+  const canManageProviders = isAdmin || isCostos || isAsistenteCompras || isAnaRol || isRecepcion;  // CRUD de proveedores (Ana primaria, Jorge tambien para no quedar trabados)
+  const canSendToLogistics = isAdmin || isCostos || isAsistenteCompras || isAnaRol;
+  // CRUD de máquinas (solo GeoMachinery; Jorge incluido para cargar máquinas)
+  const canManageMachines = esMaq && (isAdmin || isCostos || isCoordinadorMaquinas || isRecepcion);           // crear orden de recogida desde compra pagada
   // CORREGIR UNA COMPRA YA PAGADA (18-sep-2026, pedido de Gerson: "solo a mi y
   // a Christian, por si acaso Arturo se equivoca en el proyecto o en la
   // partida presupuestaria"). OJO: `isCostos` incluye a Arturo (compras_ops),
@@ -2121,6 +2224,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const setPurchases = (v) => { lastLocalMutAtRef.current = Date.now(); _setPurchasesRaw(v); };
   const [customProjects, setCustomProjects] = useState([]);
   const [providers, setProviders] = useState([]);
+  // Catálogo de máquinas (solo GeoMachinery): mq-machines, CRUD en la pestaña Máquinas.
+  const [machines, setMachines] = useState([]);
   const [despachos, _setDespachosRaw] = useState([]); // shared con LogisticsModule — para saber si una compra ya tiene orden de recogida
   const setDespachos = (v) => { lastLocalMutAtRef.current = Date.now(); _setDespachosRaw(v); };
   const [loaded, setLoaded] = useState(false);
@@ -2177,7 +2282,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // el auto-refresh vía lastLocalMutAtRef.
   const [presupuestos, setPresupuestos] = useState([]);
   const [ccConfig, setCcConfig] = useState(null);
-  const [mqPurchasesCC, setMqPurchasesCC] = useState([]);
+  const [otraPurchasesCC, setOtraPurchasesCC] = useState([]);
   const [movilizacionesCC, setMovilizacionesCC] = useState([]);
   const tasaCC = num(ccConfig?.tasa) || TASA_DEFAULT;
   // Disponible de una partida a la tasa vigente. `excluirId` = la compra que
@@ -2189,8 +2294,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     try {
       const movs = movimientosDeProyecto({
         pres,
-        cpPurchases: excluirId ? purchases.filter(x => x.id !== excluirId) : purchases,
-        mqPurchases: mqPurchasesCC, movilizaciones: movilizacionesCC,
+        // La lista propia va a su lado (cp en GeoShopping, mq en GeoMachinery)
+        cpPurchases: esMaq ? otraPurchasesCC : (excluirId ? purchases.filter(x => x.id !== excluirId) : purchases),
+        mqPurchases: esMaq ? (excluirId ? purchases.filter(x => x.id !== excluirId) : purchases) : otraPurchasesCC,
+        movilizaciones: movilizacionesCC,
         atts: [], hes: [], emps: [], heSalBase: {}, machines: [], tasa: tasaCC,
         // customProjects: sin ellos `mismoProyecto` resuelve por alias legacy
         // (PLANTEL es alias de PLANTEL-OFICINA) y el disponible mezclaba
@@ -2209,7 +2316,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // - admin/gerencia/costos → "dashboard" (vista ejecutiva)
   // - Resto → "list" (solicitudes)
   const canSeeDashboardDefault = isAdmin || isGerencia || isCostos || isVisorCompras;
-  const defaultSec = isAsistenteCompras
+  const defaultSec = isCoordinadorMaquinas
+    ? "list"                       // Fernando arranca en Solicitudes (como antes en GeoMachinery)
+    : isAsistenteCompras
     ? "ana"
     : isRecepcion
       ? "providers"
@@ -2233,17 +2342,18 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const [contaProy, setContaProy] = useState("");
   const [contaQ, setContaQ] = useState("");
   const [contaAbiertos, setContaAbiertos] = useState(() => {
-    try { const v = JSON.parse(localStorage.getItem("gt-conta-abiertos") || "[]"); return Array.isArray(v) ? v : []; }
+    try { const v = JSON.parse(localStorage.getItem(`gt-conta-abiertos${esMaq ? "-mq" : ""}`) || "[]"); return Array.isArray(v) ? v : []; }
     catch { return []; }
   });
   const abrirConta = (lista) => {
     setContaAbiertos(lista);
-    try { localStorage.setItem("gt-conta-abiertos", JSON.stringify(lista)); } catch {}
+    try { localStorage.setItem(`gt-conta-abiertos${esMaq ? "-mq" : ""}`, JSON.stringify(lista)); } catch {}
   };
   const [contaResp, setContaResp] = useState("");
   // Filtros del archivo de cerradas contablemente (mes de cierre / proyecto / texto)
   const [provQ, setProvQ] = useState("");   // buscador de proveedores
   const [provFiltro, setProvFiltro] = useState("");   // "" | "incompletos" | "constancia"
+  const [maqQ, setMaqQ] = useState("");               // buscador de la pestaña Máquinas (GeoMachinery)
   const [proyQ, setProyQ] = useState("");   // buscador de proyectos (23-sep-2026)
   // ── Bandeja "Por coordinar" (21-sep-2026) ──
   const [coordMes, setCoordMes] = useState("");          // filtro por mes de pago
@@ -2257,7 +2367,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // miré", cada quien tiene la suya, y no hace falta sincronizarla entre
   // dispositivos — si Ana lo ve en la compu, en el teléfono lo puede volver a
   // ver, no pasa nada.
-  const vistoKey = `gt-coord-visto-${userKey || "anon"}`;
+  const vistoKey = `gt-coord-visto-${esMaq ? "mq-" : ""}${userKey || "anon"}`;   // cada módulo con la suya
   const [coordVisto, _setCoordVistoRaw] = useState(() => {
     try { const v = JSON.parse(localStorage.getItem(vistoKey) || "null"); return v && typeof v === "object" ? v : null; }
     catch { return null; }
@@ -2291,12 +2401,12 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // de una fila por proyecto. Se recuerda en localStorage —preferencia de
   // pantalla, no dato de negocio: nunca toca Supabase.
   const [coordAbiertos, setCoordAbiertos] = useState(() => {
-    try { const v = JSON.parse(localStorage.getItem("gt-coord-abiertos") || "[]"); return Array.isArray(v) ? v : []; }
+    try { const v = JSON.parse(localStorage.getItem(`gt-coord-abiertos${esMaq ? "-mq" : ""}`) || "[]"); return Array.isArray(v) ? v : []; }
     catch { return []; }
   });
   const abrirCoord = (lista) => {
     setCoordAbiertos(lista);
-    try { localStorage.setItem("gt-coord-abiertos", JSON.stringify(lista)); } catch {}
+    try { localStorage.setItem(`gt-coord-abiertos${esMaq ? "-mq" : ""}`, JSON.stringify(lista)); } catch {}
   };
   // ENTREGAS DE PROVEEDOR (24-sep-2026): mismo patrón que Por coordinar —
   // grupos compactables por proyecto (localStorage, preferencia de pantalla),
@@ -2304,29 +2414,29 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const [entQ, setEntQ] = useState("");
   const [entProy, setEntProy] = useState("");
   const [entAbiertos, setEntAbiertos] = useState(() => {
-    try { const v = JSON.parse(localStorage.getItem("gt-entregas-abiertos") || "[]"); return Array.isArray(v) ? v : []; }
+    try { const v = JSON.parse(localStorage.getItem(`gt-entregas-abiertos${esMaq ? "-mq" : ""}`) || "[]"); return Array.isArray(v) ? v : []; }
     catch { return []; }
   });
   const abrirEnt = (lista) => {
     setEntAbiertos(lista);
-    try { localStorage.setItem("gt-entregas-abiertos", JSON.stringify(lista)); } catch {}
+    try { localStorage.setItem(`gt-entregas-abiertos${esMaq ? "-mq" : ""}`, JSON.stringify(lista)); } catch {}
   };
   const [rez, setRez] = useState(null);       // modal de cierre de rezagadas
   const [rezSaving, setRezSaving] = useState(false);
   const [cerrMes, setCerrMes] = useState("");
   const [cerrQuien, setCerrQuien] = useState("");   // Cerradas: quién cerró (28-sep-2026)
   const [cerrAbiertos, setCerrAbiertos] = useState(() => {
-    try { const v = JSON.parse(localStorage.getItem("gt-cerr-abiertos") || "[]"); return Array.isArray(v) ? v : []; }
+    try { const v = JSON.parse(localStorage.getItem(`gt-cerr-abiertos${esMaq ? "-mq" : ""}`) || "[]"); return Array.isArray(v) ? v : []; }
     catch { return []; }
   });
   const abrirCerr = (lista) => {
     setCerrAbiertos(lista);
-    try { localStorage.setItem("gt-cerr-abiertos", JSON.stringify(lista)); } catch {}
+    try { localStorage.setItem(`gt-cerr-abiertos${esMaq ? "-mq" : ""}`, JSON.stringify(lista)); } catch {}
   };
   const [cerrProy, setCerrProy] = useState("");
   const [cerrQ, setCerrQ] = useState("");
   // Mes del reporte ejecutivo de materiales (pestaña Costos).
-  const [costosMesEjec, setCostosMesEjec] = useState(() => new Date().toISOString().slice(0, 7));
+  const [costosMesEjec, setCostosMesEjec] = useState(() => hoyISO().slice(0, 7));
   // Filtros de Solicitudes (24-ago-2026, rediseño pedido por Gerson):
   //   ver: "pendientes" (default — la cola de pago de Carolina) | "pagadas" | "todas"
   //   mes: "" = todos. Aplica sobre la fecha que corresponde a lo que se ve
@@ -2381,14 +2491,16 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
   useEffect(() => {
     (async () => {
-      const [p, cps, prov, desp, pri, cxpIni] = await Promise.all([
-        store.get("cp-purchases"),
+      const [p, cps, prov, desp, pri, cxpIni, mach] = await Promise.all([
+        store.get(CFG.key),
         store.get("cp-projects"),
         store.get("cp-providers"),
         store.get("lg-despachos"),
-        store.get("cp-prioridades"),
-        store.get("cp-cxp"),
+        store.get(CFG.priKey),
+        store.get(CFG.cxpKey),
+        esMaq ? store.get("mq-machines") : Promise.resolve(null),
       ]);
+      if (Array.isArray(mach)) setMachines(mach);
       if (Array.isArray(pri)) setPrioridades(pri.filter(x => x && x.id));
       if (Array.isArray(cxpIni)) setCxp(cxpIni.filter(x => x && x.id));
       let purchasesArr = [];
@@ -2463,7 +2575,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       // GeoCost (9-sep-2026): presupuestos por proyecto, tasa y las otras fuentes que
       // consumen partidas — SOLO LECTURA (getCloud: store.get podría re-sincronizar
       // cache viejo hacia la nube desde acá). Si falla, el form sigue igual que antes.
-      try { const [pr, cf, mq, mv] = await Promise.all([store.getCloud("cc-presupuestos"), store.getCloud("cc-config"), store.getCloud("mq-purchases"), store.getCloud("cc-movilizaciones")]); if (Array.isArray(pr)) setPresupuestos(pr); if (cf && typeof cf === "object") setCcConfig(cf); if (Array.isArray(mq)) setMqPurchasesCC(mq); if (Array.isArray(mv)) setMovilizacionesCC(mv); } catch (e) { console.warn("[GeoCost] no se pudieron leer presupuestos:", e?.message || e); }
+      try { const [pr, cf, mq, mv] = await Promise.all([store.getCloud("cc-presupuestos"), store.getCloud("cc-config"), store.getCloud(CFG.otraKey), store.getCloud("cc-movilizaciones")]); if (Array.isArray(pr)) setPresupuestos(pr); if (cf && typeof cf === "object") setCcConfig(cf); if (Array.isArray(mq)) setOtraPurchasesCC(mq); if (Array.isArray(mv)) setMovilizacionesCC(mv); } catch (e) { console.warn("[GeoCost] no se pudieron leer presupuestos:", e?.message || e); }
     })();
   }, []);
 
@@ -2474,12 +2586,14 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       // Cambios locales recientes → no arriesgar pisarlos con una foto vieja.
       if (Date.now() - lastLocalMutAtRef.current < 8000) { console.log("[refresh] omitido: guardado local reciente"); return; }
       try {
-        const [p, desp, pri, cxpN] = await Promise.all([
-          store.get("cp-purchases"),
+        const [p, desp, pri, cxpN, mach] = await Promise.all([
+          store.get(CFG.key),
           store.get("lg-despachos"),
-          store.getCloud("cp-prioridades"),
-          store.getCloud("cp-cxp"),
+          store.getCloud(CFG.priKey),
+          store.getCloud(CFG.cxpKey),
+          esMaq ? store.get("mq-machines") : Promise.resolve(null),
         ]);
+        if (Array.isArray(mach) && Date.now() - lastLocalMutAtRef.current >= 8000) setMachines(mach);
         // Lista de prioridades: si Finanzas reordenó en otra máquina, al volver
         // a la pestaña se ve el orden nuevo. getCloud (no get) — es una lista
         // chiquita y compartida, el cache viejo acá solo confundiría.
@@ -2504,7 +2618,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       // GeoCost (9-sep-2026): presupuestos por proyecto, tasa y las otras fuentes que
       // consumen partidas — SOLO LECTURA (getCloud: store.get podría re-sincronizar
       // cache viejo hacia la nube desde acá). Si falla, el form sigue igual que antes.
-      try { const [pr, cf, mq, mv] = await Promise.all([store.getCloud("cc-presupuestos"), store.getCloud("cc-config"), store.getCloud("mq-purchases"), store.getCloud("cc-movilizaciones")]); if (Array.isArray(pr)) setPresupuestos(pr); if (cf && typeof cf === "object") setCcConfig(cf); if (Array.isArray(mq)) setMqPurchasesCC(mq); if (Array.isArray(mv)) setMovilizacionesCC(mv); } catch (e) { console.warn("[GeoCost] no se pudieron leer presupuestos:", e?.message || e); }
+      try { const [pr, cf, mq, mv] = await Promise.all([store.getCloud("cc-presupuestos"), store.getCloud("cc-config"), store.getCloud(CFG.otraKey), store.getCloud("cc-movilizaciones")]); if (Array.isArray(pr)) setPresupuestos(pr); if (cf && typeof cf === "object") setCcConfig(cf); if (Array.isArray(mq)) setOtraPurchasesCC(mq); if (Array.isArray(mv)) setMovilizacionesCC(mv); } catch (e) { console.warn("[GeoCost] no se pudieron leer presupuestos:", e?.message || e); }
     };
     const onFocus = () => refreshFromCloud();
     const onVisChange = () => { if (document.visibilityState === "visible") refreshFromCloud(); };
@@ -2559,7 +2673,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       // si la nube no responde, NO se guarda (mejor reintentar que borrar).
       let cloudPrevia;
       try {
-        cloudPrevia = await store.getCloud("cp-purchases");
+        cloudPrevia = await store.getCloud(CFG.key);
       } catch (e) {
         console.error("⛔ Nube no responde en pre-fetch — abortando save para no pisar datos ajenos:", e?.message || e);
         alert("⚠️ No hay conexión con la nube en este momento.\n\nNO se guardó nada para no arriesgar solicitudes de otros usuarios. Esperá unos segundos y volvé a intentar (tus cambios siguen en pantalla).");
@@ -2650,7 +2764,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       if (failedFiles.length > 0) {
         console.error(`⛔ ${failedFiles.length} archivo(s) fallaron — NO guardo cp-purchases para evitar refs huerfanas. El usuario debe reintentar.`);
       } else {
-        purchasesOk = await store.set("cp-purchases", light);
+        purchasesOk = await store.set(CFG.key, light);
         console.log("☁️ Save cp-purchases →", purchasesOk ? "OK" : "FAIL");
       }
 
@@ -2660,7 +2774,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       let verifiedCount = null;
       if (purchasesOk) {
         try {
-          const verify = await store.getCloud("cp-purchases");
+          const verify = await store.getCloud(CFG.key);
           verifiedCount = Array.isArray(verify) ? verify.length : null;
           // VERIFICACION SEMANTICA (20-ago-2026). Antes se comparaba el COUNT
           // exacto: si otro usuario creaba una solicitud durante los ~2s que
@@ -2759,6 +2873,22 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const deleteProvider = async (id) => {
     return await saveProviders(providers.filter(x => x.id !== id));
   };
+  // ── CRUD de Máquinas (solo GeoMachinery; mq-machines, merge por id) ──
+  const saveMachines = async (next) => {
+    setMachines(next);
+    const merged = await mergeById("mq-machines", next, machines);
+    if (merged !== next) setMachines(merged);
+    return await store.set("mq-machines", merged);
+  };
+  const upsertMachine = async (m) => {
+    const exists = machines.find(x => x.id === m.id);
+    const updated = { ...m, updatedAt: new Date().toISOString() };
+    const next = exists
+      ? machines.map(x => x.id === m.id ? updated : x)
+      : [...machines, { ...updated, id: m.id || uid(), createdAt: new Date().toISOString() }];
+    return await saveMachines(next);
+  };
+  const deleteMachine = async (id) => saveMachines(machines.filter(x => x.id !== id));
   // Buscar proveedor por nombre (case-insensitive). Devuelve el objeto provider o null.
   const findProviderByName = (name) => {
     if (!name) return null;
@@ -2784,9 +2914,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     try {
       const rec = {
         id: uid(),
-        source: "compra",
+        source: CFG.despachoSource,
         sourcePurchaseId: purchase.id,
-        tipo: "material_compra",
+        tipo: CFG.despachoTipo,
         descripcion: purchase.description || "",
         origen: purchase.provider || "Proveedor",
         destino: `Proyecto ${purchase.projectCode || ""}`.trim(),
@@ -2804,7 +2934,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           contactoProveedor: opts.contactoProveedor || "",
           notas: opts.notas || "",
         },
-        notas: opts.notas ? `[Coord. con proveedor]\n${opts.notas}` : "",
+        notas: opts.notas ? `${CFG.notaDespacho}\n${opts.notas}` : "",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -3089,11 +3219,11 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   };
 
   const sPri = (next) => sListaPropia({
-    key: "cp-prioridades", next, previa: prioridadesRef.current || [],
+    key: CFG.priKey, next, previa: prioridadesRef.current || [],
     setLista: setPrioridades, setSaving: setPriSaving, etiqueta: "la lista de prioridades",
   });
   const sCxp = (next) => sListaPropia({
-    key: "cp-cxp", next, previa: cxpRef.current || [],
+    key: CFG.cxpKey, next, previa: cxpRef.current || [],
     setLista: setCxp, setSaving: setCxpSaving, etiqueta: "la programación de pagos",
   });
 
@@ -3196,6 +3326,15 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // además un prompt con el motivo y a Ana le costaba 2 ventanas por compra.
   // Marca también `tipoCompra: "servicio"` para que quede bien clasificada.
   const cerrarSinFicha = async (purchase) => {
+    // GeoMachinery (28-sep-2026): es su "Cerrar sin logística" de siempre —
+    // no aplica retiro (servicio en sitio, lo recoge Fernando, etc.).
+    if (esMaq) {
+      if (!confirm(`¿Cerrar "${purchase.provider} — ${(purchase.description || "").slice(0, 60)}" SIN enviar a logística?\n\nUsalo cuando no aplica retiro (servicio en sitio, lo recoge Fernando, etc.). Pasa a Por cerrar contable.`)) return false;
+      const recM = { ...purchase, deliveryStatus: "cerrado", delivery: { ...(purchase.delivery || {}), cerradaSinFicha: true, closingNotes: purchase.delivery?.closingNotes || "Cerrada sin logística", closedBy: userName, closedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } };
+      const okM = await updatePurchase(addAudit(recM, "closed_no_logistics", "Cerrada sin envio a logistica"));
+      if (!okM) alert("⚠️ Se cerró en este dispositivo pero NO se sincronizó a la nube. Reintentá.");
+      return okM;
+    }
     if (!confirm(`¿Es un SERVICIO de proveedor?\n\n${purchase.provider} — ${purchase.description}\n${fmtL(Number(purchase.amount) || 0)}\n\nSale de Por coordinar y pasa a Por cerrar contable. No se coordina ni se le pide ficha de recibido.`)) return false;
     const rec = {
       ...purchase,
@@ -3255,7 +3394,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       // se aborta — el archivo ya subio y se puede reintentar el enlace.
       let cloudPurchases;
       try {
-        cloudPurchases = await store.getCloud("cp-purchases");
+        cloudPurchases = await store.getCloud(CFG.key);
       } catch (e) {
         alert("⚠️ No hay conexión con la nube.\n\nEl archivo se subió pero NO se enlazó a la solicitud (no se guardó nada más, para no arriesgar solicitudes de otros). Reintentá en un momento.");
         return false;
@@ -3297,7 +3436,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       nextPurchases[idx] = updated;
 
       // 5) Save
-      const okSave = await store.set("cp-purchases", nextPurchases);
+      const okSave = await store.set(CFG.key, nextPurchases);
       if (!okSave) {
         alert("⚠️ El archivo se subio pero no se pudo enlazar a la compra. Reintenta el upload.");
         return false;
@@ -3334,7 +3473,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     if (!lista.length) return alert("No hay solicitudes que cerrar con ese criterio.");
     const ids = new Set(lista.map(z => z.id));
     let cloud;
-    try { cloud = await store.getCloud("cp-purchases"); }
+    try { cloud = await store.getCloud(CFG.key); }
     catch { alert("⚠️ Sin conexión con la nube — no se cerró nada. Reintentá."); return false; }
     if (!Array.isArray(cloud)) { alert("⚠️ No se pudo leer la lista desde la nube."); return false; }
     const at = new Date().toISOString();
@@ -3349,10 +3488,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         }],
       };
     });
-    const ok = await store.set("cp-purchases", next);
+    const ok = await store.set(CFG.key, next);
     let verified = false;
     try {
-      const back = await store.getCloud("cp-purchases");
+      const back = await store.getCloud(CFG.key);
       verified = Array.isArray(back) && lista.every(z => { const f = back.find(y => y && y.id === z.id); return f && yaCerradaConta(f); });
     } catch { verified = false; }
     if (!ok || !verified) { alert("⚠️ No se pudo VERIFICAR el cierre en la nube — reintentá."); return false; }
@@ -3390,7 +3529,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
     // 1) Solicitud (getCloud + verify)
     let cloud;
-    try { cloud = await store.getCloud("cp-purchases"); }
+    try { cloud = await store.getCloud(CFG.key); }
     catch { return alert("⚠️ Sin conexión con la nube — no se borró nada. Reintentá."); }
     if (!Array.isArray(cloud)) return alert("⚠️ No se pudo leer la lista desde la nube — no se borró nada.");
     const next = cloud.filter(z => z && z.id !== p.id);
@@ -3398,9 +3537,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       alert("Esa solicitud ya no existe en la nube (alguien la borró antes). Se refresca la vista.");
       setPurchases(next); return;
     }
-    const ok = await store.set("cp-purchases", next);
+    const ok = await store.set(CFG.key, next);
     let verified = false;
-    try { const back = await store.getCloud("cp-purchases"); verified = Array.isArray(back) && !back.some(z => z && z.id === p.id); } catch { verified = false; }
+    try { const back = await store.getCloud(CFG.key); verified = Array.isArray(back) && !back.some(z => z && z.id === p.id); } catch { verified = false; }
     if (!ok || !verified) return alert("⚠️ No se pudo VERIFICAR el borrado en la nube — reintentá.");
     setPurchases(next);
 
@@ -3434,14 +3573,14 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const asignarCodigosFaltantes = async () => {
     const sinCodigo = purchases.filter(p => p && !p.codigo);
     if (!sinCodigo.length) return alert("Todas las solicitudes ya tienen código. ✔");
-    if (!confirm(`¿Asignar código a ${sinCodigo.length} solicitud(es) sin código?\n\nSe numeran por fecha de creación con el formato MAT-AÑO-0000. Las que ya tienen código NO se tocan.`)) return;
+    if (!confirm(`¿Asignar código a ${sinCodigo.length} solicitud(es) sin código?\n\nSe numeran por fecha de creación con el formato ${CFG.prefijo}-AÑO-0000. Las que ya tienen código NO se tocan.`)) return;
     let cloud;
-    try { cloud = await store.getCloud("cp-purchases"); }
+    try { cloud = await store.getCloud(CFG.key); }
     catch { return alert("⚠️ Sin conexión con la nube — no se asignó nada. Reintentá."); }
     if (!Array.isArray(cloud)) return alert("⚠️ No se pudo leer la lista desde la nube.");
     const contadores = {};
     cloud.forEach(p => {
-      const m = /^MAT-(\d{4})-(\d+)$/.exec(String(p?.codigo || ""));
+      const m = new RegExp(`^${CFG.prefijo}-(\\d{4})-(\\d+)$`).exec(String(p?.codigo || ""));
       if (m) { const y = m[1], n = parseInt(m[2], 10); contadores[y] = Math.max(contadores[y] || 0, n); }
     });
     const orden = cloud.map((p, i) => ({ p, i })).filter(x => x.p && !x.p.codigo)
@@ -3450,11 +3589,11 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     orden.forEach(({ p, i }) => {
       const y = String(p.createdAt || new Date().toISOString()).slice(0, 4);
       contadores[y] = (contadores[y] || 0) + 1;
-      next[i] = { ...p, codigo: `MAT-${y}-${String(contadores[y]).padStart(4, "0")}` };
+      next[i] = { ...p, codigo: `${CFG.prefijo}-${y}-${String(contadores[y]).padStart(4, "0")}` };
     });
-    const ok = await store.set("cp-purchases", next);
+    const ok = await store.set(CFG.key, next);
     let verified = false;
-    try { const back = await store.getCloud("cp-purchases"); verified = Array.isArray(back) && back.filter(p => p && !p.codigo).length === 0; } catch { verified = false; }
+    try { const back = await store.getCloud(CFG.key); verified = Array.isArray(back) && back.filter(p => p && !p.codigo).length === 0; } catch { verified = false; }
     if (!ok || !verified) return alert("⚠️ No se pudo VERIFICAR la asignación en la nube — reintentá.");
     setPurchases(next);
     alert(`✅ Listo: ${orden.length} solicitud(es) numeradas.`);
@@ -3485,7 +3624,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       const okFile = await store.set(fileKey(fileId), { name: fileObj.name, type: fileObj.type, size: fileObj.size, dataUrl });
       if (!okFile) { alert("⚠️ No se pudo subir el archivo a la nube. Reintentá."); return false; }
       let cloudPurchases;
-      try { cloudPurchases = await store.getCloud("cp-purchases"); }
+      try { cloudPurchases = await store.getCloud(CFG.key); }
       catch { alert("⚠️ Sin conexión con la nube. El archivo subió pero NO se enlazó — reintentá en un momento."); return false; }
       if (!Array.isArray(cloudPurchases)) { alert("⚠️ No se pudo leer la lista de solicitudes. Reintentá."); return false; }
       const idx = cloudPurchases.findIndex(p => p.id === purchase.id);
@@ -3511,7 +3650,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       };
       const next = [...cloudPurchases];
       next[idx] = updated;
-      const okSave = await store.set("cp-purchases", next);
+      const okSave = await store.set(CFG.key, next);
       if (!okSave) { alert("⚠️ El archivo subió pero no se enlazó. Reintentá el upload."); return false; }
       setPurchases(next);
       return true;
@@ -3526,7 +3665,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const reabrirCierreConta = async (purchase) => {
     if (!confirm(`¿REABRIR el cierre contable de ${purchase.provider} — ${purchase.description}?\n\nVuelve a "Por cerrar contablemente". El paquete subido queda en el historial.`)) return false;
     let cloudPurchases;
-    try { cloudPurchases = await store.getCloud("cp-purchases"); }
+    try { cloudPurchases = await store.getCloud(CFG.key); }
     catch { alert("⚠️ Sin conexión con la nube — no se reabrió."); return false; }
     const idx = (cloudPurchases || []).findIndex(p => p.id === purchase.id);
     if (idx === -1) { alert("⚠️ No se encontró la compra."); return false; }
@@ -3538,7 +3677,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       audit: [...(orig.audit || []), { action: "cierre_contable_reabierto", by: userName || userRole, role: userRole, at: new Date().toISOString(), note: "Cierre contable reabierto" }],
     };
     const next = [...cloudPurchases]; next[idx] = updated;
-    const ok = await store.set("cp-purchases", next);
+    const ok = await store.set(CFG.key, next);
     if (ok) setPurchases(next);
     else alert("⚠️ No se sincronizó — reintentá.");
     return ok;
@@ -3671,7 +3810,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
       // Pie de portada
       fs(7, "normal"); tc(GRAY);
-      doc.text("GeoShopping — Sistema de Operaciones · Grupo Geotecnica", M, PH - 10);
+      doc.text(`${CFG.nombre} — Sistema de Operaciones · Grupo Geotecnica`, M, PH - 10);
       doc.text("Preparado por " + (userName || "Operaciones"), PW - M, PH - 10, { align: "right" });
 
       // ── ANEXOS ─────────────────────────────────────────────────────────
@@ -3822,7 +3961,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
   // Pantalla de carga con el MISMO fondo del sistema (antes era beige y
   // "parpadeaba" entre el panel y el módulo, rompiendo la entrada smooth).
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoShopping…</div>;
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando {CFG.nombre}…</div>;
 
   // PurchaseFormImpl y PaymentFormImpl viven a nivel de modulo (final del archivo).
   // NO definir aqui — la identidad del componente cambiaria en cada render del padre
@@ -4025,6 +4164,15 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           <div><div style={{ fontSize: 11, color: "#64748b" }}>N° Cotizacion</div><div style={{ fontWeight: 600 }}>{p.quoteNumber || "—"}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Responsable Ops</div><div style={{ fontWeight: 600 }}>{p.opsResponsible || "—"}</div></div>
           <div><div style={{ fontSize: 11, color: "#64748b" }}>Validado</div><div style={{ fontWeight: 600 }}>{fmtDT(p.validatedAt)}</div></div>
+          {esMaq && p.machineId && (() => {
+            const mm = machines.find(x => x.id === p.machineId);
+            if (!mm) return null;
+            return <div style={{ gridColumn: "1/-1" }}>
+              <div style={{ fontSize: 11, color: "#64748b" }}>Máquina vinculada</div>
+              <div style={{ fontWeight: 600 }}>{mm.tipo === "compresor" ? "Compresor" : "Máquina"} — {mm.nombre}
+                {mm.diametroTipo && <span style={{ color: "#64748b", fontWeight: 500 }}> · diámetro {mm.diametroTipo}</span>}</div>
+            </div>;
+          })()}
           <div style={{ gridColumn: "1/-1" }}>
             <div style={{ fontSize: 11, color: "#64748b" }}>Descripcion</div>
             <div style={{ fontWeight: 500, lineHeight: 1.5 }}>{p.description}</div>
@@ -4460,6 +4608,295 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // resumen, buscador y filtro de los que tienen datos incompletos. Cada fila
   // dice cuántas compras tiene y cuánto se le ha pagado. Click = editar (los
   // mismos permisos de siempre: canManageProviders). La lógica no cambió.
+  // ── COSTOS DE MAQUINARIA (solo GeoMachinery; admin/gerencia/costos) ──
+  // datosCostosMes y el reporte ejecutivo PDF se portaron TAL CUAL del viejo
+  // MachinesModule (28-sep-2026) — por PROYECTO y por MÁQUINA, por fecha de pago.
+  const datosCostosMes = (mesEjec) => {
+    const delMes = purchases.filter(x => (x.status === "pagado" || x.status === "finalizado") && String(x.paidAt || "").slice(0, 7) === mesEjec);
+    const proy = {}; const maq = {}; const porEmp = { geotecnica: { total: 0, n: 0 }, subterra: { total: 0, n: 0 } };
+    delMes.forEach(x => {
+      const amt = Number(x.amount) || 0;
+      const pk = x.projectCode || "SIN PROYECTO";
+      const mk = x.machineId || "__sin__";
+      const co2 = x.company === "subterra" ? "subterra" : "geotecnica";
+      if (!proy[pk]) proy[pk] = { short: pk, total: 0, n: 0, maqs: {} };
+      proy[pk].total += amt; proy[pk].n++;
+      if (!proy[pk].maqs[mk]) proy[pk].maqs[mk] = { total: 0, items: [] };
+      proy[pk].maqs[mk].total += amt; proy[pk].maqs[mk].items.push(x);
+      if (!maq[mk]) maq[mk] = { total: 0, n: 0 };
+      maq[mk].total += amt; maq[mk].n++;
+      porEmp[co2].total += amt; porEmp[co2].n++;
+    });
+    const nombreMaq = (mk) => mk === "__sin__" ? "Sin máquina asignada" : (machines.find(m => m.id === mk)?.nombre || "Máquina eliminada");
+    return { delMes, proy, maq, porEmp, nombreMaq };
+  };
+
+  const exportMaquinasEjecutivoPDF = (mesEjec) => {
+    if (!mesEjec) return alert("Elegí el mes del reporte.");
+    const [yy, mmn] = mesEjec.split("-").map(Number);
+    const mesNombreRaw = new Date(yy, mmn - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
+    const mesTitulo = mesNombreRaw.charAt(0).toUpperCase() + mesNombreRaw.slice(1);
+    const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const esc = (t) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const TAG = { geotecnica: "GEO", subterra: "SUB" };
+    const { delMes, proy, maq, porEmp, nombreMaq } = datosCostosMes(mesEjec);
+    if (!delMes.length) return alert(`No hay pagos de maquinaria en ${mesTitulo}.`);
+    const rowsProy = Object.values(proy).sort((a, b) => b.total - a.total);
+    const rowsMaq = Object.entries(maq).map(([k, v]) => ({ key: k, nombre: nombreMaq(k), ...v })).sort((a, b) => b.total - a.total);
+    const totalG = rowsProy.reduce((sm, r) => sm + r.total, 0);
+    const w = window.open("", "_blank");
+    if (!w) return alert("Permití pop-ups para generar el PDF.");
+    const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
+    const genFecha = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" });
+    const PALETA = ["#7C3AED", "#E8762D", "#2C5F5D", "#3E6A99", "#B45309", "#0E7490", "#BE3455", "#15803D"];
+    const top = rowsProy.slice(0, 8), otros = rowsProy.slice(8);
+    const segs = [
+      ...top.map((r, i) => ({ label: r.short, val: r.total, color: PALETA[i % PALETA.length] })),
+      ...(otros.length ? [{ label: `Otros (${otros.length})`, val: otros.reduce((sm, r) => sm + r.total, 0), color: "#94A3B8" }] : []),
+    ];
+    const RAD = 62, CIRC = 2 * Math.PI * RAD;
+    let acum = 0;
+    const donaSegs = segs.map(sg => {
+      const frac = totalG > 0 ? sg.val / totalG : 0;
+      const el = `<circle r="${RAD}" cx="90" cy="90" fill="transparent" stroke="${sg.color}" stroke-width="34" stroke-dasharray="${(frac * CIRC).toFixed(2)} ${CIRC.toFixed(2)}" stroke-dashoffset="${(-acum * CIRC).toFixed(2)}" transform="rotate(-90 90 90)"/>`;
+      acum += frac; return el;
+    }).join("");
+    const donaLeyenda = segs.map(sg => `<div style="display:flex;align-items:center;gap:7px;font-size:10.5px;margin-bottom:5px">
+      <span style="width:10px;height:10px;border-radius:3px;background:${sg.color};flex-shrink:0"></span>
+      <span style="font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sg.label)}</span>
+      <span style="color:#64748b;min-width:42px;text-align:right">${totalG > 0 ? ((sg.val / totalG) * 100).toFixed(1) : "0"}%</span>
+      <span style="font-weight:700;min-width:96px;text-align:right">${fL(sg.val)}</span>
+    </div>`).join("");
+    const maxMaq = Math.max(...rowsMaq.map(r => r.total), 1);
+    const barrasMaq = rowsMaq.slice(0, 12).map(r => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:10px">
+      <span style="width:130px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;color:${r.key === "__sin__" ? "#B45309" : "#1E293B"}">${esc(r.nombre)}</span>
+      <div style="flex:1;height:16px;background:#F8FAFC;border-radius:4px;overflow:hidden">
+        <div style="width:${Math.max(2, (r.total / maxMaq) * 100).toFixed(1)}%;height:100%;background:${r.key === "__sin__" ? "#F59E0B" : "#7C3AED"}"></div>
+      </div>
+      <span style="width:92px;text-align:right;font-weight:700;flex-shrink:0">${fL(r.total)}</span>
+    </div>`).join("");
+    const kpi = (label, val, color, sub) => `<div style="flex:1;min-width:130px;border:1px solid #E2E8F0;border-radius:10px;padding:11px 14px">
+      <div style="font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:0.6px;font-weight:700">${label}</div>
+      <div style="font-size:17px;font-weight:800;color:${color};margin-top:3px;letter-spacing:-0.3px">${val}</div>
+      ${sub ? `<div style="font-size:9px;color:#94A3B8;margin-top:1px">${sub}</div>` : ""}
+    </div>`;
+    const chipCo = (c2) => `<span style="display:inline-block;background:${c2 === "subterra" ? "#2C5F5D" : "#E8762D"};color:#fff;border-radius:4px;padding:1px 6px;font-size:8px;font-weight:800;letter-spacing:0.5px;vertical-align:1px">${TAG[c2] || "GEO"}</span>`;
+    const projBlocks = rowsProy.map(r => {
+      const maqsOrd = Object.entries(r.maqs).map(([mk, v]) => ({ mk, nombre: nombreMaq(mk), ...v })).sort((a, b) => b.total - a.total);
+      return `
+    <div style="margin-bottom:16px;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
+      <div style="background:#2C2A28;color:#fff;padding:8px 14px;font-weight:700;font-size:12.5px;display:flex;justify-content:space-between;align-items:center">
+        <span>${esc(r.short)}</span>
+        <span style="font-size:10px;font-weight:600;opacity:.85">${maqsOrd.length} máquina${maqsOrd.length !== 1 ? "s" : ""} · ${r.n} pago${r.n !== 1 ? "s" : ""} &nbsp;<span style="font-size:13px;font-weight:800;opacity:1">${fL(r.total)}</span></span>
+      </div>
+      ${maqsOrd.map(mq2 => `
+        <div style="background:#F3E8FF;padding:6px 14px;font-size:11px;font-weight:800;color:#5B21B6;display:flex;justify-content:space-between;border-top:1px solid #E9D5FF">
+          <span>⚙ ${esc(mq2.nombre)}</span><span>${fL(mq2.total)}</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:10.5px">
+          <tbody>
+            ${mq2.items.map(x => `<tr style="border-top:1px solid #F1F5F9;vertical-align:top">
+              <td style="padding:5px 14px;font-weight:600;white-space:nowrap;width:190px">${chipCo(x.company === "subterra" ? "subterra" : "geotecnica")} ${esc(x.provider || "—")}</td>
+              <td style="padding:5px 8px;color:#334155">${esc(x.description || "—")}${x.detalleMateriales && String(x.detalleMateriales).trim() !== String(x.description || "").trim() ? `<div style="color:#64748b;font-size:9px;white-space:pre-wrap;margin-top:2px;border-left:2px solid #E2E8F0;padding-left:6px">${esc(x.detalleMateriales)}</div>` : ""}</td>
+              <td style="padding:5px 8px;text-align:right;white-space:nowrap;color:#64748b;width:64px">${x.paidAt ? new Date(x.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", timeZone: "UTC" }) : "—"}</td>
+              <td style="padding:5px 14px;text-align:right;font-weight:700;white-space:nowrap;width:110px">${fL(x.amount)}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>`).join("")}
+      <div style="background:#F8FAFC;font-weight:700;border-top:1px solid #E2E8F0;padding:6px 14px;display:flex;justify-content:space-between;font-size:11px">
+        <span>Subtotal ${esc(r.short)}</span><span style="color:#059669">${fL(r.total)}</span>
+      </div>
+    </div>`;
+    }).join("");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costo de Maquinaria — ${mesTitulo} · Grupo Geotecnica</title>
+    <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#1E293B;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{.np{display:none}}thead{display:table-header-group}tr{page-break-inside:avoid}</style>
+    </head><body>
+    <div style="page-break-after:always">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px">
+        <div style="display:flex;align-items:center;gap:14px">
+          <img src="${logoUrl}" style="height:52px" onerror="this.style.display='none'" />
+          <div>
+            <div style="font-size:9px;color:#7C3AED;font-weight:800;letter-spacing:1.8px;text-transform:uppercase">Grupo Geotecnica · Maquinaria</div>
+            <div style="font-size:23px;font-weight:800;letter-spacing:-0.4px;color:#2C2A28">Costo de Maquinaria</div>
+            <div style="font-size:13px;color:#64748b">Reporte ejecutivo mensual — <b style="color:#2C2A28">${mesTitulo}</b> · repuestos y mantenimiento</div>
+          </div>
+        </div>
+        <div style="text-align:right;font-size:10px;color:#64748b">
+          <div style="font-weight:800;color:#E8762D">Geotecnica Soluciones</div>
+          <div style="font-weight:800;color:#2C5F5D">Subterra Honduras</div>
+          <div style="margin-top:3px">Generado ${genFecha}</div>
+        </div>
+      </div>
+      <div style="height:4px;background:linear-gradient(90deg,#7C3AED,#E8762D,#2C5F5D);border-radius:2px;margin:13px 0 16px"></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
+        ${kpi("Gasto total en maquinaria", fL(totalG), "#059669", `${delMes.length} pagos · ${rowsMaq.length} máquinas · ${rowsProy.length} proyectos`)}
+        ${["geotecnica", "subterra"].filter(c2 => porEmp[c2].total > 0).map(c2 => kpi(c2 === "subterra" ? "Subterra Honduras" : "Geotecnica Soluciones", fL(porEmp[c2].total), c2 === "subterra" ? "#2C5F5D" : "#E8762D", `${porEmp[c2].n} pagos`)).join("")}
+        ${kpi("Máquina más costosa", rowsMaq.length ? esc(rowsMaq[0].nombre) : "—", "#7C3AED", rowsMaq.length ? fL(rowsMaq[0].total) : "")}
+      </div>
+      <div style="display:flex;gap:14px;align-items:flex-start">
+        <div style="flex:1.15;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
+          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Distribución del gasto por proyecto</div>
+          <div style="display:flex;gap:14px;align-items:center">
+            <svg width="140" height="140" viewBox="0 0 180 180" style="flex-shrink:0">
+              ${donaSegs}
+              <text x="90" y="86" text-anchor="middle" style="font-size:11px;font-weight:800;fill:#2C2A28">${rowsProy.length}</text>
+              <text x="90" y="100" text-anchor="middle" style="font-size:8px;fill:#64748b">proyectos</text>
+            </svg>
+            <div style="flex:1">${donaLeyenda}</div>
+          </div>
+        </div>
+        <div style="flex:1;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
+          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:9px">Gasto por máquina</div>
+          ${barrasMaq}
+        </div>
+      </div>
+    </div>
+    <div style="border-left:4px solid #7C3AED;padding-left:12px;margin-bottom:14px">
+      <div style="font-size:9px;color:#7C3AED;font-weight:800;letter-spacing:1.5px;text-transform:uppercase">Detalle por proyecto y máquina · ${mesTitulo}</div>
+      <div style="font-size:11px;color:#64748b">Cada pago con su empresa: ${chipCo("geotecnica")} Geotecnica Soluciones · ${chipCo("subterra")} Subterra Honduras. Cada máquina bajo el proyecto al que está asignada.</div>
+    </div>
+    ${projBlocks}
+    <div style="background:#2C2A28;color:#fff;border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;page-break-inside:avoid">
+      <span style="font-size:12px;font-weight:700">GASTO TOTAL EN MAQUINARIA DEL GRUPO — ${mesTitulo}</span>
+      <span style="font-size:17px;font-weight:800;color:#6EE7B7">${fL(totalG)}</span>
+    </div>
+    <div style="font-size:9px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:8px;margin-top:12px;line-height:1.5;page-break-inside:avoid">
+      <b>Metodología:</b> se incluyen las solicitudes de pago de repuestos/mantenimiento con pago realizado cuya fecha de pago cae en ${mesTitulo}, de ambas empresas, agrupadas por el proyecto de la solicitud y la máquina vinculada. No incluye materiales de construcción (ver el reporte de GeoShopping).
+      Preparado por ${esc(userName || "Operaciones")} · GeoMachinery — Sistema de Operaciones.
+    </div>
+    <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#7C3AED;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
+    </body></html>`);
+    w.document.close();
+  };
+
+  const renderCostosMaq = () => {
+    const mesNombreRaw = (() => { const [y2, m2] = costosMesEjec.split("-").map(Number); const t = new Date(y2, m2 - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); })();
+    const { delMes, proy, maq, nombreMaq } = datosCostosMes(costosMesEjec);
+    const rowsMaq = Object.entries(maq).map(([k, v]) => ({ key: k, nombre: nombreMaq(k), ...v })).sort((a, b) => b.total - a.total);
+    const rowsProy = Object.values(proy).sort((a, b) => b.total - a.total);
+    const totalG = rowsProy.reduce((sm, r) => sm + r.total, 0);
+    const maxM = Math.max(...rowsMaq.map(r => r.total), 1);
+    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+      <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Mes del reporte</span>
+        <input type="month" value={costosMesEjec} onChange={e => e.target.value && setCostosMesEjec(e.target.value)}
+          style={{ padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", background: "var(--surface)", color: "var(--text-2)" }} />
+        <button onClick={() => exportMaquinasEjecutivoPDF(costosMesEjec)}
+          style={{ marginLeft: "auto", padding: "7px 16px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 800, border: "1px solid transparent", background: ORANGE, color: "#fff", whiteSpace: "nowrap" }}>Reporte ejecutivo PDF — {mesNombreRaw}</button>
+      </div>
+      {delMes.length === 0
+        ? <div className="gt-vidrio" style={{ padding: "44px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>Sin pagos de maquinaria en {mesNombreRaw}.</div>
+        : <>
+          <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+            {[{ v: fmtL(totalG), l: "gasto del mes" }, { v: rowsMaq.length, l: "máquinas con gasto" }, { v: rowsProy.length, l: "proyectos" }, { v: delMes.length, l: "pagos" }].map((x, i, arr) => <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 45%" : 1, minWidth: 0 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)", whiteSpace: "nowrap" }}>{x.v}</div>
+                <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
+              </div>
+              {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
+            </div>)}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap: 14, alignItems: "start" }}>
+            <div className="gt-vidrio" style={{ padding: 20, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div className="gt-label" style={{ color: "var(--text-2)" }}>Por máquina</div>
+              {rowsMaq.map(r => <div key={r.key}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, fontWeight: 700, color: r.key === "__sin__" ? C_AMARILLO.color : "var(--text)" }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nombre} <span style={{ color: "var(--text-3)", fontWeight: 500 }}>({r.n})</span></span>
+                  <span style={{ whiteSpace: "nowrap" }}>{fmtL(r.total)}</span>
+                </div>
+                <div style={{ height: 7, borderRadius: 5, background: "rgba(44,42,40,.06)", overflow: "hidden", marginTop: 5 }}>
+                  <div style={{ width: `${(r.total / maxM) * 100}%`, height: "100%", borderRadius: 5, background: r.key === "__sin__" ? "#E4B94A" : CHARCOAL }} />
+                </div>
+              </div>)}
+            </div>
+            <div className="gt-vidrio" style={{ padding: 20, display: "flex", flexDirection: "column", gap: 4 }}>
+              <div className="gt-label" style={{ color: "var(--text-2)", marginBottom: 6 }}>Por proyecto (máquinas adentro)</div>
+              {rowsProy.map(r => <details key={r.short} style={{ borderBottom: "1px solid var(--hairline)", padding: "8px 0" }}>
+                <summary style={{ cursor: "pointer", display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, fontWeight: 800, color: "var(--text)", listStyle: "none" }}>
+                  <span>{r.short} <span style={{ color: "var(--text-3)", fontWeight: 500 }}>({r.n} pago{r.n !== 1 ? "s" : ""})</span></span>
+                  <span style={{ color: "var(--naranja-tinta)", whiteSpace: "nowrap" }}>{fmtL(r.total)}</span>
+                </summary>
+                <div style={{ marginTop: 6, paddingLeft: 12 }}>
+                  {Object.entries(r.maqs).map(([mk2, v]) => <div key={mk2} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11.5, padding: "3px 0", color: "var(--text-2)" }}>
+                    <span>{nombreMaq(mk2)} <span style={{ color: "var(--text-3)" }}>({v.items.length})</span></span>
+                    <span style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{fmtL(v.total)}</span>
+                  </div>)}
+                </div>
+              </details>)}
+            </div>
+          </div>
+        </>}
+    </div>;
+  };
+
+  // ── MÁQUINAS (solo GeoMachinery; portado 28-sep-2026 con la estética de
+  // vidrio): el catálogo de máquinas y compresores que se vinculan a las
+  // solicitudes de repuestos. Cada tarjeta dice cuánto se le ha gastado.
+  const renderMachines = () => {
+    const q = maqQ.trim().toLowerCase();
+    const gastoDe = (id) => cp.filter(x => x.machineId === id && (x.status === "pagado" || x.status === "finalizado")).reduce((sm, x) => sm + (Number(x.amount) || 0), 0);
+    const nDe = (id) => cp.filter(x => x.machineId === id).length;
+    const sorted = machines.slice()
+      .filter(m => !q || [m.nombre, m.tipo, m.diametroTipo, m.diametroNotas].some(v => String(v || "").toLowerCase().includes(q)))
+      .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", "es", { sensitivity: "base" }));
+    const nComp = machines.filter(m => m.tipo === "compresor").length;
+    return <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+        {[
+          { v: machines.length, l: "registradas" },
+          { v: machines.length - nComp, l: "máquinas" },
+          { v: nComp, l: "compresores" },
+          { v: fmtL(cp.filter(x => x.machineId && (x.status === "pagado" || x.status === "finalizado")).reduce((sm, x) => sm + (Number(x.amount) || 0), 0)), l: "pagado en repuestos" },
+        ].map((x, i, arr) => <div key={x.l} style={{ display: "flex", alignItems: "center", flex: isMobile ? "1 1 45%" : 1, minWidth: 0 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ font: "800 clamp(15px,1.3vw,19px)/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)", whiteSpace: "nowrap" }}>{x.v}</div>
+            <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>{x.l}</div>
+          </div>
+          {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
+        </div>)}
+      </div>
+      <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <input value={maqQ} onChange={e => setMaqQ(e.target.value)} placeholder="Buscar máquina o compresor…"
+          style={{ flex: "1 1 240px", minWidth: 180, padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", outline: "none", background: "var(--surface)" }} />
+        {maqQ && <Btn small variant="ghost" onClick={() => setMaqQ("")}>Limpiar</Btn>}
+        {canManageMachines && <button onClick={() => setModal({ t: "machine-new" })}
+          style={{ marginLeft: "auto", padding: "7px 16px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 800, border: "1px solid transparent", background: ORANGE, color: "#fff", whiteSpace: "nowrap" }}>+ Agregar máquina</button>}
+      </div>
+      {sorted.length === 0
+        ? <div className="gt-vidrio" style={{ padding: "44px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>
+            {maqQ ? "Ninguna máquina coincide con la búsqueda." : "Aún no hay máquinas registradas."}
+          </div>
+        : <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(250px, 1fr))", gap: 14 }}>
+          {sorted.map(m => {
+            const comp = m.tipo === "compresor";
+            const abrir = () => canManageMachines && setModal({ t: "machine-edit", d: m });
+            const gasto = gastoDe(m.id);
+            return <div key={m.id} className={`gt-vidrio${canManageMachines ? " gt-vidrio-hover" : ""}`} role={canManageMachines ? "button" : undefined} tabIndex={canManageMachines ? 0 : undefined}
+              onClick={abrir} onKeyDown={(ev) => { if (canManageMachines && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); abrir(); } }}
+              style={{ padding: 14, cursor: canManageMachines ? "pointer" : "default", display: "flex", flexDirection: "column", gap: 10 }}>
+              {m.foto?.dataUrl
+                ? <img src={m.foto.dataUrl} alt={m.nombre} style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 12, background: "rgba(44,42,40,.05)" }} />
+                : <div style={{ width: "100%", height: 140, borderRadius: 12, background: "rgba(44,42,40,.05)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-faint)" }}>
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
+                  </div>}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                <div style={{ font: "800 14.5px/1.25 var(--display)", color: "var(--text)", minWidth: 0 }}>{m.nombre}</div>
+                <span style={{ padding: "2px 10px", borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: comp ? C_AZUL.color : C_NARANJA_CHIP.color, background: comp ? C_AZUL.bg : C_NARANJA_CHIP.bg, whiteSpace: "nowrap" }}>{comp ? "Compresor" : "Máquina"}</span>
+              </div>
+              {!comp && (m.diametroTipo || m.diametroNotas) && <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>
+                {m.diametroTipo && <span style={{ fontWeight: 700, textTransform: "capitalize" }}>{m.diametroTipo}</span>}
+                {m.diametroTipo && m.diametroNotas && " — "}{m.diametroNotas}
+              </div>}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderTop: "1px solid var(--hairline)", paddingTop: 8 }}>
+                <span style={{ fontSize: 11, color: "var(--text-3)" }}>{nDe(m.id)} solicitud{nDe(m.id) === 1 ? "" : "es"}</span>
+                <span style={{ font: "800 13.5px/1 var(--display)", color: gasto > 0 ? "var(--text)" : "var(--text-faint)" }}>{gasto > 0 ? fmtL(gasto) : "—"}</span>
+              </div>
+            </div>;
+          })}
+        </div>}
+    </div>;
+  };
+
   const renderProviders = () => {
     const q = provQ.trim().toLowerCase();
     const incompletoDe = (p) => !p.phones?.length || !p.bankAccounts?.length;
@@ -4700,8 +5137,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         {/* Reporte PDF a la izquierda · selector de vista a la derecha */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div>
-            {!esGlobal && (
-              <button onClick={() => exportComprasEjecutivoPDF(mesSel)} title={`Reporte ejecutivo de materiales de ${mesSelLabel} (portada + detalle por proyecto)`}
+            {!esGlobal && (!esMaq || canSeeCostosMaq) && (
+              <button onClick={() => esMaq ? exportMaquinasEjecutivoPDF(mesSel) : exportComprasEjecutivoPDF(mesSel)} title={`Reporte ejecutivo de materiales de ${mesSelLabel} (portada + detalle por proyecto)`}
                 style={{ padding: "7px 16px", borderRadius: 999, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--naranja-tinta)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
                 Reporte ejecutivo PDF — {mesSelLabel}
               </button>
@@ -4849,6 +5286,54 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             </div>
           </div>
         </div>
+        {/* GeoMachinery: GASTO POR MÁQUINA del mes (para el reporte mensual
+            de costos de Gerson — portado del viejo módulo el 28-sep-2026).
+            Por fecha de PAGO; lo que no tiene máquina va en "Sin máquina". */}
+        {esMaq && (() => {
+          const acc = {};
+          cp.forEach(x => {
+            if (!isPaid(x) || (!esGlobal && String(x.paidAt || "").slice(0, 7) !== mesSel)) return;
+            const k = x.machineId || "__sin__";
+            if (!acc[k]) acc[k] = { monto: 0, n: 0, proys: {} };
+            acc[k].monto += Number(x.amount) || 0; acc[k].n++;
+            const pk = x.projectCode || "—";
+            acc[k].proys[pk] = (acc[k].proys[pk] || 0) + (Number(x.amount) || 0);
+          });
+          const gastoMaq = Object.entries(acc).map(([k, v]) => ({ key: k, nombre: k === "__sin__" ? "Sin máquina asignada" : (machines.find(m => m.id === k)?.nombre || "Máquina eliminada"), ...v })).sort((a, b) => b.monto - a.monto);
+          const tot = gastoMaq.reduce((sm, r) => sm + r.monto, 0);
+          const maxG = Math.max(1, ...gastoMaq.map(r => r.monto));
+          const csv = () => {
+            const enc = (v) => { let t = String(v ?? ""); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
+            const lines = [["Mes", "Maquina", "Solicitudes", "Gasto (L)", "Proyectos"].map(enc).join(",")];
+            gastoMaq.forEach(r => lines.push([esGlobal ? "global" : mesSel, r.nombre, r.n, r.monto.toFixed(2), Object.entries(r.proys).map(([pk, v]) => `${pk}: L ${v.toFixed(2)}`).join(" | ")].map(enc).join(",")));
+            lines.push(["", "TOTAL", gastoMaq.reduce((sm, r) => sm + r.n, 0), tot.toFixed(2), ""].map(enc).join(","));
+            const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+            const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `gasto-maquinas-${esGlobal ? "global" : mesSel}.csv`; a.click(); URL.revokeObjectURL(a.href);
+          };
+          return <div className="gt-vidrio" style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div className="gt-label" style={{ color: "var(--text-2)" }}>Gasto por máquina — {mesSelLabel}</div>
+              {(canSeeCostosMaq || isVisorCompras) && gastoMaq.length > 0 && <button onClick={csv}
+                style={{ padding: "5px 12px", borderRadius: 999, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-2)", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>CSV</button>}
+            </div>
+            {gastoMaq.length === 0
+              ? <div style={{ fontSize: 12.5, color: "var(--text-3)", fontStyle: "italic", padding: "10px 2px" }}>Ningún pago de repuestos o mantenimiento en {mesSelLabel}.</div>
+              : <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: "10px 28px" }}>
+                {gastoMaq.map((r, i) => <div key={r.key} style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: r.key === "__sin__" ? C_AMARILLO.color : "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nombre} <span style={{ color: "var(--text-3)", fontWeight: 500 }}>({r.n})</span></span>
+                    <span style={{ font: "800 12.5px/1 var(--display)", color: "var(--text)", whiteSpace: "nowrap" }}>{fmtL(r.monto)}</span>
+                  </div>
+                  <div style={{ display: "flex", marginTop: 5 }}>{barra(r.monto * (maxBarra / maxG), r.key === "__sin__" ? "#E4B94A" : CHARCOAL, i * 60)}</div>
+                  <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{Object.entries(r.proys).map(([pk, v]) => `${pk}: ${fmtL(v)}`).join(" · ")}</div>
+                </div>)}
+              </div>}
+            {gastoMaq.length > 0 && <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid var(--hairline)", paddingTop: 10, fontSize: 12.5, fontWeight: 800 }}>
+              <span className="gt-label" style={{ color: "var(--text-3)" }}>Total</span><span>{fmtL(tot)}</span>
+            </div>}
+            {gastoMaq.some(r => r.key === "__sin__") && <div style={{ fontSize: 11.5, color: C_AMARILLO.color, background: C_AMARILLO.bg, borderRadius: 10, padding: "7px 11px" }}>Hay pagos sin máquina vinculada — asignales la máquina en la solicitud para que el reporte quede completo.</div>}
+          </div>;
+        })()}
       </div>
     );
   };
@@ -4896,7 +5381,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       nextAction = `🏪 La entrega el proveedor${llega ? ` — llega ${llega.toLocaleDateString("es-HN", { day: "2-digit", month: "short" })} ${llega.toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}` : ""}`;
       nextOwner = "Proveedor";
     }
-    else if (isPaid && hasReceipt && !hasDesp) { nextAction = "Coordinar con proveedor + enviar a logistica"; nextOwner = "Ana Vasquez"; }
+    else if (isPaid && hasReceipt && !hasDesp) { nextAction = "Coordinar con proveedor + enviar a logistica"; nextOwner = esMaq ? "Fernando Diaz" : "Ana Vasquez"; }
     else if (hasDesp && !hasVehicle && desp?.estado === "pendiente") { nextAction = "Asignar vehiculo + motorista"; nextOwner = "Oscar Paz"; }
     else if (hasVehicle && !enRuta && !entregado) { nextAction = "Salir en ruta"; nextOwner = "Oscar Paz"; }
     else if (enRuta) { nextAction = "Entregar en proyecto"; nextOwner = "Motorista"; }
@@ -5084,7 +5569,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     </div>
     <div style="font-size:9px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:8px;margin-top:12px;line-height:1.5;page-break-inside:avoid">
       <b>Metodología:</b> se incluyen las solicitudes de compra con pago realizado (estado pagado o finalizado) cuya fecha de pago cae en ${mesTitulo}, de ambas empresas. Los montos son los de la solicitud aprobada. No incluye compras de repuestos de maquinaria (ver el reporte de GeoMachinery).
-      Preparado por ${esc(userName || "Operaciones")} · GeoShopping — Sistema de Operaciones.
+      Preparado por ${esc(userName || "Operaciones")} · ${CFG.nombre} — Sistema de Operaciones.
     </div>
     <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
     </body></html>`);
@@ -5336,7 +5821,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const despachoDe = (id) => despPorCompra[id] || null;
     // Quién coordina esta compra: el proyecto MAQUINAS lo lleva Fernando desde
     // GeoMachinery (el kanban de Ana lo excluye), el resto es Compras/Ana.
-    const coordinaCompra = (x) => /MAQUINA/i.test(String(x.projectCode || "")) ? "Fernando / Máquinas" : "Ana / Compras";
+    const coordinaCompra = (x) => esMaq || /MAQUINA/i.test(String(x.projectCode || "")) ? "Fernando / Máquinas" : "Ana / Compras";
 
     // Etapa + "desde cuándo" + responsable concreto de esa etapa. (Sin cambios
     // desde la auditoría de ago-2026 contra las compras reales.)
@@ -5541,7 +6026,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       if (p.status !== "pagado" && p.status !== "finalizado") return null;
       // El proyecto MAQUINAS lo coordina Fernando desde GeoMachinery — a Ana
       // no le corresponde (20-ago-2026). Los demás roles sí lo siguen viendo.
-      if (isAsistenteCompras && String(p.projectCode || "").toUpperCase().includes("MAQUINA")) return null;
+      if (!esMaq && isAsistenteCompras && String(p.projectCode || "").toUpperCase().includes("MAQUINA")) return null;
       if (yaCerradaConta(p)) return null;                       // vive en "Cerradas"
       if (p.deliveryStatus === "ficha_adjunta" || p.deliveryStatus === "cerrado") return "listas";
       if (p.deliveryStatus === "entrega_proveedor") return "entrega_directa";
@@ -5698,7 +6183,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         {canSendToLogistics && <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end", flexShrink: 0 }}>
           {salida("Logística", () => setModal({ t: "send-pickup", d: p }), T_LOG, "Nosotros la vamos a traer — se crea la orden de recogida")}
           {salida("Proveedor", () => setModal({ t: "entrega-directa", d: p }), T_PROV, "El proveedor la lleva al proyecto")}
-          {salida("Es servicio", () => cerrarSinFicha(p), T_SIN, "Servicio de proveedor (colado, topografía, rentas…): pasa a Por cerrar contable sin ficha")}
+          {esMaq
+            ? salida("Sin logística", () => cerrarSinFicha(p), T_SIN, "No aplica retiro (servicio en sitio, lo recoge Fernando…): pasa a Por cerrar contable")
+            : salida("Es servicio", () => cerrarSinFicha(p), T_SIN, "Servicio de proveedor (colado, topografía, rentas…): pasa a Por cerrar contable sin ficha")}
         </div>}
       </div>;
     };
@@ -7381,14 +7868,16 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     if (!modal) return null;
     const m = modal;
     switch (m.t) {
-      case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} /></Modal>;
-      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} /></Modal>;
+      case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
+      case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
-      case "corregir": return <Modal title={`Corregir proyecto / partida — ${m.d.codigo || m.d.provider}`} onClose={() => setModal(null)} wide><CorreccionFormImpl purchase={m.d} setModal={setModal} allProjects={allProjects} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} updatePurchase={updatePurchase} addAudit={addAudit} userName={userName} /></Modal>;
+      case "corregir": return <Modal title={`Corregir proyecto / partida — ${m.d.codigo || m.d.provider}`} onClose={() => setModal(null)} wide><CorreccionFormImpl purchase={m.d} setModal={setModal} allProjects={allProjects} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} updatePurchase={updatePurchase} addAudit={addAudit} userName={userName} moduloPartida={CFG.moduloPartida} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
       case "edit-project": return <Modal title={`Editar proyecto — ${m.d.short}`} onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} project={m.d} /></Modal>;
       case "provider-new":  return <Modal title="Nuevo proveedor" onClose={() => setModal(null)} wide><ProviderFormImpl setModal={setModal} upsertProvider={upsertProvider} subirConstanciaProveedor={subirConstanciaProveedor} /></Modal>;
+      case "machine-new": return esMaq ? <Modal title="Nueva máquina" onClose={() => setModal(null)}><MachineFormImpl setModal={setModal} upsertMachine={upsertMachine} /></Modal> : null;
+      case "machine-edit": return esMaq ? <Modal title={`Editar máquina — ${m.d.nombre}`} onClose={() => setModal(null)}><MachineFormImpl machine={m.d} setModal={setModal} upsertMachine={upsertMachine} deleteMachine={deleteMachine} /></Modal> : null;
       case "provider-edit": return <Modal title={`Editar proveedor — ${m.d.name}`} onClose={() => setModal(null)} wide><ProviderFormImpl provider={m.d} setModal={setModal} upsertProvider={upsertProvider} deleteProvider={deleteProvider} subirConstanciaProveedor={subirConstanciaProveedor} /></Modal>;
       case "send-pickup":   return <Modal title={`🚛 Enviar a Logistica — ${m.d.provider}`} onClose={() => setModal(null)}><SendPickupFormImpl purchase={m.d} provider={findProviderByName(m.d.provider)} setModal={setModal} enviarAOrdenRecogida={enviarAOrdenRecogida} /></Modal>;
       case "entrega-directa": return <Modal title={`🏪 La entrega el proveedor — ${m.d.provider}`} onClose={() => setModal(null)}><EntregaDirectaFormImpl purchase={m.d} provider={findProviderByName(m.d.provider)} setModal={setModal} marcarEntregaDirecta={marcarEntregaDirecta} /></Modal>;
@@ -7486,6 +7975,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // desde el Dashboard. renderCostos queda sin pestaña.
     { id: "resumen", label: "Supply Chain" },
     { id: "projects", label: "Proyectos" },
+    // GeoMachinery (28-sep-2026): sus dos pestañas propias — el catálogo de
+    // máquinas y los costos por máquina (reporte ejecutivo).
+    ...(esMaq ? [{ id: "machines", label: "Máquinas" }, { id: "costos", label: "Costos" }] : []),
     { id: "ana", label: "Por coordinar" },
     { id: "entregas", label: "Entregas de proveedor" },
     // Accounting (28-sep-2026): Por cerrar contable + Cerradas en una sola
@@ -7496,17 +7988,21 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   ];
   // Dashboard y Resumen (command center) solo para admin/gerencia/costos —
   // quien necesita seguimiento end-to-end. Ana ve su Kanban.
-  const canSeeResumen = isAdmin || isGerencia || isCostos || isVisorCompras;
+  const canSeeResumen = isAdmin || isGerencia || isCostos || isVisorCompras || isCoordinadorMaquinas;
   const canSeeDashboard = canSeeResumen;
   // Prioridades es la cola de pago: la arma Finanzas y la ejecuta Tesorería.
   // Jorge (recepción) y Ana no tienen nada que hacer ahí.
-  const canSeePri = canEditPri || isGerencia || isVisorCompras;
-  const visibleNav = isAsistenteCompras
+  const canSeePri = canEditPri || isGerencia || isVisorCompras || isCoordinadorMaquinas;
+  // Costos de maquinaria: SOLO admin / gerencia / costos. Fernando NO la ve ni
+  // exporta (pedido de Gerson 19-ago-2026).
+  const canSeeCostosMaq = esMaq && (isAdmin || isGerencia || isCostos);
+  const visibleNav = isAsistenteCompras && !esMaq
     ? allNav.filter(n => n.id === "ana" || n.id === "entregas" || n.id === "accounting" || n.id === "providers")
     : allNav.filter(n => {
         if (n.id === "resumen") return canSeeResumen;
         if (n.id === "dashboard") return canSeeDashboard;
         if (["prioridades", "cxp", "calendario"].includes(n.id)) return canSeePri;
+        if (n.id === "costos") return canSeeCostosMaq;
         return true;
       });
   const roleLabel = isAdmin ? "Operaciones"
@@ -7515,6 +8011,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     : isVisorCompras ? "Visor de Compras (solo lectura)"
     : userRole === "compras_ops" ? "Compras / Operaciones"
     : isCostos ? "Costos / Operaciones"
+    : isCoordinadorMaquinas ? "Coord. Máquinas"
     : isAsistenteCompras ? "Asistente de Compras"
     : isRecepcion ? "Recepcion"
     : userRole;
@@ -7537,8 +8034,11 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         <img src={logoUrl} alt="Geotecnica Soluciones" style={{ height: isMobile ? 28 : 34, width: "auto", display: "block" }} />
         {/* El dibujito del carrito identifica el módulo (1-sep: "en vez de
             que diga GeoShopping"). El nombre queda en el title/aria. */}
-        <div title="GeoShopping — Compras & Tesorería" aria-label="GeoShopping" style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="8" cy="21" r="1" /><circle cx="19" cy="21" r="1" /><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" /></svg>
+        <div title={esMaq ? "GeoMachinery — Repuestos & Tesorería" : "GeoShopping — Compras & Tesorería"} aria-label={CFG.nombre} style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          {esMaq
+            // Llave inglesa (mismo ícono de GeoMachinery en el panel de control)
+            ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
+            : <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="8" cy="21" r="1" /><circle cx="19" cy="21" r="1" /><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" /></svg>}
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
@@ -7602,6 +8102,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           : sec === "accounting" ? renderAccounting()
           : sec === "conta" ? renderConta()
           : sec === "cerradas" ? renderCerradas()
+          : sec === "machines" && esMaq ? renderMachines()
+          : sec === "costos" && canSeeCostosMaq ? renderCostosMaq()
           : renderList()
       }</div>
     </div>

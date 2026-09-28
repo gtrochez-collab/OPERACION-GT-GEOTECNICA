@@ -514,10 +514,11 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
 
   // Dividir una compra en ítems del presupuesto (25-sep-2026). Mismo patrón
   // que reclasificar: SIEMPRE sobre el array de la nube, por id, + verify.
-  // Solo cp-purchases: GeoMachinery todavía no maneja ítems.
+  // cp- y mq-purchases (28-sep-2026: GeoMachinery ya usa el mismo código que
+  // GeoShopping, y su `sP` también rescata `lineas`).
   const guardarItems = async (mov, { lineas, partidaId, sobregiroJustificacion }) => {
-    if (!puedeReclasificar || mov?.sourceKey !== "cp-purchases") return false;
-    const key = "cp-purchases";
+    if (!puedeReclasificar || (mov?.sourceKey !== "cp-purchases" && mov?.sourceKey !== "mq-purchases")) return false;
+    const key = mov.sourceKey;
     const id = mov.origen?.id;
     if (!id) return false;
     try {
@@ -532,7 +533,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       const back = await store.getCloud(key);
       const fila = Array.isArray(back) ? back.find(x => x.id === id) : null;
       if (!fila || (fila.lineas || []).length !== lineas.length || !(fila.audit || []).some(a => a?.at === at)) { alert("VERIFICACIÓN FALLÓ: la nube no refleja los ítems."); return false; }
-      setCpPurchases(back);
+      (key === "cp-purchases" ? setCpPurchases : setMqPurchases)(back);
       stamp();
       return true;
     } catch (e) {
@@ -615,8 +616,8 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
         <tbody>{movs.map(m => {
           const reclasificable = puedeReclasificar && (m.fuente === "compras" || m.fuente === "maquinas") && m.sourceKey && !m.dividida;
           // Dividir en ítems: solo compras de GeoShopping (25-sep-2026)
-          const divisible = puedeReclasificar && m.sourceKey === "cp-purchases";
-          const linkItems = (txt) => <button onClick={() => setModal({ t: "items", purchaseId: m.origen?.id, presId: pres.id })}
+          const divisible = puedeReclasificar && (m.sourceKey === "cp-purchases" || m.sourceKey === "mq-purchases");
+          const linkItems = (txt) => <button onClick={() => setModal({ t: "items", purchaseId: m.origen?.id, presId: pres.id, sourceKey: m.sourceKey })}
             style={{ background: "none", border: "none", padding: 0, marginTop: 4, fontSize: 11, color: "var(--naranja-tinta)", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", fontWeight: 700 }}>{txt}</button>;
           const nombrePart = nombrePartidaDe(pres, m);
           const est = m.fuente === "mo" && m.enCurso ? ESTADO_COSTO.encurso : ESTADO_COSTO[m.estado] || ESTADO_COSTO.comprometido;
@@ -1143,15 +1144,16 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     const cerrar = () => setModal(null);
     if (modal.t === "items") {
       const pres = presupuestos.find(p => p.id === modal.presId);
-      const purchase = cpPurchases.find(x => x.id === modal.purchaseId);
+      const esMq = modal.sourceKey === "mq-purchases";
+      const purchase = (esMq ? mqPurchases : cpPurchases).find(x => x.id === modal.purchaseId);
       if (!pres || !purchase || !puedeReclasificar) return null;
       // Disponible de cada partida SIN contar esta misma compra
       const r = resumenes.find(x => x.pres.id === pres.id);
       const movsSin = (r?.movs || []).filter(mv => mv.origen?.id !== purchase.id);
       const disponibleDe = (pid) => disponibleDePartida({ pres, partidaId: pid, movs: movsSin });
-      const mov = { sourceKey: "cp-purchases", origen: purchase };
+      const mov = { sourceKey: esMq ? "mq-purchases" : "cp-purchases", origen: purchase };
       return <DividirItemsModal purchase={purchase} pres={pres} tasa={tasa} disponibleDe={disponibleDe} onClose={cerrar}
-        onSave={(datos) => guardarItems(mov, datos)} Modal={Modal} Textarea={Textarea} Btn={Btn} />;
+        onSave={(datos) => guardarItems(mov, datos)} Modal={Modal} Textarea={Textarea} Btn={Btn} modulo={esMq ? "maquinas" : "compras"} />;
     }
     if (modal.t === "tasa") return <AjustesTasa config={config || { tasa: TASA_DEFAULT }} puedeEditar={puedeTasa} onSave={guardarConfig} onClose={cerrar} />;
     if (modal.t === "presupuesto") {
