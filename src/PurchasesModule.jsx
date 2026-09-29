@@ -1522,7 +1522,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           Cuenta por pagar, al APROBARLA se agrega sola a esa pestaña (ya no
           hay que ir a meterla a mano). Normal = solo calendario. */}
       <div style={{ gridColumn: "1/-1", display: "grid", gridTemplateColumns: "minmax(160px, 220px) minmax(0,1fr)", gap: 14, alignItems: "end" }}>
-        <Input label="Fecha en que se requiere el pago *" type="date" value={f.fechaPagoRequerida || ""} onChange={e => u("fechaPagoRequerida", e.target.value)} />
+        <Input label="Fecha en que se requiere el pago (opcional)" type="date" value={f.fechaPagoRequerida || ""} onChange={e => u("fechaPagoRequerida", e.target.value)} />
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Va a</label>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1665,7 +1665,9 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         <Btn variant="success" disabled={saving} onClick={async () => {
           if (!f.projectCode || !f.provider || (!modoItems && !f.description) || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert(modoItems ? "Para aprobar: complete proyecto, proveedor, monto, N° cotizacion y responsable" : "Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
           { const eCC = errorPartidaCC(); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
-          if (!f.fechaPagoRequerida) return alert("Para aprobar: poné la fecha en que se requiere el pago (entra al Calendario de Pago).");
+          // La fecha requerida es OPCIONAL (29-sep-2026, pedido de Gerson): sin
+          // ella la solicitud no sale en el Calendario (salvo que vaya a
+          // Cuentas por pagar, que la programa para hoy y se reprograma ahí).
           if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
           setSaving(true);
           try {

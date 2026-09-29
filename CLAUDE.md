@@ -246,8 +246,9 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   al entrar ya te cargue las del día de hoy" — arranca en el mes Y el día de
   hoy, con el detalle de la derecha ya abierto).
   **FECHA REQUERIDA + "Va a" en la solicitud (25-sep-2026, pedido de
-  Finanzas)**: campos aditivos `fechaPagoRequerida` (YYYY-MM-DD, OBLIGATORIA
-  para aprobar) y `destinoPago` ("normal" | "prioridad" | "cxp"; sin elegir:
+  Finanzas)**: campos aditivos `fechaPagoRequerida` (YYYY-MM-DD, OPCIONAL
+  desde el 29-sep-2026 — antes era obligatoria para aprobar; sin fecha no sale
+  en el Calendario, y si va a CxP se programa para hoy) y `destinoPago` ("normal" | "prioridad" | "cxp"; sin elegir:
   crédito → cxp, si no normal). TODAS entran al Calendario de Pago. Al
   APROBAR, `encolarPago(saved)` (a nivel del módulo, se pasa como prop a
   PurchaseFormImpl) la agrega SOLA: prioridad → al final de `cp-prioridades`
