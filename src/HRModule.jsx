@@ -2631,19 +2631,23 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       // proyecto DONDE trabajo ese dia (pedido del usuario 30-jul-2026: que
       // se entienda de un vistazo que Jose Henry trabajo la quincena en otro
       // proyecto). Cubre tambien proyectos que solo aparecen via override.
+      // SIN ROJOS NI ROSADOS (30-sep-2026, pedido de Gerson): el rojo es el
+      // color del NSP, y una celda "1*" pintada de rojo (Villa San Miguel era
+      // vino) la Lic. Carolina la podía leer como inasistencia. Se sacaron
+      // frambuesa, vino y magenta; entraron pizarra, café y petróleo.
       const PROJ_PALETTE = [
         { main: "#C75F1F", soft: "#FBE7D6" }, // naranja Geotecnica
         { main: "#2C5F5D", soft: "#DCEBEA" }, // verde acero
         { main: "#6D28D9", soft: "#EAE2FB" }, // morado
         { main: "#1D6AC0", soft: "#DEEBFA" }, // azul
-        { main: "#BE3455", soft: "#F9DFE6" }, // frambuesa
+        { main: "#475569", soft: "#E2E8F0" }, // pizarra
         { main: "#996A00", soft: "#F5EBCE" }, // ambar
         { main: "#0E7490", soft: "#D9F0F6" }, // teal
         { main: "#15803D", soft: "#DEF2E4" }, // verde
-        { main: "#9F1239", soft: "#F9DEE4" }, // vino
+        { main: "#7C5A3A", soft: "#EFE6DC" }, // café
         { main: "#4338CA", soft: "#E4E2FA" }, // indigo
         { main: "#3F6212", soft: "#E9F1D8" }, // oliva
-        { main: "#A21CAF", soft: "#F6E0F8" }, // magenta
+        { main: "#155E75", soft: "#D5ECF2" }, // petróleo
       ];
       const projColor = {};
       {

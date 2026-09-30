@@ -1335,7 +1335,9 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   aunque tengan valor guardado (fix Norman 30-jul). Hora de entrada payByHour
   hasta 11:00 (José Miguel). Resumen por proyecto: personas + NSP + INC + VAC.
   PDF: "1" regular sin color; celdas con * llevan el color del proyecto donde
-  trabajó ese día; al final "RESUMEN PARA PLANILLA" (NSP/INC/V con días y total).
+  trabajó ese día (`PROJ_PALETTE` SIN rojos ni rosados desde el 30-sep-2026:
+  el rojo es del NSP y un "1*" en vino —Villa San Miguel— se leía como
+  inasistencia; frambuesa/vino/magenta → pizarra/café/petróleo); al final "RESUMEN PARA PLANILLA" (NSP/INC/V con días y total).
 - **DÍA DE BAJA (14-sep-2026, pedido de Gerson)**: el `endDate` de un empleado
   con status `inactive` es el **día de baja** = el PRIMER día en que ya no
   pertenece a la empresa. Ese día **y los siguientes** salen en gris, domingos
