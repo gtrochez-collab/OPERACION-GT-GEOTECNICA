@@ -1110,6 +1110,29 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   por partida, sumado; UNA justificación por solicitud. ⚠ **GeoMachinery NO
   tiene ítems todavía** (sigue con una partida; "Dividir" solo aparece en
   compras de GeoShopping porque el `sP` de GeoMachinery no rescata `lineas`).
+  **SUSTITUTOS — "Es otro material" (30-sep-2026, caso Villa San Miguel)**: el
+  presupuesto se hizo para colar pilotes con concreto premezclado
+  subcontratado, pero por operación se cambió a fabricarlo con el Fiori
+  propio (cemento, arena, grava). Diseño pidió que eso siga bajando de la
+  partida "Concreto premezclado…", pero la descripción le decía a la Lic.
+  Carolina "concreto premezclado" cuando se compraba arena. Cada ítem de
+  `LineasPresupuesto` trae el enlace **"Es otro material"** → caja ámbar con
+  "Qué se compra realmente" + Unidad + Motivo (opcional); la unidad junto a
+  la cantidad pasa a ser la del material real. Se guarda en la línea como
+  `sustituto: {nombre, unidad, motivo}` (ADITIVO); `nombre`/`unidad` de la
+  línea siguen siendo los de la PARTIDA (GeoCost los usa). `descripcionDeLineas`
+  escribe lo REAL ("32 m3 × Arena de río"); helpers `nombreRealDe` /
+  `unidadRealDe`. `errorLineas` exige el nombre real si se marcó. En el
+  detalle de la solicitud: nombre real + chip ámbar "Sustituto" + "se carga
+  a: <partida> — <motivo>"; en GeoCost el movimiento lleva `sustituto: true`
+  (chip "Sustituto" en Movimientos) y el detalle "sustituto de: <partida>".
+  El detalle muestra la descripción con `pre-line` (antes salía todo pegado
+  en un renglón). `sP` rescata también `description`/`detalleExtra` cuando la
+  entrada de audit `partida_reclasificada` trae `ajustaDescripcion: true`.
+  La MAT de ICMOVA (Villa San Miguel, L 57,120) se corrigió en la nube el
+  30-sep: Gravín 3/8 (L 27,520, con ISV) y Arena de río (L 29,600, exento),
+  32 m3 cada uno, como sustitutos del concreto premezclado. A futuro Gerson
+  quiere "materiales permitidos" por partida en el presupuesto (aún NO).
   **Dashboard v4 (25-sep-2026)**: la columna del medio (una tarjeta con
   anillo POR proyecto, apiladas) no escalaba — "ahorita son 2 pero serán
   más" — y con nombres largos el título se encimaba con el anillo. La

@@ -58,6 +58,8 @@ export const evaluarLineas = ({ pres, lineas, montoTotal, tasa, disponibleDe }) 
   const todas = (lineas || []).filter(Boolean);
   const validas = todas.filter(l => l.partidaId && byId.has(l.partidaId) && num(l.monto) > 0);
   const incompletas = todas.filter(l => !(l.partidaId && byId.has(l.partidaId) && num(l.monto) > 0) && (l.partidaId || num(l.monto) > 0 || num(l.cantidad) > 0));
+  // Sustituto marcado pero sin decir qué se compra realmente
+  const sustitutosSinNombre = validas.filter(l => l.real && !String(l.realNombre || "").trim());
   const suma = r2(validas.reduce((s, l) => s + num(l.monto), 0));
   const total = num(montoTotal) > 0 ? num(montoTotal) : suma;
   const acc = new Map();
@@ -73,13 +75,14 @@ export const evaluarLineas = ({ pres, lineas, montoTotal, tasa, disponibleDe }) 
   // La partida principal (la de más plata) se guarda también en `partidaId`
   // para lo que todavía lee UNA sola partida (compatibilidad).
   const principal = porPartida.slice().sort((a, b) => b.montoHNL - a.montoHNL)[0]?.partidaId || "";
-  return { validas, incompletas, suma, total, porPartida, sobregiroUSD, principal };
+  return { validas, incompletas, sustitutosSinNombre, suma, total, porPartida, sobregiroUSD, principal };
 };
 
 // Error de validación (null = OK). Lo comparten los dos botones del form.
 export const errorLineas = (ev, { justificacion = "", montoTotal } = {}) => {
   if (!ev.validas.length) return "Agregá al menos un ítem del presupuesto, con su monto";
   if (ev.incompletas.length) return "Hay ítems sin elegir o sin monto — completalos o quitalos";
+  if (ev.sustitutosSinNombre?.length) return "Marcaste \"Es otro material\" en un ítem: escribí qué se compra realmente";
   if (num(montoTotal) > 0 && ev.suma > num(montoTotal) * 1.005 + 0.5) return `Los ítems suman ${fL(ev.suma)}, más que el monto total (${fL(montoTotal)}) — revisá los montos`;
   if (ev.sobregiroUSD > 0 && String(justificacion || "").trim().length < 5) return "Sobrepasa el presupuesto: escribí la justificación del sobregiro (mínimo 5 caracteres)";
   return null;
@@ -92,20 +95,33 @@ export const lineasParaGuardar = (pres, lineas) => {
   const byId = new Map((pres?.partidas || []).map(p => [p.id, p]));
   return (lineas || []).filter(l => l && l.partidaId && byId.has(l.partidaId) && num(l.monto) > 0).map(l => {
     const p = byId.get(l.partidaId);
-    return { id: l.id && l.id !== "legacy" ? l.id : uidL(), partidaId: l.partidaId, ...(solDe(p) ? { solucion: solDe(p) } : {}), categoria: p.categoria || "Otros", nombre: p.nombre || "", unidad: p.unidad || "", cantidad: num(l.cantidad), monto: r2(num(l.monto)) };
+    // SUSTITUTO (30-sep-2026, caso Villa San Miguel): la plata sale de la
+    // partida del presupuesto ("Concreto premezclado…") pero lo que se compra
+    // es OTRA cosa (arena, grava, cemento — se cambió a colar con Fiori propio).
+    // `nombre`/`unidad` siguen siendo los de la PARTIDA (GeoCost los usa);
+    // lo real va en `sustituto` y es lo que lee la descripción.
+    const realNombre = String(l.realNombre || "").trim();
+    const sustituto = l.real && realNombre ? { nombre: realNombre, unidad: String(l.realUnidad || "").trim(), motivo: String(l.realMotivo || "").trim() } : null;
+    return { id: l.id && l.id !== "legacy" ? l.id : uidL(), partidaId: l.partidaId, ...(solDe(p) ? { solucion: solDe(p) } : {}), categoria: p.categoria || "Otros", nombre: p.nombre || "", unidad: p.unidad || "", cantidad: num(l.cantidad), monto: r2(num(l.monto)), ...(sustituto ? { sustituto } : {}) };
   });
 };
 // "5 Lance × Varilla No.3…" — un renglón por ítem. Es lo que leen la tabla,
 // la ficha de entrega, los despachos y los reportes (campo `description`).
+// Con sustituto se escribe LO QUE REALMENTE SE COMPRA ("32 m3 × Arena de río"):
+// es lo que ven la Lic. Carolina, Ana, la ficha de entrega y Contabilidad.
+export const nombreRealDe = (l) => l?.sustituto?.nombre || l?.nombre || "";
+export const unidadRealDe = (l) => l?.sustituto ? (l.sustituto.unidad || "") : (l?.unidad || "");
 export const descripcionDeLineas = (lineas) => (lineas || []).map(l => {
-  const cant = num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")}${l.unidad ? " " + l.unidad : ""} × ` : "";
-  return `${cant}${l.nombre || ""}`.trim();
+  const u = unidadRealDe(l);
+  const cant = num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")}${u ? " " + u : ""} × ` : "";
+  return `${cant}${nombreRealDe(l)}`.trim();
 }).filter(Boolean).join("\n");
 
 // Una compra vieja con UNA partida se abre como un solo ítem por el total.
 export const lineasIniciales = (purchase) => {
   const ls = Array.isArray(purchase?.lineas) ? purchase.lineas : [];
-  if (ls.length) return ls.map(l => ({ id: l.id || uidL(), partidaId: l.partidaId || "", cantidad: l.cantidad ? String(l.cantidad) : "", monto: l.monto ? String(l.monto) : "", categoria: l.categoria }));
+  if (ls.length) return ls.map(l => ({ id: l.id || uidL(), partidaId: l.partidaId || "", cantidad: l.cantidad ? String(l.cantidad) : "", monto: l.monto ? String(l.monto) : "", categoria: l.categoria,
+    ...(l.sustituto ? { real: true, realNombre: l.sustituto.nombre || "", realUnidad: l.sustituto.unidad || "", realMotivo: l.sustituto.motivo || "" } : {}) }));
   if (purchase?.partidaId) return [{ id: "legacy", partidaId: purchase.partidaId, cantidad: "", monto: purchase.amount ? String(purchase.amount) : "" }];
   return [];
 };
@@ -173,6 +189,8 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
         const opciones = partidas.filter(x => (x.categoria || "Otros") === c && (!multi || solDe(x) === sl));
         const disp = l.partidaId && disponibleDe ? disponibleDe(l.partidaId) : null;
         const pp = ev.porPartida.find(x => x.partidaId === l.partidaId);
+        // Unidad al lado de la cantidad: la del material REAL si es sustituto
+        const uni = l.real ? (l.realUnidad || "") : (p?.unidad || "");
         return <div key={l.id} style={{ display: "flex", flexDirection: "column", gap: 4, background: pp?.sobregiroUSD > 0 ? C_ULTRA.bg : "transparent", borderRadius: 10, padding: 6, margin: -6 }}>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) 28px" : "minmax(0,1fr) 120px 140px 28px", gap: 8, alignItems: "center" }}>
             <select value={l.partidaId || ""} onChange={e => upd(l.id, "partidaId", e.target.value)} style={{ ...INPUT, gridColumn: isMobile ? "1" : undefined, color: l.partidaId ? "#0f172a" : "#94A3B8" }}>
@@ -181,15 +199,31 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
             </select>
             {isMobile && <button type="button" onClick={() => quitar(l.id)} title="Quitar ítem" style={{ background: "none", border: "none", color: "#94A3B8", fontSize: 16, cursor: "pointer", padding: 0 }}>✕</button>}
             <div style={{ position: "relative", gridColumn: isMobile ? "1 / -1" : undefined }}>
-              <input type="number" step="any" min="0" value={l.cantidad} onChange={e => upd(l.id, "cantidad", e.target.value)} placeholder="Cant." style={{ ...INPUT, paddingRight: p?.unidad ? 54 : 11 }} />
-              {p?.unidad && <span style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "#94A3B8", fontWeight: 700, pointerEvents: "none", maxWidth: 48, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.unidad}</span>}
+              <input type="number" step="any" min="0" value={l.cantidad} onChange={e => upd(l.id, "cantidad", e.target.value)} placeholder="Cant." style={{ ...INPUT, paddingRight: uni ? 54 : 11 }} />
+              {uni && <span style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "#94A3B8", fontWeight: 700, pointerEvents: "none", maxWidth: 48, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{uni}</span>}
             </div>
             <input type="number" step="0.01" min="0" value={l.monto} onChange={e => upd(l.id, "monto", e.target.value)} placeholder="0.00" style={{ ...INPUT, gridColumn: isMobile ? "1 / -1" : undefined }} />
             {!isMobile && <button type="button" onClick={() => quitar(l.id)} title="Quitar ítem" style={{ background: "none", border: "none", color: "#94A3B8", fontSize: 16, cursor: "pointer", padding: 0 }}>✕</button>}
           </div>
-          {disp && <div style={{ fontSize: 11, fontWeight: 600, color: num(disp.disponibleUSD) >= 0 ? C_VERDE.color : C_AMARILLO.color, paddingLeft: 2 }}>
-            {multi && <span style={{ color: "#64748b" }}>{sl} · </span>}Disponible en el presupuesto: {fU(disp.disponibleUSD)} · {fL(num(disp.disponibleUSD) * num(tasa))}
-            {pp?.sobregiroUSD > 0 && <span style={{ color: C_ULTRA.color, fontWeight: 800 }}> — esta compra lo pasa por {fU(pp.sobregiroUSD)}</span>}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", paddingLeft: 2 }}>
+            {disp && <div style={{ fontSize: 11, fontWeight: 600, color: num(disp.disponibleUSD) >= 0 ? C_VERDE.color : C_AMARILLO.color }}>
+              {multi && <span style={{ color: "#64748b" }}>{sl} · </span>}Disponible en el presupuesto: {fU(disp.disponibleUSD)} · {fL(num(disp.disponibleUSD) * num(tasa))}
+              {pp?.sobregiroUSD > 0 && <span style={{ color: C_ULTRA.color, fontWeight: 800 }}> — esta compra lo pasa por {fU(pp.sobregiroUSD)}</span>}
+            </div>}
+            {l.partidaId && <button type="button" onClick={() => onChange((lineas || []).map(x => x.id === l.id ? (x.real ? { ...x, real: false } : { ...x, real: true, realUnidad: x.realUnidad ?? (p?.unidad || "") }) : x))}
+              title="La plata sale de esta partida, pero lo que se compra es otra cosa (ej. arena y grava para colar con Fiori en vez de concreto premezclado)"
+              style={{ marginLeft: "auto", background: "none", border: "none", padding: 0, fontSize: 11, fontWeight: 700, color: l.real ? C_AMARILLO.color : "#64748b", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
+              {l.real ? "Quitar sustituto" : "Es otro material"}
+            </button>}
+          </div>
+          {/* SUSTITUTO: qué se compra REALMENTE (la partida de arriba no cambia) */}
+          {l.real && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) 110px minmax(0,1fr)", gap: 8, background: C_AMARILLO.bg, borderRadius: 10, padding: 10 }}>
+            <div style={{ gridColumn: "1 / -1", fontSize: 11, color: C_AMARILLO.color, fontWeight: 700 }}>
+              Se carga a la partida de arriba, pero lo que se compra realmente es:
+            </div>
+            <input value={l.realNombre || ""} onChange={e => upd(l.id, "realNombre", e.target.value)} placeholder="Qué se compra (ej. Arena de río)" style={{ ...INPUT, background: "#fff" }} />
+            <input value={l.realUnidad || ""} onChange={e => upd(l.id, "realUnidad", e.target.value)} placeholder="Unidad" style={{ ...INPUT, background: "#fff" }} />
+            <input value={l.realMotivo || ""} onChange={e => upd(l.id, "realMotivo", e.target.value)} placeholder="Motivo (opcional) — ej. colado con Fiori propio" style={{ ...INPUT, background: "#fff" }} />
           </div>}
         </div>;
       })}

@@ -2721,7 +2721,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         rescatadas++;
         // `lineas` (25-sep-2026): "Dividir en ítems" de GeoCost reparte la compra
         // entre varias partidas — viaja junto con la partida principal.
-        return { ...p, partidaId: c.partidaId, lineas: Array.isArray(c.lineas) ? c.lineas : p.lineas, sobregiroJustificacion: c.sobregiroJustificacion ?? p.sobregiroJustificacion, audit: [...(p.audit || []), ...nuevas] };
+        // `ajustaDescripcion` (30-sep-2026): una corrección de sustitutos que
+        // también reescribió la descripción — esa viaja junto con las líneas.
+        const conDesc = nuevas.some(a => a?.ajustaDescripcion);
+        return { ...p, partidaId: c.partidaId, lineas: Array.isArray(c.lineas) ? c.lineas : p.lineas, sobregiroJustificacion: c.sobregiroJustificacion ?? p.sobregiroJustificacion, ...(conDesc ? { description: c.description, detalleExtra: c.detalleExtra } : {}), audit: [...(p.audit || []), ...nuevas] };
       });
       if (rescatadas > 0) console.log(`[sP] partidas rescatadas de GeoCost: ${rescatadas}`);
 
@@ -4144,7 +4147,15 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
                   {rep.map(l => {
                     const pt = (presCC.partidas || []).find(x => x.id === l.partidaId);
                     return <div key={l.id} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 12.5 }}>
-                      <span style={{ fontWeight: 700, color: "#0f172a", minWidth: 0, flex: 1 }}>{num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")} ${l.unidad || ""} × ` : ""}{pt?.nombre || l.nombre || "(partida borrada)"}</span>
+                      <span style={{ fontWeight: 700, color: "#0f172a", minWidth: 0, flex: 1 }}>
+                        {num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")} ${(l.sustituto ? l.sustituto.unidad : l.unidad) || ""} × ` : ""}
+                        {l.sustituto ? l.sustituto.nombre : (pt?.nombre || l.nombre || "(partida borrada)")}
+                        {/* Sustituto (30-sep-2026): se compró otra cosa con la plata de la partida */}
+                        {l.sustituto && <>
+                          <span style={{ marginLeft: 6, padding: "1px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: C_AMARILLO.color, background: C_AMARILLO.bg }}>Sustituto</span>
+                          <span style={{ display: "block", fontSize: 11, fontWeight: 500, color: "#64748b", marginTop: 1 }}>se carga a: {pt?.nombre || l.nombre}{l.sustituto.motivo ? ` — ${l.sustituto.motivo}` : ""}</span>
+                        </>}
+                      </span>
                       <span style={{ color: "#64748b", fontSize: 11 }}>{[pt?.solucion || l.solucion, pt?.categoria || l.categoria].filter(Boolean).join(" · ")}</span>
                       <span style={{ fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(l.montoHNL)}</span>
                     </div>;
@@ -4177,7 +4188,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           })()}
           <div style={{ gridColumn: "1/-1" }}>
             <div style={{ fontSize: 11, color: "#64748b" }}>Descripcion</div>
-            <div style={{ fontWeight: 500, lineHeight: 1.5 }}>{p.description}</div>
+            {/* pre-line: un renglón por ítem (antes salía todo pegado en una línea) */}
+            <div style={{ fontWeight: 500, lineHeight: 1.5, whiteSpace: "pre-line" }}>{p.description}</div>
           </div>
           {p.cierreResponsable && <div>
             <div style={{ fontSize: 11, color: "#64748b" }}>Responsable de cierre contable</div>

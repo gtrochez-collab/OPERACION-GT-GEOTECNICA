@@ -411,8 +411,11 @@ export const movimientosCompras = ({ purchases, projectCode, tasa, fuente = "com
       ref: p.codigo || p.id,
       fecha: fechaCompraCosto(p),
       // "5 × Tubo PVC de 4"…" (nombre y cantidad se guardan con el ítem)
-      descripcion: [num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")} ×` : null, l.nombre].filter(Boolean).join(" ") || p.description || "",
-      detalle: [p.provider, arr.length > 1 ? `ítem ${i + 1} de ${arr.length}` : null, mq?.nombre].filter(Boolean).join(" · "),
+      // Con SUSTITUTO (30-sep-2026) se describe lo que realmente se compró
+      // (arena, grava…) y el detalle avisa a qué partida se carga.
+      descripcion: [num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")}${l.sustituto?.unidad ? " " + l.sustituto.unidad : ""} ×` : null, l.sustituto?.nombre || l.nombre].filter(Boolean).join(" ") || p.description || "",
+      detalle: [p.provider, arr.length > 1 ? `ítem ${i + 1} de ${arr.length}` : null, l.sustituto ? `sustituto de: ${l.nombre}${l.sustituto.motivo ? ` (${l.sustituto.motivo})` : ""}` : null, mq?.nombre].filter(Boolean).join(" · "),
+      sustituto: !!l.sustituto,
       partidaId: l.partidaId,
       estado,
       montoHNL: l.montoHNL,

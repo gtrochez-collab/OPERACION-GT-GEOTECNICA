@@ -627,7 +627,10 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
             <td style={TD}><Chip>{FUENTES[m.fuente] || m.fuente}</Chip></td>
             <td style={{ ...TD, ...MONO, fontSize: 12, fontWeight: 600 }}>{m.ref}</td>
             <td style={{ ...TD, whiteSpace: "normal", minWidth: 200, maxWidth: 360 }} title={m.descripcion}>
-              <div style={{ color: "var(--text)", fontWeight: 500 }}>{truncar(m.descripcion, compacta ? 60 : 90)}</div>
+              <div style={{ color: "var(--text)", fontWeight: 500 }}>
+                {m.sustituto && <span title="Se compró otro material con la plata de esta partida" style={{ display: "inline-block", marginRight: 6, padding: "1px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: C_AMARILLO.color, background: C_AMARILLO.bg, verticalAlign: 1 }}>Sustituto</span>}
+                {truncar(m.descripcion, compacta ? 60 : 90)}
+              </div>
               {m.detalle && <div style={{ color: "var(--text-3)", fontSize: 11.5, marginTop: 2 }}>{truncar(m.detalle, 60)}</div>}
             </td>
             <td style={{ ...TD, minWidth: 180 }}>
