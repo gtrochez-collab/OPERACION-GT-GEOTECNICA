@@ -1361,24 +1361,26 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   trabajó ese día (`PROJ_PALETTE` SIN rojos ni rosados desde el 30-sep-2026:
   el rojo es del NSP y un "1*" en vino —Villa San Miguel— se leía como
   inasistencia; frambuesa/vino/magenta → pizarra/café/petróleo); al final "RESUMEN PARA PLANILLA" (NSP/INC/V con días y total).
-- **DÍA DE BAJA (14-sep-2026, pedido de Gerson)**: el `endDate` de un empleado
-  con status `inactive` es el **día de baja** = el PRIMER día en que ya no
-  pertenece a la empresa. Ese día **y los siguientes** salen en gris, domingos
-  y feriados INCLUIDOS (a un dado de baja no se le paga el descanso del domingo
-  posterior). Antes se leía como "último día laborado" y se bloqueaba desde el
-  día SIGUIENTE, así que a Henry (baja 5-sep) le quedaba el domingo 6 pagado y
-  un NSP el 7. Helper único `fueraPorBaja(e, dStr)` a nivel de módulo en
-  HRModule (reemplazó las 10 copias de `dStr > e.endDate`), espejado en
+- **ÚLTIMO DÍA EN LA EMPRESA (30-sep-2026, pedido de Gerson; revierte el
+  "día de baja" del 14-sep)**: el `endDate` de un empleado con status
+  `inactive` es el **último día que estuvo en la empresa** = hasta ese día
+  (inclusive) se le paga ("para que la Lic. Carolina sepa hasta cuándo se le
+  paga"). Lo que viene DESPUÉS sale en gris, domingos y feriados INCLUIDOS (no
+  se le paga el descanso posterior). Helper único `fueraPorBaja(e, dStr)` =
+  `dStr > e.endDate` a nivel de módulo en HRModule, espejado en
   `geocost-calc.js` (`calcCostoMOPuro`) — **si cambia uno, cambiar el otro**.
-  El form de baja explica la regla y muestra cuál sería el último día laborado;
-  la ficha llama al campo "Día de baja" cuando el empleado está inactivo.
-  ⚠ `EditMovForm` editaba la fecha del movimiento SIN tocar la ficha, así que
-  el reporte decía 5-sep y la asistencia se bloqueaba desde el 7 (caso real de
-  Henry). Ahora una baja editada SINCRONIZA `emp.endDate`, y la tabla de BAJAS
-  marca con ⚠️ las filas cuya ficha quedó desfasada (se arreglan abriendo ✏️ y
-  guardando). La columna del reporte pasó de "Último día del colaborador" a
-  "Día de baja". Solo bloquea con status `inactive`: los temporales ACTIVOS
-  traen un endDate de contrato que queda viejo al renovar.
+  Rótulo único en BajaForm, edición de movimiento, ficha (empleado inactivo) y
+  columna del reporte de Movimientos (tabla + HTML/PDF): **"Último día del
+  colaborador en la empresa"**. El form de baja muestra "se le paga hasta el X;
+  gris desde el X+1" (`diaSiguiente`). La conversión a permanencia ya
+  registraba la baja del temporal el día anterior al efecto (= último día), así
+  que ahora es consistente. ⚠ Bajas cargadas entre el 14-sep y el 30-sep (Luis
+  Felipe 22-sep, Julia 26-sep, Luis Fernando 28-sep…) se tipearon con la regla
+  "primer día fuera": con la regla nueva se les paga un día más; corregir la
+  fecha a mano (✏️ en Movimientos) si el último día real fue el anterior.
+  `EditMovForm` SINCRONIZA `emp.endDate` y la tabla de BAJAS marca con ⚠️ las
+  filas cuya ficha quedó desfasada. Solo bloquea con status `inactive`: los
+  temporales ACTIVOS traen un endDate de contrato que queda viejo al renovar.
 - Costos MO (HR): costo diario = (salario + bonificación) / 30 × días pagados
   (DT×2, DT2/TF×3, INC=1, NSP=0). **calcCostoMO SUMA TAMBIÉN LAS HORAS EXTRAS**
   pagadas en esa quincena (quincena vencida) — auditado 19-ago-2026 contra la
