@@ -1376,8 +1376,8 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   registraba la baja del temporal el día anterior al efecto (= último día), así
   que ahora es consistente. ⚠ Bajas cargadas entre el 14-sep y el 30-sep (Luis
   Felipe 22-sep, Julia 26-sep, Luis Fernando 28-sep…) se tipearon con la regla
-  "primer día fuera": con la regla nueva se les paga un día más; corregir la
-  fecha a mano (✏️ en Movimientos) si el último día real fue el anterior.
+  "primer día fuera": con la regla nueva se les paga un día más. Gerson decidió
+  NO corregirlas (1-oct-2026: "será de ahora en adelante") — no re-litigar.
   `EditMovForm` SINCRONIZA `emp.endDate` y la tabla de BAJAS marca con ⚠️ las
   filas cuya ficha quedó desfasada. Solo bloquea con status `inactive`: los
   temporales ACTIVOS traen un endDate de contrato que queda viejo al renovar.
