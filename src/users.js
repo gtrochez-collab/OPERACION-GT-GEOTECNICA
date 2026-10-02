@@ -52,7 +52,15 @@ export const ROLE_LABEL = {
   visor_compras:      "Visor de Compras (solo lectura)",
   compras_ops:        "Compras / Operaciones",
   marcaje:            "Tablet de Marcaje (GeoClock)",
+  // GeoSupply (2-oct-2026): ingenieros residentes. NO viven en USERS — se crean
+  // desde GeoTeam → Accesos (key `gt-usuarios`, amarrados a su ficha de
+  // hr-emps5 y a sus proyectos). Solo entran a GeoSupply y Mis Tareas.
+  residente:          "Ingeniero Residente (GeoSupply)",
 };
+
+// Roles que puede asignar Gerson al dar acceso desde GeoTeam. Admin NO: el
+// administrador se agrega a mano en este archivo.
+export const ROLES_ASIGNABLES = ["residente", "gerencia", "visor_compras", "recepcion", "logistica", "asistente_compras", "compras_ops", "costos", "tesoreria"];
 
 // Color para el avatar de cada usuario (rotativo segun el username)
 export const userColor = (username) => {

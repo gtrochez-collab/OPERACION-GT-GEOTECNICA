@@ -7,6 +7,7 @@ cache localStorage. Deploy automático a GitHub Pages al hacer push a `main`.
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
+- `npm test` — pruebas Node (node:test) de la lógica pura: hoy `tests/geosupply-calc.test.mjs`.
 - Deploy: `git push origin main` dispara `.github/workflows/deploy.yml` → gh-pages.
   URL: https://gtrochez-collab.github.io/OPERACION-GT-GEOTECNICA/
 - Verificar deploy: `gh run list` + grep del texto nuevo en el bundle publicado.
@@ -1205,6 +1206,96 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   best-effort de la tarjeta. Las fechas se comparan como STRING YYYY-MM-DD con
   partes locales — `new Date("2026-09-18")` es medianoche UTC y en Honduras
   devolvía el día anterior.
+- `GeoSupplyModule.jsx` (**GeoSupply — Solicitudes de material, 2-oct-2026**)
+  + `geosupply-calc.js` (lógica PURA, testeada: `npm test` →
+  `tests/geosupply-calc.test.mjs`, node:test). Del residente a la aprobación:
+  residente pide ítems de la receta (cc-presupuestos) → Almacén (Óscar,
+  `logistica`) revisa stock → Compras (Ana) cotiza → Coordinador (Gerson)
+  aprueba → la cotización aprobada cae como BORRADOR en GeoShopping y Finanzas
+  solo completa condición de pago / fecha / "Va a" / cierre contable.
+  Reemplaza la solicitud que hoy se hace en GeoControl (no se integra).
+  **Decisiones aprobadas en la Fase 0 (no re-litigar)**: (1) el borrador en
+  cp-purchases mantiene `status:"borrador"` + marca `origenSupply {requestId,
+  quoteId, folios, aprobadoPor, aprobadoAt, tasaCambioUsada, avisos}` — todo lo
+  que hoy excluye borradores lo sigue excluyendo; GeoCost lo contará como
+  comprometido por la marca (Fase 4); (2) el corte se nombra **"Corte 40 ·
+  2026"** (semana ISO) con "lun 28 sep – vie 2 oct" debajo, id `C40-2026`;
+  (3) rol nuevo `residente`: SOLO GeoSupply + Mis Tareas, nunca GeoShopping;
+  los residentes se crean desde **GeoTeam → Accesos**; (4) empresa del
+  borrador = la del proyecto base, si no "geotecnica" (Finanzas confirma);
+  (5) las automatizaciones por hora NO escriben nada: `estadoEfectivoLinea`
+  trata una línea en revisión de almacén como "por cotizar · sin revisión"
+  pasado el martes 15:00 (no hay servidor), y el estado se escribe cuando
+  Compras actúa; (6) urgentes existen, se saltan el corte, pero cada una la
+  aprueba Gerson y se mide en rojo; (7) Finanzas (costos/compras_ops/
+  tesoreria) y gerencia entran SOLO LECTURA.
+  **Keys**: `sp-solicitudes` (una por solicitud con sus `lineas[]` adentro:
+  `{id, folio SUP-AAAA-NNNN, projectCode, residente (username),
+  fechaRequeridaObra, corte{anio,semana}, urgente, justificacionUrgencia,
+  estado, lineas[{id, partidaId, materialCode?, descripcion, unidad,
+  cantidad, fueraPresupuesto, justificacion, excedeSaldo, estado,
+  despachadoAlmacen, aCotizar, cantidadComprada, quoteIds[], motivoRechazo}],
+  audit[]}`), `sp-cotizaciones` (`{id, folio CTZ-AAAA-NNNN, requestId,
+  projectCode, providerId, provider, numeroProveedor, pdfFile, totalDeclarado,
+  incluyeISV, condicionPago, lineas[{requestLineId, cantidad, parcial, puLps,
+  justificacion}], estado, aprobadoPor, aprobadoAt, comentario,
+  tasaCambioUsada, purchaseId, audit[]}`), `sp-config` (CONFIG_DEFAULT:
+  cortes martes 12:00 / martes 15:00 / viernes 12:00, llegada mar–jue,
+  semáforo 3 %/10 %, tolerancia L 1, `cierrePorProyecto`), `sp-file-<id>`
+  (PDFs; en SKIP_LOCAL_PREFIXES). Bitácora = `audit[]` dentro de cada entidad
+  (mismo patrón de cp-purchases), no una key aparte.
+  **Estados** (geosupply-calc): solicitud borrador → enviada → en_proceso →
+  completada / cancelada (`estadoCabecera` derivado de las líneas;
+  `puedeCancelar` solo antes de que almacén toque algo). Línea: nace en
+  `pendiente_coord` (fuera de presupuesto / excede saldo / urgente) o en
+  `revision_almacen`; → `despachada_almacen` | parcial (despachado + resto a
+  `por_cotizar`) | `por_cotizar` → `cotizada` → `comprada` (al aprobar la
+  cotización; `cantidadComprada` acumula, así una cotización PARCIAL deja el
+  resto pendiente) | `rechazada` (motivo obligatorio). `aplicarAccionLinea`
+  valida cada transición. Cotización: borrador → enviada → aprobada /
+  devuelta / rechazada. `saldoDePartida` = cantidad presupuestada − ítems de
+  cp-purchases que consumen (validado/pagado/finalizado o borrador con
+  origenSupply) − líneas activas no rechazadas (cantidad − cantidadComprada).
+  `evaluarCotizacion`: P.U. con ISV en L → USD a la tasa; variación contra
+  `pu` de la partida (el presupuesto ya trae ISV); semáforo; suma vs total con
+  tolerancia y el mensaje "multiplicá cada P.U. por 1.15"; parcial exige la
+  marca; rojo exige justificación. `borradorDesdeCotizacion` arma el registro
+  con el MISMO shape del form de GeoShopping (`lineas` con partidaId para que
+  nunca caiga en Por clasificar, `description` un renglón por ítem, datos
+  bancarios de cp-providers o aviso "Proveedor sin datos bancarios en el
+  maestro", fecha de pago = obra − 2 días, `destinoSugerido`: crédito → cxp,
+  urgente o requerida el lun/mar próximo → prioridad, si no normal).
+  **Hora Honduras**: `partesHN` (Intl + TZ_HN) para el cierre del martes;
+  en el minuto exacto del hito ya se considera pasado.
+  **Fase 1 (2-oct-2026, hecha)**: calc + tests (13), `sp-config` y pestaña
+  Configuración (cortes, semáforo, tolerancia, cierre contable por proyecto,
+  residentes en solo lectura), rol `residente` + login con `gt-usuarios`,
+  tarjeta en el Panel (ícono caja con flecha; roles admin/residente/
+  logistica/asistente_compras/costos/compras_ops/tesoreria/gerencia), pantalla
+  "Hoy" del Coordinador (tira resumen + 2 cajas de vidrio: Por aprobar y Corte
+  en curso con los 3 hitos y la llegada estimada), lista de Solicitudes
+  (vacía) y "Mis solicitudes" del residente con el aviso del corte. Pendiente:
+  Fase 2 residente (nueva solicitud, tracking tipo Amazon) + almacén; Fase 3
+  compras + aprobación; Fase 4 integración GeoShopping ("Borradores (n)",
+  envío a Tesorería) y GeoCost (comprometido sin doble conteo); Fase 5
+  dashboard + contador en la tarjeta del Panel.
+- **Accesos al sistema desde GeoTeam (2-oct-2026)**: pestaña **Accesos** (solo
+  admin) en HRModule → key **`gt-usuarios`** `[{id, username, password, role,
+  label (= fullName de la ficha), empId, proyectos:[shorts], activo,
+  createdAt, createdBy, updatedAt, updatedBy}]`. `AccesoFormImpl` (a nivel de
+  módulo): se elige el colaborador de hr-emps5, sugiere usuario
+  "nombre.apellido" (`usernameSugerido`, sin acentos, único contra users.js y
+  la nube) y clave `geoNNNN`, rol de `ROLES_ASIGNABLES` (users.js; admin NO se
+  asigna desde ahí), proyectos como pills cuando es residente, toggle activo.
+  Guardado getCloud → merge por id → set → verify. El login de App.jsx es
+  ASYNC: primero USERS fijos, después `gt-usuarios` SOLO con getCloud
+  (`activo !== false`); la sesión guarda `empId` y `proyectos`, que viajan en
+  `moduleProps` (`userProyectos`, `userEmpId`). GeoSupply relee gt-usuarios
+  al cargar, así un proyecto agregado hoy se ve sin re-loguear. La pestaña
+  monta `<style>{GT_CSS}</style>` localmente para usar el vidrio (GeoTeam no
+  está rediseñado). ⚠ El `useEffect` que lee gt-usuarios va ARRIBA del return
+  de "Cargando…" (un hook después de un return condicional rompió el orden de
+  hooks en la primera prueba).
 - `GeoDrillVault.jsx`, `projects.js` (base + helpers), `holidays.js`, `theme.js`,
   `gt-ui.js` (GT_CSS: tokens + clases gt-* del rediseño — lo montan App y los
   módulos rediseñados, cada quien con su propio <style>).
@@ -1221,6 +1312,10 @@ logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 `hr-he` (horas extras), `hr-pays`, `hr-contracts`, etc.
 `gt-todos-<username>` (tareas personales — las comparten la tarjeta TO-DOS de
 la bienvenida y el módulo Mis Tareas; nadie ve las de otro).
+`gt-usuarios` (accesos creados desde GeoTeam → Accesos; el login los lee con
+getCloud después de users.js). GeoSupply (oct 2026): `sp-solicitudes`,
+`sp-cotizaciones`, `sp-config`, `sp-file-<id>`; campo aditivo `origenSupply`
+en cp-purchases (borradores que vienen de una cotización aprobada).
 GeoCost (sep 2026): `cc-config` ({tasa, historialTasa}), `cc-presupuestos`
 (uno por projectCode), `cc-movilizaciones`, `cc-file-<id>` (comprobantes);
 campos aditivos `partidaId` y `sobregiroJustificacion` en cp-/mq-purchases.

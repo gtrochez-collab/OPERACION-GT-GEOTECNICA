@@ -4,6 +4,11 @@ import Logo from "./Logo.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, findProject, resolveShort, projectName, projectCode } from "./projects.js";
 import { esFeriadoQuincena, nombreFeriado } from "./holidays.js";
 import { hoyISO } from "./fechas.js";
+// Accesos al sistema (2-oct-2026): Gerson crea los usuarios de GeoSupply
+// (residentes) desde la ficha del colaborador. GT_CSS se monta SOLO en esa
+// pestaña (vidrio); el resto de GeoTeam sigue con sus estilos de siempre.
+import { GT_CSS } from "./gt-ui.js";
+import { USERS, ROLE_LABEL, ROLES_ASIGNABLES } from "./users.js";
 
 // Marca Geotecnica — colores corporativos
 const ORANGE = "#E8762D";
@@ -480,7 +485,95 @@ const NavBtn = ({ children, onClick, style: sx }) => (
 );
 
 // ── APP ──
+// ── ACCESOS AL SISTEMA (2-oct-2026) ─────────────────────────────────────────
+// Usuarios creados por Gerson desde GeoTeam → key `gt-usuarios`:
+//   {id, username, password, role, label, empId, proyectos:[shorts], activo,
+//    createdAt, createdBy, updatedAt, updatedBy}
+// El login de App.jsx los acepta después de los fijos de users.js (SOLO con
+// getCloud). `label` = nombre de la ficha: es lo que firma en la bitácora.
+// `proyectos` es la asignación del RESIDENTE (lo único que ve en GeoSupply).
+// A NIVEL DE MÓDULO: dentro del componente se remontaría al tipear.
+const sinAcentos = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+const usernameSugerido = (fullName, tomados) => {
+  const partes = sinAcentos(fullName).toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
+  if (!partes.length) return "";
+  // "Luis Felipe Giron Barahona" → luis.giron (nombre + primer apellido)
+  const nombre = partes[0];
+  const apellido = partes.length >= 3 ? partes[2] : partes.length === 2 ? partes[1] : "";
+  let base = apellido ? `${nombre}.${apellido}` : nombre;
+  let u = base, i = 2;
+  while (tomados.includes(u)) u = `${base}${i++}`;
+  return u;
+};
+const claveSugerida = () => `geo${Math.floor(1000 + Math.random() * 9000)}`;
+
+function AccesoFormImpl({ acceso, emps, proyectos, tomados, userName, onSave, onClose }) {
+  const [f, setF] = useState(acceso || { id: "", empId: "", username: "", password: claveSugerida(), role: "residente", label: "", proyectos: [], activo: true });
+  const [verClave, setVerClave] = useState(!acceso);
+  const [saving, setSaving] = useState(false);
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const emp = emps.find(e => e.id === f.empId) || null;
+  const elegirEmp = (id) => {
+    const e = emps.find(x => x.id === id);
+    if (!e) { setF(p => ({ ...p, empId: "", label: "" })); return; }
+    setF(p => ({ ...p, empId: e.id, label: e.fullName, username: p.username || usernameSugerido(e.fullName, tomados) }));
+  };
+  const toggleProy = (short) => u("proyectos", (f.proyectos || []).includes(short) ? f.proyectos.filter(x => x !== short) : [...(f.proyectos || []), short]);
+  const empsOrdenados = [...emps].filter(e => e.status !== "inactive").sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "es", { sensitivity: "base" }));
+  const usernameOk = /^[a-z0-9._-]{3,}$/.test(f.username || "");
+  const usernameLibre = !tomados.includes(f.username) || (acceso && acceso.username === f.username);
+  const chip = (txt, on, onClick) => <button type="button" key={txt} onClick={onClick} style={{ padding: "7px 12px", borderRadius: 999, border: on ? "none" : "1px solid rgba(44,42,40,.12)", background: on ? ORANGE_DARK : "rgba(255,255,255,.7)", color: on ? "#fff" : "#5C5853", font: "700 12px/1 var(--sans, inherit)", cursor: "pointer" }}>{txt}</button>;
+  const CTRL = { padding: "10px 12px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 12, fontSize: 14, outline: "none", background: "#F4F4F2", color: CHARCOAL, fontFamily: "inherit", width: "100%", boxSizing: "border-box" };
+  const LBL = { fontSize: 11, fontWeight: 700, color: "#6E6862" };
+  const campo = (label, el) => <div style={{ display: "flex", flexDirection: "column", gap: 5 }}><label style={LBL}>{label}</label>{el}</div>;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    {campo("Colaborador *", <select style={CTRL} value={f.empId} onChange={e => elegirEmp(e.target.value)} disabled={!!acceso}>
+      <option value="">— Elegí de la base de GeoTeam —</option>
+      {empsOrdenados.map(e => <option key={e.id} value={e.id}>{e.fullName} — {e.position || "sin cargo"}</option>)}
+    </select>)}
+    {emp && <div style={{ fontSize: 12, color: "#6E6862", marginTop: -6 }}>{emp.position || "—"} · {emp.department || "—"} · {emp.company === "subterra" ? "Subterra" : "Geotecnica"}</div>}
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      {campo("Usuario *", <input style={{ ...CTRL, fontFamily: "var(--mono, monospace)" }} value={f.username} onChange={e => u("username", e.target.value.toLowerCase().trim())} placeholder="nombre.apellido" />)}
+      {campo("Clave *", <div style={{ display: "flex", gap: 6 }}>
+        <input style={{ ...CTRL, fontFamily: "var(--mono, monospace)" }} type={verClave ? "text" : "password"} value={f.password} onChange={e => u("password", e.target.value)} />
+        <button type="button" onClick={() => setVerClave(v => !v)} title={verClave ? "Ocultar" : "Ver"} style={{ ...CTRL, width: 44, padding: 0, cursor: "pointer" }}>{verClave ? "🙈" : "👁"}</button>
+      </div>)}
+    </div>
+    {!usernameOk && f.username && <div style={{ fontSize: 12, color: "#B03024", marginTop: -8 }}>Solo minúsculas, números, punto, guion. Mínimo 3.</div>}
+    {usernameOk && !usernameLibre && <div style={{ fontSize: 12, color: "#B03024", marginTop: -8 }}>Ese usuario ya existe.</div>}
+    {campo("Rol", <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{ROLES_ASIGNABLES.map(r => chip(ROLE_LABEL[r] || r, f.role === r, () => u("role", r)))}</div>)}
+    {f.role === "residente" && campo("Proyectos que ve en GeoSupply", <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {proyectos.map(p => chip(p.name || p.short, (f.proyectos || []).includes(p.short), () => toggleProy(p.short)))}
+    </div>)}
+    {f.role === "residente" && <div style={{ fontSize: 12, color: "#6E6862", marginTop: -8 }}>El residente entra SOLO a GeoSupply (sus proyectos) y Mis Tareas. Nunca a GeoShopping.</div>}
+    {acceso && <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: CHARCOAL, cursor: "pointer" }}>
+      <input type="checkbox" checked={f.activo !== false} onChange={e => u("activo", e.target.checked)} /> Acceso activo {f.activo === false && <span style={{ color: "#B03024", fontWeight: 700 }}>(no puede entrar)</span>}
+    </label>}
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 6 }}>
+      <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Btn>
+      <Btn disabled={saving} onClick={async () => {
+        if (!f.empId) return alert("Elegí el colaborador.");
+        if (!usernameOk) return alert("El usuario no es válido.");
+        if (!usernameLibre) return alert("Ese usuario ya existe. Elegí otro.");
+        if (String(f.password || "").length < 4) return alert("La clave debe tener al menos 4 caracteres.");
+        if (f.role === "residente" && !(f.proyectos || []).length && !confirm("El residente no tiene proyectos asignados: no va a poder pedir nada. ¿Guardar igual?")) return;
+        setSaving(true);
+        try {
+          const at = new Date().toISOString();
+          const rec = { ...f, label: f.label || emp?.fullName || f.username, id: f.id || uid(), updatedAt: at, updatedBy: userName, ...(acceso ? {} : { createdAt: at, createdBy: userName }) };
+          const ok = await onSave(rec);
+          if (ok) onClose();
+        } finally { setSaving(false); }
+      }}>{saving ? "Guardando…" : acceso ? "Guardar cambios" : "Crear acceso"}</Btn>
+    </div>
+  </div>;
+}
+
 export default function HRModule({ userRole = "admin", userName, onBack, onLogout }) {
+  // Solo Gerson (admin) da accesos al sistema.
+  const puedeAccesos = userRole === "admin";
+  const [accesos, setAccesos] = useState(null);     // null = aún no leído
+  const [accesosErr, setAccesosErr] = useState("");
   const isAsistente = userRole === "asistente";
   // Jorge (recepcion) — acceso acotado: SOLO ve la lista de empleados y puede
   // subir/cambiar fotos. No ve planilla, salarios ni ningun otro dato sensible.
@@ -499,6 +592,19 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const isReadOnly = userRole === "gerencia" || userRole === "costos";
   const [co, setCo] = useState("subterra");
   const [sec, setSec] = useState(isAsistente ? "attendance" : (isPhotoOnly || isAnaRH) ? "employees" : isOscarTardies ? "tardanzas" : "dashboard");
+  // Accesos (2-oct-2026): se leen SOLO al entrar a la pestaña y SOLO con
+  // getCloud (un cache viejo podría revivir un acceso desactivado). Va acá
+  // arriba, antes del return de "Cargando…" — un hook después de un return
+  // condicional rompe el orden de hooks de React.
+  useEffect(() => {
+    if (sec !== "accesos" || !puedeAccesos) return;
+    let vivo = true;
+    (async () => {
+      try { const c = await store.getCloud("gt-usuarios"); if (vivo) { setAccesos(Array.isArray(c) ? c : []); setAccesosErr(""); } }
+      catch (e) { if (vivo) setAccesosErr("No se pudo leer la nube: " + (e?.message || e)); }
+    })();
+    return () => { vivo = false; };
+  }, [sec, puedeAccesos]);
   const [emps, setEmps] = useState([]);
   const [vacs, setVacs] = useState([]);
   const [lvs, setLvs] = useState([]);
@@ -1069,6 +1175,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     { id: "movimientos", icon: "🔄", label: "Movimientos" },
     { id: "constancias", icon: "📄", label: "Constancias" },
     { id: "costos", icon: "💵", label: "Costos" },
+    // Accesos al sistema (solo admin): usuarios de GeoSupply desde la ficha.
+    ...(puedeAccesos ? [{ id: "accesos", icon: "🔑", label: "Accesos" }] : []),
   ];
   // Pestañas que ve Ana (asistente_compras): todo lo operativo de personal,
   // sin nada de dinero (planilla/costos) ni el reporte de altas y bajas.
@@ -6775,6 +6883,68 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
+  // ── ACCESOS (2-oct-2026) ──
+  // Lectura SOLO con getCloud al entrar a la pestaña (nunca store.get: un
+  // cache viejo podría revivir un acceso desactivado). Guardado: getCloud →
+  // merge por id → set → verify releyendo la nube.
+  const guardarAcceso = async (rec) => {
+    try {
+      const c = await store.getCloud("gt-usuarios");
+      const base = Array.isArray(c) ? c : [];
+      if (base.some(x => x.id !== rec.id && x.username === rec.username) || USERS.some(x => x.username === rec.username)) { alert("Ese usuario ya existe en la nube. Elegí otro."); return false; }
+      const next = base.some(x => x.id === rec.id) ? base.map(x => x.id === rec.id ? rec : x) : [...base, rec];
+      const ok = await store.set("gt-usuarios", next);
+      if (!ok) { alert("No se pudo guardar en la nube. Reintentá."); return false; }
+      const back = await store.getCloud("gt-usuarios");
+      const fila = Array.isArray(back) ? back.find(x => x.id === rec.id) : null;
+      if (!fila || fila.updatedAt !== rec.updatedAt) { alert("VERIFICACIÓN FALLÓ: la nube no refleja el acceso."); return false; }
+      setAccesos(back);
+      return true;
+    } catch (e) { alert("Sin conexión con la nube: no se guardó el acceso."); console.warn("[Accesos]", e); return false; }
+  };
+  const renderAccesos = () => {
+    const lista = accesos || [];
+    const tomados = [...USERS.map(x => x.username), ...lista.map(x => x.username)];
+    const proyectosOrd = [...hrProjects].sort((a, b) => String(a.short).localeCompare(String(b.short), "es", { sensitivity: "base", numeric: true }));
+    const chipRol = (r) => <span style={{ display: "inline-flex", padding: "4px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, color: r === "residente" ? "#A94E16" : "#6E6862", background: r === "residente" ? "rgba(232,118,45,.14)" : "rgba(44,42,40,.06)", whiteSpace: "nowrap" }}>{ROLE_LABEL[r] || r}</span>;
+    const fila = (x, fijo) => <div key={x.id || x.username} className={fijo ? "gt-vidrio" : "gt-vidrio gt-vidrio-hover"} onClick={fijo ? undefined : () => setModal({ t: "acceso", d: x })} style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", cursor: fijo ? "default" : "pointer", opacity: x.activo === false ? .6 : 1 }}>
+      <div style={{ minWidth: 200 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{x.label}</div>
+        <div style={{ fontSize: 11.5, color: "#6E6862", fontFamily: "var(--mono, monospace)" }}>{x.username}</div>
+      </div>
+      {chipRol(x.role)}
+      {x.role === "residente" && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{(x.proyectos || []).length ? x.proyectos.map(p => <span key={p} style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, color: "#6E6862", background: "rgba(44,42,40,.06)" }}>{hrProjects.find(h => h.short === p)?.name || p}</span>) : <span style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, color: "#8A5A00", background: "#FBEFC4" }}>Sin proyectos</span>}</div>}
+      <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+        {x.activo === false && <span style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, color: "#B03024", background: "rgba(192,57,43,.07)" }}>Desactivado</span>}
+        {fijo ? <span style={{ fontSize: 11, color: "#A39C92" }}>fijo del sistema</span> : <span style={{ fontSize: 11.5, color: "#6E6862" }}>Editar →</span>}
+      </div>
+    </div>;
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <style>{GT_CSS}</style>
+      <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ font: "800 22px/1 var(--display, inherit)", color: CHARCOAL }}>{lista.filter(x => x.activo !== false).length}</div>
+          <div className="gt-label" style={{ color: "#6E6862", marginTop: 5, fontSize: 9 }}>accesos creados</div>
+        </div>
+        <div style={{ borderLeft: "1px solid rgba(44,42,40,.08)", paddingLeft: 14 }}>
+          <div style={{ font: "800 22px/1 var(--display, inherit)", color: CHARCOAL }}>{lista.filter(x => x.role === "residente" && x.activo !== false).length}</div>
+          <div className="gt-label" style={{ color: "#6E6862", marginTop: 5, fontSize: 9 }}>residentes</div>
+        </div>
+        <div style={{ marginLeft: "auto" }}><Btn onClick={() => setModal({ t: "acceso", d: null })} disabled={accesos === null}>+ Dar acceso a un colaborador</Btn></div>
+      </div>
+      {accesosErr && <div style={{ padding: "10px 14px", borderRadius: 12, background: "rgba(192,57,43,.07)", color: "#B03024", fontSize: 13 }}>{accesosErr}</div>}
+      {accesos === null && !accesosErr && <div className="gt-vidrio" style={{ padding: "30px 20px", textAlign: "center", color: "#6E6862", fontSize: 13 }}>Leyendo accesos…</div>}
+      {accesos !== null && <>
+        <div className="gt-label" style={{ color: "#6E6862", marginTop: 6 }}>Creados desde GeoTeam</div>
+        {lista.length === 0
+          ? <div className="gt-vidrio" style={{ padding: "34px 20px", textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>Todavía no hay accesos creados. Los residentes de GeoSupply se crean acá, desde la ficha del colaborador.</div>
+          : [...lista].sort((a, b) => String(a.label).localeCompare(String(b.label), "es", { sensitivity: "base" })).map(x => fila(x, false))}
+        <div className="gt-label" style={{ color: "#6E6862", marginTop: 10 }}>Fijos del sistema</div>
+        {USERS.filter(x => x.role !== "marcaje").map(x => fila(x, true))}
+      </>}
+    </div>;
+  };
+
   const renderSec = () => {
     // Guardia por rol: el switch cae a Dashboard por default, así que sin
     // esto un rol acotado podría ver planilla/costos si `sec` queda en un id
@@ -6783,10 +6953,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     if (!permitidas.includes(sec) && nav.length < allNav.length) return renderSec2(permitidas[0]);
     return renderSec2(sec);
   };
-  const renderSec2 = (s) => { switch (s) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "tardanzas": return renderTardanzas(); case "kpis": return renderKpis(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); case "horasextras": return renderHE(); default: return renderDashboard(); } };
+  const renderSec2 = (s) => { switch (s) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "tardanzas": return renderTardanzas(); case "kpis": return renderKpis(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); case "horasextras": return renderHE(); case "accesos": return renderAccesos(); default: return renderDashboard(); } };
 
   const renderModal = () => { if (!modal) return null; const m = modal; switch (m.t) {
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;
+    case "acceso": return <Modal title={m.d ? `Acceso de ${m.d.label}` : "Dar acceso al sistema"} onClose={() => setModal(null)}><AccesoFormImpl acceso={m.d} emps={emps} proyectos={[...hrProjects].sort((a, b) => String(a.short).localeCompare(String(b.short), "es", { sensitivity: "base", numeric: true }))} tomados={[...USERS.map(x => x.username), ...(accesos || []).map(x => x.username)]} userName={userName} onSave={guardarAcceso} onClose={() => setModal(null)} /></Modal>;
     case "ee": return <Modal title="Editar empleado" onClose={() => setModal(null)} wide><EmpForm emp={m.d} onSave={e => sE(emps.map(x => x.id === e.id ? e : x))} /></Modal>;
     case "pn": return <Modal title={`Planilla — ${cc.name}`} onClose={() => setModal(null)} wide><PayrollGen /></Modal>;
     case "pd": return <Modal title={`Planilla ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><PayDetail p={m.d} /></Modal>;

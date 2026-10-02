@@ -7,6 +7,7 @@ import SafetyModule from "./SafetyModule.jsx";
 import GeoClockModule from "./GeoClockModule.jsx";
 import GeoCostModule from "./GeoCostModule.jsx";
 import TasksModule from "./TasksModule.jsx";
+import GeoSupplyModule from "./GeoSupplyModule.jsx";
 // GeoChat: desactivado temporalmente (jun 2026). El polling y los mensajes
 // en localStorage estaban presionando el cache. Cuando lo retomemos, sera
 // con Supabase Realtime + bypass de localStorage (ya esta listo).
@@ -43,6 +44,19 @@ const MODULES = [
     desc: "Compras, pagos y cierre contable.",
     accent: "#8B3A3A",
     roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion", "asistente_compras", "visor_compras", "compras_ops"],
+  },
+  {
+    // GeoSupply (2-oct-2026): solicitudes de material del residente →
+    // almacén → cotización → aprobación → borrador en GeoShopping. Los
+    // residentes (rol `residente`, creados desde GeoTeam → Accesos) SOLO
+    // entran acá y a Mis Tareas — nunca a GeoShopping (pagos, bancos).
+    // Finanzas (costos/compras_ops/tesoreria) y gerencia entran a MIRAR.
+    id: "geosupply",
+    name: "GeoSupply",
+    icon: "📦",
+    desc: "Solicitudes de material: del residente a la aprobación.",
+    accent: "#C75F1F",
+    roles: ["admin", "residente", "logistica", "asistente_compras", "costos", "compras_ops", "tesoreria", "gerencia"],
   },
   {
     id: "maquinas",
@@ -114,7 +128,7 @@ const MODULES = [
     icon: "✅",
     desc: "Organizá tus pendientes con fecha.",
     accent: "#C75F1F",
-    roles: USERS.map(u => u.role).filter(r => r !== "marcaje"),
+    roles: [...new Set([...USERS.map(u => u.role), "residente"])].filter(r => r !== "marcaje"),
   },
 ];
 
@@ -213,10 +227,21 @@ export default function App() {
 
   useEffect(() => onSyncStateChange((s) => setSyncState(s)), []);
 
-  const login = (username, password) => {
-    const found = USERS.find((u) => u.username === username && u.password === password);
-    if (!found) return false;
-    const session = { username: found.username, role: found.role, label: found.label };
+  // Login: primero los usuarios fijos de users.js; si no está ahí, los que
+  // Gerson creó desde GeoTeam → Accesos (`gt-usuarios`, en la nube — SOLO con
+  // getCloud: un cache viejo podría dejar entrar a alguien ya desactivado).
+  const login = async (username, password) => {
+    const u = String(username || "").trim();
+    const found = USERS.find((x) => x.username === u && x.password === password);
+    let session = found ? { username: found.username, role: found.role, label: found.label } : null;
+    if (!session) {
+      try {
+        const nube = await store.getCloud("gt-usuarios");
+        const c = (Array.isArray(nube) ? nube : []).find((x) => x && x.activo !== false && x.username === u && x.password === password);
+        if (c) session = { username: c.username, role: c.role, label: c.label, empId: c.empId || null, proyectos: Array.isArray(c.proyectos) ? c.proyectos : [] };
+      } catch (e) { console.warn("[login] no se pudo leer gt-usuarios:", e?.message || e); }
+    }
+    if (!session) return false;
     setUser(session);
     setActiveModule(null);   // ninguna sesión hereda el módulo de la anterior
     setWelcomeDone(false);
@@ -282,7 +307,7 @@ export default function App() {
   // ── Modulo activo ──
   // `userKey` = el username (estable, sin acentos): las keys por-usuario
   // (tareas, "visto" de la bandeja de compras) cuelgan de él.
-  const moduleProps = { userRole: user.role, userName: user.label, userKey: user.username, onBack: () => setActiveModule(null), onLogout: logout };
+  const moduleProps = { userRole: user.role, userName: user.label, userKey: user.username, userProyectos: user.proyectos || [], userEmpId: user.empId || null, onBack: () => setActiveModule(null), onLogout: logout };
   // Wrapper con la animación de entrada. key=activeModule para que al cambiar
   // de módulo vuelva a entrar. El transform del keyframe dura 560 ms: los
   // position:fixed del módulo (brillos, modales) se referencian al wrapper
@@ -306,6 +331,7 @@ export default function App() {
   if (activeModule === "geoclock") return conEntrada(<GeoClockModule {...moduleProps} />);
   if (activeModule === "geocost") return conEntrada(<GeoCostModule {...moduleProps} />);
   if (activeModule === "tareas") return conEntrada(<TasksModule {...moduleProps} />);
+  if (activeModule === "geosupply") return conEntrada(<GeoSupplyModule {...moduleProps} />);
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
 
   const availableModules = MODULES.filter((m) => m.roles.includes(user.role));
@@ -515,6 +541,8 @@ function IconoModulo({ id, fallback }) {
     logistica: <><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" /><path d="M15 18H9" /><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 17.52 8H14" /><circle cx="17" cy="18" r="2" /><circle cx="7" cy="18" r="2" /></>,
     geoclock: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
     "geodrill-vault": <><rect x="2" y="3" width="20" height="5" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></>,
+    // Caja abierta con flecha hacia arriba: el material que SALE a obra.
+    geosupply: <><path d="M12 3v8" /><path d="m8.5 6.5 3.5-3.5 3.5 3.5" /><path d="M3.3 9.8 12 13.8l8.7-4" /><path d="M4 9.8v7.4a1 1 0 0 0 .55.9L12 21.5l7.45-3.4a1 1 0 0 0 .55-.9V9.8" /><path d="M12 13.8v7.7" /></>,
   }[id];
   if (!trazos) return <span style={{ fontSize: 25 }} aria-hidden>{fallback}</span>;
   return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{trazos}</svg>;
@@ -890,15 +918,15 @@ function LoginScreen({ onLogin }) {
 
   useEffect(() => initCurvasDeNivel(canvasRef.current, { reduced: reduceMotion }), [reduceMotion]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
-    setTimeout(() => {
-      const ok = onLogin(username, password);
-      if (!ok) setError("Usuario o clave incorrecta");
-      setLoading(false);
-    }, 350);
+    await new Promise(r => setTimeout(r, 350));
+    let ok = false;
+    try { ok = await onLogin(username, password); } catch { ok = false; }
+    if (!ok) setError("Usuario o clave incorrecta");
+    setLoading(false);
   };
 
   const verso = versiculoDeHoy();
