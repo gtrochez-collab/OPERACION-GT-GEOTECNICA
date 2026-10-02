@@ -17,6 +17,8 @@ import { GT_CSS } from "./gt-ui.js";
 import Logo from "./Logo.jsx";
 import { BRAND, FONT } from "./theme.js";
 import { USERS, ROLE_LABEL } from "./users.js";
+// GeoSupply (2-oct-2026): contador de pendientes por rol en la tarjeta del Panel.
+import { contarPendientes, configEfectiva } from "./geosupply-calc.js";
 
 // ── Modulos del sistema ──
 // Cada modulo tiene un acento de color distinto (complementarios al naranja de marca).
@@ -230,6 +232,28 @@ export default function App() {
   // Login: primero los usuarios fijos de users.js; si no está ahí, los que
   // Gerson creó desde GeoTeam → Accesos (`gt-usuarios`, en la nube — SOLO con
   // getCloud: un cache viejo podría dejar entrar a alguien ya desactivado).
+  // Contadores del Panel (GeoSupply): se leen SOLO con getCloud al mostrar el
+  // panel y al volver el foco — nunca store.get (su re-sync podría escribir).
+  const [badges, setBadges] = useState({});
+  useEffect(() => {
+    if (!user || activeModule) return;
+    const puedeSupply = MODULES.find(m => m.id === "geosupply")?.roles.includes(user.role);
+    if (!puedeSupply) return;
+    let vivo = true;
+    const leer = async () => {
+      try {
+        const [sol, cot, cf] = await Promise.all([store.getCloud("sp-solicitudes"), store.getCloud("sp-cotizaciones"), store.getCloud("sp-config")]);
+        if (!vivo) return;
+        const n = contarPendientes({ solicitudes: Array.isArray(sol) ? sol : [], cotizaciones: Array.isArray(cot) ? cot : [], rol: user.role, username: user.username, cfg: configEfectiva(cf) });
+        setBadges(b => ({ ...b, geosupply: n }));
+      } catch (e) { console.warn("[panel] contador GeoSupply:", e?.message || e); }
+    };
+    leer();
+    const f = () => { if (document.visibilityState === "visible") leer(); };
+    window.addEventListener("focus", f);
+    return () => { vivo = false; window.removeEventListener("focus", f); };
+  }, [user, activeModule]);
+
   const login = async (username, password) => {
     const u = String(username || "").trim();
     const found = USERS.find((x) => x.username === u && x.password === password);
@@ -359,6 +383,7 @@ export default function App() {
         saliendo={saliendo}
         onLogout={logout}
         onVolverBienvenida={volverBienvenida}
+        badges={badges}
       />
     </>
   );
@@ -407,7 +432,7 @@ function TituloHero({ esHero, escala = 1.4, altura = 0.4, children }) {
   );
 }
 
-function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolverBienvenida, saliendo = false }) {
+function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolverBienvenida, saliendo = false, badges = {} }) {
   // El hero corre CADA VEZ que aparece el panel (3-sep, pedido de Gerson:
   // "si entrás a un módulo y volvés, ya no hace la transición"). La primera
   // vez por login aguanta 1.5 s; en los regresos 0.8 s para que ir y venir
@@ -472,7 +497,7 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
       <main inert={esHero || undefined} style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", padding: "34px 28px 64px", boxSizing: "border-box", flex: 1, visibility: esHero ? "hidden" : "visible" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(340px,100%), 1fr))", gap: 18 }}>
           {availableModules.map((m, i) => (
-            <PanelCard key={m.id} m={m} index={i} animar={!esHero} onOpen={() => onOpen(m.id)} />
+            <PanelCard key={m.id} m={m} index={i} animar={!esHero} onOpen={() => onOpen(m.id)} badge={badges[m.id] || 0} />
           ))}
         </div>
       </main>
@@ -550,7 +575,7 @@ function IconoModulo({ id, fallback }) {
 
 // ── Tarjeta de módulo (estética IST): vidrio, icono de LÍNEA monocromo —
 // todas la misma cajita gris; el hover pinta cajita + dibujo de naranja. ──
-function PanelCard({ m, onOpen, index = 0, animar = true }) {
+function PanelCard({ m, onOpen, index = 0, animar = true, badge = 0 }) {
   const [hover, setHover] = useState(false);
   return (
     <div
@@ -563,7 +588,7 @@ function PanelCard({ m, onOpen, index = 0, animar = true }) {
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
-      style={{ padding: "26px 26px 24px", cursor: "pointer", animationDelay: `${90 + index * 60}ms`, outline: "none" }}
+      style={{ padding: "26px 26px 24px", cursor: "pointer", animationDelay: `${90 + index * 60}ms`, outline: "none", position: "relative" }}
     >
       <div
         style={{
@@ -576,6 +601,8 @@ function PanelCard({ m, onOpen, index = 0, animar = true }) {
           transform: hover ? "scale(1.06)" : "scale(1)",
         }}
       ><IconoModulo id={m.id} fallback={m.icon} /></div>
+      {/* Pendientes según el rol (GeoSupply): circulito naranja arriba de la cajita */}
+      {badge > 0 && <span title={`${badge} pendiente${badge === 1 ? "" : "s"}`} style={{ position: "absolute", top: 18, left: 62, minWidth: 22, height: 22, padding: "0 6px", borderRadius: 999, background: "var(--marca-2)", color: "#fff", font: "800 11px/22px var(--sans)", textAlign: "center", boxShadow: "0 2px 8px rgba(232,118,45,.35)" }}>{badge}</span>}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         {/* Título en el MISMO gris que el icono (pedido 31-ago: simetría);
             el hover pinta título+icono+flecha de naranja a la vez. */}

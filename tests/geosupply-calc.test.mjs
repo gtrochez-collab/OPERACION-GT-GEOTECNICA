@@ -5,7 +5,7 @@ import {
   semanaISO, lunesDeSemanaISO, corteDe, etiquetaCorte, llegadaEstimada, hitoDeCorte, estadoHito,
   saldoDePartida, semaforoVariacion, evaluarCotizacion, siguienteFolio, aplicarAccionLinea,
   estadoCabecera, estadoInicialLinea, estadoEfectivoLinea, destinoSugerido, borradorDesdeCotizacion,
-  partesHN, puedeCancelar, contarPendientes, configEfectiva, pendienteDeCompra,
+  partesHN, puedeCancelar, contarPendientes, configEfectiva, pendienteDeCompra, siguienteCodigoCompra, fueraDeCorte, metricasDashboard,
 } from "../src/geosupply-calc.js";
 
 // Honduras es UTC-6 sin horario de verano: 12:00 HN = 18:00Z.
@@ -214,4 +214,32 @@ test("contadores por rol", () => {
   assert.equal(contarPendientes({ solicitudes: sols, cotizaciones: cots, rol: "residente", username: "res1", cfg, ahora }), 1);
   // pasado el martes 15:00 la de almacén pasa a Compras
   assert.equal(contarPendientes({ solicitudes: sols, cotizaciones: cots, rol: "asistente_compras", cfg, ahora: hn("2026-09-29", "15:30") }), 3);
+});
+
+test("código MAT siguiente y fuera de corte", () => {
+  assert.equal(siguienteCodigoCompra([{ codigo: "MAT-2026-0512" }, { codigo: "MAQ-2026-0900" }, { codigo: "MAT-2025-0999" }], 2026), "MAT-2026-0513");
+  assert.equal(siguienteCodigoCompra([], 2026), "MAT-2026-0001");
+  const sol = { estado: "en_proceso", corte: { anio: 2026, semana: 40 }, lineas: [{ estado: "por_cotizar" }] };
+  assert.equal(fueraDeCorte(sol, null, hn("2026-10-02", "11:59")), false);
+  assert.equal(fueraDeCorte(sol, null, hn("2026-10-02", "12:00")), true);
+  assert.equal(fueraDeCorte({ ...sol, lineas: [{ estado: "comprada" }] }, null, hn("2026-10-02", "13:00")), false);
+});
+
+test("métricas del dashboard", () => {
+  const sols = [
+    { id: "a", estado: "en_proceso", projectCode: "P1", residente: "r1", urgente: false, corte: { anio: 2026, semana: 40 }, fechaEnvio: hn("2026-09-28", "09:00"), lineas: [{ estado: "comprada" }, { estado: "rechazada" }], audit: [{ action: "almacen_no_hay", at: hn("2026-09-29", "09:00") }] },
+    { id: "b", estado: "enviada", projectCode: "P1", residente: "r2", urgente: true, corte: { anio: 2026, semana: 40 }, fechaEnvio: hn("2026-09-30", "09:00"), lineas: [{ estado: "pendiente_coord" }], audit: [] },   // enviada después del cierre → fuera del corte que le tocaba
+    { id: "c", estado: "borrador", projectCode: "P2", residente: "r1", lineas: [] },
+  ];
+  const cots = [{ id: "q", requestId: "a", projectCode: "P1", estado: "aprobada", purchaseId: "pu", aprobadoAt: hn("2026-10-01", "10:00"), audit: [{ action: "enviada", at: hn("2026-09-30", "10:00") }], evaluacion: { lineas: [{ semaforo: "verde", variacionPct: 0.01 }, { semaforo: "rojo", variacionPct: 0.2 }] } }];
+  const pur = [{ id: "pu", validatedAt: hn("2026-10-02", "10:00"), paidAt: "2026-10-05", audit: [{ action: "paid", at: hn("2026-10-05", "10:00") }] }];
+  const m = metricasDashboard({ solicitudes: sols, cotizaciones: cots, purchases: pur, ahora: hn("2026-10-05", "12:00") });
+  assert.equal(m.total, 2); assert.equal(m.urgentes, 1); assert.equal(m.pctUrgentes, 0.5);
+  assert.equal(m.enCorte, 1); assert.equal(m.conCorte, 2);
+  assert.equal(m.porProyecto[0].k, "P1"); assert.equal(m.porProyecto[0].total, 2);
+  assert.ok(Math.abs(m.tiempos.almacen - 1) < 0.01); assert.ok(Math.abs(m.tiempos.aprobacion - 1) < 0.01); assert.ok(Math.abs(m.tiempos.tesoreria - 1) < 0.01); assert.ok(Math.abs(m.tiempos.pago - 3) < 0.01);
+  assert.equal(m.semaforo.verde, 1); assert.equal(m.semaforo.rojo, 1); assert.equal(m.semaforo.pctRojo, 0.5);
+  assert.equal(m.fueraDeCorte.length, 1);      // la línea pendiente_coord de "b", pasado el viernes
+  assert.equal(metricasDashboard({ solicitudes: sols, cotizaciones: cots, filtros: { projectCode: "P2" } }).total, 0);
+  assert.equal(metricasDashboard({ solicitudes: sols, cotizaciones: cots, filtros: { corteId: "C40-2026" } }).total, 2);
 });

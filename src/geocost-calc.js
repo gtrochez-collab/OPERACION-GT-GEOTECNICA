@@ -158,7 +158,13 @@ export const estadoCompraCosto = (p) => {
   const s = p?.status;
   if (s === "validado") return "comprometido";
   if (s === "pagado" || s === "finalizado") return "ejecutado";
-  return null; // borrador, undefined, otros
+  // GeoSupply (2-oct-2026): el borrador que nace de una cotización APROBADA por
+  // el Coordinador ya es plata comprometida (decisión de la Fase 0) — aunque
+  // Finanzas todavía no lo haya enviado a Tesorería. Al validarse sigue siendo
+  // comprometido y al pagarse pasa a ejecutado: el MISMO registro cambia de
+  // estado, nunca se cuenta dos veces. Un borrador manual sigue sin contar.
+  if (s === "borrador" && p?.origenSupply) return "comprometido";
+  return null; // borrador manual, undefined, otros
 };
 export const fechaCompraCosto = (p) => p?.paidAt || p?.paymentDate || p?.validatedAt || p?.createdAt || "";
 

@@ -13,6 +13,9 @@ import { fmtUSD } from "./geocost-ui.jsx";
 // DESPUÉS del await y el navegador bloqueaba el popup (caso Arturo).
 import { VisorArchivo } from "./visor-archivo.jsx";
 import { hoyISO, diaHN } from "./fechas.js";
+// GeoSupply (2-oct-2026): los borradores que nacen de una cotización aprobada
+// llevan `origenSupply`; acá solo se rotula su corte.
+import { etiquetaCorte } from "./geosupply-calc.js";
 
 // Marca Geotecnica
 const ORANGE = "#E8762D";
@@ -86,6 +89,11 @@ const diasDesdeYMDLocal = (iso) => {
   return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86400000)) : null;
 };
 const esPagadaP = (p) => p?.status === "pagado" || p?.status === "finalizado";
+// GeoSupply (2-oct-2026): borrador que nace de una cotización APROBADA por el
+// Coordinador. Vive en la vista "Borradores (n)" de Solicitudes hasta que
+// Finanzas lo envía a Tesorería; NO cuenta en Pendientes de pago, Prioridades,
+// CxP, Calendario ni Dashboard (sigue siendo `status:"borrador"`).
+const esBorradorSupply = (p) => p?.status === "borrador" && !!p?.origenSupply;
 // "2026-09-25" → "25 sep". Se parte el string a mano: `new Date("2026-09-25")`
 // es medianoche UTC y en Honduras (UTC-6) imprimiría el día anterior.
 const fmtCorta = (ymd) => {
@@ -1695,6 +1703,78 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   </div>;
 }
 
+// ── BorradorSupplyFormImpl (2-oct-2026) — el borrador que viene de GeoSupply ──
+// Finanzas solo confirma 4 cosas: condición de pago, fecha requerida de pago,
+// "Va a" y quién cierra con conta. Todo lo demás (proveedor, monto, ítems con
+// partida, datos bancarios, cotización) ya viene de la cotización aprobada y
+// se muestra en solo lectura. "Enviar a Tesorería" = el mismo `validado` +
+// `encolarPago` del flujo normal. A NIVEL DE MÓDULO (no se remonta al tipear).
+function BorradorSupplyFormImpl({ purchase, puedeEnviar, userName, setModal, updatePurchase, addAudit, enviar, verArchivo }) {
+  const [f, setF] = useState({ condicionPago: purchase.condicionPago || "contado", tipoCredito: purchase.tipoCredito || "unico", fechaPagoRequerida: purchase.fechaPagoRequerida || "", destinoPago: purchase.destinoPago || ((purchase.condicionPago || "contado") === "credito" ? "cxp" : "normal"), cierreResponsable: purchase.cierreResponsable || "" });
+  const [saving, setSaving] = useState(false);
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const o = purchase.origenSupply || {};
+  const cambio = f.condicionPago !== (purchase.condicionPago || "contado") || f.tipoCredito !== (purchase.tipoCredito || "unico") || f.fechaPagoRequerida !== (purchase.fechaPagoRequerida || "") || f.destinoPago !== (purchase.destinoPago || "") || f.cierreResponsable !== (purchase.cierreResponsable || "");
+  const armar = () => ({ ...purchase, condicionPago: f.condicionPago, tipoCredito: f.condicionPago === "credito" ? f.tipoCredito : "", fechaPagoRequerida: f.fechaPagoRequerida, destinoPago: f.destinoPago, cierreResponsable: f.cierreResponsable });
+  const guardar = async () => {
+    setSaving(true);
+    try { const ok = await updatePurchase(addAudit(armar(), "edited", `Finanzas ajustó condición/fecha/destino/cierre (${userName})`)); if (ok) setModal(null); }
+    finally { setSaving(false); }
+  };
+  const enviarAhora = async () => {
+    setSaving(true);
+    try {
+      let rec = purchase;
+      if (cambio) { rec = addAudit(armar(), "edited", `Finanzas ajustó condición/fecha/destino/cierre (${userName})`); const ok = await updatePurchase(rec); if (!ok) return; }
+      const ok = await enviar(rec);
+      if (ok) setModal(null);
+    } finally { setSaving(false); }
+  };
+  const pill = (txt, on, onClick, c = ORANGE_DARK) => <button type="button" onClick={onClick} style={{ padding: "7px 13px", borderRadius: 999, border: on ? "none" : "1px solid rgba(44,42,40,.12)", background: on ? c : "rgba(255,255,255,.7)", color: on ? "#fff" : "#5C5853", font: "700 12px/1 inherit", cursor: "pointer" }}>{txt}</button>;
+  const cuenta = purchase.bacAccount ? `${purchase.providerBank || "Banco"} · ${purchase.providerAccountType || ""} ${purchase.bacAccount} · ${purchase.providerAccountHolder || ""}`.replace(/\s+/g, " ").trim() : null;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ background: C_NARANJA_CHIP.bg, border: "1px solid rgba(232,118,45,.25)", borderRadius: 12, padding: "12px 16px", fontSize: 13, display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: C_NARANJA_CHIP.color, textTransform: "uppercase", letterSpacing: 0.5 }}>Borrador de GeoSupply</div>
+      <div><b>{o.folioSolicitud || "—"}</b> · <b>{o.folioCotizacion || "—"}</b>{o.corte ? ` · ${etiquetaCorte(o.corte).titulo}` : ""}{o.urgente ? " · URGENTE" : ""} · pidió <b>{o.residente || "—"}</b> · aprobó <b>{o.aprobadoPor || "—"}</b> el {fmtDT(o.aprobadoAt)}</div>
+      {(o.avisos || []).length > 0 && <div style={{ fontSize: 12.5, color: C_AMARILLO.color, fontWeight: 700 }}>⚠ {o.avisos.join(" · ")}</div>}
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>Lo que viene de la cotización</div>
+        <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>Proyecto</span> <b>{projLabel(purchase.projectCode)}</b></div>
+        <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>Proveedor</span> <b>{purchase.provider}</b>{purchase.providerRTN ? ` · RTN ${purchase.providerRTN}` : ""}</div>
+        <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>N° cotización</span> <b>{purchase.quoteNumber || "—"}</b> {purchase.quoteFile && <button type="button" onClick={() => verArchivo(purchase.quoteFile)} style={{ background: "none", border: "none", color: "#2563EB", fontWeight: 700, cursor: "pointer", fontSize: 12.5 }}>Ver PDF</button>}</div>
+        <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>Monto</span> <b style={{ color: "#059669", fontSize: 16 }}>{fmtL(purchase.amount)}</b></div>
+        <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>Datos bancarios</span> {cuenta ? <b>{cuenta}</b> : <span style={{ color: C_AMARILLO.color, fontWeight: 700 }}>Proveedor sin datos bancarios en el maestro</span>}</div>
+      </div>
+      <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>Ítems ({(purchase.lineas || []).length})</div>
+        {(purchase.lineas || []).map((l, i) => <div key={l.id || i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}><span>{Number(l.cantidad).toLocaleString("es-HN")} {l.unidad} × {l.nombre}{l.fueraPresupuesto ? <span style={{ color: C_AMARILLO.color, fontWeight: 700 }}> · fuera de presupuesto</span> : ""}</span><b>{fmtL(l.monto)}</b></div>)}
+        {!(purchase.lineas || []).length && <div style={{ fontSize: 12.5, color: "#64748b", whiteSpace: "pre-line" }}>{purchase.description}</div>}
+      </div>
+    </div>
+    <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div style={{ gridColumn: "1/-1", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>Lo que confirma Finanzas</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Condición de pago</label>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{pill("Contado", f.condicionPago !== "credito", () => { u("condicionPago", "contado"); if (f.destinoPago === "cxp") u("destinoPago", "normal"); })}{pill("Crédito", f.condicionPago === "credito", () => { u("condicionPago", "credito"); u("destinoPago", "cxp"); })}</div>
+        {f.condicionPago === "credito" && <div style={{ display: "flex", gap: 6 }}>{pill("Un solo pago", f.tipoCredito !== "plan", () => u("tipoCredito", "unico"), CHARCOAL)}{pill("Plan de pagos", f.tipoCredito === "plan", () => u("tipoCredito", "plan"), CHARCOAL)}</div>}
+      </div>
+      <Input label="Fecha en que se requiere el pago" type="date" value={f.fechaPagoRequerida} onChange={e => u("fechaPagoRequerida", e.target.value)} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Va a</label>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{[["normal", "Normal"], ["prioridad", "Prioridades"], ["cxp", "Cuentas por pagar"]].map(([k, l]) => pill(l, f.destinoPago === k, () => u("destinoPago", k)))}</div>
+      </div>
+      <Select label="Responsable de cierre contable" options={[...new Set([...USERS.map(u2 => u2.label), ...(f.cierreResponsable ? [f.cierreResponsable] : [])])].sort()} value={f.cierreResponsable} onChange={e => u("cierreResponsable", e.target.value)} emptyLabel="Sin asignar" />
+    </div>
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+      <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cerrar</Btn>
+      {puedeEnviar && <Btn variant="ghost" onClick={guardar} disabled={saving || !cambio}>Guardar cambios</Btn>}
+      {puedeEnviar && <Btn variant="success" onClick={enviarAhora} disabled={saving}>{saving ? "…" : "✓ Enviar a Tesorería"}</Btn>}
+    </div>
+  </div>;
+}
+
 // ── MachineFormImpl (GeoMachinery, portado el 28-sep-2026 desde el viejo
 // MachinesModule — misma lógica, estética nueva). A NIVEL DE MÓDULO: dentro
 // del componente se remontaba y perdía la foto a medio subir.
@@ -2232,6 +2312,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const setDespachos = (v) => { lastLocalMutAtRef.current = Date.now(); _setDespachosRaw(v); };
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
+  const [visorGlobal, setVisorGlobal] = useState(null);   // PDF de GeoSupply en el modal de borrador
+  const [borrSel, setBorrSel] = useState([]);              // selección masiva en "Borradores (n)" — ARRIBA del return de Cargando (orden de hooks)
   const volverARef = useRef(null);   // pestaña a la que se regresa al cerrar la solicitud (irASolicitud)
   useEffect(() => {
     if (modal === null && volverARef.current) { setSec(volverARef.current); volverARef.current = null; }
@@ -3937,6 +4019,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // carga — así "agosto" significa lo natural en cada caso.
   const fechaFiltro = (p) => String((esPagada(p) ? (p.paidAt || p.paymentDate) : null) || p.createdAt || "").slice(0, 7);
   const filtered = cp.filter(p => {
+    // Los borradores de GeoSupply SOLO se ven en su vista; en las demás no existen.
+    if (esBorradorSupply(p) !== (filter.ver === "borradores")) return false;
     if (filter.ver === "pendientes" && esPagada(p)) return false;
     if (filter.ver === "pagadas" && !esPagada(p)) return false;
     if (filter.project && p.projectCode !== filter.project) return false;
@@ -4123,6 +4207,14 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           <div style={{ fontSize: 11, color: "#64748b" }}>Monto total</div>
         </div>
       </div>
+
+      {/* Origen GeoSupply (2-oct-2026): solo lectura, para que Finanzas vea de dónde viene */}
+      {p.origenSupply && <div style={{ background: C_NARANJA_CHIP.bg, border: "1px solid rgba(232,118,45,.25)", borderRadius: 12, padding: "12px 16px", fontSize: 13, color: CHARCOAL, display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: C_NARANJA_CHIP.color, textTransform: "uppercase", letterSpacing: 0.5 }}>Viene de GeoSupply</div>
+        <div>Solicitud <b>{p.origenSupply.folioSolicitud || "—"}</b> · Cotización <b>{p.origenSupply.folioCotizacion || "—"}</b>{p.origenSupply.corte ? ` · ${etiquetaCorte(p.origenSupply.corte).titulo}` : ""}{p.origenSupply.urgente ? " · URGENTE" : ""}</div>
+        <div style={{ fontSize: 12, color: "#5C5853" }}>Pidió el residente <b>{p.origenSupply.residente || "—"}</b> · aprobó <b>{p.origenSupply.aprobadoPor || "—"}</b> el {fmtDT(p.origenSupply.aprobadoAt)} · tasa L {Number(p.origenSupply.tasaCambioUsada || 0).toFixed(2)}</div>
+        {(p.origenSupply.avisos || []).length > 0 && <div style={{ fontSize: 12, color: C_AMARILLO.color, fontWeight: 700 }}>⚠ {p.origenSupply.avisos.join(" · ")}</div>}
+      </div>}
 
       {/* Info general */}
       <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 18 }}>
@@ -7248,7 +7340,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const renderPriModal = () => {
     if (!priModal || priModal.t !== "add") return null;
     return <PrioridadAddModal
-      candidatas={cp.filter(p => !esPagada(p) && !prioridades.some(e => e.id === p.id))}
+      candidatas={cp.filter(p => !esPagada(p) && !esBorradorSupply(p) && !prioridades.some(e => e.id === p.id))}
       ccColor={cc.color}
       onClose={() => setPriModal(null)}
       onAdd={async (ids) => {
@@ -7745,11 +7837,12 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         const btn = (txt, activo, onClick, title) => (
           <button onClick={onClick} title={title} style={{ padding: "5px 11px", borderRadius: 999, border: activo ? "1px solid transparent" : "1px solid var(--hairline)", background: activo ? ORANGE_DARK : "var(--surface)", color: activo ? "#fff" : "var(--text-2)", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{txt}</button>
         );
-        const nPend = cp.filter(x => !esPagada(x)).length;
+        const nPend = cp.filter(x => !esPagada(x) && !esBorradorSupply(x)).length;
         const nPag = cp.filter(x => esPagada(x)).length;
+        const nBorr = cp.filter(esBorradorSupply).length;
         // Meses con algo, según lo que se está viendo.
         const mesesOpts = [...new Set(cp
-          .filter(x => filter.ver === "todas" || (filter.ver === "pagadas" ? esPagada(x) : !esPagada(x)))
+          .filter(x => filter.ver === "borradores" ? esBorradorSupply(x) : !esBorradorSupply(x) && (filter.ver === "todas" || (filter.ver === "pagadas" ? esPagada(x) : !esPagada(x))))
           .map(fechaFiltro).filter(Boolean))].sort().reverse();
         const mesLbl = (m) => { const [y, mm] = m.split("-").map(Number); const t = new Date(y, mm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
         // Al cambiar de vista, un orden que ya no aplica se reajusta solo.
@@ -7758,6 +7851,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           if (v === "pendientes" && !["solicitud_asc", "solicitud_desc"].includes(listOrden)) setListOrden("solicitud_asc");
           if (v === "pagadas" && !["pago_desc", "pago_asc"].includes(listOrden)) setListOrden("pago_desc");
           if (v === "todas") setListOrden("estado");
+          if (v === "borradores") setListOrden("solicitud_desc");
         };
         const sep = !isMobile && <div aria-hidden style={{ width: 1, height: 22, background: "var(--hairline)", margin: "0 6px" }} />;
         // Dos filas compactas: [VER · ORDEN] arriba, [MES · proyecto · proveedor]
@@ -7771,6 +7865,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             {btn(`Pendientes de pago (${nPend})`, filter.ver === "pendientes", () => setVer("pendientes"), "Lo que Tesorería tiene por pagar")}
             {btn(`Pagadas (${nPag})`, filter.ver === "pagadas", () => setVer("pagadas"), "Las que ya pagó Tesorería")}
             {btn("Ambas", filter.ver === "todas", () => setVer("todas"), "Todas, con las pendientes arriba")}
+            {!esMaq && btn(`Borradores (${nBorr})`, filter.ver === "borradores", () => setVer("borradores"), "Cotizaciones aprobadas en GeoSupply que Finanzas completa y envía a Tesorería")}
           </div>
           {/* Orden (el separador va DENTRO para que envuelva junto con el grupo) */}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -7820,6 +7915,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         {!canCreate && canPay && <div style={{ fontSize: 12, color: "#64748b" }}>Click en una fila para revisar y gestionar el pago →</div>}
       </div>
 
+      {/* BORRADORES de GeoSupply (2-oct-2026): agrupados por proyecto y corte */}
+      {filter.ver === "borradores" ? renderBorradoresSupply(dataSorted) : <>
       {/* Tabla */}
       <div className="gt-vidrio" style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -7848,6 +7945,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
                   <StatusBadge status={p.status} />
                   {/* Servicio de proveedor (23-sep-2026): no se coordina ni lleva ficha */}
                   {p.tipoCompra === "servicio" && <span title="Servicio de proveedor — al pagarse va directo a Por cerrar contable" style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg, whiteSpace: "nowrap" }}>Servicio</span>}
+                  {p.origenSupply && <span title={`Viene de GeoSupply: ${p.origenSupply.folioSolicitud || ""} · ${p.origenSupply.folioCotizacion || ""}`} style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_NARANJA_CHIP.color, background: C_NARANJA_CHIP.bg, whiteSpace: "nowrap" }}>GeoSupply</span>}
                   {/* VENCIDA: +2 semanas sin pago (18-sep-2026) */}
                   {venc && <span title={`Lleva ${diasV} días sin pago`} style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_ROJO.color, background: C_ROJO.bg, border: `1px solid ${C_ROJO.borde}`, whiteSpace: "nowrap" }}>Vencida · {diasV} d</span>}
                   <TreasuryBadge status={p.treasuryStatus} />
@@ -7874,6 +7972,92 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           </tbody>
         </table>
       </div>
+      </>}
+    </div>;
+  };
+
+  // ── BORRADORES DE GeoSupply (2-oct-2026) ─────────────────────────────────
+  // Cotizaciones aprobadas por el Coordinador que ya nacieron como borrador en
+  // cp-purchases (con `origenSupply`). Finanzas confirma condición de pago,
+  // fecha de pago, "Va a" y cierre contable, y las envía a Tesorería (de a una
+  // o en lote). Al enviarse pasan a `validado` y siguen el flujo de siempre.
+  const enviarBorradoresATesoreria = async (lista) => {
+    const sinFecha = lista.filter(p => !p.fechaPagoRequerida);
+    if (!confirm(`¿Enviar ${lista.length} ${lista.length === 1 ? "solicitud" : "solicitudes"} a Tesorería?${sinFecha.length ? `\n\n${sinFecha.length} sin fecha requerida de pago (no saldrán en el Calendario).` : ""}`)) return false;
+    const at = new Date().toISOString();
+    const ids = new Set(lista.map(p => p.id));
+    const next = purchases.map(p => ids.has(p.id) ? addAudit({ ...p, status: "validado", treasuryStatus: "pendiente", validatedAt: at, opsResponsible: p.opsResponsible || userName, destinoPago: p.destinoPago || ((p.condicionPago || "contado") === "credito" ? "cxp" : "normal") }, "approved", `Enviada a Tesorería por Finanzas (${userName}) — origen GeoSupply ${p.origenSupply?.folioCotizacion || ""}`.trim()) : p);
+    const ok = await saveOrAlert(next);
+    if (!ok) return false;
+    const enviadas = next.filter(p => ids.has(p.id));
+    const dondes = [];
+    for (const p of enviadas) { try { const d = encolarPago ? await encolarPago(p) : null; if (d) dondes.push(`${p.codigo} → ${d}`); } catch (e) { console.warn("[borradores] encolarPago", e); } }
+    setBorrSel([]);
+    alert(`✓ ${enviadas.length} enviada${enviadas.length === 1 ? "" : "s"} a Tesorería como 'Pendiente Lic. Carolina'.${dondes.length ? "\n\n" + dondes.join("\n") : ""}`);
+    return true;
+  };
+  const renderBorradoresSupply = (lista) => {
+    const puedeEnviar = canCreate;
+    const grupos = (() => {
+      const m = {};
+      lista.forEach(p => { const k = p.projectCode || "—"; (m[k] = m[k] || []).push(p); });
+      return Object.entries(m).map(([k, v]) => {
+        const cortes = {};
+        v.forEach(p => { const c = p.origenSupply?.corte ? etiquetaCorte(p.origenSupply.corte) : { id: "sin", titulo: "Sin corte", sub: "" }; (cortes[c.id] = cortes[c.id] || { etq: c, items: [] }).items.push(p); });
+        return { k, items: v, total: v.reduce((a, p) => a + (Number(p.amount) || 0), 0), cortes: Object.values(cortes).sort((a, b) => String(b.etq.id).localeCompare(String(a.etq.id))) };
+      }).sort((a, b) => a.k.localeCompare(b.k, "es", { sensitivity: "base", numeric: true }));
+    })();
+    const total = lista.reduce((a, p) => a + (Number(p.amount) || 0), 0);
+    const sel = lista.filter(p => borrSel.includes(p.id));
+    const toggle = (id) => setBorrSel(s2 => s2.includes(id) ? s2.filter(x => x !== id) : [...s2, id]);
+    const DEST = { normal: "Normal", prioridad: "Prioridades", cxp: "Cuentas por pagar" };
+    const chip = (txt, c = C_GRIS, title) => <span title={title} style={{ padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 800, color: c.color, background: c.bg, whiteSpace: "nowrap" }}>{txt}</span>;
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div><div style={{ font: "800 19px/1.15 var(--display)", color: "var(--text)" }}>{lista.length}</div><div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>borradores de GeoSupply</div></div>
+        <div style={{ borderLeft: "1px solid var(--hairline)", paddingLeft: 14 }}><div style={{ font: "800 19px/1.15 var(--display)", color: "var(--naranja-tinta)" }}>{fmtL(total)}</div><div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>aprobado, aún no en Tesorería</div></div>
+        <div style={{ borderLeft: "1px solid var(--hairline)", paddingLeft: 14 }}><div style={{ font: "800 19px/1.15 var(--display)", color: "var(--text)" }}>{lista.filter(p => (p.origenSupply?.avisos || []).length).length}</div><div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>sin datos bancarios</div></div>
+        {puedeEnviar && lista.length > 0 && <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <Btn small variant="ghost" onClick={() => setBorrSel(sel.length === lista.length ? [] : lista.map(p => p.id))}>{sel.length === lista.length ? "Quitar selección" : "Seleccionar todos"}</Btn>
+          <Btn small variant="success" disabled={!sel.length} onClick={() => enviarBorradoresATesoreria(sel)}>Enviar {sel.length || ""} a Tesorería</Btn>
+        </div>}
+      </div>
+      {lista.length === 0 && <div className="gt-vidrio" style={{ padding: "40px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 13.5 }}>No hay borradores de GeoSupply. Aparecen acá cuando el Coordinador aprueba una cotización.</div>}
+      {grupos.map(g => <div key={g.k} className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ font: "800 15px/1.2 var(--display)", color: "var(--text)" }}>{projLabel(g.k)}</div>
+          <span style={{ fontSize: 12, color: "var(--text-3)" }}>{g.items.length} {g.items.length === 1 ? "borrador" : "borradores"}</span>
+          <div style={{ marginLeft: "auto", fontWeight: 800, color: "var(--text)" }}>{fmtL(g.total)}</div>
+        </div>
+        {g.cortes.map(c => <div key={c.etq.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>{c.etq.titulo}{c.etq.sub ? ` · ${c.etq.sub}` : ""}</div>
+          {c.items.map(p => {
+            const o = p.origenSupply || {};
+            const avisos = o.avisos || [];
+            return <div key={p.id} onClick={() => setModal({ t: "borrador-supply", d: p })} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: avisos.length ? C_AMARILLO.bg : "rgba(255,255,255,.75)", border: "1px solid rgba(44,42,40,.08)", cursor: "pointer", flexWrap: "wrap" }}>
+              {puedeEnviar && <input type="checkbox" checked={borrSel.includes(p.id)} onChange={() => toggle(p.id)} onClick={e => e.stopPropagation()} />}
+              <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 800, fontSize: 11.5, color: CHARCOAL }}>{p.codigo}</span>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{p.provider}</div>
+                <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{(p.lineas || []).length} {(p.lineas || []).length === 1 ? "ítem" : "ítems"} · {o.folioSolicitud} · {o.folioCotizacion} · aprobó {o.aprobadoPor || "—"} {o.aprobadoAt ? fmt(o.aprobadoAt) : ""}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
+                  {chip((p.condicionPago || "contado") === "credito" ? `Crédito · ${p.tipoCredito === "plan" ? "plan de pagos" : "un solo pago"}` : "Contado")}
+                  {chip(`Va a: ${DEST[p.destinoPago] || "Normal"}`, p.destinoPago === "prioridad" ? C_ULTRA : p.destinoPago === "cxp" ? C_AZUL : C_GRIS)}
+                  {chip(p.fechaPagoRequerida ? `Pago ${fmt(p.fechaPagoRequerida)}` : "Sin fecha de pago", p.fechaPagoRequerida ? C_GRIS : C_AMARILLO)}
+                  {chip(p.cierreResponsable ? `Cierra ${p.cierreResponsable}` : "Cierre sin asignar", p.cierreResponsable ? C_GRIS : C_AMARILLO)}
+                  {o.urgente && chip("Urgente", C_ROJO)}
+                  {avisos.map(a => chip(a, C_AMARILLO))}
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: CHARCOAL }}>{fmtL(p.amount)}</div>
+                <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 3 }}>con ISV</div>
+              </div>
+              {puedeEnviar && <Btn small variant="success" onClick={e => { e.stopPropagation(); enviarBorradoresATesoreria([p]); }}>Enviar a Tesorería</Btn>}
+            </div>;
+          })}
+        </div>)}
+      </div>)}
     </div>;
   };
 
@@ -7885,6 +8069,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
       case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
+      case "borrador-supply": return <Modal title={`${m.d.codigo} — ${m.d.provider}`} onClose={() => setModal(null)} wide><BorradorSupplyFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} puedeEnviar={canCreate} userName={userName} setModal={setModal} updatePurchase={updatePurchase} addAudit={addAudit} enviar={(p) => enviarBorradoresATesoreria([p])} verArchivo={async (ref) => { try { const full = await store.getCloud(fileKey(ref.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el archivo."); setVisorGlobal({ ...full, name: full.name || ref.name }); } catch (e) { alert("Error: " + (e?.message || e)); } }} /></Modal>;
       case "corregir": return <Modal title={`Corregir proyecto / partida — ${m.d.codigo || m.d.provider}`} onClose={() => setModal(null)} wide><CorreccionFormImpl purchase={m.d} setModal={setModal} allProjects={allProjects} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} updatePurchase={updatePurchase} addAudit={addAudit} userName={userName} moduloPartida={CFG.moduloPartida} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
@@ -8125,6 +8310,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         modal de detalle — es de solo lectura (sin botones de mutacion). El
         resto de modales (nuevo/editar/pagar/etc.) sigue bloqueado para ellos. */}
     {(!canViewOnly || modal?.t === "detail") && renderModal()}
+    {visorGlobal && <VisorArchivo archivo={visorGlobal} onClose={() => setVisorGlobal(null)} />}
     {renderPriModal()}
     {renderCxpModal()}
     {modalRezagadas()}

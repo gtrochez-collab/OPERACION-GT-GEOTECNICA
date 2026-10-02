@@ -188,11 +188,11 @@ export const llegadaEstimada = (corte, cfg) => {
   return { desde: ymdSumar(lunesSig, (Number(c.cortes.llegadaDesde) || 2) - 1), hasta: ymdSumar(lunesSig, (Number(c.cortes.llegadaHasta) || 4) - 1) };
 };
 
-/** ¿Se envió dentro del corte que le tocaba? (para medir cumplimiento). */
+/** ¿Se envió ANTES del cierre de su corte? (cumplimiento; una urgente enviada el miércoles cuenta como fuera). */
 export const enviadaEnCorte = (sol, cfg) => {
-  if (!sol?.fechaEnvio) return null;
-  const p = partesHN(sol.fechaEnvio);
-  return mismoCorte(semanaISO(p.ymd), sol.corte);
+  if (!sol?.fechaEnvio || !sol?.corte) return null;
+  const h = hitoDeCorte(sol.corte, "cierreSolicitudes", cfg);
+  return !estadoHito(h, sol.fechaEnvio).pasado;
 };
 
 // ── Estados ────────────────────────────────────────────────────────────────
@@ -552,6 +552,115 @@ export const borradorDesdeCotizacion = ({ cotizacion, evaluacion, solicitud, pro
     },
   };
   return { purchase, avisos };
+};
+
+/** Siguiente código de GeoShopping (MAT-AAAA-NNNN) sobre la lista de cp-purchases — espejo de `siguienteCodigo`. */
+export const siguienteCodigoCompra = (lista, anio = new Date().getFullYear(), prefijo = "MAT") => {
+  const re = new RegExp(`^${prefijo}-${anio}-(\\d+)$`);
+  let max = 0;
+  (lista || []).forEach(p => { const m = re.exec(String(p?.codigo || "")); if (m) max = Math.max(max, parseInt(m[1], 10)); });
+  return `${prefijo}-${anio}-${String(max + 1).padStart(4, "0")}`;
+};
+
+/** ¿La solicitud quedó FUERA del corte? = su viernes 12:00 pasó y aún tiene líneas sin resolver. */
+export const fueraDeCorte = (sol, cfg, ahora = new Date()) => {
+  if (!sol?.corte || !solicitudActiva(sol)) return false;
+  const h = hitoDeCorte(sol.corte, "aprobacionHasta", cfg);
+  if (!estadoHito(h, ahora).pasado) return false;
+  return (sol.lineas || []).some(l => !LINEA_TERMINAL.includes(l.estado));
+};
+
+/** Días (con decimales) entre dos timestamps ISO; null si falta alguno. */
+export const diasEntre = (a, b) => {
+  if (!a || !b) return null;
+  const ta = new Date(a).getTime(), tb = new Date(b).getTime();
+  if (isNaN(ta) || isNaN(tb)) return null;
+  return Math.max(0, (tb - ta) / 86400000);
+};
+const prom = (xs) => { const v = xs.filter(x => x != null && isFinite(x)); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
+
+/**
+ * Métricas del dashboard. `purchases` (cp-purchases) y `despachos`
+ * (lg-despachos) son opcionales: con ellos se mide hasta Tesorería/pago/entrega.
+ * Filtros: { projectCode, corteId, desde, hasta } (desde/hasta sobre fechaEnvio, YMD HN).
+ */
+export const metricasDashboard = ({ solicitudes = [], cotizaciones = [], purchases = [], despachos = [], cfg, ahora = new Date(), filtros = {} }) => {
+  const c = configEfectiva(cfg);
+  const enRango = (s) => {
+    if (filtros.projectCode && s.projectCode !== filtros.projectCode) return false;
+    if (filtros.corteId && (!s.corte || etiquetaCorte(s.corte).id !== filtros.corteId)) return false;
+    const d = s.fechaEnvio ? partesHN(s.fechaEnvio)?.ymd : "";
+    if (filtros.desde && (!d || d < filtros.desde)) return false;
+    if (filtros.hasta && (!d || d > filtros.hasta)) return false;
+    return true;
+  };
+  const sols = solicitudes.filter(s => s.estado !== "borrador" && enRango(s));
+  const idsSol = new Set(sols.map(s => s.id));
+  const cots = cotizaciones.filter(q => idsSol.has(q.requestId));
+  const porEstado = {};
+  sols.forEach(s => { const e = estadoCabecera(s); porEstado[e] = (porEstado[e] || 0) + 1; });
+  const agrupar = (key) => {
+    const m = {};
+    sols.forEach(s => {
+      const k = key(s) || "—";
+      m[k] = m[k] || { total: 0, urgentes: 0, enCorte: 0, conCorte: 0, lineas: 0, rechazadas: 0 };
+      m[k].total++; if (s.urgente) m[k].urgentes++;
+      const ec = enviadaEnCorte(s, c); if (ec != null) { m[k].conCorte++; if (ec) m[k].enCorte++; }
+      (s.lineas || []).forEach(l => { m[k].lineas++; if (l.estado === "rechazada") m[k].rechazadas++; });
+    });
+    return Object.entries(m).map(([k, v]) => ({ k, ...v, pctUrgentes: v.total ? v.urgentes / v.total : 0, pctEnCorte: v.conCorte ? v.enCorte / v.conCorte : null })).sort((a, b) => b.total - a.total);
+  };
+  const porProyecto = agrupar(s => s.projectCode);
+  const porResidente = agrupar(s => s.residente);
+  // Tiempos por etapa (días). Hitos: envío → decisión de almacén (audit de la
+  // línea) → cotización enviada → aprobación → envío a Tesorería (validatedAt)
+  // → pago (paidAt) → entrega (despacho entregado).
+  const audAt = (aud, pred) => { const a = (aud || []).find(pred); return a?.at || null; };
+  const tAlmacen = [], tCotizacion = [], tAprobacion = [], tTesoreria = [], tPago = [], tEntrega = [], leadAprob = [];
+  sols.forEach(s => {
+    const env = s.fechaEnvio;
+    const alm = audAt(s.audit, a => /^almacen_/.test(a?.action || ""));
+    if (env && alm) tAlmacen.push(diasEntre(env, alm));
+    cots.filter(q => q.requestId === s.id).forEach(q => {
+      const qEnv = audAt(q.audit, a => a?.action === "enviada") || q.enviadaAt;
+      const base = alm || env;
+      if (base && qEnv) tCotizacion.push(diasEntre(base, qEnv));
+      if (qEnv && q.aprobadoAt) tAprobacion.push(diasEntre(qEnv, q.aprobadoAt));
+      if (env && q.aprobadoAt) leadAprob.push(diasEntre(env, q.aprobadoAt));
+      const pu = purchases.find(p => p.id === q.purchaseId || p.origenSupply?.quoteId === q.id);
+      if (pu) {
+        if (q.aprobadoAt && pu.validatedAt) tTesoreria.push(diasEntre(q.aprobadoAt, pu.validatedAt));
+        const pagoAt = audAt(pu.audit, a => a?.action === "paid") || pu.paidAt;
+        if (pu.validatedAt && pagoAt) tPago.push(diasEntre(pu.validatedAt, pagoAt));
+        const d = despachos.filter(x => x.sourcePurchaseId === pu.id && x.estado !== "cancelado" && (x.estado === "entregado" || x.estado === "cerrado"))[0];
+        const entregaAt = d?.entregadoAt || d?.fechaEntrega || d?.updatedAt || null;
+        if (pagoAt && entregaAt) tEntrega.push(diasEntre(pagoAt, entregaAt));
+      }
+    });
+  });
+  // Semáforo de precio: de las evaluaciones guardadas al aprobar.
+  const semaforo = { verde: 0, amarillo: 0, rojo: 0, sin_base: 0 };
+  const variacionPorProyecto = {};
+  cots.filter(q => q.estado === "aprobada").forEach(q => {
+    (q.evaluacion?.lineas || []).forEach(l => {
+      semaforo[l.semaforo] = (semaforo[l.semaforo] || 0) + 1;
+      if (l.variacionPct != null && isFinite(l.variacionPct)) { (variacionPorProyecto[q.projectCode] = variacionPorProyecto[q.projectCode] || []).push(l.variacionPct); }
+    });
+  });
+  const totalSem = semaforo.verde + semaforo.amarillo + semaforo.rojo;
+  const urgentes = sols.filter(s => s.urgente).length;
+  const conCorte = sols.filter(s => enviadaEnCorte(s, c) != null);
+  const enCorte = conCorte.filter(s => enviadaEnCorte(s, c)).length;
+  return {
+    total: sols.length, urgentes, pctUrgentes: sols.length ? urgentes / sols.length : 0,
+    enCorte, conCorte: conCorte.length, pctEnCorte: conCorte.length ? enCorte / conCorte.length : null,
+    porEstado, porProyecto, porResidente,
+    tiempos: { almacen: prom(tAlmacen), cotizacion: prom(tCotizacion), aprobacion: prom(tAprobacion), tesoreria: prom(tTesoreria), pago: prom(tPago), entrega: prom(tEntrega), leadAprobacion: prom(leadAprob) },
+    semaforo: { ...semaforo, total: totalSem, pctVerde: totalSem ? semaforo.verde / totalSem : null, pctAmarillo: totalSem ? semaforo.amarillo / totalSem : null, pctRojo: totalSem ? semaforo.rojo / totalSem : null },
+    variacionPorProyecto: Object.entries(variacionPorProyecto).map(([k, v]) => ({ k, promedio: prom(v), n: v.length })).sort((a, b) => (b.promedio || 0) - (a.promedio || 0)),
+    fueraDeCorte: sols.filter(s => fueraDeCorte(s, c, ahora)).flatMap(s => (s.lineas || []).filter(l => !LINEA_TERMINAL.includes(l.estado)).map(l => ({ sol: s, linea: l }))),
+    cotizaciones: { total: cots.length, aprobadas: cots.filter(q => q.estado === "aprobada").length, devueltas: cots.filter(q => (q.audit || []).some(a => a?.action === "devuelta")).length, rechazadas: cots.filter(q => q.estado === "rechazada").length },
+  };
 };
 
 // ── Pendientes por rol (contadores del Panel y del menú) ───────────────────

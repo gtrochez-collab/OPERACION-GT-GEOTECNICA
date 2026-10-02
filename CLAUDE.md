@@ -1267,18 +1267,93 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   urgente o requerida el lun/mar próximo → prioridad, si no normal).
   **Hora Honduras**: `partesHN` (Intl + TZ_HN) para el cierre del martes;
   en el minuto exacto del hito ya se considera pasado.
-  **Fase 1 (2-oct-2026, hecha)**: calc + tests (13), `sp-config` y pestaña
-  Configuración (cortes, semáforo, tolerancia, cierre contable por proyecto,
-  residentes en solo lectura), rol `residente` + login con `gt-usuarios`,
-  tarjeta en el Panel (ícono caja con flecha; roles admin/residente/
-  logistica/asistente_compras/costos/compras_ops/tesoreria/gerencia), pantalla
-  "Hoy" del Coordinador (tira resumen + 2 cajas de vidrio: Por aprobar y Corte
-  en curso con los 3 hitos y la llegada estimada), lista de Solicitudes
-  (vacía) y "Mis solicitudes" del residente con el aviso del corte. Pendiente:
-  Fase 2 residente (nueva solicitud, tracking tipo Amazon) + almacén; Fase 3
-  compras + aprobación; Fase 4 integración GeoShopping ("Borradores (n)",
-  envío a Tesorería) y GeoCost (comprometido sin doble conteo); Fase 5
-  dashboard + contador en la tarjeta del Panel.
+  **Las 5 fases quedaron hechas el 2-oct-2026** (Gerson: "hacé todas las fases
+  de una"). Pantallas por rol (`rolSupply`): **Coordinador** (admin) = Hoy ·
+  Alertas · Cotizaciones · Solicitudes · Almacén · Compras · Dashboard ·
+  Configuración; **Residente** = Mis solicitudes (+ Nueva solicitud, detalle
+  con tracking tipo "dónde va mi pedido": `PasosLinea` Enviada → Almacén →
+  Compras → Aprobación → En compra → Llega a obra; "En camino / Terminadas":
+  una completada sigue "en camino" hasta que su despacho se entregue);
+  **Almacén** (Óscar, `logistica`) = Almacén (Hay / Parcial / No hay por
+  línea, "No hay nada de esto" por proyecto, cuenta regresiva al martes 15:00
+  del corte más próximo) · Solicitudes; **Compras** (Ana) = Por cotizar
+  (agrupado por proyecto, botón "Cotizar (N)" → `CotizacionFormImpl`:
+  proveedor del maestro o nuevo, N° cotización, Contado/Crédito, checkbox por
+  línea, cantidad con "parcial" automático, P.U. con ISV, semáforo en vivo,
+  justificación si rojo, total, PDF a `cp-file-<id>`; devueltas con el
+  comentario) · Cotizaciones · Solicitudes; **Finanzas/Gerencia** = Hoy ·
+  Solicitudes · Cotizaciones · Dashboard, solo lectura. Forms a NIVEL DE
+  MÓDULO: `SolicitudFormImpl` (buscador de la receta con saldo en vivo,
+  "Excede el saldo" en vivo, "+ Agregar ítem fuera de presupuesto" con
+  justificación, urgente con justificación, corte y llegada estimada al pie)
+  y `CotizacionFormImpl`. Aprobación (`renderAprobar`, modal xl): TRES
+  columnas lo pedido · lo cotizado · presupuesto (P.U.) con semáforo por
+  línea, Ver PDF, comentario, **Aprobar / Devolver a Compras / Rechazar**;
+  "Aprobar las N en verde" (masivo, solo `evaluacion.todasVerdes`).
+  **Guardado**: `actualizarEn(key, setter, id, fn)` aplica `fn` al registro
+  FRESCO de la nube (getCloud → fn → set → verify por `updatedAt`); nunca se
+  escribe la foto local. `accionLinea`/`accionLineas` (una escritura por
+  solicitud) usan `aplicarAccionLinea` del calc. `aprobarCotizacion` (la
+  integración): lee TODO fresco (cotizaciones, solicitudes, cp-purchases,
+  cp-providers, cc-config), re-evalúa, enriquece las líneas con la partida,
+  (1) crea el BORRADOR en cp-purchases con `borradorDesdeCotizacion` + código
+  `siguienteCodigoCompra` (IDEMPOTENTE: si ya existe uno con
+  `origenSupply.quoteId` no se duplica; proveedor nuevo → cp-providers con
+  `autoImported`), (2) `aprobar_cot` en las líneas (cantidadComprada → estado
+  comprada / sigue por cotizar si fue parcial), (3) cotización `aprobada` con
+  `tasaCambioUsada`, `purchaseId/purchaseCodigo`, `evaluacion` (snapshot del
+  semáforo para el dashboard) y `avisos`. Devolver/Rechazar → `devolver_cot`
+  en las líneas (vuelven a por cotizar). `materializarSinRevision`: si Compras
+  cotiza una línea que almacén nunca revisó (venció el martes 15:00), primero
+  se escribe `almacen_no_hay {sinRevision}` en la nube.
+  **GeoShopping (PurchasesModule)**: `esBorradorSupply(p)` (a nivel de módulo);
+  esos borradores SOLO se ven en la vista **"Borradores (n)"** de Solicitudes
+  (`filter.ver === "borradores"`, botón junto a Pendientes/Pagadas/Ambas, no en
+  GeoMachinery) y se EXCLUYEN de pendientes/ambas, de `nPend` y de las
+  candidatas de Prioridades; chip naranja "GeoSupply" en la tabla; bloque
+  "Viene de GeoSupply" en DetailView. `renderBorradoresSupply`: tira (n ·
+  monto aprobado aún no en Tesorería · sin datos bancarios), grupos por
+  PROYECTO → CORTE, fila con chips (Contado/Crédito · Va a · fecha de pago ·
+  Cierra · Urgente · avisos), checkbox + "Seleccionar todos" + **"Enviar N a
+  Tesorería"** (masivo) y botón por fila; click → `BorradorSupplyFormImpl`
+  (lo que viene de la cotización en solo lectura + los 4 campos de Finanzas:
+  condición de pago, fecha, Va a, cierre contable; Guardar / **Enviar a
+  Tesorería**). `enviarBorradoresATesoreria` = el MISMO `validado` +
+  `treasuryStatus pendiente` + `validatedAt` + audit `approved` + `encolarPago`
+  del flujo normal, en UNA escritura de `sP`. `canCreate` (admin/costos/
+  compras_ops) envía; Carolina solo mira. `visorGlobal` para el PDF.
+  **GeoCost**: `estadoCompraCosto` cuenta `borrador + origenSupply` como
+  comprometido; al validarse sigue comprometido y al pagarse ejecutado — mismo
+  registro, sin doble conteo (verificado 2-oct: $1,057.41 comprometido → tras
+  pagar una, 759.26 + 298.15 = 1,057.41). Ítems con partida → nunca "Por
+  clasificar".
+  **Dashboard** (`renderDashboard` + `metricasDashboard` del calc): pills de
+  corte (todos / actual / anteriores) + select de proyecto; tira (solicitudes
+  · % enviadas dentro del corte · % urgentes · envío→aprobación · cotizaciones
+  aprobadas · ítems fuera de corte); tarjetas Por estado · Semáforo de precio
+  (barra verde/amarillo/rojo de los ítems aprobados + variación promedio por
+  proyecto) · Por proyecto (barras) · Tiempo promedio por etapa (residente→
+  almacén→cotización→aprobación→Tesorería→pago→entrega, con lg-despachos) ·
+  Por residente (en corte %, urgentes %, rechazados) · Ítems fuera de corte.
+  `enviadaEnCorte` = enviada ANTES del cierre de su corte (una urgente del
+  miércoles cuenta como fuera). **Panel**: `PanelCard` recibe `badge`
+  (circulito naranja) y App calcula `contarPendientes` por rol con getCloud al
+  mostrar el panel (`badges.geosupply`).
+  **Prueba de punta a punta (2-oct-2026, proyecto ZZ-PRUEBA-SUPPLY, borrado
+  después)**: residente pidió 3 ítems de la receta + 1 fuera (uno excedía el
+  saldo) → Coordinador aprobó la alerta y rechazó el fuera de presupuesto con
+  motivo (el residente lo vio) → Almacén despachó 4 de 10 tubos y "No hay" al
+  resto → Compras armó 2 cotizaciones de proveedores distintos (una con línea
+  en rojo justificada; la otra no cuadró el total y quedó bloqueada con el
+  mensaje del 1.15 hasta corregirla) → Coordinador aprobó una y devolvió la
+  otra; Compras corrigió y se aprobó con "Aprobar las N en verde" → en
+  GeoShopping aparecieron 2 borradores en "Borradores (2)" con proveedor,
+  monto, ítems con partida y datos bancarios (la del proveedor nuevo con el
+  aviso); Pendientes de pago NO los contó → GeoCost comprometido subió
+  exactamente $1,057.41 y nada en Por clasificar → Finanzas envió los 2 en
+  lote (uno cayó a Cuentas por pagar por ser crédito) → al pagarse uno pasó a
+  ejecutado sin doble conteo → bitácora con usuario y fecha en cada paso.
+  Pruebas Node: 15 (`npm test`).
 - **Accesos al sistema desde GeoTeam (2-oct-2026)**: pestaña **Accesos** (solo
   admin) en HRModule → key **`gt-usuarios`** `[{id, username, password, role,
   label (= fullName de la ficha), empId, proyectos:[shorts], activo,
