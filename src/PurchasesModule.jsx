@@ -13,6 +13,8 @@ import { fmtUSD } from "./geocost-ui.jsx";
 // DESPUÉS del await y el navegador bloqueaba el popup (caso Arturo).
 import { VisorArchivo } from "./visor-archivo.jsx";
 import { hoyISO, diaHN } from "./fechas.js";
+// Lector de cotizaciones en PDF (12-oct-2026): GeoMachinery llena las líneas solo.
+import { leerPdf, parsearCotizacion } from "./leer-cotizacion.js";
 // GeoSupply (2-oct-2026): los borradores que nacen de una cotización aprobada
 // llevan `origenSupply`; acá solo se rotula su corte.
 import { etiquetaCorte } from "./geosupply-calc.js";
@@ -1342,6 +1344,13 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   const lineasForm = Array.isArray(f.lineas) ? f.lineas : lineasIniciales(f);
   // ── Líneas MANUALES (GeoMachinery, 12-oct-2026) ──
   const lineasM = esMaqForm ? (Array.isArray(f.lineas) ? f.lineas : []) : [];
+  // ISV (12-oct-2026, Gerson: "a todas las compras automáticamente se les debe
+  // sumar el 15%"): los montos de las líneas van SIN ISV y el total = suma ×
+  // 1.15. Se puede desmarcar (exentas). Las solicitudes viejas no lo traen.
+  const factorIsv = (p) => esMaqForm && (p.sumarIsv ?? !purchase) ? 1.15 : 1;
+  const sumarIsv = factorIsv(f) > 1;
+  const [leyendo, setLeyendo] = useState(false);
+  const [lectura, setLectura] = useState(null);
   const conContenido = (l) => String(l.nombre || "").trim() || num(l.monto) > 0 || num(l.cantidad) > 0;
   const lineasMValidas = lineasM.filter(conContenido);
   const sumaM = r2(lineasMValidas.reduce((a, l) => a + num(l.monto), 0));
@@ -1349,11 +1358,51 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   // mano (si el total era la suma, sigue siendo la suma). Si Fernando escribió
   // otro total (ISV o flete al final), se respeta y la diferencia se reparte.
   const setLineasM = (ls) => setF(p => {
-    const viejo = r2((Array.isArray(p.lineas) ? p.lineas : []).filter(conContenido).reduce((a, l) => a + num(l.monto), 0));
-    const nuevo = r2(ls.filter(conContenido).reduce((a, l) => a + num(l.monto), 0));
+    const fx = factorIsv(p);
+    const viejo = r2(r2((Array.isArray(p.lineas) ? p.lineas : []).filter(conContenido).reduce((a, l) => a + num(l.monto), 0)) * fx);
+    const nuevo = r2(r2(ls.filter(conContenido).reduce((a, l) => a + num(l.monto), 0)) * fx);
     const seguia = !p.amount || Math.abs(num(p.amount) - viejo) < 0.005;
     return { ...p, lineas: ls, amount: seguia && nuevo > 0 ? String(nuevo) : p.amount };
   });
+  const toggleIsv = (v) => setF(p => {
+    const suma = r2((Array.isArray(p.lineas) ? p.lineas : []).filter(conContenido).reduce((a, l) => a + num(l.monto), 0));
+    const seguia = !p.amount || Math.abs(num(p.amount) - r2(suma * factorIsv(p))) < 0.005;
+    return { ...p, sumarIsv: v, amount: seguia && suma > 0 ? String(r2(suma * (v ? 1.15 : 1))) : p.amount };
+  });
+  // ── LEER LA COTIZACIÓN (PDF con texto) → líneas, N°, proveedor, total ──
+  const esPdf = (fd) => !!fd && /pdf/i.test(`${fd.type || ""} ${fd.name || ""}`);
+  const leerCotizacion = async (fd) => {
+    if (!esPdf(fd) || !fd.dataUrl) { alert("Solo se pueden leer cotizaciones en PDF. Las fotos se escriben a mano."); return; }
+    setLeyendo(true); setLectura(null);
+    try {
+      const filas = await leerPdf(fd.dataUrl, (fn) => safeDynamicImport(fn, "lector de PDF"));
+      const r = parsearCotizacion(filas, { providers: providers || [] });
+      if (!r.items.length) { setLectura({ error: filas.length < 3 ? "Este PDF no trae texto (es una foto o un escaneo): escribí las líneas a mano." : "No reconocí las líneas de esta cotización: escribilas a mano." }); return; }
+      if (lineasMValidas.length && !confirm(`Ya hay ${lineasMValidas.length} línea(s) escritas.\n\n¿Reemplazarlas con las ${r.items.length} que leí de la cotización?`)) return;
+      const ls = r.items.map(it => ({ id: uid(), cantidad: String(it.cantidad), unidad: it.unidad, nombre: it.nombre, monto: String(it.monto) }));
+      const suma = r2(r.items.reduce((a, it) => a + it.monto, 0));
+      const pv = r.proveedor ? (providers || []).find(x => x.id === r.proveedor.id) || r.proveedor : null;
+      setF(p => {
+        const nx = { ...p, lineas: ls, quoteFile: fd, sumarIsv: true, amount: String(r2(suma * 1.15)) };
+        if (r.numero && !String(p.quoteNumber || "").trim()) nx.quoteNumber = r.numero;
+        if (pv && !String(p.provider || "").trim()) {
+          nx.provider = pv.name;
+          const bac = (pv.bankAccounts || []).find(b => /bac/i.test(b.bank || "")) || (pv.bankAccounts || [])[0];
+          if (bac) { nx.bacAccount = bac.number || ""; nx.providerBank = bac.bank || ""; nx.providerAccountType = bac.type || ""; nx.providerAccountHolder = bac.holder || ""; }
+          if (pv.rtn) nx.providerRTN = pv.rtn;
+        }
+        if (!nx.providerRTN && r.rtn) nx.providerRTN = r.rtn;
+        return nx;
+      });
+      const calc = r2(suma * 1.15);
+      setLectura({ n: ls.length, suma, calc, total: r.total, numero: r.numero, proveedor: pv?.name || "", proveedorOtro: pv && String(f.provider || "").trim() && pv.name !== f.provider ? pv.name : "",
+        cuadra: r.total != null ? Math.abs(r.total - calc) <= 1 : null, sinIsvEnCot: r.total != null && Math.abs(r.total - suma) <= 1,
+        isvEnLinea: r.items.some(it => it.isvEnLinea), descuento: r.items.some(it => it.descuento) });
+    } catch (e) {
+      console.warn("[leer cotización]", e);
+      if (!e?.isStaleChunk) setLectura({ error: "No pude abrir el PDF: " + (e?.message || e) });
+    } finally { setLeyendo(false); }
+  };
   const uLineaM = (id, k, v) => setLineasM(lineasM.map(l => l.id === id ? { ...l, [k]: v } : l));
   const errorLineasM = (aprobar) => {
     if (!esMaqForm) return null;
@@ -1418,6 +1467,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         description: desc || f.description || "",
         detalleExtra: extra,
         categoriaMaq: categoriaMaqDe(f),
+        sumarIsv,
       };
     }
     if (modoItems) {
@@ -1677,11 +1727,35 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             </div>}
             {presConPartidas && sinElegiblesCC && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>El presupuesto no tiene partida para máquinas — quedará por clasificar en GeoCost.</div>}
             {f.projectCode && !presConPartidas && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>Este proyecto no tiene presupuesto en GeoCost: la compra no lleva partida.</div>}
-            {/* 2) La cotización, línea por línea */}
+            {/* 2) Leer la cotización en PDF → llena las líneas solo */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: `1px dashed ${ORANGE}`, background: "rgba(232,118,45,.05)", borderRadius: 12, padding: "10px 12px" }}>
+              <div style={{ flex: 1, minWidth: 220, fontSize: 12.5, color: "#475569" }}><b style={{ color: "#0f172a" }}>Leer la cotización</b> · subí el PDF y lleno las líneas, el N° y el proveedor. Vos solo revisás.</div>
+              <label style={{ display: "inline-flex", alignItems: "center", padding: "8px 14px", borderRadius: 999, background: ORANGE_DARK, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: leyendo ? "wait" : "pointer", opacity: leyendo ? .7 : 1 }}>
+                {leyendo ? "Leyendo…" : "Subir PDF y leer"}
+                <input type="file" accept="application/pdf,.pdf" style={{ display: "none" }} disabled={leyendo} onChange={async e => {
+                  const file = e.target.files?.[0]; e.target.value = ""; if (!file) return;
+                  if (file.size > 2 * 1024 * 1024) { alert(`El PDF pesa ${fmtMB(file.size)} (límite 2 MB). Comprimilo antes de subir.`); return; }
+                  try { const fd = await readFileAsDataUrl(file); await leerCotizacion(fd); } catch (err) { alert("No pude leer el archivo: " + (err?.message || err)); }
+                }} />
+              </label>
+              {esPdf(f.quoteFile) && f.quoteFile.dataUrl && !leyendo && <button type="button" onClick={() => leerCotizacion(f.quoteFile)} style={{ background: "none", border: "none", color: ORANGE_DARK, fontSize: 12, fontWeight: 800, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>Leer la que ya está adjunta</button>}
+            </div>
+            {lectura && (lectura.error
+              ? <div style={{ fontSize: 12.5, color: C_AMARILLO.color, background: C_AMARILLO.bg, borderRadius: 10, padding: "9px 12px", fontWeight: 600 }}>{lectura.error}</div>
+              : <div style={{ fontSize: 12.5, color: lectura.cuadra === false ? C_AMARILLO.color : C_VERDE.color, background: lectura.cuadra === false ? C_AMARILLO.bg : C_VERDE.bg, borderRadius: 10, padding: "9px 12px", lineHeight: 1.55 }}>
+                  <b>Leí {lectura.n} línea{lectura.n === 1 ? "" : "s"}</b>{lectura.proveedor ? <> de <b>{lectura.proveedor}</b></> : ""}{lectura.numero ? <> · cotización <b>{lectura.numero}</b></> : ""}.
+                  {" "}Suma {fmtL(lectura.suma)} + ISV 15 % = <b>{fmtL(lectura.calc)}</b>
+                  {lectura.total != null && (lectura.cuadra ? <> · la cotización dice {fmtL(lectura.total)} ✓ cuadra</> : lectura.sinIsvEnCot ? <> · la cotización dice {fmtL(lectura.total)} (no le cobra ISV: si es exenta, desmarcá "Sumar ISV")</> : <> · <b>la cotización dice {fmtL(lectura.total)}: revisá las líneas</b></>)}
+                  {lectura.isvEnLinea && <> · los precios venían con ISV incluido, los dejé sin ISV</>}
+                  {lectura.descuento && <> · traía descuento por línea, ya está aplicado</>}
+                  {lectura.proveedorOtro && <> · ojo: la cotización parece de <b>{lectura.proveedorOtro}</b></>}
+                  <div style={{ fontSize: 11.5, opacity: .85, marginTop: 2 }}>Revisá cada línea y corregí lo que haga falta antes de aprobar.</div>
+                </div>)}
+            {/* 3) La cotización, línea por línea */}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>La cotización, línea por línea *</label>
-                <span style={{ fontSize: 11.5, color: "#64748b" }}>Montos en L, con ISV, tal cual la cotización</span>
+                <span style={{ fontSize: 11.5, color: "#64748b" }}>Montos en L {sumarIsv ? "SIN ISV (el 15 % se suma al total)" : "tal cual la cotización"}</span>
               </div>
               <datalist id="maq-unidades">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist>
               {lineasM.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "76px 110px minmax(0,1fr) 120px 28px", gap: 6, fontSize: 10.5, fontWeight: 800, color: "#94A3B8", textTransform: "uppercase", letterSpacing: .4, padding: "0 2px" }}>
@@ -1696,11 +1770,15 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
               </div>)}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 2 }}>
                 <button type="button" onClick={() => setLineasM([...lineasM, { id: uid(), cantidad: "", unidad: "", nombre: "", monto: "" }])} style={{ background: "#fff", border: `1px dashed ${ORANGE}`, color: ORANGE_DARK, borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>+ Agregar línea</button>
-                {lineasMValidas.length > 0 && <div style={{ fontSize: 12.5, color: "#475569" }}>
-                  Suma de líneas <b style={{ color: "#0f172a" }}>{fmtL(sumaM)}</b>
-                  {num(f.amount) > 0 && Math.abs(num(f.amount) - sumaM) >= 0.005 && <span style={{ marginLeft: 8, color: "#A94E16", fontWeight: 700 }}>· el total dice {fmtL(f.amount)} (la diferencia se reparte entre las líneas)</span>}
+                {lineasMValidas.length > 0 && <div style={{ fontSize: 12.5, color: "#475569", textAlign: "right" }}>
+                  Subtotal <b style={{ color: "#0f172a" }}>{fmtL(sumaM)}</b>
+                  {sumarIsv && <> · ISV 15 % <b style={{ color: "#0f172a" }}>{fmtL(r2(r2(sumaM * 1.15) - sumaM))}</b> · Total <b style={{ color: "#0f172a" }}>{fmtL(r2(sumaM * 1.15))}</b></>}
+                  {num(f.amount) > 0 && Math.abs(num(f.amount) - r2(sumaM * (sumarIsv ? 1.15 : 1))) >= 0.005 && <div style={{ color: "#A94E16", fontWeight: 700 }}>El monto total dice {fmtL(f.amount)} (la diferencia se reparte entre las líneas)</div>}
                 </div>}
               </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#475569", cursor: "pointer", alignSelf: "flex-start" }}>
+                <input type="checkbox" checked={sumarIsv} onChange={e => toggleIsv(e.target.checked)} /> Sumar ISV 15 % al total (desmarcá solo si la compra es exenta)
+              </label>
             </div>
             <Textarea label="Detalle adicional (opcional)" value={extraForm || ""} onChange={e => u("detalleExtra", e.target.value)} placeholder="Para qué máquina, horómetro, garantía, algo que la cotización diga distinto…" />
           </div>
@@ -1778,7 +1856,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       file={f.quoteFile}
       canUpload
       accent="#2563EB"
-      onUpload={fd => u("quoteFile", fd)}
+      onUpload={fd => { u("quoteFile", fd); if (esMaqForm && !lineasMValidas.length && esPdf(fd)) leerCotizacion(fd); }}
       onRemove={() => u("quoteFile", null)}
     />
 

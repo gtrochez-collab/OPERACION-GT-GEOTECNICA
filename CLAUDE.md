@@ -7,7 +7,7 @@ cache localStorage. Deploy automático a GitHub Pages al hacer push a `main`.
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
-- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs` y `tests/geocost-maq.test.mjs`.
+- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs` y `tests/leer-cotizacion.test.mjs`.
 - Deploy: `git push origin main` dispara `.github/workflows/deploy.yml` → gh-pages.
   URL: https://gtrochez-collab.github.io/OPERACION-GT-GEOTECNICA/
 - Verificar deploy: `gh run list` + grep del texto nuevo en el bundle publicado.
@@ -759,6 +759,37 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   **Fix de paso**: el form de solicitud (ambos módulos) se salía del modal por
   la derecha con los nombres largos de proyecto — grid `minmax(0,1fr)` y
   selects `width:100%`.
+  **LEER LA COTIZACIÓN EN PDF + ISV automático (12-oct-2026, pedido de
+  Gerson)**: "hay cotizaciones muy largas y es tedioso escribir una por una;
+  que el sistema la lea y él solo valide y corrija". `src/leer-cotizacion.js`
+  SIN servicios externos: `leerPdf` usa **pdf.js** (`pdfjs-dist`, carga
+  diferida con `safeDynamicImport`, worker por `?url`) para sacar el texto con
+  su posición → `filasDeItems` arma filas/celdas → `parsearCotizacion` (PURA,
+  `tests/leer-cotizacion.test.mjs`) reconoce: ÍTEMS = toda fila donde
+  cantidad × precio = un número a la derecha (total de línea; o subtotal y
+  después descuento → neto, caso REASA; o total CON ISV = q×p×1.15, caso
+  Larach — ahí el monto queda sin ISV); descripción = lo que está antes de la
+  cantidad (sin # de fila, moneda ni "Disponible/Nacional") + hasta 2
+  renglones de continuación alineados; unidad = palabra pegada a la cantidad
+  (`unidadDe`; "L." es Lempiras, nunca Litro) o pista en la descripción
+  ("CK-4/CUB" → Cubeta); coma decimal ("278,26"); subtotal/ISV/total por
+  etiqueta ("Monto Bruto", "Sub-Total", "Imp. S / V", "Monto Neto", "Total a
+  pagar"…); N° de cotización; RTN; proveedor contra cp-providers (primero por
+  RTN, luego por nombre; nunca nuestras empresas). Medido el 12-oct contra 58
+  cotizaciones REALES en PDF con texto del sistema: lee bien 52 (las otras son
+  estados de cuenta, rentas en dólares y un PDF con texto roto); de 113
+  cotizaciones, 42 son FOTOS y 13 PDFs escaneados — esos NO tienen texto y se
+  siguen escribiendo a mano (para leerlos haría falta OCR o IA: servicio
+  externo, a consultar con Gerson). En GeoMachinery (`esMaqForm`): caja
+  "Leer la cotización · Subir PDF y leer" arriba de las líneas (y "Leer la que
+  ya está adjunta"); subir la cotización en el FileSlot de abajo también la lee
+  si no hay líneas. Llena líneas, N°, proveedor (+ cuenta bancaria y RTN del
+  maestro, solo si el campo estaba vacío), adjunta el PDF y pone el total.
+  Banner verde "Leí N líneas de X · Suma + ISV = total · la cotización dice …
+  ✓ cuadra" o ámbar si no cuadra. **ISV**: campo aditivo `sumarIsv` (default
+  true en solicitudes NUEVAS de GeoMachinery; las viejas no lo traen): las
+  líneas van SIN ISV y el monto total = suma × 1.15 ("Subtotal · ISV 15 % ·
+  Total"), checkbox para desmarcarlo en compras exentas.
   Verificado el 28-sep montando el módulo con cada rol (admin, Fernando,
   Carolina) sobre la data real, todas las pestañas sin errores, y GeoShopping
   igual que antes.
