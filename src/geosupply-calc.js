@@ -24,7 +24,7 @@
 //                      tasaCambioUsada, purchaseId, audit[]}
 //   sp-config         CONFIG_DEFAULT con lo que Gerson edite encima.
 import { TZ_HN } from "./fechas.js";
-import { num, hnlToUsd } from "./geocost-calc.js";
+import { num, hnlToUsd, textoVarilla } from "./geocost-calc.js";
 
 const round2 = (x) => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
 export { round2 };
@@ -473,7 +473,7 @@ export const destinoSugerido = ({ condicionPago, fechaRequeridaObra, urgente, ho
 
 /** La descripción que lee Tesorería: un renglón por ítem, tal cual la cotización. */
 export const descripcionDeCotizacion = (lineasEval) => (lineasEval || [])
-  .map(l => `${num(l.cantidad).toLocaleString("es-HN")}${l.unidad ? " " + l.unidad : ""} × ${l.descripcion}`.trim())
+  .map(l => l.varilla ? textoVarilla(l.varilla, l.cantidad, l.unidadPartida || l.unidad) : `${num(l.cantidad).toLocaleString("es-HN")}${l.unidad ? " " + l.unidad : ""} × ${l.descripcion}`.trim())
   .join("\n");
 
 /**
@@ -502,6 +502,7 @@ export const borradorDesdeCotizacion = ({ cotizacion, evaluacion, solicitud, pro
     monto: l.subtotal,
     ...(l.solucion ? { solucion: l.solucion } : {}),
     ...(l.fueraPresupuesto ? { fueraPresupuesto: true } : {}),
+    ...(l.varilla ? { varilla: { n: Number(l.varilla.n), largo: Number(l.varilla.largo), lances: num(l.varilla.lances) } } : {}),
   }));
   // La partida "principal" (la de más plata) para lo que aún lee una sola.
   const principal = lineas.filter(l => l.partidaId).sort((a, b) => b.monto - a.monto)[0] || null;

@@ -27,6 +27,40 @@ export const MODULOS_PARTIDA = {
 // 25-sep-2026: se sumaron las que trae el presupuesto de ingeniería (Lance,
 // Cubeta, Und…) — Gerson: "las unidades tienen que ser sí o sí iguales".
 export const UNIDADES = ["Global", "Unidad", "Und", "Lance", "Lance 9 m", "Lance 12 m", "Cubeta", "Bolsa", "Rollo", "Galón", "Litro", "m", "m2", "m3", "Ton", "kg", "Yarda", "Pie-Tab", "Pie-tablar", "Caja", "Par", "Juego", "Viaje", "Hora", "Día", "Servicio"];
+// ── VARILLA: peso por lance (12-oct-2026, caso acero de Villa San Miguel) ──
+// El PM manda el acero en TONELADAS ("Acero de construcción, varios diámetros")
+// pero se compra en LANCES de cada diámetro. El peso no lo da el PM: es la
+// tabla estándar de varilla corrugada (ASTM A615), kg por metro. Con eso se
+// convierte cualquier compra en lances a la unidad de peso de la partida.
+export const VARILLAS = [
+  { n: 2, pulg: "1/4\"", kgm: 0.248 },
+  { n: 3, pulg: "3/8\"", kgm: 0.560 },
+  { n: 4, pulg: "1/2\"", kgm: 0.994 },
+  { n: 5, pulg: "5/8\"", kgm: 1.552 },
+  { n: 6, pulg: "3/4\"", kgm: 2.235 },
+  { n: 7, pulg: "7/8\"", kgm: 3.042 },
+  { n: 8, pulg: "1\"", kgm: 3.973 },
+  { n: 9, pulg: "1-1/8\"", kgm: 5.060 },
+  { n: 10, pulg: "1-1/4\"", kgm: 6.404 },
+  { n: 11, pulg: "1-3/8\"", kgm: 7.907 },
+];
+export const LARGOS_VARILLA = [6, 9, 12];
+const KG_POR_UNIDAD = { ton: 1000, tonelada: 1000, toneladas: 1000, t: 1000, tm: 1000, kg: 1, kgs: 1, kilo: 1, kilos: 1, qq: 45.3592, quintal: 45.3592, quintales: 45.3592, lb: 0.453592, lbs: 0.453592, libra: 0.453592, libras: 0.453592 };
+/** kg que vale 1 de esa unidad ("Ton" → 1000), o null si no es de peso. */
+export const kgPorUnidad = (u) => KG_POR_UNIDAD[String(u || "").trim().toLowerCase().replace(/\.$/, "")] || null;
+/** ¿Esta partida es de acero por peso? (ahí se ofrece la calculadora de lances) */
+export const esPartidaVarillaPorPeso = (p) => !!p && !!kgPorUnidad(p.unidad) && /acero|varilla|hierro|refuerzo/i.test(p.nombre || "");
+export const varillaDe = (n) => VARILLAS.find(v => v.n === Number(n)) || null;
+export const pesoLanceKg = (n, largo) => { const v = varillaDe(n); return v ? Math.round(v.kgm * Number(largo || 0) * 1000) / 1000 : 0; };
+/** Cantidad en la unidad de la partida (ej. Ton) de N lances. */
+export const cantidadDeVarilla = ({ n, largo, lances }, unidad) => {
+  const f = kgPorUnidad(unidad); const kg = pesoLanceKg(n, largo) * num(lances);
+  return f && kg > 0 ? Math.round((kg / f) * 10000) / 10000 : 0;
+};
+export const nombreVarilla = ({ n, largo }) => { const v = varillaDe(n); return v ? `Varilla #${v.n} (${v.pulg}) de ${Number(largo)} m` : "Varilla"; };
+/** "1,000 lances × Varilla #5 (5/8") de 9 m · 13.97 Ton" */
+export const textoVarilla = (vr, cantidad, unidad) => `${num(vr?.lances).toLocaleString("es-HN")} lances × ${nombreVarilla(vr || {})}${num(cantidad) > 0 ? ` · ${num(cantidad).toLocaleString("es-HN", { maximumFractionDigits: 2 })}${unidad ? " " + unidad : ""}` : ""}`;
+
 export const RENGLONES_MOV_DEFAULT = ["Combustible (ida y vuelta)", "Peajes", "Mano de obra conductor", "Imprevistos"];
 // Tipo de movilización (11-sep-2026): "propia" = la hacemos nosotros (solicitud
 // de fondos con renglones y conductor); "proveedor" = la hace un tercero (UN
@@ -420,7 +454,8 @@ export const movimientosCompras = ({ purchases, projectCode, tasa, fuente = "com
       // Con SUSTITUTO (30-sep-2026) se describe lo que realmente se compró
       // (arena, grava…) y el detalle avisa a qué partida se carga.
       // Líneas MANUALES (GeoMachinery, 12-oct-2026): llevan su propia unidad.
-      descripcion: [num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")}${l.sustituto?.unidad ? " " + l.sustituto.unidad : l.manual && l.unidad ? " " + l.unidad : ""} ×` : null, l.sustituto?.nombre || l.nombre].filter(Boolean).join(" ") || p.description || "",
+      descripcion: l.varilla ? textoVarilla(l.varilla, l.cantidad, l.unidad)
+        : [num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")}${l.sustituto?.unidad ? " " + l.sustituto.unidad : l.manual && l.unidad ? " " + l.unidad : ""} ×` : null, l.sustituto?.nombre || l.nombre].filter(Boolean).join(" ") || p.description || "",
       detalle: [p.provider, arr.length > 1 ? `ítem ${i + 1} de ${arr.length}` : null, l.sustituto ? `sustituto de: ${l.nombre}${l.sustituto.motivo ? ` (${l.sustituto.motivo})` : ""}` : null, mq?.nombre].filter(Boolean).join(" · "),
       sustituto: !!l.sustituto,
       partidaId: l.partidaId,

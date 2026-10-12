@@ -1402,11 +1402,31 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   marcar pagada" para ver comprometido → ejecutado. "Reiniciar" borra las 3
   keys y los PDFs simulados (`store.remove`). En simulación el saldo usa
   `purchasesVista` = reales + simulados. `gt-supply-sim` en sessionStorage.
-  ⚠ Hallazgo en la prueba: en Villa San Miguel el "Acero de construcción"
-  está en **Ton** en la receta pero en GeoShopping se compró en otras
-  unidades (lances), así que su saldo en cantidad sale −953 y CUALQUIER pedido
-  de acero cae como "excede el saldo". El saldo en cantidad solo sirve si la
-  unidad del ítem en GeoShopping es la de la receta.
+  **VARILLA POR PESO (12-oct-2026, caso acero de Villa San Miguel)**: el PM
+  manda el acero como UNA partida en **Ton** ("Acero de construcción, varios
+  diámetros", 46.22 Ton a $1,050) pero se compra en LANCES. Decisión de
+  Gerson: la receta queda COMO LA MANDÓ EL PM (no se inventa un reparto por
+  diámetro) y el sistema convierte con la tabla estándar ASTM A615
+  (`VARILLAS` en geocost-calc: kg/m de #2 a #11; `pesoLanceKg`,
+  `kgPorUnidad` Ton/kg/qq/lb, `cantidadDeVarilla`, `nombreVarilla`,
+  `textoVarilla`, `esPartidaVarillaPorPeso` = unidad de peso + nombre
+  acero/varilla/hierro/refuerzo; Torre Adobe, que ya viene por lance, NO la
+  activa). Línea con `varilla: {n, largo, lances}` y `cantidad` en la unidad
+  de la partida. Dónde: `LineasPresupuesto` (GeoShopping: caja gris "Se compra
+  en lances" con #, largo 6/9/12 y lances → llena la cantidad),
+  `SolicitudFormImpl` de GeoSupply (la varilla se puede agregar varias veces,
+  una línea por diámetro; `excede` suma todas las líneas de la partida;
+  descripción "Varilla #5 (5/8") de 9 m · 20 lances") y `CotizacionFormImpl`
+  (Ana cotiza LANCES y P.U. POR LANCE; cantidad en Ton y `puLps` por Ton se
+  derivan, así el semáforo compara contra los $1,050/Ton). Descripción en
+  GeoShopping/GeoCost: "1,000 lances × Varilla #5 (5/8") de 9 m · 13.97 Ton".
+  Datos corregidos en la nube el 12-oct: MAT-2026-0515 era "1,000 Ton" → 1,000
+  lances #5 9 m = 13.968 Ton (con `ajustaDescripcion`); MAT-2026-0416 desglosada
+  en 430 #6 9 m + 245 #5 9 m + 302 #8 12 m = 26.47 Ton (descripción intacta).
+  Saldo real: 46.22 − 40.44 = **5.78 Ton**. En plata la partida va $788 arriba
+  ($49,319 / $48,531) por PRECIO (ECOMETAL ~$1,197/Ton vs $1,050 del PM) y
+  porque el alambre de amarre (MAT-0412 y MAT-0469, $907) también carga ahí
+  (Gerson: se queda ahí). Pruebas en `tests/geocost-maq.test.mjs`.
 - **Accesos al sistema desde GeoTeam (2-oct-2026)**: pestaña **Accesos** (solo
   admin) en HRModule → key **`gt-usuarios`** `[{id, username, password, role,
   label (= fullName de la ficha), empId, proyectos:[shorts], activo,

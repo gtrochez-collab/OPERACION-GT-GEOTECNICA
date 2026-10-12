@@ -19,7 +19,7 @@
 // "Dividir en ítems" de GeoCost. Vive a NIVEL DE MÓDULO (regla de la casa).
 // ═══════════════════════════════════════════════════════════════════════════
 import { useState } from "react";
-import { num, hnlToUsd, partidasParaModulo, repartirLineas, lineasValidas, CATEGORIAS } from "./geocost-calc.js";
+import { num, hnlToUsd, partidasParaModulo, repartirLineas, lineasValidas, CATEGORIAS, VARILLAS, LARGOS_VARILLA, esPartidaVarillaPorPeso, cantidadDeVarilla, pesoLanceKg, textoVarilla } from "./geocost-calc.js";
 const solDe = (p) => String(p?.solucion || "").trim();
 
 const ORANGE_DARK = "#C75F1F";
@@ -102,7 +102,11 @@ export const lineasParaGuardar = (pres, lineas) => {
     // lo real va en `sustituto` y es lo que lee la descripción.
     const realNombre = String(l.realNombre || "").trim();
     const sustituto = l.real && realNombre ? { nombre: realNombre, unidad: String(l.realUnidad || "").trim(), motivo: String(l.realMotivo || "").trim() } : null;
-    return { id: l.id && l.id !== "legacy" ? l.id : uidL(), partidaId: l.partidaId, ...(solDe(p) ? { solucion: solDe(p) } : {}), categoria: p.categoria || "Otros", nombre: p.nombre || "", unidad: p.unidad || "", cantidad: num(l.cantidad), monto: r2(num(l.monto)), ...(sustituto ? { sustituto } : {}) };
+    // VARILLA (12-oct-2026): partida en Ton/kg comprada en lances — se guarda
+    // el diámetro, el largo y los lances; `cantidad` queda en la unidad de la
+    // partida (lo que mide el saldo).
+    const varilla = esPartidaVarillaPorPeso(p) && num(l.varLances) > 0 && l.varN ? { n: Number(l.varN), largo: Number(l.varLargo || 9), lances: num(l.varLances) } : null;
+    return { id: l.id && l.id !== "legacy" ? l.id : uidL(), partidaId: l.partidaId, ...(solDe(p) ? { solucion: solDe(p) } : {}), categoria: p.categoria || "Otros", nombre: p.nombre || "", unidad: p.unidad || "", cantidad: varilla ? cantidadDeVarilla(varilla, p.unidad) : num(l.cantidad), monto: r2(num(l.monto)), ...(sustituto ? { sustituto } : {}), ...(varilla ? { varilla } : {}) };
   });
 };
 // "5 Lance × Varilla No.3…" — un renglón por ítem. Es lo que leen la tabla,
@@ -112,6 +116,7 @@ export const lineasParaGuardar = (pres, lineas) => {
 export const nombreRealDe = (l) => l?.sustituto?.nombre || l?.nombre || "";
 export const unidadRealDe = (l) => l?.sustituto ? (l.sustituto.unidad || "") : (l?.unidad || "");
 export const descripcionDeLineas = (lineas) => (lineas || []).map(l => {
+  if (l.varilla) return textoVarilla(l.varilla, l.cantidad, l.unidad);
   const u = unidadRealDe(l);
   const cant = num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")}${u ? " " + u : ""} × ` : "";
   return `${cant}${nombreRealDe(l)}`.trim();
@@ -121,7 +126,8 @@ export const descripcionDeLineas = (lineas) => (lineas || []).map(l => {
 export const lineasIniciales = (purchase) => {
   const ls = Array.isArray(purchase?.lineas) ? purchase.lineas : [];
   if (ls.length) return ls.map(l => ({ id: l.id || uidL(), partidaId: l.partidaId || "", cantidad: l.cantidad ? String(l.cantidad) : "", monto: l.monto ? String(l.monto) : "", categoria: l.categoria,
-    ...(l.sustituto ? { real: true, realNombre: l.sustituto.nombre || "", realUnidad: l.sustituto.unidad || "", realMotivo: l.sustituto.motivo || "" } : {}) }));
+    ...(l.sustituto ? { real: true, realNombre: l.sustituto.nombre || "", realUnidad: l.sustituto.unidad || "", realMotivo: l.sustituto.motivo || "" } : {}),
+    ...(l.varilla ? { varN: String(l.varilla.n), varLargo: String(l.varilla.largo), varLances: String(l.varilla.lances) } : {}) }));
   if (purchase?.partidaId) return [{ id: "legacy", partidaId: purchase.partidaId, cantidad: "", monto: purchase.amount ? String(purchase.amount) : "" }];
   return [];
 };
@@ -216,6 +222,28 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
               {l.real ? "Quitar sustituto" : "Es otro material"}
             </button>}
           </div>
+          {/* VARILLA: la partida está en Ton/kg pero se compra en lances */}
+          {esPartidaVarillaPorPeso(p) && (() => {
+            const setVar = (k, v) => {
+              const nl = { ...l, [k]: v };
+              const n = nl.varN, largo = nl.varLargo || "9", lances = nl.varLances;
+              const cant = n && num(lances) > 0 ? cantidadDeVarilla({ n, largo, lances }, p.unidad) : "";
+              onChange((lineas || []).map(x => x.id === l.id ? { ...nl, varLargo: largo, cantidad: cant ? String(cant) : nl.cantidad } : x));
+            };
+            const kgL = l.varN ? pesoLanceKg(l.varN, l.varLargo || 9) : 0;
+            return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "minmax(0,1.3fr) 110px 120px minmax(0,1fr)", gap: 8, alignItems: "center", background: "#F1F5F9", borderRadius: 10, padding: 10 }}>
+              <div style={{ gridColumn: "1 / -1", fontSize: 11, color: "#475569", fontWeight: 700 }}>Se compra en lances — el sistema calcula las {p.unidad} con el peso de cada varilla</div>
+              <select value={l.varN || ""} onChange={e => setVar("varN", e.target.value)} style={{ ...INPUT, background: "#fff" }}>
+                <option value="">— Varilla —</option>
+                {VARILLAS.map(v => <option key={v.n} value={v.n}>#{v.n} ({v.pulg})</option>)}
+              </select>
+              <select value={l.varLargo || "9"} onChange={e => setVar("varLargo", e.target.value)} style={{ ...INPUT, background: "#fff" }}>
+                {LARGOS_VARILLA.map(x => <option key={x} value={x}>{x} m</option>)}
+              </select>
+              <input type="number" min="0" step="1" value={l.varLances || ""} onChange={e => setVar("varLances", e.target.value)} placeholder="Lances" style={{ ...INPUT, background: "#fff", textAlign: "right" }} />
+              <div style={{ fontSize: 12, color: "#475569" }}>{kgL ? <>{kgL.toLocaleString("es-HN")} kg c/u{num(l.varLances) > 0 ? <> · <b style={{ color: "#0f172a" }}>{num(l.cantidad).toLocaleString("es-HN", { maximumFractionDigits: 3 })} {p.unidad}</b></> : null}</> : "Elegí la varilla"}</div>
+            </div>;
+          })()}
           {/* SUSTITUTO: qué se compra REALMENTE (la partida de arriba no cambia) */}
           {l.real && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) 110px minmax(0,1fr)", gap: 8, background: C_AMARILLO.bg, borderRadius: 10, padding: 10 }}>
             <div style={{ gridColumn: "1 / -1", fontSize: 11, color: C_AMARILLO.color, fontWeight: 700 }}>

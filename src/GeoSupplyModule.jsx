@@ -33,7 +33,7 @@ import { GT_CSS } from "./gt-ui.js";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 import { hoyISO } from "./fechas.js";
-import { num, UNIDADES, TASA_DEFAULT, movimientosCompras } from "./geocost-calc.js";
+import { num, UNIDADES, TASA_DEFAULT, movimientosCompras, VARILLAS, LARGOS_VARILLA, esPartidaVarillaPorPeso, cantidadDeVarilla, pesoLanceKg, nombreVarilla, kgPorUnidad } from "./geocost-calc.js";
 import { Input, Select, Textarea, Btn, Chip, Modal, C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, fmtL, fmtUSD, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
 import {
@@ -153,16 +153,26 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
   const soluciones = [...new Set(pedibles.map(p => String(p.solucion || "").trim()).filter(Boolean))];
   const norm = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
   const encontrados = q.trim().length < 2 ? [] : pedibles.filter(p => (!sol || String(p.solucion || "").trim() === sol) && norm(`${p.nombre} ${p.categoria} ${p.solucion || ""}`).includes(norm(q))).slice(0, 12);
-  const yaEsta = (id) => f.lineas.some(l => l.partidaId === id);
+  // La varilla (partida en Ton) se puede agregar varias veces: una línea por diámetro.
+  const yaEsta = (id) => f.lineas.some(l => l.partidaId === id) && !esPartidaVarillaPorPeso(pedibles.find(p => p.id === id));
   const agregar = (p) => {
     if (yaEsta(p.id)) return;
-    u("lineas", [...f.lineas, { id: uid(), partidaId: p.id, descripcion: p.nombre, unidad: p.unidad || "", categoria: p.categoria || "", solucion: p.solucion || "", cantidad: "", fueraPresupuesto: false }]);
+    const vr = esPartidaVarillaPorPeso(p) ? { varilla: { n: "", largo: 9, lances: "" } } : {};
+    u("lineas", [...f.lineas, { id: uid(), partidaId: p.id, descripcion: p.nombre, unidad: p.unidad || "", categoria: p.categoria || "", solucion: p.solucion || "", cantidad: "", fueraPresupuesto: false, ...vr }]);
     setQ("");
   };
+  // Varilla: diámetro + largo + lances → cantidad en la unidad de la partida.
+  const uVarilla = (id, k, v) => u("lineas", f.lineas.map(l => {
+    if (l.id !== id) return l;
+    const varilla = { ...(l.varilla || {}), [k]: k === "lances" ? v : Number(v) };
+    const cant = varilla.n && num(varilla.lances) > 0 ? cantidadDeVarilla(varilla, l.unidad) : "";
+    return { ...l, varilla, cantidad: cant ? String(cant) : "" };
+  }));
   const uLinea = (id, k, v) => u("lineas", f.lineas.map(l => l.id === id ? { ...l, [k]: v } : l));
   const quitar = (id) => u("lineas", f.lineas.filter(l => l.id !== id));
   const saldoLinea = (l) => l.partidaId ? saldoDe(f.projectCode, l.partidaId, f.id) : null;
-  const excede = (l) => { const s = saldoLinea(l); return !!s && !s.sinCantidad && num(l.cantidad) > s.saldo + 0.0001; };
+  // Suma TODAS las líneas de la misma partida (la varilla puede venir en varias).
+  const excede = (l) => { const s = saldoLinea(l); const tot = f.lineas.filter(x => x.partidaId && x.partidaId === l.partidaId).reduce((a, x) => a + num(x.cantidad), 0); return !!s && !s.sinCantidad && tot > s.saldo + 0.0001; };
   const corte = corteDe(ahora, cfg, { urgente: !!f.urgente });
   const etq = etiquetaCorte(corte);
   const lleg = llegadaEstimada(corte, cfg);
@@ -173,7 +183,8 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
     if (enviar && f.fechaRequeridaObra && f.fechaRequeridaObra < hoyISO()) e.push("La fecha requerida en obra ya pasó.");
     if (enviar && !f.lineas.length) e.push("Agregá al menos un ítem.");
     f.lineas.forEach(l => {
-      if (enviar && !(num(l.cantidad) > 0)) e.push(`${l.descripcion || "Ítem"}: la cantidad debe ser mayor que 0.`);
+      if (l.varilla && enviar && (!l.varilla.n || !(num(l.varilla.lances) > 0))) e.push(`${l.descripcion || "Varilla"}: elegí la varilla y cuántos lances.`);
+      else if (enviar && !(num(l.cantidad) > 0)) e.push(`${l.descripcion || "Ítem"}: la cantidad debe ser mayor que 0.`);
       if (l.fueraPresupuesto && (!String(l.descripcion || "").trim() || (enviar && String(l.justificacion || "").trim().length < 5))) e.push(`${l.descripcion || "Ítem fuera de presupuesto"}: escribí qué es y por qué no está en la receta.`);
     });
     if (f.urgente && enviar && String(f.justificacionUrgencia || "").trim().length < 5) e.push("Una urgente necesita justificación.");
@@ -185,7 +196,9 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
     if (enviar && f.urgente && !confirm("Marcaste la solicitud como URGENTE: se salta el corte, pero cada ítem pasa primero por el Coordinador y queda medido. ¿Enviar igual?")) return;
     setSaving(true);
     try {
-      const lineas = f.lineas.map(l => ({ ...l, cantidad: num(l.cantidad), excedeSaldo: excede(l) }));
+      const lineas = f.lineas.map(l => ({ ...l, cantidad: num(l.cantidad), excedeSaldo: excede(l),
+        // La varilla se describe por lo que se pide: "Varilla #5 (5/8") de 9 m · 20 lances"
+        ...(l.varilla && l.varilla.n ? { varilla: { n: Number(l.varilla.n), largo: Number(l.varilla.largo || 9), lances: num(l.varilla.lances) }, descripcion: `${nombreVarilla(l.varilla)} · ${num(l.varilla.lances).toLocaleString("es-HN")} lances` } : {}) }));
       await onGuardar({ ...f, lineas }, enviar);
     } finally { setSaving(false); }
   };
@@ -244,10 +257,21 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
             </div>
             {l.fueraPresupuesto && <input value={l.justificacion || ""} onChange={e => uLinea(l.id, "justificacion", e.target.value)} placeholder="Por qué hace falta y no está en la receta *" style={{ ...CTRL, width: "100%", marginTop: 6, background: "#fff" }} />}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <input type="number" min="0" step="any" value={l.cantidad} onChange={e => uLinea(l.id, "cantidad", e.target.value)} placeholder="Cant." style={{ ...CTRL, width: 90, textAlign: "right", fontWeight: 700 }} />
-            <span style={{ fontSize: 12, color: "var(--text-2)", minWidth: 40 }}>{l.unidad || ""}</span>
-          </div>
+          {l.varilla
+            ? <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <select value={l.varilla.n || ""} onChange={e => uVarilla(l.id, "n", e.target.value)} style={{ ...CTRL, width: 112 }}>
+                <option value="">Varilla</option>{VARILLAS.map(v => <option key={v.n} value={v.n}>#{v.n} ({v.pulg})</option>)}
+              </select>
+              <select value={l.varilla.largo || 9} onChange={e => uVarilla(l.id, "largo", e.target.value)} style={{ ...CTRL, width: 74 }}>
+                {LARGOS_VARILLA.map(x => <option key={x} value={x}>{x} m</option>)}
+              </select>
+              <input type="number" min="0" step="1" value={l.varilla.lances || ""} onChange={e => uVarilla(l.id, "lances", e.target.value)} placeholder="Lances" style={{ ...CTRL, width: 84, textAlign: "right", fontWeight: 700 }} />
+              <span style={{ fontSize: 11.5, color: "var(--text-2)", minWidth: 70 }}>{num(l.cantidad) > 0 ? `= ${num(l.cantidad).toLocaleString("es-HN", { maximumFractionDigits: 3 })} ${l.unidad}` : l.varilla.n ? `${pesoLanceKg(l.varilla.n, l.varilla.largo || 9)} kg c/u` : ""}</span>
+            </div>
+            : <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input type="number" min="0" step="any" value={l.cantidad} onChange={e => uLinea(l.id, "cantidad", e.target.value)} placeholder="Cant." style={{ ...CTRL, width: 90, textAlign: "right", fontWeight: 700 }} />
+              <span style={{ fontSize: 12, color: "var(--text-2)", minWidth: 40 }}>{l.unidad || ""}</span>
+            </div>}
           <button type="button" onClick={() => quitar(l.id)} title="Quitar" style={{ background: "none", border: "none", color: "var(--text-3)", fontSize: 16, cursor: "pointer" }}>✕</button>
         </div>;
       })}
@@ -308,9 +332,20 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
   const incluida = (lid) => f.lineas.some(x => x.requestLineId === lid);
   const toggle = (c) => {
     if (incluida(c.l.id)) return u("lineas", f.lineas.filter(x => x.requestLineId !== c.l.id));
-    u("lineas", [...f.lineas, { requestLineId: c.l.id, requestId: c.sol.id, cantidad: c.pendiente, parcial: false, puLps: "", justificacion: "", descripcion: c.l.descripcion, unidad: c.l.unidad }]);
+    const vr = c.l.varilla ? { lances: lancesDe(c.l, c.pendiente), puLance: "" } : {};
+    u("lineas", [...f.lineas, { requestLineId: c.l.id, requestId: c.sol.id, cantidad: c.pendiente, parcial: false, puLps: "", justificacion: "", descripcion: c.l.descripcion, unidad: c.l.unidad, ...vr }]);
   };
   const uL = (lid, k, v) => u("lineas", f.lineas.map(x => x.requestLineId === lid ? { ...x, [k]: v } : x));
+  // VARILLA: Ana cotiza por LANCE (como viene la cotización); la cantidad y el
+  // P.U. por tonelada se derivan solos para el saldo y el semáforo.
+  function lancesDe(ls, cant) { const kg = pesoLanceKg(ls.varilla?.n, ls.varilla?.largo); const f2 = kgPorUnidad(ls.unidad); return kg && f2 ? Math.round((num(cant) * f2) / kg) : 0; }
+  const uVar = (c, k, v) => u("lineas", f.lineas.map(x => {
+    if (x.requestLineId !== c.l.id) return x;
+    const nx = { ...x, [k]: v };
+    const cant = cantidadDeVarilla({ ...c.l.varilla, lances: nx.lances }, c.l.unidad);
+    const puLps = cant > 0 && num(nx.puLance) > 0 ? (num(nx.puLance) * num(nx.lances)) / cant : "";
+    return { ...nx, cantidad: cant, puLps, parcial: cant < c.pendiente - 0.0001 };
+  }));
   const lineaSolicitudDe = (lid) => candidatas.find(c => c.l.id === lid)?.l || null;
   const ev = evaluarCotizacion({ cotizacion: f, tasa, cfg, partidaDe, lineaSolicitudDe });
   const porLinea = (lid) => ev.lineas.find(x => x.requestLineId === lid);
@@ -319,7 +354,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
     if (enviar && !ev.ok) return alert(ev.errores.join("\n"));
     if (!enviar && !String(f.provider || "").trim()) return alert("Elegí el proveedor.");
     setSaving(true);
-    try { await (enviar ? onEnviar : onGuardar)({ ...f, totalDeclarado: num(f.totalDeclarado), lineas: f.lineas.map(l => ({ ...l, cantidad: num(l.cantidad), puLps: num(l.puLps) })) }, ev); }
+    try { await (enviar ? onEnviar : onGuardar)({ ...f, totalDeclarado: num(f.totalDeclarado), lineas: f.lineas.map(l => ({ ...l, cantidad: num(l.cantidad), puLps: num(l.puLps), ...(l.lances !== undefined ? { lances: num(l.lances), puLance: num(l.puLance) } : {}) })) }, ev); }
     finally { setSaving(false); }
   };
   const CTRL = { padding: "8px 10px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 10, fontSize: 13, outline: "none", background: "#F4F4F2", fontFamily: "inherit", boxSizing: "border-box" };
@@ -359,7 +394,17 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
             </div>
             {inc && e && chipSem(e.semaforo)}
           </div>
-          {inc && fl && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "110px 1fr 140px 1fr", gap: 8, alignItems: "center" }}>
+          {inc && fl && c.l.varilla && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "110px 1fr 140px 1fr", gap: 8, alignItems: "center" }}>
+            <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>Lances</div><input type="number" min="0" step="1" value={fl.lances ?? ""} onChange={ev2 => uVar(c, "lances", ev2.target.value)} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
+            <div style={{ fontSize: 11.5, color: fl.parcial ? C_AMARILLO.color : "var(--text-3)", fontWeight: fl.parcial ? 700 : 500 }}>{nombreVarilla(c.l.varilla)} = {num(fl.cantidad).toLocaleString("es-HN", { maximumFractionDigits: 3 })} {c.l.unidad}{fl.parcial ? " · parcial" : ""}</div>
+            <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>P.U. por lance, con ISV (L)</div><input type="number" min="0" step="any" value={fl.puLance ?? ""} onChange={ev2 => uVar(c, "puLance", ev2.target.value)} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
+            <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.5 }}>
+              <div>Subtotal <b>{fmtL(e?.subtotal)}</b>{num(fl.puLps) > 0 ? ` · ${fmtL(fl.puLps)} / ${c.l.unidad}` : ""}</div>
+              {e && e.semaforo !== "sin_base" && <div style={{ color: SEM[e.semaforo].c.color, fontWeight: 700 }}>{fmtPct(e.variacionPct)} vs presupuesto ({fmtUSD(e.puUSD)} vs {fmtUSD(e.puPresupuestoUSD)} / {c.l.unidad})</div>}
+            </div>
+            {e?.semaforo === "rojo" && <input value={fl.justificacion || ""} onChange={ev2 => uL(c.l.id, "justificacion", ev2.target.value)} placeholder="Está en rojo: justificá la variación de precio *" style={{ ...CTRL, gridColumn: "1/-1", background: C_ROJO.bg, border: `1px solid ${C_ROJO.borde}` }} />}
+          </div>}
+          {inc && fl && !c.l.varilla && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "110px 1fr 140px 1fr", gap: 8, alignItems: "center" }}>
             <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>Cantidad</div><input type="number" min="0" step="any" value={fl.cantidad} onChange={ev2 => { const v = ev2.target.value; uL(c.l.id, "cantidad", v); uL(c.l.id, "parcial", num(v) < c.pendiente - 0.0001); }} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
             <div style={{ fontSize: 11.5, color: fl.parcial ? C_AMARILLO.color : "var(--text-3)", fontWeight: fl.parcial ? 700 : 500 }}>{fl.parcial ? `Parcial: quedan ${fmtCant(c.pendiente - num(fl.cantidad))} ${c.l.unidad} para otra cotización` : `${c.l.unidad} (completo)`}</div>
             <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>P.U. con ISV (L)</div><input type="number" min="0" step="any" value={fl.puLps} onChange={ev2 => uL(c.l.id, "puLps", ev2.target.value)} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
@@ -682,7 +727,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       const ev = evaluarCotizacion({ cotizacion: cot, tasa: tasaC, cfg, partidaDe: (pid) => partidaDe(cot.projectCode, pid), lineaSolicitudDe: lineaSolDe });
       if (!ev.ok) { alert("La cotización tiene errores y no se puede aprobar:\n" + ev.errores.join("\n")); return false; }
       // Enriquecer las líneas con la partida (para los ítems del borrador).
-      ev.lineas = ev.lineas.map(l => { const ls = lineaSolDe(l.requestLineId); const pa = ls ? partidaDe(cot.projectCode, ls.partidaId) : null; return { ...l, id: l.requestLineId, partidaId: ls?.partidaId || null, categoria: pa?.categoria || "", nombrePartida: pa?.nombre || ls?.descripcion || "", unidadPartida: pa?.unidad || ls?.unidad || "", solucion: pa?.solucion || "", fueraPresupuesto: !!ls?.fueraPresupuesto }; });
+      ev.lineas = ev.lineas.map(l => { const ls = lineaSolDe(l.requestLineId); const pa = ls ? partidaDe(cot.projectCode, ls.partidaId) : null; return { ...l, id: l.requestLineId, partidaId: ls?.partidaId || null, ...(ls?.varilla ? { varilla: { ...ls.varilla, lances: l.lances != null ? num(l.lances) : ls.varilla.lances } } : {}), categoria: pa?.categoria || "", nombrePartida: pa?.nombre || ls?.descripcion || "", unidadPartida: pa?.unidad || ls?.unidad || "", solucion: pa?.solucion || "", fueraPresupuesto: !!ls?.fueraPresupuesto }; });
       const ahoraISO = new Date().toISOString();
       // 1) El BORRADOR en GeoShopping (idempotente: si ya existe uno de esta cotización, no se duplica).
       let purchase = purs.find(p => p.origenSupply?.quoteId === cot.id);

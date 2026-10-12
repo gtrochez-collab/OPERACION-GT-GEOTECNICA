@@ -6,7 +6,7 @@ import { safeDynamicImport } from "./lazyLoad.js";
 import { USERS } from "./users.js";
 // GeoCost (9-sep-2026): partida del presupuesto y sobregiro en la solicitud.
 // Lógica pura (sin store) — acá solo se LEE cc-presupuestos/cc-config.
-import { opcionesPartidas, disponibleDePartida, movimientosDeProyecto, hnlToUsd, num, TASA_DEFAULT, repartirLineas, UNIDADES } from "./geocost-calc.js";
+import { opcionesPartidas, disponibleDePartida, movimientosDeProyecto, hnlToUsd, num, TASA_DEFAULT, repartirLineas, UNIDADES, textoVarilla } from "./geocost-calc.js";
 import { LineasPresupuesto, evaluarLineas, errorLineas, lineasParaGuardar, descripcionDeLineas, lineasIniciales } from "./lineas-presupuesto.jsx";
 import { fmtUSD } from "./geocost-ui.jsx";
 // Visor de archivos en la app (10-sep-2026): las fichas se abrían con window.open
@@ -4383,15 +4383,16 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
                     const pt = (presCC.partidas || []).find(x => x.id === l.partidaId);
                     return <div key={l.id} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 12.5 }}>
                       <span style={{ fontWeight: 700, color: "#0f172a", minWidth: 0, flex: 1 }}>
+                        {l.varilla ? textoVarilla(l.varilla, l.cantidad, l.unidad) : <>
                         {num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")} ${(l.sustituto ? l.sustituto.unidad : l.unidad) || ""} × ` : ""}
-                        {l.sustituto ? l.sustituto.nombre : l.manual ? l.nombre : (pt?.nombre || l.nombre || "(partida borrada)")}
+                        {l.sustituto ? l.sustituto.nombre : l.manual ? l.nombre : (pt?.nombre || l.nombre || "(partida borrada)")}</>}
                         {/* Sustituto (30-sep-2026): se compró otra cosa con la plata de la partida */}
                         {l.sustituto && <>
                           <span style={{ marginLeft: 6, padding: "1px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: C_AMARILLO.color, background: C_AMARILLO.bg }}>Sustituto</span>
                           <span style={{ display: "block", fontSize: 11, fontWeight: 500, color: "#64748b", marginTop: 1 }}>se carga a: {pt?.nombre || l.nombre}{l.sustituto.motivo ? ` — ${l.sustituto.motivo}` : ""}</span>
                         </>}
                       </span>
-                      <span style={{ color: "#64748b", fontSize: 11 }}>{l.manual ? (pt?.nombre || "") : [pt?.solucion || l.solucion, pt?.categoria || l.categoria].filter(Boolean).join(" · ")}</span>
+                      <span style={{ color: "#64748b", fontSize: 11 }}>{l.manual || l.varilla ? (pt?.nombre || "") : [pt?.solucion || l.solucion, pt?.categoria || l.categoria].filter(Boolean).join(" · ")}</span>
                       <span style={{ fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(l.montoHNL)}</span>
                     </div>;
                   })}

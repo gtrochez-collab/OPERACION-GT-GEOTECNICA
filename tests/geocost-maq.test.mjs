@@ -21,3 +21,28 @@ test("líneas manuales de GeoMachinery llegan a GeoCost, una por línea, con su 
   assert.equal(Math.round((movs[0].montoHNL + movs[1].montoHNL) * 100) / 100, 7072.5);
   assert.equal(movs[0].montoHNL, 5175);
 });
+
+import { pesoLanceKg, cantidadDeVarilla, kgPorUnidad, esPartidaVarillaPorPeso, textoVarilla } from "../src/geocost-calc.js";
+import { descripcionDeCotizacion } from "../src/geosupply-calc.js";
+
+test("peso de varilla por lance (ASTM A615) y conversión a Ton", () => {
+  assert.equal(pesoLanceKg(5, 9), 13.968);
+  assert.equal(pesoLanceKg(6, 9), 20.115);
+  assert.equal(pesoLanceKg(8, 12), 47.676);
+  assert.equal(kgPorUnidad("Ton"), 1000); assert.equal(kgPorUnidad("kg"), 1); assert.equal(kgPorUnidad("Lance"), null);
+  // Caso real Villa San Miguel
+  assert.equal(cantidadDeVarilla({ n: 5, largo: 9, lances: 1000 }, "Ton"), 13.968);
+  const t0416 = cantidadDeVarilla({ n: 6, largo: 9, lances: 430 }, "Ton") + cantidadDeVarilla({ n: 5, largo: 9, lances: 245 }, "Ton") + cantidadDeVarilla({ n: 8, largo: 12, lances: 302 }, "Ton");
+  assert.ok(Math.abs(t0416 - 26.4698) < 0.001);
+  assert.ok(Math.abs(46.22 - t0416 - 13.968 - 5.782) < 0.001);   // saldo 5.78 Ton
+  assert.equal(esPartidaVarillaPorPeso({ nombre: "Acero de construcción en barras, varios diámetros G40 y G60", unidad: "Ton" }), true);
+  assert.equal(esPartidaVarillaPorPeso({ nombre: "Varilla No.5 (5/8\"), grado 40; Lance de 9m", unidad: "Lance" }), false);   // Torre Adobe: ya viene por lance
+  assert.equal(textoVarilla({ n: 5, largo: 9, lances: 1000 }, 13.968, "Ton"), "1,000 lances × Varilla #5 (5/8\") de 9 m · 13.97 Ton");
+});
+
+test("la varilla llega a GeoCost y a la descripción de GeoShopping por lances", () => {
+  const p = { id: "x", projectCode: "VSM", status: "validado", amount: 455400, lineas: [{ id: "a", partidaId: "acero", nombre: "Acero", unidad: "Ton", cantidad: 13.968, monto: 455400, varilla: { n: 5, largo: 9, lances: 1000 } }] };
+  const [m] = movimientosCompras({ purchases: [p], projectCode: "VSM", tasa: 27 });
+  assert.equal(m.descripcion, "1,000 lances × Varilla #5 (5/8\") de 9 m · 13.97 Ton");
+  assert.equal(descripcionDeCotizacion([{ cantidad: 13.968, unidad: "Ton", descripcion: "x", varilla: { n: 5, largo: 9, lances: 1000 } }]), "1,000 lances × Varilla #5 (5/8\") de 9 m · 13.97 Ton");
+});
