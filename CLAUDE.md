@@ -7,7 +7,7 @@ cache localStorage. Deploy automático a GitHub Pages al hacer push a `main`.
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
-- `npm test` — pruebas Node (node:test) de la lógica pura: hoy `tests/geosupply-calc.test.mjs`.
+- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs` y `tests/geocost-maq.test.mjs`.
 - Deploy: `git push origin main` dispara `.github/workflows/deploy.yml` → gh-pages.
   URL: https://gtrochez-collab.github.io/OPERACION-GT-GEOTECNICA/
 - Verificar deploy: `gh run list` + grep del texto nuevo en el bundle publicado.
@@ -731,6 +731,34 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   inglesa. Las preferencias de pantalla en localStorage llevan sufijo `-mq`
   (`gt-coord-abiertos-mq`, `gt-coord-visto-mq-<user>`…) para no mezclarse.
   GeoCost ahora deja "Dividir en ítems" también en repuestos (mq-purchases).
+  **Líneas A MANO + "qué se gestiona" (12-oct-2026, pedido de Gerson)**: en
+  GeoMachinery ya NO se eligen ítems de la receta. `esMaqForm` (prefijo MAQ)
+  en `PurchaseFormImpl`: (1) pills **Repuestos · Compras varias · Mantenimiento
+  · Servicio de proveedor** (`CATEGORIAS_MAQ`, campo aditivo `categoriaMaq`;
+  solo "servicio" pone `tipoCompra: "servicio"`, las otras tres son material y
+  pasan por Por coordinar como siempre; chip gris en la tabla); (2) UNA
+  **Partida del presupuesto** (Select con `opcionesPartidas(pres,"maquinas")`,
+  disponible y sobregiro sobre el monto total) que se elige SOLA
+  (`unicaPartidaMaq`: la única, o la de módulo máquinas, o la que se llame
+  "Costos de operación" — en todos los presupuestos es la misma); (3) la
+  cotización **línea por línea**: cantidad · unidad (datalist `UNIDADES` de
+  GeoCost) · qué es · monto L con ISV, "+ Agregar línea", suma; el **monto
+  total sigue a la suma** mientras nadie lo toque (si se escribe otro total —
+  ISV o flete al final — se respeta y la diferencia se reparte proporcional).
+  Se guarda como `lineas: [{id, partidaId (la elegida), categoria, nombre,
+  unidad, cantidad, monto, manual:true}]` y `description` = un renglón por
+  línea ("2 Cubeta × Aceite hidráulico ISO 68") + detalle adicional. Aprobar
+  exige ≥1 línea completa (las solicitudes VIEJAS de texto libre se siguen
+  pudiendo aprobar sin líneas: su texto queda en "Detalle adicional").
+  GeoCost: `movimientosCompras` pone la unidad de las líneas manuales en la
+  descripción y emite un movimiento por línea a esa partida (prueba
+  `tests/geocost-maq.test.mjs`); en Movimientos NO se ofrece "Editar ítems"
+  para ellas (lo pisaría con los de la receta). Corregir compra pagada en
+  GeoMachinery = una partida; las líneas manuales se re-apuntan sin perder
+  sus nombres. DetailView muestra el nombre escrito + la partida al lado.
+  **Fix de paso**: el form de solicitud (ambos módulos) se salía del modal por
+  la derecha con los nombres largos de proyecto — grid `minmax(0,1fr)` y
+  selects `width:100%`.
   Verificado el 28-sep montando el módulo con cada rol (admin, Fernando,
   Carolina) sobre la data real, todas las pestañas sin errores, y GeoShopping
   igual que antes.
@@ -1354,6 +1382,31 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   lote (uno cayó a Cuentas por pagar por ser crédito) → al pagarse uno pasó a
   ejecutado sin doble conteo → bitácora con usuario y fecha en cada paso.
   Pruebas Node: 15 (`npm test`).
+  **Cambios del 12-oct-2026 (Gerson, al volver de viaje)**: (a) **el residente
+  ya NO tiene proyectos asignados**: elige el proyecto en cada solicitud
+  ("se rotan, cambian de proyecto rápido o se cubren"); `misProyectos` = TODOS,
+  agrupados "Con receta en GeoCost" / "Sin receta". GeoTeam → Accesos ya no
+  pide proyectos (el campo `proyectos` de gt-usuarios queda ignorado). Esto
+  reemplaza la regla del spec "residente sin el proyecto asignado = acceso
+  denegado" — decisión de Gerson, no re-litigar. (b) **SIMULACIÓN** (solo el
+  Coordinador, botón "Simular el proceso" en Hoy): barra ámbar con "Ver como
+  Residente · Almacén · Compras · Coordinador · Finanzas" (`simRol`, cambia el
+  `rol` efectivo y salta a la primera pestaña de ese rol), keys PROPIAS
+  `sp-sim-solicitudes` / `sp-sim-cotizaciones` / `sp-sim-purchases` (`K` +
+  `kRef` para `cargar`), recetas y proveedores reales en solo lectura, el
+  borrador sale con código `SIM-AAAA-NNNN` y `simulacion:true` a
+  sp-sim-purchases (NUNCA a cp-purchases; el proveedor nuevo NO se crea en
+  cp-providers). "GeoShopping simulado (n)" muestra los borradores como los
+  vería Finanzas + el impacto en GeoCost por partida (`movimientosCompras`
+  sobre los simulados) y deja "Finanzas: enviar a Tesorería" → "Tesorería:
+  marcar pagada" para ver comprometido → ejecutado. "Reiniciar" borra las 3
+  keys y los PDFs simulados (`store.remove`). En simulación el saldo usa
+  `purchasesVista` = reales + simulados. `gt-supply-sim` en sessionStorage.
+  ⚠ Hallazgo en la prueba: en Villa San Miguel el "Acero de construcción"
+  está en **Ton** en la receta pero en GeoShopping se compró en otras
+  unidades (lances), así que su saldo en cantidad sale −953 y CUALQUIER pedido
+  de acero cae como "excede el saldo". El saldo en cantidad solo sirve si la
+  unidad del ítem en GeoShopping es la de la receta.
 - **Accesos al sistema desde GeoTeam (2-oct-2026)**: pestaña **Accesos** (solo
   admin) en HRModule → key **`gt-usuarios`** `[{id, username, password, role,
   label (= fullName de la ficha), empId, proyectos:[shorts], activo,

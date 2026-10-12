@@ -419,7 +419,8 @@ export const movimientosCompras = ({ purchases, projectCode, tasa, fuente = "com
       // "5 × Tubo PVC de 4"…" (nombre y cantidad se guardan con el ítem)
       // Con SUSTITUTO (30-sep-2026) se describe lo que realmente se compró
       // (arena, grava…) y el detalle avisa a qué partida se carga.
-      descripcion: [num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")}${l.sustituto?.unidad ? " " + l.sustituto.unidad : ""} ×` : null, l.sustituto?.nombre || l.nombre].filter(Boolean).join(" ") || p.description || "",
+      // Líneas MANUALES (GeoMachinery, 12-oct-2026): llevan su propia unidad.
+      descripcion: [num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")}${l.sustituto?.unidad ? " " + l.sustituto.unidad : l.manual && l.unidad ? " " + l.unidad : ""} ×` : null, l.sustituto?.nombre || l.nombre].filter(Boolean).join(" ") || p.description || "",
       detalle: [p.provider, arr.length > 1 ? `ítem ${i + 1} de ${arr.length}` : null, l.sustituto ? `sustituto de: ${l.nombre}${l.sustituto.motivo ? ` (${l.sustituto.motivo})` : ""}` : null, mq?.nombre].filter(Boolean).join(" · "),
       sustituto: !!l.sustituto,
       partidaId: l.partidaId,

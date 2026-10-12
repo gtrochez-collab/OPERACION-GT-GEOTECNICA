@@ -518,7 +518,6 @@ function AccesoFormImpl({ acceso, emps, proyectos, tomados, userName, onSave, on
     if (!e) { setF(p => ({ ...p, empId: "", label: "" })); return; }
     setF(p => ({ ...p, empId: e.id, label: e.fullName, username: p.username || usernameSugerido(e.fullName, tomados) }));
   };
-  const toggleProy = (short) => u("proyectos", (f.proyectos || []).includes(short) ? f.proyectos.filter(x => x !== short) : [...(f.proyectos || []), short]);
   const empsOrdenados = [...emps].filter(e => e.status !== "inactive").sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "es", { sensitivity: "base" }));
   const usernameOk = /^[a-z0-9._-]{3,}$/.test(f.username || "");
   const usernameLibre = !tomados.includes(f.username) || (acceso && acceso.username === f.username);
@@ -542,10 +541,7 @@ function AccesoFormImpl({ acceso, emps, proyectos, tomados, userName, onSave, on
     {!usernameOk && f.username && <div style={{ fontSize: 12, color: "#B03024", marginTop: -8 }}>Solo minúsculas, números, punto, guion. Mínimo 3.</div>}
     {usernameOk && !usernameLibre && <div style={{ fontSize: 12, color: "#B03024", marginTop: -8 }}>Ese usuario ya existe.</div>}
     {campo("Rol", <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{ROLES_ASIGNABLES.map(r => chip(ROLE_LABEL[r] || r, f.role === r, () => u("role", r)))}</div>)}
-    {f.role === "residente" && campo("Proyectos que ve en GeoSupply", <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-      {proyectos.map(p => chip(p.name || p.short, (f.proyectos || []).includes(p.short), () => toggleProy(p.short)))}
-    </div>)}
-    {f.role === "residente" && <div style={{ fontSize: 12, color: "#6E6862", marginTop: -8 }}>El residente entra SOLO a GeoSupply (sus proyectos) y Mis Tareas. Nunca a GeoShopping.</div>}
+    {f.role === "residente" && <div style={{ fontSize: 12, color: "#6E6862", marginTop: -4 }}>El residente entra SOLO a GeoSupply y Mis Tareas, nunca a GeoShopping. El proyecto lo elige en cada solicitud (se rotan y se cubren entre ellos).</div>}
     {acceso && <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: CHARCOAL, cursor: "pointer" }}>
       <input type="checkbox" checked={f.activo !== false} onChange={e => u("activo", e.target.checked)} /> Acceso activo {f.activo === false && <span style={{ color: "#B03024", fontWeight: 700 }}>(no puede entrar)</span>}
     </label>}
@@ -556,7 +552,6 @@ function AccesoFormImpl({ acceso, emps, proyectos, tomados, userName, onSave, on
         if (!usernameOk) return alert("El usuario no es válido.");
         if (!usernameLibre) return alert("Ese usuario ya existe. Elegí otro.");
         if (String(f.password || "").length < 4) return alert("La clave debe tener al menos 4 caracteres.");
-        if (f.role === "residente" && !(f.proyectos || []).length && !confirm("El residente no tiene proyectos asignados: no va a poder pedir nada. ¿Guardar igual?")) return;
         setSaving(true);
         try {
           const at = new Date().toISOString();
@@ -6913,7 +6908,6 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div style={{ fontSize: 11.5, color: "#6E6862", fontFamily: "var(--mono, monospace)" }}>{x.username}</div>
       </div>
       {chipRol(x.role)}
-      {x.role === "residente" && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{(x.proyectos || []).length ? x.proyectos.map(p => <span key={p} style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, color: "#6E6862", background: "rgba(44,42,40,.06)" }}>{hrProjects.find(h => h.short === p)?.name || p}</span>) : <span style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, color: "#8A5A00", background: "#FBEFC4" }}>Sin proyectos</span>}</div>}
       <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
         {x.activo === false && <span style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, color: "#B03024", background: "rgba(192,57,43,.07)" }}>Desactivado</span>}
         {fijo ? <span style={{ fontSize: 11, color: "#A39C92" }}>fijo del sistema</span> : <span style={{ fontSize: 11.5, color: "#6E6862" }}>Editar →</span>}

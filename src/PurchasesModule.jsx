@@ -6,7 +6,7 @@ import { safeDynamicImport } from "./lazyLoad.js";
 import { USERS } from "./users.js";
 // GeoCost (9-sep-2026): partida del presupuesto y sobregiro en la solicitud.
 // Lógica pura (sin store) — acá solo se LEE cc-presupuestos/cc-config.
-import { opcionesPartidas, disponibleDePartida, movimientosDeProyecto, hnlToUsd, num, TASA_DEFAULT, repartirLineas } from "./geocost-calc.js";
+import { opcionesPartidas, disponibleDePartida, movimientosDeProyecto, hnlToUsd, num, TASA_DEFAULT, repartirLineas, UNIDADES } from "./geocost-calc.js";
 import { LineasPresupuesto, evaluarLineas, errorLineas, lineasParaGuardar, descripcionDeLineas, lineasIniciales } from "./lineas-presupuesto.jsx";
 import { fmtUSD } from "./geocost-ui.jsx";
 // Visor de archivos en la app (10-sep-2026): las fichas se abrían con window.open
@@ -89,6 +89,21 @@ const diasDesdeYMDLocal = (iso) => {
   return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86400000)) : null;
 };
 const esPagadaP = (p) => p?.status === "pagado" || p?.status === "finalizado";
+// GeoMachinery (12-oct-2026, pedido de Gerson): Fernando dice QUÉ gestiona
+// (`categoriaMaq`) y escribe la cotización línea por línea a mano, todas a UNA
+// partida del presupuesto (en todos los proyectos es la misma: "Costos de
+// operación"). `tipoCompra` sigue mandando el flujo: solo "servicio" se cierra
+// solo al pagarse; las otras tres son material (pasan por Por coordinar).
+const CATEGORIAS_MAQ = [
+  { k: "repuestos",      t: "Repuestos",             d: "Piezas para una máquina" },
+  { k: "compras_varias", t: "Compras varias",        d: "Aceites, grasa, mangueras, filtros, consumibles…" },
+  { k: "mantenimiento",  t: "Mantenimiento",         d: "Mantenimiento preventivo o correctivo" },
+  { k: "servicio",       t: "Servicio de proveedor", d: "No se coordina ni lleva ficha: al pagarse va directo a Por cerrar contable" },
+];
+const categoriaMaqDe = (p) => p?.categoriaMaq || (p?.tipoCompra === "servicio" ? "servicio" : "repuestos");
+const r2 = (x) => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
+// Línea escrita a mano: "2 Galón × Aceite 15W40".
+const textoLineaManual = (l) => `${num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")}${l.unidad ? " " + l.unidad : ""} × ` : ""}${String(l.nombre || "").trim()}`;
 // GeoSupply (2-oct-2026): borrador que nace de una cotización APROBADA por el
 // Coordinador. Vive en la vista "Borradores (n)" de Solicitudes hasta que
 // Finanzas lo envía a Tesorería; NO cuenta en Pendientes de pago, Prioridades,
@@ -337,7 +352,7 @@ const Textarea = ({ label, ...p }) => <div style={{ display: "flex", flexDirecti
 // {group, options} que salen como <optgroup> (partidas por categoría).
 const Select = ({ label, options, emptyLabel = "—", ...p }) => {
   const opt = o => <option key={typeof o === "string" ? o : o.value} value={typeof o === "string" ? o : o.value}>{typeof o === "string" ? o : o.label}</option>;
-  return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} {...p}><option value="">{emptyLabel}</option>{(options || []).map((o, i) => o && typeof o === "object" && o.group ? <optgroup key={o.group + i} label={o.group}>{(o.options || []).map(opt)}</optgroup> : opt(o))}</select></div>;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC", width: "100%", minWidth: 0 }} {...p}><option value="">{emptyLabel}</option>{(options || []).map((o, i) => o && typeof o === "object" && o.group ? <optgroup key={o.group + i} label={o.group}>{(o.options || []).map(opt)}</optgroup> : opt(o))}</select></div>;
 };
 
 const Modal = ({ title, onClose, children, wide, size }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onClose}>
@@ -971,11 +986,15 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
   const montoUSD = hnlToUsd(num(purchase.amount), tasaN);
   const sobregiro = disp && montoUSD > disp.disponibleUSD ? montoUSD - disp.disponibleUSD : 0;
 
-  const modoItems = !!pres && !sinElegibles;
+  // GeoMachinery (12-oct-2026): UNA partida; las líneas escritas a mano se
+  // conservan y solo cambian de partida.
+  const esMaqCorr = moduloPartida === "maquinas";
+  const modoItems = !esMaqCorr && !!pres && !sinElegibles;
   const evL = modoItems ? evaluarLineas({ pres, lineas, montoTotal: purchase.amount, tasa: tasaN, disponibleDe: (pid) => calcDisponible ? calcDisponible(projectCode, pid, purchase.id) : null }) : null;
   const firmaLineas = (ls) => JSON.stringify((ls || []).filter(l => l.partidaId && num(l.monto) > 0).map(l => [l.partidaId, num(l.monto), num(l.cantidad)]));
   const cambioProyecto = projectCode !== (purchase.projectCode || "");
   const cambioPartida = modoItems ? firmaLineas(lineas) !== firmaLineas(lineasIniciales(purchase)) : (partidaId || "") !== (purchase.partidaId || "");
+  const conPartidaMaq = esMaqCorr && !!pres && !sinElegibles;
   const hayCambio = cambioProyecto || cambioPartida;
 
   const nombrePartida = (id, presu) => {
@@ -1018,6 +1037,10 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
     {!pres && projectCode && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>
       Ese proyecto no tiene presupuesto en GeoCost — la compra no lleva partida.
     </div>}
+    {conPartidaMaq && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <Select label="Partida del presupuesto *" options={opcionesSel} value={partidaId || ""} onChange={e => setPartidaId(e.target.value)} emptyLabel="— Elegí la partida —" />
+      {sobregiro > 0 && <Textarea label={`Sobrepasa la partida en ${fmtUSD(sobregiro)} — justificación *`} value={justif} onChange={e => setJustif(e.target.value)} placeholder="Por qué se carga igual" />}
+    </div>}
 
     <Textarea label="Motivo de la corrección *" value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Ej: la compra era para Villa San Miguel, no para Plantel" />
 
@@ -1026,13 +1049,19 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
       <Btn variant="success" disabled={saving || !hayCambio} onClick={async () => {
         if (!projectCode) return alert("Elegí el proyecto.");
         if (modoItems) { const e = errorLineas(evL, { justificacion: justif, montoTotal: purchase.amount }); if (e) return alert(e + "."); }
+        if (conPartidaMaq && !partidaSel) return alert("Elegí la partida del presupuesto.");
+        if (conPartidaMaq && sobregiro > 0 && String(justif || "").trim().length < 5) return alert("Sobrepasa la partida: escribí la justificación.");
         if (String(motivo || "").trim().length < 5) return alert("Escribí el motivo de la corrección (mínimo 5 caracteres).");
         setSaving(true);
         try {
           const antesProy = purchase.projectCode || "—";
           const antesPart = nombrePartida(purchase.partidaId, presOriginal);
-          const lineasG = modoItems ? lineasParaGuardar(pres, lineas) : [];
-          const ahoraPart = !modoItems ? "Por clasificar"
+          const pidMaq = conPartidaMaq ? partidaId : "";
+          const lineasG = modoItems ? lineasParaGuardar(pres, lineas)
+            : esMaqCorr ? (purchase.lineas || []).map(l => ({ ...l, partidaId: pidMaq || null, categoria: partidaSel?.categoria || "" }))
+            : [];
+          const ahoraPart = esMaqCorr ? (pidMaq ? nombrePartida(pidMaq, pres) : "Por clasificar")
+            : !modoItems ? "Por clasificar"
             : lineasG.length > 1 ? `${lineasG.length} ítems (${lineasG.map(l => l.nombre).join(", ")})` : nombrePartida(evL.principal, pres);
           // PARCHE: se copia la compra tal cual y solo se pisan los campos de
           // costo (proyecto, ítems/partida, sobregiro). La descripción NO se
@@ -1041,8 +1070,8 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
             ...purchase,
             projectCode,
             lineas: lineasG,
-            partidaId: modoItems ? evL.principal : "",
-            sobregiroJustificacion: modoItems && evL.sobregiroUSD > 0 ? String(justif || "").trim() : "",
+            partidaId: modoItems ? evL.principal : pidMaq,
+            sobregiroJustificacion: modoItems && evL.sobregiroUSD > 0 ? String(justif || "").trim() : (pidMaq && sobregiro > 0 ? String(justif || "").trim() : ""),
           };
           // Mismo tipo de audit que usa GeoCost al reclasificar: así `sP` lo
           // RESCATA si otra pestaña guarda encima con una foto vieja.
@@ -1307,8 +1336,52 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   // Con presupuesto activo, "qué se compra" ya no es texto libre: se eligen los
   // ítems de la receta del PM (cada uno a su partida). El texto libre queda
   // como "detalle adicional" opcional. Ver src/lineas-presupuesto.jsx.
-  const modoItems = !!presConPartidas && !sinElegiblesCC;
+  // GeoMachinery NO usa los ítems de la receta: una partida + líneas a mano.
+  const esMaqForm = prefijo === "MAQ";
+  const modoItems = !esMaqForm && !!presConPartidas && !sinElegiblesCC;
   const lineasForm = Array.isArray(f.lineas) ? f.lineas : lineasIniciales(f);
+  // ── Líneas MANUALES (GeoMachinery, 12-oct-2026) ──
+  const lineasM = esMaqForm ? (Array.isArray(f.lineas) ? f.lineas : []) : [];
+  const conContenido = (l) => String(l.nombre || "").trim() || num(l.monto) > 0 || num(l.cantidad) > 0;
+  const lineasMValidas = lineasM.filter(conContenido);
+  const sumaM = r2(lineasMValidas.reduce((a, l) => a + num(l.monto), 0));
+  // Cambiar las líneas arrastra el monto total MIENTRAS nadie lo haya tocado a
+  // mano (si el total era la suma, sigue siendo la suma). Si Fernando escribió
+  // otro total (ISV o flete al final), se respeta y la diferencia se reparte.
+  const setLineasM = (ls) => setF(p => {
+    const viejo = r2((Array.isArray(p.lineas) ? p.lineas : []).filter(conContenido).reduce((a, l) => a + num(l.monto), 0));
+    const nuevo = r2(ls.filter(conContenido).reduce((a, l) => a + num(l.monto), 0));
+    const seguia = !p.amount || Math.abs(num(p.amount) - viejo) < 0.005;
+    return { ...p, lineas: ls, amount: seguia && nuevo > 0 ? String(nuevo) : p.amount };
+  });
+  const uLineaM = (id, k, v) => setLineasM(lineasM.map(l => l.id === id ? { ...l, [k]: v } : l));
+  const errorLineasM = (aprobar) => {
+    if (!esMaqForm) return null;
+    // Las solicitudes VIEJAS de texto libre se pueden seguir aprobando sin
+    // líneas (su texto quedó en "Detalle adicional"); las nuevas, no.
+    const exigir = aprobar && (!purchase || (purchase.lineas || []).length > 0);
+    if (exigir && !lineasMValidas.length) return "Escribí al menos una línea de la cotización (qué es, cantidad y monto)";
+    for (const l of lineasMValidas) {
+      if (!String(l.nombre || "").trim()) return "Hay una línea sin descripción";
+      if (!(num(l.cantidad) > 0)) return `"${String(l.nombre).trim()}": falta la cantidad`;
+      if (!(num(l.monto) > 0)) return `"${String(l.nombre).trim()}": falta el monto`;
+    }
+    return null;
+  };
+  // La partida de siempre ("Costos de operación") se elige sola: la única que
+  // haya; si hay varias, la de módulo máquinas; si no, la que se llame así.
+  const unicaPartidaMaq = (() => {
+    if (!esMaqForm || !presConPartidas) return "";
+    const ids = opcionesCC.flatMap(g => (g.options || []).map(o => o.value));
+    if (ids.length === 1) return ids[0];
+    const pts = (presConPartidas.partidas || []).filter(x => ids.includes(x.id));
+    const deMaq = pts.filter(x => x.modulo === "maquinas");
+    if (deMaq.length === 1) return deMaq[0].id;
+    const deOper = pts.filter(x => /costos? de operaci/i.test(x.nombre || ""));
+    return deOper.length === 1 ? deOper[0].id : "";
+  })();
+  useEffect(() => { if (unicaPartidaMaq && !f.partidaId) setF(p => ({ ...p, partidaId: unicaPartidaMaq })); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unicaPartidaMaq]);
   const dispDe = (pid) => calcDisponible ? calcDisponible(f.projectCode, pid, purchase?.id) : null;
   // Al editar una solicitud VIEJA (texto libre) su descripción original pasa a
   // "detalle adicional" — si no, al guardar se perdía lo que se había escrito.
@@ -1316,8 +1389,9 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
     : (Array.isArray(purchase?.lineas) && purchase.lineas.length ? "" : (purchase?.description || ""));
   const evL = modoItems ? evaluarLineas({ pres: presConPartidas, lineas: lineasForm, montoTotal: f.amount, tasa: tasaCC, disponibleDe: dispDe }) : null;
   // Validación compartida por "Guardar borrador" y "Aprobar": null = OK.
-  const errorPartidaCC = () => {
+  const errorPartidaCC = (aprobar = false) => {
     if (modoItems) return errorLineas(evL, { justificacion: f.sobregiroJustificacion, montoTotal: f.amount });
+    { const eM = errorLineasM(aprobar); if (eM) return eM; }
     if (!presConPartidas || sinElegiblesCC) return null;
     if (!partidaSel) return "Elegí la partida del presupuesto de la que baja esta compra";
     if (sobregiroCC > 0 && String(f.sobregiroJustificacion || "").trim().length < 5) return "Sobrepasa la partida: escribí la justificación del sobregiro (mínimo 5 caracteres)";
@@ -1329,6 +1403,23 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   // texto viejo NO debe viajar con la compra (#20). Sin partida elegible se
   // guarda "" para que GeoCost la muestre en "Por clasificar" (#5).
   const camposCC = () => {
+    if (esMaqForm) {
+      const pid = presConPartidas && !sinElegiblesCC ? (f.partidaId || "") : "";
+      const pt = pid ? (presConPartidas.partidas || []).find(x => x.id === pid) : null;
+      const lineas = lineasMValidas.map(l => ({
+        id: l.id || uid(), partidaId: pid || null, categoria: pt?.categoria || "", ...(pt?.solucion ? { solucion: pt.solucion } : {}),
+        nombre: String(l.nombre || "").trim(), unidad: String(l.unidad || "").trim(), cantidad: num(l.cantidad), monto: r2(num(l.monto)), manual: true,
+      }));
+      const extra = String(extraForm || "").trim();
+      const desc = [lineas.map(textoLineaManual).join("\n"), extra].filter(Boolean).join("\n");
+      return {
+        lineas, partidaId: pid,
+        sobregiroJustificacion: pid && sobregiroCC > 0 ? String(f.sobregiroJustificacion || "").trim() : "",
+        description: desc || f.description || "",
+        detalleExtra: extra,
+        categoriaMaq: categoriaMaqDe(f),
+      };
+    }
     if (modoItems) {
       const lineas = lineasParaGuardar(presConPartidas, lineasForm);
       const extra = String(extraForm || "").trim();
@@ -1393,14 +1484,16 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
 
 
   return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+    {/* minmax(0,1fr): con "1fr" los nombres largos de proyecto (UTH SPS…) estiraban
+        la columna y el form se salía del modal por la derecha (12-oct-2026). */}
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 14 }}>
       <Select label="Empresa" options={[{ value: "subterra", label: "Subterra Honduras" }, { value: "geotecnica", label: "Geotecnica Soluciones" }]} value={f.company} onChange={e => u("company", e.target.value)} />
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "flex", justifyContent: "space-between" }}>
           <span>Proyecto</span>
           <button type="button" onClick={() => setModal({ t: "new-project", returnTo: purchase ? { t: "edit", d: purchase } : { t: "new" } })} style={{ background: "none", border: "none", color: "#BE185D", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>+ Nuevo proyecto</button>
         </label>
-        <select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} value={f.projectCode} onChange={e => {
+        <select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC", width: "100%", minWidth: 0 }} value={f.projectCode} onChange={e => {
           // Cambiar de proyecto suelta la partida (es de OTRO presupuesto).
           const v = e.target.value;
           setF(p => p.projectCode === v ? p : ({ ...p, projectCode: v, partidaId: "", lineas: [] }));
@@ -1476,8 +1569,18 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           van directo a "Por cerrar contable". Default Material = lo de
           siempre: si alguien se olvida de marcarla, cae con Ana como antes. */}
       <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8 }}>
-        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Tipo de compra</label>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{esMaqForm ? "Qué se está gestionando" : "Tipo de compra"}</label>
+        {esMaqForm && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {CATEGORIAS_MAQ.map(o => {
+            const activo = categoriaMaqDe(f) === o.k;
+            return <button key={o.k} type="button" title={o.d}
+              onClick={() => setF(p => ({ ...p, categoriaMaq: o.k, tipoCompra: o.k === "servicio" ? "servicio" : "material" }))}
+              style={{ padding: "8px 18px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 800,
+                border: activo ? "1px solid transparent" : "1px solid #CBD5E1",
+                background: activo ? ORANGE_DARK : "#F8FAFC", color: activo ? "#fff" : "#475569" }}>{o.t}</button>;
+          })}
+        </div>}
+        {!esMaqForm && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {[{ k: "material", t: prefijo === "MAQ" ? "Repuesto / material" : "Material", d: `Se coordina la entrega (${prefijo === "MAQ" ? "Fernando" : "Ana"} → Logística) y lleva ficha de recibido` },
             { k: "servicio", t: "Servicio de proveedor", d: "Colado de concreto, topografía, rentas… — no se coordina ni lleva ficha" }].map(o => {
             const activo = (f.tipoCompra || "material") === o.k;
@@ -1487,7 +1590,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
                 border: activo ? "1px solid transparent" : "1px solid #CBD5E1",
                 background: activo ? ORANGE_DARK : "#F8FAFC", color: activo ? "#fff" : "#475569" }}>{o.t}</button>;
           })}
-        </div>
+        </div>}
         {(f.tipoCompra || "material") === "servicio" && <div style={{ fontSize: 11.5, color: C_AZUL.color, background: C_AZUL.bg, border: "1px solid rgba(29,95,175,.22)", borderRadius: 10, padding: "9px 12px", lineHeight: 1.5 }}>
           Cuando la Lic. la pague va directo a <b>Por cerrar contable</b> — no pasa por {prefijo === "MAQ" ? "Fernando" : "Ana"} ni por Logística, y no se le pide ficha de recibido.
         </div>}
@@ -1561,7 +1664,47 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           tabla, las cards, la ficha de entrega, los despachos y los
           reportes). `detalleMateriales` queda solo en las solicitudes viejas
           que ya lo tenían. */}
-      {modoItems
+      {esMaqForm
+        ? <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 12, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14 }}>
+            {/* 1) La partida del presupuesto (una sola para toda la compra) */}
+            {presConPartidas && !sinElegiblesCC && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <Select label="Partida del presupuesto *" options={opcionesSelectCC} value={f.partidaId || ""} onChange={e => u("partidaId", e.target.value)} emptyLabel="— Elegí la partida —" />
+              {dispCC && <div style={{ fontSize: 12, color: "#64748b" }}>Disponible en la partida: <b style={{ color: dispCC.disponibleUSD < 0 ? C_ROJO.color : "#0f172a" }}>{fmtUSD(dispCC.disponibleUSD)}</b> · ≈ {fmtL(dispCC.disponibleUSD * tasaCC)}</div>}
+              {sobregiroCC > 0 && <div style={{ background: "rgba(232,118,45,.10)", border: "1px solid rgba(232,118,45,.35)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: "#A94E16" }}>Sobrepasa la partida en {fmtUSD(sobregiroCC)}</div>
+                <Textarea label="Justificación del sobregiro *" value={f.sobregiroJustificacion || ""} onChange={e => u("sobregiroJustificacion", e.target.value)} placeholder="Por qué se aprueba igual" />
+              </div>}
+            </div>}
+            {presConPartidas && sinElegiblesCC && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>El presupuesto no tiene partida para máquinas — quedará por clasificar en GeoCost.</div>}
+            {f.projectCode && !presConPartidas && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>Este proyecto no tiene presupuesto en GeoCost: la compra no lleva partida.</div>}
+            {/* 2) La cotización, línea por línea */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>La cotización, línea por línea *</label>
+                <span style={{ fontSize: 11.5, color: "#64748b" }}>Montos en L, con ISV, tal cual la cotización</span>
+              </div>
+              <datalist id="maq-unidades">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist>
+              {lineasM.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "76px 110px minmax(0,1fr) 120px 28px", gap: 6, fontSize: 10.5, fontWeight: 800, color: "#94A3B8", textTransform: "uppercase", letterSpacing: .4, padding: "0 2px" }}>
+                <span>Cant.</span><span>Unidad</span><span>Qué es</span><span style={{ textAlign: "right" }}>Monto L</span><span />
+              </div>}
+              {lineasM.map(l => <div key={l.id} style={{ display: "grid", gridTemplateColumns: "76px 110px minmax(0,1fr) 120px 28px", gap: 6, alignItems: "center" }}>
+                <input type="number" min="0" step="any" value={l.cantidad ?? ""} onChange={e => uLineaM(l.id, "cantidad", e.target.value)} placeholder="1" style={{ padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", textAlign: "right" }} />
+                <input list="maq-unidades" value={l.unidad || ""} onChange={e => uLineaM(l.id, "unidad", e.target.value)} placeholder="Unidad" style={{ padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff" }} />
+                <input value={l.nombre || ""} onChange={e => uLineaM(l.id, "nombre", e.target.value)} placeholder="Ej. Aceite hidráulico ISO 68" style={{ padding: "8px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", minWidth: 0 }} />
+                <input type="number" min="0" step="0.01" value={l.monto ?? ""} onChange={e => uLineaM(l.id, "monto", e.target.value)} placeholder="0.00" style={{ padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", textAlign: "right", fontWeight: 700 }} />
+                <button type="button" title="Quitar línea" onClick={() => setLineasM(lineasM.filter(x => x.id !== l.id))} style={{ background: "none", border: "none", color: "#94A3B8", fontSize: 16, cursor: "pointer" }}>✕</button>
+              </div>)}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 2 }}>
+                <button type="button" onClick={() => setLineasM([...lineasM, { id: uid(), cantidad: "", unidad: "", nombre: "", monto: "" }])} style={{ background: "#fff", border: `1px dashed ${ORANGE}`, color: ORANGE_DARK, borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>+ Agregar línea</button>
+                {lineasMValidas.length > 0 && <div style={{ fontSize: 12.5, color: "#475569" }}>
+                  Suma de líneas <b style={{ color: "#0f172a" }}>{fmtL(sumaM)}</b>
+                  {num(f.amount) > 0 && Math.abs(num(f.amount) - sumaM) >= 0.005 && <span style={{ marginLeft: 8, color: "#A94E16", fontWeight: 700 }}>· el total dice {fmtL(f.amount)} (la diferencia se reparte entre las líneas)</span>}
+                </div>}
+              </div>
+            </div>
+            <Textarea label="Detalle adicional (opcional)" value={extraForm || ""} onChange={e => u("detalleExtra", e.target.value)} placeholder="Para qué máquina, horómetro, garantía, algo que la cotización diga distinto…" />
+          </div>
+        : modoItems
         ? <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 10, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14 }}>
             <LineasPresupuesto modulo={moduloPartida} pres={presConPartidas} lineas={lineasForm} onChange={ls => u("lineas", ls)} montoTotal={f.amount} tasa={tasaCC} disponibleDe={dispDe} isMobile={typeof window !== "undefined" && window.innerWidth < 640} />
             {evL.sobregiroUSD > 0 && <div style={{ background: "rgba(232,118,45,.10)", border: "1px solid rgba(232,118,45,.35)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1654,8 +1797,8 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         </div>}
         <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cancelar</Btn>
         <Btn variant="warn" disabled={saving} onClick={async () => {
-          if (!f.projectCode || !f.provider || (!modoItems && !f.description) || !f.amount) return alert(modoItems ? "Complete proyecto, proveedor y monto" : "Complete proyecto, proveedor, descripcion y monto");
-          { const eCC = errorPartidaCC(); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
+          if (!f.projectCode || !f.provider || (!modoItems && !esMaqForm && !f.description) || !f.amount) return alert(modoItems || esMaqForm ? "Complete proyecto, proveedor y monto" : "Complete proyecto, proveedor, descripcion y monto");
+          { const eCC = errorPartidaCC(false); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
           setSaving(true);
           try {
             const rec = { ...f, ...camposCC(), destinoPago: destinoForm, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases, undefined, prefijo), status: "borrador", treasuryStatus: null };
@@ -1671,8 +1814,8 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           }
         }}>{saving ? "..." : "💾 Guardar borrador"}</Btn>
         <Btn variant="success" disabled={saving} onClick={async () => {
-          if (!f.projectCode || !f.provider || (!modoItems && !f.description) || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert(modoItems ? "Para aprobar: complete proyecto, proveedor, monto, N° cotizacion y responsable" : "Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
-          { const eCC = errorPartidaCC(); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
+          if (!f.projectCode || !f.provider || (!modoItems && !esMaqForm && !f.description) || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert(modoItems || esMaqForm ? "Para aprobar: complete proyecto, proveedor, monto, N° cotizacion y responsable" : "Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
+          { const eCC = errorPartidaCC(true); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
           // La fecha requerida es OPCIONAL (29-sep-2026, pedido de Gerson): sin
           // ella la solicitud no sale en el Calendario (salvo que vaya a
           // Cuentas por pagar, que la programa para hoy y se reprograma ahí).
@@ -4241,14 +4384,14 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
                     return <div key={l.id} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 12.5 }}>
                       <span style={{ fontWeight: 700, color: "#0f172a", minWidth: 0, flex: 1 }}>
                         {num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")} ${(l.sustituto ? l.sustituto.unidad : l.unidad) || ""} × ` : ""}
-                        {l.sustituto ? l.sustituto.nombre : (pt?.nombre || l.nombre || "(partida borrada)")}
+                        {l.sustituto ? l.sustituto.nombre : l.manual ? l.nombre : (pt?.nombre || l.nombre || "(partida borrada)")}
                         {/* Sustituto (30-sep-2026): se compró otra cosa con la plata de la partida */}
                         {l.sustituto && <>
                           <span style={{ marginLeft: 6, padding: "1px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: C_AMARILLO.color, background: C_AMARILLO.bg }}>Sustituto</span>
                           <span style={{ display: "block", fontSize: 11, fontWeight: 500, color: "#64748b", marginTop: 1 }}>se carga a: {pt?.nombre || l.nombre}{l.sustituto.motivo ? ` — ${l.sustituto.motivo}` : ""}</span>
                         </>}
                       </span>
-                      <span style={{ color: "#64748b", fontSize: 11 }}>{[pt?.solucion || l.solucion, pt?.categoria || l.categoria].filter(Boolean).join(" · ")}</span>
+                      <span style={{ color: "#64748b", fontSize: 11 }}>{l.manual ? (pt?.nombre || "") : [pt?.solucion || l.solucion, pt?.categoria || l.categoria].filter(Boolean).join(" · ")}</span>
                       <span style={{ fontWeight: 700, color: "#059669", whiteSpace: "nowrap" }}>{fmtL(l.montoHNL)}</span>
                     </div>;
                   })}
@@ -7945,6 +8088,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
                   <StatusBadge status={p.status} />
                   {/* Servicio de proveedor (23-sep-2026): no se coordina ni lleva ficha */}
                   {p.tipoCompra === "servicio" && <span title="Servicio de proveedor — al pagarse va directo a Por cerrar contable" style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_AZUL.color, background: C_AZUL.bg, whiteSpace: "nowrap" }}>Servicio</span>}
+                  {p.categoriaMaq && p.categoriaMaq !== "servicio" && <span style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_GRIS.color, background: C_GRIS.bg, whiteSpace: "nowrap" }}>{(CATEGORIAS_MAQ.find(c => c.k === p.categoriaMaq) || {}).t}</span>}
                   {p.origenSupply && <span title={`Viene de GeoSupply: ${p.origenSupply.folioSolicitud || ""} · ${p.origenSupply.folioCotizacion || ""}`} style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_NARANJA_CHIP.color, background: C_NARANJA_CHIP.bg, whiteSpace: "nowrap" }}>GeoSupply</span>}
                   {/* VENCIDA: +2 semanas sin pago (18-sep-2026) */}
                   {venc && <span title={`Lleva ${diasV} días sin pago`} style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_ROJO.color, background: C_ROJO.bg, border: `1px solid ${C_ROJO.borde}`, whiteSpace: "nowrap" }}>Vencida · {diasV} d</span>}

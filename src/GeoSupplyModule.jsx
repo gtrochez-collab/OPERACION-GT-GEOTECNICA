@@ -33,7 +33,7 @@ import { GT_CSS } from "./gt-ui.js";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 import { hoyISO } from "./fechas.js";
-import { num, UNIDADES, TASA_DEFAULT } from "./geocost-calc.js";
+import { num, UNIDADES, TASA_DEFAULT, movimientosCompras } from "./geocost-calc.js";
 import { Input, Select, Textarea, Btn, Chip, Modal, C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, fmtL, fmtUSD, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
 import {
@@ -142,7 +142,7 @@ function PasosLinea({ paso, compact }) {
 // FORM DE SOLICITUD (residente) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
 function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, userKey, onGuardar, onClose, isMobile }) {
-  const [f, setF] = useState(() => solicitud ? { ...solicitud, lineas: (solicitud.lineas || []).map(l => ({ ...l })) } : { projectCode: proyectos.length === 1 ? proyectos[0].short : "", fechaRequeridaObra: "", urgente: false, justificacionUrgencia: "", notas: "", lineas: [] });
+  const [f, setF] = useState(() => solicitud ? { ...solicitud, lineas: (solicitud.lineas || []).map(l => ({ ...l })) } : { projectCode: "", fechaRequeridaObra: "", urgente: false, justificacionUrgencia: "", notas: "", lineas: [] });
   const [q, setQ] = useState("");
   const [sol, setSol] = useState("");
   const [fuera, setFuera] = useState(null);     // { descripcion, unidad, cantidad, justificacion }
@@ -192,7 +192,7 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
   const CTRL = { padding: "8px 10px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 10, fontSize: 13, outline: "none", background: "#F4F4F2", fontFamily: "inherit", boxSizing: "border-box" };
   return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr", gap: 12 }}>
-      <Select label="Proyecto *" options={proyectos.map(p => ({ value: p.short, label: p.name || p.short }))} value={f.projectCode} onChange={e => { u("projectCode", e.target.value); u("lineas", f.lineas.filter(l => l.fueraPresupuesto)); setSol(""); }} emptyLabel="Elegí el proyecto" disabled={!!solicitud && solicitud.estado !== "borrador"} />
+      <Select label="Proyecto *" options={[{ group: "Con receta en GeoCost", options: proyectos.filter(p => presDe(p.short)).map(p => ({ value: p.short, label: p.name || p.short })) }, { group: "Sin receta", options: proyectos.filter(p => !presDe(p.short)).map(p => ({ value: p.short, label: p.name || p.short })) }].filter(g => g.options.length)} value={f.projectCode} onChange={e => { u("projectCode", e.target.value); u("lineas", f.lineas.filter(l => l.fueraPresupuesto)); setSol(""); }} emptyLabel="Elegí el proyecto" disabled={!!solicitud && solicitud.estado !== "borrador"} />
       <Input label="Lo necesito en obra el *" type="date" value={f.fechaRequeridaObra || ""} min={hoyISO()} onChange={e => u("fechaRequeridaObra", e.target.value)} />
     </div>
     {f.projectCode && !pres && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12.5 }}>Este proyecto no tiene receta en GeoCost: todo lo que pidás va como <b>fuera de presupuesto</b> y lo revisa el Coordinador.</div>}
@@ -404,7 +404,18 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
 // ═══════════════════════════════════════════════════════════════════════════
 export default function GeoSupplyModule({ userRole, userName, userKey, userProyectos = [], onBack, onLogout }) {
   const isMobile = useIsMobile();
-  const rol = rolSupply(userRole);
+  // ── SIMULACIÓN (12-oct-2026, pedido de Gerson) ──
+  // El Coordinador puede correr el proceso completo "viendo como" cada rol, en
+  // keys PROPIAS (sp-sim-*): nada llega a GeoShopping, GeoCost ni a nadie. Los
+  // borradores que generaría van a `sp-sim-purchases` con código SIM-.
+  const rolReal = rolSupply(userRole);
+  const puedeSimular = rolReal === "coordinador";
+  const [sim, setSimRaw] = useState(() => { try { return puedeSimular && sessionStorage.getItem("gt-supply-sim") === "1"; } catch { return false; } });
+  const [simRol, setSimRol] = useState("residente");
+  const setSim = (v) => { setSimRaw(v); try { v ? sessionStorage.setItem("gt-supply-sim", "1") : sessionStorage.removeItem("gt-supply-sim"); } catch {} };
+  const rol = sim ? simRol : rolReal;
+  const K = sim ? { sol: "sp-sim-solicitudes", cot: "sp-sim-cotizaciones", pur: "sp-sim-purchases" } : { sol: "sp-solicitudes", cot: "sp-cotizaciones", pur: "cp-purchases" };
+  const kRef = useRef(K); kRef.current = K;
   const esCoordinador = rol === "coordinador";
   const esResidente = rol === "residente";
   const soloLectura = rol === "finanzas" || rol === "gerencia";
@@ -419,6 +430,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const [customProjects, setCustomProjects] = useState([]);
   const [providers, setProviders] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  const [simPurchases, setSimPurchases] = useState([]);
   const [despachos, setDespachos] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   const [modal, setModal] = useState(null);
@@ -432,12 +444,17 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
 
   const leer = async (k) => { try { return await store.getCloud(k); } catch (e) { console.warn(`[GeoSupply] no se pudo leer ${k}:`, e?.message || e); return undefined; } };
   const cargar = async () => {
-    const [sol, cot, cf, pr, cc, cp, pv, pu, us, dp] = await Promise.all([
-      leer("sp-solicitudes"), leer("sp-cotizaciones"), leer("sp-config"), leer("cc-presupuestos"), leer("cc-config"),
+    const k = kRef.current;
+    const enSim = k.pur !== "cp-purchases";
+    const [sol, cot, cf, pr, cc, cp, pv, pu, us, dp, sp] = await Promise.all([
+      leer(k.sol), leer(k.cot), leer("sp-config"), leer("cc-presupuestos"), leer("cc-config"),
       leer("cp-projects"), leer("cp-providers"), leer("cp-purchases"), leer("gt-usuarios"), leer("lg-despachos"),
+      enSim ? leer(k.pur) : Promise.resolve([]),
     ]);
-    if (Array.isArray(sol)) setSolicitudes(sol);
-    if (Array.isArray(cot)) setCotizaciones(cot);
+    // Key ausente (null) = lista vacía; undefined = la nube no respondió.
+    if (Array.isArray(sol) || sol === null) setSolicitudes(sol || []);
+    if (Array.isArray(cot) || cot === null) setCotizaciones(cot || []);
+    if (Array.isArray(sp) || sp === null) setSimPurchases(sp || []);
     if (cf && typeof cf === "object") setSpConfig(cf);
     if (Array.isArray(pr)) setPresupuestos(pr);
     if (cc && typeof cc === "object") setCcConfig(cc);
@@ -449,6 +466,10 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   };
   useEffect(() => { let vivo = true; (async () => { await cargar(); if (vivo) setLoaded(true); })(); return () => { vivo = false; }; // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Entrar o salir de la simulación recarga TODO con las otras keys.
+  const simPrimeraRef = useRef(true);
+  useEffect(() => { if (simPrimeraRef.current) { simPrimeraRef.current = false; return; } setModal(null); cargar(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sim]);
   // Latido: las bandejas son colas de trabajo — al volver a la pestaña y cada
   // 90 s con la pestaña visible (sin modal abierto, para no pisar lo que se tipea).
   const modalRef = useRef(null); modalRef.current = modal;
@@ -472,9 +493,14 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const nombreProy = (short) => proyectoDe(short)?.name || short || "—";
   const presDe = (short) => presupuestos.find(p => p.projectCode === short && p.estado !== "cerrado") || null;
   const partidaDe = (short, partidaId) => (presDe(short)?.partidas || []).find(p => p.id === partidaId) || null;
-  const saldoDe = (short, partidaId, excluirSolicitudId) => { const partida = partidaDe(short, partidaId); return partida ? saldoDePartida({ partida, purchases, solicitudes, excluirSolicitudId }) : null; };
+  // En simulación, los borradores simulados también consumen saldo.
+  const purchasesVista = sim ? [...purchases, ...simPurchases] : purchases;
+  const saldoDe = (short, partidaId, excluirSolicitudId) => { const partida = partidaDe(short, partidaId); return partida ? saldoDePartida({ partida, purchases: purchasesVista, solicitudes, excluirSolicitudId }) : null; };
   const miUsuario = usuarios.find(u => u.username === userKey) || null;
-  const misProyectos = esResidente ? proyectos.filter(p => (miUsuario?.proyectos || userProyectos || []).includes(p.short)) : proyectos;
+  // Cualquier residente puede pedir para CUALQUIER proyecto (12-oct-2026,
+  // Gerson: "se rotan, cambian de proyecto rápido o se cubren"). Primero los
+  // que tienen receta en GeoCost, que son los que de verdad se piden.
+  const misProyectos = [...proyectos].sort((a, b) => (presDe(b.short) ? 1 : 0) - (presDe(a.short) ? 1 : 0));
   const residentes = usuarios.filter(u => u.role === "residente" && u.activo !== false);
   const quien = (username) => nombreUsuario(username, usuarios);
 
@@ -520,8 +546,8 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     } catch (e) { alert("Sin conexión con la nube: no se guardó."); console.warn("[GeoSupply]", e); return null; }
     finally { setOcupado(false); }
   };
-  const actualizarSolicitud = (id, fn) => actualizarEn("sp-solicitudes", setSolicitudes, id, fn);
-  const actualizarCotizacion = (id, fn) => actualizarEn("sp-cotizaciones", setCotizaciones, id, fn);
+  const actualizarSolicitud = (id, fn) => actualizarEn(K.sol, setSolicitudes, id, fn);
+  const actualizarCotizacion = (id, fn) => actualizarEn(K.cot, setCotizaciones, id, fn);
 
   // Acción sobre UNA línea (Coordinador, Almacén, Compras). La transición la
   // valida geosupply-calc; acá solo se aplica al registro fresco y se audita.
@@ -569,7 +595,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         return enviar ? prepararEnvio(base) : base;
       });
     } else {
-      rec = await crearEn("sp-solicitudes", setSolicitudes, (arr) => {
+      rec = await crearEn(K.sol, setSolicitudes, (arr) => {
         const base = { id: uid(), folio: siguienteFolio(arr, "SUP", new Date(ahoraISO).getFullYear()), projectCode: f.projectCode, residente: userKey, fechaRequeridaObra: f.fechaRequeridaObra, urgente: !!f.urgente, justificacionUrgencia: f.justificacionUrgencia || "", notas: f.notas || "", estado: "borrador", lineas: f.lineas, createdAt: ahoraISO, audit: [auditEntry("creada", "Borrador creado")] };
         return enviar ? prepararEnvio(base) : base;
       });
@@ -610,7 +636,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         return marcar({ ...q, provider: f.provider, providerId: f.providerId || "", numeroProveedor: f.numeroProveedor || "", condicionPago: f.condicionPago || "contado", incluyeISV: f.incluyeISV !== false, totalDeclarado: f.totalDeclarado, pdfFile: f.pdfFile || null, notas: f.notas || "", lineas: f.lineas, audit: [...(q.audit || []), auditEntry("editada", "Cotización editada")] });
       });
     } else {
-      rec = await crearEn("sp-cotizaciones", setCotizaciones, (arr) => marcar({ id: uid(), folio: siguienteFolio(arr, "CTZ", new Date(ahoraISO).getFullYear()), requestId: f.lineas[0]?.requestId || "", projectCode: f.projectCode, provider: f.provider, providerId: f.providerId || "", numeroProveedor: f.numeroProveedor || "", condicionPago: f.condicionPago || "contado", incluyeISV: f.incluyeISV !== false, totalDeclarado: f.totalDeclarado, pdfFile: f.pdfFile || null, notas: f.notas || "", lineas: f.lineas, estado: "borrador", createdAt: ahoraISO, creadaPor: userKey, audit: [auditEntry("creada", "Borrador de cotización")] }));
+      rec = await crearEn(K.cot, setCotizaciones, (arr) => marcar({ id: uid(), folio: siguienteFolio(arr, "CTZ", new Date(ahoraISO).getFullYear()), requestId: f.lineas[0]?.requestId || "", projectCode: f.projectCode, provider: f.provider, providerId: f.providerId || "", numeroProveedor: f.numeroProveedor || "", condicionPago: f.condicionPago || "contado", incluyeISV: f.incluyeISV !== false, totalDeclarado: f.totalDeclarado, pdfFile: f.pdfFile || null, notas: f.notas || "", lineas: f.lineas, estado: "borrador", createdAt: ahoraISO, creadaPor: userKey, audit: [auditEntry("creada", "Borrador de cotización")] }));
     }
     if (!rec) return;
     // Al ENVIAR, las líneas de la solicitud pasan a "cotizada" (por solicitud, una escritura cada una).
@@ -645,7 +671,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     if (ocupado) return false;
     setOcupado(true);
     try {
-      const [cotsC, solsC, pursC, provsC, ccC] = await Promise.all([store.getCloud("sp-cotizaciones"), store.getCloud("sp-solicitudes"), store.getCloud("cp-purchases"), store.getCloud("cp-providers"), store.getCloud("cc-config")]);
+      const [cotsC, solsC, pursC, provsC, ccC] = await Promise.all([store.getCloud(K.cot), store.getCloud(K.sol), store.getCloud(K.pur), store.getCloud("cp-providers"), store.getCloud("cc-config")]);
       const cots = Array.isArray(cotsC) ? cotsC : [], sols = Array.isArray(solsC) ? solsC : [], purs = Array.isArray(pursC) ? pursC : [], provs = Array.isArray(provsC) ? provsC : [];
       const cot = cots.find(x => x.id === q.id);
       if (!cot || cot.estado !== "enviada") { alert("La cotización ya no está por aprobar (alguien más la trabajó)."); return false; }
@@ -662,15 +688,16 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       let purchase = purs.find(p => p.origenSupply?.quoteId === cot.id);
       if (!purchase) {
         const proveedor = provs.find(p => p.id === cot.providerId) || provs.find(p => p.name === cot.provider) || null;
-        const armado = borradorDesdeCotizacion({ cotizacion: cot, evaluacion: ev, solicitud: sol, proveedor, proyecto: proyectoDe(cot.projectCode), aprobadoPor: userName, tasa: tasaC, cfg, hoy: hoyISO(), ahoraISO, id: uid(), codigo: siguienteCodigoCompra(purs, new Date(ahoraISO).getFullYear()) });
+        const armado = borradorDesdeCotizacion({ cotizacion: cot, evaluacion: ev, solicitud: sol, proveedor, proyecto: proyectoDe(cot.projectCode), aprobadoPor: userName, tasa: tasaC, cfg, hoy: hoyISO(), ahoraISO, id: uid(), codigo: siguienteCodigoCompra(purs, new Date(ahoraISO).getFullYear(), sim ? "SIM" : "MAT") });
+        if (sim) purchase = { ...purchase, simulacion: true };
         purchase = armado.purchase;
-        const ok = await store.set("cp-purchases", [...purs, purchase]);
+        const ok = await store.set(K.pur, [...purs, purchase]);
         if (!ok) { alert("No se pudo crear el borrador en GeoShopping. Nada se aprobó."); return false; }
-        const back = await store.getCloud("cp-purchases");
+        const back = await store.getCloud(K.pur);
         if (!Array.isArray(back) || !back.some(p => p.id === purchase.id)) { alert("VERIFICACIÓN FALLÓ: el borrador no quedó en la nube. Nada se aprobó."); return false; }
-        setPurchases(back);
+        (sim ? setSimPurchases : setPurchases)(back);
         // Proveedor nuevo → al maestro (best effort; Finanzas completa lo bancario).
-        if (!proveedor && cot.provider) {
+        if (!proveedor && cot.provider && !sim) {
           try { const pv = await store.getCloud("cp-providers"); const arr = Array.isArray(pv) ? pv : []; if (!arr.some(p => p.name === cot.provider)) { await store.set("cp-providers", [...arr, { id: uid(), name: cot.provider, rtn: "", phones: [], contactName: "", contactEmail: "", notes: `Creado desde GeoSupply (${cot.folio}) — completar datos.`, bankAccounts: [], autoImported: true, createdAt: ahoraISO, updatedAt: ahoraISO }]); } } catch (e) { console.warn("[GeoSupply] proveedor nuevo no se guardó:", e); }
         }
       }
@@ -684,13 +711,13 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         aud.push(auditEntry("aprobar_cot", `${l.descripcion}: aprobada en ${cot.folio} → ${purchase.codigo}`, { lineaId: l.id, de: l.estado, a: r.linea.estado }));
       });
       const sol2 = { ...sol, lineas, estado: estadoCabecera({ ...sol, lineas }), audit: [...(sol.audit || []), ...aud], updatedAt: ahoraISO };
-      const okS = await store.set("sp-solicitudes", sols.map(s => s.id === sol.id ? sol2 : s));
+      const okS = await store.set(K.sol, sols.map(s => s.id === sol.id ? sol2 : s));
       if (!okS) { alert(`El borrador ${purchase.codigo} se creó pero la solicitud no se actualizó. Volvé a aprobar: no se duplica.`); return false; }
       // 3) La cotización: aprobada, con la tasa usada y el borrador que generó.
       const cot2 = { ...cot, estado: "aprobada", aprobadoPor: userName, aprobadoAt: ahoraISO, comentario: comentario || "", tasaCambioUsada: tasaC, purchaseId: purchase.id, purchaseCodigo: purchase.codigo, evaluacion: { lineas: ev.lineas, suma: ev.suma, peor: ev.peor, todasVerdes: ev.todasVerdes }, avisos: purchase.origenSupply?.avisos || [], audit: [...(cot.audit || []), auditEntry("aprobada", `Aprobada → borrador ${purchase.codigo} en GeoShopping${comentario ? ` · ${comentario}` : ""}`)], updatedAt: ahoraISO };
-      const okC = await store.set("sp-cotizaciones", cots.map(x => x.id === cot.id ? cot2 : x));
+      const okC = await store.set(K.cot, cots.map(x => x.id === cot.id ? cot2 : x));
       if (!okC) { alert(`El borrador ${purchase.codigo} se creó pero la cotización no se marcó. Volvé a aprobar: no se duplica.`); return false; }
-      const [bs, bc] = await Promise.all([store.getCloud("sp-solicitudes"), store.getCloud("sp-cotizaciones")]);
+      const [bs, bc] = await Promise.all([store.getCloud(K.sol), store.getCloud(K.cot)]);
       if (Array.isArray(bs)) setSolicitudes(bs); if (Array.isArray(bc)) setCotizaciones(bc);
       return purchase;
     } catch (e) { alert("Sin conexión con la nube: no se aprobó."); console.warn("[GeoSupply] aprobar", e); return false; }
@@ -755,7 +782,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     fueraCorte: activas.filter(s => fueraDeCorte(s, cfg, ahora)).length,
   };
   const faltanViernes = lineasEf.filter(x => !LINEA_TERMINAL.includes(x.ef.estado)).length;
-  const purchaseDeLinea = (l) => purchases.find(p => p.origenSupply && (l.quoteIds || []).concat(cotizaciones.filter(q => q.estado === "aprobada" && q.lineas?.some(x => x.requestLineId === l.id)).map(q => q.id)).includes(p.origenSupply.quoteId)) || null;
+  const purchaseDeLinea = (l) => purchasesVista.find(p => p.origenSupply && (l.quoteIds || []).concat(cotizaciones.filter(q => q.estado === "aprobada" && q.lineas?.some(x => x.requestLineId === l.id)).map(q => q.id)).includes(p.origenSupply.quoteId)) || null;
   const despachoEntregadoDe = (purchase) => !!purchase && despachos.some(d => d.sourcePurchaseId === purchase.id && d.estado !== "cancelado" && (d.estado === "entregado" || d.estado === "cerrado"));
 
   // ── Piezas de UI ──
@@ -798,6 +825,10 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const hViernes = hitos[2];
     const ir = (id) => esCoordinador ? () => setSec(id) : undefined;
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {puedeSimular && !sim && <div className="gt-vidrio" style={{ padding: "12px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 220, fontSize: 13, color: "var(--text-2)" }}><b style={{ color: CHARCOAL }}>Simulación</b> · probá el proceso completo viendo como cada rol. No toca nada real.</div>
+        <Btn small variant="dark" onClick={() => { setSimRol("residente"); setSec("solicitudes"); setSim(true); }}>Simular el proceso</Btn>
+      </div>}
       <div className="gt-vidrio" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap", gap: isMobile ? 6 : 0 }}>
         <div style={{ padding: isMobile ? "4px 10px" : "4px 18px", borderRight: isMobile ? "none" : "1px solid rgba(44,42,40,.08)" }}>
           <div style={{ font: "800 15px/1.1 var(--display)", color: CHARCOAL }}>{etq.titulo}</div>
@@ -1013,7 +1044,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           </div>
         </div>
         <div style={{ marginLeft: "auto" }}>
-          {misProyectos.length === 0 ? <Chip c={C_AMARILLO}>Sin proyectos asignados — pedile acceso a Gerson</Chip> : <Btn onClick={() => setModal({ t: "solicitud" })}>+ Nueva solicitud</Btn>}
+          <Btn onClick={() => setModal({ t: "solicitud" })}>+ Nueva solicitud</Btn>
         </div>
       </div>}
       <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -1170,7 +1201,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         {puede && <>
           <Btn variant="danger" disabled={ocupado} onClick={async () => { if (await rechazarCotizacion(q, com)) setModal(null); }}>Rechazar</Btn>
           <Btn variant="ghost" disabled={ocupado} onClick={async () => { if (await devolverCotizacion(q, com)) setModal(null); }}>Devolver a Compras</Btn>
-          <Btn variant="success" disabled={ocupado || !ev.ok} title={ev.ok ? "Crea el borrador en GeoShopping" : ev.errores[0]} onClick={async () => { const pu = await aprobarCotizacion(q, com); if (pu) { setModal(null); alert(`✓ Aprobada. Borrador ${pu.codigo} creado en GeoShopping para que Finanzas lo envíe a Tesorería.${(pu.origenSupply?.avisos || []).length ? `\n\nAviso: ${pu.origenSupply.avisos.join("; ")}.` : ""}`); } }}>{ocupado ? "Aprobando…" : "Aprobar"}</Btn>
+          <Btn variant="success" disabled={ocupado || !ev.ok} title={ev.ok ? "Crea el borrador en GeoShopping" : ev.errores[0]} onClick={async () => { const pu = await aprobarCotizacion(q, com); if (pu) { setModal(null); alert(sim ? `✓ Aprobada (simulación). Borrador ${pu.codigo} — lo ves en "GeoShopping simulado", arriba.` : `✓ Aprobada. Borrador ${pu.codigo} creado en GeoShopping para que Finanzas lo envíe a Tesorería.${(pu.origenSupply?.avisos || []).length ? `\n\nAviso: ${pu.origenSupply.avisos.join("; ")}.` : ""}`); } }}>{ocupado ? "Aprobando…" : "Aprobar"}</Btn>
         </>}
       </div>
     </div>;
@@ -1180,7 +1211,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const renderDashboard = () => {
     const cortes = [...new Set(solicitudes.filter(s => s.corte).map(s => etiquetaCorte(s.corte).id))].sort().reverse();
     const filtros = { projectCode: dashProy || undefined, corteId: dashCorte === "todos" ? undefined : dashCorte === "actual" ? etq.id : dashCorte };
-    const m = metricasDashboard({ solicitudes, cotizaciones, purchases, despachos, cfg, ahora, filtros });
+    const m = metricasDashboard({ solicitudes, cotizaciones, purchases: purchasesVista, despachos, cfg, ahora, filtros });
     const barra = (v, max, c) => <div style={{ height: 8, borderRadius: 999, background: "rgba(44,42,40,.08)", overflow: "hidden" }}><div style={{ width: `${max ? Math.min(100, (v / max) * 100) : 0}%`, height: "100%", background: c || ORANGE, borderRadius: 999, transition: "width .6s var(--curva)" }} /></div>;
     const maxProy = Math.max(1, ...m.porProyecto.map(x => x.total));
     const T = m.tiempos;
@@ -1287,14 +1318,14 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         </div>
       </div>
       <div className="gt-vidrio" style={{ padding: 22, display: "flex", flexDirection: "column", gap: 10 }}>
-        <div className="gt-label" style={{ color: "var(--text-3)" }}>Residentes y sus proyectos</div>
+        <div className="gt-label" style={{ color: "var(--text-3)" }}>Residentes</div>
         {residentes.length === 0
           ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Todavía no hay residentes. Se crean en <b>GeoTeam → Accesos</b>, desde la ficha del colaborador.</div>
           : residentes.map(r => <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 0", borderTop: "1px solid rgba(44,42,40,.06)" }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, minWidth: 160 }}>{r.label}</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{(r.proyectos || []).length ? r.proyectos.map(p => <Chip key={p} c={C_GRIS}>{proyectoDe(p)?.name || p}</Chip>) : <Chip c={C_AMARILLO}>Sin proyectos asignados</Chip>}</div>
+            <Chip c={C_GRIS}>{r.username}</Chip>
           </div>)}
-        <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Los accesos y la asignación de proyectos se editan en GeoTeam → Accesos.</div>
+        <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Cada residente elige el proyecto al hacer la solicitud. Los accesos se dan en GeoTeam → Accesos.</div>
       </div>
     </div>
     <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10 }}>
@@ -1327,6 +1358,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
             onGuardar={(f, ev) => guardarCotizacion(f, ev, false)} onEnviar={async (f, ev) => { await materializarSinRevision(f.lineas); await guardarCotizacion(f, ev, true); }} onClose={() => setModal(null)} subirPdf={subirPdf} verArchivo={verArchivo} />
         </Modal>;
       }
+      case "sim-shop": return <Modal title="GeoShopping simulado" onClose={() => setModal(null)} wide>{renderSimShop()}</Modal>;
       case "aprobar": return <Modal title={`${m.q.folio} — ${m.q.provider}`} onClose={() => setModal(null)} size="xl">{renderAprobar(m.q)}</Modal>;
       default: return null;
     }
@@ -1337,6 +1369,81 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoSupply…</div>;
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
   const secOk = nav.some(x => x.id === sec) ? sec : nav[0]?.id;
+  // Ver como (simulación): al cambiar de rol se va a SU primera pestaña.
+  const SIM_ROLES = [["residente", "Residente"], ["almacen", "Almacén"], ["compras", "Compras"], ["coordinador", "Coordinador"], ["finanzas", "Finanzas"]];
+  const verComo = (r) => { setSimRol(r); setSec((NAV[r] || [])[0]?.id || "solicitudes"); setModal(null); };
+  const reiniciarSim = async () => {
+    if (!confirm("¿Borrar toda la simulación (solicitudes, cotizaciones y borradores simulados) y empezar de cero?")) return;
+    const archivos = cotizaciones.map(q => q.pdfFile?.fileId).filter(Boolean);
+    await Promise.all([store.remove("sp-sim-solicitudes", { quiet: true }), store.remove("sp-sim-cotizaciones", { quiet: true }), store.remove("sp-sim-purchases", { quiet: true }), ...archivos.map(id => store.remove(fileKey(id), { quiet: true }))]);
+    setSolicitudes([]); setCotizaciones([]); setSimPurchases([]); setModal(null);
+    verComo("residente");
+  };
+  const salirSim = () => { setSim(false); setSec("hoy"); };
+  const barraSim = sim && <div style={{ position: "relative", zIndex: 2, flexShrink: 0, background: C_AMARILLO.bg, borderBottom: "1px solid rgba(138,90,0,.18)", padding: isMobile ? "8px 12px" : "8px 24px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+    <span style={{ font: "800 12px/1 var(--sans)", color: C_AMARILLO.color, letterSpacing: ".02em" }}>SIMULACIÓN</span>
+    <span style={{ fontSize: 12, color: C_AMARILLO.color }}>Ver como</span>
+    {SIM_ROLES.map(([k, l]) => pillBtn(l, simRol === k, () => verComo(k), { key: k, c: CHARCOAL }))}
+    <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <Btn small variant="ghost" onClick={() => setModal({ t: "sim-shop" })}>GeoShopping simulado ({simPurchases.length})</Btn>
+      <Btn small variant="ghost" onClick={reiniciarSim}>Reiniciar</Btn>
+      <Btn small variant="dark" onClick={salirSim}>Salir de la simulación</Btn>
+    </div>
+  </div>;
+  // Lo que Finanzas vería en "Borradores (n)" y cómo sube GeoCost.
+  const actualizarSimPurchase = async (id, cambios, nota) => {
+    const rec = await actualizarEn("sp-sim-purchases", setSimPurchases, id, (p) => ({ ...p, ...cambios, audit: [...(p.audit || []), auditEntry(cambios.status, nota)] }));
+    return !!rec;
+  };
+  const renderSimShop = () => {
+    const ESTADO = { borrador: ["Borrador (Finanzas)", C_GRIS], validado: ["Pendiente Lic. Carolina", C_AZUL], pagado: ["Pagada", C_VERDE] };
+    const DEST = { normal: "Normal", prioridad: "Prioridades", cxp: "Cuentas por pagar" };
+    const porProy = [...new Set(simPurchases.map(p => p.projectCode))];
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>Así le llegarían a Finanzas en GeoShopping → Solicitudes → <b>Borradores</b>, y así subiría GeoCost. Nada de esto es real.</div>
+      {simPurchases.length === 0 && <Vacio>Todavía no hay borradores: aparecen cuando el Coordinador aprueba una cotización.</Vacio>}
+      {porProy.map(pc => {
+        const lista = simPurchases.filter(p => p.projectCode === pc);
+        const movs = movimientosCompras({ purchases: lista, projectCode: pc, tasa });
+        const comp = movs.filter(m => m.estado === "comprometido").reduce((a, m) => a + m.montoUSD, 0);
+        const ejec = movs.filter(m => m.estado === "ejecutado").reduce((a, m) => a + m.montoUSD, 0);
+        const porPartida = {};
+        movs.forEach(m => { const k = partidaDe(pc, m.partidaId)?.nombre || "Por clasificar"; porPartida[k] = (porPartida[k] || 0) + m.montoUSD; });
+        return <div key={pc} className="gt-vidrio" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+            <b style={{ fontSize: 14 }}>{nombreProy(pc)}</b>
+            <span style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-2)" }}>GeoCost: comprometido <b>{fmtUSD(comp)}</b> · ejecutado <b>{fmtUSD(ejec)}</b></span>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{Object.entries(porPartida).map(([k, v]) => <Chip key={k} c={k === "Por clasificar" ? C_AMARILLO : C_GRIS}>{k}: {fmtUSD(v)}</Chip>)}</div>
+          {lista.map(p => {
+            const [lbl, c] = ESTADO[p.status] || [p.status, C_GRIS];
+            return <div key={p.id} style={{ padding: "10px 12px", borderRadius: 14, background: "rgba(255,255,255,.75)", border: "1px solid rgba(44,42,40,.08)", display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "var(--mono)", fontWeight: 800, fontSize: 12 }}>{p.codigo}</span>
+                <Chip c={c}>{lbl}</Chip>
+                <b style={{ fontSize: 13.5 }}>{p.provider}</b>
+                <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{p.origenSupply?.folioSolicitud} · {p.origenSupply?.folioCotizacion}</span>
+                <b style={{ marginLeft: "auto", fontSize: 14 }}>{fmtL(p.amount)}</b>
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "pre-line" }}>{p.description}</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <Chip c={C_GRIS}>{(p.condicionPago || "contado") === "credito" ? "Crédito" : "Contado"}</Chip>
+                <Chip c={C_GRIS}>Va a: {DEST[p.destinoPago] || "Normal"}</Chip>
+                <Chip c={C_GRIS}>Pago {p.fechaPagoRequerida ? fmtDiaCorto(p.fechaPagoRequerida) : "sin fecha"}</Chip>
+                {p.bacAccount ? <Chip c={C_GRIS}>{p.providerBank || "Banco"} {p.bacAccount}</Chip> : null}
+                {(p.origenSupply?.avisos || []).map(a => <Chip key={a} c={C_AMARILLO}>{a}</Chip>)}
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                {p.status === "borrador" && <Btn small variant="success" disabled={ocupado} onClick={() => actualizarSimPurchase(p.id, { status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() }, "Enviada a Tesorería (simulación)")}>Finanzas: enviar a Tesorería</Btn>}
+                {p.status === "validado" && <Btn small variant="success" disabled={ocupado} onClick={() => actualizarSimPurchase(p.id, { status: "pagado", treasuryStatus: "pagada", paidAt: hoyISO(), paymentDate: hoyISO() }, "Pagada (simulación)")}>Tesorería: marcar pagada</Btn>}
+              </div>
+            </div>;
+          })}
+        </div>;
+      })}
+    </div>;
+  };
+
   const badge = { alertas: n.alertas, cotizaciones: esCoordinador ? n.cotizadas : rol === "compras" ? n.devueltas : 0, almacen: n.almacen, compras: n.porCotizar };
 
   return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: "#F9F9F8", color: CHARCOAL }}>
@@ -1352,7 +1459,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
         {!isMobile && <div style={{ textAlign: "right" }}>
           <div style={{ font: "600 13px/1.3 var(--sans)", color: "var(--text)" }}>{userName || "Usuario"}</div>
-          <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2 }}>{ROL_LABEL[rol] || ROLE_LABEL[userRole] || userRole}</div>
+          <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2 }}>{sim ? `Simulando · ${ROL_LABEL[rol]}` : (ROL_LABEL[rol] || ROLE_LABEL[userRole] || userRole)}</div>
         </div>}
         {onLogout && <button onClick={onLogout} title="Cerrar sesión" style={{ minHeight: 36, padding: "8px 14px", borderRadius: 999, border: "1px solid rgba(192,57,43,.25)", background: "rgba(192,57,43,.06)", color: "#B03024", font: "700 12px/1 var(--sans)", cursor: "pointer" }}>Cerrar sesión</button>}
       </div>
@@ -1365,6 +1472,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           onMouseEnter={e => { if (!active) e.currentTarget.style.color = "var(--text)"; }} onMouseLeave={e => { if (!active) e.currentTarget.style.color = "var(--text-3)"; }}>{x.label}{b > 0 && <span style={{ minWidth: 18, height: 18, padding: "0 5px", borderRadius: 999, background: ORANGE, color: "#fff", fontSize: 10.5, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{b}</span>}</button>;
       })}
     </div>
+    {barraSim}
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>
         {secOk === "hoy" ? renderHoy() : secOk === "alertas" ? renderAlertas() : secOk === "almacen" ? renderAlmacen() : secOk === "compras" ? renderCompras() : secOk === "cotizaciones" ? renderCotizaciones() : secOk === "dashboard" ? renderDashboard() : secOk === "config" ? renderConfig() : renderSolicitudes()}

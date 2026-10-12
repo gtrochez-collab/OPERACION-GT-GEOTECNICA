@@ -616,7 +616,9 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
         <tbody>{movs.map(m => {
           const reclasificable = puedeReclasificar && (m.fuente === "compras" || m.fuente === "maquinas") && m.sourceKey && !m.dividida;
           // Dividir en ítems: solo compras de GeoShopping (25-sep-2026)
-          const divisible = puedeReclasificar && (m.sourceKey === "cp-purchases" || m.sourceKey === "mq-purchases");
+          // Las de GeoMachinery con líneas escritas a mano (12-oct-2026) ya
+          // vienen desglosadas: "Editar ítems" las pisaría con los de la receta.
+          const divisible = puedeReclasificar && (m.sourceKey === "cp-purchases" || m.sourceKey === "mq-purchases") && !(m.origen?.lineas || []).some(l => l?.manual);
           const linkItems = (txt) => <button onClick={() => setModal({ t: "items", purchaseId: m.origen?.id, presId: pres.id, sourceKey: m.sourceKey })}
             style={{ background: "none", border: "none", padding: 0, marginTop: 4, fontSize: 11, color: "var(--naranja-tinta)", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", fontWeight: 700 }}>{txt}</button>;
           const nombrePart = nombrePartidaDe(pres, m);
