@@ -503,6 +503,8 @@ export const borradorDesdeCotizacion = ({ cotizacion, evaluacion, solicitud, pro
     ...(l.solucion ? { solucion: l.solucion } : {}),
     ...(l.fueraPresupuesto ? { fueraPresupuesto: true } : {}),
     ...(l.varilla ? { varilla: { n: Number(l.varilla.n), largo: Number(l.varilla.largo), lances: num(l.varilla.lances) } } : {}),
+    // Cómo lo escribió el proveedor (si Compras leyó el PDF): memoria del lector
+    ...(l.leido?.nombre ? { cot: String(l.leido.nombre).slice(0, 160) } : {}),
   }));
   // La partida "principal" (la de más plata) para lo que aún lee una sola.
   const principal = lineas.filter(l => l.partidaId).sort((a, b) => b.monto - a.monto)[0] || null;

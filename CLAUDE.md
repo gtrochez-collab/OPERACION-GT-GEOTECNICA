@@ -790,6 +790,56 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   true en solicitudes NUEVAS de GeoMachinery; las viejas no lo traen): las
   líneas van SIN ISV y el monto total = suma × 1.15 ("Subtotal · ISV 15 % ·
   Total"), checkbox para desmarcarlo en compras exentas.
+  **El lector también en GeoSupply y GeoShopping (12-oct-2026, 2ª pasada)** —
+  Gerson: "¿cuando Ana suba la cotización se llenan los campos solos?" y "que
+  Finanzas en GeoShopping tenga lo mismo, pero allá sigue la receta del
+  pastel: ¿cómo busca en el presupuesto un tubo PVC de 2"?". Piezas PURAS
+  nuevas en `leer-cotizacion.js` (con pruebas): `tokensDe`/`parecido`
+  (palabras sin acentos ni códigos de producto, medidas normalizadas — 2" →
+  2in, 1-1/4" → 1y1/4in, #5/No.5 → n5, 6x2.35m → 6m 2.35m — y si dos textos
+  traen medidas de la MISMA clase que no coinciden, casi seguro son otra cosa),
+  `emparejar` (mejor pareja primero, uno-a-uno opcional), `ajusteAlTotal`
+  (factor de los renglones al total: isv ×1.15 · exenta · proporcional
+  —descuento global o mezcla de exentos— · no_cuadra · sin_total),
+  `lineasSupplyDesdeLectura`/`lineaSupplyDe` (GeoSupply: contra lo POR
+  COTIZAR del proyecto, P.U. CON ISV, varilla en lances) y
+  `lineasPresupuestoDesdeLectura` (GeoShopping: contra las partidas
+  comprables de la receta; con varias SOLUciones elige la que reconoce más; a
+  igualdad gana la partida CON plata —la de $0 es material del cliente—; la
+  varilla de una partida en Ton va a "Acero…" con #/largo/lances).
+  **MEMORIA ("que aprenda")**: `memoriaDeCompras(purchases)` + `recordar`:
+  cada línea de cp-purchases guarda ahora `cot` (ADITIVO: cómo lo escribió el
+  proveedor; lo escriben `lineasParaGuardar` y `borradorDesdeCotizacion`), y
+  también cuentan los `sustituto.nombre` viejos. Se recuerda por NOMBRE de
+  partida, así sirve entre proyectos con la misma receta. Si el recuerdo era
+  sustituto, la línea nace ya como "Es otro material" (ICMOVA: GRAVIN 3/8 →
+  Concreto premezclado, sustituto Gravín 3/8). **GeoSupply**
+  (`CotizacionFormImpl`): caja "Leer la cotización" arriba (sube el PDF a
+  `cp-file-*` y lo lee; el "Adjuntar PDF" de abajo también lee si no hay
+  ítems; "Leer la que ya está adjunta" baja el archivo con `bajarArchivo`):
+  marca los ítems, pone cantidad (parcial si es menos), P.U. con ISV, total,
+  N° y proveedor (solo si estaban vacíos). Debajo de cada ítem "En la
+  cotización: …"; los renglones que no son de lo pedido salen en el aviso con
+  un select "Es… (elegí de lo pedido)" (`asignar`), y el mensaje rojo de abajo
+  explica que no cuadra por esos renglones (no por el ISV). **GeoShopping**
+  (`PurchaseFormImpl`, NO en GeoMachinery): `cajaLeer`/`avisoLectura` son JSX
+  compartidos por los 3 casos; con receta llena los ítems de
+  `LineasPresupuesto` (cada uno con `leido` = lo que decía el PDF — se
+  muestra, no se guarda) y el MONTO = total de la cotización; los sin ítem
+  quedan en AMARILLO "No lo encontré en el presupuesto — elegí de qué ítem
+  sale o quitalo" (categoría/solución libres, siguen a las pills;
+  `errorLineas` no deja guardar hasta resolverlos) y con "Es otro material"
+  pre-llenado con el texto de la cotización. El aviso se actualiza en vivo
+  (verde cuando todos tienen ítem) y con varias soluciones trae un select
+  para mover TODO a otra (`cambiarSolucionLineas`). Sin receta llena "Qué se
+  está comprando" un renglón por ítem. **Medido el 12-oct** contra las 20
+  compras reales que ya tenían ítems de receta + PDF (memoria SIN la propia
+  compra): 16 renglones al ítem correcto, **0 equivocados**, 7 sin ítem (2 no
+  están en la receta —tubo 1-1/4" y 1/2"—, 3 Admix de Lazarus que se aprenden
+  en cuanto Finanzas los confirme una vez, 2 ruido del PDF). Además: el N°
+  de cotización exige un dígito y la misma línea ("COTIZACION\nFecha" daba
+  "Fecha"; "No.: S61334" de Construsmart ahora sí sale), y las palabras de
+  giro ("ferretería", "distribuidora"…) ya no identifican proveedor solas.
   Verificado el 28-sep montando el módulo con cada rol (admin, Fernando,
   Carolina) sobre la data real, todas las pestañas sin errores, y GeoShopping
   igual que antes.

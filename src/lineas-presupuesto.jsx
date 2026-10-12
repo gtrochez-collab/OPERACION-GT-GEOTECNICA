@@ -106,7 +106,11 @@ export const lineasParaGuardar = (pres, lineas) => {
     // el diámetro, el largo y los lances; `cantidad` queda en la unidad de la
     // partida (lo que mide el saldo).
     const varilla = esPartidaVarillaPorPeso(p) && num(l.varLances) > 0 && l.varN ? { n: Number(l.varN), largo: Number(l.varLargo || 9), lances: num(l.varLances) } : null;
-    return { id: l.id && l.id !== "legacy" ? l.id : uidL(), partidaId: l.partidaId, ...(solDe(p) ? { solucion: solDe(p) } : {}), categoria: p.categoria || "Otros", nombre: p.nombre || "", unidad: p.unidad || "", cantidad: varilla ? cantidadDeVarilla(varilla, p.unidad) : num(l.cantidad), monto: r2(num(l.monto)), ...(sustituto ? { sustituto } : {}), ...(varilla ? { varilla } : {}) };
+    // `cot` (12-oct-2026): cómo lo escribió el PROVEEDOR en la cotización. Es la
+    // MEMORIA del lector: la próxima cotización que diga lo mismo cae sola a
+    // esta partida (memoriaDeCompras en leer-cotizacion.js).
+    const cot = String(l.leido?.nombre || l.cot || "").trim().slice(0, 160);
+    return { id: l.id && l.id !== "legacy" ? l.id : uidL(), partidaId: l.partidaId, ...(solDe(p) ? { solucion: solDe(p) } : {}), categoria: p.categoria || "Otros", nombre: p.nombre || "", unidad: p.unidad || "", cantidad: varilla ? cantidadDeVarilla(varilla, p.unidad) : num(l.cantidad), monto: r2(num(l.monto)), ...(sustituto ? { sustituto } : {}), ...(varilla ? { varilla } : {}), ...(cot ? { cot } : {}) };
   });
 };
 // "5 Lance × Varilla No.3…" — un renglón por ítem. Es lo que leen la tabla,
@@ -125,7 +129,7 @@ export const descripcionDeLineas = (lineas) => (lineas || []).map(l => {
 // Una compra vieja con UNA partida se abre como un solo ítem por el total.
 export const lineasIniciales = (purchase) => {
   const ls = Array.isArray(purchase?.lineas) ? purchase.lineas : [];
-  if (ls.length) return ls.map(l => ({ id: l.id || uidL(), partidaId: l.partidaId || "", cantidad: l.cantidad ? String(l.cantidad) : "", monto: l.monto ? String(l.monto) : "", categoria: l.categoria,
+  if (ls.length) return ls.map(l => ({ id: l.id || uidL(), partidaId: l.partidaId || "", cantidad: l.cantidad ? String(l.cantidad) : "", monto: l.monto ? String(l.monto) : "", categoria: l.categoria, ...(l.cot ? { cot: l.cot } : {}),
     ...(l.sustituto ? { real: true, realNombre: l.sustituto.nombre || "", realUnidad: l.sustituto.unidad || "", realMotivo: l.sustituto.motivo || "" } : {}),
     ...(l.varilla ? { varN: String(l.varilla.n), varLargo: String(l.varilla.largo), varLances: String(l.varilla.lances) } : {}) }));
   if (purchase?.partidaId) return [{ id: "legacy", partidaId: purchase.partidaId, cantidad: "", monto: purchase.amount ? String(purchase.amount) : "" }];
@@ -197,7 +201,9 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
         const pp = ev.porPartida.find(x => x.partidaId === l.partidaId);
         // Unidad al lado de la cantidad: la del material REAL si es sustituto
         const uni = l.real ? (l.realUnidad || "") : (p?.unidad || "");
-        return <div key={l.id} style={{ display: "flex", flexDirection: "column", gap: 4, background: pp?.sobregiroUSD > 0 ? C_ULTRA.bg : "transparent", borderRadius: 10, padding: 6, margin: -6 }}>
+        // Renglón leído de la cotización que NO se encontró en el presupuesto
+        const sinItem = !!l.leido && !l.partidaId;
+        return <div key={l.id} style={{ display: "flex", flexDirection: "column", gap: 4, background: sinItem ? C_AMARILLO.bg : pp?.sobregiroUSD > 0 ? C_ULTRA.bg : "transparent", borderRadius: 10, padding: 6, margin: -6 }}>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) 28px" : "minmax(0,1fr) 120px 140px 28px", gap: 8, alignItems: "center" }}>
             <select value={l.partidaId || ""} onChange={e => upd(l.id, "partidaId", e.target.value)} style={{ ...INPUT, gridColumn: isMobile ? "1" : undefined, color: l.partidaId ? "#0f172a" : "#94A3B8" }}>
               <option value="">— Elegí el ítem ({multi ? `${sl} · ${c}` : c}) —</option>
@@ -211,6 +217,14 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
             <input type="number" step="0.01" min="0" value={l.monto} onChange={e => upd(l.id, "monto", e.target.value)} placeholder="0.00" style={{ ...INPUT, gridColumn: isMobile ? "1 / -1" : undefined }} />
             {!isMobile && <button type="button" onClick={() => quitar(l.id)} title="Quitar ítem" style={{ background: "none", border: "none", color: "#94A3B8", fontSize: 16, cursor: "pointer", padding: 0 }}>✕</button>}
           </div>
+          {/* LEÍDO DE LA COTIZACIÓN (12-oct-2026): lo que decía el PDF, para
+              comprobar que el ítem elegido sea el correcto. No se guarda. */}
+          {l.leido && <div style={{ fontSize: 11, paddingLeft: 2, color: sinItem || (l.leido.score > 0 && l.leido.score < 0.5) ? C_AMARILLO.color : "#64748b", fontWeight: sinItem ? 700 : 500 }}>
+            {sinItem ? "No lo encontré en el presupuesto — elegí de qué ítem sale (categoría arriba) o quitalo: " : "En la cotización: "}
+            <span style={{ color: "#0f172a", fontWeight: 600 }}>{num(l.leido.cantidad).toLocaleString("es-HN")} {l.leido.unidad} × {l.leido.nombre}</span> · {fL(l.leido.monto)}
+            {!sinItem && l.leido.recordado && " · así se cargó en una compra anterior"}
+            {!sinItem && !l.leido.recordado && l.leido.score > 0 && l.leido.score < 0.5 && " · revisá que sea el mismo"}
+          </div>}
           <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", paddingLeft: 2 }}>
             {disp && <div style={{ fontSize: 11, fontWeight: 600, color: num(disp.disponibleUSD) >= 0 ? C_VERDE.color : C_AMARILLO.color }}>
               {multi && <span style={{ color: "#64748b" }}>{sl} · </span>}Disponible en el presupuesto: {fU(disp.disponibleUSD)} · {fL(num(disp.disponibleUSD) * num(tasa))}

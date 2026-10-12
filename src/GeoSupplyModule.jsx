@@ -36,6 +36,8 @@ import { hoyISO } from "./fechas.js";
 import { num, UNIDADES, TASA_DEFAULT, movimientosCompras, VARILLAS, LARGOS_VARILLA, esPartidaVarillaPorPeso, cantidadDeVarilla, pesoLanceKg, nombreVarilla, kgPorUnidad } from "./geocost-calc.js";
 import { Input, Select, Textarea, Btn, Chip, Modal, C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, fmtL, fmtUSD, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
+import { safeDynamicImport } from "./lazyLoad.js";
+import { leerPdf, parsearCotizacion, lineasSupplyDesdeLectura, lineaSupplyDe, memoriaDeCompras } from "./leer-cotizacion.js";
 import {
   configEfectiva, corteActual, corteDe, etiquetaCorte, hitoDeCorte, estadoHito, fmtFalta, llegadaEstimada, fmtDiaCorto, fmtDiaLargo,
   DIAS_SEMANA, estadoEfectivoLinea, solicitudActiva, ESTADOS_LINEA, ESTADOS_SOLICITUD, ESTADOS_COTIZACION, estadoCabecera,
@@ -317,7 +319,7 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
 // FORM DE COTIZACIÓN (Compras) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
 // `candidatas`: líneas por cotizar del proyecto [{sol, l, pendiente}].
-function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, providers, partidaDe, tasa, cfg, onGuardar, onEnviar, onClose, subirPdf, verArchivo, isMobile }) {
+function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, providers, partidaDe, tasa, cfg, onGuardar, onEnviar, onClose, subirPdf, verArchivo, bajarArchivo, memoria = [], isMobile }) {
   const [f, setF] = useState(() => cotizacion
     ? { ...cotizacion, lineas: (cotizacion.lineas || []).map(l => ({ ...l })) }
     : { projectCode, provider: "", providerId: "", numeroProveedor: "", condicionPago: "contado", incluyeISV: true, totalDeclarado: "", pdfFile: null, notas: "", lineas: [] });
@@ -346,6 +348,57 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
     const puLps = cant > 0 && num(nx.puLance) > 0 ? (num(nx.puLance) * num(nx.lances)) / cant : "";
     return { ...nx, cantidad: cant, puLps, parcial: cant < c.pendiente - 0.0001 };
   }));
+  // ── LEER LA COTIZACIÓN (12-oct-2026, Gerson: "cuando Ana suba la cotización,
+  // ¿se llenan los campos solos?") — el MISMO lector de GeoMachinery: cada
+  // renglón del PDF se empareja con lo que está POR COTIZAR (nombre + medidas
+  // + cantidad), y se llenan P.U. con ISV, total, N° y proveedor. Ana revisa.
+  const [leyendo, setLeyendo] = useState(false);
+  const [lectura, setLectura] = useState(null);
+  const esPdfF = (x) => /pdf/i.test(`${x?.type || ""} ${x?.name || ""}`);
+  const aDataUrl = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+  const leer = async (dataUrl) => {
+    setLeyendo(true); setLectura(null);
+    try {
+      const filas = await leerPdf(dataUrl, (fn) => safeDynamicImport(fn, "lector de PDF"));
+      const r = parsearCotizacion(filas, { providers });
+      if (!r.items.length) { setLectura({ error: filas.length < 3 ? "Este PDF no trae texto (es una foto o un escaneo): llená los precios a mano." : "No reconocí los renglones de esta cotización: llená los precios a mano." }); return; }
+      if (f.lineas.length && !confirm(`Ya marcaste ${f.lineas.length} ítem(s).\n\n¿Reemplazarlos con lo que leí de la cotización?`)) return;
+      const res = lineasSupplyDesdeLectura(r, candidatas, { memoria });
+      const pv = r.proveedor ? providers.find(x => x.id === r.proveedor.id) || r.proveedor : null;
+      setF(p => ({ ...p, lineas: res.lineas,
+        ...(res.ajuste.total != null ? { totalDeclarado: String(res.ajuste.total) } : {}),
+        incluyeISV: res.ajuste.modo !== "exenta",
+        ...(r.numero && !String(p.numeroProveedor || "").trim() ? { numeroProveedor: r.numero } : {}),
+        ...(pv && !String(p.provider || "").trim() ? { provider: pv.name } : {}) }));
+      setLectura({ n: r.items.length, m: res.lineas.length, sinPareja: res.sinPareja, ajuste: res.ajuste, numero: r.numero, proveedor: pv?.name || "",
+        proveedorOtro: pv && String(f.provider || "").trim() && pv.name !== f.provider ? pv.name : "",
+        isvEnLinea: r.items.some(it => it.isvEnLinea), descuento: r.items.some(it => it.descuento) });
+    } catch (e) {
+      console.warn("[leer cotización]", e);
+      if (!e?.isStaleChunk) setLectura({ error: "No pude abrir el PDF: " + (e?.message || e) });
+    } finally { setLeyendo(false); }
+  };
+  const subirYLeer = async (file) => {
+    if (!file) return;
+    let ref = null;
+    setSubiendo(true);
+    try { ref = await subirPdf(file); if (ref) u("pdfFile", ref); } finally { setSubiendo(false); }
+    if (ref && esPdfF(file)) { try { await leer(await aDataUrl(file)); } catch (e) { alert("No pude leer el archivo: " + (e?.message || e)); } }
+  };
+  const leerAdjunta = async () => {
+    setLeyendo(true);
+    let full = null;
+    try { full = await bajarArchivo(f.pdfFile); } finally { setLeyendo(false); }
+    if (!full?.dataUrl) return alert("No se pudo bajar el PDF de la nube. Reintentá.");
+    await leer(full.dataUrl);
+  };
+  // Un renglón que no reconocí solo → Ana dice a cuál de lo pedido corresponde.
+  const asignar = (item, lid) => {
+    const c = candidatas.find(x => x.l.id === lid); if (!c) return;
+    const ln = lineaSupplyDe(item, c, lectura?.ajuste?.factor || 1.15);
+    setF(p => ({ ...p, lineas: [...p.lineas.filter(x => x.requestLineId !== lid), ln] }));
+    setLectura(l => l ? { ...l, sinPareja: (l.sinPareja || []).filter(x => x !== item) } : l);
+  };
   const lineaSolicitudDe = (lid) => candidatas.find(c => c.l.id === lid)?.l || null;
   const ev = evaluarCotizacion({ cotizacion: f, tasa, cfg, partidaDe, lineaSolicitudDe });
   const porLinea = (lid) => ev.lineas.find(x => x.requestLineId === lid);
@@ -360,6 +413,44 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
   const CTRL = { padding: "8px 10px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 10, fontSize: 13, outline: "none", background: "#F4F4F2", fontFamily: "inherit", boxSizing: "border-box" };
   return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
     <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>Proyecto <b>{nombreProy(f.projectCode)}</b> · una cotización = un proveedor. Los precios van <b>con ISV</b>, tal cual cuadran con el total.</div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: `1px dashed ${ORANGE}`, background: "rgba(232,118,45,.05)", borderRadius: 14, padding: "10px 12px" }}>
+      <div style={{ flex: 1, minWidth: 220, fontSize: 12.5, color: "var(--text-2)" }}><b style={{ color: CHARCOAL }}>Leer la cotización</b> · subí el PDF y lleno los precios, el total, el N° y el proveedor. Vos solo revisás.</div>
+      <label style={{ display: "inline-flex", alignItems: "center", padding: "8px 14px", borderRadius: 999, background: "#C75F1F", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: leyendo || subiendo ? "wait" : "pointer", opacity: leyendo || subiendo ? .7 : 1 }}>
+        {subiendo ? "Subiendo…" : leyendo ? "Leyendo…" : "Subir PDF y leer"}
+        <input type="file" accept="application/pdf,.pdf" style={{ display: "none" }} disabled={leyendo || subiendo} onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; subirYLeer(file); }} />
+      </label>
+      {f.pdfFile && esPdfF(f.pdfFile) && !leyendo && bajarArchivo && <button type="button" onClick={leerAdjunta} style={{ background: "none", border: "none", color: "#C75F1F", fontSize: 12, fontWeight: 800, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>Leer la que ya está adjunta</button>}
+    </div>
+    {lectura && (lectura.error
+      ? <div style={{ fontSize: 12.5, color: C_AMARILLO.color, background: C_AMARILLO.bg, borderRadius: 12, padding: "9px 12px", fontWeight: 600 }}>{lectura.error}</div>
+      : (() => {
+        const aj = lectura.ajuste || {};
+        const bien = ["isv", "exenta", "proporcional"].includes(aj.modo) && !(lectura.sinPareja || []).length;
+        const libres = candidatas.filter(c => !incluida(c.l.id));
+        return <div style={{ fontSize: 12.5, color: bien ? C_VERDE.color : C_AMARILLO.color, background: bien ? C_VERDE.bg : C_AMARILLO.bg, borderRadius: 12, padding: "10px 12px", lineHeight: 1.55, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div>
+            <b>Leí {lectura.n} {lectura.n === 1 ? "renglón" : "renglones"}</b>{lectura.proveedor ? <> de <b>{lectura.proveedor}</b></> : ""}{lectura.numero ? <> · cotización <b>{lectura.numero}</b></> : ""} · <b>{f.lineas.filter(x => x.leido).length}</b> {f.lineas.filter(x => x.leido).length === 1 ? "coincide" : "coinciden"} con lo pedido.
+            {" "}{aj.modo === "isv" ? <>Les sumé el ISV a los precios · total {fmtL(aj.total)} ✓</>
+              : aj.modo === "exenta" ? <>La cotización no cobra ISV: dejé los precios tal cual · total {fmtL(aj.total)}</>
+              : aj.modo === "proporcional" ? <>El total ({fmtL(aj.total)}) no es la suma + 15 % (descuento o ítems exentos): lo repartí en los precios para que cuadre</>
+              : aj.modo === "no_cuadra" ? <><b>La cotización dice {fmtL(aj.total)}, pero los renglones suman {fmtL(aj.suma)} + ISV = {fmtL(aj.calculado)}: revisá si falta alguno</b></>
+              : <>No encontré el total: lo calculé con el 15 % ({fmtL(aj.total)})</>}
+            {lectura.isvEnLinea && <> · los precios ya traían ISV</>}{lectura.descuento && <> · traía descuento por línea, ya está aplicado</>}
+            {lectura.proveedorOtro && <> · ojo: la cotización parece de <b>{lectura.proveedorOtro}</b></>}
+          </div>
+          {(lectura.sinPareja || []).length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <div style={{ fontWeight: 700 }}>Estos renglones no los encontré en lo pedido. Si son lo mismo con otro nombre, decime cuál; si no, no son de esta solicitud y el total no va a cuadrar.</div>
+            {lectura.sinPareja.map((it, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ flex: 1, minWidth: 200, color: CHARCOAL }}>{fmtCant(it.cantidad)} {it.unidad} × {it.nombre} · {fmtL(it.monto)}</span>
+              {libres.length > 0 && <select value="" onChange={e => e.target.value && asignar(it, e.target.value)} style={{ ...CTRL, padding: "6px 8px", maxWidth: "100%", background: "#fff" }}>
+                <option value="">Es… (elegí de lo pedido)</option>
+                {libres.map(c => <option key={c.l.id} value={c.l.id}>{c.l.descripcion} · {fmtCant(c.pendiente)} {c.l.unidad}</option>)}
+              </select>}
+            </div>)}
+          </div>}
+          <div style={{ fontSize: 11.5, opacity: .85 }}>Revisá cada ítem antes de enviar a aprobación.</div>
+        </div>;
+      })())}
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr 1fr", gap: 12 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         <label style={{ fontSize: 11, fontWeight: 700, color: "#6E6862" }}>Proveedor *</label>
@@ -394,6 +485,9 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
             </div>
             {inc && e && chipSem(e.semaforo)}
           </div>
+          {inc && fl?.leido && <div style={{ fontSize: 11, color: fl.leido.score != null && fl.leido.score < 0.5 ? C_AMARILLO.color : "var(--text-3)", marginTop: -3, paddingLeft: 26 }}>
+            En la cotización: <b>{fmtCant(fl.leido.cantidad)} {fl.leido.unidad} × {fl.leido.nombre}</b> · {fmtL(fl.leido.monto)} sin ISV{fl.leido.score != null && fl.leido.score < 0.5 ? " · revisá que sea lo mismo" : ""}
+          </div>}
           {inc && fl && c.l.varilla && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "110px 1fr 140px 1fr", gap: 8, alignItems: "center" }}>
             <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>Lances</div><input type="number" min="0" step="1" value={fl.lances ?? ""} onChange={ev2 => uVar(c, "lances", ev2.target.value)} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
             <div style={{ fontSize: 11.5, color: fl.parcial ? C_AMARILLO.color : "var(--text-3)", fontWeight: fl.parcial ? 700 : 500 }}>{nombreVarilla(c.l.varilla)} = {num(fl.cantidad).toLocaleString("es-HN", { maximumFractionDigits: 3 })} {c.l.unidad}{fl.parcial ? " · parcial" : ""}</div>
@@ -431,11 +525,15 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
           ? <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><Btn small variant="info" onClick={() => verArchivo(f.pdfFile)}>Ver {f.pdfFile.name?.slice(0, 22)}</Btn><Btn small variant="ghost" onClick={() => u("pdfFile", null)}>Quitar</Btn></div>
           : <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "9px 14px", borderRadius: 999, border: `1px dashed ${ORANGE}`, color: "var(--naranja-tinta)", fontSize: 12.5, fontWeight: 800, cursor: "pointer", background: "rgba(232,118,45,.06)" }}>
             {subiendo ? "Subiendo…" : "Adjuntar PDF"}
-            <input type="file" accept="application/pdf,image/*" style={{ display: "none" }} disabled={subiendo} onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setSubiendo(true); try { const ref = await subirPdf(file); if (ref) u("pdfFile", ref); } finally { setSubiendo(false); } }} />
+            <input type="file" accept="application/pdf,image/*" style={{ display: "none" }} disabled={subiendo} onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; if (!f.lineas.length && esPdfF(file)) return subirYLeer(file); setSubiendo(true); try { const ref = await subirPdf(file); if (ref) u("pdfFile", ref); } finally { setSubiendo(false); } }} />
           </label>}
       </div>
     </div>
-    {!ev.cuadra && ev.total > 0 && ev.lineas.length > 0 && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_ROJO.bg, color: C_ROJO.color, fontSize: 12.5 }}>La suma de los ítems no cuadra con el total. Si la cotización trae el ISV solo al final, <b>multiplicá cada precio unitario por 1.15</b>.</div>}
+    {!ev.cuadra && ev.total > 0 && ev.lineas.length > 0 && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_ROJO.bg, color: C_ROJO.color, fontSize: 12.5 }}>
+      {(lectura?.sinPareja || []).length > 0
+        ? <>La suma no cuadra porque la cotización trae {lectura.sinPareja.length === 1 ? "un renglón que no es" : `${lectura.sinPareja.length} renglones que no son`} de esta solicitud ({fmtL(lectura.sinPareja.reduce((a, it) => a + it.monto, 0) * (lectura.ajuste?.factor || 1.15))} con ISV). <b>Pedile al proveedor la cotización solo con lo pedido</b>, o asignalo arriba si es lo mismo con otro nombre.</>
+        : <>La suma de los ítems no cuadra con el total. Si la cotización trae el ISV solo al final, <b>multiplicá cada precio unitario por 1.15</b>.</>}
+    </div>}
     <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text-2)" }}><input type="checkbox" checked={f.incluyeISV !== false} onChange={e => u("incluyeISV", e.target.checked)} /> La cotización incluye ISV (informativo para contabilidad; no cambia la comparación)</label>
 
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
@@ -1400,7 +1498,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         const candidatas = candidatasDe(projectCode, m.q?.id);
         return <Modal title={m.q ? `${m.q.folio} — ${m.q.provider}` : `Nueva cotización — ${nombreProy(projectCode)}`} onClose={() => setModal(null)} wide fondoCierra={false}>
           <CotizacionFormImpl cotizacion={m.q} projectCode={projectCode} nombreProy={nombreProy} candidatas={candidatas} providers={providers} partidaDe={(pid) => partidaDe(projectCode, pid)} tasa={tasa} cfg={cfg} isMobile={isMobile}
-            onGuardar={(f, ev) => guardarCotizacion(f, ev, false)} onEnviar={async (f, ev) => { await materializarSinRevision(f.lineas); await guardarCotizacion(f, ev, true); }} onClose={() => setModal(null)} subirPdf={subirPdf} verArchivo={verArchivo} />
+            onGuardar={(f, ev) => guardarCotizacion(f, ev, false)} onEnviar={async (f, ev) => { await materializarSinRevision(f.lineas); await guardarCotizacion(f, ev, true); }} onClose={() => setModal(null)} subirPdf={subirPdf} verArchivo={verArchivo} bajarArchivo={(ref) => store.getCloud(fileKey(ref.fileId))} memoria={memoriaDeCompras(purchasesVista)} />
         </Modal>;
       }
       case "sim-shop": return <Modal title="GeoShopping simulado" onClose={() => setModal(null)} wide>{renderSimShop()}</Modal>;

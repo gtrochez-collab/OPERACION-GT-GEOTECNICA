@@ -80,3 +80,93 @@ test("ECOMETAL: descripción después del # de fila y renglón de continuación"
   assert.equal(r.isv, 59400); assert.equal(r.total, 455400); assert.equal(r.numero, "COT-2026-8836");
   assert.equal(r.proveedor, null);   // el nombre ECOMETAL no aparece en estas filas de prueba
 });
+
+import { emparejar, parecido, varillaEnTexto, tokensDe } from "../src/leer-cotizacion.js";
+
+test("emparejar: renglones de la cotización con lo pedido / la receta", () => {
+  assert.deepEqual(tokensDe('Tubo PVC de 1", potable'), ["tubo", "pvc", "1in", "potable"]);
+  assert.ok(parecido('TUBO PVC 1" POTABLE SDR-26', 'Tubo PVC de 1", potable') > 0.6);
+  assert.ok(parecido('TUBO PVC 2" POTABLE', 'Tubo PVC de 1", potable') < 0.34);          // otra medida
+  const pedidos = [{ id: "a", nombre: 'Tubo PVC de 1", potable', cantidad: 5 }, { id: "b", nombre: 'Tapón PVC de 2", sanitario', cantidad: 10 }];
+  const items = [
+    { nombre: 'TAPON PVC 2" SANITARIO', cantidad: 10 },
+    { nombre: "PEGAMENTO PVC 1/4 GAL", cantidad: 1 },
+    { nombre: 'TUBO PVC 1 PULG POTABLE 6M', cantidad: 5 },
+  ];
+  const r = emparejar(items, pedidos, { unoAUno: true });
+  assert.equal(r.parejas.length, 2);
+  assert.equal(r.parejas[0].cand.id, "b"); assert.equal(r.parejas[1].cand.id, "a");
+  assert.equal(r.sinPareja.length, 1); assert.equal(r.sinPareja[0].nombre, "PEGAMENTO PVC 1/4 GAL");
+  // Receta de Torre Adobe: la varilla #5 va con su partida, no con la #4
+  const receta = [{ id: "v4", nombre: 'Varilla No.4 (1/2"), grado 40; Lance de 9m' }, { id: "v5", nombre: 'Varilla No.5 (5/8"), grado 40; Lance de 9m' }];
+  const r2 = emparejar([{ nombre: "Varilla corrugada #5 x 9 m, Grado 40", cantidad: 245 }], receta);
+  assert.equal(r2.parejas[0].cand.id, "v5");
+  assert.deepEqual(varillaEnTexto("Varilla corrugada #8 x 12 m, Grado 60"), { n: 8, largo: 12 });
+  assert.deepEqual(varillaEnTexto('Varilla de Acero N° 5 (5/8") Grado 40, Longitud de 9 metros'), { n: 5, largo: 9 });
+});
+
+import { ajusteAlTotal, lineasSupplyDesdeLectura, lineasPresupuestoDesdeLectura } from "../src/leer-cotizacion.js";
+
+test("ajusteAlTotal: ISV, exenta, proporcional y no cuadra", () => {
+  assert.deepEqual(ajusteAlTotal({ suma: 1000, total: 1150 }), { factor: 1.15, total: 1150, modo: "isv", suma: 1000 });
+  assert.equal(ajusteAlTotal({ suma: 1000, total: 1000 }).modo, "exenta");
+  const p = ajusteAlTotal({ suma: 1000, total: 1100 }); assert.equal(p.modo, "proporcional"); assert.ok(Math.abs(p.factor - 1.1) < 1e-9);
+  assert.equal(ajusteAlTotal({ suma: 1000, total: 2000 }).modo, "no_cuadra");
+  assert.deepEqual(ajusteAlTotal({ suma: 1000, total: null }), { factor: 1.15, total: 1150, modo: "sin_total", suma: 1000 });
+});
+
+test("GeoSupply: la cotización llena las líneas de Ana, con ISV y cuadrada al total", () => {
+  const sol = { id: "S1", projectCode: "P" };
+  const candidatas = [
+    { sol, l: { id: "a", descripcion: 'Tubo PVC de 1", potable', unidad: "Lance", cantidad: 10 }, pendiente: 10 },
+    { sol, l: { id: "b", descripcion: 'Tapón PVC de 2", sanitario', unidad: "Unidad", cantidad: 10 }, pendiente: 10 },
+    { sol, l: { id: "v", descripcion: "Acero de refuerzo", unidad: "Ton", varilla: { n: 5, largo: 9, lances: 100 } }, pendiente: 1.3968 },
+  ];
+  const r = { suma: 2300, total: 2645, items: [
+    { nombre: 'TUBO PVC 1" POTABLE SDR-26', cantidad: 6, unidad: "Unidad", monto: 600 },
+    { nombre: 'TAPON PVC 2" SANITARIO', cantidad: 10, unidad: "Unidad", monto: 100 },
+    { nombre: "VARILLA CORRUGADA #5 X 9 M GRADO 40", cantidad: 100, unidad: "Unidad", monto: 1500 },
+    { nombre: "PEGAMENTO PVC 1/4 GAL", cantidad: 1, unidad: "Galón", monto: 100 },
+  ] };
+  const res = lineasSupplyDesdeLectura(r, candidatas);
+  assert.equal(res.ajuste.modo, "isv");
+  assert.equal(res.lineas.length, 3);
+  const a = res.lineas.find(x => x.requestLineId === "a");
+  assert.equal(a.cantidad, 6); assert.equal(a.parcial, true); assert.equal(a.puLps, 115);   // 100 × 1.15
+  const v = res.lineas.find(x => x.requestLineId === "v");
+  assert.equal(v.lances, 100); assert.equal(v.puLance, 17.25); assert.equal(v.parcial, false);
+  assert.ok(Math.abs(v.cantidad - 1.3968) < 1e-4);
+  assert.equal(res.sinPareja.length, 1); assert.equal(res.sinPareja[0].nombre, "PEGAMENTO PVC 1/4 GAL");
+});
+
+test("GeoShopping: los renglones se buscan en la receta del presupuesto", () => {
+  const pres = { partidas: [
+    { id: "t1", categoria: "Materiales", nombre: 'Tubo PVC de 2", sanitario', unidad: "Lance", modulo: "compras" },
+    { id: "t4", categoria: "Materiales", nombre: 'Tubo PVC de 4", sanitario', unidad: "Lance", modulo: "compras" },
+    { id: "ac", categoria: "Materiales", nombre: "Acero de refuerzo grado 40", unidad: "Ton", modulo: "compras" },
+    { id: "mo", categoria: "Personal", nombre: "Mano de obra", unidad: "Global", modulo: "mo" },
+  ] };
+  const r = { suma: 3000, total: 3450, items: [
+    { nombre: 'TUBO PVC 2" SDR-41 6M', cantidad: 5, unidad: "Unidad", monto: 500 },
+    { nombre: "Varilla corrugada #5 x 9 m", cantidad: 100, unidad: "Unidad", monto: 2000 },
+    { nombre: "Cinta teflón", cantidad: 10, unidad: "Rollo", monto: 500 },
+  ] };
+  let k = 0;
+  const res = lineasPresupuestoDesdeLectura(r, pres, { nuevoId: () => "x" + (++k) });
+  assert.equal(res.nEmparejadas, 2);
+  const [tubo, varilla, cinta] = res.lineas;
+  assert.equal(tubo.partidaId, "t1"); assert.equal(tubo.cantidad, "5"); assert.equal(tubo.monto, "500");
+  assert.equal(varilla.partidaId, "ac"); assert.equal(varilla.varN, "5"); assert.equal(varilla.varLances, "100");
+  assert.equal(varilla.cantidad, "1.3968");
+  assert.equal(cinta.partidaId, ""); assert.equal(cinta.realNombre, "Cinta teflón"); assert.equal(cinta.categoria, undefined);
+  assert.equal(res.ajuste.total, 3450);
+  // Varias soluciones: elige la que reconoce más
+  const pres2 = { partidas: [
+    { id: "m1", solucion: "Muro anclado", categoria: "Materiales", nombre: "Cemento gris tipo GU", unidad: "Bolsa", modulo: "compras" },
+    { id: "p1", solucion: "Pantalla de pilotes", categoria: "Materiales", nombre: "Cemento gris tipo GU", unidad: "Bolsa", modulo: "compras" },
+    { id: "p2", solucion: "Pantalla de pilotes", categoria: "Materiales", nombre: "Bentonita sódica", unidad: "Saco", modulo: "compras" },
+  ] };
+  const res2 = lineasPresupuestoDesdeLectura({ suma: 2, total: 2.3, items: [{ nombre: "CEMENTO GU 42.5KG", cantidad: 1, unidad: "Bolsa", monto: 1 }, { nombre: "BENTONITA SODICA 50KG", cantidad: 1, unidad: "Saco", monto: 1 }] }, pres2);
+  assert.equal(res2.solucion, "Pantalla de pilotes");
+  assert.deepEqual(res2.lineas.map(l => l.partidaId), ["p1", "p2"]);
+});

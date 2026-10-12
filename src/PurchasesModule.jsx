@@ -14,7 +14,7 @@ import { fmtUSD } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
 import { hoyISO, diaHN } from "./fechas.js";
 // Lector de cotizaciones en PDF (12-oct-2026): GeoMachinery llena las líneas solo.
-import { leerPdf, parsearCotizacion } from "./leer-cotizacion.js";
+import { leerPdf, parsearCotizacion, ajusteAlTotal, lineasPresupuestoDesdeLectura, memoriaDeCompras, cambiarSolucionLineas } from "./leer-cotizacion.js";
 // GeoSupply (2-oct-2026): los borradores que nacen de una cotización aprobada
 // llevan `origenSupply`; acá solo se rotula su corte.
 import { etiquetaCorte } from "./geosupply-calc.js";
@@ -1371,6 +1371,25 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   });
   // ── LEER LA COTIZACIÓN (PDF con texto) → líneas, N°, proveedor, total ──
   const esPdf = (fd) => !!fd && /pdf/i.test(`${fd.type || ""} ${fd.name || ""}`);
+  // Lo que se llena igual en los tres casos: el PDF, el N° y el proveedor
+  // (con su cuenta y RTN) — solo si están vacíos, nunca se pisa lo escrito.
+  const comunesLectura = (p, r, pv, fd) => {
+    const nx = { ...p, quoteFile: fd };
+    if (r.numero && !String(p.quoteNumber || "").trim()) nx.quoteNumber = r.numero;
+    if (pv && !String(p.provider || "").trim()) {
+      nx.provider = pv.name;
+      const bac = (pv.bankAccounts || []).find(b => /bac/i.test(b.bank || "")) || (pv.bankAccounts || [])[0];
+      if (bac) { nx.bacAccount = bac.number || ""; nx.providerBank = bac.bank || ""; nx.providerAccountType = bac.type || ""; nx.providerAccountHolder = bac.holder || ""; }
+      if (pv.rtn) nx.providerRTN = pv.rtn;
+    }
+    if (!nx.providerRTN && r.rtn) nx.providerRTN = r.rtn;
+    return nx;
+  };
+  // Tres casos (12-oct-2026):
+  //   · GeoMachinery → líneas a mano + ISV 15 % (el primero que se hizo);
+  //   · GeoShopping con receta → cada renglón se BUSCA en el presupuesto
+  //     (lineasPresupuestoDesdeLectura); lo que no aparece queda sin ítem;
+  //   · GeoShopping sin receta → se llena "Qué se está comprando".
   const leerCotizacion = async (fd) => {
     if (!esPdf(fd) || !fd.dataUrl) { alert("Solo se pueden leer cotizaciones en PDF. Las fotos se escriben a mano."); return; }
     setLeyendo(true); setLectura(null);
@@ -1378,31 +1397,82 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       const filas = await leerPdf(fd.dataUrl, (fn) => safeDynamicImport(fn, "lector de PDF"));
       const r = parsearCotizacion(filas, { providers: providers || [] });
       if (!r.items.length) { setLectura({ error: filas.length < 3 ? "Este PDF no trae texto (es una foto o un escaneo): escribí las líneas a mano." : "No reconocí las líneas de esta cotización: escribilas a mano." }); return; }
-      if (lineasMValidas.length && !confirm(`Ya hay ${lineasMValidas.length} línea(s) escritas.\n\n¿Reemplazarlas con las ${r.items.length} que leí de la cotización?`)) return;
-      const ls = r.items.map(it => ({ id: uid(), cantidad: String(it.cantidad), unidad: it.unidad, nombre: it.nombre, monto: String(it.monto) }));
-      const suma = r2(r.items.reduce((a, it) => a + it.monto, 0));
       const pv = r.proveedor ? (providers || []).find(x => x.id === r.proveedor.id) || r.proveedor : null;
-      setF(p => {
-        const nx = { ...p, lineas: ls, quoteFile: fd, sumarIsv: true, amount: String(r2(suma * 1.15)) };
-        if (r.numero && !String(p.quoteNumber || "").trim()) nx.quoteNumber = r.numero;
-        if (pv && !String(p.provider || "").trim()) {
-          nx.provider = pv.name;
-          const bac = (pv.bankAccounts || []).find(b => /bac/i.test(b.bank || "")) || (pv.bankAccounts || [])[0];
-          if (bac) { nx.bacAccount = bac.number || ""; nx.providerBank = bac.bank || ""; nx.providerAccountType = bac.type || ""; nx.providerAccountHolder = bac.holder || ""; }
-          if (pv.rtn) nx.providerRTN = pv.rtn;
-        }
-        if (!nx.providerRTN && r.rtn) nx.providerRTN = r.rtn;
-        return nx;
-      });
-      const calc = r2(suma * 1.15);
-      setLectura({ n: ls.length, suma, calc, total: r.total, numero: r.numero, proveedor: pv?.name || "", proveedorOtro: pv && String(f.provider || "").trim() && pv.name !== f.provider ? pv.name : "",
-        cuadra: r.total != null ? Math.abs(r.total - calc) <= 1 : null, sinIsvEnCot: r.total != null && Math.abs(r.total - suma) <= 1,
-        isvEnLinea: r.items.some(it => it.isvEnLinea), descuento: r.items.some(it => it.descuento) });
+      const base = { n: r.items.length, numero: r.numero, proveedor: pv?.name || "", proveedorOtro: pv && String(f.provider || "").trim() && pv.name !== f.provider ? pv.name : "",
+        isvEnLinea: r.items.some(it => it.isvEnLinea), descuento: r.items.some(it => it.descuento) };
+      if (esMaqForm) {
+        if (lineasMValidas.length && !confirm(`Ya hay ${lineasMValidas.length} línea(s) escritas.\n\n¿Reemplazarlas con las ${r.items.length} que leí de la cotización?`)) return;
+        const ls = r.items.map(it => ({ id: uid(), cantidad: String(it.cantidad), unidad: it.unidad, nombre: it.nombre, monto: String(it.monto) }));
+        const suma = r2(r.items.reduce((a, it) => a + it.monto, 0));
+        setF(p => ({ ...comunesLectura(p, r, pv, fd), lineas: ls, sumarIsv: true, amount: String(r2(suma * 1.15)) }));
+        const calc = r2(suma * 1.15);
+        setLectura({ ...base, modo: "maq", suma, calc, total: r.total, cuadra: r.total != null ? Math.abs(r.total - calc) <= 1 : null, sinIsvEnCot: r.total != null && Math.abs(r.total - suma) <= 1 });
+        return;
+      }
+      const aj = ajusteAlTotal(r);
+      if (modoItems) {
+        const ya = lineasForm.filter(l => l.partidaId || num(l.monto) > 0);
+        if (ya.length && !confirm(`Ya hay ${ya.length} ítem(s) cargados.\n\n¿Reemplazarlos con los ${r.items.length} renglones que leí de la cotización?`)) return;
+        const res = lineasPresupuestoDesdeLectura(r, presConPartidas, { modulo: moduloPartida, memoria: memoriaDeCompras((purchases || []).filter(x => x.id !== purchase?.id)) });
+        setF(p => ({ ...comunesLectura(p, r, pv, fd), lineas: res.lineas, amount: String(aj.total) }));
+        setLectura({ ...base, modo: "items", ajuste: aj, m: res.nEmparejadas, sinPareja: res.sinPareja, solucion: res.solucion, recordados: res.lineas.filter(l => l.leido?.recordado).length });
+        return;
+      }
+      if (String(f.description || "").trim() && !confirm("¿Reemplazar lo que dice \"Qué se está comprando\" con lo que leí de la cotización?")) return;
+      const desc = r.items.map(it => `${Number(it.cantidad).toLocaleString("es-HN")} ${it.unidad} × ${it.nombre}`).join("\n");
+      setF(p => ({ ...comunesLectura(p, r, pv, fd), description: desc, amount: String(aj.total) }));
+      setLectura({ ...base, modo: "texto", ajuste: aj });
     } catch (e) {
       console.warn("[leer cotización]", e);
       if (!e?.isStaleChunk) setLectura({ error: "No pude abrir el PDF: " + (e?.message || e) });
     } finally { setLeyendo(false); }
   };
+  // La caja "Leer la cotización" y el aviso de lo que se leyó (los usan
+  // GeoMachinery, GeoShopping con receta y GeoShopping sin receta). Son JSX
+  // en variables (no componentes) para no remontarse con cada tecla.
+  const cajaLeer = <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: `1px dashed ${ORANGE}`, background: "rgba(232,118,45,.05)", borderRadius: 12, padding: "10px 12px" }}>
+    <div style={{ flex: 1, minWidth: 220, fontSize: 12.5, color: "#475569" }}><b style={{ color: "#0f172a" }}>Leer la cotización</b> · {esMaqForm ? "subí el PDF y lleno las líneas, el N° y el proveedor." : modoItems ? "subí el PDF y busco cada renglón en el presupuesto; también lleno el monto, el N° y el proveedor." : "subí el PDF y lleno qué se compra, el monto, el N° y el proveedor."} Vos solo revisás.</div>
+    <label style={{ display: "inline-flex", alignItems: "center", padding: "8px 14px", borderRadius: 999, background: ORANGE_DARK, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: leyendo ? "wait" : "pointer", opacity: leyendo ? .7 : 1 }}>
+      {leyendo ? "Leyendo…" : "Subir PDF y leer"}
+      <input type="file" accept="application/pdf,.pdf" style={{ display: "none" }} disabled={leyendo} onChange={async e => {
+        const file = e.target.files?.[0]; e.target.value = ""; if (!file) return;
+        if (file.size > 2 * 1024 * 1024) { alert(`El PDF pesa ${fmtMB(file.size)} (límite 2 MB). Comprimilo antes de subir.`); return; }
+        try { const fd = await readFileAsDataUrl(file); await leerCotizacion(fd); } catch (err) { alert("No pude leer el archivo: " + (err?.message || err)); }
+      }} />
+    </label>
+    {esPdf(f.quoteFile) && f.quoteFile.dataUrl && !leyendo && <button type="button" onClick={() => leerCotizacion(f.quoteFile)} style={{ background: "none", border: "none", color: ORANGE_DARK, fontSize: 12, fontWeight: 800, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>Leer la que ya está adjunta</button>}
+  </div>;
+  const textoAjuste = (aj) => aj.modo === "isv" ? <>Monto total con ISV <b>{fmtL(aj.total)}</b> ✓ cuadra con la cotización</>
+    : aj.modo === "exenta" ? <>La cotización no cobra ISV · monto total <b>{fmtL(aj.total)}</b></>
+    : aj.modo === "proporcional" ? <>Monto total <b>{fmtL(aj.total)}</b> tal cual la cotización (trae descuento o ítems exentos)</>
+    : aj.modo === "no_cuadra" ? <><b>La cotización dice {fmtL(aj.total)}, pero los renglones suman {fmtL(aj.suma)} + ISV = {fmtL(aj.calculado)}: revisá si falta alguno</b></>
+    : <>No encontré el total: lo calculé con el 15 % (<b>{fmtL(aj.total)}</b>)</>;
+  const avisoLectura = lectura && (lectura.error
+    ? <div style={{ fontSize: 12.5, color: C_AMARILLO.color, background: C_AMARILLO.bg, borderRadius: 10, padding: "9px 12px", fontWeight: 600 }}>{lectura.error}</div>
+    : (() => {
+      const maq = lectura.modo === "maq";
+      // En vivo: cuántos renglones leídos ya tienen ítem (se pone verde al resolverlos)
+      const leidas = lectura.modo === "items" ? lineasForm.filter(l => l.leido) : [];
+      const conItem = leidas.filter(l => l.partidaId).length, sinItem = leidas.length - conItem;
+      const bien = maq ? lectura.cuadra !== false : ["isv", "exenta", "proporcional"].includes(lectura.ajuste?.modo) && !sinItem;
+      return <div style={{ fontSize: 12.5, color: bien ? C_VERDE.color : C_AMARILLO.color, background: bien ? C_VERDE.bg : C_AMARILLO.bg, borderRadius: 10, padding: "9px 12px", lineHeight: 1.55 }}>
+        <b>Leí {lectura.n} {maq ? (lectura.n === 1 ? "línea" : "líneas") : (lectura.n === 1 ? "renglón" : "renglones")}</b>{lectura.proveedor ? <> de <b>{lectura.proveedor}</b></> : ""}{lectura.numero ? <> · cotización <b>{lectura.numero}</b></> : ""}.
+        {maq && <>
+          {" "}Suma {fmtL(lectura.suma)} + ISV 15 % = <b>{fmtL(lectura.calc)}</b>
+          {lectura.total != null && (lectura.cuadra ? <> · la cotización dice {fmtL(lectura.total)} ✓ cuadra</> : lectura.sinIsvEnCot ? <> · la cotización dice {fmtL(lectura.total)} (no le cobra ISV: si es exenta, desmarcá "Sumar ISV")</> : <> · <b>la cotización dice {fmtL(lectura.total)}: revisá las líneas</b></>)}
+        </>}
+        {lectura.modo === "items" && <> {sinItem ? <>Encontré <b>{conItem} de {leidas.length}</b></> : <>Los <b>{leidas.length}</b> tienen su ítem</>} en el presupuesto{lectura.recordados ? <> ({lectura.recordados} por compras anteriores)</> : ""}.{lectura.solucion && <> Solución{" "}
+          <select value={lectura.solucion} onChange={e => { const sl = e.target.value; setF(p => ({ ...p, lineas: cambiarSolucionLineas(Array.isArray(p.lineas) ? p.lineas : [], presConPartidas, sl, { modulo: moduloPartida }) })); setLectura(l => ({ ...l, solucion: sl })); }}
+            style={{ padding: "3px 6px", borderRadius: 8, border: "1px solid #CBD5E1", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", background: "#fff" }}>
+            {[...new Set((presConPartidas?.partidas || []).map(x => String(x.solucion || "").trim()).filter(Boolean))].map(x => <option key={x} value={x}>{x}</option>)}
+          </select>{" "}(si es otra, cambiala y muevo los ítems).</>}{sinItem > 0 && <> <b>{sinItem} no {sinItem === 1 ? "lo encontré" : "los encontré"}</b>: {sinItem === 1 ? "quedó" : "quedaron"} en amarillo sin ítem — elegí de qué ítem del presupuesto sale la plata (y "Es otro material" si hace falta) o quitalo.</>}</>}
+        {!maq && <> {textoAjuste(lectura.ajuste || {})}</>}
+        {lectura.isvEnLinea && <> · los precios venían con ISV incluido, los dejé sin ISV</>}
+        {lectura.descuento && <> · traía descuento por línea, ya está aplicado</>}
+        {lectura.proveedorOtro && <> · ojo: la cotización parece de <b>{lectura.proveedorOtro}</b></>}
+        <div style={{ fontSize: 11.5, opacity: .85, marginTop: 2 }}>{maq ? "Revisá cada línea y corregí lo que haga falta antes de aprobar." : lectura.modo === "items" ? "Revisá que cada ítem sea el correcto: debajo de cada uno dice qué traía la cotización." : "Revisá el texto y el monto antes de aprobar."}</div>
+      </div>;
+    })());
   const uLineaM = (id, k, v) => setLineasM(lineasM.map(l => l.id === id ? { ...l, [k]: v } : l));
   const errorLineasM = (aprobar) => {
     if (!esMaqForm) return null;
@@ -1728,29 +1798,8 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             {presConPartidas && sinElegiblesCC && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>El presupuesto no tiene partida para máquinas — quedará por clasificar en GeoCost.</div>}
             {f.projectCode && !presConPartidas && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>Este proyecto no tiene presupuesto en GeoCost: la compra no lleva partida.</div>}
             {/* 2) Leer la cotización en PDF → llena las líneas solo */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: `1px dashed ${ORANGE}`, background: "rgba(232,118,45,.05)", borderRadius: 12, padding: "10px 12px" }}>
-              <div style={{ flex: 1, minWidth: 220, fontSize: 12.5, color: "#475569" }}><b style={{ color: "#0f172a" }}>Leer la cotización</b> · subí el PDF y lleno las líneas, el N° y el proveedor. Vos solo revisás.</div>
-              <label style={{ display: "inline-flex", alignItems: "center", padding: "8px 14px", borderRadius: 999, background: ORANGE_DARK, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: leyendo ? "wait" : "pointer", opacity: leyendo ? .7 : 1 }}>
-                {leyendo ? "Leyendo…" : "Subir PDF y leer"}
-                <input type="file" accept="application/pdf,.pdf" style={{ display: "none" }} disabled={leyendo} onChange={async e => {
-                  const file = e.target.files?.[0]; e.target.value = ""; if (!file) return;
-                  if (file.size > 2 * 1024 * 1024) { alert(`El PDF pesa ${fmtMB(file.size)} (límite 2 MB). Comprimilo antes de subir.`); return; }
-                  try { const fd = await readFileAsDataUrl(file); await leerCotizacion(fd); } catch (err) { alert("No pude leer el archivo: " + (err?.message || err)); }
-                }} />
-              </label>
-              {esPdf(f.quoteFile) && f.quoteFile.dataUrl && !leyendo && <button type="button" onClick={() => leerCotizacion(f.quoteFile)} style={{ background: "none", border: "none", color: ORANGE_DARK, fontSize: 12, fontWeight: 800, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>Leer la que ya está adjunta</button>}
-            </div>
-            {lectura && (lectura.error
-              ? <div style={{ fontSize: 12.5, color: C_AMARILLO.color, background: C_AMARILLO.bg, borderRadius: 10, padding: "9px 12px", fontWeight: 600 }}>{lectura.error}</div>
-              : <div style={{ fontSize: 12.5, color: lectura.cuadra === false ? C_AMARILLO.color : C_VERDE.color, background: lectura.cuadra === false ? C_AMARILLO.bg : C_VERDE.bg, borderRadius: 10, padding: "9px 12px", lineHeight: 1.55 }}>
-                  <b>Leí {lectura.n} línea{lectura.n === 1 ? "" : "s"}</b>{lectura.proveedor ? <> de <b>{lectura.proveedor}</b></> : ""}{lectura.numero ? <> · cotización <b>{lectura.numero}</b></> : ""}.
-                  {" "}Suma {fmtL(lectura.suma)} + ISV 15 % = <b>{fmtL(lectura.calc)}</b>
-                  {lectura.total != null && (lectura.cuadra ? <> · la cotización dice {fmtL(lectura.total)} ✓ cuadra</> : lectura.sinIsvEnCot ? <> · la cotización dice {fmtL(lectura.total)} (no le cobra ISV: si es exenta, desmarcá "Sumar ISV")</> : <> · <b>la cotización dice {fmtL(lectura.total)}: revisá las líneas</b></>)}
-                  {lectura.isvEnLinea && <> · los precios venían con ISV incluido, los dejé sin ISV</>}
-                  {lectura.descuento && <> · traía descuento por línea, ya está aplicado</>}
-                  {lectura.proveedorOtro && <> · ojo: la cotización parece de <b>{lectura.proveedorOtro}</b></>}
-                  <div style={{ fontSize: 11.5, opacity: .85, marginTop: 2 }}>Revisá cada línea y corregí lo que haga falta antes de aprobar.</div>
-                </div>)}
+            {cajaLeer}
+            {avisoLectura}
             {/* 3) La cotización, línea por línea */}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
@@ -1784,6 +1833,8 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           </div>
         : modoItems
         ? <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 10, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14 }}>
+            {cajaLeer}
+            {avisoLectura}
             <LineasPresupuesto modulo={moduloPartida} pres={presConPartidas} lineas={lineasForm} onChange={ls => u("lineas", ls)} montoTotal={f.amount} tasa={tasaCC} disponibleDe={dispDe} isMobile={typeof window !== "undefined" && window.innerWidth < 640} />
             {evL.sobregiroUSD > 0 && <div style={{ background: "rgba(232,118,45,.10)", border: "1px solid rgba(232,118,45,.35)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, color: "#A94E16" }}>Sobrepasa el presupuesto en {fmtUSD(evL.sobregiroUSD)}</div>
@@ -1791,7 +1842,9 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             </div>}
             <Textarea label="Detalle adicional (opcional)" value={extraForm || ""} onChange={e => u("detalleExtra", e.target.value)} placeholder="Marca, medida exacta, algo que la cotización diga distinto…" />
           </div>
-        : <div style={{ gridColumn: "1/-1" }}>
+        : <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 10 }}>
+            {cajaLeer}
+            {avisoLectura}
             <Textarea label="Qué se está comprando (tal cual la cotización) *" value={f.description} onChange={e => u("description", e.target.value)} placeholder={"Un renglón por ítem, como viene en la cotización:\n2 × Sacos de cemento 42.5 kg\n10 × Varilla 3/8 grado 60"} />
           </div>}
 
@@ -1856,7 +1909,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       file={f.quoteFile}
       canUpload
       accent="#2563EB"
-      onUpload={fd => { u("quoteFile", fd); if (esMaqForm && !lineasMValidas.length && esPdf(fd)) leerCotizacion(fd); }}
+      onUpload={fd => { u("quoteFile", fd); if (!esPdf(fd)) return; if (esMaqForm ? !lineasMValidas.length : modoItems ? !lineasForm.some(l => l.partidaId || num(l.monto) > 0) : !String(f.description || "").trim()) leerCotizacion(fd); }}
       onRemove={() => u("quoteFile", null)}
     />
 
