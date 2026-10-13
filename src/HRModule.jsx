@@ -9,6 +9,39 @@ import { hoyISO } from "./fechas.js";
 // pestaña (vidrio); el resto de GeoTeam sigue con sus estilos de siempre.
 import { GT_CSS } from "./gt-ui.js";
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES } from "./users.js";
+import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
+
+// ── GeoInventory → GeoTeam (13-oct-2026): "Equipo asignado" ────────────────
+// Solo lectura: lo que el colaborador tiene a su cargo según inv-items (lee
+// SOLO con getCloud; nunca escribe). `modo="aviso"` es la advertencia del form
+// de baja: si todavía tiene equipo, que lo devuelva antes de salir.
+function EquipoAsignadoInv({ empId, modo = "lista" }) {
+  const [lista, setLista] = useState(null);
+  useEffect(() => {
+    let vivo = true;
+    if (!empId) { setLista([]); return; }
+    store.getCloud("inv-items").then(arr => { if (vivo) setLista((Array.isArray(arr) ? arr : []).filter(i => i && !i.eliminado && i.tipo === "individual" && i.asignadoA === empId)); }).catch(() => { if (vivo) setLista([]); });
+    return () => { vivo = false; };
+  }, [empId]);
+  if (!empId) return null;
+  if (modo === "aviso") {
+    if (!lista?.length) return null;
+    return <div style={{ gridColumn: "1/-1", background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#7C2D12", lineHeight: 1.6 }}>
+      <b>Tiene {lista.length} equipo{lista.length === 1 ? "" : "s"} asignado{lista.length === 1 ? "" : "s"} en GeoInventory</b> — que lo devuelva antes de salir: {lista.map(i => `${i.codigo} ${i.nombre}`).join(" · ")}. Se marca como devuelto desde la ficha de cada artículo en GeoInventory.
+    </div>;
+  }
+  return <div style={{ gridColumn: "1/-1", background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+    <div style={{ fontSize: 12, fontWeight: 700, color: "#475569" }}>Equipo asignado (GeoInventory) {lista ? `· ${lista.length}` : ""}</div>
+    {lista === null && <div style={{ fontSize: 12, color: "#94A3B8" }}>Cargando…</div>}
+    {lista && lista.length === 0 && <div style={{ fontSize: 12, color: "#94A3B8" }}>No tiene equipo asignado.</div>}
+    {(lista || []).map(i => <div key={i.id} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13 }}>
+      <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 800, fontSize: 11.5, color: "#64748b" }}>{i.codigo}</span>
+      <span style={{ flex: 1, fontWeight: 600, color: "#0f172a" }}>{i.nombre}</span>
+      <span style={{ fontSize: 11.5, color: "#64748b" }}>{categoriaInv(i.categoria).corto}</span>
+      <Badge color={i.estado === "bueno" || i.estado === "disponible" ? "#177243" : i.estado === "regular" || i.estado === "en_operacion" ? "#A94E16" : "#B03024"}>{estadoLabelInv(i)}</Badge>
+    </div>)}
+  </div>;
+}
 
 // Marca Geotecnica — colores corporativos
 const ORANGE = "#E8762D";
@@ -1395,6 +1428,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           </span>
         </label>
       </>)}
+      {emp?.id && <EquipoAsignadoInv empId={emp.id} />}
       <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
         {isPhotoOnly ? (
           <Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>
@@ -5811,6 +5845,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           </div>;
         })()}
       </div>}
+      {f.employeeId && <EquipoAsignadoInv empId={f.employeeId} modo="aviso" />}
       <Input label="Último día del colaborador en la empresa" type="date" value={f.date} onChange={e => u("date", e.target.value)} />
       <Select label="Motivo de baja" options={MOTIVOS_BAJA} value={f.motivo} onChange={e => u("motivo", e.target.value)} />
       {f.date && <div style={{ gridColumn: "1/-1", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#7F1D1D", lineHeight: 1.6 }}>

@@ -8,6 +8,8 @@ import GeoClockModule from "./GeoClockModule.jsx";
 import GeoCostModule from "./GeoCostModule.jsx";
 import TasksModule from "./TasksModule.jsx";
 import GeoSupplyModule from "./GeoSupplyModule.jsx";
+import GeoInventoryModule from "./GeoInventoryModule.jsx";
+import { ROLES_INVENTARIO } from "./geoinventory-calc.js";
 // GeoChat: desactivado temporalmente (jun 2026). El polling y los mensajes
 // en localStorage estaban presionando el cache. Cuando lo retomemos, sera
 // con Supabase Realtime + bypass de localStorage (ya esta listo).
@@ -59,6 +61,17 @@ const MODULES = [
     desc: "Solicitudes de material: del residente a la aprobación.",
     accent: "#C75F1F",
     roles: ["admin", "residente", "logistica", "asistente_compras", "costos", "compras_ops", "tesoreria", "gerencia"],
+  },
+  {
+    // GeoInventory (13-oct-2026): inventario, ubicaciones y herramientas.
+    // Roles en geoinventory-calc.js (permisosDe): Gerson y la Lic. Carolina
+    // todo; Óscar y Ana cargan; Christian, Arturo y gerencia solo ven.
+    id: "geoinventory",
+    name: "GeoInventory",
+    icon: "🧰",
+    desc: "Inventario, ubicaciones y herramientas.",
+    accent: "#C75F1F",
+    roles: ROLES_INVENTARIO,
   },
   {
     id: "maquinas",
@@ -213,7 +226,11 @@ const fechaLargaTegus = () => {
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [activeModule, setActiveModule] = useState(null);
+  // QR de GeoInventory (13-oct-2026): la etiqueta trae #inv=HER-0001. Con
+  // sesión viva se abre el módulo directo (y él abre la ficha); sin sesión,
+  // el hash sobrevive al login y `login()` lo respeta.
+  const hashInventario = () => { try { return /[#&]inv=[A-Z]{3}-\d{3,}/i.test(window.location.hash); } catch { return false; } };
+  const [activeModule, setActiveModule] = useState(() => hashInventario() ? "geoinventory" : null);
   const [syncState, setSyncState] = useState({ ok: true, error: null });
   // Bienvenida (31-ago-2026): se muestra UNA vez por sesión, tras el login.
   // Restaurar la sesión con la pestaña (F5) no la repite.
@@ -267,8 +284,9 @@ export default function App() {
     }
     if (!session) return false;
     setUser(session);
-    setActiveModule(null);   // ninguna sesión hereda el módulo de la anterior
-    setWelcomeDone(false);
+    const porQR = hashInventario() && ROLES_INVENTARIO.includes(session.role);
+    setActiveModule(porQR ? "geoinventory" : null);   // ninguna sesión hereda el módulo de la anterior (salvo que venga de un QR)
+    setWelcomeDone(porQR);
     // Con storage bloqueado (Safari sin cookies) el accessor LANZA: si el
     // setItem quedara fuera del try, setWelcomeDone nunca corría y la
     // bienvenida no se mostraba jamás en ese navegador.
@@ -356,6 +374,7 @@ export default function App() {
   if (activeModule === "geocost") return conEntrada(<GeoCostModule {...moduleProps} />);
   if (activeModule === "tareas") return conEntrada(<TasksModule {...moduleProps} />);
   if (activeModule === "geosupply") return conEntrada(<GeoSupplyModule {...moduleProps} />);
+  if (activeModule === "geoinventory") return conEntrada(<GeoInventoryModule {...moduleProps} />);
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
 
   const availableModules = MODULES.filter((m) => m.roles.includes(user.role));
@@ -567,6 +586,7 @@ function IconoModulo({ id, fallback }) {
     geoclock: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
     "geodrill-vault": <><rect x="2" y="3" width="20" height="5" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></>,
     // Caja abierta con flecha hacia arriba: el material que SALE a obra.
+    geoinventory: <><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5v-9Z" /><path d="M3 7.5 12 12l9-4.5" /><path d="M12 12v9" /><path d="M7.5 5.25 16.5 9.75" /></>,
     geosupply: <><path d="M12 3v8" /><path d="m8.5 6.5 3.5-3.5 3.5 3.5" /><path d="M3.3 9.8 12 13.8l8.7-4" /><path d="M4 9.8v7.4a1 1 0 0 0 .55.9L12 21.5l7.45-3.4a1 1 0 0 0 .55-.9V9.8" /><path d="M12 13.8v7.7" /></>,
   }[id];
   if (!trazos) return <span style={{ fontSize: 25 }} aria-hidden>{fallback}</span>;

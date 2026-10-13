@@ -7,7 +7,7 @@ cache localStorage. Deploy automático a GitHub Pages al hacer push a `main`.
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
-- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs` y `tests/leer-cotizacion.test.mjs`.
+- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs` y `tests/geoinventory-calc.test.mjs`.
 - Deploy: `git push origin main` dispara `.github/workflows/deploy.yml` → gh-pages.
   URL: https://gtrochez-collab.github.io/OPERACION-GT-GEOTECNICA/
 - Verificar deploy: `gh run list` + grep del texto nuevo en el bundle publicado.
@@ -1540,6 +1540,91 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   está rediseñado). ⚠ El `useEffect` que lee gt-usuarios va ARRIBA del return
   de "Cargando…" (un hook después de un return condicional rompió el orden de
   hooks en la primera prueba).
+- `GeoInventoryModule.jsx` (**GeoInventory — Inventario, ubicaciones y
+  herramientas, 13-oct-2026**) + `geoinventory-calc.js` (lógica PURA,
+  `tests/geoinventory-calc.test.mjs`) + `geoinventory-etiquetas.js` (PDF de
+  etiquetas con QR local, paquete `qrcode`). Responde tres cosas por artículo:
+  QUÉ es, DÓNDE está y CUÁNTO hay (o en qué ESTADO está). PRIMERO CELULAR
+  (Óscar carga el Almacén Central caminando; Ana las oficinas; Gerson las
+  herramientas de perforación). Misma estética que GeoSupply (GT_CSS, vidrio).
+  **Dos tipos**: `cantidad` (cosas iguales: `stock {ubicacionId: n}`, unidad de
+  las de GeoCost) e `individual` (código propio, `ubicacionId`, `estado`,
+  `asignadoA` = empId de hr-emps5 + `asignadoNombre`, marca/modelo/serie; si es
+  herramienta de perforación `herramienta {tipo broca|bucket|rompebolon,
+  diametro}` y `maquinaId/maquinaNombre` de mq-machines cuando está en
+  operación). "¿Cuántos iguales?" crea N individuales con la misma foto y
+  datos, cada uno con su código. **Categorías** (6, con prefijo de código):
+  materiales MAT · insumos_perforacion PER · herramientas_perforacion HER ·
+  mobiliario ADM · computo TEC · otros OTR; códigos correlativos por prefijo
+  asignados sobre la lista FRESCA de la nube (`siguientesCodigos`). **Estados**:
+  herramientas Disponible/En operación (pide máquina)/Requiere trabajo; lo
+  demás Bueno/Regular/Malo; un toque en la ficha. **Ubicaciones**
+  (`ubicacionesDe`): fijas `almacen` (Almacén Central) · `vault` (GeoDrill
+  Vault, sin migrar nada) · `taller` (Taller externo) + oficinas (`of:<id>`,
+  las crean admin/tesorería/Ana desde Ubicaciones) + UNA POR PROYECTO
+  automática (`proy:<short>`, de la lista unificada base+cp-projects); en
+  `inv-ubicaciones` solo viven las oficinas y los ajustes (responsable =
+  username, activa). **Historial automático**: TODO cambio pasa por
+  `aplicarMovimiento(item, m)` (entrada · salida con destino/entregado a ·
+  mover · ajuste · estado · asignar · editar · eliminar — valida, nunca deja
+  stock negativo) y el movimiento se escribe en `inv-mov-AAAA-MM` (una key
+  por mes, append con getCloud). **Guardado**: `guardarItems(fn)` aplica fn a
+  la lista fresca (getCloud → set → verify por ids/updatedAt); la foto se sube
+  ANTES a `cp-file-<id>` (canvas 800 px, JPEG 0.75, ~10-60 KB) y el artículo
+  guarda `{fileId, name, size}`; `Foto` la carga perezosa con cache en memoria.
+  **Pantallas**: Inicio (4 botones grandes Agregar/Buscar/Escanear/
+  Ubicaciones + contadores + últimos movimientos) · **Agregar**
+  (`AgregarFormImpl`, a nivel de módulo — ⚠ `PasoCaja` también a nivel de
+  módulo: definida adentro se remontaba por tecla y el input perdía el foco):
+  ubicación FIJA (localStorage `gt-inv-ubic-<user>`), foto con cámara
+  (`capture="environment"`) o galería, nombre con **sugerencias contra
+  duplicados** (`sugerirExistentes`: tocar "Sumar" convierte el form en
+  entrada al existente; "Otro igual" copia datos y foto de un individual),
+  tipo, categoría con iconos, cantidad+unidad o estado/asignado/iguales,
+  botón pegajoso **"Guardar y agregar otro"** (conserva ubicación, categoría y
+  unidad) · Buscar (nombre/código/serie/persona + ubicación, categoría,
+  individuales, estado; Enter con un código abre la ficha — sirve para un
+  lector USB/Bluetooth; botones Etiquetas (N) e Importar Excel) · Ubicaciones
+  (grupos Almacén y bodegas / Oficinas / Proyectos, responsable y cuántos;
+  click = Buscar filtrado; ✎ y "+ Nueva oficina" con permiso) · Herramientas
+  (tablero por ubicación o tipo, pills de estado con conteo, tarjeta con foto,
+  Ø, estado en color y máquina) · Movimientos (por día, buscador, "cargar un
+  mes más atrás"). **Ficha** (`FichaImpl`): foto grande, código, QR (local),
+  estado de un toque, ubicaciones/stock, asignado; acciones inline Entrada ·
+  Salida (hacia otra ubicación y/o entregado a alguien) · Mover · Asignar/
+  Devuelto · Ajustar (corrección, solo full) · Editar · Etiqueta · Eliminar
+  (solo full, confirm; queda `eliminado:true` + movimiento). **QR**: la
+  etiqueta codifica `<origen><BASE_URL>#inv=HER-0001`; App.jsx abre
+  GeoInventory directo con ese hash (con sesión viva, o tras el login con
+  rol permitido — `hashInventario`) y el módulo abre la ficha y limpia el
+  hash; `EscanerImpl` usa `qr-scanner` (cámara) + campo manual. Etiquetas:
+  carta, 3×8 de 2.5×1.25" (Avery 5160/8160): QR, código, nombre, ubicación.
+  **Importar Excel** (`parseTabla` + `prepararImportacion`): CSV o celdas
+  pegadas (tab), columnas nombre, categoria, tipo, cantidad, unidad,
+  ubicacion, estado, marca, modelo, serie, asignado; resuelve ubicación y
+  colaborador por nombre; plantilla descargable.
+  **Permisos** (`permisosDe`, decisión de Gerson 13-oct): admin y tesorería
+  TODO; `logistica` (Óscar) todo MENOS ajustar cantidades a mano (sí entradas,
+  salidas, mover, asignar, estado, imprimir, importar); `asistente_compras`
+  (Ana) igual + crear oficinas; costos (Christian), compras_ops (Arturo),
+  gerencia y visores SOLO VER; residentes sin acceso. `ROLES_INVENTARIO` es
+  lo que usa MODULES en App.jsx.
+  **GeoTeam**: `EquipoAsignadoInv` (a nivel de módulo en HRModule, lee
+  inv-items SOLO con getCloud): sección "Equipo asignado (GeoInventory)" en
+  Editar empleado y aviso ámbar en el form de BAJA si todavía tiene equipo.
+  **Verificado el 13-oct** en viewport de celular montando el módulo con
+  cada rol sobre la nube real (datos de prueba borrados después): Óscar fijó
+  Almacén y cargó cemento con foto (MAT-0001, 11 KB), "cem" sugirió el
+  existente y sumó 30 (150), creó una broca en VILLA SAN MIGUEL (HER-0001) y
+  2 monitores iguales (TEC-0001/0002) con el primero asignado a Ana; salida de
+  20 bolsas a AMICI, broca En operación en BG20H, mover y asignar, Ajustar
+  oculto para Óscar; Ana creó "Oficina Operaciones" con responsable;
+  Christian sin Agregar ni acciones; `#inv=HER-0001` abrió la ficha; etiqueta
+  PDF generada; GeoTeam mostró el monitor en la ficha de Ana y el aviso en
+  Baja. Pruebas Node: 8 (35 en total con `npm test`).
+  **Fuera de esta versión** (dejado preparado): historial de reparaciones,
+  traslados con confirmación, aprobaciones, costos/stock mínimo, conexión con
+  GeoSupply/GeoShopping, migración de GeoDrill Vault.
 - `GeoDrillVault.jsx`, `projects.js` (base + helpers), `holidays.js`, `theme.js`,
   `gt-ui.js` (GT_CSS: tokens + clases gt-* del rediseño — lo montan App y los
   módulos rediseñados, cada quien con su propio <style>).
@@ -1560,6 +1645,8 @@ la bienvenida y el módulo Mis Tareas; nadie ve las de otro).
 getCloud después de users.js). GeoSupply (oct 2026): `sp-solicitudes`,
 `sp-cotizaciones`, `sp-config`, `sp-file-<id>`; campo aditivo `origenSupply`
 en cp-purchases (borradores que vienen de una cotización aprobada).
+GeoInventory (oct 2026): `inv-items`, `inv-ubicaciones`, `inv-mov-AAAA-MM`
+(historial, una key por mes), fotos en `cp-file-<id>`.
 GeoCost (sep 2026): `cc-config` ({tasa, historialTasa}), `cc-presupuestos`
 (uno por projectCode), `cc-movilizaciones`, `cc-file-<id>` (comprobantes);
 campos aditivos `partidaId` y `sobregiroJustificacion` en cp-/mq-purchases.
