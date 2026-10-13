@@ -1481,7 +1481,14 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   vería Finanzas + el impacto en GeoCost por partida (`movimientosCompras`
   sobre los simulados) y deja "Finanzas: enviar a Tesorería" → "Tesorería:
   marcar pagada" para ver comprometido → ejecutado. "Reiniciar" borra las 3
-  keys y los PDFs simulados (`store.remove`). En simulación el saldo usa
+  keys y los PDFs simulados (`store.remove`). **Borrar UNA solicitud simulada
+  (13-oct-2026, pedido de Gerson)**: botón "Borrar" en cada fila de
+  Solicitudes y "Borrar de la simulación" en el detalle, SOLO con `sim`
+  prendido (`borrarSolicitudSim` aborta si `K` no apunta a las sp-sim-*). Se
+  lleva sus cotizaciones simuladas (las que cubren SOLO ítems de ella; a una
+  que también cubre otra solicitud solo se le quitan sus ítems), los
+  borradores de sp-sim-purchases que salieron de esas cotizaciones y sus PDF;
+  cada key con getCloud → quitar → set → verify. En simulación el saldo usa
   `purchasesVista` = reales + simulados. `gt-supply-sim` en sessionStorage.
   **VARILLA POR PESO (12-oct-2026, caso acero de Villa San Miguel)**: el PM
   manda el acero como UNA partida en **Ton** ("Acero de construcción, varios

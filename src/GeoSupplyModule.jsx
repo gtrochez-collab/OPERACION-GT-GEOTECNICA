@@ -745,6 +745,51 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     }
     if (rec) { setModal(null); if (enviar) alert(`✓ ${rec.folio} enviada al ${etiquetaCorte(rec.corte).titulo}.\nLlegada estimada a obra: ${fmtDiaCorto(llegadaEstimada(rec.corte, cfg).desde)} – ${fmtDiaCorto(llegadaEstimada(rec.corte, cfg).hasta)}.`); }
   };
+  // ── SIMULACIÓN: borrar UNA solicitud simulada (13-oct-2026, Gerson:
+  // "permitime borrar solicitudes hechas como simulación"). SOLO con la
+  // simulación prendida y SOLO sobre las keys sp-sim-* (nunca toca
+  // sp-solicitudes ni cp-purchases). Se lleva sus cotizaciones (las que solo
+  // cubren ítems de ella; a una que también cubre otra solicitud solo se le
+  // quitan sus ítems), los borradores simulados que salieron de esas
+  // cotizaciones y sus PDF. Cada key: getCloud → quitar → set → verify.
+  const borrarSolicitudSim = async (s) => {
+    if (!sim || K.sol !== "sp-sim-solicitudes" || K.cot !== "sp-sim-cotizaciones" || K.pur !== "sp-sim-purchases" || ocupado) return;
+    const reqDe = (q, l) => l.requestId || q.requestId;
+    const tocaSol = (q) => q.requestId === s.id || (q.lineas || []).some(l => reqDe(q, l) === s.id);
+    const deEllaSola = (q) => (q.lineas || []).every(l => reqDe(q, l) === s.id);
+    const cotsBorrar = cotizaciones.filter(q => tocaSol(q) && deEllaSola(q));
+    const cotsMixtas = cotizaciones.filter(q => tocaSol(q) && !deEllaSola(q));
+    const idsCot = new Set(cotsBorrar.map(q => q.id)), idsMixtas = new Set(cotsMixtas.map(q => q.id));
+    const pursBorrar = simPurchases.filter(p => p.origenSupply && (idsCot.has(p.origenSupply.quoteId) || (p.origenSupply.requestId === s.id && !idsMixtas.has(p.origenSupply.quoteId))));
+    const partes = [cotsBorrar.length ? `${cotsBorrar.length} cotización${cotsBorrar.length === 1 ? "" : "es"}` : "", pursBorrar.length ? `${pursBorrar.length} borrador${pursBorrar.length === 1 ? "" : "es"} de GeoShopping simulado` : ""].filter(Boolean);
+    if (!confirm(`¿Borrar la solicitud simulada ${s.folio}?${partes.length ? `\n\nTambién se borra${partes.length > 1 || cotsBorrar.length > 1 || pursBorrar.length > 1 ? "n" : ""}: ${partes.join(" y ")}.` : ""}${cotsMixtas.length ? `\n\n${cotsMixtas.length} cotización(es) que también cubren otra solicitud se quedan, sin los ítems de esta.` : ""}\n\nSolo afecta la simulación.`)) return;
+    setOcupado(true);
+    try {
+      const quitar = async (key, setter, transformar, idsFuera) => {
+        const c = await store.getCloud(key);
+        const arr = Array.isArray(c) ? c : [];
+        const next = transformar(arr);
+        if (next === arr) return;
+        if (!(await store.set(key, next))) throw new Error(`No se guardó ${key}`);
+        const back = await store.getCloud(key);
+        if ((Array.isArray(back) ? back : []).some(x => idsFuera.has(x.id))) throw new Error(`La nube no confirmó el borrado en ${key}`);
+        setter(next);
+      };
+      const ahoraISO = new Date().toISOString();
+      const idsPur = new Set(pursBorrar.map(p => p.id));
+      await quitar(K.pur, setSimPurchases, (arr) => idsPur.size ? arr.filter(p => !idsPur.has(p.id)) : arr, idsPur);
+      await quitar(K.cot, setCotizaciones, (arr) => (idsCot.size || idsMixtas.size) ? arr.filter(q => !idsCot.has(q.id)).map(q => {
+        if (!idsMixtas.has(q.id)) return q;
+        const ls = (q.lineas || []).filter(l => reqDe(q, l) !== s.id);
+        return { ...q, lineas: ls, requestId: q.requestId === s.id ? (ls[0]?.requestId || q.requestId) : q.requestId, updatedAt: ahoraISO, audit: [...(q.audit || []), auditEntry("editada", `Se quitaron los ítems de ${s.folio} (borrada en la simulación)`)] };
+      }) : arr, idsCot);
+      await quitar(K.sol, setSolicitudes, (arr) => arr.filter(x => x.id !== s.id), new Set([s.id]));
+      // PDFs de las cotizaciones borradas (best-effort)
+      await Promise.all(cotsBorrar.map(q => q.pdfFile?.fileId).filter(Boolean).map(id => store.remove(fileKey(id), { quiet: true })));
+      setModal(null);
+    } catch (e) { alert("No se pudo borrar: " + (e?.message || e) + ". Reintentá."); console.warn("[GeoSupply sim]", e); }
+    finally { setOcupado(false); }
+  };
   const cancelarSolicitud = async (s) => {
     if (!confirm(`¿Cancelar la solicitud ${s.folio}? No se puede deshacer.`)) return;
     const rec = await actualizarSolicitud(s.id, (c) => puedeCancelar(c) ? { ...c, estado: "cancelada", audit: [...(c.audit || []), auditEntry("cancelada", "Cancelada por el residente")] } : (alert("Ya no se puede cancelar: almacén o compras ya la tocaron."), null));
@@ -1222,6 +1267,8 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
               <div style={{ fontSize: 12.5, fontWeight: 700, color: C_AZUL.color }}>{fmtDiaCorto(lleg.desde)} – {fmtDiaCorto(lleg.hasta)}</div>
               <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 3 }}>llegada estimada</div>
             </div>}
+            {sim && <button type="button" disabled={ocupado} onClick={e => { e.stopPropagation(); borrarSolicitudSim(s); }} onKeyDown={e => e.stopPropagation()} title="Borrar esta solicitud de la simulación"
+              style={{ padding: "6px 12px", borderRadius: 999, border: `1px solid ${C_ROJO.borde || "rgba(185,28,28,.25)"}`, background: "rgba(255,255,255,.7)", color: C_ROJO.color, fontSize: 12, fontWeight: 800, cursor: ocupado ? "wait" : "pointer", fontFamily: "inherit" }}>Borrar</button>}
           </div>;
         })}
     </div>;
@@ -1294,6 +1341,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
         {esMia && s.estado === "borrador" && <><Btn variant="ghost" onClick={() => setModal({ t: "solicitud", s })}>Editar</Btn><Btn variant="danger" disabled={ocupado} onClick={() => cancelarSolicitud(s)}>Eliminar borrador</Btn></>}
         {esMia && s.estado !== "borrador" && puedeCancelar(s) && <Btn variant="danger" disabled={ocupado} onClick={() => cancelarSolicitud(s)}>Cancelar solicitud</Btn>}
+        {sim && <Btn variant="danger" disabled={ocupado} onClick={() => borrarSolicitudSim(s)}>Borrar de la simulación</Btn>}
         <Btn variant="dark" onClick={() => setModal(null)}>Cerrar</Btn>
       </div>
     </div>;
