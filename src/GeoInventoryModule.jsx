@@ -31,6 +31,7 @@ import {
   ubicacionesDe, nombreUbicacion, TIPO_UBICACION, sugerirExistentes, siguientesCodigos, codigoDeTexto, esCodigo,
   stockDe, stockEn, ubicacionesConStock, aplicarMovimiento, textoMovimiento, keyMovimientos, ACCIONES,
   permisosDe, resumenInventario, buscarItems, UNIDADES, num, plantillaCSV, parseTabla, prepararImportacion,
+  esCaja, PREFIJO_CAJA, prefijoDe, CONTENIDOS_CAJA, MARCAS_CAJA, TAMANOS_CAJA, tamanoLabel, nombreCaja, nivelCaja, estantesDe, nombreEstante, textoEstante, resumenCajas,
 } from "./geoinventory-calc.js";
 import { generarEtiquetasPDF, qrDataUrl, urlDeFicha } from "./geoinventory-etiquetas.js";
 
@@ -52,6 +53,8 @@ const pillBtn = (label, active, onClick, { n, c, disabled, title, key, grande } 
   {label}{n != null && <span style={{ opacity: .75, fontWeight: 600 }}>{n}</span>}</button>;
 const Vacio = ({ children }) => <div className="gt-vidrio" style={{ padding: "44px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>{children}</div>;
 const chipEstado = (item) => { const e = estadosDe(item)[item?.estado]; return <Chip c={TONO[e?.tono] || C_GRIS}>{e?.label || item?.estado || "—"}</Chip>; };
+const C_NIVEL = { llena: C_VERDE, parcial: C_AMARILLO, vacia: C_GRIS };
+const chipCaja = (item) => { const n = nivelCaja(item?.caja); return <Chip c={C_NIVEL[n]}>{fmtN(item?.caja?.cantidad)} de {fmtN(item?.caja?.capacidad || item?.caja?.cantidad)}</Chip>; };
 const Buscador = ({ value, onChange, placeholder, onEnter, inputRef, autoFocus }) => <input ref={inputRef} autoFocus={autoFocus} value={value} onChange={e => onChange(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && onEnter) onEnter(value); }} placeholder={placeholder} inputMode="search" style={{ flex: 1, minWidth: 160, padding: "10px 14px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 999, fontSize: 14, background: "rgba(255,255,255,.75)", outline: "none", fontFamily: "inherit", minHeight: 44 }} />;
 
 // ── Iconos de línea (monocromos, como el panel) ──
@@ -75,6 +78,8 @@ const ICO = {
   qr: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><path d="M14 14h2v2h-2zM18 14h2v2h-2zM14 18h2v2h-2zM18 18h2v2h-2z" /></>,
   imprimir: <><path d="M6 9V4h12v5M6 18H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2" /><rect x="6" y="14" width="12" height="6" /></>,
   check: <><path d="m5 12 4.5 4.5L19 7" /></>,
+  caja: <><path d="M3 9h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9Z" /><path d="M3 9l2-4h14l2 4" /><path d="M10 13h4" /></>,
+  estante: <><path d="M4 4v16M20 4v16" /><path d="M4 9h16M4 15h16" /><path d="M7 6.5h3M14 6.5h3M7 12.5h3M14 12.5h3" /></>,
 };
 
 // ── Foto comprimida (800 px, JPEG 0.75) ──
@@ -152,8 +157,10 @@ function PasoCaja({ n, titulo, children, extra, isMobile }) {
     {children}
   </div>;
 }
-const FORM_VACIO = { foto: null, nombre: "", tipo: "cantidad", categoria: "materiales", cantidad: "", unidad: "Unidad", estado: "", asignadoA: "", asignadoNombre: "", iguales: "1", herrTipo: "broca", diametro: "", marca: "", modelo: "", serie: "", estante: "", notas: "" };
-function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, onGuardar, onSumar, ocupado, isMobile, ultimo, setUltimo }) {
+const FORM_VACIO = { foto: null, nombre: "", tipo: "cantidad", categoria: "materiales", cantidad: "", unidad: "Unidad", estado: "", asignadoA: "", asignadoNombre: "", iguales: "1", herrTipo: "broca", diametro: "", marca: "", modelo: "", serie: "", estante: "", notas: "",
+  // caja (GeoDrill Vault): qué trae, cuántas trae, en qué estante y nivel, cuántas cajas iguales
+  cajaMarca: "", tamano: "", capacidad: "", cajas: "1", estanteId: "", nivel: "" };
+function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, estantes, onNuevoEstante, onGuardar, onSumar, ocupado, isMobile, ultimo, setUltimo }) {
   const [f, setF] = useState(() => ({ ...FORM_VACIO, ...(ultimo || {}) }));
   const [existente, setExistente] = useState(null);    // artículo existente elegido de las sugerencias
   const [sumar, setSumar] = useState("");
@@ -163,6 +170,11 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, onGu
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const ubic = ubicaciones.find(x => x.id === ubicFija);
   const esHer = f.categoria === "herramientas_perforacion";
+  const esCajaF = f.tipo === "caja";
+  const estantesAqui = estantesDe(estantes, ubicFija);
+  const estanteSel = estantesAqui.find(e => e.id === f.estanteId);
+  const [nuevoEst, setNuevoEst] = useState(null);   // {nombre, niveles} mientras se crea uno
+  const contenidosUsados = [...new Set([...CONTENIDOS_CAJA, ...items.filter(i => i.tipo === "caja").map(i => i.caja?.contenido).filter(Boolean)])];
   const sugeridos = existente ? [] : sugerirExistentes(f.nombre, items, { categoria: f.categoria });
   const estados = estadosDe({ categoria: f.categoria });
   const tomarFoto = async (file) => {
@@ -175,6 +187,7 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, onGu
   const elegirExistente = (it) => {
     setExistente(it);
     if (it.tipo === "cantidad") { setSumar(""); }
+    else if (it.tipo === "caja") setF(p => ({ ...p, nombre: it.caja?.contenido || it.nombre, tipo: "caja", categoria: it.categoria, cajaMarca: it.caja?.marca || "", tamano: it.caja?.tamano || "", capacidad: String(it.caja?.capacidad || it.caja?.cantidad || ""), fotoDe: it.foto || null, foto: null }));
     else setF(p => ({ ...p, nombre: it.nombre, tipo: "individual", categoria: it.categoria, marca: it.marca || "", modelo: it.modelo || "", herrTipo: it.herramienta?.tipo || p.herrTipo, diametro: it.herramienta?.diametro || "", unidad: it.unidad || p.unidad, fotoDe: it.foto || null, foto: null }));
   };
   const limpiarExistente = () => { setExistente(null); setSumar(""); setF(p => ({ ...p, fotoDe: null })); };
@@ -185,7 +198,11 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, onGu
     if (f.tipo === "cantidad" && !(num(f.cantidad) > 0)) return "Escribí la cantidad.";
     if (f.tipo === "cantidad" && !String(f.unidad).trim()) return "Elegí la unidad.";
     if (f.tipo === "individual" && !(num(f.iguales) >= 1 && num(f.iguales) <= 200)) return "¿Cuántos iguales? Entre 1 y 200.";
-    if (esHer && !String(f.diametro).trim()) return "Escribí el diámetro de la herramienta.";
+    if (esHer && !esCajaF && !String(f.diametro).trim()) return "Escribí el diámetro de la herramienta.";
+    if (esCajaF && !(num(f.capacidad) > 0)) return "¿Cuántas trae cada caja?";
+    if (esCajaF && !(num(f.cajas) >= 1 && num(f.cajas) <= 200)) return "¿Cuántas cajas iguales? Entre 1 y 200.";
+    if (esCajaF && estantesAqui.length && !f.estanteId) return "Elegí el estante (o creá uno).";
+    if (esCajaF && estanteSel && !f.nivel) return "Elegí el nivel del estante.";
     return null;
   };
   const guardar = async (otro) => {
@@ -196,7 +213,7 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, onGu
     else r = await onGuardar({ ...f, estado: f.estado || estadoInicial(f.categoria), ubicacionId: ubicFija }, { fotoDe: f.fotoDe });
     if (!r) return;
     setGuardado(r);
-    const memoria = { tipo: f.tipo, categoria: f.categoria, unidad: f.unidad, herrTipo: f.herrTipo };
+    const memoria = { tipo: f.tipo, categoria: f.categoria, unidad: f.unidad, herrTipo: f.herrTipo, estanteId: f.estanteId, nivel: f.nivel, cajaMarca: f.cajaMarca, tamano: f.tamano, capacidad: f.capacidad };
     setUltimo(memoria);
     setExistente(null); setSumar("");
     setF({ ...FORM_VACIO, ...memoria });
@@ -232,16 +249,17 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, onGu
     </Paso>
 
     <Paso isMobile={isMobile} n="3" titulo="Qué es">
-      <input ref={nombreRef} value={f.nombre} onChange={e => { u("nombre", e.target.value); if (existente) limpiarExistente(); }} placeholder="Ej. Cemento GU 42.5 kg · Broca 1.20 m · Monitor 24&quot;" style={{ ...CTRL, fontSize: 16, fontWeight: 600 }} autoCapitalize="sentences" />
+      <input ref={nombreRef} value={f.nombre} onChange={e => { u("nombre", e.target.value); if (existente) limpiarExistente(); }} list={esCajaF ? "inv-contenidos" : undefined} placeholder={esCajaF ? "Qué trae la caja · ej. Pica, Portapica" : "Ej. Cemento GU 42.5 kg · Broca 1.20 m · Monitor 24&quot;"} style={{ ...CTRL, fontSize: 16, fontWeight: 600 }} autoCapitalize="sentences" />
+      {esCajaF && <datalist id="inv-contenidos">{contenidosUsados.map(x => <option key={x} value={x} />)}</datalist>}
       {sugeridos.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={LBL}>¿Es alguno de estos? Tocalo y no se duplica</div>
         {sugeridos.map(it => <button key={it.id} type="button" onClick={() => elegirExistente(it)} style={{ display: "flex", alignItems: "center", gap: 10, padding: 8, borderRadius: 12, border: "1px solid rgba(44,42,40,.1)", background: "rgba(255,255,255,.8)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", minHeight: 52 }}>
           <Foto foto={it.foto} size={40} radius={10} categoria={it.categoria} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.nombre}</div>
-            <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{it.codigo} · {it.tipo === "cantidad" ? `${fmtN(stockDe(it))} ${it.unidad} en total${ubicFija ? ` · ${fmtN(stockEn(it, ubicFija))} acá` : ""}` : `individual · ${estadoLabel(it)}`}</div>
+            <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{it.codigo} · {it.tipo === "cantidad" ? `${fmtN(stockDe(it))} ${it.unidad} en total${ubicFija ? ` · ${fmtN(stockEn(it, ubicFija))} acá` : ""}` : it.tipo === "caja" ? `caja · ${fmtN(it.caja?.cantidad)} de ${fmtN(it.caja?.capacidad || it.caja?.cantidad)}` : `individual · ${estadoLabel(it)}`}</div>
           </div>
-          <span style={{ color: "var(--naranja-tinta)", fontWeight: 800, fontSize: 12 }}>{it.tipo === "cantidad" ? "Sumar" : "Otro igual"}</span>
+          <span style={{ color: "var(--naranja-tinta)", fontWeight: 800, fontSize: 12 }}>{it.tipo === "cantidad" ? "Sumar" : it.tipo === "caja" ? "Otra igual" : "Otro igual"}</span>
         </button>)}
       </div>}
       {existente && existente.tipo === "cantidad" && <div style={{ padding: 12, borderRadius: 14, background: C_VERDE.bg, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -252,16 +270,17 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, onGu
           <button type="button" onClick={limpiarExistente} style={{ background: "none", border: "none", color: "var(--text-3)", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>No es este</button>
         </div>
       </div>}
-      {existente && existente.tipo === "individual" && <div style={{ fontSize: 12.5, color: C_AZUL.color, background: C_AZUL.bg, borderRadius: 12, padding: "9px 12px" }}>Vas a crear <b>otro igual</b> a {existente.codigo}, con su propio código. <button type="button" onClick={limpiarExistente} style={{ background: "none", border: "none", color: C_AZUL.color, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 12, textDecoration: "underline" }}>No es igual</button></div>}
+      {existente && existente.tipo !== "cantidad" && <div style={{ fontSize: 12.5, color: C_AZUL.color, background: C_AZUL.bg, borderRadius: 12, padding: "9px 12px" }}>Vas a crear <b>{existente.tipo === "caja" ? "otra caja igual" : "otro igual"}</b> a {existente.codigo}, con su propio código. <button type="button" onClick={limpiarExistente} style={{ background: "none", border: "none", color: C_AZUL.color, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 12, textDecoration: "underline" }}>No es igual</button></div>}
     </Paso>
 
     {!(existente?.tipo === "cantidad") && <>
       <Paso isMobile={isMobile} n="4" titulo="Tipo y categoría">
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {pillBtn("Por cantidad", f.tipo === "cantidad", () => u("tipo", "cantidad"), { grande: true, c: CHARCOAL })}
-          {pillBtn("Individual (con código propio)", f.tipo === "individual", () => u("tipo", "individual"), { grande: true, c: CHARCOAL })}
+          {pillBtn("Individual", f.tipo === "individual", () => u("tipo", "individual"), { grande: true, c: CHARCOAL })}
+          {pillBtn("Caja (picas, portapicas…)", f.tipo === "caja", () => setF(p => ({ ...p, tipo: "caja", categoria: p.categoria === "materiales" ? "insumos_perforacion" : p.categoria })), { grande: true, c: CHARCOAL })}
         </div>
-        <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{f.tipo === "cantidad" ? "Cosas iguales entre sí: cemento, picas, sillas. Se cuenta cuántas hay." : "Cada unidad es única: lleva número de serie, se asigna a una persona o es herramienta de perforación."}</div>
+        <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{f.tipo === "cantidad" ? "Cosas iguales entre sí: cemento, sillas, bolsas. Se cuenta cuántas hay." : f.tipo === "caja" ? "Una cajita con N unidades adentro. Cada caja lleva su propio código y QR; las salidas se descuentan de ESA caja." : "Cada unidad es única: lleva número de serie, se asigna a una persona o es herramienta de perforación."}</div>
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: 8 }}>
           {CATEGORIAS.map(c => { const act = f.categoria === c.id; return <button key={c.id} type="button" onClick={() => { u("categoria", c.id); if (c.id === "herramientas_perforacion") u("tipo", "individual"); u("estado", ""); }} aria-pressed={act}
             style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 12px", minHeight: 52, borderRadius: 14, border: act ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: act ? ORANGE_DARK : "rgba(255,255,255,.65)", color: act ? "#fff" : "#5C5853", font: "700 13px/1.2 var(--sans)", cursor: "pointer", textAlign: "left" }}>
@@ -269,7 +288,35 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, onGu
         </div>
       </Paso>
 
-      {f.tipo === "cantidad"
+      {esCajaF
+        ? <Paso isMobile={isMobile} n="5" titulo="La caja" extra={estanteSel && f.nivel ? <Chip c={C_NARANJA} style={{ fontSize: 12 }}>{estanteSel.nombre} · Nivel {f.nivel}</Chip> : null}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={LBL}>Estante</div>
+            {nuevoEst
+              ? <div style={{ display: "grid", gridTemplateColumns: "1fr 90px auto", gap: 8, alignItems: "center" }}>
+                <input value={nuevoEst.nombre} onChange={e => setNuevoEst(p => ({ ...p, nombre: e.target.value }))} placeholder="Nombre · ej. Estante A" style={CTRL} autoFocus />
+                <input type="number" inputMode="numeric" min="1" max="12" value={nuevoEst.niveles} onChange={e => setNuevoEst(p => ({ ...p, niveles: e.target.value }))} placeholder="Niveles" title="Niveles" style={{ ...CTRL, textAlign: "center" }} />
+                <div style={{ display: "flex", gap: 6 }}><Btn small disabled={ocupado} onClick={async () => { const id = await onNuevoEstante(ubicFija, nuevoEst); if (id) { setF(p => ({ ...p, estanteId: id, nivel: "1" })); setNuevoEst(null); } }}>Crear</Btn><Btn small variant="ghost" onClick={() => setNuevoEst(null)}>✕</Btn></div>
+              </div>
+              : <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {estantesAqui.map(e => pillBtn(e.nombre, f.estanteId === e.id, () => setF(p => ({ ...p, estanteId: e.id, nivel: p.estanteId === e.id ? p.nivel : "1" })), { key: e.id, grande: true, c: CHARCOAL }))}
+                {pillBtn("+ Nuevo estante", false, () => setNuevoEst({ nombre: `Estante ${String.fromCharCode(65 + estantesAqui.length)}`, niveles: "4" }), { grande: true })}
+                {estantesAqui.length === 0 && <span style={{ fontSize: 11.5, color: "var(--text-3)", alignSelf: "center" }}>Esta ubicación no tiene estantes todavía.</span>}
+              </div>}
+            {estanteSel && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><span style={LBL}>Nivel</span>{Array.from({ length: Math.max(1, num(estanteSel.niveles) || 1) }, (_, i) => String(i + 1)).map(n => pillBtn(n, f.nivel === n, () => u("nivel", n), { key: n, grande: true }))}</div>}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+            <input list="inv-marcas-caja" value={f.cajaMarca} onChange={e => u("cajaMarca", e.target.value)} placeholder="Marca (opcional) · ej. Drill Master" style={CTRL} />
+            <datalist id="inv-marcas-caja">{[...new Set([...MARCAS_CAJA, ...items.filter(i => i.tipo === "caja").map(i => i.caja?.marca).filter(Boolean)])].map(x => <option key={x} value={x} />)}</datalist>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>{TAMANOS_CAJA.map(([k, l]) => pillBtn(l, f.tamano === k, () => u("tamano", f.tamano === k ? "" : k), { key: k }))}</div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={LBL}>Cuántas trae cada caja</div><input type="number" inputMode="numeric" min="1" step="1" value={f.capacidad} onChange={e => u("capacidad", e.target.value)} placeholder="15" style={{ ...CTRL, fontSize: 20, fontWeight: 800, textAlign: "center" }} /></div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={LBL}>¿Cuántas cajas iguales?</div><input type="number" inputMode="numeric" min="1" max="200" value={f.cajas} onChange={e => u("cajas", e.target.value)} style={{ ...CTRL, fontSize: 20, fontWeight: 800, textAlign: "center" }} /></div>
+          </div>
+          {num(f.cajas) > 1 && <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Se crean {num(f.cajas)} cajas de {fmtN(f.capacidad) || "…"} {String(f.nombre || "unidades").toLowerCase()}, cada una con su código y su QR, en {estanteSel ? `${estanteSel.nombre} nivel ${f.nivel || "?"}` : ubic?.nombre || "la ubicación"}.</div>}
+        </Paso>
+        : f.tipo === "cantidad"
         ? <Paso isMobile={isMobile} n="5" titulo="Cuánto hay">
           <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 8 }}>
             <input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 20, fontWeight: 800, textAlign: "right" }} />
@@ -308,7 +355,7 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, onGu
 
     <div style={{ position: "sticky", bottom: 8, zIndex: 3, display: "flex", gap: 8, flexWrap: "wrap" }}>
       <button type="button" disabled={ocupado || procesando} onClick={() => guardar(true)} style={{ flex: 2, minHeight: 54, borderRadius: 16, border: "none", background: ORANGE_DARK, color: "#fff", font: "800 15px/1 var(--sans)", cursor: ocupado ? "wait" : "pointer", boxShadow: "0 10px 24px rgba(199,95,31,.28)", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-        <Ico d={ICO.agregar} size={20} /> {ocupado ? "Guardando…" : existente?.tipo === "cantidad" ? "Sumar y agregar otro" : "Guardar y agregar otro"}</button>
+        <Ico d={ICO.agregar} size={20} /> {ocupado ? "Guardando…" : existente?.tipo === "cantidad" ? "Sumar y agregar otro" : esCajaF && num(f.cajas) > 1 ? `Guardar ${num(f.cajas)} cajas y seguir` : "Guardar y agregar otro"}</button>
       <button type="button" disabled={ocupado || procesando} onClick={() => guardar(false)} style={{ flex: 1, minHeight: 54, borderRadius: 16, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.9)", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Guardar</button>
     </div>
   </div>;
@@ -337,7 +384,7 @@ function UbicacionFormImpl({ ubicacion, usuarios, onSave, onClose, ocupado }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // FICHA de un artículo (modal) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
-function FichaImpl({ item, ubicaciones, emps, maquinas, perms, onAccion, onEditar, onEliminar, onEtiqueta, verFoto, ocupado, isMobile, movs }) {
+function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms, onAccion, onEditar, onEliminar, onEtiqueta, verFoto, ocupado, isMobile, movs }) {
   const [accion, setAccion] = useState(null);   // entrada | salida | mover | ajustar | asignar | maquina
   const [f, setF] = useState({});
   const [qr, setQr] = useState(null);
@@ -348,6 +395,8 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, perms, onAccion, onEdita
   const cat = categoriaDe(item.categoria);
   const estados = estadosDe(item);
   const enUbic = ubicacionesConStock(item);
+  const caja = item.tipo === "caja";
+  const estantesDestino = estantesDe(estantes, f.a || item.ubicacionId);
   const ubicPrincipal = item.tipo === "individual" ? item.ubicacionId : (enUbic[0]?.id || "");
   const maquina = maquinas.find(m => m.id === item.maquinaId);
   const abrir = (a) => { setAccion(accion === a ? null : a); setF({ de: ubicPrincipal, a: "", cantidad: "", nuevo: "", motivo: "", en: ubicPrincipal }); };
@@ -362,7 +411,7 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, perms, onAccion, onEdita
   const selUbic = (val, onChange, excluir) => <select value={val} onChange={e => onChange(e.target.value)} style={CTRL}>
     <option value="">— Ubicación —</option>{ubicaciones.filter(x => x.id !== excluir).map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
   </select>;
-  const caja = (children) => <div style={{ padding: 12, borderRadius: 14, background: "rgba(44,42,40,.04)", display: "flex", flexDirection: "column", gap: 8 }}>{children}</div>;
+  const cajaUI = (children) => <div style={{ padding: 12, borderRadius: 14, background: "rgba(44,42,40,.04)", display: "flex", flexDirection: "column", gap: 8 }}>{children}</div>;
   const historial = (movs || []).filter(m => m.itemId === item.id).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 12);
   return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
     <div style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: isMobile ? "wrap" : "nowrap" }}>
@@ -371,14 +420,16 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, perms, onAccion, onEdita
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontFamily: "var(--mono)", fontWeight: 800, fontSize: 14, color: CHARCOAL }}>{item.codigo}</span>
           <Chip c={C_GRIS}>{cat.corto}</Chip>
-          {item.tipo === "individual" ? chipEstado(item) : <Chip c={C_AZUL}>{fmtN(stockDe(item))} {item.unidad}</Chip>}
+          {item.tipo === "individual" ? chipEstado(item) : caja ? <Chip c={C_NARANJA}>Caja</Chip> : <Chip c={C_AZUL}>{fmtN(stockDe(item))} {item.unidad}</Chip>}
         </div>
         <div style={{ font: "800 20px/1.15 var(--display)", color: CHARCOAL }}>{item.nombre}</div>
+        {caja && <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}><span style={{ font: "800 34px/1 var(--display)", color: C_NIVEL[nivelCaja(item.caja)].color }}>{fmtN(item.caja?.cantidad)}</span><span style={{ fontSize: 14, color: "var(--text-2)" }}>de {fmtN(item.caja?.capacidad || item.caja?.cantidad)} {String(item.caja?.contenido || "").toLowerCase()}{num(item.caja?.capacidad || item.caja?.cantidad) === 1 ? "" : "s"} en esta caja</span></div>}
+        {caja && textoEstante(estantes, item) && <div style={{ fontSize: 13, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}><Ico d={ICO.estante} size={15} color={ORANGE_DARK} />{textoEstante(estantes, item)}</div>}
         {esHerramienta(item) && <div style={{ fontSize: 13, color: "var(--text-2)" }}>{tipoHerramientaLabel(item.herramienta?.tipo)}{item.herramienta?.diametro ? ` · Ø ${item.herramienta.diametro}` : ""}{maquina ? <> · en <b>{maquina.nombre}</b></> : item.maquinaNombre ? <> · en <b>{item.maquinaNombre}</b></> : ""}</div>}
         {(item.marca || item.modelo || item.serie) && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{[item.marca, item.modelo, item.serie ? `S/N ${item.serie}` : ""].filter(Boolean).join(" · ")}</div>}
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {enUbic.length === 0 && <div style={{ fontSize: 13, color: C_ROJO.color, fontWeight: 700 }}>Sin existencias en ninguna ubicación</div>}
-          {enUbic.map(x => <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}><Ico d={ICO.ubicaciones} size={15} color={ORANGE_DARK} /><b>{nombreUbicacion(ubicaciones, x.id)}</b>{item.tipo === "cantidad" && <span style={{ color: "var(--text-2)" }}>· {fmtN(x.cantidad)} {item.unidad}</span>}{item.estante && <span style={{ color: "var(--text-3)" }}>· estante {item.estante}</span>}</div>)}
+          {enUbic.map(x => <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}><Ico d={ICO.ubicaciones} size={15} color={ORANGE_DARK} /><b>{nombreUbicacion(ubicaciones, x.id)}</b>{item.tipo === "cantidad" && <span style={{ color: "var(--text-2)" }}>· {fmtN(x.cantidad)} {item.unidad}</span>}{item.estante && !item.estanteId && <span style={{ color: "var(--text-3)" }}>· estante {item.estante}</span>}</div>)}
           {item.tipo === "individual" && <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}><Ico d={ICO.persona} size={15} color={item.asignadoA ? C_AZUL.color : "rgba(44,42,40,.3)"} />{item.asignadoA ? <b>{item.asignadoNombre}</b> : <span style={{ color: "var(--text-3)" }}>Sin asignar</span>}</div>}
         </div>
         {item.notas && <div style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "pre-line" }}>{item.notas}</div>}
@@ -390,7 +441,7 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, perms, onAccion, onEdita
     {item.tipo === "individual" && perms.estado && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={LBL}>Estado · un toque</div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{Object.entries(estados).map(([k, e]) => pillBtn(e.label, item.estado === k, () => cambiarEstado(k), { key: k, grande: true, c: TONO[e.tono]?.color, disabled: ocupado }))}</div>
-      {accion === "maquina" && caja(<>
+      {accion === "maquina" && cajaUI(<>
         <div style={LBL}>¿En qué máquina está?</div>
         <select value={f.maquinaId || ""} onChange={e => u("maquinaId", e.target.value)} style={CTRL}><option value="">— Máquina de GeoMachinery —</option>{maquinas.map(m => <option key={m.id} value={m.id}>{m.nombre}{m.tipo ? ` · ${m.tipo}` : ""}</option>)}</select>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado || !f.maquinaId} onClick={() => ejecutar({ accion: "estado", estado: "en_operacion", maquinaId: f.maquinaId, maquinaNombre: maquinas.find(m => m.id === f.maquinaId)?.nombre || "" })}>En operación</Btn></div>
@@ -398,43 +449,50 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, perms, onAccion, onEdita
     </div>}
 
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      {btnAccion({ id: "entrada", label: "Entrada", icono: ICO.agregar, c: C_VERDE.color, show: item.tipo === "cantidad" && perms.cargar })}
-      {btnAccion({ id: "salida", label: "Salida", icono: ICO.movimientos, c: ORANGE_DARK, show: item.tipo === "cantidad" && perms.cargar })}
-      {btnAccion({ id: "mover", label: "Mover", icono: ICO.ubicaciones, c: ORANGE_DARK, show: item.tipo === "individual" && perms.mover })}
+      {btnAccion({ id: "salida", label: caja ? "Salida de la caja" : "Salida", icono: ICO.movimientos, c: ORANGE_DARK, show: (item.tipo === "cantidad" || caja) && perms.cargar })}
+      {btnAccion({ id: "entrada", label: caja ? "Rellenar" : "Entrada", icono: ICO.agregar, c: C_VERDE.color, show: (item.tipo === "cantidad" || caja) && perms.cargar })}
+      {btnAccion({ id: "mover", label: "Mover", icono: ICO.ubicaciones, c: ORANGE_DARK, show: (item.tipo === "individual" || caja) && perms.mover })}
       {btnAccion({ id: "asignar", label: item.asignadoA ? "Reasignar" : "Asignar", icono: ICO.persona, c: C_AZUL.color, show: item.tipo === "individual" && perms.asignar })}
-      {btnAccion({ id: "ajustar", label: "Ajustar", c: C_ROJO.color, show: item.tipo === "cantidad" && perms.ajustar })}
+      {btnAccion({ id: "ajustar", label: "Ajustar", c: C_ROJO.color, show: (item.tipo === "cantidad" || caja) && perms.ajustar })}
       {perms.editar && <button type="button" onClick={() => onEditar(item)} style={{ minHeight: 48, padding: "10px 12px", borderRadius: 14, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "700 13px/1 var(--sans)", cursor: "pointer" }}>Editar</button>}
       {perms.imprimir && <button type="button" onClick={() => onEtiqueta(item)} title="Etiqueta QR en PDF" style={{ minHeight: 48, padding: "10px 12px", borderRadius: 14, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "700 13px/1 var(--sans)", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}><Ico d={ICO.imprimir} size={16} />Etiqueta</button>}
     </div>
 
-    {accion === "entrada" && caja(<>
-      <div style={LBL}>Entra a</div>{selUbic(f.a || ubicPrincipal, v => u("a", v))}
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad || ""} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{item.unidad}</b></div>
+    {accion === "entrada" && cajaUI(<>
+      {!caja && <><div style={LBL}>Entra a</div>{selUbic(f.a || ubicPrincipal, v => u("a", v))}</>}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad || ""} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{caja ? String(item.caja?.contenido || "").toLowerCase() + "s" : item.unidad}</b>{caja && <span style={{ fontSize: 12, color: "var(--text-3)" }}>caben {fmtN(item.caja?.capacidad)}</span>}</div>
       <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Nota (opcional) · ej. llegó de Larach" style={CTRL} />
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => ejecutar({ accion: "entrada", a: f.a || ubicPrincipal, cantidad: f.cantidad, motivo: f.motivo })}>Registrar entrada</Btn></div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => ejecutar({ accion: "entrada", a: f.a || ubicPrincipal, cantidad: f.cantidad, motivo: f.motivo })}>{caja ? "Rellenar" : "Registrar entrada"}</Btn></div>
     </>)}
-    {accion === "salida" && caja(<>
-      <div style={LBL}>Sale de</div>{selUbic(f.de, v => u("de", v))}
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad || ""} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{item.unidad}</b><span style={{ fontSize: 12, color: "var(--text-3)" }}>hay {fmtN(stockEn(item, f.de))}</span></div>
-      <div style={LBL}>Hacia (opcional: si va a otra ubicación, entra allá)</div>{selUbic(f.a || "", v => u("a", v), f.de)}
+    {accion === "salida" && cajaUI(<>
+      {!caja && <><div style={LBL}>Sale de</div>{selUbic(f.de, v => u("de", v))}</>}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad || ""} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{caja ? String(item.caja?.contenido || "").toLowerCase() + "s" : item.unidad}</b><span style={{ fontSize: 12, color: "var(--text-3)" }}>{caja ? `quedan ${fmtN(item.caja?.cantidad)}` : `hay ${fmtN(stockEn(item, f.de))}`}</span></div>
+      <div style={LBL}>{caja ? "Para qué proyecto / a dónde van" : "Hacia (opcional: si va a otra ubicación, entra allá)"}</div>{selUbic(f.a || "", v => u("a", v), f.de)}
       <div style={LBL}>Entregado a (opcional)</div><BuscaEmpleado emps={emps} value={f.entregadoA || ""} onChange={(id, nombre) => setF(p => ({ ...p, entregadoA: id, entregadoNombre: nombre }))} />
       <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Nota (opcional)" style={CTRL} />
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => ejecutar({ accion: "salida", de: f.de, a: f.a, cantidad: f.cantidad, motivo: f.motivo, entregadoA: f.entregadoA, entregadoNombre: f.entregadoNombre })}>Registrar salida</Btn></div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => ejecutar({ accion: "salida", de: caja ? item.ubicacionId : f.de, a: f.a, cantidad: f.cantidad, motivo: f.motivo, entregadoA: f.entregadoA, entregadoNombre: f.entregadoNombre })}>Registrar salida</Btn></div>
     </>)}
-    {accion === "mover" && caja(<>
+    {accion === "mover" && caja && cajaUI(<>
+      <div style={LBL}>Ubicación</div>{selUbic(f.a || item.ubicacionId, v => setF(p => ({ ...p, a: v, estanteId: "", nivel: "" })))}
+      {estantesDestino.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><span style={LBL}>Estante</span>{estantesDestino.map(e => pillBtn(e.nombre, (f.estanteId ?? item.estanteId) === e.id, () => setF(p => ({ ...p, estanteId: e.id, nivel: "1" })), { key: e.id, c: CHARCOAL }))}</div>}
+      {(() => { const e = estantesDestino.find(x => x.id === (f.estanteId ?? item.estanteId)); return e ? <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><span style={LBL}>Nivel</span>{Array.from({ length: Math.max(1, num(e.niveles) || 1) }, (_, i) => String(i + 1)).map(n => pillBtn(n, String(f.nivel ?? item.nivel) === n, () => u("nivel", n), { key: n }))}</div> : null; })()}
+      <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Nota (opcional)" style={CTRL} />
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => ejecutar({ accion: "mover", a: f.a || item.ubicacionId, estanteId: f.estanteId ?? item.estanteId ?? "", nivel: f.nivel ?? item.nivel ?? "", motivo: f.motivo })}>Mover</Btn></div>
+    </>)}
+    {accion === "mover" && !caja && cajaUI(<>
       <div style={LBL}>Mover a</div>{selUbic(f.a || "", v => u("a", v), item.ubicacionId)}
       {esHerramienta(item) && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><span style={LBL}>Queda</span>{Object.entries(estados).filter(([k]) => k !== "en_operacion").map(([k, e]) => pillBtn(e.label, (f.estado || item.estado) === k, () => u("estado", k), { key: k, c: TONO[e.tono]?.color }))}</div>}
       <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Nota (opcional)" style={CTRL} />
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado || !f.a} onClick={() => ejecutar({ accion: "mover", a: f.a, motivo: f.motivo, ...(esHerramienta(item) && f.estado ? { estado: f.estado } : {}) })}>Mover</Btn></div>
     </>)}
-    {accion === "asignar" && caja(<>
+    {accion === "asignar" && cajaUI(<>
       <div style={LBL}>Asignar a (colaborador de GeoTeam)</div><BuscaEmpleado emps={emps} value={f.empId ?? item.asignadoA ?? ""} onChange={(id, nombre) => setF(p => ({ ...p, empId: id, empNombre: nombre, tocado: true }))} />
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn>{item.asignadoA && <Btn small variant="danger" disabled={ocupado} onClick={() => ejecutar({ accion: "asignar", empId: "" })}>Devuelto (quitar)</Btn>}<Btn small disabled={ocupado || !f.empId || f.empId === item.asignadoA} onClick={() => ejecutar({ accion: "asignar", empId: f.empId, empNombre: f.empNombre })}>Asignar</Btn></div>
     </>)}
-    {accion === "ajustar" && caja(<>
+    {accion === "ajustar" && cajaUI(<>
       <div style={{ fontSize: 12.5, color: C_ROJO.color, fontWeight: 700 }}>Corrección de inventario: la cantidad queda en lo que escribas. Queda registrado con tu nombre.</div>
-      <div style={LBL}>En</div>{selUbic(f.en, v => u("en", v))}
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}><span style={{ fontSize: 13, color: "var(--text-2)" }}>hay {fmtN(stockEn(item, f.en))} →</span><input type="number" inputMode="decimal" min="0" step="any" value={f.nuevo || ""} onChange={e => u("nuevo", e.target.value)} placeholder="Cantidad real" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{item.unidad}</b></div>
+      {!caja && <><div style={LBL}>En</div>{selUbic(f.en, v => u("en", v))}</>}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}><span style={{ fontSize: 13, color: "var(--text-2)" }}>hay {fmtN(caja ? item.caja?.cantidad : stockEn(item, f.en))} →</span><input type="number" inputMode="decimal" min="0" step="any" value={f.nuevo || ""} onChange={e => u("nuevo", e.target.value)} placeholder="Cantidad real" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{caja ? String(item.caja?.contenido || "").toLowerCase() + "s" : item.unidad}</b></div>
       <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Motivo (corto) · ej. conteo físico" style={CTRL} />
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small variant="danger" disabled={ocupado} onClick={() => ejecutar({ accion: "ajuste", en: f.en, nuevo: f.nuevo, motivo: f.motivo })}>Ajustar</Btn></div>
     </>)}
@@ -453,7 +511,8 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, perms, onAccion, onEdita
 // EDITAR artículo (modal) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
 function EditarFormImpl({ item, onSave, onClose, ocupado, isMobile }) {
-  const [f, setF] = useState(() => ({ nombre: item.nombre, categoria: item.categoria, unidad: item.unidad || "", marca: item.marca || "", modelo: item.modelo || "", serie: item.serie || "", estante: item.estante || "", notas: item.notas || "", herrTipo: item.herramienta?.tipo || "broca", diametro: item.herramienta?.diametro || "", foto: null }));
+  const [f, setF] = useState(() => ({ nombre: item.nombre, categoria: item.categoria, unidad: item.unidad || "", marca: item.marca || "", modelo: item.modelo || "", serie: item.serie || "", estante: item.estante || "", notas: item.notas || "", herrTipo: item.herramienta?.tipo || "broca", diametro: item.herramienta?.diametro || "", foto: null,
+    contenido: item.caja?.contenido || "", cajaMarca: item.caja?.marca || "", tamano: item.caja?.tamano || "", capacidad: String(item.caja?.capacidad || "") }));
   const [procesando, setProcesando] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const esHer = f.categoria === "herramientas_perforacion";
@@ -465,13 +524,20 @@ function EditarFormImpl({ item, onSave, onClose, ocupado, isMobile }) {
         <input type="file" accept="image/*" style={{ display: "none" }} disabled={procesando} onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setProcesando(true); try { u("foto", { dataUrl: await comprimirFoto(file), name: file.name }); } catch (err) { alert(err?.message || err); } finally { setProcesando(false); } }} />
       </label>
     </div>
-    <Input label="Nombre *" value={f.nombre} onChange={e => u("nombre", e.target.value)} />
+    {item.tipo === "caja"
+      ? <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+        <Input label="Qué trae la caja *" value={f.contenido} onChange={e => u("contenido", e.target.value)} />
+        <Input label="Marca" value={f.cajaMarca} onChange={e => u("cajaMarca", e.target.value)} />
+        <div style={{ display: "flex", gap: 6, alignItems: "end", flexWrap: "wrap" }}>{TAMANOS_CAJA.map(([k, l]) => pillBtn(l, f.tamano === k, () => u("tamano", f.tamano === k ? "" : k), { key: k }))}</div>
+        <Input label="Cuántas caben (capacidad)" type="number" min="1" value={f.capacidad} onChange={e => u("capacidad", e.target.value)} />
+      </div>
+      : <Input label="Nombre *" value={f.nombre} onChange={e => u("nombre", e.target.value)} />}
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}><div style={LBL}>Categoría</div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{CATEGORIAS.map(c => pillBtn(c.corto, f.categoria === c.id, () => u("categoria", c.id), { key: c.id }))}</div><div style={{ fontSize: 11.5, color: "var(--text-3)" }}>El código no cambia aunque cambie la categoría.</div></div>
     {item.tipo === "cantidad" && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}><Input label="Unidad" list="inv-unidades-e" value={f.unidad} onChange={e => u("unidad", e.target.value)} /><datalist id="inv-unidades-e">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist><Input label="Estante" value={f.estante} onChange={e => u("estante", e.target.value)} /></div>}
     {esHer && item.tipo === "individual" && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}><div style={{ display: "flex", gap: 6, alignItems: "end" }}>{TIPOS_HERRAMIENTA.map(t => pillBtn(t.label, f.herrTipo === t.id, () => u("herrTipo", t.id), { key: t.id }))}</div><Input label="Diámetro" value={f.diametro} onChange={e => u("diametro", e.target.value)} /></div>}
     {item.tipo === "individual" && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 8 }}><Input label="Marca" value={f.marca} onChange={e => u("marca", e.target.value)} /><Input label="Modelo" value={f.modelo} onChange={e => u("modelo", e.target.value)} /><Input label="N° de serie" value={f.serie} onChange={e => u("serie", e.target.value)} /></div>}
     <Textarea label="Nota" value={f.notas} onChange={e => u("notas", e.target.value)} style={{ minHeight: 56 }} />
-    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn variant="ghost" onClick={onClose} disabled={ocupado}>Cancelar</Btn><Btn disabled={ocupado || procesando} onClick={() => { if (!String(f.nombre).trim()) return alert("Escribí el nombre."); onSave(f); }}>{ocupado ? "Guardando…" : "Guardar cambios"}</Btn></div>
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn variant="ghost" onClick={onClose} disabled={ocupado}>Cancelar</Btn><Btn disabled={ocupado || procesando} onClick={() => { if (item.tipo === "caja" ? !String(f.contenido).trim() : !String(f.nombre).trim()) return alert(item.tipo === "caja" ? "Escribí qué trae la caja." : "Escribí el nombre."); onSave(f); }}>{ocupado ? "Guardando…" : "Guardar cambios"}</Btn></div>
   </div>;
 }
 
@@ -596,6 +662,8 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     return out;
   })();
   const ubicaciones = ubicacionesDe({ guardadas: ubicGuardadas, proyectos });
+  const estantes = estantesDe(ubicGuardadas);
+  const [estUbic, setEstUbic] = useState("vault");   // ubicación que se ve en la pestaña Estantes
   const usuarios = [...USERS.filter(x => x.role !== "marcaje"), ...usuariosNube].map(x => ({ username: x.username, label: x.label, role: x.role }));
   const vivos = items.filter(i => i && !i.eliminado);
   const resumen = resumenInventario(items);
@@ -604,6 +672,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     { id: "inicio", label: "Inicio" },
     ...(perms.cargar ? [{ id: "agregar", label: "Agregar" }] : []),
     { id: "buscar", label: "Buscar" },
+    { id: "estantes", label: "Estantes" },
     { id: "ubicaciones", label: "Ubicaciones" },
     { id: "herramientas", label: "Herramientas" },
     { id: "movimientos", label: "Movimientos" },
@@ -661,16 +730,21 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       const porPrefijo = {};
       defs.forEach(d => {
         const cat = categoriaDe(d.categoria);
-        const n = d.tipo === "individual" ? Math.max(1, Math.round(num(d.iguales || d.cantidad || 1))) : 1;
-        const codigos = siguientesCodigos([...arr, ...nuevos], cat.prefijo, n);
-        porPrefijo[cat.prefijo] = (porPrefijo[cat.prefijo] || 0) + n;
+        const n = d.tipo === "individual" ? Math.max(1, Math.round(num(d.iguales || d.cantidad || 1))) : d.tipo === "caja" ? Math.max(1, Math.round(num(d.cajas || 1))) : 1;
+        const prefijo = d.tipo === "caja" ? PREFIJO_CAJA : cat.prefijo;
+        const codigos = siguientesCodigos([...arr, ...nuevos], prefijo, n);
+        porPrefijo[prefijo] = (porPrefijo[prefijo] || 0) + n;
+        // el estante tiene que ser de ESA ubicación (la memoria del form puede traer uno de otra)
+        const estanteId = d.estanteId && estantesDe(ubicGuardadas, d.ubicacionId).some(e => e.id === d.estanteId) ? d.estanteId : "";
         for (let k = 0; k < n; k++) {
           const base = { id: uid(), codigo: codigos[k], tipo: d.tipo, nombre: String(d.nombre).trim(), categoria: cat.id, foto: d.fotoRef !== undefined ? d.fotoRef : fotoRef, marca: d.marca || "", modelo: d.modelo || "", serie: n > 1 ? "" : (d.serie || ""), notas: d.notas || "", createdAt: at, createdBy: userKey, createdByNombre: userName, updatedAt: at };
-          const it = d.tipo === "individual"
+          const it = d.tipo === "caja"
+            ? { ...base, marca: "", nombre: nombreCaja({ contenido: String(d.contenido || d.nombre).trim(), marca: d.cajaMarca || d.marca || "", tamano: d.tamano || "" }), ubicacionId: d.ubicacionId, estanteId, nivel: estanteId ? String(d.nivel || "1") : "", caja: { contenido: String(d.contenido || d.nombre).trim(), marca: d.cajaMarca || d.marca || "", tamano: d.tamano || "", cantidad: num(d.capacidad || d.cantidad), capacidad: num(d.capacidad || d.cantidad) } }
+            : d.tipo === "individual"
             ? { ...base, ubicacionId: d.ubicacionId, estado: d.estado || estadoInicial(cat.id), asignadoA: k === 0 ? (d.asignadoA || "") : "", asignadoNombre: k === 0 ? (d.asignadoNombre || "") : "", ...(cat.id === "herramientas_perforacion" ? { herramienta: { tipo: d.herrTipo || d.herramienta?.tipo || "broca", diametro: String(d.diametro || d.herramienta?.diametro || "").trim() } } : {}) }
             : { ...base, unidad: String(d.unidad || "Unidad").trim(), estante: d.estante || "", stock: { [d.ubicacionId]: num(d.cantidad) } };
           nuevos.push(it); ids.push(it.id);
-          movsN.push({ id: uid(), at, ...quien(), itemId: it.id, codigo: it.codigo, nombre: it.nombre, accion: "crear", a: d.ubicacionId, cantidad: d.tipo === "cantidad" ? num(d.cantidad) : 1 });
+          movsN.push({ id: uid(), at, ...quien(), itemId: it.id, codigo: it.codigo, nombre: it.nombre, accion: "crear", a: d.ubicacionId, cantidad: d.tipo === "cantidad" ? num(d.cantidad) : d.tipo === "caja" ? num(d.capacidad || d.cantidad) : 1, ...(d.tipo === "caja" ? { contenido: it.caja.contenido } : {}) });
           if (k === 0 && d.asignadoA && d.tipo === "individual") movsN.push({ id: uid(), at, ...quien(), itemId: it.id, codigo: it.codigo, nombre: it.nombre, accion: "asignar", asignadoA: d.asignadoA, asignadoNombre: d.asignadoNombre || "" });
         }
       });
@@ -700,7 +774,9 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   const editarArticulo = async (item, f) => {
     let fotoRef;
     if (f.foto?.dataUrl) { try { fotoRef = await subirFoto(f.foto); } catch (e) { alert(e.message); return; } }
-    const cambios = { nombre: String(f.nombre).trim(), categoria: f.categoria, marca: f.marca, modelo: f.modelo, serie: f.serie, notas: f.notas, ...(item.tipo === "cantidad" ? { unidad: String(f.unidad || "Unidad").trim(), estante: f.estante } : {}), ...(fotoRef ? { foto: fotoRef } : {}), ...(f.categoria === "herramientas_perforacion" && item.tipo === "individual" ? { herramienta: { tipo: f.herrTipo, diametro: String(f.diametro).trim() } } : {}) };
+    const cambios = item.tipo === "caja"
+      ? (() => { const c = { ...(item.caja || {}), contenido: String(f.contenido).trim(), marca: String(f.cajaMarca || "").trim(), tamano: f.tamano || "", capacidad: Math.max(num(f.capacidad), num(item.caja?.cantidad)) || num(item.caja?.cantidad) }; return { nombre: nombreCaja(c), categoria: f.categoria, caja: c, notas: f.notas, ...(fotoRef ? { foto: fotoRef } : {}) }; })()
+      : { nombre: String(f.nombre).trim(), categoria: f.categoria, marca: f.marca, modelo: f.modelo, serie: f.serie, notas: f.notas, ...(item.tipo === "cantidad" ? { unidad: String(f.unidad || "Unidad").trim(), estante: f.estante } : {}), ...(fotoRef ? { foto: fotoRef } : {}), ...(f.categoria === "herramientas_perforacion" && item.tipo === "individual" ? { herramienta: { tipo: f.herrTipo, diametro: String(f.diametro).trim() } } : {}) };
     // Si cambia de familia de estados (herramienta ↔ equipo), el estado se traduce
     if (item.tipo === "individual" && (f.categoria === "herramientas_perforacion") !== esHerramienta(item)) cambios.estado = estadoInicial(f.categoria);
     const ok = await accionSobre(item, { accion: "editar", cambios });
@@ -728,14 +804,52 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     } catch (e) { alert((e?.message || e) + "\n\nNo se guardó."); }
     finally { setOcupado(false); }
   };
+  // Estantes (viven en inv-ubicaciones como tipo "estante"): mismo guardado robusto
+  const guardarRegistroUbic = async (rec) => {
+    if (ocupado) return null; setOcupado(true);
+    try {
+      const c = await store.getCloud(K_UBIC); const arr = Array.isArray(c) ? c : [];
+      const at = new Date().toISOString();
+      const full = { ...(arr.find(x => x.id === rec.id) || { createdAt: at, createdBy: userKey }), ...rec, updatedAt: at, updatedBy: userKey };
+      const next = arr.some(x => x.id === full.id) ? arr.map(x => x.id === full.id ? full : x) : [...arr, full];
+      const ok = await store.set(K_UBIC, next); if (!ok) throw new Error("La nube no aceptó el guardado.");
+      const back = await store.getCloud(K_UBIC);
+      if (!(Array.isArray(back) ? back : []).some(x => x.id === full.id && x.updatedAt === at)) throw new Error("La nube no confirmó el guardado.");
+      setUbicGuardadas(back); return full;
+    } catch (e) { alert((e?.message || e) + "\n\nNo se guardó."); return null; }
+    finally { setOcupado(false); }
+  };
+  const nuevoEstante = async (ubicacionId, { nombre, niveles }) => {
+    const n = String(nombre || "").trim(); if (!n) { alert("Escribí el nombre del estante."); return null; }
+    if (estantesDe(ubicGuardadas, ubicacionId).some(e => e.nombre.toLowerCase() === n.toLowerCase())) { alert("Ya hay un estante con ese nombre acá."); return null; }
+    const rec = await guardarRegistroUbic({ id: `est:${uid()}`, tipo: "estante", ubicacionId, nombre: n, niveles: Math.min(12, Math.max(1, Math.round(num(niveles) || 4))), orden: estantesDe(ubicGuardadas, ubicacionId).length + 1, activa: true });
+    return rec?.id || null;
+  };
+  const editarEstante = async (e) => {
+    const nombre = prompt("Nombre del estante:", e.nombre); if (nombre === null) return;
+    const niveles = prompt("¿Cuántos niveles tiene?", String(e.niveles || 4)); if (niveles === null) return;
+    await guardarRegistroUbic({ ...e, nombre: String(nombre).trim() || e.nombre, niveles: Math.min(12, Math.max(1, Math.round(num(niveles) || e.niveles || 4))) });
+  };
+  const quitarEstante = async (e) => {
+    const enEl = vivos.filter(i => i.estanteId === e.id).length;
+    if (enEl) return alert(`Este estante tiene ${enEl} caja(s). Movelas primero.`);
+    if (!confirm(`¿Quitar el estante ${e.nombre}?`)) return;
+    await guardarRegistroUbic({ ...e, activa: false });
+  };
   const importar = async (listos) => {
-    const r = await crearArticulos(listos.map(l => ({ ...l, iguales: l.tipo === "individual" ? l.cantidad : 1, fotoRef: null })));
-    if (r) { alert(r); setModal(null); setSec("buscar"); }
+    const defs = listos.map(l => {
+      if (l.tipo !== "caja") return { ...l, iguales: l.tipo === "individual" ? l.cantidad : 1, fotoRef: null };
+      const est = l.estanteNombre ? estantesDe(ubicGuardadas, l.ubicacionId).find(e => e.nombre.toLowerCase() === l.estanteNombre.toLowerCase()) : null;
+      return { ...l, fotoRef: null, estanteId: est?.id || "", nivel: est ? (l.nivel || "1") : "" };
+    });
+    const sinEstante = listos.filter(l => l.tipo === "caja" && l.estanteNombre && !defs.find(d => d === l)).length;
+    const r = await crearArticulos(defs);
+    if (r) { alert(r + (sinEstante ? `\n\n${sinEstante} caja(s) traían un estante que no existe: quedaron sin estante.` : "")); setModal(null); setSec("buscar"); }
   };
   const etiquetas = async (lista, titulo) => {
     if (!lista.length) return alert("No hay artículos para etiquetar.");
     if (lista.length > 240 && !confirm(`Son ${lista.length} etiquetas (${Math.ceil(lista.length / 24)} hojas). ¿Seguir?`)) return;
-    try { await generarEtiquetasPDF(lista.map(i => ({ codigo: i.codigo, nombre: i.nombre, ubicacionNombre: i.tipo === "individual" ? nombreUbicacion(ubicaciones, i.ubicacionId) : ubicacionesConStock(i).map(x => nombreUbicacion(ubicaciones, x.id)).join(", ") })), { titulo }); }
+    try { await generarEtiquetasPDF(lista.map(i => ({ codigo: i.codigo, nombre: i.tipo === "caja" ? `${i.nombre} · ${fmtN(i.caja?.capacidad || i.caja?.cantidad)}` : i.nombre, ubicacionNombre: i.tipo === "caja" ? [nombreUbicacion(ubicaciones, i.ubicacionId), textoEstante(estantes, i)].filter(Boolean).join(" · ") : i.tipo === "individual" ? nombreUbicacion(ubicaciones, i.ubicacionId) : ubicacionesConStock(i).map(x => nombreUbicacion(ubicaciones, x.id)).join(", ") })), { titulo }); }
     catch (e) { alert("No pude generar el PDF: " + (e?.message || e)); }
   };
   const verFoto = async (ref) => { const d = await cargarFoto(ref?.fileId); if (!d) return alert("No se pudo cargar la foto."); setVisor({ name: ref.name || "foto.jpg", type: "image/jpeg", dataUrl: d }); };
@@ -754,13 +868,14 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontFamily: "var(--mono)", fontWeight: 800, fontSize: 11.5, color: "var(--text-3)" }}>{it.codigo}</span>
-          {it.tipo === "individual" ? chipEstado(it) : null}
+          {it.tipo === "individual" ? chipEstado(it) : it.tipo === "caja" ? chipCaja(it) : null}
           {it.asignadoA && <Chip c={C_AZUL} style={{ fontSize: 11 }}>{it.asignadoNombre}</Chip>}
         </div>
-        <div style={{ fontSize: 14.5, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.nombre}</div>
-        {mostrarUbic && <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{enU.length ? enU.map(x => `${nombreUbicacion(ubicaciones, x.id)}${it.tipo === "cantidad" ? ` · ${fmtN(x.cantidad)}` : ""}`).join(" · ") : "Sin existencias"}{it.maquinaNombre ? ` · en ${it.maquinaNombre}` : ""}</div>}
+        <div style={{ fontSize: 14.5, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.tipo === "caja" ? `Caja · ${it.nombre}` : it.nombre}</div>
+        {mostrarUbic && <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.tipo === "caja" ? [nombreUbicacion(ubicaciones, it.ubicacionId), textoEstante(estantes, it)].filter(Boolean).join(" · ") : enU.length ? enU.map(x => `${nombreUbicacion(ubicaciones, x.id)}${it.tipo === "cantidad" ? ` · ${fmtN(x.cantidad)}` : ""}`).join(" · ") : "Sin existencias"}{it.maquinaNombre ? ` · en ${it.maquinaNombre}` : ""}</div>}
       </div>
       {it.tipo === "cantidad" && <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 18px/1 var(--display)", color: CHARCOAL }}>{fmtN(stockDe(it))}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{it.unidad}</div></div>}
+      {it.tipo === "caja" && <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 18px/1 var(--display)", color: C_NIVEL[nivelCaja(it.caja)].color }}>{fmtN(it.caja?.cantidad)}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{String(it.caja?.contenido || "").toLowerCase()}s</div></div>}
     </div>;
   };
   const tarjetaGrande = (label, icono, onClick, color = ORANGE_DARK) => <button type="button" onClick={onClick} style={{ flex: "1 1 140px", minHeight: 92, borderRadius: 20, border: "none", background: color, color: "#fff", font: "800 15px/1.2 var(--sans)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: `0 12px 26px ${color}44` }}><Ico d={icono} size={26} sw={2} />{label}</button>;
@@ -782,6 +897,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
         {stat(resumen.enOperacion, "en operación", C_NARANJA, () => { setHerrEstado("en_operacion"); setSec("herramientas"); })}
         {stat(resumen.requierenTrabajo, "requieren trabajo", C_ROJO, () => { setHerrEstado("requiere_trabajo"); setSec("herramientas"); })}
         {stat(resumen.asignados, "equipos asignados a personas", C_AZUL, () => { setFTipo("individual"); setFCat(""); setFUbic(""); setFEstado(""); setQ(""); setSec("buscar"); })}
+        {resumen.cajas > 0 && stat(resumen.cajas, `cajas · ${resumen.enCajas.map(x => `${fmtN(x.unidades)} ${x.contenido.toLowerCase()}s`).join(" · ")}`, C_NARANJA, () => setSec("estantes"))}
       </div>
       {vivos.length === 0 && <Vacio>{perms.cargar ? "Todavía no hay nada cargado. Tocá Agregar, fijá la ubicación y empezá con la foto." : "Todavía no hay nada en el inventario."}</Vacio>}
       {recientes.length > 0 && <div className="gt-vidrio" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -790,7 +906,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       </div>}
     </div>;
   };
-  const renderAgregar = () => <AgregarFormImpl ubicaciones={ubicaciones} ubicFija={ubicFija} setUbicFija={setUbicFija} items={vivos} emps={emps} ocupado={ocupado} isMobile={isMobile} ultimo={ultimo} setUltimo={setUltimo}
+  const renderAgregar = () => <AgregarFormImpl ubicaciones={ubicaciones} ubicFija={ubicFija} setUbicFija={setUbicFija} items={vivos} emps={emps} estantes={estantes} onNuevoEstante={nuevoEstante} ocupado={ocupado} isMobile={isMobile} ultimo={ultimo} setUltimo={setUltimo}
     onGuardar={(d, { fotoDe }) => crearArticulos([d], { fotoDe, foto: d.foto })} onSumar={sumarExistente} />;
   const renderBuscar = () => {
     const res = buscarItems(vivos, { q, ubicacionId: fUbic, categoria: fCat, estado: fEstado, tipo: fTipo }).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
@@ -806,6 +922,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
           <select value={fUbic} onChange={e => setFUbic(e.target.value)} style={{ ...CTRL, width: "auto", minHeight: 36, padding: "6px 10px", fontSize: 12.5, borderRadius: 999, maxWidth: 220 }}><option value="">Todas las ubicaciones</option>{ubicaciones.map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}</select>
           {CATEGORIAS.map(c => pillBtn(c.corto, fCat === c.id, () => { setFCat(fCat === c.id ? "" : c.id); setFEstado(""); }, { key: c.id }))}
           {pillBtn("Individuales", fTipo === "individual", () => setFTipo(fTipo === "individual" ? "" : "individual"), { c: CHARCOAL })}
+          {pillBtn("Cajas", fTipo === "caja", () => setFTipo(fTipo === "caja" ? "" : "caja"), { c: CHARCOAL })}
           {estadosFiltro && Object.entries(estadosFiltro).map(([k, e]) => pillBtn(e.label, fEstado === k, () => setFEstado(fEstado === k ? "" : k), { key: k, c: TONO[e.tono]?.color }))}
           {hayFiltro && <Btn small variant="ghost" onClick={() => { setQ(""); setFUbic(""); setFCat(""); setFEstado(""); setFTipo(""); }}>Limpiar</Btn>}
           <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-3)" }}>{res.length} {res.length === 1 ? "artículo" : "artículos"}</span>
@@ -870,6 +987,53 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       </div>)}
     </div>;
   };
+  // ── ESTANTES Y CAJAS (GeoDrill Vault): cada estante con sus niveles y las cajas en cada nivel ──
+  const renderEstantes = () => {
+    const ubicsConEstantes = ubicaciones.filter(u2 => ["almacen", "vault", "oficina", "taller"].includes(u2.tipo) || estantes.some(e => e.ubicacionId === u2.id) || vivos.some(i => i.tipo === "caja" && i.ubicacionId === u2.id));
+    const ub = ubicsConEstantes.some(u2 => u2.id === estUbic) ? estUbic : (ubicsConEstantes[0]?.id || "vault");
+    const ests = estantesDe(ubicGuardadas, ub);
+    const cajasAqui = vivos.filter(i => i.tipo === "caja" && i.ubicacionId === ub);
+    const sinEstante = cajasAqui.filter(c => !c.estanteId || !ests.some(e => e.id === c.estanteId));
+    const resumenC = resumenCajas(cajasAqui);
+    const irAgregarCaja = (estanteId, nivel) => { setUbicFija(ub); setUltimo({ tipo: "caja", categoria: "insumos_perforacion", estanteId, nivel: String(nivel) }); setSec("agregar"); };
+    const chipDeCaja = (c) => { const n = nivelCaja(c.caja); const col = C_NIVEL[n]; return <button key={c.id} type="button" onClick={() => setModal({ t: "ficha", id: c.id })} title={`${c.codigo} · ${c.nombre}`}
+      style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, padding: "8px 10px", minWidth: 118, borderRadius: 12, border: `1px solid ${col.color}33`, background: col.bg, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+      <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, fontWeight: 800, color: "var(--text-3)" }}>{c.codigo}</span>
+      <span style={{ fontSize: 12.5, fontWeight: 800, color: CHARCOAL, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.caja?.contenido}{c.caja?.tamano ? ` ${tamanoLabel(c.caja.tamano).toLowerCase()}` : ""}</span>
+      <span style={{ fontSize: 12, fontWeight: 800, color: col.color }}>{fmtN(c.caja?.cantidad)} <span style={{ fontWeight: 600, color: "var(--text-3)" }}>/ {fmtN(c.caja?.capacidad || c.caja?.cantidad)}{c.caja?.marca ? ` · ${c.caja.marca}` : ""}</span></span>
+    </button>; };
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div className="gt-vidrio" style={{ padding: isMobile ? 10 : 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <select value={ub} onChange={e => setEstUbic(e.target.value)} style={{ ...CTRL, width: "auto", minHeight: 40, padding: "8px 12px", borderRadius: 999, fontWeight: 700, maxWidth: 260 }}>{ubicsConEstantes.map(u2 => <option key={u2.id} value={u2.id}>{u2.nombre}</option>)}</select>
+        {resumenC.map(x => <Chip key={x.contenido} c={x.vacias ? C_AMARILLO : C_VERDE} style={{ fontSize: 12.5, padding: "7px 12px" }}><b>{fmtN(x.unidades)}</b> {x.contenido.toLowerCase()}{x.unidades === 1 ? "" : "s"} · {x.cajas} caja{x.cajas === 1 ? "" : "s"}{x.vacias ? ` (${x.vacias} vacía${x.vacias === 1 ? "" : "s"})` : ""}</Chip>)}
+        <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {perms.imprimir && cajasAqui.length > 0 && <Btn small variant="ghost" onClick={() => etiquetas(cajasAqui, `cajas-${nombreUbicacion(ubicaciones, ub)}`)}><Ico d={ICO.imprimir} size={14} /> Etiquetas de las cajas ({cajasAqui.length})</Btn>}
+          {perms.cargar && <Btn small onClick={async () => { const nombre = prompt("Nombre del estante:", `Estante ${String.fromCharCode(65 + ests.length)}`); if (nombre === null) return; const niveles = prompt("¿Cuántos niveles tiene?", "4"); if (niveles === null) return; await nuevoEstante(ub, { nombre, niveles }); }}>+ Estante</Btn>}
+        </span>
+      </div>
+      {ests.length === 0 && cajasAqui.length === 0 && <Vacio>{perms.cargar ? `Todavía no hay estantes en ${nombreUbicacion(ubicaciones, ub)}. Creá el primero con + Estante y después agregá las cajas nivel por nivel.` : "Todavía no hay estantes ni cajas acá."}</Vacio>}
+      {ests.map(e => { const niveles = Math.max(1, num(e.niveles) || 1); const delEst = cajasAqui.filter(c => c.estanteId === e.id); return <div key={e.id} className="gt-vidrio" style={{ padding: isMobile ? 12 : 16, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(232,118,45,.10)", color: ORANGE_DARK, display: "flex", alignItems: "center", justifyContent: "center" }}><Ico d={ICO.estante} size={19} /></div>
+          <div style={{ font: "800 16px/1.1 var(--display)", color: CHARCOAL }}>{e.nombre}</div>
+          <span style={{ fontSize: 12, color: "var(--text-3)" }}>{niveles} nivel{niveles === 1 ? "" : "es"} · {delEst.length} caja{delEst.length === 1 ? "" : "s"} · {fmtN(delEst.reduce((a, c) => a + num(c.caja?.cantidad), 0))} unidades</span>
+          {perms.ubicaciones && <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}><button type="button" title="Renombrar / niveles" onClick={() => editarEstante(e)} style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.7)", cursor: "pointer", color: "var(--text-2)", fontFamily: "inherit" }}>✎</button><button type="button" title="Quitar estante" aria-label="Quitar estante" onClick={() => quitarEstante(e)} style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.7)", cursor: "pointer", color: C_ROJO.color, fontFamily: "inherit" }}>✕</button></span>}
+        </div>
+        {Array.from({ length: niveles }, (_, i) => String(niveles - i)).map(n => { const enNivel = delEst.filter(c => String(c.nivel) === n).sort((a, b) => String(a.codigo).localeCompare(String(b.codigo))); return <div key={n} style={{ display: "flex", gap: 8, alignItems: "flex-start", borderTop: "1px solid rgba(44,42,40,.08)", paddingTop: 8 }}>
+          <div style={{ width: 54, flexShrink: 0, paddingTop: 8 }}><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9.5 }}>Nivel</div><div style={{ font: "800 18px/1 var(--display)", color: CHARCOAL }}>{n}</div></div>
+          <div style={{ flex: 1, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", minHeight: 44 }}>
+            {enNivel.map(chipDeCaja)}
+            {perms.cargar && <button type="button" onClick={() => irAgregarCaja(e.id, n)} style={{ minHeight: 44, padding: "8px 12px", borderRadius: 12, border: "1px dashed rgba(44,42,40,.2)", background: "transparent", color: "var(--text-3)", font: "700 12px/1 var(--sans)", cursor: "pointer" }}>+ Caja</button>}
+            {!enNivel.length && !perms.cargar && <span style={{ fontSize: 12, color: "var(--text-faint)" }}>vacío</span>}
+          </div>
+        </div>; })}
+      </div>; })}
+      {sinEstante.length > 0 && <div className="gt-vidrio" style={{ padding: isMobile ? 12 : 16, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className="gt-label" style={{ color: "var(--text-3)" }}>Cajas sin estante · {sinEstante.length}</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{sinEstante.map(chipDeCaja)}</div>
+      </div>}
+    </div>;
+  };
   const renderMovimientos = () => {
     const lista = [...movs].filter(m => !movQ || `${m.codigo} ${m.nombre} ${m.byName} ${m.motivo || ""}`.toLowerCase().includes(movQ.toLowerCase())).sort((a, b) => String(b.at).localeCompare(String(a.at)));
     const porDia = {}; lista.forEach(m => { const d = diaDe(m.at); (porDia[d] = porDia[d] || []).push(m); });
@@ -892,7 +1056,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   const renderModal = () => {
     if (!modal) return null;
     const m = modal;
-    if (m.t === "ficha") { const it = items.find(i => i.id === m.id); if (!it) return null; return <Modal title={it.codigo} onClose={() => setModal(null)} wide><FichaImpl item={it} ubicaciones={ubicaciones} emps={emps} maquinas={maquinas} perms={perms} ocupado={ocupado} isMobile={isMobile} movs={movs} verFoto={verFoto} onAccion={accionSobre} onEditar={(it2) => setModal({ t: "editar", id: it2.id })} onEliminar={eliminarArticulo} onEtiqueta={(it2) => etiquetas([it2], it2.codigo)} /></Modal>; }
+    if (m.t === "ficha") { const it = items.find(i => i.id === m.id); if (!it) return null; return <Modal title={it.codigo} onClose={() => setModal(null)} wide><FichaImpl item={it} ubicaciones={ubicaciones} emps={emps} maquinas={maquinas} estantes={estantes} perms={perms} ocupado={ocupado} isMobile={isMobile} movs={movs} verFoto={verFoto} onAccion={accionSobre} onEditar={(it2) => setModal({ t: "editar", id: it2.id })} onEliminar={eliminarArticulo} onEtiqueta={(it2) => etiquetas([it2], it2.codigo)} /></Modal>; }
     if (m.t === "editar") { const it = items.find(i => i.id === m.id); if (!it) return null; return <Modal title={`Editar ${it.codigo}`} onClose={() => setModal({ t: "ficha", id: it.id })}><EditarFormImpl item={it} ocupado={ocupado} isMobile={isMobile} onSave={(f) => editarArticulo(it, f)} onClose={() => setModal({ t: "ficha", id: it.id })} /></Modal>; }
     if (m.t === "ubicacion") return <Modal title={m.u ? `${m.u.nombre}` : "Nueva oficina"} onClose={() => setModal(null)}><UbicacionFormImpl ubicacion={m.u} usuarios={usuarios} ocupado={ocupado} onSave={(f) => guardarUbicacion(m.u, f)} onClose={() => setModal(null)} /></Modal>;
     if (m.t === "importar") return <Modal title="Importar desde Excel" onClose={() => setModal(null)} wide><ImportarFormImpl ubicaciones={ubicaciones} ubicFija={ubicFija} emps={emps} ocupado={ocupado} onImportar={importar} onClose={() => setModal(null)} /></Modal>;
@@ -926,7 +1090,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     </div>
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "10px 12px 24px" : "14px 32px 28px" }}>
-        {secOk === "inicio" ? renderInicio() : secOk === "agregar" ? renderAgregar() : secOk === "buscar" ? renderBuscar() : secOk === "ubicaciones" ? renderUbicaciones() : secOk === "herramientas" ? renderHerramientas() : renderMovimientos()}
+        {secOk === "inicio" ? renderInicio() : secOk === "agregar" ? renderAgregar() : secOk === "buscar" ? renderBuscar() : secOk === "estantes" ? renderEstantes() : secOk === "ubicaciones" ? renderUbicaciones() : secOk === "herramientas" ? renderHerramientas() : renderMovimientos()}
       </div>
     </div>
     {renderModal()}

@@ -1622,9 +1622,55 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Christian sin Agregar ni acciones; `#inv=HER-0001` abrió la ficha; etiqueta
   PDF generada; GeoTeam mostró el monitor en la ficha de Ana y el aviso en
   Baja. Pruebas Node: 8 (35 en total con `npm test`).
+  **CAJAS Y ESTANTES (13-oct-2026, misma noche — Gerson: "las picas y
+  portapicas SIEMPRE están en cajitas; necesito crear el estante, agregar las
+  cajas con cuántas picas trae cada una, y que la salida se registre contra
+  ESA caja leyendo su QR; son 4 estantes de 4 niveles; mañana rehago el
+  inventario del Vault desde cero")**: tercer tipo de artículo `tipo:"caja"`
+  — código propio **CAJ-0001** (`PREFIJO_CAJA`), `ubicacionId`, `estanteId` +
+  `nivel`, y `caja {contenido (texto libre con datalist CONTENIDOS_CAJA: Pica,
+  Portapica, Muela…), marca (MARCAS_CAJA), tamano jumbo|mediana|pequena,
+  cantidad, capacidad}`; `nombre` = `nombreCaja()` ("Pica jumbo · Drill
+  Master"). Stock de la caja = `caja.cantidad`; una caja VACÍA sigue "estando"
+  en su estante (`estaEn`). `aplicarMovimiento` para cajas: **salida contra
+  la caja** (cantidad ≤ lo que queda, `a` = proyecto/ubicación destino,
+  `entregadoA`, guarda `contenido` en el movimiento: "−5 picas de GeoDrill
+  Vault → AMICI"), entrada = rellenar (sube capacidad si se pasa), ajuste,
+  mover (ubicación + estante + nivel; `deEstante/aEstante/deNivel/aNivel`).
+  **Estantes** viven en `inv-ubicaciones` como `{id "est:<id>", tipo
+  "estante", ubicacionId, nombre, niveles, orden, activa}` (`estantesDe`,
+  `textoEstante` → "Estante A · Nivel 2"); se crean desde la pestaña
+  **Estantes** ("+ Estante", prompt nombre + niveles; ✎ renombrar/niveles; ✕
+  solo si no tiene cajas) o inline en Agregar ("+ Nuevo estante"). Pestaña
+  **Estantes** (`renderEstantes`): selector de ubicación (Vault por defecto),
+  chips de resumen por contenido (`resumenCajas`: "45 picas · 3 cajas (1
+  vacía)"), "Etiquetas de las cajas (N)", y cada estante con sus niveles de
+  arriba hacia abajo y las cajas como chips de color (verde llena · ámbar
+  parcial · gris vacía: `nivelCaja`) + "+ Caja" en cada nivel, que abre
+  Agregar con ubicación, estante y nivel YA puestos (`setUltimo`). En Agregar
+  la pill "Caja (picas, portapicas…)" muestra el paso "La caja": estante
+  (pills) y nivel, marca, tamaño, "Cuántas trae cada caja" y "¿Cuántas cajas
+  iguales?" → N cajas con código y QR propios ("Guardar 3 cajas y seguir").
+  La sugerencia de una caja existente ofrece "Otra igual". La ficha de una
+  caja muestra "10 de 15 picas en esta caja" en grande, el estante·nivel y
+  las acciones **Salida de la caja** (cantidad, para qué proyecto, entregado
+  a, nota) · **Rellenar** · **Mover** (ubicación, estante, nivel) · Ajustar
+  (full) · Editar (contenido, marca, tamaño, capacidad) · Etiqueta. La
+  etiqueta dice "Pica jumbo · Drill Master · 15" y "GeoDrill Vault · Estante
+  A · Nivel 2". Importar Excel acepta `tipo caja` con columnas `cajas`,
+  `estante` (por nombre, tiene que existir) y `nivel`. Buscar tiene la pill
+  "Cajas"; Inicio suma el contador de cajas con las unidades por contenido.
+  Verificado el 13-oct en celular (admin): "+ Estante" creó Estante A de 4
+  niveles en el Vault; "+ Caja" del nivel 2 abrió Agregar con todo puesto y
+  "Guardar 3 cajas y seguir" creó CAJ-0001..0003 (15 picas Drill Master
+  jumbo, foto compartida); salida de 5 a AMICI con nota (10 de 15), rellenar
+  (15), mover al nivel 3 — el tablero y la nube lo reflejaron; datos borrados
+  después. ⚠ El ✕ de quitar estante lleva `aria-label="Quitar estante"` para
+  no confundirse con el ✕ del modal.
   **Fuera de esta versión** (dejado preparado): historial de reparaciones,
   traslados con confirmación, aprobaciones, costos/stock mínimo, conexión con
-  GeoSupply/GeoShopping, migración de GeoDrill Vault.
+  GeoSupply/GeoShopping, migración de GeoDrill Vault (sus 76 cajas de gdv-items
+  tienen el mismo shape conceptual: contenido, marca, tamaño, estante, cantidad).
 - `GeoDrillVault.jsx`, `projects.js` (base + helpers), `holidays.js`, `theme.js`,
   `gt-ui.js` (GT_CSS: tokens + clases gt-* del rediseño — lo montan App y los
   módulos rediseñados, cada quien con su propio <style>).

@@ -9,6 +9,11 @@
 //                    `estado`, `asignadoA` (empId de GeoTeam), marca/modelo/serie,
 //                    y si es herramienta de perforación `herramienta {tipo,
 //                    diametro}` + `maquinaId` cuando está en operación.
+//   · "caja"       — (13-oct-2026, pedido de Gerson para GeoDrill Vault) una
+//                    cajita con N unidades de algo (15 picas, 10 portapicas):
+//                    código y QR PROPIOS (CAJ-0001), `ubicacionId`, `estanteId`
+//                    + `nivel`, y `caja {contenido, marca, tamano, cantidad,
+//                    capacidad}`. La salida se registra CONTRA ESA CAJA.
 // Todo cambio pasa por `aplicarMovimiento` (devuelve el artículo nuevo y el
 // movimiento a guardar) — así el historial es automático e invisible.
 // Pruebas: tests/geoinventory-calc.test.mjs (`npm test`).
@@ -28,6 +33,18 @@ export const CATEGORIAS = [
   { id: "otros",                    label: "Otros",                      corto: "Otros",        prefijo: "OTR" },
 ];
 export const categoriaDe = (id) => CATEGORIAS.find(c => c.id === id) || CATEGORIAS[CATEGORIAS.length - 1];
+export const PREFIJO_CAJA = "CAJ";
+export const prefijoDe = (item) => item?.tipo === "caja" ? PREFIJO_CAJA : categoriaDe(item?.categoria).prefijo;
+export const esCaja = (item) => item?.tipo === "caja";
+// Lo que suele venir en cajitas (GeoDrill Vault); el contenido es texto libre
+export const CONTENIDOS_CAJA = ["Pica", "Portapica", "Muela de encamisado", "Puerta muela de encamisado"];
+export const MARCAS_CAJA = ["Jeffry Machine", "Drill Master", "Well Equips"];
+export const TAMANOS_CAJA = [["jumbo", "Jumbo"], ["mediana", "Mediana"], ["pequena", "Pequeña"]];
+export const tamanoLabel = (t) => TAMANOS_CAJA.find(x => x[0] === t)?.[1] || "";
+/** "Pica jumbo · Drill Master" */
+export const nombreCaja = (c) => [c?.contenido, tamanoLabel(c?.tamano).toLowerCase(), c?.marca ? `· ${c.marca}` : ""].filter(Boolean).join(" ").replace(" ·", " ·");
+/** Llena / parcial / vacía — para el color del chip. */
+export const nivelCaja = (c) => { const q = num(c?.cantidad), cap = num(c?.capacidad) || q; if (q <= 0) return "vacia"; if (cap && q < cap) return "parcial"; return "llena"; };
 export const esHerramienta = (item) => item?.categoria === "herramientas_perforacion";
 
 export const TIPOS_HERRAMIENTA = [
@@ -79,6 +96,14 @@ export const ubicacionesDe = ({ guardadas = [], proyectos = [] } = {}) => {
     .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es", { sensitivity: "base", numeric: true }));
   return [fijas[0], ...oficinas, fijas[1], fijas[2], ...proys].filter(u => u.activa !== false);
 };
+// ── Estantes (13-oct-2026): dentro de una ubicación (Vault, Almacén), con N
+// niveles. Viven en inv-ubicaciones como {id "est:<id>", tipo "estante",
+// ubicacionId, nombre, niveles, orden}. Las cajas guardan estanteId + nivel.
+export const estantesDe = (guardadas = [], ubicacionId = "") => (guardadas || []).filter(e => e && e.tipo === "estante" && e.activa !== false && (!ubicacionId || e.ubicacionId === ubicacionId))
+  .sort((a, b) => (num(a.orden) - num(b.orden)) || String(a.nombre).localeCompare(String(b.nombre), "es", { numeric: true }));
+export const nombreEstante = (guardadas, id) => (guardadas || []).find(e => e.id === id)?.nombre || "";
+/** "Estante A · Nivel 2" */
+export const textoEstante = (guardadas, item) => { if (!item?.estanteId) return item?.estante ? `Estante ${item.estante}` : ""; const n = nombreEstante(guardadas, item.estanteId); return n ? `${n}${item.nivel ? ` · Nivel ${item.nivel}` : ""}` : ""; };
 export const nombreUbicacion = (ubicaciones, id) => (ubicaciones || []).find(u => u.id === id)?.nombre || (id ? String(id).replace(/^proy:/, "") : "—");
 
 // ── Nombres: normalizar y sugerir existentes (contra duplicados) ──
@@ -116,7 +141,7 @@ export const siguientesCodigos = (items, prefijo, n = 1) => {
   (items || []).forEach(i => { const m = re.exec(String(i?.codigo || "")); if (m) max = Math.max(max, Number(m[1])); });
   return Array.from({ length: Math.max(1, n) }, (_, k) => `${prefijo}-${String(max + 1 + k).padStart(4, "0")}`);
 };
-export const esCodigo = (t) => /^(MAT|PER|HER|ADM|TEC|OTR)-\d{3,}$/i.test(String(t || "").trim());
+export const esCodigo = (t) => /^(MAT|PER|HER|ADM|TEC|OTR|CAJ)-\d{3,}$/i.test(String(t || "").trim());
 /** De un QR o de lo que tipeó el lector USB → el código (o null). */
 export const codigoDeTexto = (t) => {
   const s = String(t || "").trim();
@@ -126,12 +151,13 @@ export const codigoDeTexto = (t) => {
 };
 
 // ── Stock ──
-export const stockDe = (item) => item?.tipo === "cantidad" ? r2(Object.values(item.stock || {}).reduce((a, v) => a + num(v), 0)) : (item?.tipo === "individual" ? 1 : 0);
-export const stockEn = (item, ubicacionId) => item?.tipo === "cantidad" ? num(item.stock?.[ubicacionId]) : (item?.ubicacionId === ubicacionId ? 1 : 0);
+export const stockDe = (item) => item?.tipo === "cantidad" ? r2(Object.values(item.stock || {}).reduce((a, v) => a + num(v), 0)) : item?.tipo === "caja" ? num(item.caja?.cantidad) : (item?.tipo === "individual" ? 1 : 0);
+export const stockEn = (item, ubicacionId) => item?.tipo === "cantidad" ? num(item.stock?.[ubicacionId]) : item?.tipo === "caja" ? (item.ubicacionId === ubicacionId ? num(item.caja?.cantidad) : 0) : (item?.ubicacionId === ubicacionId ? 1 : 0);
 export const ubicacionesConStock = (item) => item?.tipo === "cantidad"
   ? Object.entries(item.stock || {}).filter(([, v]) => num(v) > 0).map(([id, v]) => ({ id, cantidad: num(v) }))
-  : (item?.ubicacionId ? [{ id: item.ubicacionId, cantidad: 1 }] : []);
-export const estaEn = (item, ubicacionId) => stockEn(item, ubicacionId) > 0;
+  : (item?.ubicacionId ? [{ id: item.ubicacionId, cantidad: item.tipo === "caja" ? num(item.caja?.cantidad) : 1 }] : []);
+// Una caja VACÍA sigue estando en su estante (se ve, se rellena): "estar" ≠ tener stock.
+export const estaEn = (item, ubicacionId) => item?.tipo === "caja" || item?.tipo === "individual" ? item.ubicacionId === ubicacionId : stockEn(item, ubicacionId) > 0;
 
 // ── Movimientos (historial automático) ──
 // Devuelve { item, mov } o { error }. `mov` ya trae antes/después.
@@ -179,6 +205,40 @@ export const aplicarMovimiento = (item, m, { by = "", byName = "", at = new Date
     if (m.accion === "eliminar") return { item: { ...item, eliminado: true, eliminadoAt: at, eliminadoPor: byName || by }, mov: base };
     return { error: "Esa acción no aplica a un artículo por cantidad." };
   }
+  // caja: la salida y la entrada van CONTRA ESA CAJA
+  if (item.tipo === "caja") {
+    const caja = { ...(item.caja || {}) };
+    if (m.accion === "salida") {
+      if (!(q > 0)) return { error: "¿Cuántas salen?" };
+      const antes = num(caja.cantidad);
+      if (q > antes + 1e-9) return { error: `En esta caja solo quedan ${antes}.` };
+      caja.cantidad = r2(antes - q);
+      return { item: { ...item, caja }, mov: { ...base, de: item.ubicacionId || "", a: m.a || "", cantidad: q, antes, despues: caja.cantidad, contenido: caja.contenido || "", ...(m.entregadoA ? { entregadoA: m.entregadoA, entregadoNombre: m.entregadoNombre || "" } : {}) } };
+    }
+    if (m.accion === "entrada") {
+      if (!(q > 0)) return { error: "¿Cuántas entran?" };
+      const antes = num(caja.cantidad); caja.cantidad = r2(antes + q);
+      if (num(caja.capacidad) < caja.cantidad) caja.capacidad = caja.cantidad;
+      return { item: { ...item, caja }, mov: { ...base, a: item.ubicacionId || "", cantidad: q, antes, despues: caja.cantidad, contenido: caja.contenido || "" } };
+    }
+    if (m.accion === "ajuste") {
+      const antes = num(caja.cantidad), nuevo = r2(num(m.nuevo));
+      if (nuevo < 0) return { error: "La cantidad no puede ser negativa." };
+      if (nuevo === antes) return { error: "La cantidad es la misma." };
+      caja.cantidad = nuevo; if (num(caja.capacidad) < nuevo) caja.capacidad = nuevo;
+      return { item: { ...item, caja }, mov: { ...base, en: item.ubicacionId || "", cantidad: r2(nuevo - antes), antes, despues: nuevo, contenido: caja.contenido || "" } };
+    }
+    if (m.accion === "mover") {
+      const a = m.a || item.ubicacionId;
+      const mismo = a === item.ubicacionId && (m.estanteId ?? item.estanteId ?? "") === (item.estanteId || "") && String(m.nivel ?? item.nivel ?? "") === String(item.nivel || "");
+      if (mismo) return { error: "Ya está ahí." };
+      const nx = { ...item, ubicacionId: a, estanteId: m.estanteId ?? (a === item.ubicacionId ? item.estanteId : ""), nivel: m.nivel ?? (a === item.ubicacionId ? item.nivel : "") };
+      return { item: nx, mov: { ...base, de: item.ubicacionId || "", a, cantidad: num(caja.cantidad), deEstante: item.estanteId || "", deNivel: item.nivel || "", aEstante: nx.estanteId || "", aNivel: nx.nivel || "" } };
+    }
+    if (m.accion === "editar") return { item: { ...item, ...m.cambios }, mov: { ...base, cambios: Object.keys(m.cambios || {}) } };
+    if (m.accion === "eliminar") return { item: { ...item, eliminado: true, eliminadoAt: at, eliminadoPor: byName || by }, mov: base };
+    return { error: "Esa acción no aplica a una caja." };
+  }
   // individual
   if (m.accion === "mover") {
     if (!m.a) return { error: "Elegí a dónde va." };
@@ -210,8 +270,8 @@ export const textoMovimiento = (m, ubicaciones = []) => {
   switch (m.accion) {
     case "crear": return m.a ? `Creado en ${u(m.a)}${m.cantidad > 1 ? ` · ${c}` : ""}` : "Creado";
     case "entrada": return `+${c}→ ${u(m.a)}`;
-    case "salida": return `−${c}de ${u(m.de)}${m.a ? ` → ${u(m.a)}` : m.entregadoNombre ? ` → ${m.entregadoNombre}` : ""}`;
-    case "mover": return `${u(m.de)} → ${u(m.a)}`;
+    case "salida": return `−${c}${m.contenido ? `${m.contenido.toLowerCase()}${num(m.cantidad) === 1 ? "" : "s"} ` : ""}de ${u(m.de)}${m.a ? ` → ${u(m.a)}` : ""}${m.entregadoNombre ? ` → ${m.entregadoNombre}` : ""}`;
+    case "mover": return m.aEstante || m.deEstante ? `${u(m.de)}${m.deNivel ? ` (nivel ${m.deNivel})` : ""} → ${u(m.a)}${m.aNivel ? ` (nivel ${m.aNivel})` : ""}` : `${u(m.de)} → ${u(m.a)}`;
     case "ajuste": return `${num(m.antes).toLocaleString("es-HN")} → ${num(m.despues).toLocaleString("es-HN")} en ${u(m.en)}`;
     case "estado": return `${m.estadoDe || "—"} → ${m.estadoA}${m.maquinaNombre ? ` (${m.maquinaNombre})` : ""}`;
     case "asignar": return m.asignadoA ? `Asignado a ${m.asignadoNombre}` : `Devuelto por ${m.asignadoDeNombre || "—"}`;
@@ -252,7 +312,20 @@ export const resumenInventario = (items) => {
     herramientas: her.length, disponibles: cuenta("disponible"), enOperacion: cuenta("en_operacion"), requierenTrabajo: cuenta("requiere_trabajo"),
     asignados: vivos.filter(i => i.tipo === "individual" && i.asignadoA).length,
     sinFoto: vivos.filter(i => !i.foto?.fileId).length,
+    cajas: vivos.filter(i => i.tipo === "caja").length,
+    enCajas: resumenCajas(vivos),
   };
+};
+/** [{contenido, cajas, unidades, vacias}] — lo que hay en cajitas, por contenido. */
+export const resumenCajas = (items, ubicacionId = "") => {
+  const acc = new Map();
+  (items || []).filter(i => i && !i.eliminado && i.tipo === "caja" && (!ubicacionId || i.ubicacionId === ubicacionId)).forEach(i => {
+    const k = String(i.caja?.contenido || "Sin contenido").trim();
+    const a = acc.get(k) || { contenido: k, cajas: 0, unidades: 0, vacias: 0 };
+    a.cajas++; a.unidades = r2(a.unidades + num(i.caja?.cantidad)); if (num(i.caja?.cantidad) <= 0) a.vacias++;
+    acc.set(k, a);
+  });
+  return [...acc.values()].sort((a, b) => b.unidades - a.unidades);
 };
 
 // ── Buscar ──
@@ -267,14 +340,14 @@ export const buscarItems = (items, { q = "", ubicacionId = "", categoria = "", e
     if (asignadoA && i.asignadoA !== asignadoA) return false;
     if (cod) return String(i.codigo || "").toUpperCase() === cod || String(i.codigo || "").toUpperCase().startsWith(cod);
     if (!nq) return true;
-    const texto = normalizarNombre(`${i.codigo} ${i.nombre} ${i.marca || ""} ${i.modelo || ""} ${i.serie || ""} ${i.asignadoNombre || ""} ${i.herramienta?.diametro || ""} ${tipoHerramientaLabel(i.herramienta?.tipo)}`);
+    const texto = normalizarNombre(`${i.codigo} ${i.nombre} ${i.marca || ""} ${i.modelo || ""} ${i.serie || ""} ${i.asignadoNombre || ""} ${i.herramienta?.diametro || ""} ${tipoHerramientaLabel(i.herramienta?.tipo)} ${i.caja ? `caja ${i.caja.contenido || ""} ${i.caja.marca || ""} ${tamanoLabel(i.caja.tamano)}` : ""}`);
     return nq.split(" ").every(w => texto.includes(w));
   });
 };
 
 // ── Carga desde Excel (CSV o pegado de celdas, separado por tab) ──
-export const COLUMNAS_IMPORT = ["nombre", "categoria", "tipo", "cantidad", "unidad", "ubicacion", "estado", "marca", "modelo", "serie", "asignado"];
-export const plantillaCSV = () => [COLUMNAS_IMPORT.join(","), 'Cemento GU 42.5 kg,Materiales,cantidad,120,Bolsa,Almacén Central,,,,,', 'Monitor 24",Equipo de cómputo,individual,2,,Oficina Operaciones,Bueno,Dell,P2422H,,', 'Broca 1.20 m,Herramientas de perforación,individual,1,,VILLA SAN MIGUEL,Disponible,,,,'].join("\n");
+export const COLUMNAS_IMPORT = ["nombre", "categoria", "tipo", "cantidad", "unidad", "ubicacion", "estado", "marca", "modelo", "serie", "asignado", "cajas", "estante", "nivel"];
+export const plantillaCSV = () => [COLUMNAS_IMPORT.join(","), 'Cemento GU 42.5 kg,Materiales,cantidad,120,Bolsa,Almacén Central,,,,,,,,', 'Monitor 24",Equipo de cómputo,individual,2,,Oficina Operaciones,Bueno,Dell,P2422H,,,,,', 'Broca 1.20 m,Herramientas de perforación,individual,1,,VILLA SAN MIGUEL,Disponible,,,,,,,', 'Pica jumbo,Insumos de perforación,caja,15,,GeoDrill Vault,,Drill Master,,,,6,Estante A,2'].join("\n");
 const sepDe = (linea) => { const t = (linea.match(/\t/g) || []).length, pc = (linea.match(/;/g) || []).length, c = (linea.match(/,/g) || []).length; return t >= Math.max(pc, c) && t > 0 ? "\t" : pc > c ? ";" : ","; };
 export const parseTabla = (texto) => {
   const lineas = String(texto || "").replace(/\r/g, "").split("\n").filter(l => l.trim());
@@ -313,8 +386,15 @@ export const prepararImportacion = (filas, { ubicaciones = [], ubicacionDefault 
     const nombre = String(f.nombre || "").trim();
     if (!nombre) { errores.push({ fila, error: "Sin nombre" }); return; }
     const categoria = catPorTexto(f.categoria) || "otros";
-    const tipo = /indiv/i.test(f.tipo || "") ? "individual" : "cantidad";
+    const tipo = /caja/i.test(f.tipo || "") ? "caja" : /indiv/i.test(f.tipo || "") ? "individual" : "cantidad";
     const cantidad = num(f.cantidad) > 0 ? num(f.cantidad) : (tipo === "individual" ? 1 : 0);
+    if (tipo === "caja") {
+      const ubicacionId = ubiPorNombre(f.ubicacion) || ubicacionDefault;
+      if (!ubicacionId) { errores.push({ fila, error: `${nombre}: no encontré la ubicación "${f.ubicacion}"` }); return; }
+      if (!(cantidad > 0)) { errores.push({ fila, error: `${nombre}: ¿cuántas trae cada caja?` }); return; }
+      listos.push({ nombre, categoria: catPorTexto(f.categoria) || "insumos_perforacion", tipo: "caja", ubicacionId, contenido: nombre, marca: String(f.marca || "").trim(), cantidad, capacidad: cantidad, cajas: num(f.cajas) > 0 ? Math.round(num(f.cajas)) : 1, estanteNombre: String(f.estante || "").trim(), nivel: String(f.nivel || "").trim() });
+      return;
+    }
     if (tipo === "cantidad" && !(cantidad > 0)) { errores.push({ fila, error: `${nombre}: cantidad inválida` }); return; }
     const ubicacionId = ubiPorNombre(f.ubicacion) || ubicacionDefault;
     if (!ubicacionId) { errores.push({ fila, error: `${nombre}: no encontré la ubicación "${f.ubicacion}"` }); return; }

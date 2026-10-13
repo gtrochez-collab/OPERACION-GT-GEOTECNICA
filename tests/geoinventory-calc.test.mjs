@@ -105,3 +105,35 @@ test("importar desde Excel: CSV y pegado con tabs", () => {
   const r2 = prepararImportacion(parseTabla(tsv).filas, { ubicaciones: ubic, ubicacionDefault: "almacen" });
   assert.equal(r2.listos[0].categoria, "insumos_perforacion"); assert.equal(r2.listos[0].ubicacionId, "almacen");
 });
+
+import { nombreCaja, nivelCaja, estantesDe, textoEstante, resumenCajas, PREFIJO_CAJA, esCaja } from "../src/geoinventory-calc.js";
+
+test("cajas: salida contra la caja, rellenar, mover de estante, resumen", () => {
+  const est = [{ id: "est:a", tipo: "estante", ubicacionId: "vault", nombre: "Estante A", niveles: 4, orden: 1 }, { id: "est:b", tipo: "estante", ubicacionId: "vault", nombre: "Estante B", niveles: 4, orden: 2 }, { id: "of:1", tipo: "oficina", nombre: "Oficina" }];
+  assert.deepEqual(estantesDe(est, "vault").map(e => e.nombre), ["Estante A", "Estante B"]);
+  let caja = { id: "c1", codigo: "CAJ-0001", tipo: "caja", nombre: "Pica jumbo · Drill Master", categoria: "insumos_perforacion", ubicacionId: "vault", estanteId: "est:a", nivel: 2, caja: { contenido: "Pica", marca: "Drill Master", tamano: "jumbo", cantidad: 15, capacidad: 15 } };
+  assert.equal(nombreCaja(caja.caja), "Pica jumbo · Drill Master");
+  assert.equal(textoEstante(est, caja), "Estante A · Nivel 2");
+  assert.equal(nivelCaja(caja.caja), "llena");
+  assert.equal(stockDe(caja), 15); assert.equal(stockEn(caja, "vault"), 15);
+  assert.equal(aplicarMovimiento(caja, { accion: "salida", cantidad: 20 }).error, "En esta caja solo quedan 15.");
+  let r = aplicarMovimiento(caja, { accion: "salida", cantidad: 5, a: "proy:AMICI", entregadoA: "e1", entregadoNombre: "Juan" }, { by: "administrador" });
+  assert.equal(r.item.caja.cantidad, 10); assert.equal(r.mov.contenido, "Pica"); assert.equal(r.mov.a, "proy:AMICI");
+  assert.equal(textoMovimiento(r.mov, [{ id: "vault", nombre: "GeoDrill Vault" }, { id: "proy:AMICI", nombre: "AMICI" }]), "−5 picas de GeoDrill Vault → AMICI → Juan");
+  assert.equal(nivelCaja(r.item.caja), "parcial");
+  r = aplicarMovimiento(r.item, { accion: "salida", cantidad: 10 }); assert.equal(nivelCaja(r.item.caja), "vacia");
+  assert.ok(buscarItems([r.item], { ubicacionId: "vault" }).length === 1, "la caja vacía sigue en su estante");
+  r = aplicarMovimiento(r.item, { accion: "entrada", cantidad: 15 }); assert.equal(r.item.caja.cantidad, 15);
+  assert.equal(aplicarMovimiento(r.item, { accion: "mover", a: "vault", estanteId: "est:a", nivel: 2 }).error, "Ya está ahí.");
+  r = aplicarMovimiento(r.item, { accion: "mover", a: "vault", estanteId: "est:b", nivel: 1 }); assert.equal(r.item.estanteId, "est:b"); assert.equal(r.mov.aNivel, 1);
+  r = aplicarMovimiento(r.item, { accion: "mover", a: "taller" }); assert.equal(r.item.estanteId, ""); assert.equal(r.item.ubicacionId, "taller");
+  assert.deepEqual(siguientesCodigos([caja], PREFIJO_CAJA, 2), ["CAJ-0002", "CAJ-0003"]);
+  assert.ok(esCaja(caja) && !esCaja({ tipo: "cantidad" }));
+  const res = resumenCajas([caja, { ...caja, id: "c2", caja: { ...caja.caja, cantidad: 0 } }, { ...caja, id: "c3", caja: { contenido: "Portapica", cantidad: 8, capacidad: 10 } }]);
+  assert.deepEqual(res.map(x => [x.contenido, x.cajas, x.unidades, x.vacias]), [["Pica", 2, 15, 1], ["Portapica", 1, 8, 0]]);
+  assert.deepEqual(buscarItems([caja], { q: "pica drill" }).map(i => i.id), ["c1"]);
+  // importar cajas
+  const ubic = ubicacionesDe({ proyectos: [] });
+  const r2 = prepararImportacion(parseTabla("nombre,categoria,tipo,cantidad,ubicacion,marca,cajas,estante,nivel\nPica jumbo,Insumos,caja,15,GeoDrill Vault,Drill Master,6,Estante A,2").filas, { ubicaciones: ubic });
+  assert.equal(r2.listos[0].tipo, "caja"); assert.equal(r2.listos[0].cajas, 6); assert.equal(r2.listos[0].estanteNombre, "Estante A"); assert.equal(r2.listos[0].nivel, "2");
+});
