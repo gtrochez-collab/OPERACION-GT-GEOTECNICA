@@ -1381,8 +1381,16 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Alertas · Cotizaciones · Solicitudes · Almacén · Compras · Dashboard ·
   Configuración; **Residente** = Mis solicitudes (+ Nueva solicitud, detalle
   con tracking tipo "dónde va mi pedido": `PasosLinea` Enviada → Almacén →
-  Compras → Aprobación → En compra → Llega a obra; "En camino / Terminadas":
-  una completada sigue "en camino" hasta que su despacho se entregue);
+  **En cotización** → Aprobación → **Pendiente de pago** (pasa a "Pagado" en
+  verde cuando la Lic. Carolina paga) → **En camino a tu proyecto** (pasa a
+  "Entregado en tu proyecto" en verde con la FICHA FIRMADA — `entregaDe(pu)`:
+  `delivery.fichaFile` o deliveryStatus `ficha_adjunta`, o `cerrado` sin
+  ficha; el candado de GeoLogistics exige la ficha para marcar entregado) —
+  nombres del 13-oct-2026, pedido de Gerson; el chip de la línea comprada
+  dice lo mismo (Pendiente de pago / Pagado · en camino / Entregado en tu
+  proyecto). "En camino / Terminadas": una completada sigue "en camino"
+  hasta que tenga la ficha. En la simulación, "GeoShopping simulado" suma el
+  botón "Logística: entregado con ficha" para ver el proceso hasta el final);
   **Almacén** (Óscar, `logistica`) = Almacén (Hay / Parcial / No hay por
   línea, "No hay nada de esto" por proyecto, cuenta regresiva al martes 15:00
   del corte más próximo) · Solicitudes; **Compras** (Ana) = Por cotizar

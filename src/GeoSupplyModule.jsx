@@ -104,8 +104,17 @@ function Grupo({ titulo, sub, abierto, onToggle, derecha, children, alerta }) {
 }
 
 // Pasos de una línea (tracking tipo "dónde va mi pedido").
-const PASOS = ["Enviada", "Almacén", "Compras", "Aprobación", "En compra", "Llega a obra"];
-const pasoDeLinea = (l, sol, purchase, despachoEntregado) => {
+// 13-oct-2026 (Gerson): "Compras" → "En cotización"; "En compra" →
+// "Pendiente de pago", que pasa a "Pagado" en verde cuando la Lic. Carolina
+// paga; "Llega a obra" → "En camino a tu proyecto", que pasa a "Entregado en
+// tu proyecto" en verde cuando hay ficha firmada (Logística la exige al marcar
+// entregado) — ahí se completa el proceso.
+const PASOS = ["Enviada", "Almacén", "En cotización", "Aprobación", "Pendiente de pago", "En camino a tu proyecto"];
+const etiquetaPaso = (i, paso) => i === 4 && paso.idx >= 5 ? "Pagado"
+  : i === 5 && paso.idx === 5 && paso.estado === "fin" && paso.etapa === "entregado" ? "Entregado en tu proyecto"
+  : PASOS[i];
+// `entrega` = {completa, ficha, cerrada, despachoEntregado} de la compra (entregaDe).
+const pasoDeLinea = (l, sol, purchase, entrega = {}) => {
   if (!l) return { idx: 0, estado: "activo" };
   if (l.estado === "rechazada") return { idx: -1, estado: "rechazada" };
   if (l.estado === "pendiente_coord") return { idx: 0, estado: "alerta", nota: "Esperando al Coordinador" };
@@ -114,10 +123,10 @@ const pasoDeLinea = (l, sol, purchase, despachoEntregado) => {
   if (l.estado === "por_cotizar") return { idx: 2, estado: "activo" };
   if (l.estado === "cotizada") return { idx: 3, estado: "activo" };
   if (l.estado === "comprada") {
-    if (despachoEntregado) return { idx: 5, estado: "fin", nota: "Entregada en obra" };
-    if (purchase && (purchase.status === "pagado" || purchase.status === "finalizado")) return { idx: 5, estado: "activo", nota: "Pagada, en camino" };
-    if (purchase && purchase.status === "validado") return { idx: 4, estado: "activo", nota: "En Tesorería" };
-    return { idx: 4, estado: "activo", nota: "Con Finanzas" };
+    if (entrega.completa) return { idx: 5, estado: "fin", etapa: "entregado", nota: entrega.ficha ? "Entregado · ficha firmada" : "Cerrada sin ficha" };
+    if (purchase && (purchase.status === "pagado" || purchase.status === "finalizado")) return { idx: 5, estado: "activo", etapa: "pagado", nota: entrega.despachoEntregado ? "Entregado · falta subir la ficha firmada" : purchase.deliveryStatus === "entrega_proveedor" ? "Lo entrega el proveedor" : "Pagado, en camino" };
+    if (purchase && purchase.status === "validado") return { idx: 4, estado: "activo", etapa: "pendiente_pago", nota: "En Tesorería" };
+    return { idx: 4, estado: "activo", etapa: "pendiente_pago", nota: "Con Finanzas" };
   }
   return { idx: 0, estado: "activo" };
 };
@@ -129,10 +138,11 @@ function PasosLinea({ paso, compact }) {
       const rechazada = paso.estado === "rechazada";
       const color = rechazada ? C_ROJO.color : hecho ? C_VERDE.color : actual ? (paso.estado === "alerta" ? ORANGE_DARK : ORANGE) : "rgba(44,42,40,.18)";
       const noAplica = paso.estado === "fin" && i > paso.idx;
+      const etq = etiquetaPaso(i, paso);
       return <div key={p} style={{ display: "flex", alignItems: "center", flex: i < PASOS.length - 1 ? "1 1 0" : "0 0 auto", minWidth: 0 }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: compact ? 44 : 64 }}>
           <span style={{ width: compact ? 14 : 18, height: compact ? 14 : 18, borderRadius: "50%", background: hecho ? color : "transparent", border: `2px solid ${color}`, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 10, fontWeight: 900, opacity: noAplica ? .35 : 1, boxShadow: actual ? `0 0 0 4px ${paso.estado === "alerta" ? C_NARANJA.bg : "rgba(232,118,45,.18)"}` : "none" }}>{hecho ? "✓" : ""}</span>
-          {!compact && <span style={{ fontSize: 10, fontWeight: actual ? 800 : 600, color: actual ? CHARCOAL : noAplica ? "var(--text-faint)" : "var(--text-3)", whiteSpace: "nowrap" }}>{p}</span>}
+          {!compact && <span style={{ fontSize: 10, fontWeight: actual || etq !== p ? 800 : 600, color: etq !== p ? C_VERDE.color : actual ? CHARCOAL : noAplica ? "var(--text-faint)" : "var(--text-3)", whiteSpace: "nowrap" }}>{etq}</span>}
         </div>
         {i < PASOS.length - 1 && <div style={{ flex: 1, height: 2, background: paso.idx > i ? C_VERDE.color : "rgba(44,42,40,.12)", margin: compact ? "0 2px 0" : "0 4px 14px", minWidth: 8 }} />}
       </div>;
@@ -972,6 +982,15 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const faltanViernes = lineasEf.filter(x => !LINEA_TERMINAL.includes(x.ef.estado)).length;
   const purchaseDeLinea = (l) => purchasesVista.find(p => p.origenSupply && (l.quoteIds || []).concat(cotizaciones.filter(q => q.estado === "aprobada" && q.lineas?.some(x => x.requestLineId === l.id)).map(q => q.id)).includes(p.origenSupply.quoteId)) || null;
   const despachoEntregadoDe = (purchase) => !!purchase && despachos.some(d => d.sourcePurchaseId === purchase.id && d.estado !== "cancelado" && (d.estado === "entregado" || d.estado === "cerrado"));
+  // El proceso se COMPLETA con la ficha de recibido firmada (la sube Logística
+  // al entregar —su candado la exige— o Ana si lo entregó el proveedor), o si
+  // la compra se cerró sin ficha.
+  const entregaDe = (pu) => {
+    if (!pu) return { completa: false };
+    const ficha = !!pu.delivery?.fichaFile?.fileId || pu.deliveryStatus === "ficha_adjunta";
+    const cerrada = pu.deliveryStatus === "cerrado";
+    return { completa: ficha || cerrada, ficha, cerrada, despachoEntregado: despachoEntregadoDe(pu) };
+  };
 
   // ── Piezas de UI ──
   const stat = (v, l, { c, onClick } = {}) => <button key={l} onClick={onClick} disabled={!onClick} style={{ background: "transparent", border: "none", padding: isMobile ? "4px 10px" : "4px 18px", textAlign: "left", cursor: onClick ? "pointer" : "default", fontFamily: "inherit", borderRight: isMobile ? "none" : "1px solid rgba(44,42,40,.08)" }}>
@@ -1214,7 +1233,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     // "Abierta" para quien pidió = todavía hay algo en camino: una solicitud
     // completada en GeoSupply (todo comprado) sigue abierta hasta que lo
     // comprado llegue a obra (despacho entregado en GeoLogistics).
-    const terminada = (s) => s.estado === "cancelada" || (estadoCabecera(s) === "completada" && (s.lineas || []).every(l => l.estado !== "comprada" || despachoEntregadoDe(purchaseDeLinea(l))));
+    const terminada = (s) => s.estado === "cancelada" || (estadoCabecera(s) === "completada" && (s.lineas || []).every(l => l.estado !== "comprada" || entregaDe(purchaseDeLinea(l)).completa));
     const visibles = base
       .filter(s => solVista === "todas" ? true : solVista === "abiertas" ? !terminada(s) : terminada(s))
       .filter(s => !solProy || s.projectCode === solProy)
@@ -1298,14 +1317,17 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         {(s.lineas || []).map(l => {
           const ef = estadoEfectivoLinea(l, s, cfg, ahora);
           const pu = purchaseDeLinea(l);
-          const paso = pasoDeLinea({ ...l, estado: ef.estado === "por_cotizar" && l.estado === "revision_almacen" ? "por_cotizar" : l.estado }, s, pu, despachoEntregadoDe(pu));
+          const paso = pasoDeLinea({ ...l, estado: ef.estado === "por_cotizar" && l.estado === "revision_almacen" ? "por_cotizar" : l.estado }, s, pu, entregaDe(pu));
           const al = alertasDeLinea(l, s);
           return <div key={l.id} style={{ padding: "12px 14px", borderRadius: 14, background: l.estado === "rechazada" ? C_ROJO.bg : "rgba(255,255,255,.75)", border: "1px solid rgba(44,42,40,.08)", display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <div style={{ flex: 1, minWidth: 180 }}>
                 <div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL }}>{l.descripcion} <span style={{ fontWeight: 600, color: "var(--text-2)" }}>· {fmtCant(l.cantidad)} {l.unidad}</span></div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-                  {chipEstado(ESTADOS_LINEA, l.estado === "rechazada" ? "rechazada" : ef.estado)}
+                  {paso.etapa === "entregado" ? <Chip c={C_VERDE}>Entregado en tu proyecto</Chip>
+                    : paso.etapa === "pagado" ? <Chip c={C_AZUL}>Pagado · en camino</Chip>
+                    : paso.etapa === "pendiente_pago" ? <Chip c={C_GRIS}>Pendiente de pago</Chip>
+                    : chipEstado(ESTADOS_LINEA, l.estado === "rechazada" ? "rechazada" : ef.estado === "por_cotizar" ? "por_cotizar" : ef.estado)}
                   {ef.sinRevisionAlmacen && <Chip c={C_AMARILLO}>Sin revisión de almacén</Chip>}
                   {al.filter(a => a !== "urgente").map(a => <Chip key={a} c={C_AMARILLO}>{ALERTAS[a]}</Chip>)}
                   {num(l.despachadoAlmacen) > 0 && <Chip c={C_VERDE}>{fmtCant(l.despachadoAlmacen)} {l.unidad} de almacén</Chip>}
@@ -1583,7 +1605,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   </div>;
   // Lo que Finanzas vería en "Borradores (n)" y cómo sube GeoCost.
   const actualizarSimPurchase = async (id, cambios, nota) => {
-    const rec = await actualizarEn("sp-sim-purchases", setSimPurchases, id, (p) => ({ ...p, ...cambios, audit: [...(p.audit || []), auditEntry(cambios.status, nota)] }));
+    const rec = await actualizarEn("sp-sim-purchases", setSimPurchases, id, (p) => ({ ...p, ...cambios, audit: [...(p.audit || []), auditEntry(cambios.status || cambios.deliveryStatus || "cambio", nota)] }));
     return !!rec;
   };
   const renderSimShop = () => {
@@ -1607,7 +1629,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{Object.entries(porPartida).map(([k, v]) => <Chip key={k} c={k === "Por clasificar" ? C_AMARILLO : C_GRIS}>{k}: {fmtUSD(v)}</Chip>)}</div>
           {lista.map(p => {
-            const [lbl, c] = ESTADO[p.status] || [p.status, C_GRIS];
+            const [lbl, c] = p.deliveryStatus === "ficha_adjunta" ? ["Entregada con ficha", C_VERDE] : ESTADO[p.status] || [p.status, C_GRIS];
             return <div key={p.id} style={{ padding: "10px 12px", borderRadius: 14, background: "rgba(255,255,255,.75)", border: "1px solid rgba(44,42,40,.08)", display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <span style={{ fontFamily: "var(--mono)", fontWeight: 800, fontSize: 12 }}>{p.codigo}</span>
@@ -1627,6 +1649,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 {p.status === "borrador" && <Btn small variant="success" disabled={ocupado} onClick={() => actualizarSimPurchase(p.id, { status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() }, "Enviada a Tesorería (simulación)")}>Finanzas: enviar a Tesorería</Btn>}
                 {p.status === "validado" && <Btn small variant="success" disabled={ocupado} onClick={() => actualizarSimPurchase(p.id, { status: "pagado", treasuryStatus: "pagada", paidAt: hoyISO(), paymentDate: hoyISO() }, "Pagada (simulación)")}>Tesorería: marcar pagada</Btn>}
+                {(p.status === "pagado" || p.status === "finalizado") && p.deliveryStatus !== "ficha_adjunta" && <Btn small variant="success" disabled={ocupado} onClick={() => { const at = new Date().toISOString(); actualizarSimPurchase(p.id, { deliveryStatus: "ficha_adjunta", delivery: { ...(p.delivery || {}), entregadoAt: at, fichaUploadedAt: at, simulada: true } }, "Entregado en el proyecto con ficha firmada (simulación)"); }}>Logística: entregado con ficha</Btn>}
               </div>
             </div>;
           })}
