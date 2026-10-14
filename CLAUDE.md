@@ -1735,9 +1735,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   **Grupos plegables (14-oct-2026)**: en Inicio, "Tus ubicaciones", "Almacén
   y bodegas", "Oficinas de plantel" y "Proyectos" se compactan tocando su
   título (chevron; `cerrados` en localStorage `gt-inv-grupos-cerrados`, es
-  preferencia de pantalla); con el filtro escrito se abren todos. El botón
-  "Ver/Ocultar los N proyectos sin inventario" va ARRIBA de esa lista para no
-  tener que bajar a cerrarla. Tarjetas sin alto mínimo (más compactas).
+  preferencia de pantalla); con el filtro escrito se abren todos. Cada grupo
+  es una FILA DE VIDRIO grande (`cabeceraGrupo`: ícono, título 17.5px,
+  resumen, conteo, chevron; "+ Nueva oficina" en la de oficinas) — Gerson:
+  "más grandes; minimizados se veía el vacío feo". Al desplegar Proyectos
+  salen TODOS (con inventario primero), sin botón "Ver los N sin
+  inventario" (se retiró). Tarjetas sin alto mínimo (más compactas).
   **ALCANCE de Óscar (14-oct-2026, Gerson: "que Óscar sí pueda ver el
   inventario de todos los proyectos pero no manipularlo, y ubicaciones")**:
   `permisosDe("logistica").alcance = "propias"` → el módulo arma `editables`

@@ -753,7 +753,6 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   // Inicio = navegación por ubicaciones (14-oct-2026): ubicación › estante/rack › nivel
   const [ruta, setRutaRaw] = useState({});                 // {ubic, est, niv}
   const setRuta = (r) => { setRutaRaw(r || {}); try { document.getElementById("inv-scroll")?.scrollTo({ top: 0 }); } catch {} };
-  const [verProySin, setVerProySin] = useState(false);
   // Grupos plegables de Inicio (14-oct-2026: "permitime minimizar proyectos,
   // oficinas y almacén"). Preferencia de pantalla → localStorage.
   const [cerrados, setCerradosRaw] = useState(() => { try { return JSON.parse(localStorage.getItem("gt-inv-grupos-cerrados") || "[]"); } catch { return []; } });
@@ -1090,11 +1089,21 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   };
   const grilla = (children) => <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(270px, 1fr))", gap: 10 }}>{children}</div>;
   const tituloGrupo = (t, extra, clave) => <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
-    {clave ? <button type="button" onClick={() => toggleGrupo(clave)} aria-expanded={!cerrados.includes(clave)} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: "4px 0", cursor: "pointer", fontFamily: "inherit" }}>
-      <span style={{ display: "inline-flex", transform: cerrados.includes(clave) ? "rotate(0deg)" : "rotate(90deg)", transition: "transform .2s" }}><Ico d={ICO.flecha} size={14} color="#8C857D" /></span>
-      <span className="gt-label" style={{ color: "var(--text-3)" }}>{t}</span>
-    </button> : <div className="gt-label" style={{ color: "var(--text-3)" }}>{t}</div>}
+    <div className="gt-label" style={{ color: "var(--text-3)" }}>{t}</div>
     {extra}</div>;
+  // Cabecera de grupo de Inicio: fila de vidrio grande, plegable (14-oct-2026:
+  // "más grandes para que se vean cool; minimizados el vacío se veía feo")
+  const cabeceraGrupo = ({ clave, titulo, n, icono, sub, extra }) => { const ab = abierto(clave); return <div key={clave} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} aria-expanded={ab} onClick={() => toggleGrupo(clave)} onKeyDown={e => { if (e.key === "Enter") toggleGrupo(clave); }}
+    style={{ padding: isMobile ? "12px 14px" : "14px 18px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer", marginTop: 2 }}>
+    <div style={{ width: 42, height: 42, borderRadius: 13, background: "rgba(232,118,45,.12)", color: ORANGE_DARK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={icono} size={21} /></div>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ font: `800 ${isMobile ? 16 : 17.5}px/1.15 var(--display)`, color: CHARCOAL }}>{titulo}</div>
+      {sub && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 3 }}>{sub}</div>}
+    </div>
+    {extra && <span onClick={e => e.stopPropagation()}>{extra}</span>}
+    <span style={{ minWidth: 34, height: 30, padding: "0 10px", borderRadius: 999, background: "rgba(44,42,40,.06)", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "800 13px/1 var(--sans)", color: CHARCOAL }}>{n}</span>
+    <span style={{ display: "inline-flex", transform: ab ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .2s" }}><Ico d={ICO.flecha} size={18} color="#8C857D" /></span>
+  </div>; };
   const abierto = (k) => !cerrados.includes(k) || !!qUbic;
   const renderInicio = () => {
     if (ruta.ubic) return renderUbicacionVista();
@@ -1121,16 +1130,12 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
         {statBtn(resumen.requierenTrabajo, "requieren trabajo", C_ROJO, () => { setHerrEstado("requiere_trabajo"); setSec("herramientas"); })}
         {statBtn(resumen.asignados, "asignados a personas", C_AZUL, () => { setFTipo("individual"); setFCat(""); setFUbic(""); setFEstado(""); setQ(""); setSec("buscar"); })}
       </div>
-      {mias.length > 0 && !qUbic && <>{tituloGrupo(`Tus ubicaciones · ${mias.length}`, null, "mias")}{abierto("mias") && grilla(mias.map(u2 => tarjetaUbicacion(u2, { destacada: true })))}</>}
-      {filtroU(fijas).length > 0 && <>{tituloGrupo(`Almacén y bodegas · ${filtroU(fijas).length}`, null, "fijas")}{abierto("fijas") && grilla(filtroU(fijas).map(u2 => tarjetaUbicacion(u2)))}</>}
-      {(filtroU(oficinas).length > 0 || (perms.ubicaciones && !qUbic)) && <>{tituloGrupo(`Oficinas de plantel · ${filtroU(oficinas).length}`, perms.ubicaciones && abierto("oficinas") && <Btn small variant="ghost" onClick={() => setModal({ t: "ubicacion", u: null })}>+ Nueva oficina</Btn>, "oficinas")}
-        {abierto("oficinas") && (filtroU(oficinas).length ? grilla(filtroU(oficinas).map(u2 => tarjetaUbicacion(u2))) : <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Todavía no hay oficinas. Creá la primera: cada una sale con su código QR para pegar afuera.</div>)}</>}
-      {tituloGrupo(`Proyectos · ${proys.length}`, <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{proysCon.length} con inventario</span>, "proyectos")}
-      {abierto("proyectos") && <>
-        {filtroU(proysCon).length > 0 ? grilla(filtroU(proysCon).map(u2 => tarjetaUbicacion(u2))) : !qUbic && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Ningún proyecto tiene inventario cargado todavía.</div>}
-        {!qUbic && proysSin.length > 0 && <div><Btn small variant="ghost" onClick={() => setVerProySin(v => !v)}>{verProySin ? `Ocultar los ${proysSin.length} sin inventario` : `Ver los ${proysSin.length} proyectos sin inventario`}</Btn></div>}
-        {(verProySin || qUbic) && filtroU(proysSin).length > 0 && grilla(filtroU(proysSin).map(u2 => tarjetaUbicacion(u2)))}
-      </>}
+      {mias.length > 0 && !qUbic && <>{cabeceraGrupo({ clave: "mias", titulo: "Tus ubicaciones", n: mias.length, icono: ICO.persona, sub: "Donde sos responsable" })}{abierto("mias") && grilla(mias.map(u2 => tarjetaUbicacion(u2, { destacada: true })))}</>}
+      {filtroU(fijas).length > 0 && <>{cabeceraGrupo({ clave: "fijas", titulo: "Almacén y bodegas", n: filtroU(fijas).length, icono: ICO.bodega, sub: resumenTxt(resumenDe(fijas.flatMap(u2 => itemsEnUbicacion(vivos, u2.id)))) || "Almacén Central, GeoDrill Vault y taller" })}{abierto("fijas") && grilla(filtroU(fijas).map(u2 => tarjetaUbicacion(u2)))}</>}
+      {(filtroU(oficinas).length > 0 || (perms.ubicaciones && !qUbic)) && <>{cabeceraGrupo({ clave: "oficinas", titulo: "Oficinas de plantel", n: filtroU(oficinas).length, icono: ICO.oficina, sub: oficinas.length ? resumenTxt(resumenDe(oficinas.flatMap(u2 => itemsEnUbicacion(vivos, u2.id)))) || "Sin inventario todavía" : "Todavía no hay oficinas", extra: perms.ubicaciones && <Btn small variant="ghost" onClick={() => setModal({ t: "ubicacion", u: null })}>+ Nueva oficina</Btn> })}
+        {abierto("oficinas") && (filtroU(oficinas).length ? grilla(filtroU(oficinas).map(u2 => tarjetaUbicacion(u2))) : <div style={{ fontSize: 12.5, color: "var(--text-3)", paddingLeft: 4 }}>Creá la primera con + Nueva oficina: cada una sale con su código QR para pegar afuera.</div>)}</>}
+      {filtroU(proys).length > 0 && <>{cabeceraGrupo({ clave: "proyectos", titulo: "Proyectos", n: filtroU(proys).length, icono: ICO.proyecto, sub: proysCon.length ? `${proysCon.length} con inventario` : "Ninguno con inventario todavía" })}
+        {abierto("proyectos") && grilla([...filtroU(proysCon), ...filtroU(proysSin)].map(u2 => tarjetaUbicacion(u2)))}</>}
     </div>;
   };
   // ── Dentro de una ubicación ──
