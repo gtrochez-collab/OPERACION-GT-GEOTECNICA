@@ -95,6 +95,7 @@ const MODULES = [
   },
   {
     id: "geosafety",
+    oculto: true,   // 14-oct-2026: Gerson pidió esconderlo del panel "de momento" (el código sigue intacto)
     name: "GeoSafety",
     icon: "🦺",
     desc: "EPP: catálogo, dotación e inventario.",
@@ -127,6 +128,7 @@ const MODULES = [
   },
   {
     id: "geodrill-vault",
+    oculto: true,   // 14-oct-2026: Gerson pidió esconderlo del panel "de momento" (el código sigue intacto)
     name: "GeoDrill Vault",
     icon: "🗄️",
     desc: "Picas, portapicas y herramienta de perforación.",
@@ -139,6 +141,7 @@ const MODULES = [
     // Cada quien ve solo las suyas (key `gt-todos-<username>`), así que va
     // abierto a todos los roles menos la tablet kiosco de marcaje.
     id: "tareas",
+    oculto: true,   // 14-oct-2026: Gerson pidió esconderlo del panel "de momento" (el código sigue intacto)
     name: "Mis Tareas",
     icon: "✅",
     desc: "Organizá tus pendientes con fecha.",
@@ -377,7 +380,10 @@ export default function App() {
   if (activeModule === "geoinventory") return conEntrada(<GeoInventoryModule {...moduleProps} />);
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
 
-  const availableModules = MODULES.filter((m) => m.roles.includes(user.role));
+  // `oculto` (14-oct-2026): GeoSafety, GeoDrill Vault y Mis Tareas no salen en
+  // el panel por ahora. Mis Tareas sigue abriéndose desde la tarjeta TO-DOS de
+  // la bienvenida (onAbrirTareas), que no pasa por esta lista.
+  const availableModules = MODULES.filter((m) => m.roles.includes(user.role) && !m.oculto);
 
   // ── Bienvenida del día (todos menos la tablet kiosco de marcaje) ──
   if (!welcomeDone && user.role !== "marcaje") {

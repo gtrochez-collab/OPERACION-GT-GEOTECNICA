@@ -137,3 +137,49 @@ test("cajas: salida contra la caja, rellenar, mover de estante, resumen", () => 
   const r2 = prepararImportacion(parseTabla("nombre,categoria,tipo,cantidad,ubicacion,marca,cajas,estante,nivel\nPica jumbo,Insumos,caja,15,GeoDrill Vault,Drill Master,6,Estante A,2").filas, { ubicaciones: ubic });
   assert.equal(r2.listos[0].tipo, "caja"); assert.equal(r2.listos[0].cajas, 6); assert.equal(r2.listos[0].estanteNombre, "Estante A"); assert.equal(r2.listos[0].nivel, "2");
 });
+
+import { resolverCodigo, codigoNivel, nivelesDe, posicionDe, itemsEnEstante, itemsEnNivel, itemsSinEstante, resumenDe, movimientosDe, muebleLabel } from "../src/geoinventory-calc.js";
+
+test("ubicaciones/estantes/niveles con código y QR; posición de cualquier artículo", () => {
+  const guardadas = [
+    { id: "vault", codigo: "UBI-0002" },
+    { id: "of:1", tipo: "oficina", nombre: "Oficina Operaciones", codigo: "UBI-0001" },
+    { id: "est:a", tipo: "estante", ubicacionId: "vault", nombre: "Estante A", mueble: "estante", niveles: 4, codigo: "EST-0001", activa: true },
+    { id: "est:r", tipo: "estante", ubicacionId: "almacen", nombre: "Rack 1", mueble: "rack", niveles: 3, codigo: "EST-0002", activa: true },
+  ];
+  const ubicaciones = ubicacionesDe({ guardadas, proyectos: [{ short: "AMICI" }] });
+  assert.equal(ubicaciones.find(u => u.id === "vault").codigo, "UBI-0002");
+  assert.equal(ubicaciones.find(u => u.id === "of:1").codigo, "UBI-0001");
+  assert.equal(codigoNivel(guardadas[2], 2), "EST-0001-N2");
+  assert.deepEqual(nivelesDe(guardadas[3]), ["1", "2", "3"]);
+  assert.equal(muebleLabel(guardadas[3]), "Rack");
+  assert.equal(codigoDeTexto("https://x/APP/#inv=EST-0001-N2"), "EST-0001-N2");
+  assert.equal(codigoDeTexto("ubi-0001"), "UBI-0001");
+  const items = [
+    { id: "c1", codigo: "CAJ-0001", tipo: "caja", ubicacionId: "vault", estanteId: "est:a", nivel: "2", caja: { contenido: "Pica", cantidad: 15, capacidad: 15 } },
+    { id: "c2", codigo: "CAJ-0002", tipo: "caja", ubicacionId: "vault", estanteId: "", nivel: "", caja: { contenido: "Pica", cantidad: 0, capacidad: 15 } },
+    { id: "m1", codigo: "MAT-0001", tipo: "cantidad", stock: { almacen: 50, "proy:AMICI": 10 }, posiciones: { almacen: { estanteId: "est:r", nivel: "3" } } },
+    { id: "t1", codigo: "TEC-0001", tipo: "individual", ubicacionId: "almacen", estanteId: "est:r", nivel: "1" },
+  ];
+  assert.deepEqual(resolverCodigo("UBI-0002", { items, guardadas, ubicaciones }), { tipo: "ubicacion", ubicacionId: "vault" });
+  assert.equal(resolverCodigo("EST-0001", { items, guardadas, ubicaciones }).tipo, "estante");
+  const rn = resolverCodigo("EST-0001-N2", { items, guardadas, ubicaciones }); assert.equal(rn.tipo, "nivel"); assert.equal(rn.nivel, "2");
+  assert.equal(resolverCodigo("EST-0001-N9", { items, guardadas, ubicaciones }), null);
+  assert.equal(resolverCodigo("CAJ-0001", { items, guardadas, ubicaciones }).item.id, "c1");
+  assert.deepEqual(posicionDe(items[2], "almacen"), { estanteId: "est:r", nivel: "3" });
+  assert.deepEqual(posicionDe(items[2], "proy:AMICI"), { estanteId: "", nivel: "" });
+  assert.deepEqual(itemsEnEstante(items, guardadas[3]).map(i => i.id), ["m1", "t1"]);
+  assert.deepEqual(itemsEnNivel(items, guardadas[3], 1).map(i => i.id), ["t1"]);
+  assert.deepEqual(itemsEnNivel(items, guardadas[2], 2).map(i => i.id), ["c1"]);
+  assert.deepEqual(itemsSinEstante(items, "vault", [guardadas[2]]).map(i => i.id), ["c2"]);
+  const r = resumenDe(itemsEnEstante(items, guardadas[2])); assert.equal(r.cajas, 1); assert.equal(r.enCajas[0].unidades, 15);
+  // ubicar un artículo por cantidad en un nivel; mover un individual de nivel
+  let x = aplicarMovimiento(items[2], { accion: "ubicar", en: "proy:AMICI", estanteId: "est:z", nivel: "1" });
+  assert.deepEqual(x.item.posiciones["proy:AMICI"], { estanteId: "est:z", nivel: "1" });
+  assert.equal(aplicarMovimiento(items[2], { accion: "ubicar", en: "taller", estanteId: "est:z" }).error, "No hay existencias en esa ubicación.");
+  x = aplicarMovimiento(items[3], { accion: "mover", a: "almacen", estanteId: "est:r", nivel: "2" });
+  assert.equal(x.item.nivel, "2"); assert.equal(x.mov.aNivel, "2");
+  assert.equal(aplicarMovimiento(items[3], { accion: "mover", a: "almacen", estanteId: "est:r", nivel: "1" }).error, "Ya está ahí.");
+  x = aplicarMovimiento(items[3], { accion: "mover", a: "of:1" }); assert.equal(x.item.estanteId, ""); assert.equal(x.item.nivel, "");
+  assert.deepEqual(movimientosDe([{ a: "vault" }, { de: "almacen" }, { en: "vault" }, { a: "x" }], "vault").length, 2);
+});

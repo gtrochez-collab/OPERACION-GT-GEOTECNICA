@@ -1638,7 +1638,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Vault → AMICI"), entrada = rellenar (sube capacidad si se pasa), ajuste,
   mover (ubicación + estante + nivel; `deEstante/aEstante/deNivel/aNivel`).
   **Estantes** viven en `inv-ubicaciones` como `{id "est:<id>", tipo
-  "estante", ubicacionId, nombre, niveles, orden, activa}` (`estantesDe`,
+  "estante", mueble, codigo EST-…, ubicacionId, nombre, niveles, orden, activa}` (`estantesDe`,
   `textoEstante` → "Estante A · Nivel 2"); se crean desde la pestaña
   **Estantes** ("+ Estante", prompt nombre + niveles; ✎ renombrar/niveles; ✕
   solo si no tiene cajas) o inline en Agregar ("+ Nuevo estante"). Pestaña
@@ -1646,7 +1646,8 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   chips de resumen por contenido (`resumenCajas`: "45 picas · 3 cajas (1
   vacía)"), "Etiquetas de las cajas (N)", y cada estante con sus niveles de
   arriba hacia abajo y las cajas como chips de color (verde llena · ámbar
-  parcial · gris vacía: `nivelCaja`) + "+ Caja" en cada nivel, que abre
+  parcial · gris vacía: `nivelCaja`) — ⚠ esa pestaña se RETIRÓ el 14-oct (ver
+  NAVEGACIÓN POR UBICACIONES más abajo) + "+ Caja" en cada nivel, que abre
   Agregar con ubicación, estante y nivel YA puestos (`setUltimo`). En Agregar
   la pill "Caja (picas, portapicas…)" muestra el paso "La caja": estante
   (pills) y nivel, marca, tamaño, "Cuántas trae cada caja" y "¿Cuántas cajas
@@ -1667,6 +1668,72 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (15), mover al nivel 3 — el tablero y la nube lo reflejaron; datos borrados
   después. ⚠ El ✕ de quitar estante lleva `aria-label="Quitar estante"` para
   no confundirse con el ✕ del modal.
+  **NAVEGACIÓN POR UBICACIONES (14-oct-2026, Gerson: "la pestaña Estantes es
+  ilógica; en Inicio cajitas de vidrio con las ubicaciones, pico adentro y veo
+  su inventario; si tiene estantes, cajitas con los estantes, entro y salen
+  los niveles, entro al nivel y salen las cajitas; cada estante, rack y nivel
+  con su QR; las oficinas con un código para pegar el QR afuera")**: se
+  RETIRÓ la pestaña Estantes. Pestañas: Inicio · Agregar · Buscar ·
+  Ubicaciones · Herramientas · Movimientos. **Inicio** = `ruta {ubic, est,
+  niv}` (estado; tocar "Inicio" estando en Inicio vuelve a la raíz):
+  raíz con Escanear QR (azul) + Agregar + "Filtrar ubicaciones o escribir un
+  código" (Enter con un código lo abre), tira compacta de contadores, "Tus
+  ubicaciones" (donde `responsable === userKey`, resaltadas y NO repetidas
+  abajo) y grupos de tarjetas `.gt-vidrio` (`tarjetaUbicacion`): Almacén y
+  bodegas · Oficinas de plantel (+ Nueva oficina) · Proyectos con inventario
+  (los demás tras "Ver los N proyectos sin inventario"). Todos los que entran
+  al módulo ven todas (los visores también; los residentes siguen SIN
+  acceso). `renderUbicacionVista` (migas, cabecera con chip del código/QR,
+  Agregar aquí, + Estante / rack, Responsable; tarjetas de estantes/racks;
+  "Fuera de estante" o el inventario por categoría; movimientos de aquí →
+  Movimientos filtrado) → `renderEstanteVista` (tarjeta por NIVEL 1..N con
+  lo que tiene, su código; Editar/Quitar; QR del estante y niveles) →
+  `renderNivelVista` (cajas como `tarjetaCaja` con barra de llenado + otros
+  artículos; pills para saltar de nivel; Agregar aquí con ubicación, estante
+  y nivel puestos — en el Vault arranca en tipo Caja, fuera del Vault vuelve
+  a Por cantidad). Proyectos y oficinas NO llevan sub-ubicaciones: todo cae
+  en su inventario general (salvo que se les cree un estante).
+  **Posición para TODO artículo** (`posicionDe`): individuales y cajas
+  `estanteId` + `nivel`; por cantidad `posiciones {[ubicacionId]: {estanteId,
+  nivel}}` (acción `ubicar` en la ficha: "Ubicar en estante"); `Mover` de
+  individuales/cajas elige ubicación + estante + nivel (`PosicionPicker`).
+  Helpers `itemsEnUbicacion/EnEstante/EnNivel/SinEstante`, `resumenDe`,
+  `movimientosDe`. **Códigos y QR**: ubicaciones `UBI-0001` (oficina nueva lo
+  recibe al crearse y se abre su QR de una; fijas y proyectos lo reciben BAJO
+  DEMANDA con `asegurarCodigos` al pedir su QR — se guarda un registro
+  `{id, tipo, codigo}` en inv-ubicaciones), estantes/racks `EST-0001` (al
+  crearse; `mueble` estante|rack) y su NIVEL `EST-0001-N2` (`codigoNivel`).
+  `resolverCodigo` + `abrirCodigo` llevan cualquier código escaneado/tipeado
+  a la ficha, ubicación, estante o nivel; `#inv=` acepta todos (App.jsx no
+  cambió). `QRImpl` (modal) muestra el QR grande + Imprimir etiqueta.
+  **Etiquetas** (`generarEtiquetas({grandes, chicas})`, UN solo PDF —dos
+  descargas seguidas las bloquea el navegador): GRANDES 4 por carta (2×2 de
+  4.25×5.5", franja naranja, nombre, QR 2.6", código) para oficinas,
+  bodegas y estantes; CHICAS Avery 3×8 para niveles, cajas y artículos.
+  "QR de estantes y niveles" = grande del estante + chica por nivel.
+  **Pestaña Ubicaciones** = administración: filas con responsable, artículos,
+  estantes, chip del código/QR y ✎; "QR de almacén, bodegas y oficinas".
+  **Movimientos**: filtro por ubicación (`movUbic`). **Agregar** (Gerson:
+  "más compacto, aprovechemos el ancho, ese negro no me encanta"): a DOS
+  COLUMNAS desde 1000 px (`dosColumnas`), tarjetas más bajas, número del paso
+  en gris claro, `Segmentado` (control estilo iOS, pista gris y opción activa
+  blanca) para tipo/herramienta/tamaño/nivel/mueble, foto como cuadro que
+  abre la cámara + "o desde la galería", **unidad en MENÚ** (`UnidadSelect`
+  con las 26 de GeoCost + "Otra…"), estante/nivel opcional para cualquier
+  tipo (obligatorio para cajas si la ubicación tiene estantes) con "+
+  Estante / rack" en línea. Se corrigió el placeholder que mostraba `24&quot;`.
+  Verificado el 14-oct (escritorio y celular, admin y Óscar) sobre la nube
+  real: Inicio con tarjetas; Vault › + Estante (EST-0001, 4 niveles) › Nivel
+  2 › Agregar aquí › 2 cajas de 15 picas aparecen en el nivel; Oficina
+  Operaciones nueva → UBI-0001 con su QR; Almacén › Rack A (3 niveles) ›
+  cemento en nivel 3 con unidad Bolsa del menú; "EST-0001-N2" y "UBI-0001"
+  tecleados abren su vista; QR del Vault generado bajo demanda (UBI-0002);
+  Óscar ve "Tus ubicaciones" con el Almacén, puede Agregar y no ve Quitar;
+  PDF de etiquetas revisado como imagen. Todo borrado después y el
+  responsable real del Almacén (Óscar) quedó intacto.
+  **Panel**: GeoSafety, GeoDrill Vault y Mis Tareas llevan `oculto: true` en
+  MODULES (14-oct, "de momento"): no salen en el panel; el código sigue y Mis
+  Tareas se abre igual desde la tarjeta TO-DOS de la bienvenida.
   **Fuera de esta versión** (dejado preparado): historial de reparaciones,
   traslados con confirmación, aprobaciones, costos/stock mínimo, conexión con
   GeoSupply/GeoShopping, migración de GeoDrill Vault (sus 76 cajas de gdv-items

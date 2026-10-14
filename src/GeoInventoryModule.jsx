@@ -32,8 +32,9 @@ import {
   stockDe, stockEn, ubicacionesConStock, aplicarMovimiento, textoMovimiento, keyMovimientos, ACCIONES,
   permisosDe, resumenInventario, buscarItems, UNIDADES, num, plantillaCSV, parseTabla, prepararImportacion,
   esCaja, PREFIJO_CAJA, prefijoDe, CONTENIDOS_CAJA, MARCAS_CAJA, TAMANOS_CAJA, tamanoLabel, nombreCaja, nivelCaja, estantesDe, nombreEstante, textoEstante, resumenCajas,
+  PREFIJO_UBIC, PREFIJO_EST, MUEBLES, muebleLabel, codigoNivel, nivelesDe, resolverCodigo, posicionDe, itemsEnUbicacion, itemsEnEstante, itemsEnNivel, itemsSinEstante, resumenDe, movimientosDe,
 } from "./geoinventory-calc.js";
-import { generarEtiquetasPDF, qrDataUrl, urlDeFicha } from "./geoinventory-etiquetas.js";
+import { generarEtiquetas, generarEtiquetasPDF, qrDataUrl, urlDeFicha } from "./geoinventory-etiquetas.js";
 
 const ORANGE = "#E8762D";
 const ORANGE_DARK = "#C75F1F";
@@ -78,6 +79,12 @@ const ICO = {
   qr: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><path d="M14 14h2v2h-2zM18 14h2v2h-2zM14 18h2v2h-2zM18 18h2v2h-2z" /></>,
   imprimir: <><path d="M6 9V4h12v5M6 18H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2" /><rect x="6" y="14" width="12" height="6" /></>,
   check: <><path d="m5 12 4.5 4.5L19 7" /></>,
+  oficina: <><rect x="4" y="3" width="16" height="18" rx="1.5" /><path d="M9 7h1M14 7h1M9 11h1M14 11h1M9 15h1M14 15h1" /><path d="M10 21v-3h4v3" /></>,
+  bodega: <><path d="M3 10 12 4l9 6v10H3V10Z" /><path d="M7 20v-6h10v6M7 17h10" /></>,
+  taller: <><path d="M14.5 4.5a4 4 0 0 0-5.2 5.2L4 15l5 5 5.3-5.3a4 4 0 0 0 5.2-5.2l-2.7 2.7-2.3-2.3 2.7-2.7Z" /></>,
+  proyecto: <><path d="M4 20V9l8-5 8 5v11" /><path d="M9 20v-5h6v5" /></>,
+  nivel: <><path d="M4 7h16M4 12h16M4 17h16" /></>,
+  flecha: <><path d="m9 6 6 6-6 6" /></>,
   caja: <><path d="M3 9h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9Z" /><path d="M3 9l2-4h14l2 4" /><path d="M10 13h4" /></>,
   estante: <><path d="M4 4v16M20 4v16" /><path d="M4 9h16M4 15h16" /><path d="M7 6.5h3M14 6.5h3M7 12.5h3M14 12.5h3" /></>,
 };
@@ -147,20 +154,68 @@ function BuscaEmpleado({ emps, value, onChange, placeholder = "Buscar colaborado
 // ═══════════════════════════════════════════════════════════════════════════
 // ⚠ A nivel de módulo: un componente definido DENTRO del form se remonta en
 // cada re-render y los inputs pierden el foco con cada tecla.
+// 14-oct-2026 (Gerson: "más compacto, aprovechemos el ancho; ese negro no me
+// encanta, suavemos gris"): tarjetas más bajas, número en gris claro.
 function PasoCaja({ n, titulo, children, extra, isMobile }) {
-  return <div className="gt-vidrio" style={{ padding: isMobile ? 14 : 18, display: "flex", flexDirection: "column", gap: 10 }}>
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <span style={{ width: 26, height: 26, borderRadius: "50%", background: CHARCOAL, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "800 12px/1 var(--sans)", flexShrink: 0 }}>{n}</span>
-      <span style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</span>
+  return <div className="gt-vidrio" style={{ padding: isMobile ? 12 : 14, display: "flex", flexDirection: "column", gap: 9 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 22 }}>
+      <span style={{ width: 22, height: 22, borderRadius: "50%", background: "rgba(44,42,40,.08)", color: "#6E6862", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "800 11px/1 var(--sans)", flexShrink: 0 }}>{n}</span>
+      <span style={{ font: "800 13.5px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</span>
       {extra && <span style={{ marginLeft: "auto" }}>{extra}</span>}
     </div>
     {children}
   </div>;
 }
-const FORM_VACIO = { foto: null, nombre: "", tipo: "cantidad", categoria: "materiales", cantidad: "", unidad: "Unidad", estado: "", asignadoA: "", asignadoNombre: "", iguales: "1", herrTipo: "broca", diametro: "", marca: "", modelo: "", serie: "", estante: "", notas: "",
-  // caja (GeoDrill Vault): qué trae, cuántas trae, en qué estante y nivel, cuántas cajas iguales
-  cajaMarca: "", tamano: "", capacidad: "", cajas: "1", estanteId: "", nivel: "" };
-function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, estantes, onNuevoEstante, onGuardar, onSumar, ocupado, isMobile, ultimo, setUltimo }) {
+// Control segmentado estilo iOS: pista gris, la opción activa en blanco.
+function Segmentado({ opciones, valor, onChange, lleno, chico }) {
+  return <div role="radiogroup" style={{ display: lleno ? "flex" : "inline-flex", gap: 3, padding: 3, borderRadius: 12, background: "rgba(44,42,40,.07)", flexWrap: "wrap", maxWidth: "100%", boxSizing: "border-box" }}>
+    {opciones.map(([k, l]) => { const act = valor === k; return <button key={k} type="button" role="radio" aria-checked={act} onClick={() => onChange(k)}
+      style={{ flex: lleno ? "1 1 0" : "0 0 auto", minHeight: chico ? 32 : 38, padding: chico ? "6px 11px" : "7px 14px", borderRadius: 9, border: "none", background: act ? "#fff" : "transparent", boxShadow: act ? "0 1px 3px rgba(44,42,40,.16), 0 0 0 .5px rgba(44,42,40,.08)" : "none", color: act ? CHARCOAL : "#6E6862", font: `${act ? 800 : 600} ${chico ? 12 : 13}px/1.1 var(--sans)`, cursor: "pointer", whiteSpace: "nowrap" }}>{l}</button>; })}
+  </div>;
+}
+// Unidad: menú con TODAS las de GeoCost (14-oct: "prefiero un menú con todas
+// las disponibles para seleccionar una") + "Otra…" para escribir.
+function UnidadSelect({ value, onChange, style: sx }) {
+  const enLista = UNIDADES.includes(value);
+  const [otra, setOtra] = useState(!!value && !enLista);
+  if (otra) return <div style={{ display: "flex", gap: 6, ...(sx || {}) }}>
+    <input value={value} onChange={e => onChange(e.target.value)} placeholder="Unidad" style={{ ...CTRL, fontWeight: 700 }} autoFocus />
+    <button type="button" onClick={() => { setOtra(false); onChange("Unidad"); }} title="Volver a la lista" style={{ border: "none", background: "rgba(44,42,40,.07)", borderRadius: 10, padding: "0 10px", cursor: "pointer", color: "#6E6862", fontWeight: 800, fontFamily: "inherit" }}>▾</button>
+  </div>;
+  return <select value={enLista ? value : "Unidad"} onChange={e => { if (e.target.value === "__otra") { setOtra(true); onChange(""); } else onChange(e.target.value); }} style={{ ...CTRL, fontWeight: 700, ...(sx || {}) }}>
+    {UNIDADES.map(x => <option key={x} value={x}>{x}</option>)}
+    <option value="__otra">Otra…</option>
+  </select>;
+}
+// Estante/rack + nivel dentro de la ubicación (para cualquier artículo).
+function PosicionPicker({ estantes, estanteId, nivel, onChange, requerido, onNuevo, ocupado, isMobile }) {
+  const [nuevo, setNuevo] = useState(null);
+  const sel = estantes.find(e => e.id === estanteId);
+  if (nuevo) return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) auto 84px auto", gap: 8, alignItems: "center", background: "rgba(44,42,40,.04)", borderRadius: 12, padding: 8 }}>
+    <input value={nuevo.nombre} onChange={e => setNuevo(p => ({ ...p, nombre: e.target.value }))} placeholder="Nombre · ej. Estante A" style={CTRL} autoFocus />
+    <Segmentado chico opciones={MUEBLES} valor={nuevo.mueble} onChange={v => setNuevo(p => ({ ...p, mueble: v, nombre: p.nombre.replace(/^(Estante|Rack)/, v === "rack" ? "Rack" : "Estante") }))} />
+    <input type="number" inputMode="numeric" min="1" max="12" value={nuevo.niveles} onChange={e => setNuevo(p => ({ ...p, niveles: e.target.value }))} title="Niveles" placeholder="Niveles" style={{ ...CTRL, textAlign: "center" }} />
+    <div style={{ display: "flex", gap: 6 }}><Btn small disabled={ocupado} onClick={async () => { const id = await onNuevo(nuevo); if (id) { onChange(id, "1"); setNuevo(null); } }}>Crear</Btn><Btn small variant="ghost" onClick={() => setNuevo(null)}>✕</Btn></div>
+  </div>;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      {estantes.length > 0 && <select value={estanteId || ""} onChange={e => onChange(e.target.value, e.target.value ? (e.target.value === estanteId ? nivel : "1") : "")} style={{ ...CTRL, flex: 1, minWidth: 170, width: "auto" }}>
+        {!requerido && <option value="">Fuera de estante</option>}
+        {requerido && !estanteId && <option value="">— Elegí el estante o rack —</option>}
+        {estantes.map(e => <option key={e.id} value={e.id}>{e.nombre} · {e.niveles} niveles</option>)}
+      </select>}
+      {onNuevo && <button type="button" onClick={() => setNuevo({ nombre: `Estante ${String.fromCharCode(65 + estantes.length)}`, mueble: "estante", niveles: "4" })} style={{ minHeight: 40, padding: "8px 12px", borderRadius: 12, border: "1px dashed rgba(44,42,40,.22)", background: "transparent", color: "#6E6862", font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>+ Estante / rack</button>}
+      {estantes.length === 0 && <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{requerido ? "Esta ubicación no tiene estantes: creá el primero." : "Sin estantes acá (opcional)."}</span>}
+    </div>
+    {sel && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><span style={LBL}>Nivel</span><Segmentado chico opciones={nivelesDe(sel).map(n => [n, n])} valor={String(nivel || "")} onChange={v => onChange(sel.id, v)} /></div>}
+  </div>;
+}
+const FORM_VACIO = { foto: null, nombre: "", tipo: "cantidad", categoria: "materiales", cantidad: "", unidad: "Unidad", estado: "", asignadoA: "", asignadoNombre: "", iguales: "1", herrTipo: "broca", diametro: "", marca: "", modelo: "", serie: "", notas: "",
+  // caja (picas, portapicas): qué trae, cuántas trae, cuántas cajas iguales
+  cajaMarca: "", tamano: "", capacidad: "", cajas: "1",
+  // posición dentro de la ubicación (estante/rack + nivel), para cualquier tipo
+  estanteId: "", nivel: "" };
+function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, estantes, onNuevoEstante, onGuardar, onSumar, ocupado, isMobile, dosColumnas, ultimo, setUltimo }) {
   const [f, setF] = useState(() => ({ ...FORM_VACIO, ...(ultimo || {}) }));
   const [existente, setExistente] = useState(null);    // artículo existente elegido de las sugerencias
   const [sumar, setSumar] = useState("");
@@ -173,7 +228,9 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, esta
   const esCajaF = f.tipo === "caja";
   const estantesAqui = estantesDe(estantes, ubicFija);
   const estanteSel = estantesAqui.find(e => e.id === f.estanteId);
-  const [nuevoEst, setNuevoEst] = useState(null);   // {nombre, niveles} mientras se crea uno
+  // Si la ubicación cambia y el estante elegido no es de ahí, se suelta
+  useEffect(() => { if (f.estanteId && !estantesAqui.some(e => e.id === f.estanteId)) setF(p => ({ ...p, estanteId: "", nivel: "" })); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ubicFija, estantes.length]);
   const contenidosUsados = [...new Set([...CONTENIDOS_CAJA, ...items.filter(i => i.tipo === "caja").map(i => i.caja?.contenido).filter(Boolean)])];
   const sugeridos = existente ? [] : sugerirExistentes(f.nombre, items, { categoria: f.categoria });
   const estados = estadosDe({ categoria: f.categoria });
@@ -194,15 +251,15 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, esta
   const validar = () => {
     if (!ubic) return "Elegí la ubicación donde estás cargando.";
     if (existente?.tipo === "cantidad") return num(sumar) > 0 ? null : "Escribí cuánto vas a sumar.";
-    if (!String(f.nombre).trim()) return "Escribí el nombre.";
+    if (!String(f.nombre).trim()) return esCajaF ? "Escribí qué trae la caja." : "Escribí el nombre.";
     if (f.tipo === "cantidad" && !(num(f.cantidad) > 0)) return "Escribí la cantidad.";
     if (f.tipo === "cantidad" && !String(f.unidad).trim()) return "Elegí la unidad.";
     if (f.tipo === "individual" && !(num(f.iguales) >= 1 && num(f.iguales) <= 200)) return "¿Cuántos iguales? Entre 1 y 200.";
     if (esHer && !esCajaF && !String(f.diametro).trim()) return "Escribí el diámetro de la herramienta.";
     if (esCajaF && !(num(f.capacidad) > 0)) return "¿Cuántas trae cada caja?";
     if (esCajaF && !(num(f.cajas) >= 1 && num(f.cajas) <= 200)) return "¿Cuántas cajas iguales? Entre 1 y 200.";
-    if (esCajaF && estantesAqui.length && !f.estanteId) return "Elegí el estante (o creá uno).";
-    if (esCajaF && estanteSel && !f.nivel) return "Elegí el nivel del estante.";
+    if (esCajaF && estantesAqui.length && !f.estanteId) return "Elegí el estante o rack (o creá uno).";
+    if (estanteSel && !f.nivel) return "Elegí el nivel.";
     return null;
   };
   const guardar = async (otro) => {
@@ -220,144 +277,133 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, esta
     if (otro) setTimeout(() => nombreRef.current?.focus(), 50);
   };
   const Paso = PasoCaja;   // componente ESTABLE (a nivel de módulo)
-  const inputFoto = (capture) => <label style={{ flex: 1, minHeight: 56, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 14px", borderRadius: 14, border: `1px dashed ${ORANGE}`, background: "rgba(232,118,45,.06)", color: "var(--naranja-tinta)", font: "800 13.5px/1 var(--sans)", cursor: procesando ? "wait" : "pointer" }}>
-    <Ico d={capture ? ICO.camara : ICO.galeria} size={20} /> {procesando ? "Procesando…" : capture ? "Tomar foto" : "De la galería"}
-    <input type="file" accept="image/*" {...(capture ? { capture: "environment" } : {})} disabled={procesando} style={{ display: "none" }} onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; tomarFoto(file); }} />
+  const fotoCaja = <label title="Tomar foto" style={{ width: 92, height: 92, flexShrink: 0, borderRadius: 16, border: f.foto || f.fotoDe ? "none" : `1.5px dashed ${ORANGE}`, background: "rgba(232,118,45,.06)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, color: "var(--naranja-tinta)", font: "800 11.5px/1 var(--sans)", cursor: procesando ? "wait" : "pointer", overflow: "hidden", position: "relative" }}>
+    {f.foto ? <img src={f.foto.dataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : f.fotoDe ? <Foto foto={f.fotoDe} size={92} radius={16} categoria={f.categoria} /> : <><Ico d={ICO.camara} size={24} />{procesando ? "…" : "Foto"}</>}
+    <input type="file" accept="image/*" capture="environment" disabled={procesando} style={{ display: "none" }} onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; tomarFoto(file); }} />
+  </label>;
+  const linkGaleria = <label style={{ fontSize: 12, fontWeight: 800, color: ORANGE_DARK, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
+    <Ico d={ICO.galeria} size={14} /> {f.foto || f.fotoDe ? "Cambiar desde la galería" : "o desde la galería"}
+    <input type="file" accept="image/*" disabled={procesando} style={{ display: "none" }} onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; tomarFoto(file); }} />
   </label>;
 
-  return <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 720, margin: "0 auto", width: "100%" }}>
-    {guardado && <div style={{ padding: "12px 16px", borderRadius: 14, background: C_VERDE.bg, color: C_VERDE.color, fontSize: 13.5, display: "flex", alignItems: "center", gap: 10, fontWeight: 700 }}><Ico d={ICO.check} size={18} /> {guardado}</div>}
-    <Paso isMobile={isMobile} n="1" titulo="Dónde estás cargando" extra={ubic && <Chip c={C_NARANJA} style={{ fontSize: 12 }}>{TIPO_UBICACION[ubic.tipo]}</Chip>}>
-      <select value={ubicFija} onChange={e => setUbicFija(e.target.value)} style={{ ...CTRL, fontWeight: 700, fontSize: 15 }}>
+  const colIzq = <>
+    <Paso isMobile={isMobile} n="1" titulo="Dónde" extra={ubic && <Chip c={C_NARANJA} style={{ fontSize: 11.5 }}>{TIPO_UBICACION[ubic.tipo]}</Chip>}>
+      <select value={ubicFija} onChange={e => setUbicFija(e.target.value)} style={{ ...CTRL, fontWeight: 700 }}>
         <option value="">— Elegí la ubicación —</option>
         {ubicaciones.map(x => <option key={x.id} value={x.id}>{x.nombre}{x.tipo === "proyecto" && x.nombreLargo && x.nombreLargo !== x.nombre ? ` — ${x.nombreLargo}` : ""}</option>)}
       </select>
-      <div style={{ fontSize: 12, color: "var(--text-3)" }}>Se queda fija: todo lo que cargués va ahí hasta que la cambiés.</div>
+      {ubic && (estantesAqui.length > 0 || esCajaF || ["almacen", "vault"].includes(ubic.tipo)) && <PosicionPicker estantes={estantesAqui} estanteId={f.estanteId} nivel={f.nivel} requerido={esCajaF && estantesAqui.length > 0} isMobile={isMobile} ocupado={ocupado}
+        onChange={(estanteId, nivel) => setF(p => ({ ...p, estanteId, nivel }))} onNuevo={onNuevoEstante ? (d) => onNuevoEstante(ubicFija, d) : null} />}
+      <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Se queda fija para lo que sigás cargando.</div>
     </Paso>
-
-    <Paso isMobile={isMobile} n="2" titulo="Foto">
-      {f.foto || f.fotoDe
-        ? <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {f.foto ? <img src={f.foto.dataUrl} alt="" style={{ width: 96, height: 96, borderRadius: 14, objectFit: "cover" }} /> : <Foto foto={f.fotoDe} size={96} radius={14} categoria={f.categoria} />}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
-            <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>{f.foto ? "Lista." : "Usa la misma foto del artículo existente."}</div>
-            <div style={{ display: "flex", gap: 8 }}>{inputFoto(true)}{!isMobile && inputFoto(false)}</div>
-            <button type="button" onClick={() => setF(p => ({ ...p, foto: null, fotoDe: null }))} style={{ alignSelf: "flex-start", background: "none", border: "none", color: C_ROJO.color, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Quitar foto</button>
-          </div>
+    <Paso isMobile={isMobile} n="2" titulo="Foto y nombre">
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+        {fotoCaja}
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 7 }}>
+          <input ref={nombreRef} value={f.nombre} onChange={e => { u("nombre", e.target.value); if (existente) limpiarExistente(); }} list={esCajaF ? "inv-contenidos" : undefined} placeholder={esCajaF ? "Qué trae la caja · ej. Pica, Portapica" : 'Ej. Cemento GU 42.5 kg · Broca 1.20 m · Monitor 24"'} style={{ ...CTRL, fontSize: 15, fontWeight: 600 }} autoCapitalize="sentences" />
+          {esCajaF && <datalist id="inv-contenidos">{contenidosUsados.map(x => <option key={x} value={x} />)}</datalist>}
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>{linkGaleria}{(f.foto || f.fotoDe) && <button type="button" onClick={() => setF(p => ({ ...p, foto: null, fotoDe: null }))} style={{ background: "none", border: "none", color: C_ROJO.color, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12, padding: 0 }}>Quitar foto</button>}</div>
         </div>
-        : <div style={{ display: "flex", gap: 8 }}>{inputFoto(true)}{inputFoto(false)}</div>}
-    </Paso>
-
-    <Paso isMobile={isMobile} n="3" titulo="Qué es">
-      <input ref={nombreRef} value={f.nombre} onChange={e => { u("nombre", e.target.value); if (existente) limpiarExistente(); }} list={esCajaF ? "inv-contenidos" : undefined} placeholder={esCajaF ? "Qué trae la caja · ej. Pica, Portapica" : "Ej. Cemento GU 42.5 kg · Broca 1.20 m · Monitor 24&quot;"} style={{ ...CTRL, fontSize: 16, fontWeight: 600 }} autoCapitalize="sentences" />
-      {esCajaF && <datalist id="inv-contenidos">{contenidosUsados.map(x => <option key={x} value={x} />)}</datalist>}
+      </div>
       {sugeridos.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={LBL}>¿Es alguno de estos? Tocalo y no se duplica</div>
-        {sugeridos.map(it => <button key={it.id} type="button" onClick={() => elegirExistente(it)} style={{ display: "flex", alignItems: "center", gap: 10, padding: 8, borderRadius: 12, border: "1px solid rgba(44,42,40,.1)", background: "rgba(255,255,255,.8)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", minHeight: 52 }}>
-          <Foto foto={it.foto} size={40} radius={10} categoria={it.categoria} />
+        {sugeridos.map(it => <button key={it.id} type="button" onClick={() => elegirExistente(it)} style={{ display: "flex", alignItems: "center", gap: 10, padding: 7, borderRadius: 12, border: "1px solid rgba(44,42,40,.1)", background: "rgba(255,255,255,.8)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", minHeight: 48 }}>
+          <Foto foto={it.foto} size={36} radius={9} categoria={it.categoria} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.nombre}</div>
-            <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{it.codigo} · {it.tipo === "cantidad" ? `${fmtN(stockDe(it))} ${it.unidad} en total${ubicFija ? ` · ${fmtN(stockEn(it, ubicFija))} acá` : ""}` : it.tipo === "caja" ? `caja · ${fmtN(it.caja?.cantidad)} de ${fmtN(it.caja?.capacidad || it.caja?.cantidad)}` : `individual · ${estadoLabel(it)}`}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.nombre}</div>
+            <div style={{ fontSize: 11, color: "var(--text-3)" }}>{it.codigo} · {it.tipo === "cantidad" ? `${fmtN(stockDe(it))} ${it.unidad} en total${ubicFija ? ` · ${fmtN(stockEn(it, ubicFija))} acá` : ""}` : it.tipo === "caja" ? `caja · ${fmtN(it.caja?.cantidad)} de ${fmtN(it.caja?.capacidad || it.caja?.cantidad)}` : `individual · ${estadoLabel(it)}`}</div>
           </div>
           <span style={{ color: "var(--naranja-tinta)", fontWeight: 800, fontSize: 12 }}>{it.tipo === "cantidad" ? "Sumar" : it.tipo === "caja" ? "Otra igual" : "Otro igual"}</span>
         </button>)}
       </div>}
-      {existente && existente.tipo === "cantidad" && <div style={{ padding: 12, borderRadius: 14, background: C_VERDE.bg, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontSize: 13, color: C_VERDE.color }}><b>Ya existe: {existente.nombre}</b> ({existente.codigo}) · hay {fmtN(stockEn(existente, ubicFija))} {existente.unidad} en {ubic?.nombre || "esta ubicación"}. Solo sumás.</div>
+      {existente && existente.tipo === "cantidad" && <div style={{ padding: 10, borderRadius: 12, background: C_VERDE.bg, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 12.5, color: C_VERDE.color }}><b>Ya existe: {existente.nombre}</b> ({existente.codigo}) · hay {fmtN(stockEn(existente, ubicFija))} {existente.unidad} en {ubic?.nombre || "esta ubicación"}. Solo sumás.</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input type="number" inputMode="decimal" min="0" step="any" value={sumar} onChange={e => setSumar(e.target.value)} placeholder="Cuánto entra" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right", flex: 1 }} autoFocus />
+          <input type="number" inputMode="decimal" min="0" step="any" value={sumar} onChange={e => setSumar(e.target.value)} placeholder="Cuánto entra" style={{ ...CTRL, fontSize: 17, fontWeight: 800, textAlign: "right", flex: 1 }} autoFocus />
           <span style={{ fontWeight: 700, color: "var(--text-2)" }}>{existente.unidad}</span>
           <button type="button" onClick={limpiarExistente} style={{ background: "none", border: "none", color: "var(--text-3)", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>No es este</button>
         </div>
       </div>}
-      {existente && existente.tipo !== "cantidad" && <div style={{ fontSize: 12.5, color: C_AZUL.color, background: C_AZUL.bg, borderRadius: 12, padding: "9px 12px" }}>Vas a crear <b>{existente.tipo === "caja" ? "otra caja igual" : "otro igual"}</b> a {existente.codigo}, con su propio código. <button type="button" onClick={limpiarExistente} style={{ background: "none", border: "none", color: C_AZUL.color, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 12, textDecoration: "underline" }}>No es igual</button></div>}
+      {existente && existente.tipo !== "cantidad" && <div style={{ fontSize: 12, color: C_AZUL.color, background: C_AZUL.bg, borderRadius: 12, padding: "8px 12px" }}>Vas a crear <b>{existente.tipo === "caja" ? "otra caja igual" : "otro igual"}</b> a {existente.codigo}, con su propio código. <button type="button" onClick={limpiarExistente} style={{ background: "none", border: "none", color: C_AZUL.color, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 12, textDecoration: "underline" }}>No es igual</button></div>}
     </Paso>
+  </>;
 
-    {!(existente?.tipo === "cantidad") && <>
-      <Paso isMobile={isMobile} n="4" titulo="Tipo y categoría">
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {pillBtn("Por cantidad", f.tipo === "cantidad", () => u("tipo", "cantidad"), { grande: true, c: CHARCOAL })}
-          {pillBtn("Individual", f.tipo === "individual", () => u("tipo", "individual"), { grande: true, c: CHARCOAL })}
-          {pillBtn("Caja (picas, portapicas…)", f.tipo === "caja", () => setF(p => ({ ...p, tipo: "caja", categoria: p.categoria === "materiales" ? "insumos_perforacion" : p.categoria })), { grande: true, c: CHARCOAL })}
+  const colDer = !(existente?.tipo === "cantidad") && <>
+    <Paso isMobile={isMobile} n="3" titulo="Tipo y categoría">
+      <Segmentado lleno opciones={[["cantidad", "Por cantidad"], ["individual", "Individual"], ["caja", "Caja"]]} valor={f.tipo} onChange={v => setF(p => ({ ...p, tipo: v, categoria: v === "caja" && p.categoria === "materiales" ? "insumos_perforacion" : p.categoria }))} />
+      <div style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.4 }}>{f.tipo === "cantidad" ? "Cosas iguales entre sí: cemento, sillas, bolsas. Se cuenta cuántas hay." : f.tipo === "caja" ? "Cajita con N unidades (picas, portapicas). Cada caja lleva su código y QR; las salidas se descuentan de ESA caja." : "Cada unidad es única: con serie, asignada a una persona o herramienta de perforación."}</div>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, minmax(0,1fr))", gap: 6 }}>
+        {CATEGORIAS.map(c => { const act = f.categoria === c.id; return <button key={c.id} type="button" onClick={() => { setF(p => ({ ...p, categoria: c.id, estado: "", tipo: c.id === "herramientas_perforacion" && p.tipo === "cantidad" ? "individual" : p.tipo })); }} aria-pressed={act}
+          style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", minHeight: 42, borderRadius: 12, border: act ? "1px solid transparent" : "1px solid rgba(44,42,40,.10)", background: act ? ORANGE_DARK : "rgba(255,255,255,.65)", color: act ? "#fff" : "#5C5853", font: "700 12.5px/1.15 var(--sans)", cursor: "pointer", textAlign: "left" }}>
+          <Ico d={ICO[c.id]} size={18} /> {c.corto}</button>; })}
+      </div>
+    </Paso>
+    {esCajaF
+      ? <Paso isMobile={isMobile} n="4" titulo="La caja" extra={estanteSel && f.nivel ? <Chip c={C_NARANJA} style={{ fontSize: 11.5 }}>{estanteSel.nombre} · Nivel {f.nivel}</Chip> : null}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1fr) auto", gap: 8, alignItems: "center" }}>
+          <input list="inv-marcas-caja" value={f.cajaMarca} onChange={e => u("cajaMarca", e.target.value)} placeholder="Marca (opcional) · ej. Drill Master" style={CTRL} />
+          <datalist id="inv-marcas-caja">{[...new Set([...MARCAS_CAJA, ...items.filter(i => i.tipo === "caja").map(i => i.caja?.marca).filter(Boolean)])].map(x => <option key={x} value={x} />)}</datalist>
+          <Segmentado chico opciones={[["", "Sin tamaño"], ...TAMANOS_CAJA]} valor={f.tamano} onChange={v => u("tamano", v)} />
         </div>
-        <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{f.tipo === "cantidad" ? "Cosas iguales entre sí: cemento, sillas, bolsas. Se cuenta cuántas hay." : f.tipo === "caja" ? "Una cajita con N unidades adentro. Cada caja lleva su propio código y QR; las salidas se descuentan de ESA caja." : "Cada unidad es única: lleva número de serie, se asigna a una persona o es herramienta de perforación."}</div>
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: 8 }}>
-          {CATEGORIAS.map(c => { const act = f.categoria === c.id; return <button key={c.id} type="button" onClick={() => { u("categoria", c.id); if (c.id === "herramientas_perforacion") u("tipo", "individual"); u("estado", ""); }} aria-pressed={act}
-            style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 12px", minHeight: 52, borderRadius: 14, border: act ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: act ? ORANGE_DARK : "rgba(255,255,255,.65)", color: act ? "#fff" : "#5C5853", font: "700 13px/1.2 var(--sans)", cursor: "pointer", textAlign: "left" }}>
-            <Ico d={ICO[c.id]} size={20} /> {c.corto}</button>; })}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={LBL}>Cuántas trae cada caja</div><input type="number" inputMode="numeric" min="1" step="1" value={f.capacidad} onChange={e => u("capacidad", e.target.value)} placeholder="15" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "center" }} /></div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={LBL}>¿Cuántas cajas iguales?</div><input type="number" inputMode="numeric" min="1" max="200" value={f.cajas} onChange={e => u("cajas", e.target.value)} style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "center" }} /></div>
+        </div>
+        {num(f.cajas) > 1 && <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Se crean {num(f.cajas)} cajas de {fmtN(f.capacidad) || "…"} {String(f.nombre || "unidades").toLowerCase()}, cada una con su código y QR, en {estanteSel ? `${estanteSel.nombre} nivel ${f.nivel || "?"}` : ubic?.nombre || "la ubicación"}.</div>}
+      </Paso>
+      : f.tipo === "cantidad"
+      ? <Paso isMobile={isMobile} n="4" titulo="Cuánto hay">
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 8 }}>
+          <input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} />
+          <UnidadSelect value={f.unidad} onChange={v => u("unidad", v)} />
         </div>
       </Paso>
+      : <Paso isMobile={isMobile} n="4" titulo={esHer ? "La herramienta" : "Detalle"}>
+        {esHer && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "auto minmax(0,1fr)", gap: 8, alignItems: "center" }}>
+          <Segmentado opciones={TIPOS_HERRAMIENTA.map(t => [t.id, t.label])} valor={f.herrTipo} onChange={v => u("herrTipo", v)} />
+          <input value={f.diametro} onChange={e => u("diametro", e.target.value)} placeholder="Diámetro · ej. 1.20 m" style={{ ...CTRL, fontWeight: 700 }} />
+        </div>}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><span style={LBL}>Estado</span>{Object.entries(estados).map(([k, e]) => pillBtn(e.label, (f.estado || estadoInicial(f.categoria)) === k, () => u("estado", k), { key: k, c: TONO[e.tono]?.color }))}</div>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 8 }}>
+          <input value={f.marca} onChange={e => u("marca", e.target.value)} placeholder="Marca (opcional)" style={CTRL} />
+          <input value={f.modelo} onChange={e => u("modelo", e.target.value)} placeholder="Modelo (opcional)" style={CTRL} />
+          <input value={f.serie} onChange={e => u("serie", e.target.value)} placeholder="N° de serie (opcional)" style={CTRL} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1fr) auto", gap: 8, alignItems: "start" }}>
+          <BuscaEmpleado emps={emps} value={f.asignadoA} onChange={(id, nombre) => setF(p => ({ ...p, asignadoA: id, asignadoNombre: nombre }))} placeholder="Asignado a (opcional) · buscar colaborador" />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(44,42,40,.04)", borderRadius: 12, padding: "4px 4px 4px 12px" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: "#6E6862", whiteSpace: "nowrap" }}>¿Cuántos iguales?</span>
+            <input type="number" inputMode="numeric" min="1" max="200" value={f.iguales} onChange={e => u("iguales", e.target.value)} style={{ ...CTRL, width: 70, textAlign: "center", fontWeight: 800, minHeight: 38 }} />
+          </div>
+        </div>
+        {num(f.iguales) > 1 && <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Se crean {num(f.iguales)} con la misma foto y datos, cada uno con su código{f.asignadoA ? " (el asignado va en el primero; los demás se asignan desde su ficha)" : ""}.</div>}
+      </Paso>}
+    <input value={f.notas} onChange={e => u("notas", e.target.value)} placeholder="Nota (opcional)" style={{ ...CTRL, background: "rgba(255,255,255,.7)" }} />
+  </>;
 
-      {esCajaF
-        ? <Paso isMobile={isMobile} n="5" titulo="La caja" extra={estanteSel && f.nivel ? <Chip c={C_NARANJA} style={{ fontSize: 12 }}>{estanteSel.nombre} · Nivel {f.nivel}</Chip> : null}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={LBL}>Estante</div>
-            {nuevoEst
-              ? <div style={{ display: "grid", gridTemplateColumns: "1fr 90px auto", gap: 8, alignItems: "center" }}>
-                <input value={nuevoEst.nombre} onChange={e => setNuevoEst(p => ({ ...p, nombre: e.target.value }))} placeholder="Nombre · ej. Estante A" style={CTRL} autoFocus />
-                <input type="number" inputMode="numeric" min="1" max="12" value={nuevoEst.niveles} onChange={e => setNuevoEst(p => ({ ...p, niveles: e.target.value }))} placeholder="Niveles" title="Niveles" style={{ ...CTRL, textAlign: "center" }} />
-                <div style={{ display: "flex", gap: 6 }}><Btn small disabled={ocupado} onClick={async () => { const id = await onNuevoEstante(ubicFija, nuevoEst); if (id) { setF(p => ({ ...p, estanteId: id, nivel: "1" })); setNuevoEst(null); } }}>Crear</Btn><Btn small variant="ghost" onClick={() => setNuevoEst(null)}>✕</Btn></div>
-              </div>
-              : <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {estantesAqui.map(e => pillBtn(e.nombre, f.estanteId === e.id, () => setF(p => ({ ...p, estanteId: e.id, nivel: p.estanteId === e.id ? p.nivel : "1" })), { key: e.id, grande: true, c: CHARCOAL }))}
-                {pillBtn("+ Nuevo estante", false, () => setNuevoEst({ nombre: `Estante ${String.fromCharCode(65 + estantesAqui.length)}`, niveles: "4" }), { grande: true })}
-                {estantesAqui.length === 0 && <span style={{ fontSize: 11.5, color: "var(--text-3)", alignSelf: "center" }}>Esta ubicación no tiene estantes todavía.</span>}
-              </div>}
-            {estanteSel && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><span style={LBL}>Nivel</span>{Array.from({ length: Math.max(1, num(estanteSel.niveles) || 1) }, (_, i) => String(i + 1)).map(n => pillBtn(n, f.nivel === n, () => u("nivel", n), { key: n, grande: true }))}</div>}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
-            <input list="inv-marcas-caja" value={f.cajaMarca} onChange={e => u("cajaMarca", e.target.value)} placeholder="Marca (opcional) · ej. Drill Master" style={CTRL} />
-            <datalist id="inv-marcas-caja">{[...new Set([...MARCAS_CAJA, ...items.filter(i => i.tipo === "caja").map(i => i.caja?.marca).filter(Boolean)])].map(x => <option key={x} value={x} />)}</datalist>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>{TAMANOS_CAJA.map(([k, l]) => pillBtn(l, f.tamano === k, () => u("tamano", f.tamano === k ? "" : k), { key: k }))}</div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={LBL}>Cuántas trae cada caja</div><input type="number" inputMode="numeric" min="1" step="1" value={f.capacidad} onChange={e => u("capacidad", e.target.value)} placeholder="15" style={{ ...CTRL, fontSize: 20, fontWeight: 800, textAlign: "center" }} /></div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={LBL}>¿Cuántas cajas iguales?</div><input type="number" inputMode="numeric" min="1" max="200" value={f.cajas} onChange={e => u("cajas", e.target.value)} style={{ ...CTRL, fontSize: 20, fontWeight: 800, textAlign: "center" }} /></div>
-          </div>
-          {num(f.cajas) > 1 && <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Se crean {num(f.cajas)} cajas de {fmtN(f.capacidad) || "…"} {String(f.nombre || "unidades").toLowerCase()}, cada una con su código y su QR, en {estanteSel ? `${estanteSel.nombre} nivel ${f.nivel || "?"}` : ubic?.nombre || "la ubicación"}.</div>}
-        </Paso>
-        : f.tipo === "cantidad"
-        ? <Paso isMobile={isMobile} n="5" titulo="Cuánto hay">
-          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 8 }}>
-            <input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 20, fontWeight: 800, textAlign: "right" }} />
-            <input list="inv-unidades" value={f.unidad} onChange={e => u("unidad", e.target.value)} placeholder="Unidad" style={{ ...CTRL, fontWeight: 700 }} />
-            <datalist id="inv-unidades">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist>
-          </div>
-          {ubic?.tipo === "almacen" && <input value={f.estante} onChange={e => u("estante", e.target.value)} placeholder="Estante (opcional) · ej. A-2" list="inv-estantes" style={CTRL} />}
-          <datalist id="inv-estantes">{[...new Set(items.map(i => i.estante).filter(Boolean))].map(x => <option key={x} value={x} />)}</datalist>
-        </Paso>
-        : <Paso isMobile={isMobile} n="5" titulo={esHer ? "La herramienta" : "Detalle"}>
-          {esHer && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
-            <div style={{ display: "flex", gap: 6 }}>{TIPOS_HERRAMIENTA.map(t => pillBtn(t.label, f.herrTipo === t.id, () => u("herrTipo", t.id), { key: t.id, grande: true, c: CHARCOAL }))}</div>
-            <input value={f.diametro} onChange={e => u("diametro", e.target.value)} placeholder="Diámetro · ej. 1.20 m" style={{ ...CTRL, fontWeight: 700 }} />
-          </div>}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={LBL}>Estado</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{Object.entries(estados).map(([k, e]) => pillBtn(e.label, (f.estado || estadoInicial(f.categoria)) === k, () => u("estado", k), { key: k, grande: true, c: TONO[e.tono]?.color }))}</div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 8 }}>
-            <input value={f.marca} onChange={e => u("marca", e.target.value)} placeholder="Marca (opcional)" style={CTRL} />
-            <input value={f.modelo} onChange={e => u("modelo", e.target.value)} placeholder="Modelo (opcional)" style={CTRL} />
-            <input value={f.serie} onChange={e => u("serie", e.target.value)} placeholder="N° de serie (opcional)" style={CTRL} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={LBL}>Asignado a (opcional)</div>
-            <BuscaEmpleado emps={emps} value={f.asignadoA} onChange={(id, nombre) => setF(p => ({ ...p, asignadoA: id, asignadoNombre: nombre }))} />
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(44,42,40,.04)", borderRadius: 12, padding: "8px 12px" }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, flex: 1 }}>¿Cuántos iguales?</span>
-            <input type="number" inputMode="numeric" min="1" max="200" value={f.iguales} onChange={e => u("iguales", e.target.value)} style={{ ...CTRL, width: 90, textAlign: "center", fontWeight: 800, fontSize: 16 }} />
-          </div>
-          {num(f.iguales) > 1 && <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Se crean {num(f.iguales)} con la misma foto y datos, cada uno con su código{f.asignadoA ? " (el asignado solo va en el primero; los demás los asignás desde su ficha)" : ""}.</div>}
-        </Paso>}
-      <Textarea label="Nota (opcional)" value={f.notas} onChange={e => u("notas", e.target.value)} style={{ minHeight: 48 }} placeholder="Algo que valga la pena recordar" />
-    </>}
-
-    <div style={{ position: "sticky", bottom: 8, zIndex: 3, display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <button type="button" disabled={ocupado || procesando} onClick={() => guardar(true)} style={{ flex: 2, minHeight: 54, borderRadius: 16, border: "none", background: ORANGE_DARK, color: "#fff", font: "800 15px/1 var(--sans)", cursor: ocupado ? "wait" : "pointer", boxShadow: "0 10px 24px rgba(199,95,31,.28)", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+  return <div style={{ display: "grid", gridTemplateColumns: dosColumnas ? "minmax(0,1fr) minmax(0,1.1fr)" : "minmax(0,1fr)", gap: 12, maxWidth: dosColumnas ? 1180 : 720, margin: "0 auto", width: "100%", alignItems: "start" }}>
+    {guardado && <div style={{ gridColumn: "1 / -1", padding: "10px 14px", borderRadius: 14, background: C_VERDE.bg, color: C_VERDE.color, fontSize: 13.5, display: "flex", alignItems: "center", gap: 10, fontWeight: 700 }}><Ico d={ICO.check} size={18} /> {guardado}</div>}
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>{colIzq}</div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>{colDer}</div>
+    <div style={{ gridColumn: "1 / -1", position: "sticky", bottom: 8, zIndex: 3, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <button type="button" disabled={ocupado || procesando} onClick={() => guardar(true)} style={{ flex: 2, minHeight: 52, borderRadius: 16, border: "none", background: ORANGE_DARK, color: "#fff", font: "800 15px/1 var(--sans)", cursor: ocupado ? "wait" : "pointer", boxShadow: "0 10px 24px rgba(199,95,31,.28)", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
         <Ico d={ICO.agregar} size={20} /> {ocupado ? "Guardando…" : existente?.tipo === "cantidad" ? "Sumar y agregar otro" : esCajaF && num(f.cajas) > 1 ? `Guardar ${num(f.cajas)} cajas y seguir` : "Guardar y agregar otro"}</button>
-      <button type="button" disabled={ocupado || procesando} onClick={() => guardar(false)} style={{ flex: 1, minHeight: 54, borderRadius: 16, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.9)", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Guardar</button>
+      <button type="button" disabled={ocupado || procesando} onClick={() => guardar(false)} style={{ flex: 1, minHeight: 52, borderRadius: 16, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.92)", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Guardar</button>
     </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FORM de estante / rack — a nivel de módulo
+// ═══════════════════════════════════════════════════════════════════════════
+function EstanteFormImpl({ estante, ubicacionNombre, onSave, onClose, ocupado }) {
+  const [f, setF] = useState(() => ({ nombre: estante?.nombre || "Estante A", mueble: estante?.mueble || "estante", niveles: String(estante?.niveles || 4) }));
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>En <b>{ubicacionNombre}</b>{estante?.codigo ? <> · código <b style={{ fontFamily: "var(--mono)" }}>{estante.codigo}</b></> : ""}</div>
+    <Segmentado lleno opciones={MUEBLES} valor={f.mueble} onChange={v => setF(p => ({ ...p, mueble: v, nombre: estante ? p.nombre : p.nombre.replace(/^(Estante|Rack)/, v === "rack" ? "Rack" : "Estante") }))} />
+    <Input label="Nombre *" value={f.nombre} onChange={e => setF(p => ({ ...p, nombre: e.target.value }))} autoFocus />
+    <Input label="¿Cuántos niveles tiene?" type="number" min="1" max="12" value={f.niveles} onChange={e => setF(p => ({ ...p, niveles: e.target.value }))} />
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn variant="ghost" onClick={onClose} disabled={ocupado}>Cancelar</Btn><Btn disabled={ocupado} onClick={() => { if (!String(f.nombre).trim()) return alert("Escribí el nombre."); onSave(f); }}>{ocupado ? "Guardando…" : estante ? "Guardar" : "Crear"}</Btn></div>
   </div>;
 }
 
@@ -372,6 +418,8 @@ function UbicacionFormImpl({ ubicacion, usuarios, onSave, onClose, ocupado }) {
   return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
     {(nueva || ubicacion.tipo === "oficina") && <Input label="Nombre de la oficina *" value={f.nombre} onChange={e => u("nombre", e.target.value)} placeholder="Ej. Oficina Operaciones · Recepción · Sala de reuniones" autoFocus />}
     {!nueva && ubicacion.tipo !== "oficina" && <div style={{ fontSize: 13, color: "var(--text-2)" }}><b>{ubicacion.nombre}</b> · {TIPO_UBICACION[ubicacion.tipo]}</div>}
+    {!nueva && ubicacion.codigo && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Código <b style={{ fontFamily: "var(--mono)", color: CHARCOAL }}>{ubicacion.codigo}</b> (no cambia aunque cambie el nombre)</div>}
+    {nueva && <div style={{ fontSize: 12, color: "var(--text-3)" }}>Al guardar le doy su código (UBI-…) y te muestro el QR para imprimirlo y pegarlo afuera de la oficina.</div>}
     <Select label="Responsable (usuario del sistema)" emptyLabel="— Sin responsable —" options={usuarios.map(x => ({ value: x.username, label: `${x.label} · ${ROLE_LABEL[x.role] || x.role}` }))} value={f.responsable} onChange={e => u("responsable", e.target.value)} />
     {!nueva && ubicacion.tipo === "oficina" && <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}><input type="checkbox" checked={f.activa} onChange={e => u("activa", e.target.checked)} /> Activa (si la desactivás deja de aparecer, pero no se borra nada)</label>}
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
@@ -397,6 +445,10 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms, onAccio
   const enUbic = ubicacionesConStock(item);
   const caja = item.tipo === "caja";
   const estantesDestino = estantesDe(estantes, f.a || item.ubicacionId);
+  const nombreEst = (id) => estantes.find(e => e.id === id)?.nombre || "";
+  const textoPos = (ubId) => { const p = posicionDe(item, ubId); return p.estanteId && nombreEst(p.estanteId) ? `${nombreEst(p.estanteId)} · Nivel ${p.nivel}` : ""; };
+  // Por cantidad: ubicaciones con existencias que tienen estantes (para "Ubicar")
+  const ubicConEstantes = item.tipo === "cantidad" ? enUbic.filter(x => estantesDe(estantes, x.id).length > 0) : [];
   const ubicPrincipal = item.tipo === "individual" ? item.ubicacionId : (enUbic[0]?.id || "");
   const maquina = maquinas.find(m => m.id === item.maquinaId);
   const abrir = (a) => { setAccion(accion === a ? null : a); setF({ de: ubicPrincipal, a: "", cantidad: "", nuevo: "", motivo: "", en: ubicPrincipal }); };
@@ -429,7 +481,7 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms, onAccio
         {(item.marca || item.modelo || item.serie) && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{[item.marca, item.modelo, item.serie ? `S/N ${item.serie}` : ""].filter(Boolean).join(" · ")}</div>}
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {enUbic.length === 0 && <div style={{ fontSize: 13, color: C_ROJO.color, fontWeight: 700 }}>Sin existencias en ninguna ubicación</div>}
-          {enUbic.map(x => <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}><Ico d={ICO.ubicaciones} size={15} color={ORANGE_DARK} /><b>{nombreUbicacion(ubicaciones, x.id)}</b>{item.tipo === "cantidad" && <span style={{ color: "var(--text-2)" }}>· {fmtN(x.cantidad)} {item.unidad}</span>}{item.estante && !item.estanteId && <span style={{ color: "var(--text-3)" }}>· estante {item.estante}</span>}</div>)}
+          {enUbic.map(x => <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, flexWrap: "wrap" }}><Ico d={ICO.ubicaciones} size={15} color={ORANGE_DARK} /><b>{nombreUbicacion(ubicaciones, x.id)}</b>{item.tipo === "cantidad" && <span style={{ color: "var(--text-2)" }}>· {fmtN(x.cantidad)} {item.unidad}</span>}{!caja && textoPos(x.id) && <span style={{ color: "var(--text-2)" }}>· {textoPos(x.id)}</span>}{item.estante && !textoPos(x.id) && <span style={{ color: "var(--text-3)" }}>· estante {item.estante}</span>}</div>)}
           {item.tipo === "individual" && <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}><Ico d={ICO.persona} size={15} color={item.asignadoA ? C_AZUL.color : "rgba(44,42,40,.3)"} />{item.asignadoA ? <b>{item.asignadoNombre}</b> : <span style={{ color: "var(--text-3)" }}>Sin asignar</span>}</div>}
         </div>
         {item.notas && <div style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "pre-line" }}>{item.notas}</div>}
@@ -452,6 +504,7 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms, onAccio
       {btnAccion({ id: "salida", label: caja ? "Salida de la caja" : "Salida", icono: ICO.movimientos, c: ORANGE_DARK, show: (item.tipo === "cantidad" || caja) && perms.cargar })}
       {btnAccion({ id: "entrada", label: caja ? "Rellenar" : "Entrada", icono: ICO.agregar, c: C_VERDE.color, show: (item.tipo === "cantidad" || caja) && perms.cargar })}
       {btnAccion({ id: "mover", label: "Mover", icono: ICO.ubicaciones, c: ORANGE_DARK, show: (item.tipo === "individual" || caja) && perms.mover })}
+      {btnAccion({ id: "ubicar", label: "Ubicar en estante", icono: ICO.estante, c: ORANGE_DARK, show: ubicConEstantes.length > 0 && perms.mover })}
       {btnAccion({ id: "asignar", label: item.asignadoA ? "Reasignar" : "Asignar", icono: ICO.persona, c: C_AZUL.color, show: item.tipo === "individual" && perms.asignar })}
       {btnAccion({ id: "ajustar", label: "Ajustar", c: C_ROJO.color, show: (item.tipo === "cantidad" || caja) && perms.ajustar })}
       {perms.editar && <button type="button" onClick={() => onEditar(item)} style={{ minHeight: 48, padding: "10px 12px", borderRadius: 14, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "700 13px/1 var(--sans)", cursor: "pointer" }}>Editar</button>}
@@ -472,18 +525,18 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms, onAccio
       <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Nota (opcional)" style={CTRL} />
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => ejecutar({ accion: "salida", de: caja ? item.ubicacionId : f.de, a: f.a, cantidad: f.cantidad, motivo: f.motivo, entregadoA: f.entregadoA, entregadoNombre: f.entregadoNombre })}>Registrar salida</Btn></div>
     </>)}
-    {accion === "mover" && caja && cajaUI(<>
-      <div style={LBL}>Ubicación</div>{selUbic(f.a || item.ubicacionId, v => setF(p => ({ ...p, a: v, estanteId: "", nivel: "" })))}
-      {estantesDestino.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><span style={LBL}>Estante</span>{estantesDestino.map(e => pillBtn(e.nombre, (f.estanteId ?? item.estanteId) === e.id, () => setF(p => ({ ...p, estanteId: e.id, nivel: "1" })), { key: e.id, c: CHARCOAL }))}</div>}
-      {(() => { const e = estantesDestino.find(x => x.id === (f.estanteId ?? item.estanteId)); return e ? <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><span style={LBL}>Nivel</span>{Array.from({ length: Math.max(1, num(e.niveles) || 1) }, (_, i) => String(i + 1)).map(n => pillBtn(n, String(f.nivel ?? item.nivel) === n, () => u("nivel", n), { key: n }))}</div> : null; })()}
-      <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Nota (opcional)" style={CTRL} />
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => ejecutar({ accion: "mover", a: f.a || item.ubicacionId, estanteId: f.estanteId ?? item.estanteId ?? "", nivel: f.nivel ?? item.nivel ?? "", motivo: f.motivo })}>Mover</Btn></div>
-    </>)}
-    {accion === "mover" && !caja && cajaUI(<>
-      <div style={LBL}>Mover a</div>{selUbic(f.a || "", v => u("a", v), item.ubicacionId)}
+    {accion === "mover" && cajaUI(<>
+      <div style={LBL}>Ubicación</div>{selUbic(f.a || item.ubicacionId, v => setF(p => ({ ...p, a: v, estanteId: undefined, nivel: undefined })))}
+      {estantesDestino.length > 0 && <PosicionPicker estantes={estantesDestino} estanteId={f.estanteId ?? ((f.a || item.ubicacionId) === item.ubicacionId ? item.estanteId || "" : "")} nivel={f.nivel ?? ((f.a || item.ubicacionId) === item.ubicacionId ? item.nivel || "" : "")} isMobile={isMobile} onChange={(estanteId, nivel) => setF(p => ({ ...p, estanteId, nivel }))} />}
       {esHerramienta(item) && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><span style={LBL}>Queda</span>{Object.entries(estados).filter(([k]) => k !== "en_operacion").map(([k, e]) => pillBtn(e.label, (f.estado || item.estado) === k, () => u("estado", k), { key: k, c: TONO[e.tono]?.color }))}</div>}
       <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Nota (opcional)" style={CTRL} />
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado || !f.a} onClick={() => ejecutar({ accion: "mover", a: f.a, motivo: f.motivo, ...(esHerramienta(item) && f.estado ? { estado: f.estado } : {}) })}>Mover</Btn></div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => { const a = f.a || item.ubicacionId; const mismo = a === item.ubicacionId; ejecutar({ accion: "mover", a, estanteId: f.estanteId ?? (mismo ? item.estanteId || "" : ""), nivel: f.nivel ?? (mismo ? item.nivel || "" : ""), motivo: f.motivo, ...(esHerramienta(item) && f.estado ? { estado: f.estado } : {}) }); }}>Mover</Btn></div>
+    </>)}
+    {accion === "ubicar" && cajaUI(<>
+      <div style={LBL}>En</div>
+      <select value={f.en || ubicConEstantes[0]?.id || ""} onChange={e => setF(p => ({ ...p, en: e.target.value, estanteId: undefined, nivel: undefined }))} style={CTRL}>{ubicConEstantes.map(x => <option key={x.id} value={x.id}>{nombreUbicacion(ubicaciones, x.id)} · {fmtN(x.cantidad)} {item.unidad}</option>)}</select>
+      {(() => { const en = f.en || ubicConEstantes[0]?.id; const p = posicionDe(item, en); return <PosicionPicker estantes={estantesDe(estantes, en)} estanteId={f.estanteId ?? p.estanteId} nivel={f.nivel ?? p.nivel} isMobile={isMobile} onChange={(estanteId, nivel) => setF(q => ({ ...q, estanteId, nivel }))} />; })()}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => { const en = f.en || ubicConEstantes[0]?.id; const p = posicionDe(item, en); ejecutar({ accion: "ubicar", en, estanteId: f.estanteId ?? p.estanteId, nivel: f.nivel ?? p.nivel }); }}>Guardar lugar</Btn></div>
     </>)}
     {accion === "asignar" && cajaUI(<>
       <div style={LBL}>Asignar a (colaborador de GeoTeam)</div><BuscaEmpleado emps={emps} value={f.empId ?? item.asignadoA ?? ""} onChange={(id, nombre) => setF(p => ({ ...p, empId: id, empNombre: nombre, tocado: true }))} />
@@ -569,6 +622,26 @@ function ImportarFormImpl({ ubicaciones, ubicFija, emps, onImportar, onClose, oc
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// QR de una ubicación / estante / nivel (modal) — a nivel de módulo
+// ═══════════════════════════════════════════════════════════════════════════
+function QRImpl({ codigo, titulo, subtitulo, onImprimir, extraBoton, onClose }) {
+  const [qr, setQr] = useState(null);
+  useEffect(() => { let vivo = true; qrDataUrl(urlDeFicha(codigo), 360).then(d => { if (vivo) setQr(d); }).catch(() => {}); return () => { vivo = false; }; }, [codigo]);
+  return <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, textAlign: "center" }}>
+    <div style={{ font: "800 20px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</div>
+    {subtitulo && <div style={{ fontSize: 13, color: "var(--text-2)" }}>{subtitulo}</div>}
+    <div style={{ padding: 14, background: "#fff", borderRadius: 18, boxShadow: "0 0 0 1px rgba(44,42,40,.08)" }}>{qr ? <img src={qr} alt={`QR ${codigo}`} style={{ width: 230, height: 230, display: "block" }} /> : <div style={{ width: 230, height: 230 }} />}</div>
+    <div style={{ fontFamily: "var(--mono)", fontWeight: 800, fontSize: 18, color: CHARCOAL }}>{codigo}</div>
+    <div style={{ fontSize: 12, color: "var(--text-3)", maxWidth: 320 }}>Pegalo afuera. Al escanearlo con la cámara del celular se abre GeoInventory directo acá.</div>
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+      {onImprimir && <Btn onClick={onImprimir}><Ico d={ICO.imprimir} size={15} /> Imprimir etiqueta</Btn>}
+      {extraBoton}
+      <Btn variant="ghost" onClick={onClose}>Cerrar</Btn>
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ESCÁNER con la cámara (modal) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
 function EscanerImpl({ onCodigo, onClose }) {
@@ -645,13 +718,15 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   }, []);
   useEffect(() => { const onFocus = () => { if (!ocupado && !modal) cargar(); }; window.addEventListener("focus", onFocus); return () => window.removeEventListener("focus", onFocus); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ocupado, modal]);
-  // Enlace profundo del QR: #inv=HER-0001 → abre la ficha
+  // Enlace profundo del QR: #inv=HER-0001 (artículo) · UBI-0003 (ubicación) ·
+  // EST-0002 (estante/rack) · EST-0002-N3 (nivel) → abre lo que corresponde.
   useEffect(() => {
     if (!loaded || !hashRef.current) return;
-    const it = items.find(i => String(i.codigo).toUpperCase() === hashRef.current && !i.eliminado);
+    const c = hashRef.current;
     hashRef.current = null;
     try { history.replaceState(null, "", window.location.pathname + window.location.search); } catch {}
-    if (it) setModal({ t: "ficha", id: it.id }); else alert("No encontré ese código en el inventario.");
+    abrirCodigo(c);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, items]);
 
   // ── Derivados ──
@@ -663,7 +738,13 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   })();
   const ubicaciones = ubicacionesDe({ guardadas: ubicGuardadas, proyectos });
   const estantes = estantesDe(ubicGuardadas);
-  const [estUbic, setEstUbic] = useState("vault");   // ubicación que se ve en la pestaña Estantes
+  // Inicio = navegación por ubicaciones (14-oct-2026): ubicación › estante/rack › nivel
+  const [ruta, setRutaRaw] = useState({});                 // {ubic, est, niv}
+  const setRuta = (r) => { setRutaRaw(r || {}); try { document.getElementById("inv-scroll")?.scrollTo({ top: 0 }); } catch {} };
+  const [verProySin, setVerProySin] = useState(false);
+  const [movUbic, setMovUbic] = useState("");
+  const [qUbic, setQUbic] = useState("");
+  const anchoGrande = !useIsMobile(1000);
   const usuarios = [...USERS.filter(x => x.role !== "marcaje"), ...usuariosNube].map(x => ({ username: x.username, label: x.label, role: x.role }));
   const vivos = items.filter(i => i && !i.eliminado);
   const resumen = resumenInventario(items);
@@ -672,7 +753,6 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     { id: "inicio", label: "Inicio" },
     ...(perms.cargar ? [{ id: "agregar", label: "Agregar" }] : []),
     { id: "buscar", label: "Buscar" },
-    { id: "estantes", label: "Estantes" },
     { id: "ubicaciones", label: "Ubicaciones" },
     { id: "herramientas", label: "Herramientas" },
     { id: "movimientos", label: "Movimientos" },
@@ -741,8 +821,8 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
           const it = d.tipo === "caja"
             ? { ...base, marca: "", nombre: nombreCaja({ contenido: String(d.contenido || d.nombre).trim(), marca: d.cajaMarca || d.marca || "", tamano: d.tamano || "" }), ubicacionId: d.ubicacionId, estanteId, nivel: estanteId ? String(d.nivel || "1") : "", caja: { contenido: String(d.contenido || d.nombre).trim(), marca: d.cajaMarca || d.marca || "", tamano: d.tamano || "", cantidad: num(d.capacidad || d.cantidad), capacidad: num(d.capacidad || d.cantidad) } }
             : d.tipo === "individual"
-            ? { ...base, ubicacionId: d.ubicacionId, estado: d.estado || estadoInicial(cat.id), asignadoA: k === 0 ? (d.asignadoA || "") : "", asignadoNombre: k === 0 ? (d.asignadoNombre || "") : "", ...(cat.id === "herramientas_perforacion" ? { herramienta: { tipo: d.herrTipo || d.herramienta?.tipo || "broca", diametro: String(d.diametro || d.herramienta?.diametro || "").trim() } } : {}) }
-            : { ...base, unidad: String(d.unidad || "Unidad").trim(), estante: d.estante || "", stock: { [d.ubicacionId]: num(d.cantidad) } };
+            ? { ...base, ubicacionId: d.ubicacionId, estanteId, nivel: estanteId ? String(d.nivel || "1") : "", estado: d.estado || estadoInicial(cat.id), asignadoA: k === 0 ? (d.asignadoA || "") : "", asignadoNombre: k === 0 ? (d.asignadoNombre || "") : "", ...(cat.id === "herramientas_perforacion" ? { herramienta: { tipo: d.herrTipo || d.herramienta?.tipo || "broca", diametro: String(d.diametro || d.herramienta?.diametro || "").trim() } } : {}) }
+            : { ...base, unidad: String(d.unidad || "Unidad").trim(), estante: d.estante || "", stock: { [d.ubicacionId]: num(d.cantidad) }, ...(estanteId ? { posiciones: { [d.ubicacionId]: { estanteId, nivel: String(d.nivel || "1") } } } : {}) };
           nuevos.push(it); ids.push(it.id);
           movsN.push({ id: uid(), at, ...quien(), itemId: it.id, codigo: it.codigo, nombre: it.nombre, accion: "crear", a: d.ubicacionId, cantidad: d.tipo === "cantidad" ? num(d.cantidad) : d.tipo === "caja" ? num(d.capacidad || d.cantidad) : 1, ...(d.tipo === "caja" ? { contenido: it.caja.contenido } : {}) });
           if (k === 0 && d.asignadoA && d.tipo === "individual") movsN.push({ id: uid(), at, ...quien(), itemId: it.id, codigo: it.codigo, nombre: it.nombre, accion: "asignar", asignadoA: d.asignadoA, asignadoNombre: d.asignadoNombre || "" });
@@ -794,23 +874,27 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       const at = new Date().toISOString();
       const rec = ubicacion
         ? { ...(arr.find(x => x.id === ubicacion.id) || { id: ubicacion.id, tipo: ubicacion.tipo, createdAt: at, createdBy: userKey }), ...(ubicacion.tipo === "oficina" ? { nombre: String(f.nombre).trim(), activa: f.activa !== false } : {}), responsable: f.responsable || "", responsableNombre: f.responsableNombre || "", updatedAt: at, updatedBy: userKey }
-        : { id: `of:${uid()}`, tipo: "oficina", nombre: String(f.nombre).trim(), responsable: f.responsable || "", responsableNombre: f.responsableNombre || "", activa: true, createdAt: at, createdBy: userKey, updatedAt: at };
+        : { id: `of:${uid()}`, tipo: "oficina", nombre: String(f.nombre).trim(), codigo: siguientesCodigos(arr, PREFIJO_UBIC)[0], responsable: f.responsable || "", responsableNombre: f.responsableNombre || "", activa: true, createdAt: at, createdBy: userKey, updatedAt: at };
       if (!ubicacion && arr.some(x => x.tipo === "oficina" && x.activa !== false && String(x.nombre).trim().toLowerCase() === rec.nombre.toLowerCase())) { alert("Ya hay una oficina con ese nombre."); return; }
       const next = arr.some(x => x.id === rec.id) ? arr.map(x => x.id === rec.id ? rec : x) : [...arr, rec];
       const ok = await store.set(K_UBIC, next); if (!ok) throw new Error("La nube no aceptó el guardado.");
       const back = await store.getCloud(K_UBIC);
       if (!(Array.isArray(back) ? back : []).some(x => x.id === rec.id && x.updatedAt === at)) throw new Error("La nube no confirmó el guardado.");
-      setUbicGuardadas(back); setModal(null);
+      setUbicGuardadas(back);
+      // Oficina nueva: de una vez su QR para pegarlo afuera
+      if (!ubicacion && rec.codigo) setModal({ t: "qr", codigo: rec.codigo, titulo: rec.nombre, subtitulo: "Oficina", grande: { codigo: rec.codigo, titulo: rec.nombre, subtitulo: "Oficina" } });
+      else setModal(null);
     } catch (e) { alert((e?.message || e) + "\n\nNo se guardó."); }
     finally { setOcupado(false); }
   };
   // Estantes (viven en inv-ubicaciones como tipo "estante"): mismo guardado robusto
-  const guardarRegistroUbic = async (rec) => {
+  const guardarRegistroUbic = async (rec, { prefijoCodigo = "" } = {}) => {
     if (ocupado) return null; setOcupado(true);
     try {
       const c = await store.getCloud(K_UBIC); const arr = Array.isArray(c) ? c : [];
       const at = new Date().toISOString();
       const full = { ...(arr.find(x => x.id === rec.id) || { createdAt: at, createdBy: userKey }), ...rec, updatedAt: at, updatedBy: userKey };
+      if (prefijoCodigo && !full.codigo) full.codigo = siguientesCodigos(arr, prefijoCodigo)[0];
       const next = arr.some(x => x.id === full.id) ? arr.map(x => x.id === full.id ? full : x) : [...arr, full];
       const ok = await store.set(K_UBIC, next); if (!ok) throw new Error("La nube no aceptó el guardado.");
       const back = await store.getCloud(K_UBIC);
@@ -819,22 +903,83 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     } catch (e) { alert((e?.message || e) + "\n\nNo se guardó."); return null; }
     finally { setOcupado(false); }
   };
-  const nuevoEstante = async (ubicacionId, { nombre, niveles }) => {
-    const n = String(nombre || "").trim(); if (!n) { alert("Escribí el nombre del estante."); return null; }
-    if (estantesDe(ubicGuardadas, ubicacionId).some(e => e.nombre.toLowerCase() === n.toLowerCase())) { alert("Ya hay un estante con ese nombre acá."); return null; }
-    const rec = await guardarRegistroUbic({ id: `est:${uid()}`, tipo: "estante", ubicacionId, nombre: n, niveles: Math.min(12, Math.max(1, Math.round(num(niveles) || 4))), orden: estantesDe(ubicGuardadas, ubicacionId).length + 1, activa: true });
+  const nuevoEstante = async (ubicacionId, { nombre, niveles, mueble = "estante" }) => {
+    const n = String(nombre || "").trim(); if (!n) { alert("Escribí el nombre."); return null; }
+    if (estantesDe(ubicGuardadas, ubicacionId).some(e => e.nombre.toLowerCase() === n.toLowerCase())) { alert("Ya hay uno con ese nombre acá."); return null; }
+    const rec = await guardarRegistroUbic({ id: `est:${uid()}`, tipo: "estante", mueble, ubicacionId, nombre: n, niveles: Math.min(12, Math.max(1, Math.round(num(niveles) || 4))), orden: estantesDe(ubicGuardadas, ubicacionId).length + 1, activa: true }, { prefijoCodigo: PREFIJO_EST });
     return rec?.id || null;
   };
-  const editarEstante = async (e) => {
-    const nombre = prompt("Nombre del estante:", e.nombre); if (nombre === null) return;
-    const niveles = prompt("¿Cuántos niveles tiene?", String(e.niveles || 4)); if (niveles === null) return;
-    await guardarRegistroUbic({ ...e, nombre: String(nombre).trim() || e.nombre, niveles: Math.min(12, Math.max(1, Math.round(num(niveles) || e.niveles || 4))) });
+  const guardarEstante = async (e, ubicacionId, f) => {
+    if (!e) { const id = await nuevoEstante(ubicacionId, f); if (id) setModal(null); return; }
+    const niveles = Math.min(12, Math.max(1, Math.round(num(f.niveles) || e.niveles || 4)));
+    const fuera = itemsEnEstante(vivos, e).filter(i => num(posicionDe(i, e.ubicacionId).nivel) > niveles);
+    if (fuera.length) return alert(`Hay ${fuera.length} artículo(s) en niveles arriba del ${niveles}. Movelos primero.`);
+    const rec = await guardarRegistroUbic({ ...e, nombre: String(f.nombre).trim() || e.nombre, mueble: f.mueble || e.mueble || "estante", niveles }, { prefijoCodigo: PREFIJO_EST });
+    if (rec) setModal(null);
   };
   const quitarEstante = async (e) => {
-    const enEl = vivos.filter(i => i.estanteId === e.id).length;
-    if (enEl) return alert(`Este estante tiene ${enEl} caja(s). Movelas primero.`);
-    if (!confirm(`¿Quitar el estante ${e.nombre}?`)) return;
-    await guardarRegistroUbic({ ...e, activa: false });
+    const enEl = itemsEnEstante(vivos, e).length;
+    if (enEl) return alert(`${e.nombre} tiene ${enEl} artículo(s). Movelos primero.`);
+    if (!confirm(`¿Quitar ${e.nombre}?`)) return;
+    const rec = await guardarRegistroUbic({ ...e, activa: false });
+    if (rec) setRuta({ ubic: e.ubicacionId });
+  };
+  // Códigos UBI/EST bajo demanda: las ubicaciones fijas y los proyectos no
+  // tienen registro hasta que alguien les pone responsable o pide su QR.
+  // Devuelve la lista FRESCA de inv-ubicaciones (o null si no se pudo).
+  const asegurarCodigos = async ({ ubicIds = [], estIds = [] } = {}) => {
+    const faltanU = ubicIds.filter(id => !ubicaciones.find(x => x.id === id)?.codigo);
+    const faltanE = estIds.filter(id => !estantes.find(x => x.id === id)?.codigo);
+    if (!faltanU.length && !faltanE.length) return ubicGuardadas;
+    if (!perms.imprimir) { alert("Todavía no tiene código. Pedile a Gerson, la Lic. Carolina, Óscar o Ana que generen su QR."); return null; }
+    if (ocupado) return null; setOcupado(true);
+    try {
+      const c = await store.getCloud(K_UBIC); const arr = Array.isArray(c) ? c.map(x => ({ ...x })) : [];
+      const at = new Date().toISOString();
+      faltanU.forEach(id => {
+        const i = arr.findIndex(x => x.id === id);
+        if (i >= 0 && arr[i].codigo) return;
+        const codigo = siguientesCodigos(arr, PREFIJO_UBIC)[0];
+        if (i >= 0) arr[i] = { ...arr[i], codigo, updatedAt: at, updatedBy: userKey };
+        else arr.push({ id, tipo: ubicaciones.find(x => x.id === id)?.tipo || "", codigo, createdAt: at, createdBy: userKey, updatedAt: at, updatedBy: userKey });
+      });
+      faltanE.forEach(id => { const i = arr.findIndex(x => x.id === id); if (i < 0 || arr[i].codigo) return; arr[i] = { ...arr[i], codigo: siguientesCodigos(arr, PREFIJO_EST)[0], updatedAt: at, updatedBy: userKey }; });
+      const ok = await store.set(K_UBIC, arr); if (!ok) throw new Error("La nube no aceptó el guardado.");
+      const back = await store.getCloud(K_UBIC); const lista = Array.isArray(back) ? back : [];
+      if ([...faltanU, ...faltanE].some(id => !lista.find(x => x.id === id)?.codigo)) throw new Error("La nube no confirmó los códigos.");
+      setUbicGuardadas(lista); return lista;
+    } catch (e) { alert((e?.message || e) + "\n\nNo se generó el código."); return null; }
+    finally { setOcupado(false); }
+  };
+  const subUbic = (u) => u.tipo === "proyecto" ? (u.nombreLargo && u.nombreLargo.toLowerCase() !== String(u.nombre).toLowerCase() ? u.nombreLargo : "Proyecto") : TIPO_UBICACION[u.tipo] || "";
+  const verQRUbicacion = async (u) => {
+    let codigo = u.codigo;
+    if (!codigo) { const back = await asegurarCodigos({ ubicIds: [u.id] }); if (!back) return; codigo = ubicacionesDe({ guardadas: back, proyectos }).find(x => x.id === u.id)?.codigo; }
+    if (codigo) setModal({ t: "qr", codigo, titulo: u.nombre, subtitulo: subUbic(u), grande: { codigo, titulo: u.nombre, subtitulo: subUbic(u) } });
+  };
+  const verQREstante = async (e, nivel = "") => {
+    let est = e;
+    if (!est.codigo) { const back = await asegurarCodigos({ estIds: [e.id] }); if (!back) return; est = estantesDe(back).find(x => x.id === e.id) || e; }
+    if (!est.codigo) return;
+    const ubN = nombreUbicacion(ubicaciones, est.ubicacionId);
+    if (nivel) { const codigo = codigoNivel(est, nivel); return setModal({ t: "qr", codigo, titulo: `${est.nombre} · Nivel ${nivel}`, subtitulo: ubN, chica: { codigo, nombre: `${est.nombre} · Nivel ${nivel}`, ubicacionNombre: ubN } }); }
+    setModal({ t: "qr", codigo: est.codigo, titulo: est.nombre, subtitulo: `${ubN} · ${muebleLabel(est)} de ${est.niveles} niveles`, grande: { codigo: est.codigo, titulo: est.nombre, subtitulo: `${ubN} · ${muebleLabel(est)}` }, estanteId: est.id });
+  };
+  /** PDF: etiqueta grande de cada estante/rack + una chica por cada nivel. */
+  const imprimirEstantes = async (lista, titulo) => {
+    if (!lista.length) return;
+    const back = await asegurarCodigos({ estIds: lista.map(e => e.id) }); if (!back) return;
+    const ests = estantesDe(back).filter(e => lista.some(x => x.id === e.id));
+    const ubN = (e) => nombreUbicacion(ubicaciones, e.ubicacionId);
+    try { await generarEtiquetas({ grandes: ests.map(e => ({ codigo: e.codigo, titulo: e.nombre, subtitulo: `${ubN(e)} · ${muebleLabel(e)}` })), chicas: ests.flatMap(e => nivelesDe(e).map(n => ({ codigo: codigoNivel(e, n), nombre: `${e.nombre} · Nivel ${n}`, ubicacionNombre: ubN(e) }))) }, { titulo }); }
+    catch (err) { alert("No pude generar el PDF: " + (err?.message || err)); }
+  };
+  const imprimirUbicaciones = async (lista, titulo) => {
+    if (!lista.length) return;
+    const back = await asegurarCodigos({ ubicIds: lista.map(u => u.id) }); if (!back) return;
+    const ubs = ubicacionesDe({ guardadas: back, proyectos }).filter(u => lista.some(x => x.id === u.id));
+    try { await generarEtiquetas({ grandes: ubs.map(u => ({ codigo: u.codigo, titulo: u.nombre, subtitulo: subUbic(u) })) }, { titulo }); }
+    catch (err) { alert("No pude generar el PDF: " + (err?.message || err)); }
   };
   const importar = async (listos) => {
     const defs = listos.map(l => {
@@ -853,12 +998,21 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     catch (e) { alert("No pude generar el PDF: " + (e?.message || e)); }
   };
   const verFoto = async (ref) => { const d = await cargarFoto(ref?.fileId); if (!d) return alert("No se pudo cargar la foto."); setVisor({ name: ref.name || "foto.jpg", type: "image/jpeg", dataUrl: d }); };
+  // Cualquier código (escaneado, tipeado o del lector USB) → lo que corresponde
   const abrirCodigo = (codigo) => {
-    const it = vivos.find(i => String(i.codigo).toUpperCase() === String(codigo).toUpperCase());
-    if (!it) return alert(`No encontré ${codigo} en el inventario.`);
-    setModal({ t: "ficha", id: it.id });
+    const r = resolverCodigo(codigo, { items, guardadas: ubicGuardadas, ubicaciones });
+    if (!r) return alert(`No encontré ${codigo} en el inventario.`);
+    if (r.tipo === "item") return setModal({ t: "ficha", id: r.item.id });
+    setModal(null); setSec("inicio");
+    if (r.tipo === "ubicacion") setRuta({ ubic: r.ubicacionId });
+    else if (r.tipo === "estante") setRuta({ ubic: r.estante.ubicacionId, est: r.estante.id });
+    else setRuta({ ubic: r.estante.ubicacionId, est: r.estante.id, niv: r.nivel });
   };
-  const irAUbicacion = (id) => { setFUbic(id); setQ(""); setFCat(""); setFEstado(""); setFTipo(""); setSec("buscar"); };
+  const irAUbicacion = (id) => { setSec("inicio"); setRuta({ ubic: id }); };
+  // Fuera del Vault, si lo último que se cargó fueron cajas, vuelve a "por cantidad"
+  const agregarAqui = (ubicacionId, { estanteId = "", nivel = "", tipo } = {}) => { setUbicFija(ubicacionId); setUltimo(p => { const t = tipo || (p?.tipo === "caja" ? "cantidad" : p?.tipo); return { ...(p || {}), estanteId, nivel, ...(t ? { tipo: t, ...(t === "caja" ? { categoria: "insumos_perforacion" } : {}) } : {}) }; }); setSec("agregar"); };
+  const nombreEstanteDe = (id) => estantes.find(e => e.id === id)?.nombre || "";
+  const textoPosicion = (it, ubId) => { const p = posicionDe(it, ubId); const n = nombreEstanteDe(p.estanteId); return n ? `${n} · Nivel ${p.nivel}` : ""; };
 
   // ── Piezas de lista ──
   const filaItem = (it, { mostrarUbic = true } = {}) => {
@@ -872,41 +1026,201 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
           {it.asignadoA && <Chip c={C_AZUL} style={{ fontSize: 11 }}>{it.asignadoNombre}</Chip>}
         </div>
         <div style={{ fontSize: 14.5, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.tipo === "caja" ? `Caja · ${it.nombre}` : it.nombre}</div>
-        {mostrarUbic && <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.tipo === "caja" ? [nombreUbicacion(ubicaciones, it.ubicacionId), textoEstante(estantes, it)].filter(Boolean).join(" · ") : enU.length ? enU.map(x => `${nombreUbicacion(ubicaciones, x.id)}${it.tipo === "cantidad" ? ` · ${fmtN(x.cantidad)}` : ""}`).join(" · ") : "Sin existencias"}{it.maquinaNombre ? ` · en ${it.maquinaNombre}` : ""}</div>}
+        {mostrarUbic && <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.tipo === "caja" ? [nombreUbicacion(ubicaciones, it.ubicacionId), textoEstante(estantes, it)].filter(Boolean).join(" · ") : enU.length ? enU.map(x => [nombreUbicacion(ubicaciones, x.id), it.tipo === "cantidad" ? fmtN(x.cantidad) : "", textoPosicion(it, x.id)].filter(Boolean).join(" · ")).join(" | ") : "Sin existencias"}{it.maquinaNombre ? ` · en ${it.maquinaNombre}` : ""}</div>}
       </div>
       {it.tipo === "cantidad" && <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 18px/1 var(--display)", color: CHARCOAL }}>{fmtN(stockDe(it))}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{it.unidad}</div></div>}
       {it.tipo === "caja" && <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 18px/1 var(--display)", color: C_NIVEL[nivelCaja(it.caja)].color }}>{fmtN(it.caja?.cantidad)}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{String(it.caja?.contenido || "").toLowerCase()}s</div></div>}
     </div>;
   };
-  const tarjetaGrande = (label, icono, onClick, color = ORANGE_DARK) => <button type="button" onClick={onClick} style={{ flex: "1 1 140px", minHeight: 92, borderRadius: 20, border: "none", background: color, color: "#fff", font: "800 15px/1.2 var(--sans)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: `0 12px 26px ${color}44` }}><Ico d={icono} size={26} sw={2} />{label}</button>;
-  const stat = (n, label, c, onClick) => <div onClick={onClick} className={onClick ? "gt-vidrio gt-vidrio-hover" : "gt-vidrio"} style={{ padding: "12px 14px", flex: "1 1 120px", cursor: onClick ? "pointer" : "default", display: "flex", flexDirection: "column", gap: 3 }}><div style={{ font: "800 24px/1 var(--display)", color: c?.color || CHARCOAL }}>{fmtN(n)}</div><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 10 }}>{label}</div></div>;
 
   // ── Pantallas ──
-  const renderInicio = () => {
-    const recientes = [...movs].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 8);
-    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        {perms.cargar && tarjetaGrande("Agregar", ICO.agregar, () => setSec("agregar"))}
-        {tarjetaGrande("Buscar", ICO.buscar, () => { setSec("buscar"); setTimeout(() => buscadorRef.current?.focus(), 80); }, CHARCOAL)}
-        {tarjetaGrande("Escanear", ICO.escanear, () => setModal({ t: "escanear" }), "#1D5FAF")}
-        {tarjetaGrande("Ubicaciones", ICO.ubicaciones, () => setSec("ubicaciones"), "#5C5853")}
+  // ═══════════════ INICIO: ubicaciones como tarjetas de vidrio ═══════════════
+  // 14-oct-2026 (Gerson): "en Inicio a cada responsable le sale su ubicación
+  // en una cajita de vidrio; a mí, la Lic., Óscar y Ana todas; pico adentro y
+  // veo su inventario; si tiene estantes, cajitas con los estantes; entro a uno
+  // y salen los niveles; entro al nivel y salen las cajitas".
+  const ICO_UBIC = { almacen: ICO.bodega, vault: ICO.estante, taller: ICO.taller, oficina: ICO.oficina, proyecto: ICO.proyecto };
+  const resumenTxt = (r) => [r.articulos ? `${r.articulos} artículo${r.articulos === 1 ? "" : "s"}` : "", ...r.enCajas.slice(0, 2).map(x => `${fmtN(x.unidades)} ${x.contenido.toLowerCase()}${x.unidades === 1 ? "" : "s"}`), r.herramientas ? `${r.herramientas} herr.` : ""].filter(Boolean).join(" · ");
+  const migas = (partes) => <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 13 }}>
+    <button type="button" className="gt-circulo" onClick={partes[partes.length - 2]?.[1] || (() => setRuta({}))} aria-label="Atrás" style={{ width: 34, height: 34, fontSize: 15, marginRight: 4 }}>←</button>
+    {partes.map(([t, fn], i) => <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      {i > 0 && <Ico d={ICO.flecha} size={13} color="rgba(44,42,40,.35)" />}
+      {fn && i < partes.length - 1 ? <button type="button" onClick={fn} style={{ background: "none", border: "none", padding: 0, color: "var(--text-3)", font: "700 13px/1 var(--sans)", cursor: "pointer" }}>{t}</button> : <span style={{ color: CHARCOAL, font: "800 13px/1 var(--sans)" }}>{t}</span>}
+    </span>)}
+  </div>;
+  const chipCodigo = (codigo, onClick) => <button type="button" onClick={onClick} title="Ver / imprimir el QR" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 999, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "800 11.5px/1 var(--mono)", cursor: "pointer" }}><Ico d={ICO.qr} size={14} />{codigo || "QR"}</button>;
+  const tarjetaUbicacion = (u2, { destacada } = {}) => {
+    const r = resumenDe(itemsEnUbicacion(vivos, u2.id));
+    const ests = estantesDe(ubicGuardadas, u2.id);
+    const resp = usuarios.find(x => x.username === u2.responsable);
+    const vacia = r.articulos === 0;
+    return <div key={u2.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => irAUbicacion(u2.id)} onKeyDown={e => { if (e.key === "Enter") irAUbicacion(u2.id); }}
+      style={{ padding: isMobile ? 12 : 14, display: "flex", flexDirection: "column", gap: isMobile ? 8 : 10, cursor: "pointer", minHeight: isMobile ? 0 : 112, ...(destacada ? { boxShadow: `inset 0 0 0 1.5px ${ORANGE}55` } : {}) }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <div style={{ width: 44, height: 44, borderRadius: 13, background: vacia ? "rgba(44,42,40,.06)" : "rgba(232,118,45,.12)", color: vacia ? "#8C857D" : ORANGE_DARK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO_UBIC[u2.tipo] || ICO.ubicaciones} size={22} /></div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u2.nombre}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 3 }}>{resp ? resp.label : u2.responsableNombre || (u2.tipo === "proyecto" ? subUbic(u2) : "Sin responsable")}</div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 22px/1 var(--display)", color: vacia ? "rgba(44,42,40,.25)" : CHARCOAL }}>{r.articulos}</div><div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 3 }}>artículos</div></div>
       </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {stat(resumen.articulos, "artículos", null, () => { setFUbic(""); setFCat(""); setFEstado(""); setSec("buscar"); })}
-        {stat(resumen.disponibles, "herramientas disponibles", C_VERDE, () => { setHerrEstado("disponible"); setSec("herramientas"); })}
-        {stat(resumen.enOperacion, "en operación", C_NARANJA, () => { setHerrEstado("en_operacion"); setSec("herramientas"); })}
-        {stat(resumen.requierenTrabajo, "requieren trabajo", C_ROJO, () => { setHerrEstado("requiere_trabajo"); setSec("herramientas"); })}
-        {stat(resumen.asignados, "equipos asignados a personas", C_AZUL, () => { setFTipo("individual"); setFCat(""); setFUbic(""); setFEstado(""); setQ(""); setSec("buscar"); })}
-        {resumen.cajas > 0 && stat(resumen.cajas, `cajas · ${resumen.enCajas.map(x => `${fmtN(x.unidades)} ${x.contenido.toLowerCase()}s`).join(" · ")}`, C_NARANJA, () => setSec("estantes"))}
-      </div>
-      {vivos.length === 0 && <Vacio>{perms.cargar ? "Todavía no hay nada cargado. Tocá Agregar, fijá la ubicación y empezá con la foto." : "Todavía no hay nada en el inventario."}</Vacio>}
-      {recientes.length > 0 && <div className="gt-vidrio" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}><div className="gt-label" style={{ color: "var(--text-3)" }}>Últimos movimientos</div><button type="button" onClick={() => setSec("movimientos")} style={{ background: "none", border: "none", color: ORANGE_DARK, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Ver todos →</button></div>
-        {recientes.map(m => <div key={m.id} style={{ display: "flex", gap: 10, fontSize: 12.5, alignItems: "baseline", flexWrap: "wrap" }}><span style={{ fontFamily: "var(--mono)", color: "var(--text-3)", fontSize: 11, whiteSpace: "nowrap" }}>{fmtDT(m.at)}</span><span style={{ flex: 1, minWidth: 160 }}><b>{ACCIONES[m.accion] || m.accion}</b> · {m.nombre} <span style={{ color: "var(--text-3)" }}>({m.codigo})</span> · {textoMovimiento(m, ubicaciones)}</span><span style={{ color: "var(--text-3)", fontSize: 11.5 }}>{m.byName || m.by}</span></div>)}
+      {(ests.length > 0 || r.enCajas.length > 0 || r.herramientas > 0 || (u2.codigo && !isMobile)) && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: "auto" }}>
+        {ests.length > 0 && <Chip c={C_GRIS} style={{ fontSize: 11 }}>{ests.length} {ests.length === 1 ? muebleLabel(ests[0]).toLowerCase() : "estantes/racks"}</Chip>}
+        {r.enCajas.slice(0, 2).map(x => <Chip key={x.contenido} c={C_NARANJA} style={{ fontSize: 11 }}>{fmtN(x.unidades)} {x.contenido.toLowerCase()}{x.unidades === 1 ? "" : "s"}</Chip>)}
+        {r.herramientas > 0 && <Chip c={C_AZUL} style={{ fontSize: 11 }}>{r.herramientas} herr.</Chip>}
+        {u2.codigo && <span style={{ marginLeft: "auto", font: "700 10.5px/1 var(--mono)", color: "var(--text-3)" }}>{u2.codigo}</span>}
       </div>}
     </div>;
   };
-  const renderAgregar = () => <AgregarFormImpl ubicaciones={ubicaciones} ubicFija={ubicFija} setUbicFija={setUbicFija} items={vivos} emps={emps} estantes={estantes} onNuevoEstante={nuevoEstante} ocupado={ocupado} isMobile={isMobile} ultimo={ultimo} setUltimo={setUltimo}
+  const grilla = (children) => <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(270px, 1fr))", gap: 10 }}>{children}</div>;
+  const tituloGrupo = (t, extra) => <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}><div className="gt-label" style={{ color: "var(--text-3)" }}>{t}</div>{extra}</div>;
+  const renderInicio = () => {
+    if (ruta.ubic) return renderUbicacionVista();
+    const mias = ubicaciones.filter(u2 => u2.responsable && u2.responsable === userKey);
+    const noMia = (u2) => !mias.includes(u2) || !!qUbic;   // las tuyas van arriba, no se repiten
+    const fijas = ubicaciones.filter(u2 => ["almacen", "vault", "taller"].includes(u2.tipo) && noMia(u2));
+    const oficinas = ubicaciones.filter(u2 => u2.tipo === "oficina" && noMia(u2));
+    const proys = ubicaciones.filter(u2 => u2.tipo === "proyecto" && noMia(u2));
+    const proysCon = proys.filter(u2 => itemsEnUbicacion(vivos, u2.id).length > 0 || estantesDe(ubicGuardadas, u2.id).length > 0);
+    const proysSin = proys.filter(u2 => !proysCon.includes(u2));
+    const filtroU = (l) => qUbic.trim() ? l.filter(u2 => `${u2.nombre} ${u2.nombreLargo || ""} ${u2.codigo || ""}`.toLowerCase().includes(qUbic.toLowerCase())) : l;
+    const statBtn = (n, label, c, onClick) => <button type="button" onClick={onClick} style={{ display: "inline-flex", alignItems: "baseline", gap: 6, padding: "4px 2px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}><span style={{ font: "800 17px/1 var(--display)", color: c?.color || CHARCOAL }}>{fmtN(n)}</span><span style={{ fontSize: 12, color: "var(--text-3)" }}>{label}</span></button>;
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "stretch" }}>
+        <button type="button" onClick={() => setModal({ t: "escanear" })} style={{ flex: isMobile ? "1 1 0" : "0 0 auto", minHeight: 50, padding: "0 20px", borderRadius: 16, border: "none", background: "#1D5FAF", color: "#fff", font: "800 14.5px/1 var(--sans)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, boxShadow: "0 10px 22px rgba(29,95,175,.25)" }}><Ico d={ICO.escanear} size={21} sw={2} /> Escanear QR</button>
+        {perms.cargar && <button type="button" onClick={() => setSec("agregar")} style={{ flex: isMobile ? "1 1 0" : "0 0 auto", minHeight: 50, padding: "0 20px", borderRadius: 16, border: "none", background: ORANGE_DARK, color: "#fff", font: "800 14.5px/1 var(--sans)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, boxShadow: "0 10px 22px rgba(199,95,31,.25)" }}><Ico d={ICO.agregar} size={21} sw={2} /> Agregar</button>}
+        <input value={qUbic} onChange={e => setQUbic(e.target.value)} enterKeyHint="go" onKeyDown={e => { if (e.key !== "Enter") return; const c = codigoDeTexto(qUbic); if (c) { setQUbic(""); abrirCodigo(c); } }} placeholder="Filtrar ubicaciones o escribir un código…" style={{ flex: isMobile ? "1 1 100%" : "1 1 220px", minHeight: 50, padding: "0 16px", borderRadius: 16, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.75)", fontSize: 14, outline: "none", fontFamily: "inherit" }} />
+      </div>
+      <div className="gt-vidrio" style={{ padding: "8px 14px", display: "flex", gap: isMobile ? 10 : 20, flexWrap: "wrap", alignItems: "center" }}>
+        {statBtn(resumen.articulos, "artículos", null, () => { setQ(""); setFUbic(""); setFCat(""); setFEstado(""); setFTipo(""); setSec("buscar"); })}
+        {resumen.cajas > 0 && statBtn(resumen.cajas, "cajas", C_NARANJA, () => { setFTipo("caja"); setFUbic(""); setFCat(""); setSec("buscar"); })}
+        {statBtn(resumen.disponibles, "herr. disponibles", C_VERDE, () => { setHerrEstado("disponible"); setSec("herramientas"); })}
+        {statBtn(resumen.enOperacion, "en operación", C_NARANJA, () => { setHerrEstado("en_operacion"); setSec("herramientas"); })}
+        {statBtn(resumen.requierenTrabajo, "requieren trabajo", C_ROJO, () => { setHerrEstado("requiere_trabajo"); setSec("herramientas"); })}
+        {statBtn(resumen.asignados, "asignados a personas", C_AZUL, () => { setFTipo("individual"); setFCat(""); setFUbic(""); setFEstado(""); setQ(""); setSec("buscar"); })}
+      </div>
+      {mias.length > 0 && !qUbic && <>{tituloGrupo("Tus ubicaciones")}{grilla(mias.map(u2 => tarjetaUbicacion(u2, { destacada: true })))}</>}
+      {filtroU(fijas).length > 0 && <>{tituloGrupo("Almacén y bodegas")}{grilla(filtroU(fijas).map(u2 => tarjetaUbicacion(u2)))}</>}
+      {(filtroU(oficinas).length > 0 || (perms.ubicaciones && !qUbic)) && <>{tituloGrupo("Oficinas de plantel", perms.ubicaciones && <Btn small variant="ghost" onClick={() => setModal({ t: "ubicacion", u: null })}>+ Nueva oficina</Btn>)}
+        {filtroU(oficinas).length ? grilla(filtroU(oficinas).map(u2 => tarjetaUbicacion(u2))) : <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Todavía no hay oficinas. Creá la primera: cada una sale con su código QR para pegar afuera.</div>}</>}
+      {tituloGrupo("Proyectos", <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{proysCon.length} con inventario</span>)}
+      {filtroU(proysCon).length > 0 ? grilla(filtroU(proysCon).map(u2 => tarjetaUbicacion(u2))) : !qUbic && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Ningún proyecto tiene inventario cargado todavía.</div>}
+      {(verProySin || qUbic) && filtroU(proysSin).length > 0 && grilla(filtroU(proysSin).map(u2 => tarjetaUbicacion(u2)))}
+      {!qUbic && proysSin.length > 0 && <div><Btn small variant="ghost" onClick={() => setVerProySin(v => !v)}>{verProySin ? "Ocultar" : `Ver los ${proysSin.length} proyectos sin inventario`}</Btn></div>}
+    </div>;
+  };
+  // ── Dentro de una ubicación ──
+  const renderUbicacionVista = () => {
+    const u2 = ubicaciones.find(x => x.id === ruta.ubic);
+    if (!u2) return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{migas([["Ubicaciones", () => setRuta({})], ["No encontrada"]])}<Vacio>Esa ubicación ya no existe.</Vacio></div>;
+    const ests = estantesDe(ubicGuardadas, u2.id);
+    if (ruta.est) { const e = ests.find(x => x.id === ruta.est); if (e) return ruta.niv ? renderNivelVista(u2, e, String(ruta.niv)) : renderEstanteVista(u2, e); }
+    const aqui = itemsEnUbicacion(vivos, u2.id);
+    const sueltos = ests.length ? itemsSinEstante(vivos, u2.id, ests) : aqui;
+    const r = resumenDe(aqui);
+    const resp = usuarios.find(x => x.username === u2.responsable);
+    const movsAqui = movimientosDe(movs, u2.id).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    const porCat = CATEGORIAS.map(c => [c, sueltos.filter(i => i.categoria === c.id)]).filter(([, l]) => l.length);
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {migas([["Ubicaciones", () => setRuta({})], [u2.nombre]])}
+      <div className="gt-vidrio" style={{ padding: isMobile ? 14 : 18, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ width: 54, height: 54, borderRadius: 16, background: "rgba(232,118,45,.12)", color: ORANGE_DARK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO_UBIC[u2.tipo] || ICO.ubicaciones} size={27} /></div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ font: "800 21px/1.15 var(--display)", color: CHARCOAL }}>{u2.nombre}</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4 }}>{subUbic(u2)} · {resp ? `responsable ${resp.label}` : "sin responsable"}{r.articulos ? ` · ${resumenTxt(r)}` : ""}</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {(u2.codigo || perms.imprimir) && chipCodigo(u2.codigo || "Generar QR", () => verQRUbicacion(u2))}
+          {perms.cargar && <Btn small onClick={() => agregarAqui(u2.id, { tipo: u2.tipo === "vault" ? "caja" : undefined })}><Ico d={ICO.agregar} size={14} /> Agregar aquí</Btn>}
+          {perms.cargar && <Btn small variant="ghost" onClick={() => setModal({ t: "estante", e: null, ubicacionId: u2.id })}>+ Estante / rack</Btn>}
+          {perms.ubicaciones && <Btn small variant="ghost" onClick={() => setModal({ t: "ubicacion", u: u2 })}>Responsable</Btn>}
+        </div>
+      </div>
+      {ests.length > 0 && <>
+        {tituloGrupo(`Estantes y racks · ${ests.length}`, perms.imprimir && <Btn small variant="ghost" onClick={() => imprimirEstantes(ests, `estantes-${u2.nombre}`)}><Ico d={ICO.imprimir} size={13} /> QR de estantes y niveles</Btn>)}
+        {grilla(ests.map(e => { const en = itemsEnEstante(vivos, e); const re = resumenDe(en); return <div key={e.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => setRuta({ ubic: u2.id, est: e.id })} onKeyDown={ev => { if (ev.key === "Enter") setRuta({ ubic: u2.id, est: e.id }); }} style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10, cursor: "pointer", minHeight: 112 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 13, background: "rgba(44,42,40,.06)", color: "#5C5853", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO.estante} size={22} /></div>
+            <div style={{ flex: 1, minWidth: 0 }}><div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{e.nombre}</div><div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3 }}>{muebleLabel(e)} · {e.niveles} niveles</div></div>
+            <div style={{ textAlign: "right" }}><div style={{ font: "800 22px/1 var(--display)", color: en.length ? CHARCOAL : "rgba(44,42,40,.25)" }}>{en.length}</div><div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 3 }}>{re.cajas && re.cajas === en.length ? "cajas" : "artículos"}</div></div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: "auto" }}>
+            {re.enCajas.slice(0, 2).map(x => <Chip key={x.contenido} c={C_NARANJA} style={{ fontSize: 11 }}>{fmtN(x.unidades)} {x.contenido.toLowerCase()}{x.unidades === 1 ? "" : "s"}</Chip>)}
+            {e.codigo && <span style={{ marginLeft: "auto", font: "700 10.5px/1 var(--mono)", color: "var(--text-3)" }}>{e.codigo}</span>}
+          </div>
+        </div>; }))}
+      </>}
+      {tituloGrupo(ests.length ? `Fuera de estante · ${sueltos.length}` : `Inventario · ${aqui.length}`, perms.imprimir && sueltos.length > 0 && <Btn small variant="ghost" onClick={() => etiquetas(sueltos, u2.nombre)}><Ico d={ICO.imprimir} size={13} /> Etiquetas ({sueltos.length})</Btn>)}
+      {sueltos.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{ests.length ? "Todo está en sus estantes." : perms.cargar ? "Vacío. Tocá Agregar aquí y empezá con la foto." : "Vacío."}</div>
+        : porCat.map(([c, l]) => <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "#6E6862" }}><Ico d={ICO[c.id]} size={14} />{c.label} · {l.length}</div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(340px, 1fr))", gap: 8 }}>{l.map(it => filaItem(it, { mostrarUbic: false }))}</div>
+        </div>)}
+      {movsAqui.length > 0 && <div className="gt-vidrio" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}><div className="gt-label" style={{ color: "var(--text-3)" }}>Movimientos de aquí</div><button type="button" onClick={() => { setMovUbic(u2.id); setSec("movimientos"); }} style={{ background: "none", border: "none", color: ORANGE_DARK, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Ver todos →</button></div>
+        {movsAqui.slice(0, 6).map(m => <div key={m.id} style={{ display: "flex", gap: 10, fontSize: 12.5, alignItems: "baseline", flexWrap: "wrap" }}><span style={{ fontFamily: "var(--mono)", color: "var(--text-3)", fontSize: 11, whiteSpace: "nowrap" }}>{fmtDT(m.at)}</span><span style={{ flex: 1, minWidth: 160 }}><b>{ACCIONES[m.accion] || m.accion}</b> · {m.nombre} · {textoMovimiento(m, ubicaciones)}</span><span style={{ color: "var(--text-3)", fontSize: 11.5 }}>{m.byName || m.by}</span></div>)}
+      </div>}
+    </div>;
+  };
+  // ── Dentro de un estante / rack: sus niveles ──
+  const renderEstanteVista = (u2, e) => {
+    const en = itemsEnEstante(vivos, e);
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {migas([["Ubicaciones", () => setRuta({})], [u2.nombre, () => setRuta({ ubic: u2.id })], [e.nombre]])}
+      <div className="gt-vidrio" style={{ padding: isMobile ? 14 : 18, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ width: 54, height: 54, borderRadius: 16, background: "rgba(44,42,40,.06)", color: "#5C5853", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO.estante} size={27} /></div>
+        <div style={{ flex: 1, minWidth: 200 }}><div style={{ font: "800 21px/1.15 var(--display)", color: CHARCOAL }}>{e.nombre}</div><div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4 }}>{muebleLabel(e)} de {e.niveles} niveles · {u2.nombre}{en.length ? ` · ${resumenTxt(resumenDe(en))}` : ""}</div></div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {(e.codigo || perms.imprimir) && chipCodigo(e.codigo || "Generar QR", () => verQREstante(e))}
+          {perms.imprimir && <Btn small variant="ghost" onClick={() => imprimirEstantes([e], e.nombre)}><Ico d={ICO.imprimir} size={13} /> QR del {muebleLabel(e).toLowerCase()} y niveles</Btn>}
+          {perms.cargar && <Btn small variant="ghost" onClick={() => setModal({ t: "estante", e, ubicacionId: u2.id })}>Editar</Btn>}
+          {perms.ubicaciones && <Btn small variant="danger" onClick={() => quitarEstante(e)}>Quitar</Btn>}
+        </div>
+      </div>
+      {grilla(nivelesDe(e).map(n => { const l = itemsEnNivel(vivos, e, n); const rn = resumenDe(l); return <div key={n} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => setRuta({ ubic: u2.id, est: e.id, niv: n })} onKeyDown={ev => { if (ev.key === "Enter") setRuta({ ubic: u2.id, est: e.id, niv: n }); }} style={{ padding: 14, display: "flex", alignItems: "center", gap: 14, cursor: "pointer", minHeight: 84 }}>
+        <div style={{ width: 52, height: 52, borderRadius: 14, background: l.length ? "rgba(232,118,45,.12)" : "rgba(44,42,40,.05)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><span style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".06em", color: "var(--text-3)" }}>NIVEL</span><span style={{ font: "800 22px/1 var(--display)", color: l.length ? ORANGE_DARK : "rgba(44,42,40,.3)" }}>{n}</span></div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: l.length ? CHARCOAL : "var(--text-3)" }}>{l.length ? `${l.length} ${rn.cajas === l.length ? (l.length === 1 ? "caja" : "cajas") : (l.length === 1 ? "artículo" : "artículos")}` : "Vacío"}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rn.enCajas.map(x => `${fmtN(x.unidades)} ${x.contenido.toLowerCase()}${x.unidades === 1 ? "" : "s"}`).join(" · ") || (l.length ? l.slice(0, 2).map(i => i.nombre).join(" · ") : codigoNivel(e, n))}</div>
+        </div>
+        <Ico d={ICO.flecha} size={18} color="rgba(44,42,40,.3)" />
+      </div>; }))}
+    </div>;
+  };
+  // ── Dentro de un nivel: las cajitas y lo que haya ──
+  const tarjetaCaja = (c) => { const n = nivelCaja(c.caja); const col = C_NIVEL[n]; const cap = num(c.caja?.capacidad || c.caja?.cantidad) || 1; const pct = Math.max(0, Math.min(1, num(c.caja?.cantidad) / cap));
+    return <div key={c.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => setModal({ t: "ficha", id: c.id })} onKeyDown={ev => { if (ev.key === "Enter") setModal({ t: "ficha", id: c.id }); }} style={{ padding: 12, display: "flex", gap: 12, alignItems: "center", cursor: "pointer" }}>
+      <Foto foto={c.foto} size={58} radius={13} categoria={c.categoria} />
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontFamily: "var(--mono)", fontWeight: 800, fontSize: 11.5, color: "var(--text-3)" }}>{c.codigo}</span>{c.caja?.marca && <span style={{ fontSize: 11, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.caja.marca}</span>}</div>
+        <div style={{ fontSize: 14.5, fontWeight: 800, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.caja?.contenido}{c.caja?.tamano ? ` ${tamanoLabel(c.caja.tamano).toLowerCase()}` : ""}</div>
+        <div style={{ height: 6, borderRadius: 99, background: "rgba(44,42,40,.08)", overflow: "hidden" }}><div style={{ width: `${pct * 100}%`, height: "100%", background: col.color, borderRadius: 99 }} /></div>
+      </div>
+      <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 22px/1 var(--display)", color: col.color }}>{fmtN(c.caja?.cantidad)}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>de {fmtN(cap)}</div></div>
+    </div>; };
+  const renderNivelVista = (u2, e, n) => {
+    const l = itemsEnNivel(vivos, e, n).sort((a, b) => String(a.codigo).localeCompare(String(b.codigo)));
+    const cajas = l.filter(i => i.tipo === "caja"), otros = l.filter(i => i.tipo !== "caja");
+    const rn = resumenDe(l);
+    const niveles = nivelesDe(e);
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {migas([["Ubicaciones", () => setRuta({})], [u2.nombre, () => setRuta({ ubic: u2.id })], [e.nombre, () => setRuta({ ubic: u2.id, est: e.id })], [`Nivel ${n}`]])}
+      <div className="gt-vidrio" style={{ padding: isMobile ? 14 : 18, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ width: 54, height: 54, borderRadius: 16, background: "rgba(232,118,45,.12)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><span style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".06em", color: "var(--text-3)" }}>NIVEL</span><span style={{ font: "800 24px/1 var(--display)", color: ORANGE_DARK }}>{n}</span></div>
+        <div style={{ flex: 1, minWidth: 180 }}><div style={{ font: "800 20px/1.15 var(--display)", color: CHARCOAL }}>{e.nombre} · Nivel {n}</div><div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4 }}>{u2.nombre}{l.length ? ` · ${resumenTxt(rn)}` : " · vacío"}</div></div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {(e.codigo || perms.imprimir) && chipCodigo(e.codigo ? codigoNivel(e, n) : "Generar QR", () => verQREstante(e, n))}
+          {perms.cargar && <Btn small onClick={() => agregarAqui(u2.id, { estanteId: e.id, nivel: n, tipo: u2.tipo === "vault" ? "caja" : undefined })}><Ico d={ICO.agregar} size={14} /> Agregar aquí</Btn>}
+          {perms.imprimir && l.length > 0 && <Btn small variant="ghost" onClick={() => etiquetas(l, `${e.nombre}-nivel-${n}`)}><Ico d={ICO.imprimir} size={13} /> Etiquetas ({l.length})</Btn>}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{niveles.map(x => pillBtn(`Nivel ${x}`, x === n, () => setRuta({ ubic: u2.id, est: e.id, niv: x }), { key: x, c: "#6E6862" }))}</div>
+      {l.length === 0 && <Vacio>Nivel vacío.{perms.cargar ? " Tocá Agregar aquí: la ubicación, el estante y el nivel ya van puestos." : ""}</Vacio>}
+      {cajas.length > 0 && grilla(cajas.map(tarjetaCaja))}
+      {otros.length > 0 && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(340px, 1fr))", gap: 8 }}>{otros.map(it => filaItem(it, { mostrarUbic: false }))}</div>}
+    </div>;
+  };
+  const renderAgregar = () => <AgregarFormImpl ubicaciones={ubicaciones} ubicFija={ubicFija} setUbicFija={setUbicFija} items={vivos} emps={emps} estantes={estantes} onNuevoEstante={perms.cargar ? nuevoEstante : null} ocupado={ocupado} isMobile={isMobile} dosColumnas={anchoGrande} ultimo={ultimo} setUltimo={setUltimo}
     onGuardar={(d, { fotoDe }) => crearArticulos([d], { fotoDe, foto: d.foto })} onSumar={sumarExistente} />;
   const renderBuscar = () => {
     const res = buscarItems(vivos, { q, ubicacionId: fUbic, categoria: fCat, estado: fEstado, tipo: fTipo }).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
@@ -934,23 +1248,30 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       {res.length > verMas && <div style={{ display: "flex", justifyContent: "center" }}><Btn variant="ghost" onClick={() => setVerMas(v => v + 60)}>Ver más ({res.length - verMas})</Btn></div>}
     </div>;
   };
+  // ── UBICACIONES (administración): código/QR, responsable, oficinas ──
   const renderUbicaciones = () => {
-    const cuenta = (id) => { const en = vivos.filter(i => stockEn(i, id) > 0); return { n: en.length, her: en.filter(esHerramienta).length, ind: en.filter(i => i.tipo === "individual").length }; };
-    const grupos = [["Almacén y bodegas", ubicaciones.filter(u => ["almacen", "vault", "taller"].includes(u.tipo))], ["Oficinas", ubicaciones.filter(u => u.tipo === "oficina")], ["Proyectos", ubicaciones.filter(u => u.tipo === "proyecto")]];
-    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {perms.ubicaciones && <div style={{ display: "flex", justifyContent: "flex-end" }}><Btn onClick={() => setModal({ t: "ubicacion", u: null })}>+ Nueva oficina</Btn></div>}
-      {grupos.map(([titulo, lista]) => <div key={titulo} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    const grupos = [["Almacén y bodegas", ubicaciones.filter(u2 => ["almacen", "vault", "taller"].includes(u2.tipo))], ["Oficinas de plantel", ubicaciones.filter(u2 => u2.tipo === "oficina")], ["Proyectos", ubicaciones.filter(u2 => u2.tipo === "proyecto")]];
+    const noProyectos = ubicaciones.filter(u2 => u2.tipo !== "proyecto");
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div className="gt-vidrio" style={{ padding: isMobile ? 10 : 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ fontSize: 12.5, color: "var(--text-2)", flex: "1 1 260px" }}>Cada ubicación, estante y nivel tiene su <b>código y QR</b>: pegalo afuera y al escanearlo se abre lo que hay adentro.</div>
+        {perms.imprimir && <Btn small variant="ghost" onClick={() => imprimirUbicaciones(noProyectos, "almacen-bodegas-oficinas")}><Ico d={ICO.imprimir} size={13} /> QR de almacén, bodegas y oficinas</Btn>}
+        {perms.ubicaciones && <Btn small onClick={() => setModal({ t: "ubicacion", u: null })}>+ Nueva oficina</Btn>}
+      </div>
+      {grupos.map(([titulo, lista]) => <div key={titulo} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <div className="gt-label" style={{ color: "var(--text-3)" }}>{titulo} · {lista.length}</div>
-        {lista.length === 0 && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{titulo === "Oficinas" ? "Todavía no hay oficinas. Creá la primera con + Nueva oficina." : "—"}</div>}
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(300px, 1fr))", gap: 8 }}>
-          {lista.map(u2 => { const c = cuenta(u2.id); const resp = usuarios.find(x => x.username === u2.responsable); return <div key={u2.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => irAUbicacion(u2.id)} onKeyDown={e => { if (e.key === "Enter") irAUbicacion(u2.id); }} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
-            <div style={{ width: 42, height: 42, borderRadius: 12, background: "rgba(232,118,45,.10)", color: ORANGE_DARK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO.ubicaciones} size={20} /></div>
+        {lista.length === 0 && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{titulo.startsWith("Oficinas") ? "Todavía no hay oficinas." : "—"}</div>}
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(360px, 1fr))", gap: 6 }}>
+          {lista.map(u2 => { const n = itemsEnUbicacion(vivos, u2.id).length; const ne = estantesDe(ubicGuardadas, u2.id).length; const resp = usuarios.find(x => x.username === u2.responsable); return <div key={u2.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => irAUbicacion(u2.id)} onKeyDown={e => { if (e.key === "Enter") irAUbicacion(u2.id); }} style={{ padding: "9px 12px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(232,118,45,.10)", color: ORANGE_DARK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO_UBIC[u2.tipo] || ICO.ubicaciones} size={17} /></div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14.5, fontWeight: 800, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u2.nombre}</div>
-              <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{resp ? resp.label : u2.responsableNombre || "Sin responsable"}{u2.tipo === "proyecto" && u2.nombreLargo && u2.nombreLargo !== u2.nombre ? ` · ${u2.nombreLargo}` : ""}</div>
+              <div style={{ fontSize: 13.5, fontWeight: 800, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u2.nombre}</div>
+              <div style={{ fontSize: 11, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{resp ? resp.label : u2.responsableNombre || "Sin responsable"} · {n} artículo{n === 1 ? "" : "s"}{ne ? ` · ${ne} estante${ne === 1 ? "" : "s"}` : ""}</div>
             </div>
-            <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 18px/1 var(--display)", color: c.n ? CHARCOAL : "rgba(44,42,40,.3)" }}>{c.n}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{c.her ? `${c.her} herr.` : c.ind ? `${c.ind} indiv.` : "artículos"}</div></div>
-            {perms.ubicaciones && <button type="button" onClick={e => { e.stopPropagation(); setModal({ t: "ubicacion", u: u2 }); }} title="Responsable / editar" style={{ width: 36, height: 36, borderRadius: 999, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.7)", cursor: "pointer", color: "var(--text-2)", fontSize: 14, fontFamily: "inherit" }}>✎</button>}
+            <span onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              {(u2.codigo || perms.imprimir) && chipCodigo(u2.codigo || "QR", () => verQRUbicacion(u2))}
+              {perms.ubicaciones && <button type="button" onClick={() => setModal({ t: "ubicacion", u: u2 })} title="Responsable / editar" style={{ width: 34, height: 34, borderRadius: 999, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.7)", cursor: "pointer", color: "var(--text-2)", fontSize: 14, fontFamily: "inherit" }}>✎</button>}
+            </span>
           </div>; })}
         </div>
       </div>)}
@@ -987,59 +1308,15 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       </div>)}
     </div>;
   };
-  // ── ESTANTES Y CAJAS (GeoDrill Vault): cada estante con sus niveles y las cajas en cada nivel ──
-  const renderEstantes = () => {
-    const ubicsConEstantes = ubicaciones.filter(u2 => ["almacen", "vault", "oficina", "taller"].includes(u2.tipo) || estantes.some(e => e.ubicacionId === u2.id) || vivos.some(i => i.tipo === "caja" && i.ubicacionId === u2.id));
-    const ub = ubicsConEstantes.some(u2 => u2.id === estUbic) ? estUbic : (ubicsConEstantes[0]?.id || "vault");
-    const ests = estantesDe(ubicGuardadas, ub);
-    const cajasAqui = vivos.filter(i => i.tipo === "caja" && i.ubicacionId === ub);
-    const sinEstante = cajasAqui.filter(c => !c.estanteId || !ests.some(e => e.id === c.estanteId));
-    const resumenC = resumenCajas(cajasAqui);
-    const irAgregarCaja = (estanteId, nivel) => { setUbicFija(ub); setUltimo({ tipo: "caja", categoria: "insumos_perforacion", estanteId, nivel: String(nivel) }); setSec("agregar"); };
-    const chipDeCaja = (c) => { const n = nivelCaja(c.caja); const col = C_NIVEL[n]; return <button key={c.id} type="button" onClick={() => setModal({ t: "ficha", id: c.id })} title={`${c.codigo} · ${c.nombre}`}
-      style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, padding: "8px 10px", minWidth: 118, borderRadius: 12, border: `1px solid ${col.color}33`, background: col.bg, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-      <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, fontWeight: 800, color: "var(--text-3)" }}>{c.codigo}</span>
-      <span style={{ fontSize: 12.5, fontWeight: 800, color: CHARCOAL, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.caja?.contenido}{c.caja?.tamano ? ` ${tamanoLabel(c.caja.tamano).toLowerCase()}` : ""}</span>
-      <span style={{ fontSize: 12, fontWeight: 800, color: col.color }}>{fmtN(c.caja?.cantidad)} <span style={{ fontWeight: 600, color: "var(--text-3)" }}>/ {fmtN(c.caja?.capacidad || c.caja?.cantidad)}{c.caja?.marca ? ` · ${c.caja.marca}` : ""}</span></span>
-    </button>; };
-    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div className="gt-vidrio" style={{ padding: isMobile ? 10 : 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <select value={ub} onChange={e => setEstUbic(e.target.value)} style={{ ...CTRL, width: "auto", minHeight: 40, padding: "8px 12px", borderRadius: 999, fontWeight: 700, maxWidth: 260 }}>{ubicsConEstantes.map(u2 => <option key={u2.id} value={u2.id}>{u2.nombre}</option>)}</select>
-        {resumenC.map(x => <Chip key={x.contenido} c={x.vacias ? C_AMARILLO : C_VERDE} style={{ fontSize: 12.5, padding: "7px 12px" }}><b>{fmtN(x.unidades)}</b> {x.contenido.toLowerCase()}{x.unidades === 1 ? "" : "s"} · {x.cajas} caja{x.cajas === 1 ? "" : "s"}{x.vacias ? ` (${x.vacias} vacía${x.vacias === 1 ? "" : "s"})` : ""}</Chip>)}
-        <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          {perms.imprimir && cajasAqui.length > 0 && <Btn small variant="ghost" onClick={() => etiquetas(cajasAqui, `cajas-${nombreUbicacion(ubicaciones, ub)}`)}><Ico d={ICO.imprimir} size={14} /> Etiquetas de las cajas ({cajasAqui.length})</Btn>}
-          {perms.cargar && <Btn small onClick={async () => { const nombre = prompt("Nombre del estante:", `Estante ${String.fromCharCode(65 + ests.length)}`); if (nombre === null) return; const niveles = prompt("¿Cuántos niveles tiene?", "4"); if (niveles === null) return; await nuevoEstante(ub, { nombre, niveles }); }}>+ Estante</Btn>}
-        </span>
-      </div>
-      {ests.length === 0 && cajasAqui.length === 0 && <Vacio>{perms.cargar ? `Todavía no hay estantes en ${nombreUbicacion(ubicaciones, ub)}. Creá el primero con + Estante y después agregá las cajas nivel por nivel.` : "Todavía no hay estantes ni cajas acá."}</Vacio>}
-      {ests.map(e => { const niveles = Math.max(1, num(e.niveles) || 1); const delEst = cajasAqui.filter(c => c.estanteId === e.id); return <div key={e.id} className="gt-vidrio" style={{ padding: isMobile ? 12 : 16, display: "flex", flexDirection: "column", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(232,118,45,.10)", color: ORANGE_DARK, display: "flex", alignItems: "center", justifyContent: "center" }}><Ico d={ICO.estante} size={19} /></div>
-          <div style={{ font: "800 16px/1.1 var(--display)", color: CHARCOAL }}>{e.nombre}</div>
-          <span style={{ fontSize: 12, color: "var(--text-3)" }}>{niveles} nivel{niveles === 1 ? "" : "es"} · {delEst.length} caja{delEst.length === 1 ? "" : "s"} · {fmtN(delEst.reduce((a, c) => a + num(c.caja?.cantidad), 0))} unidades</span>
-          {perms.ubicaciones && <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}><button type="button" title="Renombrar / niveles" onClick={() => editarEstante(e)} style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.7)", cursor: "pointer", color: "var(--text-2)", fontFamily: "inherit" }}>✎</button><button type="button" title="Quitar estante" aria-label="Quitar estante" onClick={() => quitarEstante(e)} style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.7)", cursor: "pointer", color: C_ROJO.color, fontFamily: "inherit" }}>✕</button></span>}
-        </div>
-        {Array.from({ length: niveles }, (_, i) => String(niveles - i)).map(n => { const enNivel = delEst.filter(c => String(c.nivel) === n).sort((a, b) => String(a.codigo).localeCompare(String(b.codigo))); return <div key={n} style={{ display: "flex", gap: 8, alignItems: "flex-start", borderTop: "1px solid rgba(44,42,40,.08)", paddingTop: 8 }}>
-          <div style={{ width: 54, flexShrink: 0, paddingTop: 8 }}><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9.5 }}>Nivel</div><div style={{ font: "800 18px/1 var(--display)", color: CHARCOAL }}>{n}</div></div>
-          <div style={{ flex: 1, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", minHeight: 44 }}>
-            {enNivel.map(chipDeCaja)}
-            {perms.cargar && <button type="button" onClick={() => irAgregarCaja(e.id, n)} style={{ minHeight: 44, padding: "8px 12px", borderRadius: 12, border: "1px dashed rgba(44,42,40,.2)", background: "transparent", color: "var(--text-3)", font: "700 12px/1 var(--sans)", cursor: "pointer" }}>+ Caja</button>}
-            {!enNivel.length && !perms.cargar && <span style={{ fontSize: 12, color: "var(--text-faint)" }}>vacío</span>}
-          </div>
-        </div>; })}
-      </div>; })}
-      {sinEstante.length > 0 && <div className="gt-vidrio" style={{ padding: isMobile ? 12 : 16, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div className="gt-label" style={{ color: "var(--text-3)" }}>Cajas sin estante · {sinEstante.length}</div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{sinEstante.map(chipDeCaja)}</div>
-      </div>}
-    </div>;
-  };
   const renderMovimientos = () => {
-    const lista = [...movs].filter(m => !movQ || `${m.codigo} ${m.nombre} ${m.byName} ${m.motivo || ""}`.toLowerCase().includes(movQ.toLowerCase())).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    const lista = (movUbic ? movimientosDe(movs, movUbic) : [...movs]).filter(m => !movQ || `${m.codigo} ${m.nombre} ${m.byName} ${m.motivo || ""}`.toLowerCase().includes(movQ.toLowerCase())).sort((a, b) => String(b.at).localeCompare(String(a.at)));
     const porDia = {}; lista.forEach(m => { const d = diaDe(m.at); (porDia[d] = porDia[d] || []).push(m); });
     const cargarMesAnterior = async () => { const ultimo = mesesMov[mesesMov.length - 1]; const [y, mo] = ultimo.replace("inv-mov-", "").split("-").map(Number); const prev = keyMovimientos(new Date(y, mo - 2, 1).toISOString()); setMesesMov(p => [...p, prev]); try { const c = await store.getCloud(prev); setMovs(p => [...p, ...(Array.isArray(c) ? c : [])]); } catch {} };
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div className="gt-vidrio" style={{ padding: isMobile ? 10 : 14, display: "flex", gap: 8, alignItems: "center" }}><Buscador value={movQ} onChange={setMovQ} placeholder="Buscar por artículo, código o persona" /><span style={{ fontSize: 12, color: "var(--text-3)", whiteSpace: "nowrap" }}>{lista.length}</span></div>
+      <div className="gt-vidrio" style={{ padding: isMobile ? 10 : 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <select value={movUbic} onChange={e => setMovUbic(e.target.value)} style={{ ...CTRL, width: "auto", minHeight: 44, borderRadius: 999, maxWidth: 260, fontWeight: 700 }}><option value="">Todas las ubicaciones</option>{ubicaciones.map(u2 => <option key={u2.id} value={u2.id}>{u2.nombre}</option>)}</select>
+        <Buscador value={movQ} onChange={setMovQ} placeholder="Buscar por artículo, código o persona" /><span style={{ fontSize: 12, color: "var(--text-3)", whiteSpace: "nowrap" }}>{lista.length}</span>
+      </div>
       {lista.length === 0 && <Vacio>Sin movimientos todavía.</Vacio>}
       {Object.keys(porDia).map(d => <div key={d} className="gt-vidrio" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
         <div className="gt-label" style={{ color: "var(--text-3)", textTransform: "capitalize" }}>{fmtDia(d + "T12:00:00")}</div>
@@ -1061,6 +1338,10 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     if (m.t === "ubicacion") return <Modal title={m.u ? `${m.u.nombre}` : "Nueva oficina"} onClose={() => setModal(null)}><UbicacionFormImpl ubicacion={m.u} usuarios={usuarios} ocupado={ocupado} onSave={(f) => guardarUbicacion(m.u, f)} onClose={() => setModal(null)} /></Modal>;
     if (m.t === "importar") return <Modal title="Importar desde Excel" onClose={() => setModal(null)} wide><ImportarFormImpl ubicaciones={ubicaciones} ubicFija={ubicFija} emps={emps} ocupado={ocupado} onImportar={importar} onClose={() => setModal(null)} /></Modal>;
     if (m.t === "escanear") return <Modal title="Escanear" onClose={() => setModal(null)}><EscanerImpl onCodigo={(c) => { setModal(null); abrirCodigo(c); }} onClose={() => setModal(null)} /></Modal>;
+    if (m.t === "estante") return <Modal title={m.e ? `Editar ${m.e.nombre}` : "Nuevo estante / rack"} onClose={() => setModal(null)}><EstanteFormImpl estante={m.e} ubicacionNombre={nombreUbicacion(ubicaciones, m.ubicacionId)} ocupado={ocupado} onSave={(f) => guardarEstante(m.e, m.ubicacionId, f)} onClose={() => setModal(null)} /></Modal>;
+    if (m.t === "qr") { const est = m.estanteId ? estantes.find(x => x.id === m.estanteId) : null; return <Modal title="Código QR" onClose={() => setModal(null)}><QRImpl codigo={m.codigo} titulo={m.titulo} subtitulo={m.subtitulo} onClose={() => setModal(null)}
+      onImprimir={perms.imprimir ? async () => { try { await generarEtiquetas(m.grande ? { grandes: [m.grande] } : { chicas: [m.chica] }, { titulo: m.codigo }); } catch (err) { alert("No pude generar el PDF: " + (err?.message || err)); } } : null}
+      extraBoton={est && perms.imprimir ? <Btn variant="ghost" onClick={() => imprimirEstantes([est], est.nombre)}>Con sus {est.niveles} niveles</Btn> : null} /></Modal>; }
     return null;
   };
 
@@ -1086,11 +1367,11 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       </div>
     </div>
     <div style={{ position: "relative", zIndex: 2, display: "flex", borderBottom: "1px solid rgba(44,42,40,.08)", overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0, paddingLeft: isMobile ? 4 : 20, scrollbarWidth: "none" }}>
-      {nav.map(x => { const active = secOk === x.id; return <button key={x.id} onClick={() => setSec(x.id)} style={{ padding: isMobile ? "12px 13px" : "14px 18px", background: "transparent", border: "none", boxShadow: active ? `inset 0 -2px 0 ${ORANGE}` : "none", color: active ? "var(--naranja-tinta)" : "var(--text-3)", font: `${active ? 800 : 600} 13px/1 var(--sans)`, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{x.label}</button>; })}
+      {nav.map(x => { const active = secOk === x.id; return <button key={x.id} onClick={() => { if (x.id === "inicio" && secOk === "inicio") setRuta({}); setSec(x.id); }} style={{ padding: isMobile ? "12px 13px" : "14px 18px", background: "transparent", border: "none", boxShadow: active ? `inset 0 -2px 0 ${ORANGE}` : "none", color: active ? "var(--naranja-tinta)" : "var(--text-3)", font: `${active ? 800 : 600} 13px/1 var(--sans)`, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{x.label}</button>; })}
     </div>
-    <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
+    <div id="inv-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "10px 12px 24px" : "14px 32px 28px" }}>
-        {secOk === "inicio" ? renderInicio() : secOk === "agregar" ? renderAgregar() : secOk === "buscar" ? renderBuscar() : secOk === "estantes" ? renderEstantes() : secOk === "ubicaciones" ? renderUbicaciones() : secOk === "herramientas" ? renderHerramientas() : renderMovimientos()}
+        {secOk === "inicio" ? renderInicio() : secOk === "agregar" ? renderAgregar() : secOk === "buscar" ? renderBuscar() : secOk === "ubicaciones" ? renderUbicaciones() : secOk === "herramientas" ? renderHerramientas() : renderMovimientos()}
       </div>
     </div>
     {renderModal()}

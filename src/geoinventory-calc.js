@@ -88,7 +88,7 @@ export const idProyecto = (short) => `proy:${short}`;
  */
 export const ubicacionesDe = ({ guardadas = [], proyectos = [] } = {}) => {
   const porId = new Map((guardadas || []).filter(u => u && u.id).map(u => [u.id, u]));
-  const mezcla = (base) => ({ ...base, ...(porId.get(base.id) ? { responsable: porId.get(base.id).responsable || "", responsableNombre: porId.get(base.id).responsableNombre || "", activa: porId.get(base.id).activa !== false } : { responsable: "", responsableNombre: "", activa: true }) });
+  const mezcla = (base) => ({ ...base, ...(porId.get(base.id) ? { responsable: porId.get(base.id).responsable || "", responsableNombre: porId.get(base.id).responsableNombre || "", activa: porId.get(base.id).activa !== false, codigo: porId.get(base.id).codigo || "" } : { responsable: "", responsableNombre: "", activa: true, codigo: "" }) });
   const fijas = UBICACIONES_FIJAS.map(mezcla);
   const oficinas = (guardadas || []).filter(u => u && u.tipo === "oficina").map(u => ({ ...u, activa: u.activa !== false }))
     .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es", { sensitivity: "base" }));
@@ -99,6 +99,13 @@ export const ubicacionesDe = ({ guardadas = [], proyectos = [] } = {}) => {
 // ── Estantes (13-oct-2026): dentro de una ubicación (Vault, Almacén), con N
 // niveles. Viven en inv-ubicaciones como {id "est:<id>", tipo "estante",
 // ubicacionId, nombre, niveles, orden}. Las cajas guardan estanteId + nivel.
+export const PREFIJO_UBIC = "UBI";
+export const PREFIJO_EST = "EST";
+export const MUEBLES = [["estante", "Estante"], ["rack", "Rack"]];
+export const muebleLabel = (e) => (MUEBLES.find(x => x[0] === e?.mueble)?.[1]) || "Estante";
+/** Código del NIVEL de un estante: EST-0001-N2 (el QR que va pegado en el nivel). */
+export const codigoNivel = (est, nivel) => est?.codigo ? `${est.codigo}-N${nivel}` : "";
+export const nivelesDe = (est) => Array.from({ length: Math.max(1, Math.round(num(est?.niveles) || 1)) }, (_, i) => String(i + 1));
 export const estantesDe = (guardadas = [], ubicacionId = "") => (guardadas || []).filter(e => e && e.tipo === "estante" && e.activa !== false && (!ubicacionId || e.ubicacionId === ubicacionId))
   .sort((a, b) => (num(a.orden) - num(b.orden)) || String(a.nombre).localeCompare(String(b.nombre), "es", { numeric: true }));
 export const nombreEstante = (guardadas, id) => (guardadas || []).find(e => e.id === id)?.nombre || "";
@@ -141,13 +148,34 @@ export const siguientesCodigos = (items, prefijo, n = 1) => {
   (items || []).forEach(i => { const m = re.exec(String(i?.codigo || "")); if (m) max = Math.max(max, Number(m[1])); });
   return Array.from({ length: Math.max(1, n) }, (_, k) => `${prefijo}-${String(max + 1 + k).padStart(4, "0")}`);
 };
-export const esCodigo = (t) => /^(MAT|PER|HER|ADM|TEC|OTR|CAJ)-\d{3,}$/i.test(String(t || "").trim());
+// Artículos (MAT…CAJ), ubicaciones (UBI) y estantes/racks (EST); el NIVEL de
+// un estante agrega -N<n> (EST-0001-N2).
+const RE_CODIGO = /^(?:(?:MAT|PER|HER|ADM|TEC|OTR|CAJ|UBI)-\d{3,}|EST-\d{3,}(?:-N\d{1,2})?)$/i;
+export const esCodigo = (t) => RE_CODIGO.test(String(t || "").trim());
 /** De un QR o de lo que tipeó el lector USB → el código (o null). */
 export const codigoDeTexto = (t) => {
   const s = String(t || "").trim();
-  const m = /[#?&]inv=([A-Z]{3}-\d{3,})/i.exec(s);
+  const m = /[#?&]inv=([A-Z]{3}-\d{3,}(?:-N\d{1,2})?)/i.exec(s);
   if (m) return m[1].toUpperCase();
   return esCodigo(s) ? s.toUpperCase() : null;
+};
+/**
+ * Un código escaneado → qué es. items: inv-items; guardadas: inv-ubicaciones;
+ * ubicaciones: ubicacionesDe(...) (trae el código de cada ubicación).
+ */
+export const resolverCodigo = (codigo, { items = [], guardadas = [], ubicaciones = [] } = {}) => {
+  const c = String(codigo || "").trim().toUpperCase();
+  if (!c) return null;
+  if (c.startsWith("UBI-")) { const u = ubicaciones.find(x => String(x.codigo || "").toUpperCase() === c); return u ? { tipo: "ubicacion", ubicacionId: u.id } : null; }
+  if (c.startsWith("EST-")) {
+    const [, base, n] = /^(EST-\d+)(?:-N(\d+))?$/.exec(c) || [];
+    const est = (guardadas || []).find(e => e && e.tipo === "estante" && e.activa !== false && String(e.codigo || "").toUpperCase() === base);
+    if (!est) return null;
+    if (n && Number(n) > num(est.niveles)) return null;
+    return n ? { tipo: "nivel", estante: est, nivel: String(Number(n)) } : { tipo: "estante", estante: est };
+  }
+  const it = (items || []).find(i => i && !i.eliminado && String(i.codigo || "").toUpperCase() === c);
+  return it ? { tipo: "item", item: it } : null;
 };
 
 // ── Stock ──
@@ -159,6 +187,27 @@ export const ubicacionesConStock = (item) => item?.tipo === "cantidad"
 // Una caja VACÍA sigue estando en su estante (se ve, se rellena): "estar" ≠ tener stock.
 export const estaEn = (item, ubicacionId) => item?.tipo === "caja" || item?.tipo === "individual" ? item.ubicacionId === ubicacionId : stockEn(item, ubicacionId) > 0;
 
+// ── Posición dentro de una ubicación (estante/rack + nivel) ──
+// Individuales y cajas: `estanteId` + `nivel` (están en UN lugar). Por
+// cantidad: `posiciones { [ubicacionId]: {estanteId, nivel} }` (el stock puede
+// estar en varias ubicaciones, cada una con su lugar).
+export const posicionDe = (item, ubicacionId) => {
+  if (!item) return { estanteId: "", nivel: "" };
+  if (item.tipo === "cantidad") { const p = item.posiciones?.[ubicacionId]; return { estanteId: p?.estanteId || "", nivel: p?.nivel ? String(p.nivel) : "" }; }
+  return item.ubicacionId === ubicacionId ? { estanteId: item.estanteId || "", nivel: item.nivel ? String(item.nivel) : "" } : { estanteId: "", nivel: "" };
+};
+export const itemsEnUbicacion = (items, ubicacionId) => (items || []).filter(i => i && !i.eliminado && estaEn(i, ubicacionId));
+export const itemsEnEstante = (items, est) => itemsEnUbicacion(items, est?.ubicacionId).filter(i => posicionDe(i, est.ubicacionId).estanteId === est.id);
+export const itemsEnNivel = (items, est, nivel) => itemsEnEstante(items, est).filter(i => posicionDe(i, est.ubicacionId).nivel === String(nivel));
+/** Lo que está en la ubicación pero en ningún estante vigente. */
+export const itemsSinEstante = (items, ubicacionId, estantes = []) => { const ids = new Set((estantes || []).map(e => e.id)); return itemsEnUbicacion(items, ubicacionId).filter(i => !ids.has(posicionDe(i, ubicacionId).estanteId)); };
+/** Resumen corto de un conjunto: artículos, cajas, unidades en cajas, herramientas. */
+export const resumenDe = (lista) => {
+  const l = (lista || []).filter(i => i && !i.eliminado);
+  return { articulos: l.length, cajas: l.filter(i => i.tipo === "caja").length, enCajas: resumenCajas(l), herramientas: l.filter(esHerramienta).length, individuales: l.filter(i => i.tipo === "individual").length, porCantidad: l.filter(i => i.tipo === "cantidad").length };
+};
+export const movimientosDe = (movs, ubicacionId) => (movs || []).filter(m => m && (m.a === ubicacionId || m.de === ubicacionId || m.en === ubicacionId));
+
 // ── Movimientos (historial automático) ──
 // Devuelve { item, mov } o { error }. `mov` ya trae antes/después.
 export const ACCIONES = {
@@ -167,6 +216,7 @@ export const ACCIONES = {
   salida:  "Salida",
   mover:   "Movido",
   ajuste:  "Ajuste de cantidad",
+  ubicar:  "Ubicado",
   estado:  "Cambio de estado",
   asignar: "Asignación",
   editar:  "Editado",
@@ -200,6 +250,15 @@ export const aplicarMovimiento = (item, m, { by = "", byName = "", at = new Date
       if (nuevo === antes) return { error: "La cantidad es la misma." };
       stock[m.en] = nuevo; if (nuevo <= 0) delete stock[m.en];
       return { item: { ...item, stock }, mov: { ...base, en: m.en, cantidad: r2(nuevo - antes), antes, despues: nuevo } };
+    }
+    if (m.accion === "ubicar") {
+      if (!m.en) return { error: "Elegí la ubicación." };
+      if (!(num(stock[m.en]) > 0)) return { error: "No hay existencias en esa ubicación." };
+      const antes = item.posiciones?.[m.en] || {};
+      if ((antes.estanteId || "") === (m.estanteId || "") && String(antes.nivel || "") === String(m.nivel || "")) return { error: "Ya está ahí." };
+      const posiciones = { ...(item.posiciones || {}) };
+      if (m.estanteId) posiciones[m.en] = { estanteId: m.estanteId, nivel: String(m.nivel || "1") }; else delete posiciones[m.en];
+      return { item: { ...item, posiciones }, mov: { ...base, en: m.en, deEstante: antes.estanteId || "", deNivel: antes.nivel || "", aEstante: m.estanteId || "", aNivel: m.estanteId ? String(m.nivel || "1") : "" } };
     }
     if (m.accion === "editar") return { item: { ...item, ...m.cambios }, mov: { ...base, cambios: Object.keys(m.cambios || {}) } };
     if (m.accion === "eliminar") return { item: { ...item, eliminado: true, eliminadoAt: at, eliminadoPor: byName || by }, mov: base };
@@ -242,11 +301,14 @@ export const aplicarMovimiento = (item, m, { by = "", byName = "", at = new Date
   // individual
   if (m.accion === "mover") {
     if (!m.a) return { error: "Elegí a dónde va." };
-    if (m.a === item.ubicacionId) return { error: "Ya está en esa ubicación." };
-    const nx = { ...item, ubicacionId: m.a };
+    const mismaUbic = m.a === item.ubicacionId;
+    const estanteId = m.estanteId ?? (mismaUbic ? item.estanteId || "" : "");
+    const nivel = estanteId ? String(m.nivel ?? (mismaUbic ? item.nivel || "1" : "1")) : "";
+    if (mismaUbic && estanteId === (item.estanteId || "") && nivel === String(item.nivel || "") && !m.estado) return { error: "Ya está ahí." };
+    const nx = { ...item, ubicacionId: m.a, estanteId, nivel };
     if (m.estado) nx.estado = m.estado;
     if (m.estado && m.estado !== "en_operacion") { nx.maquinaId = ""; nx.maquinaNombre = ""; }
-    return { item: nx, mov: { ...base, de: item.ubicacionId || "", a: m.a, cantidad: 1 } };
+    return { item: nx, mov: { ...base, de: item.ubicacionId || "", a: m.a, cantidad: 1, deEstante: item.estanteId || "", deNivel: item.nivel || "", aEstante: estanteId, aNivel: nivel } };
   }
   if (m.accion === "estado") {
     const estados = estadosDe(item);
@@ -272,6 +334,7 @@ export const textoMovimiento = (m, ubicaciones = []) => {
     case "entrada": return `+${c}→ ${u(m.a)}`;
     case "salida": return `−${c}${m.contenido ? `${m.contenido.toLowerCase()}${num(m.cantidad) === 1 ? "" : "s"} ` : ""}de ${u(m.de)}${m.a ? ` → ${u(m.a)}` : ""}${m.entregadoNombre ? ` → ${m.entregadoNombre}` : ""}`;
     case "mover": return m.aEstante || m.deEstante ? `${u(m.de)}${m.deNivel ? ` (nivel ${m.deNivel})` : ""} → ${u(m.a)}${m.aNivel ? ` (nivel ${m.aNivel})` : ""}` : `${u(m.de)} → ${u(m.a)}`;
+    case "ubicar": return `${u(m.en)} · ${m.aEstante ? `a nivel ${m.aNivel}` : "fuera de estante"}`;
     case "ajuste": return `${num(m.antes).toLocaleString("es-HN")} → ${num(m.despues).toLocaleString("es-HN")} en ${u(m.en)}`;
     case "estado": return `${m.estadoDe || "—"} → ${m.estadoA}${m.maquinaNombre ? ` (${m.maquinaNombre})` : ""}`;
     case "asignar": return m.asignadoA ? `Asignado a ${m.asignadoNombre}` : `Devuelto por ${m.asignadoDeNombre || "—"}`;
