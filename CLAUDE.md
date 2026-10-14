@@ -1732,6 +1732,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Óscar ve "Tus ubicaciones" con el Almacén, puede Agregar y no ve Quitar;
   PDF de etiquetas revisado como imagen. Todo borrado después y el
   responsable real del Almacén (Óscar) quedó intacto.
+  **Grupos plegables (14-oct-2026)**: en Inicio, "Tus ubicaciones", "Almacén
+  y bodegas", "Oficinas de plantel" y "Proyectos" se compactan tocando su
+  título (chevron; `cerrados` en localStorage `gt-inv-grupos-cerrados`, es
+  preferencia de pantalla); con el filtro escrito se abren todos. El botón
+  "Ver/Ocultar los N proyectos sin inventario" va ARRIBA de esa lista para no
+  tener que bajar a cerrarla. Tarjetas sin alto mínimo (más compactas).
   **ALCANCE de Óscar (14-oct-2026, Gerson: "que Óscar sí pueda ver el
   inventario de todos los proyectos pero no manipularlo, y ubicaciones")**:
   `permisosDe("logistica").alcance = "propias"` → el módulo arma `editables`
