@@ -432,7 +432,7 @@ function UbicacionFormImpl({ ubicacion, usuarios, onSave, onClose, ocupado }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // FICHA de un artículo (modal) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
-function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms, onAccion, onEditar, onEliminar, onEtiqueta, verFoto, ocupado, isMobile, movs }) {
+function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms: permsBase, puedeEn = () => true, onAccion, onEditar, onEliminar, onEtiqueta, verFoto, ocupado, isMobile, movs }) {
   const [accion, setAccion] = useState(null);   // entrada | salida | mover | ajustar | asignar | maquina
   const [f, setF] = useState({});
   const [qr, setQr] = useState(null);
@@ -444,12 +444,19 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms, onAccio
   const estados = estadosDe(item);
   const enUbic = ubicacionesConStock(item);
   const caja = item.tipo === "caja";
+  // Alcance (14-oct-2026): fuera de sus ubicaciones, Óscar solo mira.
+  const enMia = item.tipo === "cantidad" ? enUbic.some(x => puedeEn(x.id)) : puedeEn(item.ubicacionId);
+  const ubEditables = ubicaciones.filter(x => puedeEn(x.id));
+  const salidaDesde = item.tipo === "cantidad" ? enUbic.filter(x => puedeEn(x.id)) : [];
+  const perms = { ...permsBase, ...(enMia ? {} : { mover: false, asignar: false, estado: false, editar: false, ajustar: false, eliminar: false }), cargar: permsBase.cargar && (item.tipo === "cantidad" ? ubEditables.length > 0 : enMia) };
+  const soloMirar = permsBase.cargar && !enMia;
   const estantesDestino = estantesDe(estantes, f.a || item.ubicacionId);
   const nombreEst = (id) => estantes.find(e => e.id === id)?.nombre || "";
   const textoPos = (ubId) => { const p = posicionDe(item, ubId); return p.estanteId && nombreEst(p.estanteId) ? `${nombreEst(p.estanteId)} · Nivel ${p.nivel}` : ""; };
   // Por cantidad: ubicaciones con existencias que tienen estantes (para "Ubicar")
-  const ubicConEstantes = item.tipo === "cantidad" ? enUbic.filter(x => estantesDe(estantes, x.id).length > 0) : [];
-  const ubicPrincipal = item.tipo === "individual" ? item.ubicacionId : (enUbic[0]?.id || "");
+  const ubicConEstantes = item.tipo === "cantidad" ? enUbic.filter(x => puedeEn(x.id) && estantesDe(estantes, x.id).length > 0) : [];
+  const ubicPrincipal = item.tipo === "individual" ? item.ubicacionId : ((enUbic.find(x => puedeEn(x.id)) || enUbic[0])?.id || "");
+  const destinoEntrada = puedeEn(ubicPrincipal) ? ubicPrincipal : (ubEditables[0]?.id || "");
   const maquina = maquinas.find(m => m.id === item.maquinaId);
   const abrir = (a) => { setAccion(accion === a ? null : a); setF({ de: ubicPrincipal, a: "", cantidad: "", nuevo: "", motivo: "", en: ubicPrincipal }); };
   const ejecutar = async (m) => { const ok = await onAccion(item, m); if (ok) { setAccion(null); setF({}); } };
@@ -460,8 +467,8 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms, onAccio
   };
   const btnAccion = ({ id, label, icono, c = CHARCOAL, show = true }) => show ? <button key={id} type="button" onClick={() => abrir(id)} aria-pressed={accion === id} disabled={ocupado}
     style={{ flex: "1 1 auto", minHeight: 48, padding: "10px 12px", borderRadius: 14, border: accion === id ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: accion === id ? c : "rgba(255,255,255,.75)", color: accion === id ? "#fff" : CHARCOAL, font: "700 13px/1 var(--sans)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}>{icono && <Ico d={icono} size={16} />}{label}</button> : null;
-  const selUbic = (val, onChange, excluir) => <select value={val} onChange={e => onChange(e.target.value)} style={CTRL}>
-    <option value="">— Ubicación —</option>{ubicaciones.filter(x => x.id !== excluir).map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
+  const selUbic = (val, onChange, excluir, soloMias) => <select value={val} onChange={e => onChange(e.target.value)} style={CTRL}>
+    <option value="">— Ubicación —</option>{ubicaciones.filter(x => x.id !== excluir && (!soloMias || puedeEn(x.id))).map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
   </select>;
   const cajaUI = (children) => <div style={{ padding: 12, borderRadius: 14, background: "rgba(44,42,40,.04)", display: "flex", flexDirection: "column", gap: 8 }}>{children}</div>;
   const historial = (movs || []).filter(m => m.itemId === item.id).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 12);
@@ -500,8 +507,9 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms, onAccio
       </>)}
     </div>}
 
+    {soloMirar && <div style={{ fontSize: 12.5, color: "var(--text-3)", background: "rgba(44,42,40,.05)", borderRadius: 12, padding: "8px 12px" }}>Está en {enUbic.map(x => nombreUbicacion(ubicaciones, x.id)).join(", ") || "otra ubicación"}: lo podés ver, pero lo maneja su responsable.</div>}
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      {btnAccion({ id: "salida", label: caja ? "Salida de la caja" : "Salida", icono: ICO.movimientos, c: ORANGE_DARK, show: (item.tipo === "cantidad" || caja) && perms.cargar })}
+      {btnAccion({ id: "salida", label: caja ? "Salida de la caja" : "Salida", icono: ICO.movimientos, c: ORANGE_DARK, show: (caja ? perms.cargar : item.tipo === "cantidad" && perms.cargar && salidaDesde.length > 0) })}
       {btnAccion({ id: "entrada", label: caja ? "Rellenar" : "Entrada", icono: ICO.agregar, c: C_VERDE.color, show: (item.tipo === "cantidad" || caja) && perms.cargar })}
       {btnAccion({ id: "mover", label: "Mover", icono: ICO.ubicaciones, c: ORANGE_DARK, show: (item.tipo === "individual" || caja) && perms.mover })}
       {btnAccion({ id: "ubicar", label: "Ubicar en estante", icono: ICO.estante, c: ORANGE_DARK, show: ubicConEstantes.length > 0 && perms.mover })}
@@ -512,13 +520,13 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms, onAccio
     </div>
 
     {accion === "entrada" && cajaUI(<>
-      {!caja && <><div style={LBL}>Entra a</div>{selUbic(f.a || ubicPrincipal, v => u("a", v))}</>}
+      {!caja && <><div style={LBL}>Entra a</div>{selUbic(f.a || destinoEntrada, v => u("a", v), undefined, true)}</>}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad || ""} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{caja ? String(item.caja?.contenido || "").toLowerCase() + "s" : item.unidad}</b>{caja && <span style={{ fontSize: 12, color: "var(--text-3)" }}>caben {fmtN(item.caja?.capacidad)}</span>}</div>
       <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Nota (opcional) · ej. llegó de Larach" style={CTRL} />
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => ejecutar({ accion: "entrada", a: f.a || ubicPrincipal, cantidad: f.cantidad, motivo: f.motivo })}>{caja ? "Rellenar" : "Registrar entrada"}</Btn></div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => ejecutar({ accion: "entrada", a: caja ? ubicPrincipal : (f.a || destinoEntrada), cantidad: f.cantidad, motivo: f.motivo })}>{caja ? "Rellenar" : "Registrar entrada"}</Btn></div>
     </>)}
     {accion === "salida" && cajaUI(<>
-      {!caja && <><div style={LBL}>Sale de</div>{selUbic(f.de, v => u("de", v))}</>}
+      {!caja && <><div style={LBL}>Sale de</div>{selUbic(f.de, v => u("de", v), undefined, true)}</>}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad || ""} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{caja ? String(item.caja?.contenido || "").toLowerCase() + "s" : item.unidad}</b><span style={{ fontSize: 12, color: "var(--text-3)" }}>{caja ? `quedan ${fmtN(item.caja?.cantidad)}` : `hay ${fmtN(stockEn(item, f.de))}`}</span></div>
       <div style={LBL}>{caja ? "Para qué proyecto / a dónde van" : "Hacia (opcional: si va a otra ubicación, entra allá)"}</div>{selUbic(f.a || "", v => u("a", v), f.de)}
       <div style={LBL}>Entregado a (opcional)</div><BuscaEmpleado emps={emps} value={f.entregadoA || ""} onChange={(id, nombre) => setF(p => ({ ...p, entregadoA: id, entregadoNombre: nombre }))} />
@@ -544,7 +552,7 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms, onAccio
     </>)}
     {accion === "ajustar" && cajaUI(<>
       <div style={{ fontSize: 12.5, color: C_ROJO.color, fontWeight: 700 }}>Corrección de inventario: la cantidad queda en lo que escribas. Queda registrado con tu nombre.</div>
-      {!caja && <><div style={LBL}>En</div>{selUbic(f.en, v => u("en", v))}</>}
+      {!caja && <><div style={LBL}>En</div>{selUbic(f.en, v => u("en", v), undefined, true)}</>}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}><span style={{ fontSize: 13, color: "var(--text-2)" }}>hay {fmtN(caja ? item.caja?.cantidad : stockEn(item, f.en))} →</span><input type="number" inputMode="decimal" min="0" step="any" value={f.nuevo || ""} onChange={e => u("nuevo", e.target.value)} placeholder="Cantidad real" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{caja ? String(item.caja?.contenido || "").toLowerCase() + "s" : item.unidad}</b></div>
       <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Motivo (corto) · ej. conteo físico" style={CTRL} />
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small variant="danger" disabled={ocupado} onClick={() => ejecutar({ accion: "ajuste", en: f.en, nuevo: f.nuevo, motivo: f.motivo })}>Ajustar</Btn></div>
@@ -737,6 +745,10 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     return out;
   })();
   const ubicaciones = ubicacionesDe({ guardadas: ubicGuardadas, proyectos });
+  // Dónde puede MANIPULAR este usuario (Óscar: Almacén Central + donde es responsable)
+  const editables = new Set(perms.alcance === "propias" ? ubicaciones.filter(u2 => u2.id === "almacen" || (u2.responsable && u2.responsable === userKey)).map(u2 => u2.id) : ubicaciones.map(u2 => u2.id));
+  const puedeEn = (ubId) => !!perms.cargar && (perms.alcance !== "propias" || editables.has(ubId));
+  const ubicacionesMias = ubicaciones.filter(u2 => puedeEn(u2.id));
   const estantes = estantesDe(ubicGuardadas);
   // Inicio = navegación por ubicaciones (14-oct-2026): ubicación › estante/rack › nivel
   const [ruta, setRutaRaw] = useState({});                 // {ubic, est, niv}
@@ -931,7 +943,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     const faltanU = ubicIds.filter(id => !ubicaciones.find(x => x.id === id)?.codigo);
     const faltanE = estIds.filter(id => !estantes.find(x => x.id === id)?.codigo);
     if (!faltanU.length && !faltanE.length) return ubicGuardadas;
-    if (!perms.imprimir) { alert("Todavía no tiene código. Pedile a Gerson, la Lic. Carolina, Óscar o Ana que generen su QR."); return null; }
+    if (!perms.imprimir || faltanU.some(id => !puedeEn(id)) || faltanE.some(id => !puedeEn(estantes.find(x => x.id === id)?.ubicacionId))) { alert("Todavía no tiene código. Lo genera su responsable (o Gerson, la Lic. Carolina o Ana)."); return null; }
     if (ocupado) return null; setOcupado(true);
     try {
       const c = await store.getCloud(K_UBIC); const arr = Array.isArray(c) ? c.map(x => ({ ...x })) : [];
@@ -1130,9 +1142,10 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
           <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4 }}>{subUbic(u2)} · {resp ? `responsable ${resp.label}` : "sin responsable"}{r.articulos ? ` · ${resumenTxt(r)}` : ""}</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {(u2.codigo || perms.imprimir) && chipCodigo(u2.codigo || "Generar QR", () => verQRUbicacion(u2))}
-          {perms.cargar && <Btn small onClick={() => agregarAqui(u2.id, { tipo: u2.tipo === "vault" ? "caja" : undefined })}><Ico d={ICO.agregar} size={14} /> Agregar aquí</Btn>}
-          {perms.cargar && <Btn small variant="ghost" onClick={() => setModal({ t: "estante", e: null, ubicacionId: u2.id })}>+ Estante / rack</Btn>}
+          {(u2.codigo || puedeEn(u2.id)) && chipCodigo(u2.codigo || "Generar QR", () => verQRUbicacion(u2))}
+          {puedeEn(u2.id) && <Btn small onClick={() => agregarAqui(u2.id, { tipo: u2.tipo === "vault" ? "caja" : undefined })}><Ico d={ICO.agregar} size={14} /> Agregar aquí</Btn>}
+          {puedeEn(u2.id) && <Btn small variant="ghost" onClick={() => setModal({ t: "estante", e: null, ubicacionId: u2.id })}>+ Estante / rack</Btn>}
+          {perms.cargar && !puedeEn(u2.id) && <Chip c={C_GRIS} style={{ fontSize: 11.5 }}>Solo lectura</Chip>}
           {perms.ubicaciones && <Btn small variant="ghost" onClick={() => setModal({ t: "ubicacion", u: u2 })}>Responsable</Btn>}
         </div>
       </div>
@@ -1151,7 +1164,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
         </div>; }))}
       </>}
       {tituloGrupo(ests.length ? `Fuera de estante · ${sueltos.length}` : `Inventario · ${aqui.length}`, perms.imprimir && sueltos.length > 0 && <Btn small variant="ghost" onClick={() => etiquetas(sueltos, u2.nombre)}><Ico d={ICO.imprimir} size={13} /> Etiquetas ({sueltos.length})</Btn>)}
-      {sueltos.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{ests.length ? "Todo está en sus estantes." : perms.cargar ? "Vacío. Tocá Agregar aquí y empezá con la foto." : "Vacío."}</div>
+      {sueltos.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{ests.length ? "Todo está en sus estantes." : puedeEn(u2.id) ? "Vacío. Tocá Agregar aquí y empezá con la foto." : "Vacío."}</div>
         : porCat.map(([c, l]) => <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "#6E6862" }}><Ico d={ICO[c.id]} size={14} />{c.label} · {l.length}</div>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(340px, 1fr))", gap: 8 }}>{l.map(it => filaItem(it, { mostrarUbic: false }))}</div>
@@ -1171,9 +1184,9 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
         <div style={{ width: 54, height: 54, borderRadius: 16, background: "rgba(44,42,40,.06)", color: "#5C5853", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO.estante} size={27} /></div>
         <div style={{ flex: 1, minWidth: 200 }}><div style={{ font: "800 21px/1.15 var(--display)", color: CHARCOAL }}>{e.nombre}</div><div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4 }}>{muebleLabel(e)} de {e.niveles} niveles · {u2.nombre}{en.length ? ` · ${resumenTxt(resumenDe(en))}` : ""}</div></div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {(e.codigo || perms.imprimir) && chipCodigo(e.codigo || "Generar QR", () => verQREstante(e))}
-          {perms.imprimir && <Btn small variant="ghost" onClick={() => imprimirEstantes([e], e.nombre)}><Ico d={ICO.imprimir} size={13} /> QR del {muebleLabel(e).toLowerCase()} y niveles</Btn>}
-          {perms.cargar && <Btn small variant="ghost" onClick={() => setModal({ t: "estante", e, ubicacionId: u2.id })}>Editar</Btn>}
+          {(e.codigo || puedeEn(u2.id)) && chipCodigo(e.codigo || "Generar QR", () => verQREstante(e))}
+          {perms.imprimir && (e.codigo || puedeEn(u2.id)) && <Btn small variant="ghost" onClick={() => imprimirEstantes([e], e.nombre)}><Ico d={ICO.imprimir} size={13} /> QR del {muebleLabel(e).toLowerCase()} y niveles</Btn>}
+          {puedeEn(u2.id) && <Btn small variant="ghost" onClick={() => setModal({ t: "estante", e, ubicacionId: u2.id })}>Editar</Btn>}
           {perms.ubicaciones && <Btn small variant="danger" onClick={() => quitarEstante(e)}>Quitar</Btn>}
         </div>
       </div>
@@ -1209,18 +1222,18 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
         <div style={{ width: 54, height: 54, borderRadius: 16, background: "rgba(232,118,45,.12)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><span style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".06em", color: "var(--text-3)" }}>NIVEL</span><span style={{ font: "800 24px/1 var(--display)", color: ORANGE_DARK }}>{n}</span></div>
         <div style={{ flex: 1, minWidth: 180 }}><div style={{ font: "800 20px/1.15 var(--display)", color: CHARCOAL }}>{e.nombre} · Nivel {n}</div><div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4 }}>{u2.nombre}{l.length ? ` · ${resumenTxt(rn)}` : " · vacío"}</div></div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {(e.codigo || perms.imprimir) && chipCodigo(e.codigo ? codigoNivel(e, n) : "Generar QR", () => verQREstante(e, n))}
-          {perms.cargar && <Btn small onClick={() => agregarAqui(u2.id, { estanteId: e.id, nivel: n, tipo: u2.tipo === "vault" ? "caja" : undefined })}><Ico d={ICO.agregar} size={14} /> Agregar aquí</Btn>}
+          {(e.codigo || puedeEn(u2.id)) && chipCodigo(e.codigo ? codigoNivel(e, n) : "Generar QR", () => verQREstante(e, n))}
+          {puedeEn(u2.id) && <Btn small onClick={() => agregarAqui(u2.id, { estanteId: e.id, nivel: n, tipo: u2.tipo === "vault" ? "caja" : undefined })}><Ico d={ICO.agregar} size={14} /> Agregar aquí</Btn>}
           {perms.imprimir && l.length > 0 && <Btn small variant="ghost" onClick={() => etiquetas(l, `${e.nombre}-nivel-${n}`)}><Ico d={ICO.imprimir} size={13} /> Etiquetas ({l.length})</Btn>}
         </div>
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{niveles.map(x => pillBtn(`Nivel ${x}`, x === n, () => setRuta({ ubic: u2.id, est: e.id, niv: x }), { key: x, c: "#6E6862" }))}</div>
-      {l.length === 0 && <Vacio>Nivel vacío.{perms.cargar ? " Tocá Agregar aquí: la ubicación, el estante y el nivel ya van puestos." : ""}</Vacio>}
+      {l.length === 0 && <Vacio>Nivel vacío.{puedeEn(u2.id) ? " Tocá Agregar aquí: la ubicación, el estante y el nivel ya van puestos." : ""}</Vacio>}
       {cajas.length > 0 && grilla(cajas.map(tarjetaCaja))}
       {otros.length > 0 && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(340px, 1fr))", gap: 8 }}>{otros.map(it => filaItem(it, { mostrarUbic: false }))}</div>}
     </div>;
   };
-  const renderAgregar = () => <AgregarFormImpl ubicaciones={ubicaciones} ubicFija={ubicFija} setUbicFija={setUbicFija} items={vivos} emps={emps} estantes={estantes} onNuevoEstante={perms.cargar ? nuevoEstante : null} ocupado={ocupado} isMobile={isMobile} dosColumnas={anchoGrande} ultimo={ultimo} setUltimo={setUltimo}
+  const renderAgregar = () => <AgregarFormImpl ubicaciones={ubicacionesMias} ubicFija={ubicFija} setUbicFija={setUbicFija} items={vivos} emps={emps} estantes={estantes} onNuevoEstante={perms.cargar ? nuevoEstante : null} ocupado={ocupado} isMobile={isMobile} dosColumnas={anchoGrande} ultimo={ultimo} setUltimo={setUltimo}
     onGuardar={(d, { fotoDe }) => crearArticulos([d], { fotoDe, foto: d.foto })} onSumar={sumarExistente} />;
   const renderBuscar = () => {
     const res = buscarItems(vivos, { q, ubicacionId: fUbic, categoria: fCat, estado: fEstado, tipo: fTipo }).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
@@ -1269,7 +1282,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
               <div style={{ fontSize: 11, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{resp ? resp.label : u2.responsableNombre || "Sin responsable"} · {n} artículo{n === 1 ? "" : "s"}{ne ? ` · ${ne} estante${ne === 1 ? "" : "s"}` : ""}</div>
             </div>
             <span onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              {(u2.codigo || perms.imprimir) && chipCodigo(u2.codigo || "QR", () => verQRUbicacion(u2))}
+              {(u2.codigo || puedeEn(u2.id)) && chipCodigo(u2.codigo || "QR", () => verQRUbicacion(u2))}
               {perms.ubicaciones && <button type="button" onClick={() => setModal({ t: "ubicacion", u: u2 })} title="Responsable / editar" style={{ width: 34, height: 34, borderRadius: 999, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.7)", cursor: "pointer", color: "var(--text-2)", fontSize: 14, fontFamily: "inherit" }}>✎</button>}
             </span>
           </div>; })}
@@ -1333,10 +1346,10 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   const renderModal = () => {
     if (!modal) return null;
     const m = modal;
-    if (m.t === "ficha") { const it = items.find(i => i.id === m.id); if (!it) return null; return <Modal title={it.codigo} onClose={() => setModal(null)} wide><FichaImpl item={it} ubicaciones={ubicaciones} emps={emps} maquinas={maquinas} estantes={estantes} perms={perms} ocupado={ocupado} isMobile={isMobile} movs={movs} verFoto={verFoto} onAccion={accionSobre} onEditar={(it2) => setModal({ t: "editar", id: it2.id })} onEliminar={eliminarArticulo} onEtiqueta={(it2) => etiquetas([it2], it2.codigo)} /></Modal>; }
+    if (m.t === "ficha") { const it = items.find(i => i.id === m.id); if (!it) return null; return <Modal title={it.codigo} onClose={() => setModal(null)} wide><FichaImpl item={it} ubicaciones={ubicaciones} emps={emps} maquinas={maquinas} estantes={estantes} perms={perms} puedeEn={puedeEn} ocupado={ocupado} isMobile={isMobile} movs={movs} verFoto={verFoto} onAccion={accionSobre} onEditar={(it2) => setModal({ t: "editar", id: it2.id })} onEliminar={eliminarArticulo} onEtiqueta={(it2) => etiquetas([it2], it2.codigo)} /></Modal>; }
     if (m.t === "editar") { const it = items.find(i => i.id === m.id); if (!it) return null; return <Modal title={`Editar ${it.codigo}`} onClose={() => setModal({ t: "ficha", id: it.id })}><EditarFormImpl item={it} ocupado={ocupado} isMobile={isMobile} onSave={(f) => editarArticulo(it, f)} onClose={() => setModal({ t: "ficha", id: it.id })} /></Modal>; }
     if (m.t === "ubicacion") return <Modal title={m.u ? `${m.u.nombre}` : "Nueva oficina"} onClose={() => setModal(null)}><UbicacionFormImpl ubicacion={m.u} usuarios={usuarios} ocupado={ocupado} onSave={(f) => guardarUbicacion(m.u, f)} onClose={() => setModal(null)} /></Modal>;
-    if (m.t === "importar") return <Modal title="Importar desde Excel" onClose={() => setModal(null)} wide><ImportarFormImpl ubicaciones={ubicaciones} ubicFija={ubicFija} emps={emps} ocupado={ocupado} onImportar={importar} onClose={() => setModal(null)} /></Modal>;
+    if (m.t === "importar") return <Modal title="Importar desde Excel" onClose={() => setModal(null)} wide><ImportarFormImpl ubicaciones={ubicacionesMias} ubicFija={ubicFija} emps={emps} ocupado={ocupado} onImportar={importar} onClose={() => setModal(null)} /></Modal>;
     if (m.t === "escanear") return <Modal title="Escanear" onClose={() => setModal(null)}><EscanerImpl onCodigo={(c) => { setModal(null); abrirCodigo(c); }} onClose={() => setModal(null)} /></Modal>;
     if (m.t === "estante") return <Modal title={m.e ? `Editar ${m.e.nombre}` : "Nuevo estante / rack"} onClose={() => setModal(null)}><EstanteFormImpl estante={m.e} ubicacionNombre={nombreUbicacion(ubicaciones, m.ubicacionId)} ocupado={ocupado} onSave={(f) => guardarEstante(m.e, m.ubicacionId, f)} onClose={() => setModal(null)} /></Modal>;
     if (m.t === "qr") { const est = m.estanteId ? estantes.find(x => x.id === m.estanteId) : null; return <Modal title="Código QR" onClose={() => setModal(null)}><QRImpl codigo={m.codigo} titulo={m.titulo} subtitulo={m.subtitulo} onClose={() => setModal(null)}

@@ -348,7 +348,9 @@ export const keyMovimientos = (iso) => `inv-mov-${String(iso || new Date().toISO
 // ── Permisos por rol (13-oct-2026, decisión de Gerson) ──
 //   · Gerson (admin) y la Lic. Carolina (tesoreria): TODO.
 //   · Óscar (logistica): todo menos AJUSTAR cantidades a mano (corregir stock);
-//     sí da entradas y salidas, mueve, asigna, cambia estado e imprime.
+//     sí da entradas y salidas, mueve, asigna, cambia estado e imprime — PERO
+//     solo en el Almacén Central y donde sea responsable (`alcance: "propias"`,
+//     14-oct-2026); el resto lo ve sin poder tocarlo.
 //   · Ana (asistente_compras): igual que Óscar + crea oficinas.
 //   · Christian (costos), Arturo (compras_ops), gerencia y visores: solo ver.
 //   · Residentes y los demás: sin acceso.
@@ -359,6 +361,10 @@ export const permisosDe = (role) => {
   return {
     ver, cargar: carga, mover: carga, asignar: carga, estado: carga, imprimir: carga, editar: carga, importar: carga,
     ajustar: full, eliminar: full, ubicaciones: full || role === "asistente_compras", config: full,
+    // 14-oct-2026 (Gerson): Óscar VE el inventario de todos los proyectos y
+    // ubicaciones pero solo MANIPULA lo suyo (Almacén Central + donde sea
+    // responsable). Sí da salida del Almacén hacia un proyecto.
+    alcance: role === "logistica" ? "propias" : "todo",
   };
 };
 export const ROLES_INVENTARIO = ["admin", "tesoreria", "logistica", "asistente_compras", "costos", "compras_ops", "gerencia", "visor_compras"];

@@ -183,3 +183,10 @@ test("ubicaciones/estantes/niveles con código y QR; posición de cualquier art�
   x = aplicarMovimiento(items[3], { accion: "mover", a: "of:1" }); assert.equal(x.item.estanteId, ""); assert.equal(x.item.nivel, "");
   assert.deepEqual(movimientosDe([{ a: "vault" }, { de: "almacen" }, { en: "vault" }, { a: "x" }], "vault").length, 2);
 });
+
+test("alcance: Óscar solo manipula lo suyo; los demás roles de carga, todo", () => {
+  assert.equal(permisosDe("logistica").alcance, "propias");
+  assert.equal(permisosDe("asistente_compras").alcance, "todo");
+  assert.equal(permisosDe("admin").alcance, "todo");
+  assert.equal(permisosDe("tesoreria").alcance, "todo");
+});

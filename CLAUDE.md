@@ -1605,7 +1605,8 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   colaborador por nombre; plantilla descargable.
   **Permisos** (`permisosDe`, decisión de Gerson 13-oct): admin y tesorería
   TODO; `logistica` (Óscar) todo MENOS ajustar cantidades a mano (sí entradas,
-  salidas, mover, asignar, estado, imprimir, importar); `asistente_compras`
+  salidas, mover, asignar, estado, imprimir, importar) y, desde el 14-oct,
+  SOLO en sus ubicaciones (ver ALCANCE de Óscar); `asistente_compras`
   (Ana) igual + crear oficinas; costos (Christian), compras_ops (Arturo),
   gerencia y visores SOLO VER; residentes sin acceso. `ROLES_INVENTARIO` es
   lo que usa MODULES en App.jsx.
@@ -1731,6 +1732,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Óscar ve "Tus ubicaciones" con el Almacén, puede Agregar y no ve Quitar;
   PDF de etiquetas revisado como imagen. Todo borrado después y el
   responsable real del Almacén (Óscar) quedó intacto.
+  **ALCANCE de Óscar (14-oct-2026, Gerson: "que Óscar sí pueda ver el
+  inventario de todos los proyectos pero no manipularlo, y ubicaciones")**:
+  `permisosDe("logistica").alcance = "propias"` → el módulo arma `editables`
+  (Almacén Central + las ubicaciones donde `responsable === userKey`) y
+  `puedeEn(ubicacionId)`. Fuera de ahí Óscar SOLO MIRA: Agregar e Importar
+  solo ofrecen sus ubicaciones; en las vistas no salen "Agregar aquí", "+
+  Estante / rack", Editar estante ni "Generar QR" (sí ve los códigos que ya
+  existen) y sale el chip "Solo lectura"; la ficha (`FichaImpl` recibe
+  `puedeEn`) apaga Mover/Asignar/Estado/Editar/Salida/Rellenar de lo que no es
+  suyo y muestra "lo podés ver, pero lo maneja su responsable". Lo que SÍ
+  hace: salida del Almacén HACIA un proyecto (el destino puede ser cualquiera)
+  y entradas a sus ubicaciones; Ajustar sigue sin tenerlo. `asegurarCodigos`
+  no genera códigos de ubicaciones ajenas. Admin, tesorería y Ana siguen con
+  alcance "todo". Verificado el 14-oct con datos de prueba (borrados).
   **Panel**: GeoSafety, GeoDrill Vault y Mis Tareas llevan `oculto: true` en
   MODULES (14-oct, "de momento"): no salen en el panel; el código sigue y Mis
   Tareas se abre igual desde la tarjeta TO-DOS de la bienvenida.
