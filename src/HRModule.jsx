@@ -463,7 +463,7 @@ const GTLineChart = ({ series = [], lastDay = 31, height = 190 }) => {
 };
 
 // Dona simple. segments: [{ value, color, label }]. Tooltips nativos.
-const ANIM_GRAF = "1500ms cubic-bezier(.22,1,.36,1)";
+const ANIM_GRAF = "2200ms cubic-bezier(.22,1,.36,1)";
 const GTDonut = ({ segments = [], size = 132, thickness = 17, centerLabel = "", centerSub = "", progreso = 1 }) => {
   // progreso 0→1 (15-oct-2026): la dona se DIBUJA en barrido al entrar. Cada
   // tajada crece y gira a su lugar con transición CSS (stroke-dasharray +
@@ -479,8 +479,8 @@ const GTDonut = ({ segments = [], size = 132, thickness = 17, centerLabel = "", 
       const rot = (acc / total) * 360 * progreso - 90;
       acc += v;
       return <circle key={s.label || i} cx={C} cy={C} r={RAD} fill="none" stroke={s.color} strokeWidth={thickness}
-        strokeDasharray={`${(frac * CIRC * progreso).toFixed(2)} ${CIRC.toFixed(2)}`} strokeLinecap="butt"
-        style={{ transform: `rotate(${rot}deg)`, transformOrigin: `${C}px ${C}px`, transition: `stroke-dasharray ${ANIM_GRAF}, transform ${ANIM_GRAF}` }}>
+        strokeLinecap="butt"
+        style={{ strokeDasharray: `${(frac * CIRC * progreso).toFixed(2)}px ${CIRC.toFixed(2)}px`, transform: `rotate(${rot}deg)`, transformOrigin: `${C}px ${C}px`, transition: `stroke-dasharray ${ANIM_GRAF}, transform ${ANIM_GRAF}` }}>
         <title>{`${s.label}: ${s.value} (${Math.round(frac * 100)}%)`}</title>
       </circle>;
     })}
@@ -492,7 +492,7 @@ const GTDonut = ({ segments = [], size = 132, thickness = 17, centerLabel = "", 
 // Número que CUENTA hacia arriba al aparecer (y al cambiar de valor): de lo
 // que mostraba al valor nuevo en ~1.4 s con salida suave. Respeta
 // prefers-reduced-motion (salta directo).
-const CuentaArriba = ({ valor = 0, formato = (v) => Math.round(v), dur = 1400 }) => {
+const CuentaArriba = ({ valor = 0, formato = (v) => Math.round(v), dur = 2400 }) => {
   const [v, setV] = useState(0);
   const desdeRef = useRef(0);
   useEffect(() => {
@@ -502,7 +502,7 @@ const CuentaArriba = ({ valor = 0, formato = (v) => Math.round(v), dur = 1400 })
     let raf;
     const paso = (t) => {
       const k = Math.min(1, (t - t0) / dur);
-      const e = 1 - Math.pow(1 - k, 4);
+      const e = 1 - Math.pow(1 - k, 3);
       const x = ini + (fin - ini) * e;
       desdeRef.current = x; setV(x);
       if (k < 1) raf = requestAnimationFrame(paso);

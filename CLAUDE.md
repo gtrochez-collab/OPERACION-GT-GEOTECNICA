@@ -894,7 +894,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   stroke-dasharray + rotate, y al cambiar de mes se reacomodan suave),
   `GTMonthBars progreso` (crecen desde abajo escalonadas), los anchos de las
   barras y `CuentaArriba` (cifras que cuentan hasta su valor en ~1.4 s;
-  respeta reduced-motion). `ANIM_GRAF` = 1500ms cubic-bezier(.22,1,.36,1).
+  respeta reduced-motion; ~2.4 s). `ANIM_GRAF` = 2200ms cubic-bezier(.22,1,.36,1). ⚠ El stroke-dasharray de la dona va en `style` (como ATRIBUTO SVG Chrome no lo transiciona y la dona salía de golpe).
   El carnet ya no usa backdrop-filter mientras viaja (era el tirón al
   cerrarlo): caras sólidas, fondo oscuro sin blur, will-change, abrir ~0.9 s
   desacelerando y cerrar ~0.8 s ease-in-out.
