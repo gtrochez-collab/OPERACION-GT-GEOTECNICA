@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, findProject, resolveShort, projectName, projectCode } from "./projects.js";
 import { esFeriadoQuincena, nombreFeriado } from "./holidays.js";
 import { hoyISO } from "./fechas.js";
-// Accesos al sistema (2-oct-2026): Gerson crea los usuarios de GeoSupply
-// (residentes) desde la ficha del colaborador. GT_CSS se monta SOLO en esa
-// pestaña (vidrio); el resto de GeoTeam sigue con sus estilos de siempre.
+// GT_CSS (vidrio): desde el 15-oct-2026 lo monta TODO GeoTeam (rediseño de
+// encabezado, Dashboard, KPI's y Empleados).
 import { GT_CSS } from "./gt-ui.js";
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
@@ -304,7 +304,8 @@ const empInitials = (fullName) => {
   return (parts[0][0] + parts[parts.length > 2 ? 2 : 1][0]).toUpperCase();
 };
 const empColor = (seed) => {
-  const palette = ["#0F4C75", "#8B3A3A", "#1B4332", "#7C3AED", "#E8762D", "#0891B2", "#BE185D", "#D97706", "#2C5F5D", "#B45309", "#4C1D95"];
+  // Paleta GeoCore (15-oct-2026): carbón, naranjas y grises — sin el arcoíris de antes.
+  const palette = ["#2C2A28", "#E8762D", "#5C5853", "#C75F1F", "#8C857D", "#3A3633", "#A9542A", "#6E6862"];
   if (!seed) return "#64748b";
   let hash = 0;
   for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0;
@@ -441,17 +442,17 @@ const GTLineChart = ({ series = [], lastDay = 31, height = 190 }) => {
   const ticksX = [1, 5, 10, 15, 20, 25, lastDay].filter((v, i, a) => v <= lastDay && a.indexOf(v) === i);
   return <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
     {[0, 50, 100].map(v => <g key={v}>
-      <line x1={L} y1={yOf(v)} x2={W - R2} y2={yOf(v)} stroke="#EDE5D5" strokeWidth="1" />
-      <text x={L - 6} y={yOf(v) + 3} textAnchor="end" fontSize="9" fill="#B8B0A4">{v}%</text>
+      <line x1={L} y1={yOf(v)} x2={W - R2} y2={yOf(v)} stroke="rgba(44,42,40,.07)" strokeWidth="1" />
+      <text x={L - 6} y={yOf(v) + 3} textAnchor="end" fontSize="9" fill="#A39C92">{v}%</text>
     </g>)}
-    {ticksX.map(d => <text key={d} x={xOf(d)} y={H - 8} textAnchor="middle" fontSize="9" fill="#B8B0A4">{d}</text>)}
+    {ticksX.map(d => <text key={d} x={xOf(d)} y={H - 8} textAnchor="middle" fontSize="9" fill="#A39C92">{d}</text>)}
     {series.map((s, si) => {
       const pts = (s.points || []).filter(p => p.y !== null && p.y !== undefined);
       if (!pts.length) return null;
       const poly = pts.map(p => `${xOf(p.x).toFixed(1)},${yOf(p.y).toFixed(1)}`).join(" ");
       const area = `${xOf(pts[0].x).toFixed(1)},${yOf(0).toFixed(1)} ${poly} ${xOf(pts[pts.length - 1].x).toFixed(1)},${yOf(0).toFixed(1)}`;
       return <g key={si}>
-        {si === 0 && <polygon points={area} fill={s.color} opacity="0.10" />}
+        {si === 0 && <polygon points={area} fill={s.color} opacity="0.08" />}
         <polyline points={poly} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
         {pts.map(p => <circle key={p.x} cx={xOf(p.x)} cy={yOf(p.y)} r="3.4" fill="#fff" stroke={s.color} strokeWidth="2">
           <title>{`${s.label} · día ${p.x}: ${p.y}%${p.sub ? ` (${p.sub})` : ""}`}</title>
@@ -467,7 +468,7 @@ const GTDonut = ({ segments = [], size = 132, thickness = 17, centerLabel = "", 
   const RAD = (size - thickness) / 2 - 2, C = size / 2, CIRC = 2 * Math.PI * RAD;
   let acc = 0;
   return <svg viewBox={`0 0 ${size} ${size}`} style={{ width: size, height: size, display: "block" }}>
-    <circle cx={C} cy={C} r={RAD} fill="none" stroke="#EDE5D5" strokeWidth={thickness} />
+    <circle cx={C} cy={C} r={RAD} fill="none" stroke="rgba(44,42,40,.07)" strokeWidth={thickness} />
     {total > 0 && segments.filter(s => s.value > 0).map((s, i) => {
       const frac = s.value / total;
       const dash = `${(frac * CIRC).toFixed(2)} ${(CIRC).toFixed(2)}`;
@@ -498,8 +499,8 @@ const GTMonthBars = ({ data = [], height = 180, fmtVal = v => v, selected = "", 
       const isSel = selected && d.key === selected;
       return <g key={i} style={{ cursor: onPick ? "pointer" : "default" }} onClick={onPick ? () => onPick(d) : undefined}>
         <rect x={x} y={y} width={w} height={h} rx="4"
-          fill={d.real ? "#D4A017" : "#3E6A99"} opacity={d.value ? (isSel ? 1 : 0.85) : 0.25}
-          stroke={isSel ? "#2C2A28" : "none"} strokeWidth={isSel ? 2 : 0}>
+          fill={d.real ? "#E8762D" : "#CFCAC3"} opacity={d.value ? (isSel ? 1 : 0.9) : 0.25}
+          stroke={isSel ? "#2C2A28" : "none"} strokeWidth={isSel ? 1.5 : 0}>
           <title>{`${d.title || d.label}: ${fmtVal(d.value)}${d.real ? " (planilla real)" : " (proyección)"}`}</title>
         </rect>
         {d.value > 0 && <text x={x + w / 2} y={y - 5} textAnchor="middle" fontSize="8.5" fill="#8B847C">{d.top || ""}</text>}
@@ -516,6 +517,107 @@ const GTMonthBars = ({ data = [], height = 180, fmtVal = v => v, selected = "", 
 const NavBtn = ({ children, onClick, style: sx }) => (
   <span role="button" onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8, border: "1px solid #DBD4C8", background: "#fff", color: "#5C5853", fontSize: 12, fontWeight: 700, cursor: "pointer", userSelect: "none", ...sx }}>{children}</span>
 );
+
+// ═══════════════════════════════════════════════════════════════════
+// CARNET DEL COLABORADOR (15-oct-2026, rediseño de Empleados)
+// ═══════════════════════════════════════════════════════════════════
+// Gerson: "las fichas en cajitas de vidrio tipo CARNET bonito de Geo; al dar
+// click sale una card a tu pantalla con la parte de atrás del carnet y toda la
+// info". A NIVEL DE MÓDULO (definidos adentro se remontarían en cada render).
+const CT_LABEL = { permanent: "Permanente", temporary: "Temporal", honorarios: "Honorarios" };
+const CT_COLOR = { permanent: CHARCOAL, temporary: ORANGE_DARK, honorarios: "#6E6862" };
+const CURVAS_CARNET = (
+  <svg viewBox="0 0 240 70" preserveAspectRatio="none" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+    <path d="M-10 52c40-26 70-26 110-6s80 18 150-14" fill="none" stroke="rgba(232,118,45,.55)" strokeWidth="2" />
+    <path d="M-10 36c40-26 70-26 110-6s80 18 150-14" fill="none" stroke="rgba(255,255,255,.16)" strokeWidth="1.5" />
+    <path d="M-10 20c40-26 70-26 110-6s80 18 150-14" fill="none" stroke="rgba(255,255,255,.09)" strokeWidth="1.5" />
+  </svg>
+);
+// Fin de contrato de un temporal: texto + color según los días que faltan.
+const finContratoDe = (e) => {
+  if (!e?.endDate || e.contractType === "permanent") return null;
+  const dias = Math.round((new Date(`${String(e.endDate).slice(0, 10)}T12:00:00`) - new Date(`${hoyISO()}T12:00:00`)) / 86400000);
+  const color = dias < 0 ? "#B03024" : dias <= 30 ? ORANGE_DARK : "#6E6862";
+  const txt = e.status !== "active" ? `Salió · ${fmt(e.endDate)}` : dias < 0 ? `Venció hace ${-dias} d` : dias === 0 ? "Vence hoy" : `Vence en ${dias} d`;
+  return { dias, color, txt };
+};
+
+function CarnetFrente({ e, foto, empresa, grande = false }) {
+  const activo = e.status === "active";
+  const fin = finContratoDe(e);
+  const s = grande ? 1.45 : 1;
+  return <div style={{ display: "flex", flexDirection: "column", height: "100%", borderRadius: "inherit", overflow: "hidden" }}>
+    <div style={{ position: "relative", height: 62 * s, flexShrink: 0, background: "linear-gradient(135deg,#2C2A28 0%,#3A3633 100%)", padding: `${10 * s}px ${14 * s}px`, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+      {CURVAS_CARNET}
+      <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 7 * s }}>
+        <svg width={18 * s} height={18 * s} viewBox="0 0 56 56" aria-hidden><rect width="56" height="56" rx="14" fill="#E8762D" /><path d="M10 34c6-8 12-8 18-3s12 5 18-3" fill="none" stroke="#fff" strokeWidth="4.5" strokeLinecap="round" /></svg>
+        <span style={{ font: `700 ${9 * s}px/1 var(--mono)`, letterSpacing: ".16em", color: "rgba(255,255,255,.85)", textTransform: "uppercase" }}>{empresa}</span>
+      </div>
+      <span style={{ position: "relative", font: `700 ${9.5 * s}px/1 var(--sans)`, padding: `${4 * s}px ${8 * s}px`, borderRadius: 999, background: "rgba(255,255,255,.14)", color: "#fff" }}>{CT_LABEL[e.contractType] || "—"}</span>
+    </div>
+    <div style={{ display: "flex", justifyContent: "center", marginTop: -34 * s, position: "relative" }}>
+      <div style={{ padding: 3 * s, borderRadius: 22 * s, background: "rgba(255,255,255,.95)", boxShadow: "0 6px 18px rgba(44,42,40,.18)" }}>
+        <EmpAvatar name={e.fullName} dataUrl={foto} size={84 * s} borderRadius={19 * s} />
+      </div>
+    </div>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: `${10 * s}px ${14 * s}px ${12 * s}px`, gap: 3 * s }}>
+      <div style={{ font: `800 ${14.5 * s}px/1.22 var(--display)`, color: CHARCOAL, letterSpacing: "-.01em", wordBreak: "break-word" }}>{e.fullName || "—"}</div>
+      <div style={{ font: `500 ${12 * s}px/1.3 var(--sans)`, color: "#6E6862" }}>{e.position || "Sin cargo"}</div>
+      <div style={{ flex: 1 }} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", marginTop: 10 * s, paddingTop: 9 * s, borderTop: "1px solid rgba(44,42,40,.07)" }}>
+        <span style={{ font: `700 ${10.5 * s}px/1 var(--mono)`, color: "var(--naranja-texto-chico)", letterSpacing: ".04em" }}>{genEmpCode(e.fullName, e.dni) || "—"}</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, font: `600 ${11 * s}px/1 var(--sans)`, color: fin && fin.dias <= 30 ? fin.color : "#6E6862" }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: activo ? "#3E8E5A" : "#B8B1A8" }} />
+          {fin ? fin.txt : (e.department || (activo ? "Activo" : "Inactivo"))}
+        </span>
+      </div>
+    </div>
+  </div>;
+}
+
+// La card que "sale a la pantalla" y se voltea: arranca EXACTAMENTE sobre el
+// carnet tocado (rect medido) y viaja al centro girando 180° hasta mostrar el
+// dorso. Cerrar hace el camino inverso. Portal a <body>: el vidrio usa
+// backdrop-filter y eso volvería "fixed" relativo a la tarjeta.
+function CarnetVolteo({ origen, onCerrado, frente, dorso }) {
+  const reducir = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const [fase, setFase] = useState(reducir || !origen ? "abierto" : "inicio");
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const W = Math.min(400, vw - 28), H = Math.min(640, vh - 40);
+  const left = (vw - W) / 2, top = (vh - H) / 2;
+  useEffect(() => {
+    if (fase !== "inicio") return;
+    let r2; const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setFase("abierto")); });
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
+  }, [fase]);
+  const cerrandoRef = useRef(false);
+  const cerrar = () => {
+    if (cerrandoRef.current) return;
+    cerrandoRef.current = true;
+    if (reducir || !origen) { onCerrado(); return; }
+    setFase("cerrando");
+    setTimeout(onCerrado, 620);
+  };
+  useEffect(() => {
+    const k = (ev) => { if (ev.key === "Escape") cerrar(); };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  });
+  const enOrigen = fase !== "abierto" && origen;
+  const s = origen ? origen.width / W : 1;
+  const tf = enOrigen ? `translate(${origen.left - left}px, ${origen.top + origen.height / 2 - (top + (H * s) / 2)}px) scale(${s})` : "none";
+  const cara = { position: "absolute", inset: 0, borderRadius: 26, backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", overflow: "hidden" };
+  return createPortal(<div style={{ position: "fixed", inset: 0, zIndex: 1000 }}>
+    <style>{GT_CSS}</style>
+    <div onClick={cerrar} style={{ position: "absolute", inset: 0, background: "rgba(28,26,24,.38)", WebkitBackdropFilter: "blur(8px)", backdropFilter: "blur(8px)", opacity: fase === "abierto" ? 1 : 0, transition: "opacity 420ms var(--curva)" }} />
+    <div style={{ position: "absolute", left, top, width: W, height: H, transformOrigin: "top left", transform: tf, transition: reducir ? "none" : "transform 640ms var(--curva-exp)", perspective: 1600 }}>
+      <div style={{ position: "relative", width: "100%", height: "100%", transformStyle: "preserve-3d", transform: enOrigen ? "rotateY(0deg)" : "rotateY(180deg)", transition: reducir ? "none" : "transform 720ms var(--curva-exp)" }}>
+        <div className="gt-vidrio" style={{ ...cara, borderRadius: 26 }}>{frente}</div>
+        <div className="gt-vidrio" role="dialog" aria-modal="true" style={{ ...cara, transform: "rotateY(180deg)", background: "rgba(255,255,255,.97)", boxShadow: "0 30px 80px rgba(28,26,24,.35), 0 0 0 1px rgba(44,42,40,.08)" }}>{dorso(cerrar)}</div>
+      </div>
+    </div>
+  </div>, document.body);
+}
 
 // ── APP ──
 // ── ACCESOS AL SISTEMA (2-oct-2026) ─────────────────────────────────────────
@@ -705,6 +807,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // en cloud (cp-file-<id>) despues del render inicial, para no bloquear el
   // primer paint del tab.
   const [photoCache, setPhotoCache] = useState({});
+  const [empTipo, setEmpTipo] = useState("todos");
+  const [carnet, setCarnet] = useState(null); // {id, rect} del carnet abierto
   // Firmas de marcajes GeoClock cargadas on-demand en Llegadas tardías:
   // { markId: dataUrl }. Se cargan solo al tocar "Ver firma".
   const [firmaCache, setFirmaCache] = useState({});
@@ -1217,7 +1321,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     : isAnaRH ? allNav.filter(n => ANA_TABS.includes(n.id))
     : allNav;
 
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "'Segoe UI', sans-serif", color: "#64748b" }}>Cargando RRHH...</div>;
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoTeam…</div>;
 
   // ── FORMS ──
   const EmpForm = ({ emp, onSave }) => {
@@ -4444,26 +4548,40 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     return `${n.charAt(0).toUpperCase()}${n.slice(1)} ${y}`;
   };
 
+  // ── Piezas del rediseño (15-oct-2026): vidrio, títulos y pills ──────────
+  // Mismas reglas que el resto de GeoCore: cajitas de vidrio, paleta
+  // carbón/naranja/gris, poco texto. Las pills son <span role=button> (no
+  // <button>) para que los roles de solo lectura igual puedan navegar.
+  const tituloCaja = (txt, der) => <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
+    <div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL, letterSpacing: "-.01em" }}>{txt}</div>
+    {der}
+  </div>;
+  const cifra = (v, sub, color = CHARCOAL) => <div>
+    <div style={{ font: "800 30px/1 var(--display)", color, letterSpacing: "-.02em" }}>{v}</div>
+    {sub && <div style={{ font: "500 12px/1.35 var(--sans)", color: "#6E6862", marginTop: 6 }}>{sub}</div>}
+  </div>;
+  const pista = (opciones) => <div style={{ display: "inline-flex", gap: 3, padding: 3, borderRadius: 12, background: "rgba(44,42,40,.07)", flexWrap: "wrap", maxWidth: "100%" }}>
+    {opciones.map(o => <span key={o.k} role="button" title={o.title} onClick={o.onClick} style={{ padding: "7px 12px", borderRadius: 9, background: o.on ? "#fff" : "transparent", boxShadow: o.on ? "0 1px 3px rgba(44,42,40,.14)" : "none", color: o.on ? CHARCOAL : "#6E6862", font: `${o.on ? 800 : 600} 12.5px/1 var(--sans)`, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>{o.label}</span>)}
+  </div>;
+  const PAL_MES = [CHARCOAL, ORANGE, "#A39C92", ORANGE_DARK, "#5C5853", "#D9B79B"];
+
   const renderDashboard = () => {
-    const tmp = ae.filter(e => e.contractType === "temporary"); const pm = ae.filter(e => e.contractType === "permanent"); const hon = ae.filter(e => e.contractType === "honorarios");
+    const tmp = ae.filter(e => e.contractType === "temporary");
     const activos = ae.filter(e => e.status === "active");
-    const masaSalarial = activos.reduce((s, e) => s + (Number(e.salary) || 0) + (Number(e.bonificacion) || 0), 0);
-    const soon = tmp.filter(e => { if (!e.endDate) return false; const d = (new Date(e.endDate) - new Date()) / 86400000; return d >= 0 && d <= 30; });
+    const soon = tmp.filter(e => { const f = finContratoDe(e); return f && e.status === "active" && f.dias >= 0 && f.dias <= 30; });
     const hoy = hoyTegus();
     const mesActual = hoy.slice(0, 7);
     // Meses disponibles: los que tienen asistencia o planilla + el actual.
     const mesesDisponibles = [...new Set([mesActual, ...ca.map(a => a.periodo), ...cp.map(p => p.periodo)])]
-      .filter(Boolean).sort((a, b) => b.localeCompare(a)).slice(0, 8);
+      .filter(Boolean).sort((a, b) => b.localeCompare(a)).slice(0, 6);
     const mesesSel = (dashMeses.length ? dashMeses : [mesActual]).slice().sort((a, b) => a.localeCompare(b));
     const multi = mesesSel.length > 1;
     const stats = mesesSel.map(p => statsDeMes(p));
-    const MES_COLORS = [cc.accent || "#2C5F5D", "#E8762D", "#7C3AED", "#0891B2", "#D97706", "#BE185D"];
     const toggleMes = (p) => {
       const cur = dashMeses.length ? dashMeses : [mesActual];
       const next = cur.includes(p) ? cur.filter(x => x !== p) : [...cur, p];
       setDashMeses(next.length ? next : [mesActual]);
     };
-    // Masa MO por proyecto (por mes seleccionado, para barras agrupadas)
     const proyShorts = [...new Set(stats.flatMap(s => Object.keys(s.proy)))]
       .sort((a, b) => Math.max(...stats.map(s => s.proy[b] || 0)) - Math.max(...stats.map(s => s.proy[a] || 0)));
     const maxProy = Math.max(1, ...stats.flatMap(s => Object.values(s.proy)));
@@ -4473,181 +4591,103 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const entradasHoy = marksHoy.filter(mk => mk.tipo === "entrada");
     const tardesHoy = entradasHoy.filter(mk => mk.tarde);
     const sinMarcarHoy = Math.max(0, activos.length - entradasHoy.length);
-    // Sexo (para la dona de composición)
-    const mujeres = activos.filter(e => e.sexo === "femenino").length;
-    const hombres = activos.filter(e => e.sexo === "masculino").length;
-    const sinSexo = activos.length - mujeres - hombres;
-    // Focos del resumen ejecutivo
     const sinFicha = activos.filter(e => !e.startDate || !e.sexo || !e.horario);
     const tardesPend = Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.tarde && !(gcTardies || []).some(t => t && t.markId === mk.id && (t.estado === "aprobada" || t.estado === "denegada")));
-    const st0 = stats[stats.length - 1]; // el mes más reciente seleccionado
-    const panelStyle = { background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: 18, boxShadow: "0 1px 2px rgba(44,42,40,0.04)" };
-    const kpiCard = (label, value, sub, color = "#2C2A28") => (
-      <div style={{ ...panelStyle, padding: "14px 18px", minWidth: isMobile ? "100%" : 170, flex: 1 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.1, textTransform: "uppercase", color: "#8B847C" }}>{label}</div>
-        <div style={{ fontSize: 26, fontWeight: 800, color, marginTop: 4, fontFamily: FONT_DISPLAY }}>{value}</div>
-        {sub && <div style={{ fontSize: 11, color: "#8B847C", marginTop: 2 }}>{sub}</div>}
-        <div style={{ height: 3, borderRadius: 2, marginTop: 10, background: color, opacity: 0.65 }} />
-      </div>
-    );
+    const st0 = stats[stats.length - 1];
+    const permitidas = nav.map(n => n.id);
+    const pendientes = [
+      soon.length > 0 && { k: "contracts", n: soon.length, txt: soon.length === 1 ? "contrato vence en 30 días" : "contratos vencen en 30 días", det: soon.slice(0, 3).map(e => e.fullName.split(" ").slice(0, 2).join(" ")).join(" · ") },
+      tardesPend.length > 0 && { k: "tardanzas", n: tardesPend.length, txt: tardesPend.length === 1 ? "llegada tarde sin decidir" : "llegadas tarde sin decidir" },
+      sinFicha.length > 0 && { k: "employees", n: sinFicha.length, txt: sinFicha.length === 1 ? "ficha incompleta" : "fichas incompletas", det: "fecha de ingreso, sexo u horario" },
+    ].filter(Boolean);
+    const VID = { padding: isMobile ? 16 : 20, minWidth: 0, display: "flex", flexDirection: "column" };
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {/* Encabezado + selector de mes(es) */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 2, textTransform: "uppercase", color: cc.accent }}>{cc.name} · Grupo Geotecnica</div>
-          <h3 style={{ margin: "2px 0 0", fontSize: 20, color: "#2C2A28" }}>Dashboard Gerencial de Talento Humano</h3>
-          <div style={{ fontSize: 12, color: "#8B847C" }}>{mesesSel.map(mesLabel).join(" · ")} — data real de asistencia, planilla y GeoClock</div>
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontSize: 10, color: "#8B847C", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>Mes(es):</span>
-          {mesesDisponibles.map(p => {
-            const on = mesesSel.includes(p);
-            {/* span (no <button>): así los roles solo-lectura pueden navegar meses */}
-            return <span key={p} role="button" onClick={() => toggleMes(p)} title={on && mesesSel.length === 1 ? "Mes seleccionado" : on ? "Quitar de la comparación" : "Agregar a la comparación"}
-              style={{ padding: "5px 12px", borderRadius: 999, border: `1.5px solid ${on ? cc.accent : "#DBD4C8"}`, background: on ? cc.accent : "#fff", color: on ? "#fff" : "#5C5853", fontSize: 12, fontWeight: 700, cursor: "pointer", userSelect: "none" }}>
-              {mesLabel(p).split(" ")[0].slice(0, 3)} {p.slice(0, 4)}
-            </span>;
-          })}
-        </div>
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        {pista(mesesDisponibles.slice().reverse().map(p => {
+          const on = mesesSel.includes(p);
+          return { k: p, on, label: `${mesLabel(p).split(" ")[0].slice(0, 3)} ${p.slice(2, 4)}`, title: on && mesesSel.length === 1 ? "Mes a la vista" : on ? "Quitar de la comparación" : "Comparar con este mes", onClick: () => toggleMes(p) };
+        }))}
       </div>
 
-      {/* KPI cards del mes más reciente seleccionado */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        {kpiCard("Colaboradores", activos.length, `${pm.length} perm · ${tmp.length} temp${hon.length ? ` · ${hon.length} hon` : ""}`, cc.color)}
-        {!hideSalary && kpiCard(`Masa salarial · ${mesLabel(st0.periodo).split(" ")[0]}`, fmtL(masaSalarial), "salario + bonificación del roster", "#D97706")}
-        {!hideSalary && kpiCard("Costo MO del mes", st0.costoMO > 0 ? fmtL(st0.costoMO) : "—", st0.tieneAsistencia ? "asistencia + horas extras pagadas" : "sin asistencia registrada", "#059669")}
-        {kpiCard("Presencia del mes", st0.presenciaProm !== null ? `${st0.presenciaProm}%` : "—", st0.tieneAsistencia ? `NSP ${st0.nsp} · INC ${st0.inc} · VAC ${st0.vac}` : "aún sin hojas de asistencia", "#3E6A99")}
-        {kpiCard("Tardanzas del mes", st0.tardes.length, st0.minTardeDenegados > 0 ? `${st0.minTardeDenegados} min a descontar (denegadas)` : "GeoClock — quincenas recientes", "#B45309")}
-      </div>
-
-      {/* Comparación multi-mes */}
-      {multi && <div style={panelStyle}>
-        <h4 style={{ margin: "0 0 10px" }}>Comparación de meses</h4>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
-            <thead><tr>
-              <th style={{ ...TH, textAlign: "left" }}>Mes</th>
-              <th style={TH}>Presencia</th><th style={TH}>Días pagados</th><th style={TH}>NSP</th><th style={TH}>INC</th><th style={TH}>VAC</th><th style={TH}>Tardanzas</th>
-              {!hideSalary && <th style={TH}>Costo MO</th>}{!hideSalary && <th style={TH}>Planilla</th>}
-            </tr></thead>
-            <tbody>{stats.map((s, i) => <tr key={s.periodo}>
-              <td style={{ ...TD, fontWeight: 800, color: MES_COLORS[i % MES_COLORS.length] }}>● {mesLabel(s.periodo)}</td>
-              <td style={{ ...TD, textAlign: "center", fontWeight: 700 }}>{s.presenciaProm !== null ? `${s.presenciaProm}%` : "—"}</td>
-              <td style={{ ...TD, textAlign: "center" }}>{s.diasPagados || "—"}</td>
-              <td style={{ ...TD, textAlign: "center", color: s.nsp ? "#DC2626" : "#94A3B8" }}>{s.nsp}</td>
-              <td style={{ ...TD, textAlign: "center", color: s.inc ? "#92400E" : "#94A3B8" }}>{s.inc}</td>
-              <td style={{ ...TD, textAlign: "center", color: s.vac ? "#0F766E" : "#94A3B8" }}>{s.vac}</td>
-              <td style={{ ...TD, textAlign: "center" }}>{s.tardes.length || "—"}</td>
-              {!hideSalary && <td style={{ ...TD, textAlign: "right", fontWeight: 700, color: "#059669" }}>{s.costoMO ? fmtL(s.costoMO) : "—"}</td>}
-              {!hideSalary && <td style={{ ...TD, textAlign: "right", color: "#0891B2" }}>{s.planillaTotal ? fmtL(s.planillaTotal) : "—"}</td>}
-            </tr>)}</tbody>
-          </table>
-        </div>
-      </div>}
-
-      {/* Presencia diaria + resumen ejecutivo */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.6fr 1fr", gap: 16 }}>
-        <div style={panelStyle}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-            <h4 style={{ margin: 0 }}>Presencia diaria {multi ? "por mes" : "del mes"}</h4>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              {stats.map((s, i) => <span key={s.periodo} style={{ fontSize: 11, fontWeight: 700, color: MES_COLORS[i % MES_COLORS.length] }}>● {mesLabel(s.periodo)}</span>)}
-            </div>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.55fr) minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "stretch", minHeight: isMobile ? undefined : "min(640px, calc(100vh - 210px))" }}>
+        {/* 1 · Presencia */}
+        <div className="gt-vidrio gt-sube" style={VID}>
+          {tituloCaja("Presencia", multi && <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>{stats.map((s, i) => <span key={s.periodo} style={{ font: "700 11px/1 var(--sans)", color: PAL_MES[i % PAL_MES.length] }}>● {mesLabel(s.periodo).split(" ")[0]}</span>)}</div>)}
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 22, flexWrap: "wrap", marginBottom: 14 }}>
+            {cifra(st0.presenciaProm !== null ? `${st0.presenciaProm}%` : "—", st0.tieneAsistencia ? `promedio de ${mesLabel(st0.periodo).toLowerCase()}` : "sin asistencia este mes")}
+            {st0.tieneAsistencia && <div style={{ display: "flex", gap: 18 }}>
+              {[["NSP", st0.nsp, st0.nsp ? "#B03024" : CHARCOAL], ["INC", st0.inc, CHARCOAL], ["VAC", st0.vac, CHARCOAL]].map(([l, v, c]) => <div key={l}>
+                <div style={{ font: "800 18px/1 var(--display)", color: c }}>{v}</div>
+                <div className="gt-label" style={{ color: "#A39C92", marginTop: 5, fontSize: 9 }}>{l}</div>
+              </div>)}
+            </div>}
           </div>
-          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 6 }}>Porcentaje del equipo presente o justificado por día (domingos/feriados fuera). Pasá el mouse por los puntos.</div>
-          {stats.every(s => !s.tieneAsistencia)
-            ? <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic", padding: "24px 0" }}>Sin hojas de asistencia en {mesesSel.map(mesLabel).join(" ni ")} todavía.</div>
-            : <GTLineChart lastDay={Math.max(...stats.map(s => s.lastDay))} series={stats.map((s, i) => ({ label: mesLabel(s.periodo), color: MES_COLORS[i % MES_COLORS.length], points: s.porDia }))} />}
-        </div>
-        <div style={{ background: "#1F1B17", borderRadius: 14, padding: 18, color: "#F0EBE3", display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 2, textTransform: "uppercase", color: "#E8762D" }}>Resumen ejecutivo</div>
-          <div style={{ fontSize: 19, fontWeight: 800, fontFamily: FONT_DISPLAY }}>{mesLabel(st0.periodo)}</div>
-          <div style={{ fontSize: 12.5, lineHeight: 1.55, color: "#D8D2C8" }}>
-            {cc.name} opera con <b style={{ color: "#fff" }}>{activos.length} colaboradores</b>{!hideSalary && <> y una masa salarial de <b style={{ color: "#fff" }}>{fmtL(masaSalarial)}</b></>}.{" "}
-            {st0.tieneAsistencia ? <>La presencia del mes va en <b style={{ color: "#fff" }}>{st0.presenciaProm}%</b> con {st0.nsp} NSP.</> : <>Aún no hay asistencia registrada este mes.</>}{" "}
-            {hideSalary ? null : st0.paysMes.length ? <>Planilla del mes: <b style={{ color: "#fff" }}>{fmtL(st0.planillaTotal)}</b>{st0.paysMes.length === 1 ? " (1 quincena)" : ""}.</> : <>La planilla del mes aún no se genera en el sistema.</>}
+          <div style={{ flex: 1, display: "flex", alignItems: "center" }}>
+            {stats.every(s => !s.tieneAsistencia)
+              ? <div style={{ fontSize: 13, color: "#A39C92", padding: "30px 0", width: "100%", textAlign: "center" }}>Todavía no hay hojas de asistencia.</div>
+              : <div style={{ width: "100%" }}><GTLineChart height={isMobile ? 220 : 330} lastDay={Math.max(...stats.map(s => s.lastDay))} series={stats.map((s, i) => ({ label: mesLabel(s.periodo), color: PAL_MES[i % PAL_MES.length], points: s.porDia }))} /></div>}
           </div>
-          {soon.length > 0 && <div style={{ background: "#2A2520", border: "1px solid #3D3530", borderRadius: 10, padding: "10px 12px" }}>
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: "#E8762D", textTransform: "uppercase" }}>Foco 1 · Contratos</div>
-            <div style={{ fontSize: 12.5, fontWeight: 700, marginTop: 2 }}>{soon.length} contrato(s) vencen en 30 días</div>
-            <div style={{ fontSize: 11, color: "#A8A096" }}>{soon.slice(0, 3).map(e => e.fullName.split(" ").slice(0, 2).join(" ")).join(" · ")}{soon.length > 3 ? "…" : ""} — renovalos desde Contratos.</div>
-          </div>}
-          {tardesPend.length > 0 && <div style={{ background: "#2A2520", border: "1px solid #3D3530", borderRadius: 10, padding: "10px 12px" }}>
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: "#E8762D", textTransform: "uppercase" }}>Foco · GeoClock</div>
-            <div style={{ fontSize: 12.5, fontWeight: 700, marginTop: 2 }}>{tardesPend.length} llegada(s) tardía(s) sin decidir</div>
-            <div style={{ fontSize: 11, color: "#A8A096" }}>Aprobá o denegá las explicaciones en Llegadas tardías.</div>
-          </div>}
-          {sinFicha.length > 0 && <div style={{ background: "#2A2520", border: "1px solid #3D3530", borderRadius: 10, padding: "10px 12px" }}>
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: "#E8762D", textTransform: "uppercase" }}>Foco · Expedientes</div>
-            <div style={{ fontSize: 12.5, fontWeight: 700, marginTop: 2 }}>{sinFicha.length} ficha(s) incompletas</div>
-            <div style={{ fontSize: 11, color: "#A8A096" }}>Sin fecha de ingreso, sexo u horario — completalas para que KPIs y GeoClock calculen bien.</div>
-          </div>}
         </div>
-      </div>
 
-      {/* Costo MO por proyecto + Asistencia de hoy + Composición */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.35fr 1fr 1fr", gap: 16 }}>
-        <div style={panelStyle}>
-          <h4 style={{ margin: "0 0 2px" }}>Costo de mano de obra por proyecto</h4>
-          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 10 }}>{hideSalary ? "Días pagados por proyecto (montos ocultos para tu usuario)" : "Real, desde la asistencia del mes (salario + bonif / 30 × días)"}{multi ? " — por mes" : ""}</div>
-          {proyShorts.length === 0 && <div style={{ fontSize: 12, color: "#94A3B8", fontStyle: "italic" }}>Sin asistencia registrada en {mesesSel.map(mesLabel).join(" / ")}.</div>}
-          {proyShorts.slice(0, 9).map(shrt => <div key={shrt} style={{ marginBottom: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
-              <span style={{ fontWeight: 700, color: "#2C2A28" }}>{shrt}</span>
-              {!hideSalary && <span style={{ fontWeight: 800, color: "#059669" }}>{stats.map((s) => s.proy[shrt] ? fmtL(s.proy[shrt]) : "—").join("  ·  ")}</span>}
-            </div>
-            {stats.map((s, i) => <div key={s.periodo} title={`${mesLabel(s.periodo)} · ${shrt}: ${hideSalary ? "" : fmtL(s.proy[shrt] || 0)}`} style={{ height: multi ? 6 : 9, borderRadius: 4, background: "#F1F5F9", overflow: "hidden", marginTop: 2 }}>
-              <div style={{ width: `${Math.min(100, ((s.proy[shrt] || 0) / maxProy) * 100)}%`, height: "100%", background: MES_COLORS[i % MES_COLORS.length], transition: "width .3s" }} />
+        {/* 2 · Mano de obra por proyecto */}
+        <div className="gt-vidrio gt-sube" style={{ ...VID, animationDelay: "60ms" }}>
+          {tituloCaja("Mano de obra")}
+          {cifra(hideSalary ? `${st0.diasPagados || 0} d` : st0.costoMO > 0 ? fmtL(st0.costoMO) : "—", hideSalary ? "días pagados del mes" : "asistencia + horas extras pagadas")}
+          <div style={{ display: "flex", flexDirection: "column", gap: 11, marginTop: 18, flex: 1 }}>
+            {proyShorts.length === 0 && <div style={{ fontSize: 13, color: "#A39C92" }}>Sin asistencia registrada.</div>}
+            {proyShorts.slice(0, 10).map(shrt => <div key={shrt} title={stats.map(s => `${mesLabel(s.periodo)}: ${hideSalary ? "" : fmtL(s.proy[shrt] || 0)}`).join("\n")}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, font: "600 12px/1.2 var(--sans)", marginBottom: 5 }}>
+                <span style={{ color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{shrt}</span>
+                {!hideSalary && <span style={{ color: "#5C5853", fontWeight: 700, flexShrink: 0 }}>{fmtL(st0.proy[shrt] || 0).replace(/\.\d\d$/, "")}</span>}
+              </div>
+              {stats.map((s, i) => <div key={s.periodo} style={{ height: multi ? 5 : 7, borderRadius: 4, background: "rgba(44,42,40,.06)", overflow: "hidden", marginTop: 2 }}>
+                <div style={{ width: `${Math.min(100, ((s.proy[shrt] || 0) / maxProy) * 100)}%`, height: "100%", borderRadius: 4, background: PAL_MES[i % PAL_MES.length], transition: "width .5s var(--curva)" }} />
+              </div>)}
             </div>)}
-          </div>)}
+            {proyShorts.length > 10 && <div style={{ fontSize: 11.5, color: "#A39C92" }}>+{proyShorts.length - 10} proyectos más en Costos</div>}
+          </div>
         </div>
-        <div style={panelStyle}>
-          <h4 style={{ margin: "0 0 2px" }}>Asistencia de hoy</h4>
-          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 8 }}>{fmt(hoy)} · marcajes GeoClock</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <GTDonut size={120} centerLabel={String(entradasHoy.length)} centerSub="marcaron"
+
+        {/* 3 · Hoy + pendientes */}
+        <div className="gt-vidrio gt-sube" style={{ ...VID, animationDelay: "120ms" }}>
+          {tituloCaja("Hoy", <span style={{ font: "500 12px/1 var(--sans)", color: "#A39C92" }}>{fmt(hoy)}</span>)}
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <GTDonut size={118} thickness={14} centerLabel={String(entradasHoy.length)} centerSub="marcaron"
               segments={[
-                { value: entradasHoy.length - tardesHoy.length, color: "#5A8A4F", label: "A tiempo" },
-                { value: tardesHoy.length, color: "#D4A017", label: "Tarde" },
-                { value: sinMarcarHoy, color: "#DBD4C8", label: "Sin marcar" },
+                { value: entradasHoy.length - tardesHoy.length, color: CHARCOAL, label: "A tiempo" },
+                { value: tardesHoy.length, color: ORANGE, label: "Tarde" },
+                { value: sinMarcarHoy, color: "#DAD5CE", label: "Sin marcar" },
               ]} />
-            <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5 }}>
-              <span><span style={{ color: "#5A8A4F" }}>●</span> A tiempo <b>{entradasHoy.length - tardesHoy.length}</b></span>
-              <span><span style={{ color: "#D4A017" }}>●</span> Tardanzas <b>{tardesHoy.length}</b></span>
-              <span><span style={{ color: "#B8B0A4" }}>●</span> Sin marcar <b>{sinMarcarHoy}</b></span>
-              <span style={{ fontSize: 10.5, color: "#94A3B8" }}>Salidas registradas: {marksHoy.filter(mk => mk.tipo === "salida").length}</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, font: "500 12.5px/1 var(--sans)", color: "#5C5853" }}>
+              {[["A tiempo", entradasHoy.length - tardesHoy.length, CHARCOAL], ["Tarde", tardesHoy.length, ORANGE], ["Sin marcar", sinMarcarHoy, "#DAD5CE"]].map(([l, v, c]) => <span key={l} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: c }} />{l} <b style={{ color: CHARCOAL }}>{v}</b>
+              </span>)}
             </div>
           </div>
-          {entradasHoy.length === 0 && <div style={{ fontSize: 11, color: "#94A3B8", fontStyle: "italic", marginTop: 8 }}>Nadie ha marcado hoy — el marcaje vive en el módulo GeoClock (tablet de Oscar en plantel y de Ana en oficina).</div>}
-        </div>
-        <div style={panelStyle}>
-          <h4 style={{ margin: "0 0 2px" }}>Composición del equipo</h4>
-          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 8 }}>{activos.length} personas activas</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <GTDonut size={120} centerLabel={String(activos.length)} centerSub="personas"
-              segments={[
-                { value: pm.length, color: cc.accent, label: "Permanentes" },
-                { value: tmp.length, color: "#D4A017", label: "Temporales" },
-                { value: hon.length, color: "#7B5FA8", label: "Honorarios" },
-              ]} />
-            <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5 }}>
-              <span><span style={{ color: cc.accent }}>●</span> Permanentes <b>{pm.length}</b></span>
-              <span><span style={{ color: "#D4A017" }}>●</span> Temporales <b>{tmp.length}</b></span>
-              {hon.length > 0 && <span><span style={{ color: "#7B5FA8" }}>●</span> Honorarios <b>{hon.length}</b></span>}
-              <span style={{ fontSize: 10.5, color: "#94A3B8", marginTop: 4 }}>♀ {mujeres} · ♂ {hombres}{sinSexo ? ` · ${sinSexo} sin registrar` : ""}</span>
-            </div>
+          <div style={{ borderTop: "1px solid rgba(44,42,40,.07)", marginTop: 18, paddingTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div className="gt-label" style={{ color: "#A39C92", fontSize: 9 }}>Pendientes</div>
+            {pendientes.length === 0 && <div style={{ display: "flex", alignItems: "center", gap: 8, font: "600 13px/1.3 var(--sans)", color: "#3E8E5A" }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#3E8E5A" }} />Todo al día</div>}
+            {pendientes.map(p => {
+              const ir = permitidas.includes(p.k);
+              return <div key={p.k} role={ir ? "button" : undefined} onClick={ir ? () => setSec(p.k) : undefined} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: "rgba(232,118,45,.07)", cursor: ir ? "pointer" : "default" }}>
+                <span style={{ font: "800 20px/1 var(--display)", color: ORANGE_DARK, minWidth: 22 }}>{p.n}</span>
+                <span style={{ minWidth: 0, flex: 1 }}>
+                  <span style={{ display: "block", font: "600 12.5px/1.3 var(--sans)", color: CHARCOAL }}>{p.txt}</span>
+                  {p.det && <span style={{ display: "block", font: "400 11px/1.3 var(--sans)", color: "#6E6862", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.det}</span>}
+                </span>
+                {ir && <span style={{ color: "#A39C92" }}>→</span>}
+              </div>;
+            })}
           </div>
         </div>
       </div>
-
-      {cp.length > 0 && <div style={panelStyle}><h4 style={{ margin: "0 0 12px" }}>Últimas planillas</h4><Table columns={[{ key: "p", label: "Periodo", render: r => `${r.quincena} ${r.periodo}` }, { key: "count", label: "Empleados" }, { key: "total", label: "Total", render: r => <b style={{ color: "#059669" }}>{fmtL(r.total)}</b> }, { key: "date", label: "Fecha", render: r => fmt(r.date) }]} data={cp.slice(-3).reverse()} /></div>}
     </div>;
   };
 
   // ═══════════════════════════════════════════════════════════════════
-  // KPI's DE RECURSOS HUMANOS (ago 2026) — indicadores generales por
-  // empresa, con navegación de mes. Estilo IsTeam del cliente de Gerson.
+  // KPI's (rediseño 15-oct-2026): 5 cajitas de vidrio con lo que más
+  // importa + 2 tarjetas (masa salarial del año y estructura del equipo).
   // ═══════════════════════════════════════════════════════════════════
   const renderKpis = () => {
     const hoy = hoyTegus();
@@ -4661,108 +4701,85 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const activos = ae.filter(e => e.status === "active");
     const st = statsDeMes(mes);
     const masaRoster = activos.reduce((s, e) => s + (Number(e.salary) || 0) + (Number(e.bonificacion) || 0), 0);
-    const bonifTotal = activos.reduce((s, e) => s + (Number(e.bonificacion) || 0), 0);
     const masaMes = st.planillaTotal > 0 ? st.planillaTotal : masaRoster;
     const masaEsReal = st.planillaTotal > 0;
-    // Delta vs mes anterior (solo si ambos tienen planilla real)
     const prevD = new Date(ky, km - 2, 1);
     const mesPrev = `${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, "0")}`;
     const planillaPrev = cp.filter(p => p.periodo === mesPrev).reduce((s, p) => s + (Number(p.total) || 0), 0);
     const deltaMasa = masaEsReal && planillaPrev > 0 ? ((st.planillaTotal - planillaPrev) / planillaPrev) * 100 : null;
-    // HE del mes (hojas de HE cuyo periodo es este mes — costo estimado)
-    const heMes = che.filter(h => h.periodo === mes);
-    const heCosto = heMes.reduce((s, h) => s + (heTotalsOf(h)?.costo || 0), 0);
-    const heHrs = heMes.reduce((s, h) => s + (heTotalsOf(h)?.hrs || 0), 0);
-    // Ausentismo: NSP sobre días esperados marcados
     const ausentismo = (st.nsp + st.diasPagados) > 0 ? (st.nsp / (st.nsp + st.diasPagados)) * 100 : 0;
-    // Rotación del año: bajas registradas en movimientos / headcount
     const anio = String(ky);
     const bajasAnio = cmov.filter(mv => mv.tipo === "baja" && String(mv.date || "").slice(0, 4) === anio);
     const rotacion = activos.length > 0 ? (bajasAnio.length / activos.length) * 100 : 0;
-    // Vacaciones del año (registros hr-vacs de esta empresa)
-    const vacsAnio = cv.filter(v => v.status !== "rejected" && String(v.startDate || "").slice(0, 4) === anio);
-    const diasVacAnio = vacsAnio.reduce((s, v) => s + (Number(v.days) || 0), 0);
-    // Antigüedad promedio
     const conIngreso = activos.filter(e => e.startDate);
     const antProm = conIngreso.length ? conIngreso.reduce((s, e) => s + (Date.now() - new Date(e.startDate).getTime()), 0) / conIngreso.length / (365.25 * 86400000) : null;
-    // Género
     const mujeres = activos.filter(e => e.sexo === "femenino").length;
     const hombres = activos.filter(e => e.sexo === "masculino").length;
     const conSexo = mujeres + hombres;
-    // Masa salarial por mes del año (real = planilla; si no, proyección roster)
+    const nPerm = activos.filter(e => e.contractType === "permanent").length;
+    const nTemp = activos.filter(e => e.contractType === "temporary").length;
+    const nHon = activos.filter(e => e.contractType === "honorarios").length;
     const mesesAnio = Array.from({ length: 12 }, (_, i) => `${anio}-${String(i + 1).padStart(2, "0")}`);
     const barsAnio = mesesAnio.map(p => {
       const real = cp.filter(x => x.periodo === p).reduce((s, x) => s + (Number(x.total) || 0), 0);
       return { key: p, label: "EFMAMJJASOND"[Number(p.slice(5, 7)) - 1], title: mesLabel(p), value: real > 0 ? real : masaRoster, real: real > 0, top: `${Math.round((real > 0 ? real : masaRoster) / 1000)}k` };
     });
-    // Composición por departamento (barra apilada)
     const porDepto = {};
     activos.forEach(e => { const d = e.department || "Sin depto"; porDepto[d] = (porDepto[d] || 0) + 1; });
     const deptoRows = Object.entries(porDepto).sort((a, b) => b[1] - a[1]);
-    const DEPTO_COLORS = ["#D4A017", "#3E6A99", "#1F2A44", "#5A8A4F", "#7B5FA8", "#C0392B", "#0891B2", "#8B847C"];
-    const card = (label, value, sub, hi = false) => (
-      <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${hi ? "#E8762D" : "#E2E8F0"}`, borderTop: hi ? "3px solid #E8762D" : undefined, padding: "14px 18px", flex: "1 1 180px", minWidth: 170 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.1, textTransform: "uppercase", color: "#8B847C" }}>{label}</div>
-        <div style={{ fontSize: 24, fontWeight: 800, color: "#2C2A28", marginTop: 4, fontFamily: FONT_DISPLAY }}>{value}</div>
-        <div style={{ fontSize: 11, color: "#8B847C", marginTop: 2 }}>{sub}</div>
-      </div>
-    );
+    const DEPTO_COLORS = [CHARCOAL, ORANGE, "#8C857D", ORANGE_DARK, "#C9C3BB", "#5C5853", "#F2B48A", "#E4E0DA"];
+    const kpi = (label, valor, sub, i, acento) => <div key={label} className="gt-vidrio gt-sube" style={{ padding: isMobile ? "14px 16px" : "18px 20px", minWidth: 0, animationDelay: `${i * 50}ms` }}>
+      <div className="gt-label" style={{ color: "#6E6862", fontSize: 9 }}>{label}</div>
+      <div style={{ font: `800 ${isMobile ? 24 : 28}px/1 var(--display)`, color: acento || CHARCOAL, letterSpacing: "-.02em", marginTop: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{valor}</div>
+      <div style={{ font: "500 12px/1.35 var(--sans)", color: "#6E6862", marginTop: 7 }}>{sub}</div>
+    </div>;
+    const kpis = [
+      ["Colaboradores", activos.length, `${nPerm} permanentes · ${nTemp} temporales${nHon ? ` · ${nHon} hon.` : ""}`],
+      hideSalary
+        ? ["Antigüedad", antProm !== null ? `${antProm.toFixed(1)} años` : "—", "promedio del equipo"]
+        : ["Masa salarial", fmtL(masaMes).replace(/\.\d\d$/, ""), masaEsReal ? (deltaMasa !== null ? `planilla real · ${deltaMasa >= 0 ? "+" : ""}${deltaMasa.toFixed(1)}% vs mes anterior` : "planilla real del mes") : "proyección con el roster"],
+      ["Ausentismo", `${ausentismo.toFixed(1)}%`, `${st.nsp} día${st.nsp === 1 ? "" : "s"} sin presentarse (NSP)`, ausentismo >= 5 ? "#B03024" : null],
+      ["Tardanzas", st.tardes.length, st.minTardeDenegados > 0 ? `${st.minTardeDenegados} min a descontar` : "llegadas tarde del mes", st.tardes.length ? ORANGE_DARK : null],
+      [`Rotación ${anio}`, `${rotacion.toFixed(1)}%`, `${bajasAnio.length} baja${bajasAnio.length === 1 ? "" : "s"} en el año`],
+    ];
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <h3 style={{ margin: 0, fontSize: 20, color: "#2C2A28" }}>KPI's de Recursos Humanos</h3>
-          <div style={{ fontSize: 12, color: "#8B847C" }}>Indicadores clave de {cc.name} — los meses con planilla generada usan el dato real</div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <NavBtn onClick={() => moverMes(-1)}>‹</NavBtn>
-          <span style={{ fontWeight: 800, fontSize: 15, color: "#2C2A28", minWidth: 130, textAlign: "center" }}>{mesLabel(mes)}</span>
-          <NavBtn onClick={() => moverMes(1)}>›</NavBtn>
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: 3, borderRadius: 12, background: "rgba(44,42,40,.07)" }}>
+          <span role="button" aria-label="Mes anterior" onClick={() => moverMes(-1)} style={{ padding: "7px 12px", borderRadius: 9, cursor: "pointer", color: "#5C5853", font: "800 14px/1 var(--sans)", userSelect: "none" }}>‹</span>
+          <span style={{ padding: "7px 14px", borderRadius: 9, background: "#fff", boxShadow: "0 1px 3px rgba(44,42,40,.14)", font: "800 12.5px/1 var(--sans)", color: CHARCOAL, minWidth: 110, textAlign: "center" }}>{mesLabel(mes)}</span>
+          <span role="button" aria-label="Mes siguiente" onClick={() => moverMes(1)} style={{ padding: "7px 12px", borderRadius: 9, cursor: "pointer", color: "#5C5853", font: "800 14px/1 var(--sans)", userSelect: "none" }}>›</span>
         </div>
       </div>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        {card("Headcount", activos.length, `${activos.filter(e => e.contractType === "permanent").length} permanentes · ${activos.filter(e => e.contractType === "temporary").length} temporales`)}
-        {!hideSalary && card(`Masa salarial (${mesLabel(mes).split(" ")[0].toLowerCase()})`, fmtL(masaMes), masaEsReal ? (st.paysMes.length === 1 ? "planilla real de 1 QUINCENA (falta la otra)" : deltaMasa !== null ? `planilla real · vs mes anterior: ${deltaMasa >= 0 ? "+" : ""}${deltaMasa.toFixed(1)}%` : "planilla real del mes") : "proyección con roster (generá la planilla)", true)}
-        {!hideSalary && card("Salario promedio", activos.length ? fmtL(masaRoster / activos.length) : "—", "base mensual por colaborador")}
-        {!hideSalary && card("Costo por empleado", activos.length ? fmtL((masaRoster + heCosto) / activos.length) : "—", heCosto > 0 ? `incluye ${fmtL(heCosto)} de HE del mes` : "sin horas extras este mes")}
-        {card("Tasa de expediente", activos.length ? `${Math.round(activos.filter(e => e.startDate && e.sexo && e.horario).length / activos.length * 100)}%` : "—", `${activos.filter(e => !e.startDate || !e.sexo || !e.horario).length} fichas por completar`)}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(5, minmax(0,1fr))", gap: 14 }}>
+        {kpis.map((k, i) => kpi(k[0], k[1], k[2], i, k[3]))}
       </div>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        {card("Ausentismo del mes", `${ausentismo.toFixed(1)}%`, `${st.nsp} inasistencias injustificadas (NSP)`)}
-        {card("Tardanzas del mes", `${st.minTardeDenegados} min`, `${st.tardes.length} llegada(s) tarde · minutos a descontar (denegadas)`, st.tardes.length > 0)}
-        {card(`Rotación ${anio}`, `${rotacion.toFixed(1)}%`, `${bajasAnio.length} baja(s) en el año`)}
-        {card("Vacaciones tomadas", `${diasVacAnio} días`, `acumulado ${anio} (${vacsAnio.length} registro(s))`)}
-        {card("Antigüedad promedio", antProm !== null ? `${antProm.toFixed(1)} años` : "—", conIngreso.length < activos.length ? `${activos.length - conIngreso.length} sin fecha de ingreso` : "de todo el equipo activo")}
-        {!hideSalary && card("Horas extras del mes", heHrs > 0 ? `${heHrs.toFixed(1)} h` : "0 h", heCosto > 0 ? `${fmtL(heCosto)} estimado` : "sin hojas de HE este mes")}
-        {!hideSalary && card("Bonificaciones activas", fmtL(bonifTotal), "suma mensual vigente en fichas")}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.5fr 1fr", gap: 16 }}>
-        {!hideSalary && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: 18 }}>
-          <h4 style={{ margin: "0 0 2px" }}>Masa salarial por mes · {anio}</h4>
-          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 10 }}>Barras <b style={{ color: "#D4A017" }}>doradas</b> = planilla generada (dato real) · barras <b style={{ color: "#3E6A99" }}>azules</b> = proyección con el roster actual. Click en una barra para ver ese mes.</div>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile || hideSalary ? "minmax(0,1fr)" : "minmax(0,1.6fr) minmax(0,1fr)", gap: 16 }}>
+        {!hideSalary && <div className="gt-vidrio gt-sube" style={{ padding: isMobile ? 16 : 20, minWidth: 0, animationDelay: "250ms" }}>
+          {tituloCaja(`Masa salarial ${anio}`, <span style={{ display: "flex", gap: 12, font: "600 11.5px/1 var(--sans)", color: "#6E6862" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: ORANGE }} />Planilla real</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#CFCAC3" }} />Proyección</span>
+          </span>)}
           <GTMonthBars data={barsAnio} fmtVal={fmtL} selected={mes} onPick={(d) => setKpisMes(d.key)} />
         </div>}
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: 18 }}>
-          <h4 style={{ margin: "0 0 2px" }}>Estructura del personal</h4>
-          <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 10 }}>{conSexo} de {activos.length} con sexo registrado{conSexo < activos.length ? " — completá las fichas" : ""}</div>
+        <div className="gt-vidrio gt-sube" style={{ padding: isMobile ? 16 : 20, minWidth: 0, animationDelay: "300ms" }}>
+          {tituloCaja("El equipo", conSexo < activos.length && <span style={{ font: "500 11.5px/1 var(--sans)", color: "#A39C92" }}>{activos.length - conSexo} sin sexo en la ficha</span>)}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div style={{ background: "#FDF2F0", borderRadius: 12, padding: "16px 10px", textAlign: "center" }}>
-              <div style={{ fontSize: 30 }}>👩‍🦱</div>
-              <div style={{ fontSize: 24, fontWeight: 800, color: "#BE185D" }}>{conSexo ? Math.round(mujeres / conSexo * 100) : 0}%</div>
-              <div style={{ fontSize: 11, color: "#8B847C" }}>Mujeres · {mujeres}</div>
-            </div>
-            <div style={{ background: "#EFF6F4", borderRadius: 12, padding: "16px 10px", textAlign: "center" }}>
-              <div style={{ fontSize: 30 }}>👷</div>
-              <div style={{ fontSize: 24, fontWeight: 800, color: "#1F2A44" }}>{conSexo ? Math.round(hombres / conSexo * 100) : 0}%</div>
-              <div style={{ fontSize: 11, color: "#8B847C" }}>Hombres · {hombres}</div>
-            </div>
+            {[["Hombres", hombres, CHARCOAL], ["Mujeres", mujeres, ORANGE_DARK]].map(([l, n, c]) => <div key={l} style={{ borderRadius: 16, background: "rgba(44,42,40,.04)", padding: "14px 16px" }}>
+              <div style={{ font: "800 26px/1 var(--display)", color: c }}>{conSexo ? Math.round(n / conSexo * 100) : 0}%</div>
+              <div style={{ font: "500 12px/1 var(--sans)", color: "#6E6862", marginTop: 7 }}>{l} · {n}</div>
+            </div>)}
           </div>
           {deptoRows.length > 0 && <>
-            <div style={{ display: "flex", height: 12, borderRadius: 6, overflow: "hidden", marginTop: 14 }}>
+            <div className="gt-label" style={{ color: "#A39C92", fontSize: 9, margin: "18px 0 8px" }}>Por departamento</div>
+            <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", gap: 2 }}>
               {deptoRows.map(([dep, n], i) => <div key={dep} title={`${dep}: ${n}`} style={{ width: `${(n / activos.length) * 100}%`, background: DEPTO_COLORS[i % DEPTO_COLORS.length] }} />)}
             </div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-              {deptoRows.map(([dep, n], i) => <span key={dep} style={{ fontSize: 11, color: "#5C5853" }}><span style={{ color: DEPTO_COLORS[i % DEPTO_COLORS.length] }}>●</span> {dep} <b>{n}</b> ({Math.round(n / activos.length * 100)}%)</span>)}
+            <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 12 }}>
+              {deptoRows.map(([dep, n], i) => <div key={dep} style={{ display: "flex", alignItems: "center", gap: 8, font: "500 12.5px/1 var(--sans)", color: "#5C5853" }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: DEPTO_COLORS[i % DEPTO_COLORS.length] }} />
+                <span style={{ flex: 1 }}>{dep}</span><b style={{ color: CHARCOAL }}>{n}</b><span style={{ color: "#A39C92", minWidth: 36, textAlign: "right" }}>{Math.round(n / activos.length * 100)}%</span>
+              </div>)}
             </div>
           </>}
         </div>
@@ -4770,216 +4787,131 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     </div>;
   };
 
+  // ═══════════════════════════════════════════════════════════════════
+  // EMPLEADOS (rediseño 15-oct-2026): carnets de vidrio. Click = el carnet
+  // sale a la pantalla, se voltea y el DORSO trae toda la ficha.
+  // ═══════════════════════════════════════════════════════════════════
   const renderEmps = () => {
-    // Vista de cards estilo Odoo — foto grande arriba + info clave debajo.
-    // Filtros: search por nombre/DNI/cargo + dropdown por departamento.
     const q = (empSearch || "").trim().toLowerCase();
-    const filtered = ce.filter((e) => {
+    const base = ce.filter((e) => {
       if (empDeptFilter && e.department !== empDeptFilter) return false;
       if (!q) return true;
-      const hay = [e.fullName, e.dni, e.position, e.department, e.email, e.phone]
+      const hay = [e.fullName, e.dni, e.position, e.department, e.email, e.phone, genEmpCode(e.fullName, e.dni)]
         .filter(Boolean).join(" ").toLowerCase();
       return hay.includes(q);
     });
-
-    const permanentes = filtered.filter(e => e.contractType === "permanent");
-    const temporales = filtered.filter(e => e.contractType === "temporary");
-    const honorarios = filtered.filter(e => e.contractType === "honorarios");
-
-    // Departamentos disponibles: canon + los que ya existen en la data.
+    const porTipo = (t) => base.filter(e => e.contractType === t);
+    const filtered = empTipo === "todos" ? base : porTipo(empTipo);
     const deptSet = new Set(DEPARTMENTS);
     ce.forEach(e => { if (e.department) deptSet.add(e.department); });
     const deptOptions = [...deptSet].sort();
-
-    const ctColor = (ct) => ct === "permanent" ? "#2563EB" : ct === "temporary" ? "#D97706" : "#7C3AED";
-    const ctLabel = (ct) => ct === "permanent" ? "Permanente" : ct === "temporary" ? "Temporal" : "Honorarios";
-
-    const Card = ({ r }) => {
-      const url = r.photo?.fileId ? photoCache[r.photo.fileId] : null;
-      const isActive = r.status === "active";
-      // Info de fin de contrato (solo para temporales/honorarios con endDate)
-      let endInfo = null;
-      if (r.endDate && r.contractType !== "permanent") {
-        const hoy = new Date(); hoy.setHours(0,0,0,0);
-        const fin = new Date(r.endDate); fin.setHours(0,0,0,0);
-        const diasRest = Math.ceil((fin - hoy) / 86400000);
-        const color = diasRest < 0 ? "#991B1B" : diasRest <= 7 ? "#DC2626" : diasRest <= 30 ? "#D97706" : "#059669";
-        endInfo = { color, text: `${fmt(r.endDate)}${isActive ? ` (${diasRest < 0 ? "vencido " + Math.abs(diasRest) + "d" : diasRest + "d"})` : ""}` };
-      }
-      return (
-        <div
-          onClick={() => setModal({ t: "ee", d: r })}
-          style={{
-            background: "#fff",
-            border: "1px solid #E2E8F0",
-            borderRadius: 12,
-            padding: 16,
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-            cursor: "pointer",
-            transition: "all 0.15s ease",
-            boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
-            position: "relative",
-            opacity: isActive ? 1 : 0.72,
-          }}
-          onMouseEnter={(ev) => { ev.currentTarget.style.boxShadow = "0 6px 18px rgba(232,118,45,0.15)"; ev.currentTarget.style.borderColor = "#E8762D"; ev.currentTarget.style.transform = "translateY(-2px)"; }}
-          onMouseLeave={(ev) => { ev.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,0.03)"; ev.currentTarget.style.borderColor = "#E2E8F0"; ev.currentTarget.style.transform = "translateY(0)"; }}
-          title="Click para editar"
-        >
-          {/* Botones flotantes (borrar) — oculto para visor de solo-fotos */}
-          {/* Borrar empleado: NO para Ana — entra a la ficha y sube fotos,
-              pero dar de baja gente sigue siendo de administración. */}
-          {!isPhotoOnly && !isAnaRH && <button
-            onClick={(ev) => { ev.stopPropagation(); if (confirm(`Eliminar a ${r.fullName}?`)) sE(emps.filter(e => e.id !== r.id)); }}
-            style={{ position: "absolute", top: 8, right: 8, width: 24, height: 24, borderRadius: 6, border: "none", background: "rgba(220,38,38,0.08)", color: "#DC2626", cursor: "pointer", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
-            title="Eliminar empleado"
-          >×</button>}
-
-          {/* Foto + estado */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
-            <EmpAvatar name={r.fullName} dataUrl={url} size={92} borderRadius={12} />
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
-              <Badge color={isActive ? "#059669" : "#94A3B8"}>{isActive ? "Activo" : "Inactivo"}</Badge>
-              <Badge color={ctColor(r.contractType)}>{ctLabel(r.contractType)}</Badge>
-            </div>
-          </div>
-
-          {/* Nombre + cargo */}
-          <div style={{ textAlign: "center", marginTop: 2 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, color: "#1E293B", lineHeight: 1.25, wordBreak: "break-word" }}>{r.fullName || "—"}</div>
-            {r.position && <div style={{ fontSize: 12, color: "#64748b", marginTop: 3, lineHeight: 1.3 }}>{r.position}</div>}
-            <div style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 10, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5, marginTop: 4 }}>
-              {genEmpCode(r.fullName, r.dni)}
-            </div>
-          </div>
-
-          {/* Departamento */}
-          {r.department && (
-            <div style={{ display: "flex", justifyContent: "center" }}>
-              <Badge color="#0891B2">{r.department}</Badge>
-            </div>
-          )}
-
-          {/* Contacto */}
-          {(r.phone || r.email) && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11, color: "#475569", borderTop: "1px solid #F1F5F9", paddingTop: 8 }}>
-              {r.phone && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ opacity: 0.6 }}>📞</span><span>{r.phone}</span></div>}
-              {r.email && <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}><span style={{ opacity: 0.6 }}>✉️</span><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.email}</span></div>}
-            </div>
-          )}
-
-          {/* Fin de contrato (solo temporales) */}
-          {endInfo && (
-            <div style={{ fontSize: 10.5, color: endInfo.color, textAlign: "center", fontWeight: 600, background: endInfo.color + "10", padding: "3px 8px", borderRadius: 6 }}>
-              Fin contrato: {endInfo.text}
-            </div>
-          )}
-        </div>
-      );
+    const abrir = (ev, e) => {
+      const r = ev.currentTarget.getBoundingClientRect();
+      setCarnet({ id: e.id, rect: { left: r.left, top: r.top, width: r.width, height: r.height } });
     };
-
-    const grid = (rows) => (
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
-        gap: 14,
-      }}>
-        {rows.map(r => <Card key={r.id} r={r} />)}
-      </div>
-    );
-
-    const sectionHeader = (label, count, color, descripcion) => (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: color + "14", borderLeft: `4px solid ${color}`, borderRadius: 8, marginBottom: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ color, fontWeight: 800, fontSize: 14, letterSpacing: 0.3 }}>{label}</span>
-          <Badge color={color}>{count}</Badge>
-        </div>
-        {descripcion && <span style={{ color: "#64748b", fontSize: 11, fontStyle: "italic" }}>{descripcion}</span>}
-      </div>
-    );
-
-    return <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      {/* Barra de filtros + accion */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
-          <input
-            type="text"
-            placeholder="Buscar por nombre, DNI, cargo..."
-            value={empSearch}
-            onChange={e => setEmpSearch(e.target.value)}
-            style={{ flex: 1, minWidth: 220, padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff", outline: "none" }}
-          />
-          <select
-            value={empDeptFilter}
-            onChange={e => setEmpDeptFilter(e.target.value)}
-            style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff" }}
-          >
-            <option value="">Todos los departamentos</option>
-            {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
-          </select>
-          {(empSearch || empDeptFilter) && (
-            <Btn small variant="ghost" onClick={() => { setEmpSearch(""); setEmpDeptFilter(""); }}>Limpiar</Btn>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <Btn small variant="ghost" disabled={refreshing} onClick={async () => {
-            setRefreshing(true);
-            try { await loadAll(); } finally { setRefreshing(false); }
-          }}>{refreshing ? "⏳ Actualizando..." : "🔄 Actualizar"}</Btn>
-          {!isPhotoOnly && <Btn onClick={() => setModal({ t: "en" })}>+ Nuevo empleado</Btn>}
-        </div>
-      </div>
-
-      {/* Advertencia: la nube no devolvio empleados (red caida o key vacia). */}
-      {empsLoadWarning && (
-        <div style={{ background: "#FEF2F2", border: "1px solid #FCA5A5", borderRadius: 10, padding: "12px 16px", fontSize: 13, color: "#991B1B" }}>
-          ⚠️ <b>No se pudieron cargar los empleados desde la nube.</b> Puede ser un problema de conexion.
-          Tocá <b>🔄 Actualizar</b> para reintentar. No agregues ni edites empleados hasta que cargue la lista — para no duplicar ni pisar datos.
-        </div>
-      )}
-
-      {/* Contador */}
-      <div style={{ color: "#64748b", fontSize: 13 }}>
-        <b style={{ color: "#1E293B" }}>{filtered.length}</b> empleado{filtered.length !== 1 ? "s" : ""}
-        {(empSearch || empDeptFilter) && ce.length !== filtered.length && <span style={{ color: "#94A3B8" }}> · de {ce.length} totales</span>}
-        &nbsp;·&nbsp;
-        <span style={{ color: "#2563EB" }}>{permanentes.length} permanente{permanentes.length !== 1 ? "s" : ""}</span> &nbsp;·&nbsp;
-        <span style={{ color: "#D97706" }}>{temporales.length} temporal{temporales.length !== 1 ? "es" : ""}</span>
-        {honorarios.length > 0 && <> &nbsp;·&nbsp; <span style={{ color: "#7C3AED" }}>{honorarios.length} honorarios</span></>}
-      </div>
-
-      {/* Permanentes */}
-      {permanentes.length > 0 && <div>
-        {sectionHeader(
-          "PERMANENTES",
-          permanentes.length,
-          "#2563EB",
-          co === "geotecnica"
-            ? "Contratos indefinidos · IHSS + RAP aplicables en 2Q (grupo C)"
-            : "Contratos indefinidos · IHSS aplicable en 2Q (grupo A · sin RAP)"
-        )}
-        {grid(permanentes)}
-      </div>}
-
-      {/* Temporales */}
-      {temporales.length > 0 && <div>
-        {sectionHeader("TEMPORALES", temporales.length, "#D97706", "Contratos por obra determinada · con fecha de fin · IHSS aplicable en 2Q (sin RAP)")}
-        {grid(temporales)}
-      </div>}
-
-      {/* Honorarios */}
-      {honorarios.length > 0 && <div>
-        {sectionHeader("HONORARIOS", honorarios.length, "#7C3AED", "ISR fijo 12.5% · sin IHSS ni RAP")}
-        {grid(honorarios)}
-      </div>}
-
-      {filtered.length === 0 && (
-        <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 40, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>
-          {ce.length === 0 ? `Sin empleados en ${cc.name}` : "Ningun empleado coincide con los filtros"}
-        </div>
-      )}
+    const carnetDe = (e, i) => <div key={e.id} role="button" tabIndex={0} className="gt-vidrio gt-vidrio-hover gt-sube"
+      onClick={(ev) => abrir(ev, e)} onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); abrir(ev, e); } }}
+      aria-label={`Ver la ficha de ${e.fullName}`}
+      style={{ height: 268, borderRadius: 22, cursor: "pointer", overflow: "hidden", opacity: e.status === "active" ? 1 : 0.62, visibility: carnet?.id === e.id ? "hidden" : "visible", animationDelay: `${Math.min(i, 12) * 25}ms` }}>
+      <CarnetFrente e={e} foto={e.photo?.fileId ? photoCache[e.photo.fileId] : null} empresa={co === "subterra" ? "Subterra" : "Geotecnica"} />
     </div>;
+    const grid = (rows) => <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 158 : 210}px, 1fr))`, gap: isMobile ? 10 : 16 }}>
+      {rows.map((e, i) => carnetDe(e, i))}
+    </div>;
+    const grupos = [["permanent", "Permanentes"], ["temporary", "Temporales"], ["honorarios", "Honorarios"]];
+    const SEL = { padding: "10px 12px", border: "1px solid rgba(44,42,40,.1)", borderRadius: 12, fontSize: 13, background: "rgba(255,255,255,.75)", color: CHARCOAL, outline: "none", fontFamily: "inherit" };
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div className="gt-vidrio" style={{ padding: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: "1 1 240px", minWidth: 0 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A39C92" strokeWidth="2" strokeLinecap="round" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <input type="search" placeholder="Buscar por nombre, DNI, cargo o código" value={empSearch} onChange={e => setEmpSearch(e.target.value)} style={{ ...SEL, width: "100%", boxSizing: "border-box", paddingLeft: 38 }} />
+        </div>
+        <select value={empDeptFilter} onChange={e => setEmpDeptFilter(e.target.value)} style={SEL}>
+          <option value="">Todos los departamentos</option>
+          {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
+        </select>
+        {pista([["todos", `Todos ${base.length}`], ...grupos.filter(([k]) => porTipo(k).length || empTipo === k).map(([k, l]) => [k, `${l} ${porTipo(k).length}`])].map(([k, label]) => ({ k, label, on: empTipo === k, onClick: () => setEmpTipo(k) })))}
+        <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+          <span role="button" title="Volver a leer de la nube" aria-label="Actualizar" className="gt-circulo" onClick={async () => { if (refreshing) return; setRefreshing(true); try { await loadAll(); } finally { setRefreshing(false); } }} style={{ width: 40, height: 40, fontSize: 16, opacity: refreshing ? .5 : 1 }}>↻</span>
+          {!isPhotoOnly && !isReadOnly && <button className="gt-btn gt-btn-primario" onClick={() => setModal({ t: "en" })} style={{ minHeight: 40, padding: "10px 18px", fontSize: 13.5 }}>+ Nuevo</button>}
+        </div>
+      </div>
+
+      {empsLoadWarning && <div style={{ background: "rgba(192,57,43,.07)", borderRadius: 14, padding: "12px 16px", fontSize: 13, color: "#B03024" }}>
+        <b>No se pudieron cargar los empleados desde la nube.</b> Tocá ↻ para reintentar y no agregues ni edites hasta que cargue la lista.
+      </div>}
+
+      {empTipo === "todos"
+        ? grupos.map(([k, l]) => { const rows = filtered.filter(e => e.contractType === k); return rows.length > 0 && <div key={k}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "4px 2px 12px" }}>
+              <span style={{ font: "800 16px/1 var(--display)", color: CHARCOAL }}>{l}</span>
+              <span style={{ font: "600 13px/1 var(--sans)", color: "#A39C92" }}>{rows.length}</span>
+            </div>
+            {grid(rows)}
+          </div>; })
+        : grid(filtered)}
+
+      {filtered.length === 0 && <div className="gt-vidrio" style={{ padding: 40, textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>
+        {ce.length === 0 ? `Sin colaboradores en ${cc.name}` : "Nadie coincide con la búsqueda"}
+      </div>}
+    </div>;
+  };
+
+  // Dorso del carnet: TODA la ficha. Se monta fuera del <fieldset disabled>
+  // (portal), así que los permisos se revisan acá: editar = no solo-lectura;
+  // eliminar = igual que antes (ni el visor de fotos ni Ana).
+  const renderCarnet = () => {
+    if (!carnet) return null;
+    const e = emps.find(x => x.id === carnet.id);
+    if (!e) return null;
+    const foto = e.photo?.fileId ? photoCache[e.photo.fileId] : null;
+    const empresa = e.company === "subterra" ? "Subterra" : "Geotecnica";
+    const fin = finContratoDe(e);
+    const antig = e.startDate ? (Date.now() - new Date(`${e.startDate}T12:00:00`).getTime()) / (365.25 * 86400000) : null;
+    const puedeEditar = !isReadOnly;
+    const puedeBorrar = !isReadOnly && !isPhotoOnly && !isAnaRH;
+    const fila = (l, v) => v ? <div key={l} style={{ display: "flex", justifyContent: "space-between", gap: 14, padding: "8px 0", borderBottom: "1px solid rgba(44,42,40,.06)" }}>
+      <span style={{ font: "500 12.5px/1.3 var(--sans)", color: "#6E6862", flexShrink: 0 }}>{l}</span>
+      <span style={{ font: "600 13px/1.3 var(--sans)", color: CHARCOAL, textAlign: "right", minWidth: 0, wordBreak: "break-word" }}>{v}</span>
+    </div> : null;
+    const bloque = (t, filas) => filas.some(Boolean) && <div style={{ marginTop: 16 }}>
+      <div className="gt-label" style={{ color: ORANGE_DARK, fontSize: 9, marginBottom: 4 }}>{t}</div>
+      {filas}
+    </div>;
+    return <CarnetVolteo origen={carnet.rect} onCerrado={() => setCarnet(null)}
+      frente={<CarnetFrente e={e} foto={foto} empresa={empresa} grande />}
+      dorso={(cerrar) => <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+        <div style={{ position: "relative", flexShrink: 0, background: "linear-gradient(135deg,#2C2A28 0%,#3A3633 100%)", padding: "16px 18px", display: "flex", alignItems: "center", gap: 12 }}>
+          {CURVAS_CARNET}
+          <EmpAvatar name={e.fullName} dataUrl={foto} size={52} borderRadius={14} style={{ position: "relative", border: "2px solid rgba(255,255,255,.9)" }} />
+          <div style={{ position: "relative", minWidth: 0, flex: 1 }}>
+            <div style={{ font: "800 16px/1.2 var(--display)", color: "#fff" }}>{e.fullName}</div>
+            <div style={{ font: "500 12px/1.3 var(--sans)", color: "rgba(255,255,255,.7)", marginTop: 3 }}>{e.position || "Sin cargo"} · <span style={{ fontFamily: "var(--mono)", color: "#F2B48A" }}>{genEmpCode(e.fullName, e.dni)}</span></div>
+          </div>
+          <button onClick={cerrar} aria-label="Cerrar" style={{ position: "relative", width: 34, height: 34, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.14)", color: "#fff", fontSize: 16, cursor: "pointer", flexShrink: 0 }}>✕</button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "4px 20px 16px" }}>
+          {bloque("Trabajo", [
+            fila("Empresa", COMPANIES[e.company]?.name),
+            fila("Departamento", e.department),
+            fila("Contrato", CT_LABEL[e.contractType]),
+            fila("Estado", e.status === "active" ? "Activo" : "Inactivo"),
+            fila("Ingreso", e.startDate ? fmt(e.startDate) : null),
+            fila(e.status === "active" ? "Fin de contrato" : "Último día", e.endDate && e.contractType !== "permanent" ? `${fmt(e.endDate)}${fin && e.status === "active" ? ` · ${fin.txt.toLowerCase()}` : ""}` : (e.status !== "active" && e.endDate ? fmt(e.endDate) : null)),
+            fila("Antigüedad", antig !== null && antig >= 0 ? (antig < 1 ? `${Math.max(1, Math.round(antig * 12))} meses` : `${antig.toFixed(1)} años`) : null),
+            fila("Horario", horarioDe(e).label + (e.noMarca ? " · no marca" : "")),
+          ])}
+          {bloque("Identidad", [fila("DNI", e.dni), fila("Sexo", e.sexo === "femenino" ? "Femenino" : e.sexo === "masculino" ? "Masculino" : null)])}
+          {bloque("Contacto", [fila("Teléfono", e.phone), fila("Correo", e.email)])}
+          {!hideSalary && bloque("Salario", [fila("Salario mensual", Number(e.salary) ? fmtL(e.salary) : null), fila("Bonificación", Number(e.bonificacion) ? fmtL(e.bonificacion) : null)])}
+          <div style={{ marginTop: 16 }}><EquipoAsignadoInv empId={e.id} /></div>
+        </div>
+        {(puedeEditar || puedeBorrar) && <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", borderTop: "1px solid rgba(44,42,40,.07)", background: "rgba(249,249,248,.9)" }}>
+          {puedeBorrar && <button onClick={() => { if (!confirm(`¿Eliminar a ${e.fullName} de ${COMPANIES[e.company]?.name}?\n\nSe borra su ficha completa. Para una salida normal usá la baja en Movimientos.`)) return; sE(emps.filter(x => x.id !== e.id)); setCarnet(null); }} style={{ border: "none", background: "transparent", color: "#B03024", font: "600 12.5px/1 var(--sans)", cursor: "pointer", padding: "8px 4px" }}>Eliminar</button>}
+          {puedeEditar && <button className="gt-btn gt-btn-primario" onClick={() => { setCarnet(null); setModal({ t: "ee", d: e }); }} style={{ marginLeft: "auto", minHeight: 40, padding: "10px 20px", fontSize: 13.5 }}>Editar ficha</button>}
+        </div>}
+      </div>} />;
   };
 
   const renderPayroll = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -7030,274 +6962,53 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const roleLabel = userRole === "admin" ? "Recursos Humanos" : userRole === "tesoreria" ? "Tesorería — acceso completo" : userRole === "asistente" ? "Asistente RRHH" : userRole === "gerencia" ? "Gerencia (solo lectura)" : userRole === "costos" ? "Costos (solo lectura)" : userRole === "recepcion" ? "Fotos del personal" : userRole === "asistente_compras" ? "Personal y asistencia" : userRole === "logistica" ? "Aprobador de llegadas tardías (plantel/almacén)" : (userRole || "Usuario");
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
-  // SVG cartoon team lineup — trabajadores del sector industrial
-  const TeamSVG = ({ height = 170 }) => (
-    <svg viewBox="0 0 240 180" xmlns="http://www.w3.org/2000/svg" style={{ height, width: "auto", display: "block" }} aria-hidden="true">
-      {/* Sombras bajo pies */}
-      <ellipse cx="45" cy="168" rx="26" ry="4" fill="#0F172A" opacity="0.10" />
-      <ellipse cx="105" cy="168" rx="26" ry="4" fill="#0F172A" opacity="0.10" />
-      <ellipse cx="165" cy="168" rx="26" ry="4" fill="#0F172A" opacity="0.10" />
-      <ellipse cx="215" cy="168" rx="20" ry="3" fill="#0F172A" opacity="0.07" />
-
-      {/* --- Personaje 4 (atras a la derecha, silueta) --- */}
-      <g opacity="0.55">
-        <rect x="205" y="105" width="24" height="42" rx="4" fill="#4A5568" />
-        <circle cx="217" cy="94" r="10" fill="#D4A574" />
-        {/* casco simple */}
-        <path d="M207 89 Q217 79 227 89 L227 94 L207 94 Z" fill="#F1C40F" />
-      </g>
-
-      {/* --- Personaje 1 (izquierda) — casco amarillo, chaleco naranja --- */}
-      <g>
-        {/* Piernas */}
-        <rect x="37" y="140" width="7" height="26" rx="2" fill="#2C3E50" />
-        <rect x="47" y="140" width="7" height="26" rx="2" fill="#2C3E50" />
-        {/* Zapatos */}
-        <rect x="35" y="163" width="10" height="5" rx="1.5" fill="#1F2937" />
-        <rect x="45" y="163" width="10" height="5" rx="1.5" fill="#1F2937" />
-        {/* Torso — chaleco reflectivo naranja sobre camiseta gris */}
-        <rect x="30" y="105" width="30" height="40" rx="5" fill="#7A7A7A" />
-        <rect x="30" y="112" width="30" height="26" rx="3" fill="#E8762D" />
-        {/* Franja reflectiva */}
-        <rect x="30" y="124" width="30" height="3" fill="#F5D76E" />
-        {/* Brazos */}
-        <rect x="22" y="108" width="8" height="30" rx="3" fill="#E8762D" />
-        <rect x="60" y="108" width="8" height="30" rx="3" fill="#E8762D" />
-        {/* Manos */}
-        <circle cx="26" cy="140" r="4" fill="#F4C88C" />
-        <circle cx="64" cy="140" r="4" fill="#F4C88C" />
-        {/* Cabeza */}
-        <circle cx="45" cy="88" r="14" fill="#F4C88C" />
-        {/* Casco amarillo */}
-        <path d="M31 87 Q45 68 59 87 L59 93 L31 93 Z" fill="#F1C40F" />
-        <rect x="31" y="91" width="28" height="4" fill="#D4A017" />
-        {/* Cara */}
-        <circle cx="41" cy="90" r="1.2" fill="#1F2937" />
-        <circle cx="49" cy="90" r="1.2" fill="#1F2937" />
-        <path d="M41 96 Q45 99 49 96" stroke="#1F2937" strokeWidth="1.3" fill="none" strokeLinecap="round" />
-      </g>
-
-      {/* --- Personaje 2 (centro-izquierda) — casco naranja, polo verde acero --- */}
-      <g>
-        {/* Piernas */}
-        <rect x="97" y="140" width="7" height="26" rx="2" fill="#3E3E3E" />
-        <rect x="107" y="140" width="7" height="26" rx="2" fill="#3E3E3E" />
-        {/* Zapatos */}
-        <rect x="95" y="163" width="10" height="5" rx="1.5" fill="#1F2937" />
-        <rect x="105" y="163" width="10" height="5" rx="1.5" fill="#1F2937" />
-        {/* Torso — polo verde acero */}
-        <rect x="90" y="105" width="30" height="40" rx="5" fill="#2C5F5D" />
-        {/* Cuello polo */}
-        <path d="M100 105 L105 112 L110 105" stroke="#1E4A48" strokeWidth="1.5" fill="none" />
-        <rect x="103" y="105" width="4" height="6" fill="#F4C88C" />
-        {/* Brazos */}
-        <rect x="82" y="108" width="8" height="30" rx="3" fill="#2C5F5D" />
-        <rect x="120" y="108" width="8" height="30" rx="3" fill="#2C5F5D" />
-        {/* Manos */}
-        <circle cx="86" cy="140" r="4" fill="#D4A574" />
-        <circle cx="124" cy="140" r="4" fill="#D4A574" />
-        {/* Cabeza */}
-        <circle cx="105" cy="88" r="14" fill="#D4A574" />
-        {/* Casco naranja */}
-        <path d="M91 87 Q105 68 119 87 L119 93 L91 93 Z" fill="#E8762D" />
-        <rect x="91" y="91" width="28" height="4" fill="#C75F1F" />
-        {/* Cresta del casco */}
-        <rect x="103" y="72" width="4" height="15" fill="#C75F1F" />
-        {/* Cara */}
-        <circle cx="101" cy="90" r="1.2" fill="#1F2937" />
-        <circle cx="109" cy="90" r="1.2" fill="#1F2937" />
-        <path d="M101 96 Q105 98 109 96" stroke="#1F2937" strokeWidth="1.3" fill="none" strokeLinecap="round" />
-        {/* Bigote sutil */}
-        <path d="M102 94 Q105 95 108 94" stroke="#4A2E1F" strokeWidth="1" fill="none" />
-      </g>
-
-      {/* --- Personaje 3 (centro-derecha) — administrativa con tablet, gafas --- */}
-      <g>
-        {/* Piernas — pantalon oscuro */}
-        <rect x="157" y="140" width="7" height="26" rx="2" fill="#1F2937" />
-        <rect x="167" y="140" width="7" height="26" rx="2" fill="#1F2937" />
-        {/* Zapatos */}
-        <rect x="155" y="163" width="10" height="5" rx="1.5" fill="#0F172A" />
-        <rect x="165" y="163" width="10" height="5" rx="1.5" fill="#0F172A" />
-        {/* Blusa color beige/naranja claro */}
-        <rect x="150" y="105" width="30" height="40" rx="5" fill="#F5D6B3" />
-        {/* Cuello blusa */}
-        <path d="M160 105 L165 110 L170 105" stroke="#E8762D" strokeWidth="1.3" fill="none" />
-        {/* Brazos */}
-        <rect x="142" y="108" width="8" height="28" rx="3" fill="#F5D6B3" />
-        <rect x="180" y="108" width="8" height="28" rx="3" fill="#F5D6B3" />
-        {/* Tablet en las manos */}
-        <rect x="150" y="130" width="30" height="18" rx="2" fill="#1F2937" />
-        <rect x="152" y="132" width="26" height="14" rx="1" fill="#5FD4E8" />
-        <rect x="154" y="134" width="6" height="1.5" fill="#fff" opacity="0.9" />
-        <rect x="154" y="137" width="14" height="1.5" fill="#fff" opacity="0.9" />
-        <rect x="154" y="140" width="10" height="1.5" fill="#fff" opacity="0.9" />
-        {/* Manos sobre tablet */}
-        <circle cx="146" cy="138" r="4" fill="#F4C88C" />
-        <circle cx="184" cy="138" r="4" fill="#F4C88C" />
-        {/* Cabeza */}
-        <circle cx="165" cy="88" r="14" fill="#F4C88C" />
-        {/* Pelo — melena castana */}
-        <path d="M151 85 Q152 72 165 70 Q178 72 179 85 L179 90 Q175 82 165 82 Q155 82 151 90 Z" fill="#5C3A21" />
-        {/* Coleta a un lado */}
-        <ellipse cx="179" cy="94" rx="4" ry="8" fill="#5C3A21" />
-        {/* Cara */}
-        <circle cx="161" cy="90" r="1.2" fill="#1F2937" />
-        <circle cx="169" cy="90" r="1.2" fill="#1F2937" />
-        {/* Gafas */}
-        <circle cx="161" cy="90" r="3.2" fill="none" stroke="#1F2937" strokeWidth="1" />
-        <circle cx="169" cy="90" r="3.2" fill="none" stroke="#1F2937" strokeWidth="1" />
-        <line x1="164.2" y1="90" x2="165.8" y2="90" stroke="#1F2937" strokeWidth="1" />
-        <path d="M161 96 Q165 98 169 96" stroke="#B23A5E" strokeWidth="1.3" fill="none" strokeLinecap="round" />
-      </g>
-
-      {/* Piso — linea sutil */}
-      <line x1="15" y1="170" x2="235" y2="170" stroke="#0F172A" strokeWidth="1" opacity="0.08" />
-    </svg>
-  );
-
-  const activeNav = nav.find(n => n.id === sec);
-
-  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: BEIGE, color: CHARCOAL }}>
-    {/* HERO — logo Geotecnica + titulo + ilustracion equipo */}
-    <div style={{
-      position: "relative",
-      minHeight: isMobile ? 120 : 180,
-      flexShrink: 0,
-      background: "linear-gradient(135deg, #E8F0EF 0%, #F1F5F4 100%)",
-      borderBottom: `1px solid ${BORDER}`,
-      padding: isMobile ? "14px 16px" : "24px 32px",
-      overflow: "hidden",
-      display: "flex",
-      alignItems: "center",
-    }}>
-      {/* Botones arriba a la derecha */}
-      <div style={{ position: "absolute", top: isMobile ? 8 : 14, right: isMobile ? 12 : 24, display: "flex", gap: 8, zIndex: 3 }}>
-        {onBack && <button onClick={onBack} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 8, color: CHARCOAL, padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>← Volver al panel</button>}
-        {onLogout && <button onClick={onLogout} style={{ background: "#fff", border: "1px solid #E5B4A9", borderRadius: 8, color: "#B23A26", padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>Cerrar sesion</button>}
+  // ── Encabezado y pestañas (15-oct-2026): mismo estilo que GeoInventory /
+  // GeoSupply. Se retiró el hero con la ilustración, el título repetido de la
+  // pestaña ("Dashboard / Subterra Honduras") y los emojis de las pestañas.
+  // Dashboard, KPI's y Empleados NO llevan el <fieldset disabled>: solo
+  // muestran (los botones que escriben ya se ocultan por rol) y así un rol de
+  // solo lectura puede buscar y filtrar.
+  const SIN_CANDADO = ["dashboard", "kpis", "employees"];
+  const secVista = nav.some(n => n.id === sec) ? sec : nav[0]?.id;
+  const candado = isReadOnly && !SIN_CANDADO.includes(secVista);
+  return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "var(--sans)", background: "var(--bg)", color: CHARCOAL, position: "relative", overflow: "hidden" }}>
+    <style>{GT_CSS}</style>
+    <div className="gt-brillo gt-brillo-a" aria-hidden />
+    <div className="gt-brillo gt-brillo-b" aria-hidden />
+    <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: isMobile ? "wrap" : "nowrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
+        {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
+        <img src={logoUrl} alt="Geotecnica Soluciones" style={{ height: isMobile ? 28 : 34, width: "auto", display: "block" }} />
+        <div title="GeoTeam" style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="9" cy="8" r="3.2" /><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" /><circle cx="17" cy="9" r="2.4" /><path d="M16 14.2c2.4-.2 4.1 1.3 4.6 4" /></svg>
+        </div>
+        {!isMobile && <div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>GeoTeam</div>}
       </div>
-
-      {/* Row principal */}
-      <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 12 : 28, width: "100%" }}>
-        {/* IZQUIERDA — logo Geotecnica */}
-        <div style={{ flexShrink: 0, width: isMobile ? 90 : 200, display: "flex", alignItems: "center", justifyContent: isMobile ? "flex-start" : "center" }}>
-          <img
-            src={logoUrl}
-            alt="Geotecnica Soluciones"
-            style={{ height: isMobile ? 40 : 65, width: "auto", objectFit: "contain", display: "block" }}
-          />
-        </div>
-
-        {/* CENTRO — texto */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-          <div style={{ fontSize: isMobile ? 10 : 11, letterSpacing: 2, color: HR_ACCENT_DARK, fontWeight: 700, textTransform: "uppercase" }}>Grupo Geotecnica</div>
-          <h1 style={{ margin: 0, fontSize: isMobile ? 18 : 28, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.5, lineHeight: 1.15 }}>
-            GeoTeam — Recursos Humanos
-          </h1>
-          {!isMobile && <div style={{ fontSize: 13, color: STONE, fontWeight: 500 }}>
-            Empleados, planilla, asistencia y beneficios
-          </div>}
-          {/* Selector empresa + badge usuario en mobile */}
-          {isMobile && (
-            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-              {Object.entries(COMPANIES).map(([k, v]) => (
-                <button key={k} onClick={() => setCo(k)} style={{ background: co === k ? v.accent : "#fff", color: co === k ? "#fff" : "#5C5853", border: `1px solid ${co === k ? v.accent : BORDER}`, borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{v.name.split(" ")[0]}</button>
-              ))}
-              {userName && (
-                <div style={{ background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "3px 8px", fontSize: 10, color: CHARCOAL, fontWeight: 700 }}>
-                  {userName} · {roleLabel}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* DERECHA — ilustracion equipo (solo desktop) */}
-        {!isMobile && (
-          <div style={{ flexShrink: 0, display: "flex", alignItems: "flex-end", justifyContent: "center", height: 180, marginRight: 8 }}>
-            <TeamSVG height={170} />
-          </div>
-        )}
-
-        {/* Badge usuario + selector empresa en desktop */}
-        {!isMobile && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0, alignItems: "flex-end" }}>
-            <div style={{ display: "flex", gap: 6 }}>
-              {Object.entries(COMPANIES).map(([k, v]) => (
-                <button key={k} onClick={() => setCo(k)} style={{ background: co === k ? v.accent : "#fff", color: co === k ? "#fff" : "#5C5853", border: `1px solid ${co === k ? v.accent : BORDER}`, borderRadius: 20, padding: "4px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all .15s" }}>{v.name}</button>
-              ))}
-            </div>
-            <div style={{ background: BEIGE, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "8px 14px", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-              <div style={{ fontSize: 13, color: CHARCOAL, fontWeight: 700, letterSpacing: 0.2 }}>{userName || "Usuario"}</div>
-              <div style={{ fontSize: 11, color: HR_ACCENT_DARK, fontWeight: 600 }}>{roleLabel}</div>
-            </div>
-          </div>
-        )}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0, order: isMobile ? 3 : 0, width: isMobile ? "100%" : "auto", justifyContent: isMobile ? "center" : "flex-start" }}>
+        {pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: isMobile ? v.name.split(" ")[0] : v.name, on: co === k, onClick: () => setCo(k) })))}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
+        {!isMobile && <div style={{ textAlign: "right" }}>
+          <div style={{ font: "600 13px/1.3 var(--sans)", color: CHARCOAL }}>{userName || "Usuario"}</div>
+          <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2 }}>{isReadOnly ? "Solo lectura" : roleLabel}</div>
+        </div>}
+        {onLogout && <button onClick={onLogout} title="Cerrar sesión" style={{ minHeight: 36, padding: "8px 14px", borderRadius: 999, border: "1px solid rgba(192,57,43,.25)", background: "rgba(192,57,43,.06)", color: "#B03024", font: "700 12px/1 var(--sans)", cursor: "pointer" }}>{isMobile ? "Salir" : "Cerrar sesión"}</button>}
       </div>
     </div>
-
-    {/* TOPNAV horizontal */}
-    <div style={{
-      display: "flex",
-      background: CREAM,
-      borderBottom: `1px solid ${BORDER}`,
-      overflowX: "auto",
-      whiteSpace: "nowrap",
-      flexShrink: 0,
-      paddingLeft: isMobile ? 8 : 24,
-      scrollbarWidth: "thin",
-    }}>
-      {nav.map(n => {
-        const active = sec === n.id;
-        return <button
-          key={n.id}
-          onClick={() => setSec(n.id)}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: isMobile ? "12px 14px" : "14px 18px",
-            background: "transparent",
-            border: "none",
-            borderBottom: active ? `3px solid ${HR_ACCENT}` : "3px solid transparent",
-            color: active ? CHARCOAL : STONE,
-            cursor: "pointer",
-            fontSize: 14,
-            fontWeight: active ? 700 : 500,
-            fontFamily: "inherit",
-            transition: "all .15s",
-            whiteSpace: "nowrap",
-            marginBottom: -1,
-          }}
-          onMouseEnter={e => { if (!active) e.currentTarget.style.color = CHARCOAL; }}
-          onMouseLeave={e => { if (!active) e.currentTarget.style.color = STONE; }}
-        >
-          <span style={{ fontSize: 16 }}>{n.icon}</span>
-          <span>{n.label}</span>
-        </button>;
-      })}
-    </div>
-
-    {/* CONTENIDO */}
-    <div style={{ flex: 1, overflow: "auto", background: BEIGE }}>
-      <div style={{ padding: isMobile ? "12px 16px" : "20px 32px 8px 32px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 22, fontWeight: 800, color: CHARCOAL, letterSpacing: -0.3 }}>{activeNav?.label}</h2>
-          <span style={{ fontSize: 13, color: cc.accent, fontWeight: 600, letterSpacing: 0.3 }}>{cc.name}</span>
-        </div>
-        <Badge color={cc.color}>{ae.length} activos</Badge>
-      </div>
-      <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>
-        {isReadOnly && (
-          <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", color: "#1E40AF", padding: "10px 16px", borderRadius: 8, marginBottom: 16, fontSize: 13, fontWeight: 600 }}>
-            👁️ Modo solo lectura — podés ver toda la información pero no editar ni guardar cambios.
-          </div>
-        )}
-        <fieldset disabled={isReadOnly} style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
+    {nav.length > 1 && <div style={{ position: "relative", zIndex: 2, display: "flex", borderBottom: "1px solid rgba(44,42,40,.08)", overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0, paddingLeft: isMobile ? 4 : 20, scrollbarWidth: "none" }}>
+      {nav.map(n => { const active = secVista === n.id; return <button key={n.id} onClick={() => setSec(n.id)} style={{ padding: isMobile ? "12px 13px" : "14px 16px", background: "transparent", border: "none", boxShadow: active ? `inset 0 -2px 0 ${ORANGE}` : "none", color: active ? "var(--naranja-tinta)" : "var(--text-3)", font: `${active ? 800 : 600} 13px/1 var(--sans)`, cursor: "pointer", whiteSpace: "nowrap" }}>{n.label}</button>; })}
+    </div>}
+    <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
+      <div style={{ padding: isMobile ? "12px 12px 24px" : "18px 32px 32px", maxWidth: 1500, margin: "0 auto", boxSizing: "border-box" }}>
+        {candado && <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "7px 14px", borderRadius: 999, background: "rgba(44,42,40,.06)", color: "#5C5853", font: "600 12px/1 var(--sans)", marginBottom: 14 }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#A39C92" }} />Solo lectura: podés ver todo, sin editar
+        </div>}
+        <fieldset disabled={candado} style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
           {renderSec()}
         </fieldset>
       </div>
     </div>
     {!isReadOnly && renderModal()}
+    {renderCarnet()}
   </div>;
 }

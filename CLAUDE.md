@@ -855,6 +855,33 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Planilla, Asistencia (cuadrillas → grid 1/0/INC/DT/DT2/TF + override 1*),
   Horas Extras, Costos MO, Dashboard, KPI's, Llegadas tardías. Bonificaciones
   oculto (código intacto).
+  **REDISEÑO GeoCore (15-oct-2026, pedido de Gerson: "todo feo, desordenado,
+  muchos colores, mucho texto")** — primera pasada: encabezado, Dashboard,
+  KPI's y Empleados (el resto de pestañas viene una por una, empezando por
+  Contratos). GT_CSS se monta en TODO GeoTeam; encabezado igual al de
+  GeoInventory (← · logo · GeoTeam · pista Subterra/Geotecnica · usuario ·
+  Cerrar sesión), pestañas SIN emojis, se retiraron el hero con la ilustración
+  `TeamSVG`, el título repetido de la pestaña y el badge "N activos". Helpers
+  del componente: `tituloCaja`, `cifra`, `pista` (control segmentado de
+  spans, sirve a solo-lectura), `PAL_MES`. **Dashboard** = 3 cajas de vidrio
+  que llenan el alto: Presencia (% + NSP/INC/VAC + línea por día, multi-mes),
+  Mano de obra (total + barras por proyecto) y Hoy (dona GeoClock +
+  "Pendientes" clickeables a su pestaña). **KPI's** = 5 cajitas (Colaboradores,
+  Masa salarial —Antigüedad con hideSalary—, Ausentismo, Tardanzas, Rotación) +
+  "Masa salarial del año" y "El equipo". Gráficos SVG recoloreados a
+  carbón/naranja/gris (planilla real naranja, proyección gris) y las
+  iniciales de los avatares sin arcoíris. **Empleados** = CARNETS de vidrio
+  (`CarnetFrente` a nivel de módulo: franja carbón con curvas de nivel,
+  empresa, tipo de contrato, foto, nombre, cargo, código y depto/fin de
+  contrato); filtros: buscador, depto y pista Todos/Permanentes/Temporales/
+  Honorarios. Click → `CarnetVolteo` (portal a body, FLIP desde el rect del
+  carnet tocado + rotateY 180°, Esc/fondo cierran con la animación inversa,
+  respeta reduced-motion): el DORSO trae toda la ficha (trabajo, identidad,
+  contacto, salario si !hideSalary, equipo de GeoInventory) con "Editar
+  ficha" (abre el modal `ee` de siempre) y "Eliminar" (mismos permisos que
+  la ✕ vieja). ⚠ Dashboard, KPI's y Empleados quedan FUERA del `<fieldset
+  disabled>` de solo-lectura (`SIN_CANDADO`): no tienen controles que
+  escriban (se ocultan por rol) y así gerencia/costos pueden buscar.
   **Dashboard gerencial + KPI's (ago 2026, estilo IsTeam)**: `renderDashboard`
   reescrito — `statsDeMes(periodo)` calcula presencia diaria/NSP/INC/VAC/costo
   MO por proyecto desde hr-atts2 (calcCostoMO) + planilla real (hr-pays) +
