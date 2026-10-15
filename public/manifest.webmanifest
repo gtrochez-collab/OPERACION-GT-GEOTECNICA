@@ -1,0 +1,13 @@
+{
+  "name": "GeoCore · Grupo Geotecnica",
+  "short_name": "GeoCore",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F9F9F8",
+  "theme_color": "#2C2A28",
+  "icons": [
+    { "src": "brand/geocore/geocore-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "brand/geocore/geocore-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

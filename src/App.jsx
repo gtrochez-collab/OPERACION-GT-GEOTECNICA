@@ -16,7 +16,7 @@ import { ROLES_INVENTARIO } from "./geoinventory-calc.js";
 // import ChatModule, { fetchUnreadSummary, playBeep } from "./ChatModule.jsx";
 import { store, onSyncStateChange } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
-import Logo from "./Logo.jsx";
+import Logo, { GeoCoreSello } from "./Logo.jsx";
 import { BRAND, FONT } from "./theme.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 // GeoSupply (2-oct-2026): contador de pendientes por rol en la tarjeta del Panel.
@@ -507,7 +507,7 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
       <div style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", boxSizing: "border-box", padding: "40px 28px 8px" }}>
         <TituloHero esHero={esHero} escala={1.4}>
           <div className="gt-label gt-aparece" style={{ color: "var(--text-3)" }}>
-            Grupo Geotecnica · Sistema de Operaciones · Honduras
+            GeoCore · Grupo Geotecnica · Honduras
           </div>
           <h1 className="gt-sube" style={{ font: "800 clamp(40px,5vw,64px)/1.05 var(--display)", letterSpacing: "-.025em", color: "var(--text)", margin: "14px 0 0" }}>
             Panel de <span style={{ color: "var(--marca-2)" }}>Control</span>
@@ -530,7 +530,7 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
       {/* Footer */}
       {!esHero && (
         <footer className="gt-aparece" style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", padding: "20px 28px 26px", boxSizing: "border-box", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, color: "var(--text-3)", fontSize: 12 }}>
-          <div>© Grupo Geotecnica · Sistema de Operaciones</div>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }}><GeoCoreSello size={20} fontSize={13} /><span>© Grupo Geotecnica</span></div>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: syncOk ? "#059669" : BRAND.red }} />
             {syncOk ? "Sincronizado" : "Sin sincronizar"} · v2.0
@@ -1004,6 +1004,9 @@ function LoginScreen({ onLogin }) {
         {/* Centro: tagline izquierda + tarjeta derecha */}
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 40, flexWrap: "wrap", padding: "28px 0" }}>
           <div style={{ maxWidth: 620, minWidth: "min(100%, 320px)" }}>
+            <div className="gt-sube" style={{ marginBottom: 14, animationDelay: "80ms" }}>
+              <GeoCoreSello size={38} fontSize={24} />
+            </div>
             <div className="gt-label gt-sube" style={{ color: "var(--naranja-tinta)", marginBottom: 20, animationDelay: "120ms" }}>
               Sistema de Gestión de Operaciones
             </div>

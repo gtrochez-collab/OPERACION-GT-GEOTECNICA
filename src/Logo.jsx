@@ -60,3 +60,28 @@ export default function Logo({ size = 56, color = "color", showText = true }) {
     />
   );
 }
+
+// Marca del SISTEMA (GeoCore, 15-oct-2026): curvas de nivel naranja sobre
+// carbón — las mismas del login. El logo de Geotecnica sigue siendo `Logo`.
+export function GeoCoreMark({ size = 32 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 56 56" aria-hidden style={{ flexShrink: 0, display: "block" }}>
+      <rect width="56" height="56" rx="14" fill="#2C2A28" />
+      <path d="M10 24c6-8 12-8 18-3s12 5 18-3" fill="none" stroke="#fff" strokeOpacity=".55" strokeWidth="2.6" strokeLinecap="round" />
+      <path d="M10 34c6-8 12-8 18-3s12 5 18-3" fill="none" stroke="#E8762D" strokeWidth="3.2" strokeLinecap="round" />
+      <circle cx="28" cy="31" r="3.6" fill="#E8762D" />
+    </svg>
+  );
+}
+
+// Sello "GeoCore" (marca + nombre) para login y panel.
+export function GeoCoreSello({ size = 30, fontSize = 17 }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+      <GeoCoreMark size={size} />
+      <span style={{ font: `800 ${fontSize}px/1 var(--display, "Plus Jakarta Sans", sans-serif)`, letterSpacing: "-.02em", color: "#2C2A28" }}>
+        Geo<span style={{ color: "#E8762D" }}>Core</span>
+      </span>
+    </span>
+  );
+}

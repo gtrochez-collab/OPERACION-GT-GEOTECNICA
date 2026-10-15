@@ -1,4 +1,12 @@
-# Sistema de Operaciones — Grupo Geotecnica
+# GeoCore — Sistema de Operaciones de Grupo Geotecnica
+
+**Nombre y marca (15-oct-2026, elegido por Gerson)**: el sistema se llama
+**GeoCore** (el núcleo de todos los módulos Geo). Logo = curvas de nivel
+naranja/blanco sobre carbón (las del login): `public/brand/geocore/`
+(geocore.svg + PNG 180/192/512), `GeoCoreMark`/`GeoCoreSello` en `Logo.jsx`.
+Título de pestaña "GeoCore · Grupo Geotecnica", favicon, apple-touch-icon y
+`public/manifest.webmanifest` (instalable en el celular). El logo de
+Geotecnica (`Logo`) se queda como logo de la EMPRESA.
 
 App React (Vite) interna para Geotecnica Soluciones / Subterra Honduras.
 SPA sin backend propio: datos en Supabase (tabla key-value `app_data`) con
