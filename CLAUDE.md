@@ -887,6 +887,17 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   la ✕ vieja). ⚠ Dashboard, KPI's y Empleados quedan FUERA del `<fieldset
   disabled>` de solo-lectura (`SIN_CANDADO`): no tienen controles que
   escriban (se ocultan por rol) y así gerencia/costos pueden buscar.
+  **Animaciones (15-oct-2026, "que carguen, cool pero smooth y lento")**:
+  `grafAnim` (0→1 dos frames después de entrar a Dashboard/KPI's o cambiar de
+  empresa; el useEffect va ANTES del return de "Cargando") alimenta
+  `GTDonut progreso` (las tajadas se dibujan en barrido con transición de
+  stroke-dasharray + rotate, y al cambiar de mes se reacomodan suave),
+  `GTMonthBars progreso` (crecen desde abajo escalonadas), los anchos de las
+  barras y `CuentaArriba` (cifras que cuentan hasta su valor en ~1.4 s;
+  respeta reduced-motion). `ANIM_GRAF` = 1500ms cubic-bezier(.22,1,.36,1).
+  El carnet ya no usa backdrop-filter mientras viaja (era el tirón al
+  cerrarlo): caras sólidas, fondo oscuro sin blur, will-change, abrir ~0.9 s
+  desacelerando y cerrar ~0.8 s ease-in-out.
   **Dashboard gerencial + KPI's (ago 2026, estilo IsTeam)**: `renderDashboard`
   reescrito — `statsDeMes(periodo)` calcula presencia diaria/NSP/INC/VAC/costo
   MO por proyecto desde hr-atts2 (calcCostoMO) + planilla real (hr-pays) +

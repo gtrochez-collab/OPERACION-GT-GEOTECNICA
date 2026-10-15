@@ -463,31 +463,60 @@ const GTLineChart = ({ series = [], lastDay = 31, height = 190 }) => {
 };
 
 // Dona simple. segments: [{ value, color, label }]. Tooltips nativos.
-const GTDonut = ({ segments = [], size = 132, thickness = 17, centerLabel = "", centerSub = "" }) => {
+const ANIM_GRAF = "1500ms cubic-bezier(.22,1,.36,1)";
+const GTDonut = ({ segments = [], size = 132, thickness = 17, centerLabel = "", centerSub = "", progreso = 1 }) => {
+  // progreso 0→1 (15-oct-2026): la dona se DIBUJA en barrido al entrar. Cada
+  // tajada crece y gira a su lugar con transición CSS (stroke-dasharray +
+  // rotate), así al cambiar de mes también se acomoda suave.
   const total = segments.reduce((s, x) => s + (Number(x.value) || 0), 0);
   const RAD = (size - thickness) / 2 - 2, C = size / 2, CIRC = 2 * Math.PI * RAD;
   let acc = 0;
   return <svg viewBox={`0 0 ${size} ${size}`} style={{ width: size, height: size, display: "block" }}>
     <circle cx={C} cy={C} r={RAD} fill="none" stroke="rgba(44,42,40,.07)" strokeWidth={thickness} />
-    {total > 0 && segments.filter(s => s.value > 0).map((s, i) => {
-      const frac = s.value / total;
-      const dash = `${(frac * CIRC).toFixed(2)} ${(CIRC).toFixed(2)}`;
-      const rot = (acc / total) * 360 - 90;
-      acc += s.value;
-      return <circle key={i} cx={C} cy={C} r={RAD} fill="none" stroke={s.color} strokeWidth={thickness}
-        strokeDasharray={dash} transform={`rotate(${rot} ${C} ${C})`} strokeLinecap="butt">
+    {total > 0 && segments.map((s, i) => {
+      const v = Math.max(0, Number(s.value) || 0);
+      const frac = v / total;
+      const rot = (acc / total) * 360 * progreso - 90;
+      acc += v;
+      return <circle key={s.label || i} cx={C} cy={C} r={RAD} fill="none" stroke={s.color} strokeWidth={thickness}
+        strokeDasharray={`${(frac * CIRC * progreso).toFixed(2)} ${CIRC.toFixed(2)}`} strokeLinecap="butt"
+        style={{ transform: `rotate(${rot}deg)`, transformOrigin: `${C}px ${C}px`, transition: `stroke-dasharray ${ANIM_GRAF}, transform ${ANIM_GRAF}` }}>
         <title>{`${s.label}: ${s.value} (${Math.round(frac * 100)}%)`}</title>
       </circle>;
     })}
-    <text x={C} y={C - 1} textAnchor="middle" fontSize="22" fontWeight="800" fill="#2C2A28">{centerLabel}</text>
-    <text x={C} y={C + 15} textAnchor="middle" fontSize="8.5" fill="#8B847C" style={{ textTransform: "uppercase", letterSpacing: 1 }}>{centerSub}</text>
+    <text x={C} y={C - 1} textAnchor="middle" fontSize="22" fontWeight="800" fill="#2C2A28" style={{ opacity: progreso, transition: `opacity 900ms ease 300ms` }}>{centerLabel}</text>
+    <text x={C} y={C + 15} textAnchor="middle" fontSize="8.5" fill="#8B847C" style={{ textTransform: "uppercase", letterSpacing: 1, opacity: progreso, transition: `opacity 900ms ease 300ms` }}>{centerSub}</text>
   </svg>;
+};
+
+// Número que CUENTA hacia arriba al aparecer (y al cambiar de valor): de lo
+// que mostraba al valor nuevo en ~1.4 s con salida suave. Respeta
+// prefers-reduced-motion (salta directo).
+const CuentaArriba = ({ valor = 0, formato = (v) => Math.round(v), dur = 1400 }) => {
+  const [v, setV] = useState(0);
+  const desdeRef = useRef(0);
+  useEffect(() => {
+    const fin = Number(valor) || 0;
+    if (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) { desdeRef.current = fin; setV(fin); return; }
+    const ini = desdeRef.current, t0 = performance.now();
+    let raf;
+    const paso = (t) => {
+      const k = Math.min(1, (t - t0) / dur);
+      const e = 1 - Math.pow(1 - k, 4);
+      const x = ini + (fin - ini) * e;
+      desdeRef.current = x; setV(x);
+      if (k < 1) raf = requestAnimationFrame(paso);
+    };
+    raf = requestAnimationFrame(paso);
+    return () => cancelAnimationFrame(raf);
+  }, [valor, dur]);
+  return <>{formato(v)}</>;
 };
 
 // Barras verticales por mes (masa salarial anual estilo IsTeam):
 // data: [{ label, value, real }] — real=true pinta dorado (planilla generada),
 // false pinta azul (proyección con el roster actual).
-const GTMonthBars = ({ data = [], height = 180, fmtVal = v => v, selected = "", onPick = null }) => {
+const GTMonthBars = ({ data = [], height = 180, fmtVal = v => v, selected = "", onPick = null, progreso = 1 }) => {
   const W = 640, H = height, B = 26, T = 22;
   const max = Math.max(1, ...data.map(d => d.value));
   const bw = (W - 20) / Math.max(1, data.length);
@@ -497,7 +526,7 @@ const GTMonthBars = ({ data = [], height = 180, fmtVal = v => v, selected = "", 
       const x = 10 + i * bw + bw * 0.14, w = bw * 0.72;
       const y = H - B - h;
       const isSel = selected && d.key === selected;
-      return <g key={i} style={{ cursor: onPick ? "pointer" : "default" }} onClick={onPick ? () => onPick(d) : undefined}>
+      return <g key={i} style={{ cursor: onPick ? "pointer" : "default", transform: `scaleY(${progreso})`, transformOrigin: `0px ${H - B}px`, transition: `transform ${ANIM_GRAF} ${i * 70}ms` }} onClick={onPick ? () => onPick(d) : undefined}>
         <rect x={x} y={y} width={w} height={h} rx="4"
           fill={d.real ? "#E8762D" : "#CFCAC3"} opacity={d.value ? (isSel ? 1 : 0.9) : 0.25}
           stroke={isSel ? "#2C2A28" : "none"} strokeWidth={isSel ? 1.5 : 0}>
@@ -596,7 +625,7 @@ function CarnetVolteo({ origen, onCerrado, frente, dorso }) {
     cerrandoRef.current = true;
     if (reducir || !origen) { onCerrado(); return; }
     setFase("cerrando");
-    setTimeout(onCerrado, 620);
+    setTimeout(onCerrado, 900);
   };
   useEffect(() => {
     const k = (ev) => { if (ev.key === "Escape") cerrar(); };
@@ -606,14 +635,21 @@ function CarnetVolteo({ origen, onCerrado, frente, dorso }) {
   const enOrigen = fase !== "abierto" && origen;
   const s = origen ? origen.width / W : 1;
   const tf = enOrigen ? `translate(${origen.left - left}px, ${origen.top + origen.height / 2 - (top + (H * s) / 2)}px) scale(${s})` : "none";
-  const cara = { position: "absolute", inset: 0, borderRadius: 26, backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", overflow: "hidden" };
+  // Suavidad (15-oct-2026, "al quitarlo se ve laggy"): durante el viaje NADA
+  // lleva backdrop-filter (el blur a pantalla completa recalculándose en cada
+  // frame era el tirón) — caras con fondo sólido, fondo oscuro sin blur y
+  // will-change en lo que se mueve. Abrir desacelera; cerrar es ease-in-out
+  // para que "aterrice" sobre su lugar.
+  const curva = fase === "cerrando" ? "cubic-bezier(.65,0,.35,1)" : "cubic-bezier(.22,1,.36,1)";
+  const durMov = fase === "cerrando" ? 820 : 860, durGiro = fase === "cerrando" ? 780 : 940;
+  const cara = { position: "absolute", inset: 0, borderRadius: 26, backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", overflow: "hidden", boxShadow: "0 30px 80px rgba(28,26,24,.28), 0 0 0 1px rgba(44,42,40,.07)" };
   return createPortal(<div style={{ position: "fixed", inset: 0, zIndex: 1000 }}>
     <style>{GT_CSS}</style>
-    <div onClick={cerrar} style={{ position: "absolute", inset: 0, background: "rgba(28,26,24,.38)", WebkitBackdropFilter: "blur(8px)", backdropFilter: "blur(8px)", opacity: fase === "abierto" ? 1 : 0, transition: "opacity 420ms var(--curva)" }} />
-    <div style={{ position: "absolute", left, top, width: W, height: H, transformOrigin: "top left", transform: tf, transition: reducir ? "none" : "transform 640ms var(--curva-exp)", perspective: 1600 }}>
-      <div style={{ position: "relative", width: "100%", height: "100%", transformStyle: "preserve-3d", transform: enOrigen ? "rotateY(0deg)" : "rotateY(180deg)", transition: reducir ? "none" : "transform 720ms var(--curva-exp)" }}>
-        <div className="gt-vidrio" style={{ ...cara, borderRadius: 26 }}>{frente}</div>
-        <div className="gt-vidrio" role="dialog" aria-modal="true" style={{ ...cara, transform: "rotateY(180deg)", background: "rgba(255,255,255,.97)", boxShadow: "0 30px 80px rgba(28,26,24,.35), 0 0 0 1px rgba(44,42,40,.08)" }}>{dorso(cerrar)}</div>
+    <div onClick={cerrar} style={{ position: "absolute", inset: 0, background: "rgba(28,26,24,.42)", opacity: fase === "abierto" ? 1 : 0, transition: `opacity ${fase === "cerrando" ? 700 : 600}ms ease`, willChange: "opacity" }} />
+    <div style={{ position: "absolute", left, top, width: W, height: H, transformOrigin: "top left", transform: tf, transition: reducir ? "none" : `transform ${durMov}ms ${curva}`, perspective: 1800, willChange: "transform" }}>
+      <div style={{ position: "relative", width: "100%", height: "100%", transformStyle: "preserve-3d", transform: enOrigen ? "rotateY(0deg)" : "rotateY(180deg)", transition: reducir ? "none" : `transform ${durGiro}ms ${curva}`, willChange: "transform" }}>
+        <div style={{ ...cara, background: "linear-gradient(165deg,#fff 0%,#FAFAF9 100%)" }}>{frente}</div>
+        <div role="dialog" aria-modal="true" style={{ ...cara, transform: "rotateY(180deg)", background: "#fff" }}>{dorso(cerrar)}</div>
       </div>
     </div>
   </div>, document.body);
@@ -790,6 +826,10 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [kpisMes, setKpisMes] = useState("");
   // Meses seleccionados en el Dashboard gerencial ([] = solo el mes actual).
   const [dashMeses, setDashMeses] = useState([]);
+  // Animación de entrada de los gráficos (15-oct-2026): 0 al entrar a
+  // Dashboard/KPI's (o cambiar de empresa) y 1 dos frames después, así las
+  // donas, barras y cifras "cargan" despacio.
+  const [grafAnim, setGrafAnim] = useState(0);
   const [movs, setMovs] = useState([]);
   const [movsFilter, setMovsFilter] = useState({ periodo: "", quincena: "" });
   const [contracts, setContracts] = useState([]);
@@ -1321,6 +1361,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     : isAnaRH ? allNav.filter(n => ANA_TABS.includes(n.id))
     : allNav;
 
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (!loaded || (sec !== "dashboard" && sec !== "kpis")) return;
+    setGrafAnim(0);
+    let r2; const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setGrafAnim(1)); });
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
+  }, [sec, loaded, co]);
   if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoTeam…</div>;
 
   // ── FORMS ──
@@ -4615,9 +4662,9 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         {/* 1 · Masa salarial por departamento */}
         <div className="gt-vidrio gt-sube" style={VID}>
           {tituloCaja(hideSalary ? "Equipo por departamento" : "Masa salarial", <span style={{ font: "500 12px/1 var(--sans)", color: "#A39C92" }}>{mesLabel(mes)}</span>)}
-          {cifra(hideSalary ? `${masa}` : fmtL(masa), hideSalary ? "personas en el mes" : `salario + bonificación · ${delMes.length} personas`)}
+          {cifra(<CuentaArriba valor={grafAnim ? masa : 0} formato={hideSalary ? (v) => `${Math.round(v)}` : fmtL} />, hideSalary ? "personas en el mes" : `salario + bonificación · ${delMes.length} personas`)}
           <div style={{ display: "flex", justifyContent: "center", margin: "20px 0 18px" }}>
-            <GTDonut size={isMobile ? 180 : 210} thickness={isMobile ? 22 : 26} centerLabel={hideSalary ? String(masa) : corto(masa)} centerSub={hideSalary ? "personas" : "al mes"}
+            <GTDonut progreso={grafAnim} size={isMobile ? 180 : 210} thickness={isMobile ? 22 : 26} centerLabel={hideSalary ? String(masa) : corto(masa)} centerSub={hideSalary ? "personas" : "al mes"}
               segments={deptos.map(([d, v], i) => ({ value: v, color: DEPTO_COLORS[i % DEPTO_COLORS.length], label: d }))} />
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
@@ -4633,16 +4680,16 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         {/* 2 · Mano de obra por proyecto */}
         <div className="gt-vidrio gt-sube" style={{ ...VID, animationDelay: "60ms" }}>
           {tituloCaja("Por proyecto", <span style={{ font: "500 12px/1 var(--sans)", color: "#A39C92" }}>{mesLabel(mes)}</span>)}
-          {cifra(hideSalary ? `${st.diasPagados || 0} días` : st.costoMO > 0 ? fmtL(st.costoMO) : "—", hideSalary ? "días pagados en el mes" : "mano de obra: asistencia + horas extras")}
+          {cifra(hideSalary ? <CuentaArriba valor={grafAnim ? st.diasPagados || 0 : 0} formato={(v) => `${Math.round(v)} días`} /> : st.costoMO > 0 ? <CuentaArriba valor={grafAnim ? st.costoMO : 0} formato={fmtL} /> : "—", hideSalary ? "días pagados en el mes" : "mano de obra: asistencia + horas extras")}
           <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 20, flex: 1 }}>
             {proyShorts.length === 0 && <div style={{ fontSize: 13, color: "#A39C92" }}>Sin asistencia registrada en {mesLabel(mes).toLowerCase()}.</div>}
-            {proyShorts.slice(0, 10).map(shrt => <div key={shrt}>
+            {proyShorts.slice(0, 10).map((shrt, ip) => <div key={shrt}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8, font: "600 12px/1.2 var(--sans)", marginBottom: 5 }}>
                 <span style={{ color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{shrt}</span>
                 {!hideSalary && <span style={{ color: "#5C5853", fontWeight: 700, flexShrink: 0 }}>{fmtL(st.proy[shrt] || 0).replace(/\.\d\d$/, "")}</span>}
               </div>
               <div style={{ height: 7, borderRadius: 4, background: "rgba(44,42,40,.06)", overflow: "hidden" }}>
-                <div style={{ width: `${Math.min(100, ((st.proy[shrt] || 0) / maxProy) * 100)}%`, height: "100%", borderRadius: 4, background: CHARCOAL, transition: "width .5s var(--curva)" }} />
+                <div style={{ width: `${grafAnim ? Math.min(100, ((st.proy[shrt] || 0) / maxProy) * 100) : 0}%`, height: "100%", borderRadius: 4, background: CHARCOAL, transition: `width ${ANIM_GRAF} ${ip * 80}ms` }} />
               </div>
             </div>)}
             {proyShorts.length > 10 && <div style={{ fontSize: 11.5, color: "#A39C92" }}>+{proyShorts.length - 10} proyectos más en Costos</div>}
@@ -4653,7 +4700,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         <div className="gt-vidrio gt-sube" style={{ ...VID, animationDelay: "120ms" }}>
           {tituloCaja("Hoy", <span style={{ font: "500 12px/1 var(--sans)", color: "#A39C92" }}>{fmt(hoy)}</span>)}
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <GTDonut size={118} thickness={14} centerLabel={String(entradasHoy.length)} centerSub="marcaron"
+            <GTDonut progreso={grafAnim} size={118} thickness={14} centerLabel={String(entradasHoy.length)} centerSub="marcaron"
               segments={[
                 { value: entradasHoy.length - tardesHoy.length, color: CHARCOAL, label: "A tiempo" },
                 { value: tardesHoy.length, color: ORANGE, label: "Tarde" },
@@ -4733,14 +4780,15 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       <div style={{ font: `800 ${isMobile ? 24 : 28}px/1 var(--display)`, color: acento || CHARCOAL, letterSpacing: "-.02em", marginTop: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{valor}</div>
       <div style={{ font: "500 12px/1.35 var(--sans)", color: "#6E6862", marginTop: 7 }}>{sub}</div>
     </div>;
+    const sinDec = (v) => fmtL(v).replace(/\.\d\d$/, "");
     const kpis = [
-      ["Colaboradores", activos.length, `${nPerm} permanentes · ${nTemp} temporales${nHon ? ` · ${nHon} hon.` : ""}`],
+      ["Colaboradores", activos.length, (v) => `${Math.round(v)}`, `${nPerm} permanentes · ${nTemp} temporales${nHon ? ` · ${nHon} hon.` : ""}`],
       hideSalary
-        ? ["Antigüedad", antProm !== null ? `${antProm.toFixed(1)} años` : "—", "promedio del equipo"]
-        : ["Masa salarial", fmtL(masaMes).replace(/\.\d\d$/, ""), masaEsReal ? (deltaMasa !== null ? `planilla real · ${deltaMasa >= 0 ? "+" : ""}${deltaMasa.toFixed(1)}% vs mes anterior` : "planilla real del mes") : "proyección con el roster"],
-      ["Ausentismo", `${ausentismo.toFixed(1)}%`, `${st.nsp} día${st.nsp === 1 ? "" : "s"} sin presentarse (NSP)`, ausentismo >= 5 ? "#B03024" : null],
-      ["Tardanzas", st.tardes.length, st.minTardeDenegados > 0 ? `${st.minTardeDenegados} min a descontar` : "llegadas tarde del mes", st.tardes.length ? ORANGE_DARK : null],
-      [`Rotación ${anio}`, `${rotacion.toFixed(1)}%`, `${bajasAnio.length} baja${bajasAnio.length === 1 ? "" : "s"} en el año`],
+        ? ["Antigüedad", antProm || 0, (v) => antProm !== null ? `${v.toFixed(1)} años` : "—", "promedio del equipo"]
+        : ["Masa salarial", masaMes, sinDec, masaEsReal ? (deltaMasa !== null ? `planilla real · ${deltaMasa >= 0 ? "+" : ""}${deltaMasa.toFixed(1)}% vs mes anterior` : "planilla real del mes") : "proyección con el roster"],
+      ["Ausentismo", ausentismo, (v) => `${v.toFixed(1)}%`, `${st.nsp} día${st.nsp === 1 ? "" : "s"} sin presentarse (NSP)`, ausentismo >= 5 ? "#B03024" : null],
+      ["Tardanzas", st.tardes.length, (v) => `${Math.round(v)}`, st.minTardeDenegados > 0 ? `${st.minTardeDenegados} min a descontar` : "llegadas tarde del mes", st.tardes.length ? ORANGE_DARK : null],
+      [`Rotación ${anio}`, rotacion, (v) => `${v.toFixed(1)}%`, `${bajasAnio.length} baja${bajasAnio.length === 1 ? "" : "s"} en el año`],
     ];
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -4752,7 +4800,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(5, minmax(0,1fr))", gap: 14 }}>
-        {kpis.map((k, i) => kpi(k[0], k[1], k[2], i, k[3]))}
+        {kpis.map((k, i) => kpi(k[0], <CuentaArriba valor={grafAnim ? k[1] : 0} formato={k[2]} />, k[3], i, k[4]))}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: isMobile || hideSalary ? "minmax(0,1fr)" : "minmax(0,1.6fr) minmax(0,1fr)", gap: 16 }}>
         {!hideSalary && <div className="gt-vidrio gt-sube" style={{ padding: isMobile ? 16 : 20, minWidth: 0, animationDelay: "250ms" }}>
@@ -4760,20 +4808,20 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
             <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: ORANGE }} />Planilla real</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#CFCAC3" }} />Proyección</span>
           </span>)}
-          <GTMonthBars data={barsAnio} fmtVal={fmtL} selected={mes} onPick={(d) => setKpisMes(d.key)} />
+          <GTMonthBars progreso={grafAnim} data={barsAnio} fmtVal={fmtL} selected={mes} onPick={(d) => setKpisMes(d.key)} />
         </div>}
         <div className="gt-vidrio gt-sube" style={{ padding: isMobile ? 16 : 20, minWidth: 0, animationDelay: "300ms" }}>
           {tituloCaja("El equipo", conSexo < activos.length && <span style={{ font: "500 11.5px/1 var(--sans)", color: "#A39C92" }}>{activos.length - conSexo} sin sexo en la ficha</span>)}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             {[["Hombres", hombres, CHARCOAL], ["Mujeres", mujeres, ORANGE_DARK]].map(([l, n, c]) => <div key={l} style={{ borderRadius: 16, background: "rgba(44,42,40,.04)", padding: "14px 16px" }}>
-              <div style={{ font: "800 26px/1 var(--display)", color: c }}>{conSexo ? Math.round(n / conSexo * 100) : 0}%</div>
+              <div style={{ font: "800 26px/1 var(--display)", color: c }}><CuentaArriba valor={grafAnim && conSexo ? n / conSexo * 100 : 0} formato={(v) => `${Math.round(v)}%`} /></div>
               <div style={{ font: "500 12px/1 var(--sans)", color: "#6E6862", marginTop: 7 }}>{l} · {n}</div>
             </div>)}
           </div>
           {deptoRows.length > 0 && <>
             <div className="gt-label" style={{ color: "#A39C92", fontSize: 9, margin: "18px 0 8px" }}>Por departamento</div>
             <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", gap: 2 }}>
-              {deptoRows.map(([dep, n], i) => <div key={dep} title={`${dep}: ${n}`} style={{ width: `${(n / activos.length) * 100}%`, background: DEPTO_COLORS[i % DEPTO_COLORS.length] }} />)}
+              {deptoRows.map(([dep, n], i) => <div key={dep} title={`${dep}: ${n}`} style={{ width: `${grafAnim ? (n / activos.length) * 100 : 0}%`, background: DEPTO_COLORS[i % DEPTO_COLORS.length], transition: `width ${ANIM_GRAF} ${i * 90}ms` }} />)}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 12 }}>
               {deptoRows.map(([dep, n], i) => <div key={dep} style={{ display: "flex", alignItems: "center", gap: 8, font: "500 12.5px/1 var(--sans)", color: "#5C5853" }}>
