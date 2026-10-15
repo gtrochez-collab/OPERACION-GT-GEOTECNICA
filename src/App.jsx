@@ -39,7 +39,7 @@ const MODULES = [
     // Lic. Carolina (tesoreria): acceso COMPLETO igual que Gerson (18-ago).
     // Oscar (logistica): SOLO el aprobador de Llegadas tardías — responsable
     // de las tardanzas marcadas desde su tablet de plantel/almacén.
-    roles: ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica"],
+    roles: ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica", "gerencia"],
   },
   {
     id: "compras-operaciones",

@@ -33,6 +33,10 @@ export const USERS = [
   // Tablet de marcaje de OFICINA/ADMINISTRACIÓN (ago 2026): solo GeoClock.
   // Sus marcajes los aprueba Ana en Llegadas tardías (GeoTeam). La clave
   // también es el candado del modo kiosco para salir del reloj.
+  // 15-oct-2026, pedido de Gerson: Dr. Raúl Flores con acceso COMPLETO (admin)
+  // e Ing. César Iglesias como visualizador de todo (gerencia = solo lectura).
+  { username: "raul.flores",   password: "GeoCore-i2Ro4f",  role: "admin",                label: "Dr. Raúl Flores" },
+  { username: "cesar.iglesias", password: "GeoCore-K6pdC8", role: "gerencia",             label: "Ing. César Iglesias" },
   { username: "marcaje",       password: "marcaje1234",    role: "marcaje",              label: "Marcaje de Asistencia", ubicacion: "ADMINISTRACIÓN" },
 ];
 
