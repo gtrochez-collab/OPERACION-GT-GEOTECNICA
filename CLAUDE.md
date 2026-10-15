@@ -898,14 +898,19 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   **CONTRATOS (rediseño 15-oct-2026, "cajitas largas por empleado que se
   puedan compactar o desglosar, sin tanto texto")**: `ContractsView` (sigue
   siendo función, no componente) = 4 contadores de vidrio que FILTRAN
-  (`ctFiltro`: vencidos · vencen en 30 días · cerca de 180 · sin contrato),
+  (`ctFiltro`: vencidos · vencen en 30 días · vigentes · sin contrato),
   barra con buscador (nombre/DNI/código), Expandir/Compactar todo, "Generar
   faltantes (N)" y "+ Nuevo contrato"; y UNA FILA DE VIDRIO por colaborador
-  ordenada por urgencia (vencidos primero): foto, nombre, cargo, tipo ("Por
-  obra"/Permanente/Honorarios), barra de los 180 días (carbón · naranja desde
-  150 · rojo al cumplir 180), fecha de fin y chip de estado (rojo venció ·
-  naranja ≤30 d · verde vigente). Click → se despliega (`ctAbiertos`) con
-  inicio/fin/grupo/salario (si !hideSalary)/días acumulados, historial (cada
+  ordenada por urgencia (vencidos primero): foto (iniciales en gris suave,
+  `EmpAvatar suave`), nombre, cargo, tipo ("Por obra"/Permanente/Honorarios),
+  "N días con contrato" (`cumulativeDaysOf`, toda la cadena de renovaciones),
+  fecha de fin y chip de estado. ⚠ SOLO 3 COLORES y nada de negro (Gerson,
+  2ª pasada del 15-oct): rojo = vencido, naranja = alerta (≤30 d) y acción
+  principal (Renovar, Crear), verde = vigente/indefinido y "Pasa a
+  permanencia". Se RETIRÓ todo lo de la regla de 180 días (barra, filtro
+  "cerca de 180", "cumplió 180") — Gerson la va a repensar; el 3er contador
+  ahora es "Vigentes". Click → se despliega (`ctAbiertos`) con
+  inicio/fin/grupo/salario (si !hideSalary)/días con contrato, historial (cada
   contrato con "Editar" → modal `cte`) y Renovar / Pasa a permanencia / Crear
   contrato (mismos modales `ctr`/`perm`/`ctn`). Columnas de ancho FIJO para
   que las filas queden alineadas. El banner del snapshot de mayo se volvió un
