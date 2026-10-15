@@ -839,6 +839,8 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // no pierda foco cuando HRModule re-renderiza (era bug en el subcomponente
   // anterior que se remontaba en cada render).
   const [contractSearch, setContractSearch] = useState("");
+  const [ctFiltro, setCtFiltro] = useState(""); // vencidos | pronto | cerca180 | sin
+  const [ctAbiertos, setCtAbiertos] = useState({}); // {empId: true} filas desplegadas
   // Filtros del tab Empleados — al nivel del padre para no perder foco en el
   // input de busqueda cuando el modulo re-renderiza.
   const [empSearch, setEmpSearch] = useState("");
@@ -6486,227 +6488,184 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     );
   };
 
-  // Helper que retorna el JSX del tab Control de Contratos. NO es un
-  // componente React (por eso se invoca como ContractsView(), no
-  // <ContractsView />). Antes era componente y el input de search perdia
-  // el foco en cada re-render del padre porque React remontaba el subarbol.
-  // Ahora usa el state contractSearch del padre (HRModule) — sin hooks
-  // internos — asi el input mantiene foco.
+  // ═══════════════════════════════════════════════════════════════════
+  // CONTRATOS (rediseño 15-oct-2026, Gerson: "feo, desordenado, mucho
+  // texto; cajitas largas por empleado que se puedan compactar o desglosar;
+  // es para llevar el track de los contratos por obra, cuándo vencen, y ahí
+  // mismo renovar o pasar a permanencia"). Una FILA DE VIDRIO por colaborador
+  // (ordenadas por urgencia); click la despliega con fechas, los 180 días,
+  // historial y las acciones. Los contadores de arriba FILTRAN.
+  // Sigue siendo una función (no componente): el buscador no pierde el foco.
+  // ═══════════════════════════════════════════════════════════════════
   const ContractsView = () => {
     const search = contractSearch;
     const setSearch = setContractSearch;
-
-    // Agrupar contratos activos por empleado
     const empleadosConContratos = ce.map(e => {
       const empContracts = cct.filter(c => c.employeeId === e.id).sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
       const active = empContracts.find(c => c.status === "active") || null;
       return { emp: e, active, all: empContracts };
     });
-
-    // Alertas (universo total, no filtrado)
-    const venceEn7 = empleadosConContratos.filter(x => x.active && x.active.endDate && daysUntil(x.active.endDate) !== null && daysUntil(x.active.endDate) <= 7 && daysUntil(x.active.endDate) >= 0);
-    const venceEn30 = empleadosConContratos.filter(x => x.active && x.active.endDate && daysUntil(x.active.endDate) > 7 && daysUntil(x.active.endDate) <= 30);
-    const cerca180 = empleadosConContratos.filter(x => {
+    const diasDe = (x) => x.active && x.active.endDate ? daysUntil(x.active.endDate) : null;
+    const esCerca180 = (x) => {
       if (!x.active || x.active.contractType !== "temporary") return false;
       const acum = cumulativeDaysOf(x.active);
-      const proyectado = x.active.endDate ? daysBetweenDates(x.active.startDate, x.active.endDate) + (cumulativeDaysOf(x.active) - daysBetweenDates(x.active.startDate, x.active.endDate)) : acum;
-      return acum >= 150 || (x.active.endDate && proyectado >= 180);
-    });
-    const sinContrato = empleadosConContratos.filter(x => !x.active && x.emp.status === "active");
-
-    // Filtro busqueda por nombre / DNI
+      return acum >= 150 || (x.active.endDate && acum >= 180);
+    };
+    const GRUPOS_F = {
+      vencidos: { label: "Vencidos", test: x => { const d = diasDe(x); return d !== null && d < 0; } },
+      pronto: { label: "Vencen en 30 días", test: x => { const d = diasDe(x); return d !== null && d >= 0 && d <= 30; } },
+      cerca180: { label: "Cerca de 180 días", test: esCerca180 },
+      sin: { label: "Sin contrato", test: x => !x.active && x.emp.status === "active" },
+    };
+    const sinContrato = empleadosConContratos.filter(GRUPOS_F.sin.test);
     const q = search.trim().toLowerCase();
-    const filtered = !q ? empleadosConContratos : empleadosConContratos.filter(x =>
-      (x.emp.fullName || "").toLowerCase().includes(q) ||
-      (x.emp.dni || "").toLowerCase().includes(q)
-    );
-
-    // ── Tabla unica ordenada por urgencia ──
-    // Orden: vencidos primero (dias negativos), luego proximos a vencer,
-    // luego vigentes con fecha, indefinidos, y sin contrato al final.
-    const urgencyKey = (x) => {
-      if (!x.active) return 900000;
-      const d = x.active.endDate ? daysUntil(x.active.endDate) : null;
-      if (d === null) return 800000;
-      return d;
-    };
-    const tableRows = [...filtered].sort((a, b) => {
-      const ka = urgencyKey(a), kb = urgencyKey(b);
-      if (ka !== kb) return ka - kb;
-      return (a.emp.fullName || "").localeCompare(b.emp.fullName || "");
+    const filtered = empleadosConContratos.filter(x => {
+      if (ctFiltro && GRUPOS_F[ctFiltro] && !GRUPOS_F[ctFiltro].test(x)) return false;
+      if (!q) return true;
+      return (x.emp.fullName || "").toLowerCase().includes(q) || (x.emp.dni || "").toLowerCase().includes(q) || genEmpCode(x.emp.fullName, x.emp.dni).toLowerCase().includes(q);
     });
+    const urgencyKey = (x) => { if (!x.active) return 900000; const d = diasDe(x); return d === null ? 800000 : d; };
+    const filas = [...filtered].sort((a, b) => { const ka = urgencyKey(a), kb = urgencyKey(b); return ka !== kb ? ka - kb : (a.emp.fullName || "").localeCompare(b.emp.fullName || ""); });
 
+    const ROJO = "#B03024";
     const estadoDe = (x) => {
-      if (!x.active) return { label: "Sin contrato", color: "#94A3B8", tint: "#FAFAF9" };
-      const d = x.active.endDate ? daysUntil(x.active.endDate) : null;
-      if (d === null) return { label: "Indefinido", color: "#10B981", tint: "#fff" };
-      if (d < 0)   return { label: `Venció hace ${-d}d`, color: "#DC2626", tint: "#FEF2F2" };
-      if (d === 0) return { label: "Vence hoy", color: "#DC2626", tint: "#FEF2F2" };
-      if (d <= 7)  return { label: `Vence en ${d}d`, color: "#DC2626", tint: "#FEF2F2" };
-      if (d <= 30) return { label: `Vence en ${d}d`, color: "#F59E0B", tint: "#FFFBEB" };
-      return { label: "Vigente", color: "#10B981", tint: "#fff" };
+      if (!x.active) return { label: "Sin contrato", color: "#6E6862", bg: "rgba(44,42,40,.06)", fila: null };
+      const d = diasDe(x);
+      if (d === null) return { label: "Indefinido", color: CHARCOAL, bg: "rgba(44,42,40,.06)", fila: null };
+      if (d < 0) return { label: `Venció hace ${-d} d`, color: ROJO, bg: "rgba(192,57,43,.09)", fila: "rgba(192,57,43,.045)" };
+      if (d === 0) return { label: "Vence hoy", color: ROJO, bg: "rgba(192,57,43,.09)", fila: "rgba(192,57,43,.045)" };
+      if (d <= 30) return { label: `Vence en ${d} d`, color: ORANGE_DARK, bg: "rgba(232,118,45,.12)", fila: "rgba(232,118,45,.05)" };
+      return { label: "Vigente", color: "#3E8E5A", bg: "rgba(62,142,90,.10)", fila: null };
     };
+    const tipoTxt = (t) => t === "permanent" ? "Permanente" : t === "honorarios" ? "Honorarios" : t === "temporary" ? "Por obra" : "—";
+    const estadoHist = (c) => c.status === "active" ? "Activo" : c.status === "liquidated" ? "Liquidado" : c.status === "renewed" ? "Renovado" : "Cerrado";
+    const toggle = (id) => setCtAbiertos(p => { const n = { ...p }; if (n[id]) delete n[id]; else n[id] = true; return n; });
+    const todosAbiertos = filas.length > 0 && filas.every(x => ctAbiertos[x.emp.id]);
+    const puedeEscribir = !isReadOnly;
+    const BTN = (variante) => ({ minHeight: 36, padding: "9px 16px", borderRadius: 999, border: variante === "ghost" ? "1px solid rgba(44,42,40,.14)" : "none", background: variante === "naranja" ? ORANGE : variante === "carbon" ? CHARCOAL : "rgba(255,255,255,.8)", color: variante === "ghost" ? CHARCOAL : "#fff", font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" });
+    const dato = (l, v) => <div style={{ minWidth: 0 }}>
+      <div className="gt-label" style={{ color: "#A39C92", fontSize: 9 }}>{l}</div>
+      <div style={{ font: "700 14px/1.2 var(--sans)", color: CHARCOAL, marginTop: 6 }}>{v}</div>
+    </div>;
 
-    const th = { textAlign: "left", padding: "10px 10px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap", borderBottom: "2px solid #E8E1D3", background: "#FFFBF5" };
-    const td = { padding: "9px 10px", fontSize: 12, color: "#2C2A28", verticalAlign: "top", borderBottom: "1px solid #F1EBE0" };
-
-    const renderTableRow = (x) => {
+    const fila = (x, i) => {
       const { emp, active, all } = x;
-      const code = genEmpCode(emp.fullName, emp.dni);
-      const grupo = getGrupo(emp.company, emp.contractType);
-      const acumDias = active ? cumulativeDaysOf(active) : 0;
-      const tipoActivo = active?.contractType;
-      const isTemp = tipoActivo === "temporary";
-      const tipoLabel = tipoActivo === "permanent" ? "Permanente" : tipoActivo === "honorarios" ? "Honorarios" : isTemp ? "Obra/Tiempo" : "—";
-      const tipoColor = tipoActivo === "permanent" ? "#2563EB" : tipoActivo === "honorarios" ? "#7C3AED" : isTemp ? "#D97706" : "#94A3B8";
       const est = estadoDe(x);
+      const abierto = !!ctAbiertos[emp.id];
+      const esTemp = active?.contractType === "temporary";
+      const acum = active ? cumulativeDaysOf(active) : 0;
+      const pct180 = Math.min(100, (acum / 180) * 100);
+      const color180 = acum >= 180 ? ROJO : acum >= 150 ? ORANGE_DARK : CHARCOAL;
+      const foto = emp.photo?.fileId ? photoCache[emp.photo.fileId] : null;
+      return <div key={emp.id} className="gt-vidrio gt-sube" style={{ borderRadius: 18, overflow: "hidden", background: est.fila ? `linear-gradient(165deg, ${est.fila}, rgba(255,255,255,.7))` : undefined, animationDelay: `${Math.min(i, 14) * 22}ms` }}>
+        <div role="button" tabIndex={0} aria-expanded={abierto} onClick={() => toggle(emp.id)} onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(emp.id); } }}
+          style={{ display: "grid", gridTemplateColumns: isMobile ? "40px minmax(0,1fr) auto" : "40px minmax(0,1.5fr) 100px minmax(0,1.2fr) 130px 180px", alignItems: "center", gap: isMobile ? 10 : 16, padding: isMobile ? "10px 12px" : "12px 18px", cursor: "pointer" }}>
+          <EmpAvatar name={emp.fullName} dataUrl={foto} size={40} borderRadius={12} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ font: "700 14px/1.25 var(--sans)", color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{emp.fullName}</div>
+            <div style={{ font: "500 12px/1.3 var(--sans)", color: "#6E6862", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{emp.position || "Sin cargo"}{isMobile ? ` · ${tipoTxt(active?.contractType)}` : ""}</div>
+          </div>
+          {!isMobile && <div style={{ font: "600 12.5px/1.2 var(--sans)", color: "#5C5853" }}>{tipoTxt(active?.contractType)}</div>}
+          {!isMobile && <div style={{ minWidth: 0 }}>
+            {esTemp ? <>
+              <div style={{ display: "flex", justifyContent: "space-between", font: "600 11.5px/1 var(--sans)", color: "#6E6862", marginBottom: 6 }}><span><b style={{ color: color180 }}>{acum}</b> de 180 días</span></div>
+              <div style={{ height: 6, borderRadius: 4, background: "rgba(44,42,40,.07)", overflow: "hidden" }}><div style={{ width: `${pct180}%`, height: "100%", borderRadius: 4, background: color180 }} /></div>
+            </> : <span style={{ font: "500 12px/1 var(--sans)", color: "#A39C92" }}>{active ? (active.endDate ? `Hasta ${fmt(active.endDate)}` : "Sin fecha de fin") : "—"}</span>}
+          </div>}
+          {!isMobile && <div style={{ font: "600 12.5px/1.2 var(--sans)", color: "#5C5853" }}>{active?.endDate ? fmt(active.endDate) : ""}</div>}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "flex-end" }}>
+            <span style={{ padding: "6px 11px", borderRadius: 999, background: est.bg, color: est.color, font: "700 12px/1 var(--sans)", whiteSpace: "nowrap" }}>{est.label}</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A39C92" strokeWidth="2.2" strokeLinecap="round" style={{ transform: abierto ? "rotate(180deg)" : "none", transition: "transform 300ms var(--curva)", flexShrink: 0 }} aria-hidden><path d="m6 9 6 6 6-6" /></svg>
+          </div>
+        </div>
 
-      return (
-        <tr key={emp.id} style={{ background: est.tint }} title={active?.notes || undefined}>
-          <td style={td}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              <span style={{ fontWeight: 700, fontSize: 13 }}>{emp.fullName}</span>
-              <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 9.5, fontWeight: 700, color: "#E8762D" }}>{code}</span>
+        {abierto && <div className="gt-aparece" style={{ borderTop: "1px solid rgba(44,42,40,.07)", padding: isMobile ? "14px 14px 16px" : "16px 18px 18px 74px", display: "flex", flexDirection: "column", gap: 16 }}>
+          {active ? <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(5, minmax(0,1fr))", gap: 14 }}>
+            {dato("Inicio", fmt(active.startDate))}
+            {dato("Fin", active.endDate ? fmt(active.endDate) : "Indefinido")}
+            {dato("Grupo", getGrupo(emp.company, active.contractType))}
+            {!hideSalary && dato("Salario", fmtL(active.salary))}
+            {esTemp && dato("Días acumulados", <span style={{ color: color180 }}>{acum >= 180 ? `${acum} · cumplió 180` : `${acum} · faltan ${180 - acum}`}</span>)}
+          </div> : <div style={{ font: "500 13px/1.4 var(--sans)", color: "#6E6862" }}>No tiene un contrato activo registrado.</div>}
+          {active?.notes && <div style={{ font: "400 12.5px/1.5 var(--sans)", color: "#6E6862" }}>{active.notes}</div>}
+          {all.length > 0 && <div>
+            <div className="gt-label" style={{ color: "#A39C92", fontSize: 9, marginBottom: 8 }}>Historial · {all.length}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {all.map(c => <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 12px", borderRadius: 12, background: c.status === "active" ? "rgba(62,142,90,.08)" : "rgba(44,42,40,.04)", font: "500 12.5px/1.3 var(--sans)", color: "#5C5853" }}>
+                <b style={{ color: c.status === "active" ? "#3E8E5A" : c.status === "liquidated" ? ROJO : CHARCOAL, minWidth: 74 }}>{estadoHist(c)}</b>
+                <span>{fmt(c.startDate)} → {c.endDate ? fmt(c.endDate) : "indefinido"}</span>
+                <span style={{ color: "#A39C92" }}>{tipoTxt(c.contractType)}</span>
+                {!hideSalary && <span style={{ marginLeft: "auto", fontWeight: 700, color: CHARCOAL }}>{fmtL(c.salary)}</span>}
+                {c.liquidationReason && <span style={{ width: "100%", color: "#6E6862" }}>{c.liquidationReason}</span>}
+                {puedeEscribir && <span role="button" onClick={(ev) => { ev.stopPropagation(); setModal({ t: "cte", d: c }); }} style={{ marginLeft: hideSalary ? "auto" : 0, color: "#A39C92", font: "600 12px/1 var(--sans)", cursor: "pointer" }}>Editar</span>}
+              </div>)}
             </div>
-            <div style={{ fontSize: 10.5, color: "#8B847C", marginTop: 2 }}>{emp.position} · DNI {emp.dni}</div>
-            {all.length > 1 && (
-              <details style={{ marginTop: 3 }}>
-                <summary style={{ cursor: "pointer", fontSize: 10, color: "#8B847C", fontWeight: 600 }}>▸ Historial ({all.length})</summary>
-                <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
-                  {all.map(c => (
-                    <div key={c.id} style={{ fontSize: 10.5, color: "#5C5853", padding: "3px 8px", background: c.status === "active" ? "#ECFDF5" : c.status === "liquidated" ? "#FEE2E2" : "#F1F5F9", borderRadius: 5 }}>
-                      <b>{c.status === "active" ? "Activo" : c.status === "liquidated" ? "Liquidado" : c.status === "renewed" ? "Renovado" : "Cerrado"}</b> · {fmt(c.startDate)} → {c.endDate ? fmt(c.endDate) : "indefinido"} · {fmtL(c.salary)}{c.liquidationReason ? ` · ${c.liquidationReason}` : ""}
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
-          </td>
-          <td style={td}><Badge color={tipoColor}>{tipoLabel}</Badge></td>
-          <td style={td}><Badge color={GRUPO_COLOR[grupo]}>{grupo}</Badge></td>
-          <td style={{ ...td, whiteSpace: "nowrap" }}>{active ? fmt(active.startDate) : "—"}</td>
-          <td style={{ ...td, whiteSpace: "nowrap" }}>{active ? (active.endDate ? fmt(active.endDate) : "Indefinido") : "—"}</td>
-          <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap", fontWeight: 700, color: "#1E293B" }}>{hideSalary ? <span style={{ color: "#94A3B8", fontWeight: 400 }}>🔒</span> : (active ? fmtL(active.salary) : "—")}</td>
-          <td style={{ ...td, whiteSpace: "nowrap" }}>
-            {active && isTemp ? (
-              <>
-                <span style={{ fontWeight: 800, color: acumDias >= 180 ? "#DC2626" : acumDias >= 150 ? "#B45309" : "#334155" }}>{acumDias}</span>
-                <span style={{ color: "#94A3B8" }}>/180</span>
-                <div style={{ fontSize: 9.5, color: acumDias >= 180 ? "#DC2626" : acumDias >= 150 ? "#B45309" : "#8B847C", fontWeight: 600 }}>
-                  {acumDias >= 180 ? "⚠️ cumplió 180" : `faltan ${180 - acumDias}d`}
-                </div>
-              </>
-            ) : <span style={{ color: "#CBD5E1" }}>—</span>}
-          </td>
-          <td style={td}>
-            <span style={{ background: est.color + "18", color: est.color, fontWeight: 700, fontSize: 11, padding: "3px 10px", borderRadius: 10, whiteSpace: "nowrap" }}>{est.label}</span>
-          </td>
-          <td style={{ ...td, whiteSpace: "nowrap" }}>
-            {!active && <Btn small onClick={() => setModal({ t: "ctn", presetEmpId: emp.id })}>+ Crear</Btn>}
-            {active && isTemp && <Btn small variant="info" onClick={() => setModal({ t: "ctr", d: active })}>🔄 Renovar</Btn>}
-            {active && isTemp && <Btn small variant="success" onClick={() => setModal({ t: "perm", d: active })}>⭐ Pasa a permanencia</Btn>}
-          </td>
-        </tr>
-      );
+          </div>}
+          {puedeEscribir && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {!active && <button style={BTN("naranja")} onClick={() => setModal({ t: "ctn", presetEmpId: emp.id })}>Crear contrato</button>}
+            {active && esTemp && <button style={BTN("carbon")} onClick={() => setModal({ t: "ctr", d: active })}>Renovar</button>}
+            {active && esTemp && <button style={BTN("naranja")} onClick={() => setModal({ t: "perm", d: active })}>Pasa a permanencia</button>}
+          </div>}
+        </div>}
+      </div>;
     };
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Header titulo */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: "#2C2A28" }}>📋 Control de Contratos</div>
-          <div style={{ fontSize: 12, color: "#8B847C", marginTop: 2 }}>Vencimientos, renovaciones e historial por empleado</div>
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {sinContrato.length > 0 && (
-            <Btn variant="info" onClick={() => {
-              if (!confirm(`Generar contratos automáticos para ${sinContrato.length} empleado(s) sin contrato? Se creará un contrato activo usando los datos actuales del empleado (fecha inicio, tipo, salario).`)) return;
-              const nuevos = sinContrato.map(({ emp }) => ({
-                id: uid(),
-                employeeId: emp.id,
-                company: emp.company,
-                contractType: emp.contractType,
-                startDate: emp.startDate || hoyISO(),
-                endDate: emp.contractType === "temporary" ? (emp.endDate || "") : "",
-                salary: Number(emp.salary) || 0,
-                bonificacion: Number(emp.bonificacion) || 0,
-                status: "active",
-                parentContractId: null,
-                notes: "Migración automática desde empleado existente",
-                createdAt: new Date().toISOString(),
-              }));
-              sCt([...contracts, ...nuevos]);
-              alert(`${nuevos.length} contrato(s) generados.`);
-            }}>🔁 Generar faltantes ({sinContrato.length})</Btn>
-          )}
-          <Btn onClick={() => setModal({ t: "ctn" })}>+ Nuevo contrato</Btn>
-        </div>
+    const contadores = [
+      ["vencidos", empleadosConContratos.filter(GRUPOS_F.vencidos.test).length, ROJO],
+      ["pronto", empleadosConContratos.filter(GRUPOS_F.pronto.test).length, ORANGE_DARK],
+      ["cerca180", empleadosConContratos.filter(GRUPOS_F.cerca180.test).length, CHARCOAL],
+      ["sin", sinContrato.length, "#6E6862"],
+    ];
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(4, minmax(0,1fr))", gap: 12 }}>
+        {contadores.map(([k, n, c], i) => {
+          const on = ctFiltro === k;
+          return <div key={k} role="button" tabIndex={0} aria-pressed={on} onClick={() => setCtFiltro(on ? "" : k)} onKeyDown={(ev) => { if (ev.key === "Enter") setCtFiltro(on ? "" : k); }} className="gt-vidrio gt-vidrio-hover gt-sube"
+            style={{ padding: "14px 18px", cursor: "pointer", animationDelay: `${i * 40}ms`, boxShadow: on ? `inset 0 0 0 2px ${c}, 0 12px 30px rgba(44,42,40,.10)` : undefined }}>
+            <div style={{ font: "800 28px/1 var(--display)", color: n ? c : "#C9C3BB" }}>{n}</div>
+            <div style={{ font: "600 12.5px/1.2 var(--sans)", color: "#5C5853", marginTop: 7 }}>{GRUPOS_F[k].label}</div>
+          </div>;
+        })}
       </div>
 
-      {/* Snapshot Subterra Mayo 2026 — Setup inicial */}
-      {co === "subterra" && (
-        <div style={{ background: "linear-gradient(135deg, #FFFBF5 0%, #F8F2E6 100%)", border: "1px solid #DBD4C8", borderRadius: 12, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#E8762D", letterSpacing: 1.5, textTransform: "uppercase" }}>📥 Setup inicial</div>
-            <div style={{ fontWeight: 700, color: "#2C2A28", marginTop: 4 }}>Snapshot Subterra Honduras · {SUBTERRA_SNAPSHOT_DATE}</div>
-            <div style={{ fontSize: 12, color: "#5C5853", marginTop: 4 }}>
-              {SUBTERRA_SNAPSHOT.length} empleados aprobados por Dr. Raúl Flores (Grupo A: 2 permanentes · Grupo B: 14 obra determinada). Idempotente — preserva contratos activos existentes.
-            </div>
-          </div>
-          <Btn variant="info" onClick={applySubterraSnapshot}>📥 Aplicar Snapshot</Btn>
+      <div className="gt-vidrio" style={{ padding: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: "1 1 260px", minWidth: 0 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A39C92" strokeWidth="2" strokeLinecap="round" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar por nombre, DNI o código"
+            style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px 10px 38px", border: "1px solid rgba(44,42,40,.1)", borderRadius: 12, fontSize: 13, background: "rgba(255,255,255,.75)", color: CHARCOAL, outline: "none" }} />
         </div>
-      )}
-
-      {/* Stats de alertas */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-        <AlertCard color="#DC2626" icon="🔴" label="Vencen en 7 días" value={venceEn7.length} />
-        <AlertCard color="#F59E0B" icon="🟡" label="Vencen este mes" value={venceEn30.length} />
-        <AlertCard color="#7C3AED" icon="⚠️" label="Cerca de 180 días" value={cerca180.length} />
-        <AlertCard color="#94A3B8" icon="📭" label="Sin contrato activo" value={sinContrato.length} />
+        {ctFiltro && <span role="button" onClick={() => setCtFiltro("")} style={{ padding: "8px 12px", borderRadius: 999, background: "rgba(44,42,40,.07)", font: "600 12.5px/1 var(--sans)", color: CHARCOAL, cursor: "pointer" }}>{GRUPOS_F[ctFiltro].label} ✕</span>}
+        {filas.length > 1 && <span role="button" onClick={() => setCtAbiertos(todosAbiertos ? {} : Object.fromEntries(filas.map(x => [x.emp.id, true])))} style={{ padding: "8px 12px", borderRadius: 999, font: "600 12.5px/1 var(--sans)", color: "#5C5853", cursor: "pointer" }}>{todosAbiertos ? "Compactar todo" : "Expandir todo"}</span>}
+        {puedeEscribir && <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+          {sinContrato.length > 0 && <button style={BTN("ghost")} onClick={() => {
+            if (!confirm(`Generar contratos automáticos para ${sinContrato.length} empleado(s) sin contrato? Se creará un contrato activo usando los datos actuales del empleado (fecha inicio, tipo, salario).`)) return;
+            const nuevos = sinContrato.map(({ emp }) => ({
+              id: uid(), employeeId: emp.id, company: emp.company, contractType: emp.contractType,
+              startDate: emp.startDate || hoyISO(), endDate: emp.contractType === "temporary" ? (emp.endDate || "") : "",
+              salary: Number(emp.salary) || 0, bonificacion: Number(emp.bonificacion) || 0, status: "active", parentContractId: null,
+              notes: "Migración automática desde empleado existente", createdAt: new Date().toISOString(),
+            }));
+            sCt([...contracts, ...nuevos]);
+            alert(`${nuevos.length} contrato(s) generados.`);
+          }}>Generar faltantes ({sinContrato.length})</button>}
+          <button className="gt-btn gt-btn-primario" onClick={() => setModal({ t: "ctn" })} style={{ minHeight: 38, padding: "9px 18px", fontSize: 13 }}>+ Nuevo contrato</button>
+        </div>}
       </div>
 
-      {/* Buscador */}
-      <div style={{ background: "#fff", border: "1px solid #DBD4C8", borderRadius: 10, padding: "10px 14px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ fontSize: 15 }}>🔍</div>
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Buscar por nombre o DNI…"
-          style={{ flex: 1, minWidth: 200, padding: "8px 12px", border: "1px solid #E8E1D3", borderRadius: 8, fontSize: 13, outline: "none", background: "#FFFBF5" }}
-        />
-        <span style={{ fontSize: 11, color: "#8B847C" }}>
-          {filtered.length} de {empleadosConContratos.length} empleados
-        </span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {filas.map(fila)}
       </div>
+      {filas.length === 0 && <div className="gt-vidrio" style={{ padding: 34, textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>
+        {ctFiltro || q ? "Nadie coincide con ese filtro." : `Sin colaboradores en ${cc.name}.`}
+      </div>}
 
-      {/* Tabla de contratos — ordenada por urgencia (vencidos primero) */}
-      <div style={{ background: "#fff", border: "1px solid #DBD4C8", borderRadius: 12, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
-            <thead>
-              <tr>
-                <th style={th}>Empleado</th>
-                <th style={th}>Tipo</th>
-                <th style={th}>Grupo</th>
-                <th style={th}>Inicio</th>
-                <th style={th}>Fin</th>
-                <th style={{ ...th, textAlign: "right" }}>{hideSalary ? "" : "Salario"}</th>
-                <th style={th}>Días 180</th>
-                <th style={th}>Estado</th>
-                <th style={th}>Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tableRows.map(renderTableRow)}
-            </tbody>
-          </table>
-        </div>
-        {filtered.length === 0 && (
-          <div style={{ padding: 20, textAlign: "center", color: "#64748B", fontSize: 13 }}>
-            Sin resultados para "{search}".
-          </div>
-        )}
-      </div>
+      {/* Snapshot de mayo (setup inicial, idempotente): ya no ocupa una tarjeta
+          entera — queda como enlace discreto al pie, solo admin/tesorería. */}
+      {co === "subterra" && puedeEscribir && !isAnaRH && <div style={{ textAlign: "center", marginTop: 6 }}>
+        <span role="button" onClick={applySubterraSnapshot}
+          style={{ font: "500 12px/1 var(--sans)", color: "#A39C92", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3 }}>Snapshot inicial de Subterra · {SUBTERRA_SNAPSHOT_DATE}</span>
+      </div>}
     </div>;
   };
 
@@ -7016,7 +6975,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // Dashboard, KPI's y Empleados NO llevan el <fieldset disabled>: solo
   // muestran (los botones que escriben ya se ocultan por rol) y así un rol de
   // solo lectura puede buscar y filtrar.
-  const SIN_CANDADO = ["dashboard", "kpis", "employees"];
+  const SIN_CANDADO = ["dashboard", "kpis", "employees", "contracts"];
   const secVista = nav.some(n => n.id === sec) ? sec : nav[0]?.id;
   const candado = isReadOnly && !SIN_CANDADO.includes(secVista);
   return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "var(--sans)", background: "var(--bg)", color: CHARCOAL, position: "relative", overflow: "hidden" }}>

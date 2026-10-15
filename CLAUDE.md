@@ -895,6 +895,22 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   `GTMonthBars progreso` (crecen desde abajo escalonadas), los anchos de las
   barras y `CuentaArriba` (cifras que cuentan hasta su valor en ~1.4 s;
   respeta reduced-motion; ~2.4 s). `ANIM_GRAF` = 2200ms cubic-bezier(.22,1,.36,1). ⚠ El stroke-dasharray de la dona va en `style` (como ATRIBUTO SVG Chrome no lo transiciona y la dona salía de golpe).
+  **CONTRATOS (rediseño 15-oct-2026, "cajitas largas por empleado que se
+  puedan compactar o desglosar, sin tanto texto")**: `ContractsView` (sigue
+  siendo función, no componente) = 4 contadores de vidrio que FILTRAN
+  (`ctFiltro`: vencidos · vencen en 30 días · cerca de 180 · sin contrato),
+  barra con buscador (nombre/DNI/código), Expandir/Compactar todo, "Generar
+  faltantes (N)" y "+ Nuevo contrato"; y UNA FILA DE VIDRIO por colaborador
+  ordenada por urgencia (vencidos primero): foto, nombre, cargo, tipo ("Por
+  obra"/Permanente/Honorarios), barra de los 180 días (carbón · naranja desde
+  150 · rojo al cumplir 180), fecha de fin y chip de estado (rojo venció ·
+  naranja ≤30 d · verde vigente). Click → se despliega (`ctAbiertos`) con
+  inicio/fin/grupo/salario (si !hideSalary)/días acumulados, historial (cada
+  contrato con "Editar" → modal `cte`) y Renovar / Pasa a permanencia / Crear
+  contrato (mismos modales `ctr`/`perm`/`ctn`). Columnas de ancho FIJO para
+  que las filas queden alineadas. El banner del snapshot de mayo se volvió un
+  enlace discreto al pie. Contratos entra a `SIN_CANDADO` (los botones que
+  escriben se ocultan con isReadOnly).
   El carnet ya no usa backdrop-filter mientras viaja (era el tirón al
   cerrarlo): caras sólidas, fondo oscuro sin blur, will-change, abrir ~0.9 s
   desacelerando y cerrar ~0.8 s ease-in-out.
