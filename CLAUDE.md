@@ -42,7 +42,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
     paleta del rediseño es blanco/gris/naranja/carbón y las manchas de
     brillo naranja/gris, e0/e1/e2,
     --curva cubic-bezier(.32,.72,0,1)), clases `gt-*`, keyframes solo-`from` +
-    `fill-mode: backwards`, manchas de brillo 47s/59s (primos), vidrio
+    `fill-mode: backwards`, manchas de brillo 47s/59s (primos) — desde el
+    15-oct-2026 las mueve `src/brillos.js` (iniciado en main.jsx) a ~12
+    cuadros/s por los MISMOS keyframes y ease-in-out (clase `gt-brillos-js`
+    en <html> apaga la animación CSS, que queda de respaldo): a 60 cuadros/s
+    el vidrio se re-desenfocaba en cada cuadro y en PCs Windows se sentía
+    laggy; a la vista es idéntico. Pausa con la pestaña oculta. Vidrio
     `--v-fondo-foto`, `prefers-reduced-motion` respetado.
   - `LoginScreen`: **14-sep-2026, reemplazo total del fondo** — Gerson pidió
     el mismo diseño y efecto del sitio público (geotecnica-web.vercel.app,

@@ -52,6 +52,9 @@ export const GT_CSS = `
 .gt-brillo-b{width:min(660px,80vw);height:min(660px,80vw);bottom:-26%;right:-12%;
   background:radial-gradient(circle,rgba(199,95,31,.16) 0%,rgba(140,133,125,.10) 44%,transparent 72%);
   animation:gtPaseoB 59s ease-in-out infinite}
+/* Con JS (src/brillos.js) las manchas se mueven a ~12 cuadros/s por el MISMO
+   recorrido: el vidrio no tiene que re-desenfocarse 60 veces por segundo. */
+.gt-brillos-js .gt-brillo{animation:none !important;will-change:transform}
 @keyframes gtPaseoA{0%{transform:translateX(-50%) translateY(0) scale(1)}25%{transform:translateX(-96%) translateY(34vh) scale(.86)}50%{transform:translateX(-38%) translateY(66vh) scale(1.08)}75%{transform:translateX(4%) translateY(28vh) scale(.92)}100%{transform:translateX(-50%) translateY(0) scale(1)}}
 @keyframes gtPaseoB{0%{transform:translate(0,0) scale(1)}25%{transform:translate(-46vw,-30vh) scale(1.1)}50%{transform:translate(-72vw,-58vh) scale(.84)}75%{transform:translate(-30vw,-72vh) scale(1.05)}100%{transform:translate(0,0) scale(1)}}
 
