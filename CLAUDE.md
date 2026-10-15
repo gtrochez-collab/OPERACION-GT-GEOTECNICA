@@ -863,10 +863,15 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Cerrar sesión), pestañas SIN emojis, se retiraron el hero con la ilustración
   `TeamSVG`, el título repetido de la pestaña y el badge "N activos". Helpers
   del componente: `tituloCaja`, `cifra`, `pista` (control segmentado de
-  spans, sirve a solo-lectura), `PAL_MES`. **Dashboard** = 3 cajas de vidrio
-  que llenan el alto: Presencia (% + NSP/INC/VAC + línea por día, multi-mes),
-  Mano de obra (total + barras por proyecto) y Hoy (dona GeoClock +
-  "Pendientes" clickeables a su pestaña). **KPI's** = 5 cajitas (Colaboradores,
+  spans, sirve a solo-lectura), `PAL_MES`. **Dashboard** (v2 del mismo día — Gerson:
+  "la primera mejor masa salarial en ruedita por departamento, cambiando entre
+  meses; todas del mismo tamaño") = 3 cajas de vidrio IGUALES que llenan el
+  alto, con la pista de los últimos 6 meses arriba (`dashMeses[0]` = mes a la
+  vista): Masa salarial (dona por departamento del ROSTER de ese mes: salario
+  + bonificación de quien estuvo en la empresa —entró antes de fin de mes y no
+  había salido antes del 1—; con hideSalary cuenta personas) · Por proyecto
+  (total de mano de obra del mes arriba + barras, de `statsDeMes`) · Hoy (dona
+  GeoClock + "Pendientes" clickeables a su pestaña). **KPI's** = 5 cajitas (Colaboradores,
   Masa salarial —Antigüedad con hideSalary—, Ausentismo, Tardanzas, Rotación) +
   "Masa salarial del año" y "El equipo". Gráficos SVG recoloreados a
   carbón/naranja/gris (planilla real naranja, proyección gris) y las

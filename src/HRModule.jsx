@@ -4563,7 +4563,6 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const pista = (opciones) => <div style={{ display: "inline-flex", gap: 3, padding: 3, borderRadius: 12, background: "rgba(44,42,40,.07)", flexWrap: "wrap", maxWidth: "100%" }}>
     {opciones.map(o => <span key={o.k} role="button" title={o.title} onClick={o.onClick} style={{ padding: "7px 12px", borderRadius: 9, background: o.on ? "#fff" : "transparent", boxShadow: o.on ? "0 1px 3px rgba(44,42,40,.14)" : "none", color: o.on ? CHARCOAL : "#6E6862", font: `${o.on ? 800 : 600} 12.5px/1 var(--sans)`, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>{o.label}</span>)}
   </div>;
-  const PAL_MES = [CHARCOAL, ORANGE, "#A39C92", ORANGE_DARK, "#5C5853", "#D9B79B"];
 
   const renderDashboard = () => {
     const tmp = ae.filter(e => e.contractType === "temporary");
@@ -4571,20 +4570,25 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const soon = tmp.filter(e => { const f = finContratoDe(e); return f && e.status === "active" && f.dias >= 0 && f.dias <= 30; });
     const hoy = hoyTegus();
     const mesActual = hoy.slice(0, 7);
-    // Meses disponibles: los que tienen asistencia o planilla + el actual.
-    const mesesDisponibles = [...new Set([mesActual, ...ca.map(a => a.periodo), ...cp.map(p => p.periodo)])]
-      .filter(Boolean).sort((a, b) => b.localeCompare(a)).slice(0, 6);
-    const mesesSel = (dashMeses.length ? dashMeses : [mesActual]).slice().sort((a, b) => a.localeCompare(b));
-    const multi = mesesSel.length > 1;
-    const stats = mesesSel.map(p => statsDeMes(p));
-    const toggleMes = (p) => {
-      const cur = dashMeses.length ? dashMeses : [mesActual];
-      const next = cur.includes(p) ? cur.filter(x => x !== p) : [...cur, p];
-      setDashMeses(next.length ? next : [mesActual]);
-    };
-    const proyShorts = [...new Set(stats.flatMap(s => Object.keys(s.proy)))]
-      .sort((a, b) => Math.max(...stats.map(s => s.proy[b] || 0)) - Math.max(...stats.map(s => s.proy[a] || 0)));
-    const maxProy = Math.max(1, ...stats.flatMap(s => Object.values(s.proy)));
+    // Últimos 6 meses (la masa salarial sale del roster, así que cualquier mes
+    // tiene dato) + los que tengan asistencia/planilla más viejos no hacen falta.
+    const meses6 = Array.from({ length: 6 }, (_, i) => { const d = new Date(Number(mesActual.slice(0, 4)), Number(mesActual.slice(5, 7)) - 1 - i, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }).reverse();
+    const mes = dashMeses[0] && meses6.includes(dashMeses[0]) ? dashMeses[0] : mesActual;
+    const st = statsDeMes(mes);
+    // Masa salarial del mes por DEPARTAMENTO: salario + bonificación de quien
+    // estuvo en la empresa ese mes (entró antes de que terminara y no había
+    // salido antes de que empezara). Con hideSalary se cuentan personas.
+    const [my, mm] = mes.split("-").map(Number);
+    const ini = `${mes}-01`, fin = `${mes}-${String(new Date(my, mm, 0).getDate()).padStart(2, "0")}`;
+    const delMes = ae.filter(e => (!e.startDate || e.startDate <= fin) && (e.status === "active" || !e.endDate || e.endDate >= ini));
+    const porDepto = {};
+    delMes.forEach(e => { const d = e.department || "Sin departamento"; porDepto[d] = (porDepto[d] || 0) + (hideSalary ? 1 : (Number(e.salary) || 0) + (Number(e.bonificacion) || 0)); });
+    const deptos = Object.entries(porDepto).sort((a, b) => b[1] - a[1]);
+    const masa = deptos.reduce((s, [, v]) => s + v, 0);
+    const DEPTO_COLORS = [CHARCOAL, ORANGE, "#8C857D", ORANGE_DARK, "#C9C3BB", "#5C5853", "#F2B48A", "#E4E0DA"];
+    const corto = (v) => v >= 1e6 ? `L ${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `L ${Math.round(v / 1e3)}k` : `L ${Math.round(v)}`;
+    const proyShorts = Object.keys(st.proy).sort((a, b) => (st.proy[b] || 0) - (st.proy[a] || 0));
+    const maxProy = Math.max(1, ...Object.values(st.proy));
     // Asistencia de HOY (GeoClock): marcajes del día en la quincena actual.
     const qHoy = getQuincena(hoy);
     const marksHoy = (gcMarks[`${qHoy.periodo}|${qHoy.quincena}`] || []).filter(mk => mk && mk.company === co && mk.fecha === hoy);
@@ -4593,57 +4597,53 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     const sinMarcarHoy = Math.max(0, activos.length - entradasHoy.length);
     const sinFicha = activos.filter(e => !e.startDate || !e.sexo || !e.horario);
     const tardesPend = Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.tarde && !(gcTardies || []).some(t => t && t.markId === mk.id && (t.estado === "aprobada" || t.estado === "denegada")));
-    const st0 = stats[stats.length - 1];
     const permitidas = nav.map(n => n.id);
     const pendientes = [
       soon.length > 0 && { k: "contracts", n: soon.length, txt: soon.length === 1 ? "contrato vence en 30 días" : "contratos vencen en 30 días", det: soon.slice(0, 3).map(e => e.fullName.split(" ").slice(0, 2).join(" ")).join(" · ") },
       tardesPend.length > 0 && { k: "tardanzas", n: tardesPend.length, txt: tardesPend.length === 1 ? "llegada tarde sin decidir" : "llegadas tarde sin decidir" },
       sinFicha.length > 0 && { k: "employees", n: sinFicha.length, txt: sinFicha.length === 1 ? "ficha incompleta" : "fichas incompletas", det: "fecha de ingreso, sexo u horario" },
     ].filter(Boolean);
-    const VID = { padding: isMobile ? 16 : 20, minWidth: 0, display: "flex", flexDirection: "column" };
+    const VID = { padding: isMobile ? 16 : 22, minWidth: 0, display: "flex", flexDirection: "column" };
+    const mesCorto = (p) => `${mesLabel(p).split(" ")[0].slice(0, 3)} ${p.slice(2, 4)}`;
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        {pista(mesesDisponibles.slice().reverse().map(p => {
-          const on = mesesSel.includes(p);
-          return { k: p, on, label: `${mesLabel(p).split(" ")[0].slice(0, 3)} ${p.slice(2, 4)}`, title: on && mesesSel.length === 1 ? "Mes a la vista" : on ? "Quitar de la comparación" : "Comparar con este mes", onClick: () => toggleMes(p) };
-        }))}
+        {pista(meses6.map(p => ({ k: p, on: p === mes, label: mesCorto(p), onClick: () => setDashMeses([p]) })))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.55fr) minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "stretch", minHeight: isMobile ? undefined : "min(640px, calc(100vh - 210px))" }}>
-        {/* 1 · Presencia */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(3, minmax(0,1fr))", gap: 16, alignItems: "stretch", minHeight: isMobile ? undefined : "min(640px, calc(100vh - 210px))" }}>
+        {/* 1 · Masa salarial por departamento */}
         <div className="gt-vidrio gt-sube" style={VID}>
-          {tituloCaja("Presencia", multi && <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>{stats.map((s, i) => <span key={s.periodo} style={{ font: "700 11px/1 var(--sans)", color: PAL_MES[i % PAL_MES.length] }}>● {mesLabel(s.periodo).split(" ")[0]}</span>)}</div>)}
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 22, flexWrap: "wrap", marginBottom: 14 }}>
-            {cifra(st0.presenciaProm !== null ? `${st0.presenciaProm}%` : "—", st0.tieneAsistencia ? `promedio de ${mesLabel(st0.periodo).toLowerCase()}` : "sin asistencia este mes")}
-            {st0.tieneAsistencia && <div style={{ display: "flex", gap: 18 }}>
-              {[["NSP", st0.nsp, st0.nsp ? "#B03024" : CHARCOAL], ["INC", st0.inc, CHARCOAL], ["VAC", st0.vac, CHARCOAL]].map(([l, v, c]) => <div key={l}>
-                <div style={{ font: "800 18px/1 var(--display)", color: c }}>{v}</div>
-                <div className="gt-label" style={{ color: "#A39C92", marginTop: 5, fontSize: 9 }}>{l}</div>
-              </div>)}
-            </div>}
+          {tituloCaja(hideSalary ? "Equipo por departamento" : "Masa salarial", <span style={{ font: "500 12px/1 var(--sans)", color: "#A39C92" }}>{mesLabel(mes)}</span>)}
+          {cifra(hideSalary ? `${masa}` : fmtL(masa), hideSalary ? "personas en el mes" : `salario + bonificación · ${delMes.length} personas`)}
+          <div style={{ display: "flex", justifyContent: "center", margin: "20px 0 18px" }}>
+            <GTDonut size={isMobile ? 180 : 210} thickness={isMobile ? 22 : 26} centerLabel={hideSalary ? String(masa) : corto(masa)} centerSub={hideSalary ? "personas" : "al mes"}
+              segments={deptos.map(([d, v], i) => ({ value: v, color: DEPTO_COLORS[i % DEPTO_COLORS.length], label: d }))} />
           </div>
-          <div style={{ flex: 1, display: "flex", alignItems: "center" }}>
-            {stats.every(s => !s.tieneAsistencia)
-              ? <div style={{ fontSize: 13, color: "#A39C92", padding: "30px 0", width: "100%", textAlign: "center" }}>Todavía no hay hojas de asistencia.</div>
-              : <div style={{ width: "100%" }}><GTLineChart height={isMobile ? 220 : 330} lastDay={Math.max(...stats.map(s => s.lastDay))} series={stats.map((s, i) => ({ label: mesLabel(s.periodo), color: PAL_MES[i % PAL_MES.length], points: s.porDia }))} /></div>}
+          <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+            {deptos.map(([d, v], i) => <div key={d} style={{ display: "flex", alignItems: "center", gap: 9, font: "500 12.5px/1.2 var(--sans)", color: "#5C5853" }}>
+              <span style={{ width: 9, height: 9, borderRadius: 3, background: DEPTO_COLORS[i % DEPTO_COLORS.length], flexShrink: 0 }} />
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d}</span>
+              <b style={{ color: CHARCOAL }}>{hideSalary ? v : fmtL(v).replace(/\.\d\d$/, "")}</b>
+              <span style={{ color: "#A39C92", minWidth: 34, textAlign: "right" }}>{masa ? Math.round(v / masa * 100) : 0}%</span>
+            </div>)}
           </div>
         </div>
 
         {/* 2 · Mano de obra por proyecto */}
         <div className="gt-vidrio gt-sube" style={{ ...VID, animationDelay: "60ms" }}>
-          {tituloCaja("Mano de obra")}
-          {cifra(hideSalary ? `${st0.diasPagados || 0} d` : st0.costoMO > 0 ? fmtL(st0.costoMO) : "—", hideSalary ? "días pagados del mes" : "asistencia + horas extras pagadas")}
-          <div style={{ display: "flex", flexDirection: "column", gap: 11, marginTop: 18, flex: 1 }}>
-            {proyShorts.length === 0 && <div style={{ fontSize: 13, color: "#A39C92" }}>Sin asistencia registrada.</div>}
-            {proyShorts.slice(0, 10).map(shrt => <div key={shrt} title={stats.map(s => `${mesLabel(s.periodo)}: ${hideSalary ? "" : fmtL(s.proy[shrt] || 0)}`).join("\n")}>
+          {tituloCaja("Por proyecto", <span style={{ font: "500 12px/1 var(--sans)", color: "#A39C92" }}>{mesLabel(mes)}</span>)}
+          {cifra(hideSalary ? `${st.diasPagados || 0} días` : st.costoMO > 0 ? fmtL(st.costoMO) : "—", hideSalary ? "días pagados en el mes" : "mano de obra: asistencia + horas extras")}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 20, flex: 1 }}>
+            {proyShorts.length === 0 && <div style={{ fontSize: 13, color: "#A39C92" }}>Sin asistencia registrada en {mesLabel(mes).toLowerCase()}.</div>}
+            {proyShorts.slice(0, 10).map(shrt => <div key={shrt}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8, font: "600 12px/1.2 var(--sans)", marginBottom: 5 }}>
                 <span style={{ color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{shrt}</span>
-                {!hideSalary && <span style={{ color: "#5C5853", fontWeight: 700, flexShrink: 0 }}>{fmtL(st0.proy[shrt] || 0).replace(/\.\d\d$/, "")}</span>}
+                {!hideSalary && <span style={{ color: "#5C5853", fontWeight: 700, flexShrink: 0 }}>{fmtL(st.proy[shrt] || 0).replace(/\.\d\d$/, "")}</span>}
               </div>
-              {stats.map((s, i) => <div key={s.periodo} style={{ height: multi ? 5 : 7, borderRadius: 4, background: "rgba(44,42,40,.06)", overflow: "hidden", marginTop: 2 }}>
-                <div style={{ width: `${Math.min(100, ((s.proy[shrt] || 0) / maxProy) * 100)}%`, height: "100%", borderRadius: 4, background: PAL_MES[i % PAL_MES.length], transition: "width .5s var(--curva)" }} />
-              </div>)}
+              <div style={{ height: 7, borderRadius: 4, background: "rgba(44,42,40,.06)", overflow: "hidden" }}>
+                <div style={{ width: `${Math.min(100, ((st.proy[shrt] || 0) / maxProy) * 100)}%`, height: "100%", borderRadius: 4, background: CHARCOAL, transition: "width .5s var(--curva)" }} />
+              </div>
             </div>)}
             {proyShorts.length > 10 && <div style={{ fontSize: 11.5, color: "#A39C92" }}>+{proyShorts.length - 10} proyectos más en Costos</div>}
           </div>
