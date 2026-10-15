@@ -20,6 +20,17 @@ const FERIADOS_FIJOS = [
   { mes: 12, dia: 25, nombre: "Navidad" },
 ];
 
+// Los feriados de octubre (3, 12 y 21) por ley se corren y se juntan en la
+// SEMANA MORAZÁNICA, que el Gobierno fija cada año. Si el año está acá, esos
+// tres días fijos NO cuentan y van los de la lista.
+//   2026: el feriado arrancó el miércoles 7 a las 12:00 m. y siguió jueves 8,
+//   viernes 9 y sábado 10; se retomó el lunes 12 (aviso de Gerson, 15-oct).
+//   El 7 queda como día REGULAR (se trabajó la mañana y el día se paga igual).
+const OCTUBRE_MOVIBLES = [3, 12, 21];
+const SEMANA_MORAZANICA = {
+  2026: [8, 9, 10],
+};
+
 // Calcular Domingo de Pascua (algoritmo de Gauss).
 function pascua(year) {
   const a = year % 19;
@@ -43,9 +54,12 @@ function pascua(year) {
 export function feriadosDelAnio(year) {
   const set = new Set();
   // Fijos
+  const morazanica = SEMANA_MORAZANICA[year];
   FERIADOS_FIJOS.forEach((f) => {
+    if (morazanica && f.mes === 10 && OCTUBRE_MOVIBLES.includes(f.dia)) return;
     set.add(toIso(year, f.mes, f.dia));
   });
+  if (morazanica) morazanica.forEach((d) => set.add(toIso(year, 10, d)));
   // Semana Santa: jueves y viernes (sabado no es feriado oficial pero
   // muchas empresas lo reconocen — por ahora solo jueves/viernes santo).
   const easter = pascua(year);
@@ -83,7 +97,10 @@ export function esFeriadoQuincena(period, day) {
 
 // Para tooltip / leyenda.
 export function nombreFeriado(year, monthIdx0, day) {
-  const fijo = FERIADOS_FIJOS.find((f) => f.mes === monthIdx0 + 1 && f.dia === day);
+  const morazanica = SEMANA_MORAZANICA[year];
+  if (morazanica && monthIdx0 === 9 && morazanica.includes(day)) return "Semana Morazánica";
+  const fijo = FERIADOS_FIJOS.find((f) => f.mes === monthIdx0 + 1 && f.dia === day
+    && !(morazanica && f.mes === 10 && OCTUBRE_MOVIBLES.includes(f.dia)));
   if (fijo) return fijo.nombre;
   const easter = pascua(year);
   const target = new Date(year, monthIdx0, day);

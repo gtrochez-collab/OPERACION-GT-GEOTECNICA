@@ -1915,6 +1915,11 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   aplica los 0 al BORRADOR (setData); nada persiste hasta "Guardar asistencia".
   Se decide a mano porque una ausencia puede ser permiso, vacación, INC o que
   andaba en proyecto.
+- **Semana Morazánica (15-oct-2026)**: `holidays.js` → `SEMANA_MORAZANICA[año]`
+  reemplaza los fijos 3/12/21 de octubre por los días que fija el Gobierno
+  (2026: 8, 9 y 10; el 7 arrancó a las 12 m. y queda como día regular). Cada
+  año nuevo hay que agregarlo; sin entrada se usan los fijos. Solo cambia qué
+  día es feriado: lo guardado en hr-atts2 (TF del 3, etc.) NO se toca.
 - Asistencia: cuadrilla por quincena es la fuente de asignaciones; domingos/feriados
   auto "1" (descanso pagado). Ciclo día regular: ""→1→0→INC→V→"" (V=vacaciones,
   día pagado, teal). Días BLOQUEADOS por alta/baja NO cuentan en totales/costos
