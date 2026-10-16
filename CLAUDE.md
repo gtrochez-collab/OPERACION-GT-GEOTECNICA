@@ -15,7 +15,7 @@ cache localStorage. Deploy automático a GitHub Pages al hacer push a `main`.
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
-- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs` y `tests/geoinventory-calc.test.mjs`.
+- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs` y `tests/planilla-calc.test.mjs`.
 - Deploy: `git push origin main` dispara `.github/workflows/deploy.yml` → gh-pages.
   URL: https://gtrochez-collab.github.io/OPERACION-GT-GEOTECNICA/
 - Verificar deploy: `gh run list` + grep del texto nuevo en el bundle publicado.
@@ -924,6 +924,63 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   El carnet ya no usa backdrop-filter mientras viaja (era el tirón al
   cerrarlo): caras sólidas, fondo oscuro sin blur, will-change, abrir ~0.9 s
   desacelerando y cerrar ~0.8 s ease-in-out.
+  **PLANILLA (16-oct-2026, "mi mayor gol": la Lic. Carolina la genera acá,
+  ya no en Excel)**: `src/planilla-calc.js` (lógica PURA, probada en
+  `tests/planilla-calc.test.mjs`) + `src/planilla-export.js` (PDF con jsPDF
+  legal apaisado y Excel con **exceljs**, dependencia nueva cargada bajo
+  demanda) + la UI en HRModule (`renderPlanillaLista` / `renderPlanillaEditor`,
+  estados `payVista`/`payDraft`/`payAbiertos`/`payNuevo`…). Calca el Excel
+  "Para revisión 1Q 10.26" de Carolina (GEO STRUCTURES = Geotecnica):
+  **ordinario = mensual/2** en quincena completa (NO diario×días: la 2Q tiene
+  16 días; alta/baja a mitad → diario×días con tope mensual/2; el diario se
+  multiplica SIN redondear, como =J/30), bonificación = mensual/2, feriado
+  trabajado (TF) +2 diarios, domingo (DT) +1 / DT2 +2, NSP −1 diario,
+  llegada tarde denegada proporcional, INC y V pagan completo. **Deducciones
+  de ley SOLO en la 2Q**: IHSS cuota fija 595.16 (permanentes y temporales),
+  RAP = (mensual − 11,903.13) × 1.5 % (Geotecnica permanentes; `emp.sinRap`
+  exime), ISR = lo que manda el contador (`emp.isrMensual`, editable en la
+  línea y se RECUERDA en la ficha al guardar). **Cooperativa se descuenta
+  TODAS las quincenas** (así va en la hoja de Carolina). **Honorarios**:
+  quincenales con ISR 12.5 % sobre lo que cobran; `emp.honorariosPago =
+  "mensual"` cobra el mes completo en `emp.honorariosQuincena` (default 1Q)
+  y no entra en la otra (pill en la línea, se recuerda). **HORAS EXTRAS de la
+  quincena ANTERIOR** (quincena vencida: 1Q oct paga HE de 2Q sep) entran
+  como ingreso por colaborador (`horasExtrasDe` sobre hr-he con
+  `heHoraBase`, que respeta el ajuste de salario base de HE) — con la data
+  real de oct-2026 dio L 38,860.41, EXACTO el "HE" del Excel de Carolina.
+  Cada línea admite **extras** `[{id, tipo ingreso|deduccion, concepto,
+  monto}]` (lo que ella escribía en OTROS INGRESOS/OTRAS DEDUCCIONES con
+  nota), `metodoPago` transferencia|cheque|ach (se recuerda en la ficha; el
+  cierre suma por método, como su "CK/ACH") y `nota`. Registro en `hr-pays`
+  v3: `{id, company, periodo, quincena, estado borrador|publicada, lines,
+  heDe, total, count, date, createdBy, updatedAt/By, publicadaAt/Por}`;
+  `lineaParaGuardar` sigue llenando so/o1/otros/tDed/neto para lo viejo
+  (`totalesLinea` también suma líneas v2). Guardado getCloud → reemplazar por
+  id → set → verify; `recordarEnFichas` escribe isrMensual/metodoPago/
+  honorariosPago en hr-emps5 solo si cambiaron. Pantalla: lista de planillas
+  (filas de vidrio por año, chip Borrador/Publicada, Eliminar solo admin) +
+  tarjeta "Siguiente: …" con mes/1Q-2Q; editor = avisos (asistencia leída o
+  "sin asistencia: se paga completa", HE de X, llegadas tarde sin decidir →
+  pestaña, 1Q/2Q), 6 tiles, buscador + pista por tipo + Expandir todo, UNA
+  FILA DE VIDRIO por colaborador (días · ordinario · ingresos · deducciones ·
+  neto) que se despliega en Ingresos (bonif editable, feriados, domingos, HE,
+  extras +Agregar) · Deducciones (NSP, tarde, ISR editable en 2Q, IHSS, RAP,
+  coop editable, extras) · Asistencia/HE/método de pago/nota; barra fija
+  abajo: Excel · PDF · Guardar borrador · Publicar. "↻ Releer asistencia"
+  regenera conservando extras/ISR/nota/método. `puedePlanilla` = admin y
+  tesorería; los demás solo miran (Planilla sigue bajo el fieldset de solo
+  lectura). Se RETIRARON PayrollGen, PayDetail, exportCSV/exportPrint y los
+  modales pn/pd. PDF: tiles, tabla por tipo (ISR/IHSS/RAP solo en 2Q),
+  totales por grupo, cierre por tipo / método / Salarios+HE=Total, firmas y
+  hoja de Horas extras por banda; revisado como imagen con la réplica Node.
+  Excel: hoja Planilla (encabezado carbón, formato "L" #,##0.00, subtotales
+  y total con SUM, columnas ISR/IHSS/RAP ocultas en 1Q, congelado), Horas
+  extras y Resumen. ⚠ Diferencias ficha vs Excel de Carolina detectadas el
+  16-oct (NO se tocaron): bonificaciones Ester 10,000 vs 4,000 (+6,000 era
+  un bono extraordinario), Josué Manuel 1,977 vs 2,000, Marvin 2,959 vs
+  3,000, Nacho 1,019 vs 1,000, Teófilo 1,980 vs 2,000, coop Nelson 1,056 vs
+  1,294.50, Mauro salario 0 vs 54,000; honorarios mensuales según ella:
+  Arturo, Gustavo, Mauro, Melissa y Oscar.
   **Dashboard gerencial + KPI's (ago 2026, estilo IsTeam)**: `renderDashboard`
   reescrito — `statsDeMes(periodo)` calcula presencia diaria/NSP/INC/VAC/costo
   MO por proyecto desde hr-atts2 (calcCostoMO) + planilla real (hr-pays) +
@@ -2062,8 +2119,9 @@ interna sigue siendo "plantel" por compatibilidad de fichas guardadas).
   (el candado bloquea el marcaje hasta que RRHH la genere) y llenar sexo/
   horario en las fichas (KPI de género marca 0/32). Si funciona esta
   quincena, la siguiente se agrega a los proyectos.
-- hr-pays vacío en producción: nunca han GENERADO planilla desde el sistema
-  (por eso el ReferenceError de PayrollGen vivió inadvertido desde mayo).
+- hr-pays: hasta el 16-oct-2026 solo tenía una planilla de prueba de
+  Subterra (1Q ago, v2). La planilla real arranca con la 1Q oct-2026 que
+  genere la Lic. Carolina desde el sistema.
 - Ideas futuras: reasignación por día en grid HE, workflow Node 24 en
   deploy.yml, mover auth a Supabase, GeoClock como app móvil.
 - **INVESTIGAR (24-sep-2026): botón "Proveedor" parece BORRAR una ficha ya

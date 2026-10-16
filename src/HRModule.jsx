@@ -10,6 +10,9 @@ import { hoyISO } from "./fechas.js";
 import { GT_CSS } from "./gt-ui.js";
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
+// Planilla (16-oct-2026): lógica pura + PDF/Excel.
+import { diasDeQuincena, quincenaAnterior as quincenaAnteriorPl, quincenaSiguiente, nombreQuincena, rangoQuincena, etiquetaCorta, asistenciaDe, horasExtrasDe, armarLinea, totalesLinea, lineaParaGuardar, resumenPlanilla, entraEnPlanilla, diasMostrados, GRUPOS_CT, METODOS_PAGO } from "./planilla-calc.js";
+import { exportarPlanillaPDF, exportarPlanillaExcel } from "./planilla-export.js";
 
 // ── GeoInventory → GeoTeam (13-oct-2026): "Equipo asignado" ────────────────
 // Solo lectura: lo que el colaborador tiene a su cargo según inv-items (lee
@@ -853,6 +856,16 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const [photoCache, setPhotoCache] = useState({});
   const [empTipo, setEmpTipo] = useState("todos");
   const [carnet, setCarnet] = useState(null); // {id, rect} del carnet abierto
+  // Planilla (16-oct-2026)
+  const [payVista, setPayVista] = useState("lista");   // lista | editor
+  const [payDraft, setPayDraft] = useState(null);      // planilla en edición
+  const [payAbiertos, setPayAbiertos] = useState({});
+  const [payBusy, setPayBusy] = useState(false);
+  const [payQ, setPayQ] = useState("");
+  const [payGrupo, setPayGrupo] = useState("todos");
+  const [payNuevo, setPayNuevo] = useState(null);      // mini-form de ingreso/deducción extra
+  const [payPer, setPayPer] = useState("");
+  const [payQui, setPayQui] = useState("");
   // Firmas de marcajes GeoClock cargadas on-demand en Llegadas tardías:
   // { markId: dataUrl }. Se cargan solo al tocar "Ver firma".
   const [firmaCache, setFirmaCache] = useState({});
@@ -1592,442 +1605,6 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           <Btn variant="success" onClick={() => { if (!f.fullName) return alert("Nombre requerido"); onSave({ ...f, id: f.id || uid(), company: f.company || co }); setModal(null); }}>{emp ? "Guardar" : "Agregar"}</Btn>
         </>)}
       </div>
-    </div>;
-  };
-
-  // ── PAYROLL GENERATOR ──
-  // ── Export helpers (used by PayrollGen and PayDetail) ──
-  const exportCSV = (rows, filename) => {
-    const fN = n => Number(n || 0).toFixed(2);
-    const headers = ["Nombre","Cargo","Tipo","Proyecto","Sal.Bruto","Sal.Diario","Dias","NSP","Desc.NSP","Sal.Ordinario","Dom.Trab","Bono Domingo","Bonif.Q","Otros Ing.","ISR","IHSS","RAP","Cooperativa","Otros Ded.","Total Ded.","Neto","Notas"];
-    const csv = [headers.join(","), ...rows.map(l => ['"'+l.name+'"','"'+l.pos+'"',l.ct==="permanent"?"PMNT":l.ct==="temporary"?"TMPR":"HON",'"'+(l.proj||"")+'"',fN(l.sb),fN(l.sd),l.diasPresente||0,l.diasNSP||0,fN(l.descuentoNSP),fN(l.so),l.domTrab||0,fN(l.bonoDomingo||0),fN(l.bq),fN(l.o1),fN(l.isr),fN(l.ihss),fN(l.rap),fN(l.coop),fN(l.otros),fN(l.tDed||0),fN(l.neto||0),'"'+(l.nota||"")+'"'].join(","))].join("\n");
-    const a = document.createElement("a");
-    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent("\uFEFF" + csv);
-    a.download = filename;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  };
-  const exportPrint = (rows, titulo, subtitulo, totalNeto) => {
-    const fL = n => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 });
-    const trs = rows.map(l => "<tr><td>"+l.name+"</td><td>"+l.pos+"</td><td>"+(l.proj||"")+"</td><td style='text-align:right'>"+fL(l.sb)+"</td><td>"+(l.diasPresente||0)+"</td><td style='color:red'>"+(l.diasNSP||0)+"</td><td style='text-align:right'>"+fL(l.so)+"</td><td style='text-align:center;color:purple;font-weight:bold'>"+(l.domTrab||"")+"</td><td style='text-align:right;color:purple'>"+((l.bonoDomingo||0)>0?fL(l.bonoDomingo):"")+"</td><td style='text-align:right'>"+fL(l.isr)+"</td><td style='text-align:right'>"+fL(l.ihss)+"</td><td style='text-align:right'>"+fL(l.rap)+"</td><td style='text-align:right'>"+fL(l.coop)+"</td><td style='text-align:right;font-weight:bold;color:green'>"+fL(l.neto||0)+"</td><td>"+(l.nota||"")+"</td></tr>").join("");
-    const w = window.open("","_blank");
-    if(!w){alert("Permite popups para imprimir");return;}
-    w.document.write("<!DOCTYPE html><html><head><meta charset='utf-8'><title>"+titulo+"</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;padding:30px}table{border-collapse:collapse;width:100%;margin-top:15px}th,td{border:1px solid #ccc;padding:5px 8px;font-size:10px}th{background:#eee}@media print{.np{display:none}}</style></head><body>");
-    w.document.write("<h1 style='font-size:20px'>"+titulo+"</h1><h2 style='font-size:13px;color:#666'>"+subtitulo+"</h2><p style='font-size:16px;font-weight:bold;margin:12px 0'>Total Neto: "+fL(totalNeto)+" | "+rows.length+" empleados</p>");
-    w.document.write("<table><thead><tr><th>Nombre</th><th>Cargo</th><th>Proy.</th><th>Sal.Bruto</th><th>Dias</th><th>NSP</th><th>Sal.Ord.</th><th style='color:purple'>DOM</th><th style='color:purple'>Bono Dom.</th><th>ISR</th><th>IHSS</th><th>RAP</th><th>Coop.</th><th>Neto</th><th>Notas</th></tr></thead><tbody>"+trs+"</tbody></table>");
-    w.document.write("<br><button class='np' onclick='window.print()' style='padding:10px 24px;font-size:14px;cursor:pointer;background:#059669;color:white;border:none;border-radius:8px'>Imprimir / Guardar como PDF</button></body></html>");
-    w.document.close();
-  };
-
-  const PayrollGen = () => {
-    const [per, setPer] = useState("");
-    const [q, setQ] = useState("2Q");
-    const [lines, setLines] = useState([]);
-    const [gen, setGen] = useState(false);
-    // Chequeo de tardanzas en curso: bloquea el botón y los selectores de
-    // periodo/quincena mientras se consulta la nube (getCloud tarda hasta 15 s
-    // si la red está mala). Sin esto, cambiar el periodo a mitad del await
-    // dejaba las líneas de la quincena VIEJA etiquetadas con el periodo NUEVO
-    // al guardar la planilla — y un doble click generaba dos corridas.
-    const [chk, setChk] = useState(false);
-    const chkRef = useRef(false);
-
-    const is2Q = q === "2Q";
-
-    const generate = async () => {
-      if (!per) return alert("Seleccione periodo");
-      if (chkRef.current) return; // ya hay una generación en curso
-      chkRef.current = true; setChk(true);
-      try { await generateInner(); } finally { chkRef.current = false; setChk(false); }
-    };
-
-    const generateInner = async () => {
-      // AVISO de tardanzas pendientes (ago 2026, regla del "1 verde"): una
-      // llegada tarde SIN DECIDIR cuenta día completo en planilla — hay que
-      // aprobarla o denegarla ANTES de generar. Chequeo directo a la nube
-      // (getCloud) para no depender de lo cargado; un registro revertido
-      // (estado "pendiente") también cuenta como pendiente, igual que en la
-      // pestaña de Llegadas tardías. Si la nube no responde, se genera igual
-      // (la generación no escribe nada por sí sola).
-      try {
-        const [mks, tds] = await Promise.all([
-          store.getCloud(gcMarkKey(per, q)),
-          store.getCloud("gc-tardies"),
-        ]);
-        const decididas = new Set((Array.isArray(tds) ? tds : [])
-          .filter(t => t && (t.estado === "aprobada" || t.estado === "denegada"))
-          .map(t => t.markId));
-        const pend = (Array.isArray(mks) ? mks : []).filter(mk =>
-          mk && mk.company === co && mk.tipo === "entrada" && mk.tarde && !decididas.has(mk.id));
-        if (pend.length) {
-          const lista = pend.map(mk => `• ${mk.empNombre || "?"} — ${fmt(mk.fecha)} (marcó ${mk.hora})`).join("\n");
-          if (!confirm(`⚠ Hay ${pend.length} llegada(s) tarde SIN DECIDIR en esta quincena:\n\n${lista}\n\nMientras estén pendientes, el día se paga COMPLETO. Lo correcto es aprobarlas o denegarlas en "Llegadas tardías" antes de generar la planilla.\n\n¿Generar de todas formas?`)) return;
-        }
-      } catch (e) {
-        // Sin nube no bloqueamos la generación (no escribe nada por sí sola),
-        // pero SÍ avisamos: "no se pudo verificar" ≠ "no hay pendientes".
-        console.warn("[planilla] no se pudo verificar tardanzas pendientes:", e?.message || e);
-        alert("⚠ No se pudo verificar si hay llegadas tarde sin decidir (la nube no respondió).\n\nLa planilla se genera igual, pero revisá la pestaña \"Llegadas tardías\" a mano antes de guardarla: una tardanza pendiente se paga como día completo.");
-      }
-      const attSheet = ca.find(a => a.periodo === per && a.quincena === q);
-      const grid = attSheet?.grid || {};
-      const projOvr = attSheet?.projOverrides || {};
-
-      const [y, m] = per.split("-").map(Number);
-      const start = q === "1Q" ? 1 : 16;
-      const lastDay = new Date(y, m, 0).getDate();
-      const end = q === "1Q" ? 15 : lastDay;
-      const totalDays = end - start + 1;
-
-      const cuad = cq.find(x => x.periodo === per && x.quincena === q);
-
-      // Empleados a incluir en planilla: todos los de la empresa que tuvieron
-      // ALGUN dia dentro de la quincena (incluye gente activa, ALTAS de mitad
-      // de quincena, BAJAS de mitad de quincena).
-      const periodStart = `${per}-${String(start).padStart(2, "0")}`;
-      const periodEnd = `${per}-${String(end).padStart(2, "0")}`;
-      const payrollEmps = ce.filter((e) => {
-        // Si nunca empezo (sin startDate) lo incluimos solo si esta activo
-        if (!e.startDate) return e.status === "active";
-        // Si su startDate es DESPUES del fin de quincena → no aplica
-        if (e.startDate > periodEnd) return false;
-        // Si tiene endDate y es ANTES del inicio de quincena → no aplica
-        if (e.endDate && e.endDate < periodStart) return false;
-        return true;
-      });
-
-      setLines(payrollEmps.map(emp => {
-        const sb = Number(emp.salary) || 0;
-        const bn = Number(emp.bonificacion) || 0;
-        const cp = Number(emp.cooperativa) || 0;
-        const gm = Number(emp.gastosMedicos) || 40000;
-        const sd = +(sb / 30).toFixed(2);
-        const isHon = emp.contractType === "honorarios";
-        const isPerm = emp.contractType === "permanent";
-        const isGeo = emp.company === "geotecnica";
-
-        // Proyecto base de la cuadrilla (para empleados sin overrides)
-        const baseProjRaw = cuad?.assignments?.[emp.id] || emp.project || "";
-        const baseProj = resolveShortHR(baseProjRaw);
-
-        // Recorrer dias de la quincena respetando alta/baja
-        // Estados de asistencia:
-        //   "1"   = presente normal (1x)
-        //   "TF"  = trabajo en feriado → +2 dias bonus (triple total)
-        //   "DT"  = trabajo en domingo → +1 dia bonus (doble total)
-        //   "DT2" = trabajo en domingo triple → +2 dias bonus (triple total)
-        //   "INC" = incapacidad (1x, dia pagado)
-        //   "0"   = NSP. Solo descuenta en dia regular. En domingo/feriado no
-        //           descuenta porque la ley paga el dia.
-        let diasPresente = 0, diasPresenteEfectivo = 0, diasNSP = 0, diasIncap = 0, diasVac = 0;
-        let domTrab = 0, domTrabTriple = 0, ferTrab = 0;
-        let diasFueraRango = 0;
-        // Descuento por hora de entrada tardia. Modelo: jornada de 8h desde
-        // la hora de entrada del HORARIO del empleado (default plantel 7am).
-        // Si entra tarde, se descuenta proporcional por las horas perdidas.
-        // Ejemplo: horario 7:00 y llega 8:30 = 1.5h tarde → 1.5/8 del diario.
-        // Aplica a CUALQUIER empleado con hora marcada en la celda: la marca
-        // la pone el pago proporcional (José Miguel, payByHour) o una llegada
-        // tarde de GeoClock DENEGADA por RRHH (ago 2026). Tambien acumulamos
-        // diasPresenteEfectivo: suma proporcional de dias trabajados.
-        // FIX ago 2026: decia `sheet?.arrivalTimes` pero la variable de este
-        // scope es `attSheet` — `sheet` no existe y la generacion reventaba
-        // con ReferenceError (nadie genero planilla desde may 2026).
-        let descuentoHoras = 0;
-        const sheetArrivalTimes = attSheet?.arrivalTimes || {};
-        const projDays = {}; // { proj_short: dias_trabajados }
-        for (let d = start; d <= end; d++) {
-          const dStr = `${per}-${String(d).padStart(2, "0")}`;
-          // Bloqueo por fechas de alta / baja. Alineado con AttendanceGrid:
-          //   - Siempre bloqueamos antes del startDate (alta).
-          //   - Despues del ULTIMO DIA en la empresa solo si status === "inactive"
-          //     (baja efectivamente registrada). Asi no penalizamos a temporales
-          //     activos cuyo endDate quedo viejo por renovacion de contrato.
-          if (emp.startDate && dStr < emp.startDate) { diasFueraRango++; continue; }
-          if (fueraPorBaja(emp, dStr)) { diasFueraRango++; continue; }
-
-          const v = grid[`${emp.id}-${d}`] || "";
-          const dt = new Date(y, m - 1, d);
-          const esDomingo = dt.getDay() === 0;
-          const esFeriado = esFeriadoQuincena(per, d);
-
-          // Estados pagados (cuentan como presente y se asignan al proyecto del dia).
-          // "V" = vacaciones: dia pagado completo (agregado 30-jul-2026).
-          if (v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC" || v === "V") {
-            diasPresente++;
-            if (v === "TF") ferTrab++;
-            if (v === "DT") domTrab++;
-            if (v === "DT2") domTrabTriple++;
-            if (v === "INC") diasIncap++;
-            if (v === "V") diasVac++;
-            const ovr = projOvr[`${emp.id}-${d}`];
-            const projForDay = ovr ? resolveShortHR(ovr) : baseProj;
-            if (projForDay) projDays[projForDay] = (projDays[projForDay] || 0) + 1;
-            // Calcular fraccion del dia trabajado (1.0 = dia completo).
-            // INC siempre cuenta como dia completo (incapacidad pagada).
-            // Para empleados payByHour, aplicar proporcion segun hora de entrada.
-            let dayFraction = 1;
-            if (v !== "INC" && v !== "V") {
-              const arrival = sheetArrivalTimes[`${emp.id}-${d}`];
-              if (arrival) {
-                const [h, mm] = arrival.split(":").map(Number);
-                const arrivalH = h + mm / 60;
-                // Tope 8h: el descuento nunca supera el valor del día (una
-                // llegada extrema de GeoClock no puede descontar MÁS que el día).
-                const horasTarde = Math.min(8, Math.max(0, arrivalH - horaLimiteH(emp)));
-                dayFraction = Math.max(0, (8 - horasTarde) / 8);
-                descuentoHoras += (horasTarde / 8) * sd;
-              }
-            }
-            diasPresenteEfectivo += dayFraction;
-          } else if (v === "0") {
-            // Solo descuenta en dia laboral normal. Domingo/feriado paga la ley.
-            if (!esDomingo && !esFeriado) diasNSP++;
-          }
-        }
-
-        // Dias efectivos de la quincena (excluyendo dias fuera de rango por alta/baja)
-        const diasEfectivos = totalDays - diasFueraRango;
-
-        // Salario bruto prorrateado: solo paga los dias en rango
-        const sbProrated = +(sd * diasEfectivos).toFixed(2);
-        const descuentoNSP = +(diasNSP * sd).toFixed(2);
-        const descuentoHorasFinal = +descuentoHoras.toFixed(2);
-        // Bonos por trabajar dias de descanso/feriado:
-        //   DT  → +1 dia base por cada domingo trabajado (doble total)
-        //   DT2 → +2 dias base por cada domingo trabajado triple (negociado)
-        //   TF  → +2 dias base por cada feriado trabajado (triple)
-        const bonoDomingo = +((domTrab * sd) + (domTrabTriple * sd * 2)).toFixed(2);
-        const bonoFeriado = +(ferTrab * sd * 2).toFixed(2);
-
-        // Salario ordinario: bruto prorrateado menos descuentos (NSP + horas tardias)
-        const so = +(sbProrated - descuentoNSP - descuentoHorasFinal).toFixed(2);
-
-        // Bonificacion quincenal: SIEMPRE bono_mensual_total / 2.
-        // El bono mensual total = bono base del empleado + bonos extra activos
-        // en el periodo (modulo Bonificaciones). Politica Geotecnica: las faltas
-        // (NSP) se descuentan del salario, no del bono.
-        const bonosExtraMensual = monthlyBonusFor(emp.id, periodStart, periodEnd);
-        const bonoMensualTotal = bn + bonosExtraMensual;
-        const bq = +(bonoMensualTotal / 2).toFixed(2);
-
-        let ihss = 0, rap = 0, isr = 0;
-        if (is2Q && !isHon) {
-          ihss = IHSS_AMOUNT;
-          if (isGeo && isPerm) rap = calcRAP(sb);
-        }
-        if (isHon && is2Q) {
-          isr = +((sb / 2) * 0.125).toFixed(2);
-          ihss = 0;
-        }
-
-        return {
-          id: uid(),
-          eid: emp.id,
-          name: emp.fullName,
-          pos: emp.position,
-          ct: emp.contractType,
-          proj: baseProj,
-          projDays,            // Distribucion de dias por proyecto (overrides aplicados)
-          diasFueraRango,
-          diasEfectivos,
-          sb,
-          bn,
-          sd,
-          so,
-          bq,
-          diasPresente,
-          diasPresenteEfectivo: +diasPresenteEfectivo.toFixed(2),
-          diasNSP,
-          diasIncap,
-          diasVac,
-          descuentoNSP,
-          domTrab,
-          domTrabTriple,
-          bonoDomingo,
-          ferTrab,
-          descuentoHoras: descuentoHorasFinal,
-          payByHour: !!emp.payByHour,
-          bonoFeriado,
-          o1: 0,
-          o2: 0,
-          isr,
-          amdc: 0,
-          ihss,
-          rap,
-          coop: is2Q ? cp : 0,
-          aus: 0,
-          otros: 0,
-          gm,
-          nota: "",
-          payrollVersion: 2,
-        };
-      }));
-      setGen(true);
-    };
-
-    const ul = (id, k, v) => setLines(ls => ls.map(l => l.id === id ? { ...l, [k]: v } : l));
-    const calc = l => {
-      const bd = +(l.bonoDomingo || 0);
-      const bf = +(l.bonoFeriado || 0);
-      const tOtros = +l.bq + +l.o1 + +l.o2 + bd + bf;
-      const tDed = +l.isr + +l.amdc + +l.ihss + +l.rap + +l.coop + +l.aus + +l.otros;
-      return { tOtros: +tOtros.toFixed(2), tDed: +tDed.toFixed(2), neto: +(l.so + tOtros - tDed).toFixed(2), bonoDomingo: bd, bonoFeriado: bf };
-    };
-    const totalNeto = lines.reduce((s, l) => s + calc(l).neto, 0);
-    const permLines = lines.filter(l => l.ct === "permanent");
-    const tempLines = lines.filter(l => l.ct === "temporary");
-    const honLines = lines.filter(l => l.ct === "honorarios");
-
-    // Distribucion de costos por proyecto — usa projDays (dias trabajados por
-    // proyecto, considerando overrides). Si la linea no tiene projDays
-    // (planillas viejas pre-versionado), cae al proyecto base.
-    const projCosts = {};
-    lines.forEach(l => {
-      const c = calc(l);
-      const projDays = l.projDays || {};
-      const totalDaysWorked = Object.values(projDays).reduce((s, d) => s + d, 0);
-      if (totalDaysWorked > 0) {
-        Object.entries(projDays).forEach(([p, days]) => {
-          const share = (c.neto * days) / totalDaysWorked;
-          if (!projCosts[p]) projCosts[p] = { neto: 0, count: 0 };
-          projCosts[p].neto += share;
-          projCosts[p].count++;
-        });
-      } else {
-        // Fallback: si no hay distribucion por dia (planilla vieja o sin asistencia)
-        const p = l.proj || "SIN ASIGNAR";
-        if (!projCosts[p]) projCosts[p] = { neto: 0, count: 0 };
-        projCosts[p].neto += c.neto;
-        projCosts[p].count++;
-      }
-    });
-
-    const hasAttendance = ca.some(a => a.periodo === per && a.quincena === q);
-
-    const renderTable = (rows, label, color) => {
-      if (rows.length === 0) return null;
-      const subtotal = rows.reduce((s, l) => s + calc(l).neto, 0);
-      const sums = { sb: 0, sd: 0, dias: 0, nsp: 0, dNSP: 0, so: 0, dom: 0, bdom: 0, fer: 0, bfer: 0, bq: 0, oi: 0, isr: 0, ihss: 0, rap: 0, coop: 0, otros: 0, tDed: 0, neto: 0 };
-      rows.forEach(l => { const c = calc(l); sums.sb += l.sb; sums.so += l.so; sums.dom += (l.domTrab || 0) + (l.domTrabTriple || 0); sums.bdom += (l.bonoDomingo || 0); sums.fer += (l.ferTrab || 0); sums.bfer += (l.bonoFeriado || 0); sums.bq += l.bq; sums.oi += l.o1 + l.o2; sums.dias += l.diasPresente; sums.nsp += l.diasNSP; sums.dNSP += l.descuentoNSP; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
-      return <div style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden" }}>
-        <div style={{ background: color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between" }}>
-          <span>{label} ({rows.length})</span><span>Subtotal: {fmtL(subtotal)}</span>
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-            <thead><tr style={{ background: "#F1F5F9" }}>
-              <th style={TH}>#</th><th style={{ ...TH, minWidth: 150 }}>Nombre</th><th style={TH}>Proy.</th>
-              <th style={TH}>Sal.Bruto</th><th style={TH}>Sal.Diario</th>
-              <th style={TH}>Dias</th><th style={{ ...TH, color: "#DC2626" }}>NSP</th><th style={TH}>Desc.NSP</th>
-              <th style={TH}>Sal.Ord.</th>
-              <th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>DOM</th><th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>Bono Dom.</th>
-              <th style={{ ...TH, color: "#9A3412", background: "#FED7AA" }}>FER</th><th style={{ ...TH, color: "#9A3412", background: "#FED7AA" }}>Bono Fer.</th>
-              <th style={TH}>Bonif.Q</th><th style={TH}>Otros Ing.</th>
-              {is2Q && <><th style={TH}>ISR</th><th style={TH}>IHSS</th><th style={TH}>RAP</th><th style={TH}>Coop.</th></>}
-              <th style={TH}>Otros Ded.</th><th style={TH}>Tot.Ded</th><th style={{ ...TH, background: "#ECFDF5" }}>Neto</th><th style={TH}>Notas</th>
-            </tr></thead>
-            <tbody>{rows.map((l, i) => { const c = calc(l); return <tr key={l.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
-              <td style={TD}>{i + 1}</td>
-              <td style={{ ...TD, fontWeight: 600 }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span>{l.name}</span>
-                  {(() => { const emp = ae.find(x => x.id === l.eid) || ce.find(x => x.id === l.eid); return emp ? <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 9, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5 }}>{genEmpCode(emp.fullName, emp.dni)}</span> : null; })()}
-                </div>
-              </td>
-              <td style={TD}><Badge color={cc.color}>{l.proj || "—"}</Badge></td>
-              <td style={TD}>{fmtL(l.sb)}</td>
-              <td style={TD}>{fmtL(l.sd)}</td>
-              <td title={(l.diasPresenteEfectivo || 0) !== l.diasPresente ? `${l.diasPresente} dias marcados · ${(l.diasPresenteEfectivo || 0).toFixed(2)} efectivos (proporcional por hora de entrada)` : ""} style={{ ...TD, color: "#059669", fontWeight: 600 }}>{(l.diasPresenteEfectivo || 0) !== l.diasPresente && l.diasPresenteEfectivo != null ? l.diasPresenteEfectivo.toFixed(2) : l.diasPresente}</td>
-              <td style={{ ...TD, color: l.diasNSP > 0 ? "#DC2626" : "#94A3B8", fontWeight: l.diasNSP > 0 ? 700 : 400 }}>{l.diasNSP}</td>
-              <td style={{ ...TD, color: "#DC2626" }}>{l.descuentoNSP > 0 ? fmtL(l.descuentoNSP) : ""}</td>
-              <td style={TD}>{fmtL(l.so)}</td>
-              <td title={(l.domTrabTriple || 0) > 0 ? `${l.domTrab || 0} DT + ${l.domTrabTriple} DT2 (triple)` : `${l.domTrab || 0} DT`} style={{ ...TD, color: "#7C3AED", fontWeight: 700, background: ((l.domTrab || 0) + (l.domTrabTriple || 0)) > 0 ? "#F3E8FF" : "transparent" }}>{((l.domTrab || 0) + (l.domTrabTriple || 0)) || ""}</td>
-              <td style={{ ...TD, color: "#7C3AED", fontWeight: 600 }}>{(l.bonoDomingo || 0) > 0 ? fmtL(l.bonoDomingo) : ""}</td>
-              <td style={{ ...TD, color: "#9A3412", fontWeight: 700, background: (l.ferTrab || 0) > 0 ? "#FED7AA" : "transparent" }}>{l.ferTrab || ""}</td>
-              <td style={{ ...TD, color: "#9A3412", fontWeight: 600 }}>{(l.bonoFeriado || 0) > 0 ? fmtL(l.bonoFeriado) : ""}</td>
-              <td style={TD}><input type="number" value={l.bq} onChange={e => ul(l.id, "bq", +e.target.value)} style={INP} /></td>
-              <td style={TD}><input type="number" value={l.o1} onChange={e => ul(l.id, "o1", +e.target.value)} style={INP} /></td>
-              {is2Q && <>
-                <td style={TD}><input type="number" value={l.isr} onChange={e => ul(l.id, "isr", +e.target.value)} style={INP} /></td>
-                <td style={TD}>{fmtL(l.ihss)}</td>
-                <td style={TD}>{l.rap > 0 ? fmtL(l.rap) : ""}</td>
-                <td style={TD}><input type="number" value={l.coop} onChange={e => ul(l.id, "coop", +e.target.value)} style={INP} /></td>
-              </>}
-              <td style={TD}><input type="number" value={l.otros} onChange={e => ul(l.id, "otros", +e.target.value)} style={INP} /></td>
-              <td style={{ ...TD, fontWeight: 600, color: "#DC2626" }}>{fmtL(c.tDed)}</td>
-              <td style={{ ...TD, fontWeight: 700, color: "#059669" }}>{fmtL(c.neto)}</td>
-              <td style={TD}><input value={l.nota} onChange={e => ul(l.id, "nota", e.target.value)} style={{ ...INP, width: 100, textAlign: "left" }} placeholder="..." /></td>
-            </tr>; })}</tbody>
-            <tfoot><tr style={{ background: "#F1F5F9", fontWeight: 700, fontSize: 11 }}>
-              <td colSpan={3} style={{ padding: "8px 10px", textAlign: "right" }}>TOTALES:</td>
-              <td style={{ padding: "8px 10px" }}>{fmtL(sums.sb)}</td><td style={{ padding: "8px 10px" }}></td>
-              <td style={{ padding: "8px 10px", color: "#059669" }}>{sums.dias}</td>
-              <td style={{ padding: "8px 10px", color: "#DC2626" }}>{sums.nsp}</td>
-              <td style={{ padding: "8px 10px", color: "#DC2626" }}>{sums.dNSP > 0 ? fmtL(sums.dNSP) : ""}</td>
-              <td style={{ padding: "8px 10px" }}>{fmtL(sums.so)}</td>
-              <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.dom || ""}</td>
-              <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.bdom > 0 ? fmtL(sums.bdom) : ""}</td>
-              <td style={{ padding: "8px 10px", color: "#9A3412" }}>{sums.fer || ""}</td>
-              <td style={{ padding: "8px 10px", color: "#9A3412" }}>{sums.bfer > 0 ? fmtL(sums.bfer) : ""}</td>
-              <td style={{ padding: "8px 10px" }}>{fmtL(sums.bq)}</td>
-              <td style={{ padding: "8px 10px" }}>{fmtL(sums.oi)}</td>
-              {is2Q && <>
-                <td style={{ padding: "8px 10px" }}>{fmtL(sums.isr)}</td>
-                <td style={{ padding: "8px 10px" }}>{fmtL(sums.ihss)}</td>
-                <td style={{ padding: "8px 10px" }}>{fmtL(sums.rap)}</td>
-                <td style={{ padding: "8px 10px" }}>{fmtL(sums.coop)}</td>
-              </>}
-              <td style={{ padding: "8px 10px" }}>{fmtL(sums.otros)}</td>
-              <td style={{ padding: "8px 10px", color: "#DC2626" }}>{fmtL(sums.tDed)}</td>
-              <td style={{ padding: "8px 10px", color: "#059669", fontSize: 13 }}>{fmtL(sums.neto)}</td>
-              <td></td>
-            </tr></tfoot>
-          </table>
-        </div>
-      </div>;
-    };
-
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 14, alignItems: "end" }}>
-        <Input label="Periodo" type="month" value={per} onChange={e => setPer(e.target.value)} disabled={chk} />
-        <Select label="Quincena" options={[{ value: "1Q", label: "1Q (1-15)" }, { value: "2Q", label: "2Q (16-31)" }]} value={q} onChange={e => setQ(e.target.value)} disabled={chk} />
-        <Btn onClick={generate} disabled={gen || chk}>{chk ? "Verificando tardanzas…" : "Generar"}</Btn>
-      </div>
-      {gen && <>
-        {!hasAttendance && <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 10, padding: 12, fontSize: 13, color: "#92400E" }}>⚠️ No hay asistencia registrada para {q} {per}. Registre asistencia primero.</div>}
-
-        <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 10, padding: 14, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <span style={{ fontWeight: 700, color: "#065F46", fontSize: 16 }}>Total Neto: {fmtL(totalNeto)}</span>
-          <span style={{ fontSize: 13, color: "#047857" }}>{q} {per} — {cc.name} — {lines.length} empleados {is2Q && "| Deducciones 2Q"}</span>
-        </div>
-
-        {Object.keys(projCosts).length > 0 && <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {Object.entries(projCosts).sort((a, b) => b[1].neto - a[1].neto).map(([p, d]) => {
-            const pj = hrProjects.find(x => x.short === p);
-            return <div key={p} style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 10, padding: "10px 16px", minWidth: 150 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: cc.color }}>{p}</div>
-              {pj && <div style={{ fontSize: 9, color: "#94A3B8" }}>[{pj.code}]</div>}
-              <div style={{ fontSize: 16, fontWeight: 700, color: "#059669" }}>{fmtL(d.neto)}</div>
-              <div style={{ fontSize: 11, color: "#64748b" }}>{d.count} personas</div>
-            </div>;
-          })}
-        </div>}
-
-        {renderTable(permLines, "PERMANENTES", "#2563EB")}
-        {renderTable(tempLines, "TEMPORALES", "#D97706")}
-        {renderTable(honLines, "HONORARIOS", "#7C3AED")}
-
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Btn small variant="ghost" onClick={() => { const all = lines.map(l => ({...l, ...calc(l)})); exportCSV(all, `Planilla_${cc.name.replace(/ /g,"_")}_${q}_${per}.csv`); }}>📊 Descargar CSV</Btn>
-            <Btn small variant="ghost" onClick={() => { const all = lines.map(l => ({...l, ...calc(l)})); exportPrint(all, cc.name.toUpperCase(), `Planilla — ${q === "1Q" ? "Primera" : "Segunda"} Quincena, ${per}`, totalNeto); }}>🖨️ Imprimir/PDF</Btn>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-            <Btn variant="success" onClick={() => { sP([...pays, { id: uid(), company: co, periodo: per, quincena: q, date: new Date().toISOString(), total: +totalNeto.toFixed(2), count: lines.length, lines: lines.map(l => ({ ...l, ...calc(l) })) }]); setModal(null); }}>Guardar planilla</Btn>
-          </div>
-        </div>
-      </>}
     </div>;
   };
 
@@ -4966,10 +4543,429 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       </div>} />;
   };
 
-  const renderPayroll = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-    <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cp.length} planillas</span><Btn onClick={() => setModal({ t: "pn" })}>+ Nueva planilla</Btn></div>
-    <Table columns={[{ key: "p", label: "Periodo", render: r => <b>{r.quincena} {r.periodo}</b> }, { key: "count", label: "Empleados" }, { key: "total", label: "Total neto", render: r => <b style={{ color: "#059669" }}>{fmtL(r.total)}</b> }, { key: "date", label: "Fecha", render: r => fmt(r.date) }]} data={cp.slice().reverse()} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "pd", d: r })}>Detalle</Btn><Btn small variant="danger" onClick={() => sP(pays.filter(p => p.id !== r.id))}>×</Btn></div>} />
-  </div>;
+  // ═══════════════════════════════════════════════════════════════════════
+  // PLANILLA (16-oct-2026): la Lic. Carolina la genera ACÁ, ya no en Excel.
+  // La asistencia dicta los días (NSP, feriados, domingos, llegadas tarde
+  // denegadas), las deducciones de ley salen solas en la 2Q, las horas
+  // extras de la quincena ANTERIOR entran como ingreso (quincena vencida),
+  // y cada línea admite ingresos / deducciones extra con su concepto.
+  // Lógica pura en planilla-calc.js (probada); PDF y Excel en planilla-export.
+  // ═══════════════════════════════════════════════════════════════════════
+  const puedePlanilla = userRole === "admin" || userRole === "tesoreria";
+  const planillasEmpresa = cp.slice().sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`));
+  // Sugerencia: la más RECIENTE entre "la que sigue a la última planilla" y
+  // "la última quincena con asistencia registrada" — así la primera vez
+  // propone la asistencia más nueva (1Q oct) y después va de corrido, sin
+  // volver a quincenas viejas que ya se pagaron por Excel.
+  const quincenaSugerida = () => {
+    const clave = (q) => `${q.periodo}-${q.quincena}`;
+    const candidatas = [];
+    const ultima = planillasEmpresa[0];
+    if (ultima) candidatas.push(quincenaSiguiente(ultima.periodo, ultima.quincena));
+    const asist = ca.slice().sort((x, y) => clave(y).localeCompare(clave(x)))[0];
+    if (asist) candidatas.push({ periodo: asist.periodo, quincena: asist.quincena });
+    if (!candidatas.length) { const hoy = hoyTegus(); return { periodo: hoy.slice(0, 7), quincena: Number(hoy.slice(8, 10)) <= 15 ? "1Q" : "2Q" }; }
+    return candidatas.sort((x, y) => clave(y).localeCompare(clave(x)))[0];
+  };
+
+  // Genera las líneas desde la asistencia + HE de la quincena anterior.
+  const generarLineasPlanilla = async (periodo, quincena) => {
+    const q = diasDeQuincena(periodo, quincena);
+    if (!q) return null;
+    const attSheet = ca.find(a => a.periodo === periodo && a.quincena === quincena) || null;
+    const cuad = cq.find(x => x.periodo === periodo && x.quincena === quincena) || null;
+    const prev = quincenaAnteriorPl(periodo, quincena);
+    const heSheet = che.find(h => h.periodo === prev.periodo && h.quincena === prev.quincena) || null;
+    const ovr = Object.fromEntries(Object.entries(attSheet?.projOverrides || {}).map(([k, v]) => [k, resolveShortHR(v)]));
+    const lines = ce.filter(e => entraEnPlanilla(e, periodo, quincena)).map(emp => {
+      const baseProj = resolveShortHR(cuad?.assignments?.[emp.id] || emp.project || "") || "";
+      const asistencia = asistenciaDe(emp, periodo, quincena, { grid: attSheet?.grid, arrivalTimes: attSheet?.arrivalTimes, projOverrides: ovr, baseProj, esFeriado: (d) => esFeriadoQuincena(periodo, d), fueraPorBaja, horaLimite: horaLimiteH });
+      asistencia.baseProj = baseProj;
+      const he = horasExtrasDe(heSheet, emp.id, heHoraBase(emp));
+      return armarLinea({ emp, periodo, quincena, asistencia, he, bonosExtra: monthlyBonusFor(emp.id, q.inicio, q.fin) });
+    });
+    const orden = { permanent: 0, temporary: 1, honorarios: 2 };
+    lines.sort((a, b) => (orden[a.ct] ?? 9) - (orden[b.ct] ?? 9) || String(a.name).localeCompare(String(b.name), "es", { sensitivity: "base" }));
+    // Llegadas tarde SIN DECIDIR de esta quincena (se pagan día completo).
+    let tardesPend = [];
+    try {
+      const [mks, tds] = await Promise.all([store.getCloud(gcMarkKey(periodo, quincena)), store.getCloud("gc-tardies")]);
+      const decididas = new Set((Array.isArray(tds) ? tds : []).filter(t => t && (t.estado === "aprobada" || t.estado === "denegada")).map(t => t.markId));
+      tardesPend = (Array.isArray(mks) ? mks : []).filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.tarde && !decididas.has(mk.id)).map(mk => `${mk.empNombre || "?"} · ${fmt(mk.fecha)}`);
+    } catch { tardesPend = null; }
+    return { lines, heDe: heSheet ? { periodo: prev.periodo, quincena: prev.quincena } : null, heFaltante: !heSheet ? prev : null, sinAsistencia: !attSheet, sinCuadrilla: !cuad, tardesPend };
+  };
+
+  const nuevaPlanilla = async (periodo, quincena) => {
+    const existe = cp.find(p => p.periodo === periodo && p.quincena === quincena);
+    if (existe) { abrirPlanilla(existe); return; }
+    setPayBusy(true);
+    try {
+      const g = await generarLineasPlanilla(periodo, quincena);
+      if (!g) return;
+      setPayDraft({ id: uid(), company: co, periodo, quincena, estado: "borrador", date: new Date().toISOString(), createdBy: userName, version: 3, ...g });
+      setPayAbiertos({}); setPayQ(""); setPayGrupo("todos"); setPayVista("editor");
+    } finally { setPayBusy(false); }
+  };
+  const abrirPlanilla = (p) => {
+    setPayDraft({ ...p, lines: (p.lines || []).map(l => ({ ...l, extras: Array.isArray(l.extras) ? l.extras : [] })) });
+    setPayAbiertos({}); setPayQ(""); setPayGrupo("todos"); setPayVista("editor");
+  };
+  // Vuelve a leer asistencia y HE, conservando lo que se tocó a mano.
+  const regenerarPlanilla = async () => {
+    const d = payDraft; if (!d) return;
+    if (!confirm("¿Volver a leer la asistencia y las horas extras?\n\nSe conservan los ingresos y deducciones extra, el ISR, las notas y el método de pago que ya pusiste.")) return;
+    setPayBusy(true);
+    try {
+      const g = await generarLineasPlanilla(d.periodo, d.quincena);
+      if (!g) return;
+      const prev = Object.fromEntries((d.lines || []).map(l => [l.eid, l]));
+      g.lines = g.lines.map(l => { const p = prev[l.eid]; return p ? { ...l, extras: p.extras || [], nota: p.nota || "", isr: l.aplicaLey ? (p.isr ?? l.isr) : l.isr, metodoPago: p.metodoPago || l.metodoPago } : l; });
+      setPayDraft({ ...d, ...g });
+    } finally { setPayBusy(false); }
+  };
+  const upLinea = (id, fn) => setPayDraft(d => ({ ...d, lines: d.lines.map(l => l.id === id ? fn(l) : l) }));
+
+  // Guardado robusto: getCloud → reemplazar por id → set → verify.
+  const guardarPlanilla = async (estado) => {
+    const d = payDraft; if (!d) return false;
+    const r = resumenPlanilla(d.lines);
+    const at = new Date().toISOString();
+    const rec = { ...d, estado, lines: d.lines.map(lineaParaGuardar), total: r.neto, count: d.lines.length, updatedAt: at, updatedBy: userName, ...(estado === "publicada" && d.estado !== "publicada" ? { publicadaAt: at, publicadaPor: userName } : {}) };
+    delete rec.tardesPend;
+    setPayBusy(true);
+    try {
+      let cloud; try { cloud = await store.getCloud("hr-pays"); } catch { cloud = null; }
+      if (!Array.isArray(cloud)) { alert("No se pudo leer la nube. Revisá la conexión y volvé a intentar; la planilla NO se guardó."); return false; }
+      const ok = await store.set("hr-pays", [...cloud.filter(p => p.id !== rec.id), rec]);
+      if (!ok) { alert("No se pudo guardar en la nube. Volvé a intentar."); return false; }
+      let ver; try { ver = await store.getCloud("hr-pays"); } catch { ver = null; }
+      if (!Array.isArray(ver) || !ver.some(p => p.id === rec.id && p.updatedAt === at)) { alert("La nube no confirmó el guardado. Volvé a intentar antes de cerrar."); return false; }
+      setPays(ver);
+      setPayDraft(rec);
+      await recordarEnFichas(rec.lines);
+      return true;
+    } finally { setPayBusy(false); }
+  };
+  // Lo que Carolina ajusta en la planilla y se repite cada mes queda en la
+  // ficha: ISR del contador, método de pago y si el honorario es mensual.
+  const recordarEnFichas = async (lines) => {
+    const cambios = [];
+    lines.forEach(l => {
+      const e = emps.find(x => x.id === l.eid); if (!e) return;
+      const c = {};
+      if (l.aplicaLey && l.ct !== "honorarios" && Number(l.isr || 0) !== Number(e.isrMensual || 0)) c.isrMensual = Number(l.isr || 0);
+      if ((l.metodoPago || "transferencia") !== (e.metodoPago || "transferencia")) c.metodoPago = l.metodoPago || "transferencia";
+      if (l.ct === "honorarios" && (l.honorariosPago || "quincenal") !== (e.honorariosPago || "quincenal")) c.honorariosPago = l.honorariosPago || "quincenal";
+      if (Object.keys(c).length) cambios.push([e.id, c]);
+    });
+    if (!cambios.length) return;
+    try {
+      const cloud = await store.getCloud("hr-emps5");
+      if (!Array.isArray(cloud)) return;
+      const map = Object.fromEntries(cambios);
+      const next = cloud.map(e => map[e.id] ? { ...e, ...map[e.id] } : e);
+      const ok = await store.set("hr-emps5", next);
+      if (ok) setEmps(next);
+    } catch { /* best effort: la planilla ya quedó guardada */ }
+  };
+  const borrarPlanilla = async (p) => {
+    if (!confirm(`¿Eliminar la planilla ${etiquetaCorta(p.periodo, p.quincena)} de ${cc.name}?\n\nEsto no se puede deshacer.`)) return;
+    let cloud; try { cloud = await store.getCloud("hr-pays"); } catch { cloud = null; }
+    if (!Array.isArray(cloud)) return alert("No se pudo leer la nube. Volvé a intentar.");
+    const ok = await store.set("hr-pays", cloud.filter(x => x.id !== p.id));
+    if (!ok) return alert("No se pudo borrar en la nube.");
+    setPays(cloud.filter(x => x.id !== p.id));
+    if (payDraft?.id === p.id) { setPayDraft(null); setPayVista("lista"); }
+  };
+  const descargarPlanilla = async (tipo) => {
+    const d = payDraft; if (!d) return;
+    setPayBusy(true);
+    try {
+      const args = { empresa: cc.name, periodo: d.periodo, quincena: d.quincena, lines: d.lines, meta: { estado: d.estado, generadaPor: d.updatedBy || d.createdBy || userName, elaboradoPor: userName, heDe: d.heDe } };
+      if (tipo === "pdf") await exportarPlanillaPDF(args); else await exportarPlanillaExcel(args);
+    } catch (e) { alert(`No se pudo generar el ${tipo === "pdf" ? "PDF" : "Excel"}: ${e?.message || e}`); }
+    finally { setPayBusy(false); }
+  };
+
+  const PAY_IN = { padding: "8px 10px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 10, font: "700 13px/1.2 var(--sans)", color: CHARCOAL, background: "rgba(255,255,255,.85)", outline: "none", width: 118, textAlign: "right", boxSizing: "border-box" };
+  const chipPay = (txt, color = "#5C5853", bg = "rgba(44,42,40,.06)") => <span key={txt} style={{ padding: "4px 9px", borderRadius: 999, background: bg, color, font: "700 11px/1 var(--sans)", whiteSpace: "nowrap" }}>{txt}</span>;
+  const estadoChip = (p) => p.estado === "publicada" ? chipPay("Publicada", "#3E8E5A", "rgba(62,142,90,.10)") : chipPay("Borrador", ORANGE_DARK, "rgba(232,118,45,.12)");
+
+  const renderPayroll = () => payVista === "editor" && payDraft ? renderPlanillaEditor() : renderPlanillaLista();
+
+  const renderPlanillaLista = () => {
+    const sug = quincenaSugerida();
+    const porAnio = {};
+    planillasEmpresa.forEach(p => { const y = String(p.periodo).slice(0, 4); (porAnio[y] = porAnio[y] || []).push(p); });
+    const asistSug = ca.some(a => a.periodo === sug.periodo && a.quincena === sug.quincena);
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {puedePlanilla && <div className="gt-vidrio gt-sube" style={{ padding: isMobile ? 16 : "18px 22px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="4" y="3" width="16" height="18" rx="3" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>
+        </div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>Siguiente: {nombreQuincena(sug.periodo, sug.quincena)}</div>
+          <div style={{ font: "500 12.5px/1.4 var(--sans)", color: "#6E6862", marginTop: 3 }}>{asistSug ? "La asistencia ya está registrada." : "Todavía no hay asistencia registrada: se pagaría completa, sin NSP ni feriados."} Horas extras de {etiquetaCorta(quincenaAnteriorPl(sug.periodo, sug.quincena).periodo, quincenaAnteriorPl(sug.periodo, sug.quincena).quincena)}.</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input type="month" value={payPer || sug.periodo} onChange={e => setPayPer(e.target.value)} style={{ ...PAY_IN, width: 150, textAlign: "left", fontWeight: 600 }} aria-label="Otro mes" />
+          {pista([["1Q", "1Q"], ["2Q", "2Q"]].map(([k, l]) => ({ k, label: l, on: (payQui || sug.quincena) === k, onClick: () => setPayQui(k) })))}
+          <button className="gt-btn gt-btn-primario" disabled={payBusy} onClick={() => nuevaPlanilla(payPer || sug.periodo, payQui || sug.quincena)} style={{ minHeight: 40, padding: "10px 18px", fontSize: 13.5 }}>{payBusy ? "Generando…" : (payPer || payQui) && ((payPer || sug.periodo) !== sug.periodo || (payQui || sug.quincena) !== sug.quincena) ? `Generar ${etiquetaCorta(payPer || sug.periodo, payQui || sug.quincena)}` : "Generar planilla"}</button>
+        </div>
+      </div>}
+      {planillasEmpresa.length === 0 && <div className="gt-vidrio" style={{ padding: 34, textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>Todavía no hay planillas generadas para {cc.name}.</div>}
+      {Object.keys(porAnio).sort((a, b) => b.localeCompare(a)).map(y => <div key={y}>
+        <div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL, margin: "6px 2px 10px" }}>{y}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {porAnio[y].map((p, i) => <div key={p.id} role="button" tabIndex={0} className="gt-vidrio gt-vidrio-hover gt-sube" onClick={() => abrirPlanilla(p)} onKeyDown={(ev) => { if (ev.key === "Enter") abrirPlanilla(p); }}
+            style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) auto" : "minmax(0,1.4fr) 120px 110px 150px minmax(0,1fr) auto", alignItems: "center", gap: 14, padding: isMobile ? "12px 14px" : "14px 20px", cursor: "pointer", borderRadius: 18, animationDelay: `${i * 25}ms` }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "700 14.5px/1.2 var(--sans)", color: CHARCOAL }}>{nombreQuincena(p.periodo, p.quincena)}</div>
+              <div style={{ font: "500 12px/1.3 var(--sans)", color: "#6E6862", marginTop: 3 }}>{rangoQuincena(p.periodo, p.quincena)}{isMobile ? ` · ${p.count || (p.lines || []).length} personas` : ""}</div>
+            </div>
+            {!isMobile && <div>{estadoChip(p)}</div>}
+            {!isMobile && <div style={{ font: "600 12.5px/1.2 var(--sans)", color: "#5C5853" }}>{p.count || (p.lines || []).length} personas</div>}
+            {!isMobile && <div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>{fmtL(p.total)}</div>}
+            {!isMobile && <div style={{ font: "500 12px/1.3 var(--sans)", color: "#A39C92", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.estado === "publicada" && p.publicadaAt ? `Publicada el ${fmt(p.publicadaAt)}${p.publicadaPor ? ` · ${p.publicadaPor}` : ""}` : `Generada el ${fmt(p.updatedAt || p.date)}${p.updatedBy || p.createdBy ? ` · ${p.updatedBy || p.createdBy}` : ""}`}</div>}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {isMobile && <span style={{ font: "800 14px/1 var(--display)", color: CHARCOAL }}>{fmtL(p.total)}</span>}
+              {userRole === "admin" && <span role="button" aria-label="Eliminar planilla" onClick={(ev) => { ev.stopPropagation(); borrarPlanilla(p); }} style={{ color: "#A39C92", font: "600 12px/1 var(--sans)", cursor: "pointer", padding: 6 }}>Eliminar</span>}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A39C92" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="m9 6 6 6-6 6" /></svg>
+            </div>
+          </div>)}
+        </div>
+      </div>)}
+    </div>;
+  };
+
+  const renderPlanillaEditor = () => {
+    const d = payDraft;
+    const res = resumenPlanilla(d.lines);
+    const ley = d.quincena === "2Q";
+    const editable = puedePlanilla;
+    const q = payQ.trim().toLowerCase();
+    const visibles = d.lines.filter(l => (payGrupo === "todos" || l.ct === payGrupo) && (!q || `${l.name} ${l.pos} ${l.dni}`.toLowerCase().includes(q)));
+    const todosAbiertos = visibles.length > 0 && visibles.every(l => payAbiertos[l.id]);
+    const toggle = (id) => setPayAbiertos(p => { const n = { ...p }; if (n[id]) delete n[id]; else n[id] = true; return n; });
+    const tile = (lab, val, destacar) => <div className="gt-vidrio" style={{ padding: "12px 16px", minWidth: 0, background: destacar ? "linear-gradient(165deg, rgba(232,118,45,.95), rgba(199,95,31,.95))" : undefined, color: destacar ? "#fff" : CHARCOAL }}>
+      <div className="gt-label" style={{ color: destacar ? "rgba(255,255,255,.8)" : "#6E6862", fontSize: 9 }}>{lab}</div>
+      <div style={{ font: `800 ${isMobile ? 17 : 20}px/1 var(--display)`, marginTop: 9, letterSpacing: "-.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{val}</div>
+    </div>;
+    const aviso = (txt, tono = "gris", onClick) => <span role={onClick ? "button" : undefined} onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "7px 12px", borderRadius: 999, background: tono === "naranja" ? "rgba(232,118,45,.12)" : tono === "verde" ? "rgba(62,142,90,.10)" : "rgba(44,42,40,.06)", color: tono === "naranja" ? ORANGE_DARK : tono === "verde" ? "#3E8E5A" : "#5C5853", font: "600 12px/1.2 var(--sans)", cursor: onClick ? "pointer" : "default" }}>
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: "currentColor", flexShrink: 0 }} />{txt}{onClick ? " →" : ""}
+    </span>;
+    const dato = (l, v, { color, bold = true } = {}) => <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid rgba(44,42,40,.06)" }}>
+      <span style={{ font: "500 12.5px/1.3 var(--sans)", color: "#6E6862", minWidth: 0 }}>{l}</span>
+      <span style={{ font: `${bold ? 700 : 500} 13px/1.3 var(--sans)`, color: color || CHARCOAL, whiteSpace: "nowrap" }}>{v}</span>
+    </div>;
+    const datoInput = (l, value, onChange, { sub } = {}) => <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "5px 0", borderBottom: "1px solid rgba(44,42,40,.06)" }}>
+      <span style={{ font: "500 12.5px/1.3 var(--sans)", color: "#6E6862", minWidth: 0 }}>{l}{sub && <span style={{ display: "block", font: "400 11px/1.3 var(--sans)", color: "#A39C92" }}>{sub}</span>}</span>
+      {editable ? <input type="number" step="0.01" value={value} onChange={e => onChange(e.target.value === "" ? 0 : Number(e.target.value))} style={PAY_IN} /> : <span style={{ font: "700 13px/1.3 var(--sans)", color: CHARCOAL }}>{fmtL(value)}</span>}
+    </div>;
+    const extrasDe = (l, tipo) => (l.extras || []).filter(x => x.tipo === tipo);
+    const nuevoExtra = (l, tipo) => {
+      const n = payNuevo && payNuevo.id === l.id && payNuevo.tipo === tipo ? payNuevo : null;
+      if (!editable) return null;
+      if (!n) return <span role="button" onClick={() => setPayNuevo({ id: l.id, tipo, concepto: "", monto: "" })} style={{ display: "inline-block", marginTop: 8, font: "700 12px/1 var(--sans)", color: ORANGE_DARK, cursor: "pointer" }}>+ Agregar {tipo === "ingreso" ? "ingreso" : "deducción"}</span>;
+      const ok = () => { const m = Number(n.monto); if (!n.concepto.trim() || !(m > 0)) return alert("Poné el concepto y un monto mayor que 0."); upLinea(l.id, x => ({ ...x, extras: [...(x.extras || []), { id: uid(), tipo, concepto: n.concepto.trim(), monto: Math.round(m * 100) / 100 }] })); setPayNuevo(null); };
+      return <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <input autoFocus placeholder={tipo === "ingreso" ? "Concepto · ej. Bono foráneo" : "Concepto · ej. Préstamo"} value={n.concepto} onChange={e => setPayNuevo({ ...n, concepto: e.target.value })} onKeyDown={e => { if (e.key === "Enter") ok(); if (e.key === "Escape") setPayNuevo(null); }} style={{ ...PAY_IN, textAlign: "left", fontWeight: 500, flex: "1 1 160px", width: "auto" }} />
+        <input type="number" step="0.01" placeholder="Monto" value={n.monto} onChange={e => setPayNuevo({ ...n, monto: e.target.value })} onKeyDown={e => { if (e.key === "Enter") ok(); if (e.key === "Escape") setPayNuevo(null); }} style={{ ...PAY_IN, width: 110 }} />
+        <button onClick={ok} style={{ minHeight: 36, padding: "8px 14px", borderRadius: 999, border: "none", background: ORANGE, color: "#fff", font: "700 12px/1 var(--sans)", cursor: "pointer" }}>Agregar</button>
+        <button onClick={() => setPayNuevo(null)} style={{ minHeight: 36, padding: "8px 10px", borderRadius: 999, border: "none", background: "transparent", color: "#6E6862", font: "600 12px/1 var(--sans)", cursor: "pointer" }}>Cancelar</button>
+      </div>;
+    };
+    const quitarExtra = (l, id) => upLinea(l.id, x => ({ ...x, extras: (x.extras || []).filter(e => e.id !== id) }));
+
+    const fila = (l, i) => {
+      const t = totalesLinea(l);
+      const abierto = !!payAbiertos[l.id];
+      const e = emps.find(x => x.id === l.eid);
+      const foto = e?.photo?.fileId ? photoCache[e.photo.fileId] : null;
+      const chips = [];
+      if (l.sinAsistencia) chips.push(chipPay("Sin asistencia", ORANGE_DARK, "rgba(232,118,45,.12)"));
+      if (l.diasNSP) chips.push(chipPay(`${l.diasNSP} NSP`, "#B03024", "rgba(192,57,43,.09)"));
+      if (l.tardes) chips.push(chipPay(`${l.tardes} tarde`, ORANGE_DARK, "rgba(232,118,45,.12)"));
+      if (l.ferTrab) chips.push(chipPay(`${l.ferTrab} feriado${l.ferTrab > 1 ? "s" : ""}`));
+      if (l.domTrab + (l.domTrabTriple || 0)) chips.push(chipPay(`${l.domTrab + (l.domTrabTriple || 0)} domingo${l.domTrab + (l.domTrabTriple || 0) > 1 ? "s" : ""}`));
+      if (l.he?.hrs) chips.push(chipPay(`HE ${l.he.hrs} h`, "#3E8E5A", "rgba(62,142,90,.10)"));
+      if (l.diasFueraRango) chips.push(chipPay(`${l.diasEfectivos} de ${l.totalDays} días`));
+      if (l.ct === "honorarios" && l.honorariosPago === "mensual") chips.push(chipPay("Mensual"));
+      if ((l.extras || []).length) chips.push(chipPay(`${(l.extras || []).length} extra${(l.extras || []).length > 1 ? "s" : ""}`, ORANGE_DARK, "rgba(232,118,45,.12)"));
+      const dias = diasMostrados(l);
+      return <div key={l.id} className="gt-vidrio gt-sube" style={{ borderRadius: 18, overflow: "hidden", animationDelay: `${Math.min(i, 14) * 20}ms` }}>
+        <div role="button" tabIndex={0} aria-expanded={abierto} onClick={() => toggle(l.id)} onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(l.id); } }}
+          style={{ display: "grid", gridTemplateColumns: isMobile ? "36px minmax(0,1fr) auto" : "36px minmax(0,1.7fr) 70px 120px 120px 120px 130px 24px", alignItems: "center", gap: isMobile ? 10 : 14, padding: isMobile ? "10px 12px" : "11px 18px", cursor: "pointer" }}>
+          <EmpAvatar name={l.name} dataUrl={foto} size={36} borderRadius={11} suave />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ font: "700 14px/1.25 var(--sans)", color: CHARCOAL }}>{l.name}</span>
+              {!isMobile && chips}
+            </div>
+            <div style={{ font: "500 12px/1.3 var(--sans)", color: "#6E6862", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.pos || "Sin cargo"}{l.proj ? ` · ${l.proj}` : ""}</div>
+          </div>
+          {!isMobile && <div style={{ textAlign: "right" }}><div style={{ font: "700 13.5px/1 var(--sans)", color: CHARCOAL }}>{dias}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>días</div></div>}
+          {!isMobile && <div style={{ textAlign: "right" }}><div style={{ font: "700 13.5px/1 var(--sans)", color: CHARCOAL }}>{fmtL(t.ordinario)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>ordinario</div></div>}
+          {!isMobile && <div style={{ textAlign: "right" }}><div style={{ font: "700 13.5px/1 var(--sans)", color: t.ingresos ? "#3E8E5A" : "#A39C92" }}>{t.ingresos ? `+${fmtL(t.ingresos)}` : "—"}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>ingresos</div></div>}
+          {!isMobile && <div style={{ textAlign: "right" }}><div style={{ font: "700 13.5px/1 var(--sans)", color: t.deducciones ? "#B03024" : "#A39C92" }}>{t.deducciones ? `−${fmtL(t.deducciones)}` : "—"}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>deducciones</div></div>}
+          <div style={{ textAlign: "right" }}><div style={{ font: `800 ${isMobile ? 14 : 15.5}px/1 var(--display)`, color: CHARCOAL }}>{fmtL(t.neto)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>neto</div></div>
+          {!isMobile && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A39C92" strokeWidth="2.2" strokeLinecap="round" style={{ transform: abierto ? "rotate(180deg)" : "none", transition: "transform 300ms var(--curva)" }} aria-hidden><path d="m6 9 6 6 6-6" /></svg>}
+        </div>
+        {abierto && <div className="gt-aparece" style={{ borderTop: "1px solid rgba(44,42,40,.07)", padding: isMobile ? "12px 14px 16px" : "14px 18px 18px 68px" }}>
+          {isMobile && chips.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>{chips}</div>}
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr) minmax(0,.9fr)", gap: isMobile ? 16 : 24 }}>
+            <div>
+              <div className="gt-label" style={{ color: "#3E8E5A", fontSize: 9, marginBottom: 4 }}>Ingresos</div>
+              {dato(l.ct === "honorarios" ? "Honorarios" : "Salario ordinario", fmtL(t.ordinario))}
+              {datoInput("Bonificación", l.bq, v => upLinea(l.id, x => ({ ...x, bq: v })), { sub: `${fmtL(l.bn)} al mes` })}
+              {l.bonoFeriado > 0 && dato(`Feriados trabajados ×${l.ferTrab} (dos diarios c/u)`, fmtL(l.bonoFeriado))}
+              {l.bonoDomingo > 0 && dato(`Domingos trabajados ×${l.domTrab}${l.domTrabTriple ? ` + ${l.domTrabTriple} triple` : ""}`, fmtL(l.bonoDomingo))}
+              {l.he?.monto > 0 && dato(`Horas extras ${etiquetaCorta(l.he.periodo, l.he.quincena)} · ${l.he.hrs} h`, fmtL(l.he.monto))}
+              {extrasDe(l, "ingreso").map(x => <div key={x.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid rgba(44,42,40,.06)" }}>
+                <span style={{ font: "500 12.5px/1.3 var(--sans)", color: ORANGE_DARK, minWidth: 0 }}>{x.concepto}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><b style={{ font: "700 13px/1.3 var(--sans)", color: CHARCOAL }}>{fmtL(x.monto)}</b>{editable && <span role="button" aria-label="Quitar" onClick={() => quitarExtra(l, x.id)} style={{ color: "#A39C92", cursor: "pointer", fontSize: 14 }}>✕</span>}</span>
+              </div>)}
+              {nuevoExtra(l, "ingreso")}
+            </div>
+            <div>
+              <div className="gt-label" style={{ color: "#B03024", fontSize: 9, marginBottom: 4 }}>Deducciones</div>
+              {l.descuentoNSP > 0 && dato(`Inasistencias · ${l.diasNSP} NSP`, `−${fmtL(l.descuentoNSP)}`, { color: "#B03024" })}
+              {l.descuentoHoras > 0 && dato(`Llegadas tarde denegadas · ${l.horasTarde} h`, `−${fmtL(l.descuentoHoras)}`, { color: "#B03024" })}
+              {l.ct === "honorarios"
+                ? datoInput("ISR 12.5 %", l.isr, v => upLinea(l.id, x => ({ ...x, isr: v })), { sub: l.honorariosPago === "mensual" ? "mensual: no se retiene" : "sobre lo que cobra" })
+                : ley
+                  ? <>
+                    {datoInput("ISR", l.isr, v => upLinea(l.id, x => ({ ...x, isr: v })), { sub: "lo manda el contador · se recuerda" })}
+                    {dato("IHSS", l.ihss ? `−${fmtL(l.ihss)}` : "—", { color: l.ihss ? "#B03024" : "#A39C92" })}
+                    {dato("RAP", l.rap ? `−${fmtL(l.rap)}` : "—", { color: l.rap ? "#B03024" : "#A39C92" })}
+                  </>
+                  : dato("ISR · IHSS · RAP", "en la 2Q", { color: "#A39C92", bold: false })}
+              {datoInput("Cooperativa", l.coop, v => upLinea(l.id, x => ({ ...x, coop: v })))}
+              {extrasDe(l, "deduccion").map(x => <div key={x.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid rgba(44,42,40,.06)" }}>
+                <span style={{ font: "500 12.5px/1.3 var(--sans)", color: ORANGE_DARK, minWidth: 0 }}>{x.concepto}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><b style={{ font: "700 13px/1.3 var(--sans)", color: "#B03024" }}>−{fmtL(x.monto)}</b>{editable && <span role="button" aria-label="Quitar" onClick={() => quitarExtra(l, x.id)} style={{ color: "#A39C92", cursor: "pointer", fontSize: 14 }}>✕</span>}</span>
+              </div>)}
+              {nuevoExtra(l, "deduccion")}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ borderRadius: 14, background: "rgba(44,42,40,.04)", padding: "12px 14px" }}>
+                <div className="gt-label" style={{ color: "#A39C92", fontSize: 9 }}>Asistencia</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 8, marginTop: 8 }}>
+                  {[["Presentes", l.diasPresente], ["NSP", l.diasNSP, l.diasNSP ? "#B03024" : null], ["Incap.", l.diasIncap], ["Vacac.", l.diasVac], ["Feriados", l.ferTrab], ["Domingos", l.domTrab + (l.domTrabTriple || 0)]].map(([a, b, c]) => <div key={a}>
+                    <div style={{ font: "800 16px/1 var(--display)", color: c || CHARCOAL }}>{b || 0}</div>
+                    <div style={{ font: "500 11px/1 var(--sans)", color: "#6E6862", marginTop: 4 }}>{a}</div>
+                  </div>)}
+                </div>
+                {l.sinAsistencia && <div style={{ font: "500 11.5px/1.4 var(--sans)", color: ORANGE_DARK, marginTop: 10 }}>No hay hoja de asistencia: se paga la quincena completa.</div>}
+              </div>
+              {l.he && <div style={{ borderRadius: 14, background: "rgba(62,142,90,.07)", padding: "12px 14px" }}>
+                <div className="gt-label" style={{ color: "#3E8E5A", fontSize: 9 }}>Horas extras · {etiquetaCorta(l.he.periodo, l.he.quincena)}</div>
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 8, font: "500 12px/1.3 var(--sans)", color: "#5C5853" }}>
+                  {[["4–7 pm", l.he.bandas?.b1?.hrs], ["7–10 pm", l.he.bandas?.b2?.hrs], ["10–12", l.he.bandas?.b3?.hrs], ["Domingo", l.he.bandas?.dom?.hrs]].filter(([, h]) => h > 0).map(([a, h]) => <span key={a}><b style={{ color: CHARCOAL }}>{h} h</b> {a}</span>)}
+                  <span>hora base <b style={{ color: CHARCOAL }}>{fmtL(l.he.horaBase)}</b></span>
+                </div>
+              </div>}
+              <div>
+                <div className="gt-label" style={{ color: "#A39C92", fontSize: 9, marginBottom: 7 }}>Método de pago</div>
+                {editable ? pista(METODOS_PAGO.map(([k, lab]) => ({ k, label: lab, on: (l.metodoPago || "transferencia") === k, onClick: () => upLinea(l.id, x => ({ ...x, metodoPago: k })) }))) : <span style={{ font: "600 13px/1 var(--sans)" }}>{Object.fromEntries(METODOS_PAGO)[l.metodoPago || "transferencia"]}</span>}
+              </div>
+              {l.ct === "honorarios" && editable && <div>
+                <div className="gt-label" style={{ color: "#A39C92", fontSize: 9, marginBottom: 7 }}>Honorarios</div>
+                {pista([["quincenal", "Quincenal"], ["mensual", "Mensual"]].map(([k, lab]) => ({ k, label: lab, on: (l.honorariosPago || "quincenal") === k, onClick: () => upLinea(l.id, x => { const mensual = k === "mensual"; const ord = mensual ? x.sb : Math.round(x.sb / 2 * 100) / 100; const bq = mensual ? x.bn : Math.round(x.bn / 2 * 100) / 100; return { ...x, honorariosPago: k, ordinario: ord, bq, isr: mensual ? 0 : Math.round((ord + bq) * 0.125 * 100) / 100 }; }) })))}
+                <div style={{ font: "400 11px/1.4 var(--sans)", color: "#A39C92", marginTop: 6 }}>Mensual: cobra el mes completo en esta quincena y no sale en la otra.</div>
+              </div>}
+              <div>
+                <div className="gt-label" style={{ color: "#A39C92", fontSize: 9, marginBottom: 7 }}>Nota</div>
+                {editable ? <input value={l.nota || ""} onChange={e => upLinea(l.id, x => ({ ...x, nota: e.target.value }))} placeholder="Sale en la planilla" style={{ ...PAY_IN, width: "100%", textAlign: "left", fontWeight: 500 }} /> : <span style={{ font: "500 13px/1.4 var(--sans)", color: "#5C5853" }}>{l.nota || "—"}</span>}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", paddingTop: 10, borderTop: "1px solid rgba(44,42,40,.08)" }}>
+                <span style={{ font: "600 12.5px/1 var(--sans)", color: "#6E6862" }}>Neto a pagar</span>
+                <span style={{ font: "800 20px/1 var(--display)", color: ORANGE_DARK }}>{fmtL(t.neto)}</span>
+              </div>
+            </div>
+          </div>
+        </div>}
+      </div>;
+    };
+
+    const grupos = GRUPOS_CT.map(([k, lab]) => [k, lab, visibles.filter(l => l.ct === k)]).filter(([, , rows]) => rows.length);
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 90 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <button type="button" className="gt-circulo" onClick={() => { if (!payBusy) { setPayVista("lista"); } }} aria-label="Volver a planillas" style={{ width: 36, height: 36, fontSize: 15 }}>←</button>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL }}>{nombreQuincena(d.periodo, d.quincena)}</span>
+            {estadoChip(d)}
+          </div>
+          <div style={{ font: "500 12.5px/1.4 var(--sans)", color: "#6E6862", marginTop: 2 }}>{cc.name} · {rangoQuincena(d.periodo, d.quincena)}{d.publicadaAt ? ` · publicada el ${fmt(d.publicadaAt)} por ${d.publicadaPor || ""}` : ""}</div>
+        </div>
+        {editable && <span role="button" onClick={() => { if (!payBusy) regenerarPlanilla(); }} style={{ font: "600 12.5px/1 var(--sans)", color: "#5C5853", cursor: "pointer", padding: "8px 12px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)" }}>↻ Releer asistencia</span>}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {d.sinAsistencia ? aviso("Sin asistencia registrada: se paga la quincena completa, sin NSP ni feriados", "naranja", nav.some(n => n.id === "attendance") ? () => setSec("attendance") : undefined) : aviso("Asistencia leída de la hoja de la quincena", "verde")}
+        {d.heDe ? aviso(`Horas extras de ${etiquetaCorta(d.heDe.periodo, d.heDe.quincena)}: ${res.heHrs ? `${res.heHrs} h · ${fmtL(res.he)}` : "sin horas"}`, res.he ? "verde" : "gris") : d.heFaltante ? aviso(`No hay hoja de horas extras de ${etiquetaCorta(d.heFaltante.periodo, d.heFaltante.quincena)}`, "gris", nav.some(n => n.id === "horasextras") ? () => setSec("horasextras") : undefined) : null}
+        {Array.isArray(d.tardesPend) && d.tardesPend.length > 0 && aviso(`${d.tardesPend.length} llegada${d.tardesPend.length > 1 ? "s" : ""} tarde sin decidir: se paga el día completo`, "naranja", nav.some(n => n.id === "tardanzas") ? () => setSec("tardanzas") : undefined)}
+        {aviso(ley ? "Segunda quincena: aplican IHSS, RAP e ISR" : "Primera quincena: las deducciones de ley van en la 2Q", "gris")}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(6, minmax(0,1fr))", gap: 10 }}>
+        {tile("Colaboradores", res.personas)}
+        {tile("Ordinario", fmtL(res.ordinario))}
+        {tile("Ingresos", fmtL(res.ingresos))}
+        {tile("Deducciones", fmtL(res.deducciones))}
+        {tile("Horas extras", res.he ? fmtL(res.he) : "—")}
+        {tile("Total a pagar", fmtL(res.neto), true)}
+      </div>
+
+      <div className="gt-vidrio" style={{ padding: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: "1 1 220px", minWidth: 0 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A39C92" strokeWidth="2" strokeLinecap="round" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <input type="search" value={payQ} onChange={e => setPayQ(e.target.value)} placeholder="Buscar colaborador" style={{ ...PAY_IN, width: "100%", textAlign: "left", fontWeight: 500, paddingLeft: 38 }} />
+        </div>
+        {pista([["todos", `Todos ${d.lines.length}`], ...GRUPOS_CT.filter(([k]) => d.lines.some(l => l.ct === k)).map(([k, lab]) => [k, `${lab} ${d.lines.filter(l => l.ct === k).length}`])].map(([k, label]) => ({ k, label, on: payGrupo === k, onClick: () => setPayGrupo(k) })))}
+        {visibles.length > 1 && <span role="button" onClick={() => setPayAbiertos(todosAbiertos ? {} : Object.fromEntries(visibles.map(l => [l.id, true])))} style={{ padding: "8px 12px", borderRadius: 999, font: "600 12.5px/1 var(--sans)", color: "#5C5853", cursor: "pointer" }}>{todosAbiertos ? "Compactar todo" : "Expandir todo"}</span>}
+      </div>
+
+      {grupos.map(([k, lab, rows]) => <div key={k}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, margin: "4px 2px 10px" }}>
+          <span style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>{lab}</span>
+          <span style={{ font: "600 13px/1 var(--sans)", color: "#A39C92" }}>{rows.length}</span>
+          <span style={{ marginLeft: "auto", font: "700 13px/1 var(--sans)", color: "#5C5853" }}>{fmtL(rows.reduce((s, l) => s + totalesLinea(l).neto, 0))}</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{rows.map(fila)}</div>
+      </div>)}
+      {visibles.length === 0 && <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>Nadie coincide con la búsqueda.</div>}
+
+      <div className="gt-vidrio" style={{ padding: isMobile ? 14 : "16px 22px", display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(3, minmax(0,1fr))", gap: 14 }}>
+        <div>
+          <div className="gt-label" style={{ color: "#A39C92", fontSize: 9, marginBottom: 8 }}>Por tipo</div>
+          {GRUPOS_CT.filter(([k]) => res.porGrupo[k]?.n).map(([k, lab]) => <div key={k} style={{ display: "flex", justifyContent: "space-between", font: "500 13px/1.8 var(--sans)", color: "#5C5853" }}><span>{lab} · {res.porGrupo[k].n}</span><b style={{ color: CHARCOAL }}>{fmtL(res.porGrupo[k].neto)}</b></div>)}
+        </div>
+        <div>
+          <div className="gt-label" style={{ color: "#A39C92", fontSize: 9, marginBottom: 8 }}>Por método de pago</div>
+          {METODOS_PAGO.filter(([k]) => res.porMetodo[k]?.n).map(([k, lab]) => <div key={k} style={{ display: "flex", justifyContent: "space-between", font: "500 13px/1.8 var(--sans)", color: "#5C5853" }}><span>{lab} · {res.porMetodo[k].n}</span><b style={{ color: CHARCOAL }}>{fmtL(res.porMetodo[k].neto)}</b></div>)}
+        </div>
+        <div>
+          <div className="gt-label" style={{ color: "#A39C92", fontSize: 9, marginBottom: 8 }}>Total</div>
+          <div style={{ display: "flex", justifyContent: "space-between", font: "500 13px/1.8 var(--sans)", color: "#5C5853" }}><span>Salarios</span><b style={{ color: CHARCOAL }}>{fmtL(res.salarios)}</b></div>
+          <div style={{ display: "flex", justifyContent: "space-between", font: "500 13px/1.8 var(--sans)", color: "#5C5853" }}><span>Horas extras</span><b style={{ color: CHARCOAL }}>{fmtL(res.he)}</b></div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4, paddingTop: 6, borderTop: "1px solid rgba(44,42,40,.08)" }}><span style={{ font: "700 13px/1.4 var(--sans)", color: CHARCOAL }}>Total a pagar</span><b style={{ font: "800 20px/1 var(--display)", color: ORANGE_DARK }}>{fmtL(res.neto)}</b></div>
+        </div>
+      </div>
+
+      <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 5, padding: isMobile ? "10px 12px" : "12px 32px", pointerEvents: "none" }}>
+        <div className="gt-vidrio" style={{ maxWidth: 1436, margin: "0 auto", padding: isMobile ? "10px 12px" : "10px 16px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", pointerEvents: "auto", borderRadius: 18 }}>
+          <span style={{ font: "600 12.5px/1.3 var(--sans)", color: "#6E6862", marginRight: "auto" }}>{payBusy ? "Un momento…" : `${res.personas} colaboradores · ${fmtL(res.neto)}`}</span>
+          <button disabled={payBusy} onClick={() => descargarPlanilla("excel")} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>Excel</button>
+          <button disabled={payBusy} onClick={() => descargarPlanilla("pdf")} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>PDF</button>
+          {editable && <button disabled={payBusy} onClick={async () => { if (await guardarPlanilla(d.estado === "publicada" ? "publicada" : "borrador")) alert(d.estado === "publicada" ? "Cambios guardados en la planilla publicada." : "Borrador guardado."); }} style={{ minHeight: 38, padding: "9px 16px", borderRadius: 999, border: "none", background: "#3E8E5A", color: "#fff", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{d.estado === "publicada" ? "Guardar cambios" : "Guardar borrador"}</button>}
+          {editable && d.estado !== "publicada" && <button disabled={payBusy} onClick={async () => { if (!confirm(`¿Publicar la planilla ${etiquetaCorta(d.periodo, d.quincena)} de ${cc.name} por ${fmtL(res.neto)}?\n\nQueda como la planilla oficial de la quincena. Después igual podés corregirla.`)) return; if (await guardarPlanilla("publicada")) alert("Planilla publicada. Ya podés descargar el PDF y el Excel."); }} className="gt-btn gt-btn-primario" style={{ minHeight: 38, padding: "9px 18px", fontSize: 13 }}>Publicar</button>}
+        </div>
+      </div>
+    </div>;
+  };
 
   const renderVacs = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cv.length} solicitudes</span><Btn onClick={() => setModal({ t: "vn" })}>+ Nueva</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "s", label: "Desde", render: r => fmt(r.startDate) }, { key: "f", label: "Hasta", render: r => fmt(r.endDate) }, { key: "days", label: "Dias" }, { key: "st", label: "Estado", render: r => <Badge color={r.status === "approved" ? "#059669" : r.status === "rejected" ? "#DC2626" : "#D97706"}>{r.status === "approved" ? "Aprobado" : r.status === "rejected" ? "Rechazado" : "Pendiente"}</Badge> }]} data={cv} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "ve", d: r })}>Editar</Btn><Btn small variant="danger" onClick={async () => { if (!confirm(`¿Eliminar las vacaciones de ${en(r.employeeId)} (${fmt(r.startDate)} → ${fmt(r.endDate)})?\n\nTambién se desmarcan los días "V" que puso en la asistencia.`)) return; await sV(vacs.filter(v => v.id !== r.id)); await syncVacacion(null, r); }}>×</Btn></div>} /></div>;
 
@@ -5364,157 +5360,6 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   };
 
   const renderCons = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cc2.length} emitidas</span><Btn onClick={() => setModal({ t: "cn" })}>+ Generar</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "t", label: "Tipo", render: r => <Badge color="#0891B2">{r.type === "laboral" ? "Laboral" : "Ingresos"}</Badge> }, { key: "d", label: "Fecha", render: r => fmt(r.date) }]} data={cc2} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>{(!hideSalary || r.type !== "ingresos") && <Btn small variant="ghost" onClick={() => { navigator.clipboard?.writeText(r.text); alert("Copiado"); }}>Copiar</Btn>}<Btn small variant="danger" onClick={() => { if (!confirm(`¿Eliminar la constancia de ${en(r.employeeId)} del ${fmt(r.date)}?`)) return; sC(cons.filter(c => c.id !== r.id)); }}>×</Btn></div>} /></div>;
-
-  const PayDetail = ({ p }) => {
-    const [lines, setLn] = useState((p.lines || []).map(l => ({ ...l, bq: l.bq || 0, o1: l.o1 || 0, o2: l.o2 || 0, isr: l.isr || 0, amdc: l.amdc || 0, ihss: l.ihss || 0, rap: l.rap || 0, coop: l.coop || 0, aus: l.aus || 0, otros: l.otros || 0, nota: l.nota || "", diasPresente: l.diasPresente || 0, diasNSP: l.diasNSP || 0, descuentoNSP: l.descuentoNSP || 0, domTrab: l.domTrab || 0, bonoDomingo: l.bonoDomingo || 0, proj: l.proj || "", so: l.so || 0, sb: l.sb || 0, sd: l.sd || 0 })));
-    const ul2 = (id, k, v) => setLn(ls => ls.map(l => l.id === id ? { ...l, [k]: v } : l));
-    const calc2 = l => {
-      const bd = +(l.bonoDomingo || 0);
-      const tOtros = +(+l.bq + +l.o1 + (+l.o2 || 0) + bd).toFixed(2);
-      const tDed = +(+l.isr + (+l.amdc || 0) + +l.ihss + +l.rap + +l.coop + (+l.aus || 0) + +l.otros).toFixed(2);
-      return { tOtros, tDed, neto: +(l.so + tOtros - tDed).toFixed(2), bonoDomingo: bd };
-    };
-    const totalNeto = lines.reduce((s, l) => s + calc2(l).neto, 0);
-    const is2Q = p.quincena === "2Q";
-
-    const permL = lines.filter(l => l.ct === "permanent");
-    const tempL = lines.filter(l => l.ct === "temporary");
-    const honL = lines.filter(l => l.ct === "honorarios");
-
-    const projCosts = {};
-    lines.forEach(l => { const pr = l.proj || "SIN ASIGNAR"; if (!projCosts[pr]) projCosts[pr] = { count: 0, neto: 0 }; projCosts[pr].count++; projCosts[pr].neto += calc2(l).neto; });
-
-    const doExcel = () => { const all = lines.map(l => ({...l, ...calc2(l)})); exportCSV(all, `Planilla_${cc.name.replace(/ /g,"_")}_${p.quincena}_${p.periodo}.csv`); };
-    const doPDF = () => { const all = lines.map(l => ({...l, ...calc2(l)})); exportPrint(all, cc.name.toUpperCase(), `Planilla — ${p.quincena === "1Q" ? "Primera" : "Segunda"} Quincena, ${p.periodo}`, totalNeto); };
-
-    const renderBlock = (rows, label, color) => {
-      if (rows.length === 0) return null;
-      const sub = rows.reduce((s, l) => s + calc2(l).neto, 0);
-      const sums = { sb: 0, so: 0, bq: 0, oi: 0, dias: 0, nsp: 0, dNSP: 0, dom: 0, bdom: 0, isr: 0, ihss: 0, rap: 0, coop: 0, otros: 0, tDed: 0, neto: 0 };
-      rows.forEach(l => { const c = calc2(l); sums.sb += l.sb; sums.so += l.so; sums.dom += (l.domTrab || 0) + (l.domTrabTriple || 0); sums.bdom += (l.bonoDomingo || 0); sums.bq += l.bq; sums.oi += l.o1; sums.dias += l.diasPresente || 0; sums.nsp += l.diasNSP || 0; sums.dNSP += l.descuentoNSP || 0; sums.isr += l.isr; sums.ihss += l.ihss; sums.rap += l.rap; sums.coop += l.coop; sums.otros += l.otros; sums.tDed += c.tDed; sums.neto += c.neto; });
-      return <div style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden" }}>
-        <div style={{ background: color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between" }}>
-          <span>{label} ({rows.length})</span><span>Subtotal: {fmtL(sub)}</span>
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-            <thead><tr style={{ background: "#F1F5F9" }}>
-              <th style={TH}>#</th><th style={{ ...TH, minWidth: 150 }}>Nombre</th><th style={TH}>Proy.</th>
-              <th style={TH}>Sal.Bruto</th><th style={TH}>Dias</th><th style={{ ...TH, color: "#DC2626" }}>NSP</th><th style={TH}>Desc.NSP</th>
-              <th style={TH}>Sal.Ord.</th><th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>DOM</th><th style={{ ...TH, color: "#7C3AED", background: "#F3E8FF" }}>Bono Dom.</th>
-              <th style={TH}>Bonif.Q</th><th style={TH}>Otros Ing.</th>
-              {is2Q && <><th style={TH}>ISR</th><th style={TH}>IHSS</th><th style={TH}>RAP</th><th style={TH}>Coop.</th></>}
-              <th style={TH}>Otros Ded.</th><th style={TH}>Tot.Ded</th><th style={{ ...TH, background: "#ECFDF5" }}>Neto</th><th style={TH}>Notas</th>
-            </tr></thead>
-            <tbody>{rows.map((l, i) => { const c = calc2(l); return <tr key={l.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
-              <td style={TD}>{i + 1}</td>
-              <td style={{ ...TD, fontWeight: 600 }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span>{l.name}</span>
-                  {(() => { const emp = ae.find(x => x.id === l.eid) || ce.find(x => x.id === l.eid); return emp ? <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 9, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5 }}>{genEmpCode(emp.fullName, emp.dni)}</span> : null; })()}
-                </div>
-              </td>
-              <td style={TD}><Badge color={cc.color}>{l.proj || "—"}</Badge></td>
-              <td style={TD}>{fmtL(l.sb)}</td>
-              <td title={l.diasPresenteEfectivo != null && l.diasPresenteEfectivo !== l.diasPresente ? `${l.diasPresente || 0} dias marcados · ${l.diasPresenteEfectivo.toFixed(2)} efectivos (proporcional por hora de entrada)` : ""} style={{ ...TD, color: "#059669", fontWeight: 600 }}>{l.diasPresenteEfectivo != null && l.diasPresenteEfectivo !== l.diasPresente ? l.diasPresenteEfectivo.toFixed(2) : (l.diasPresente || 0)}</td>
-              <td style={{ ...TD, color: (l.diasNSP || 0) > 0 ? "#DC2626" : "#94A3B8" }}>{l.diasNSP || 0}</td>
-              <td style={{ ...TD, color: "#DC2626" }}>{(l.descuentoNSP || 0) > 0 ? fmtL(l.descuentoNSP) : ""}</td>
-              <td style={TD}>{fmtL(l.so)}</td>
-              <td title={(l.domTrabTriple || 0) > 0 ? `${l.domTrab || 0} DT + ${l.domTrabTriple} DT2 (triple)` : `${l.domTrab || 0} DT`} style={{ ...TD, color: "#7C3AED", fontWeight: 700, background: ((l.domTrab || 0) + (l.domTrabTriple || 0)) > 0 ? "#F3E8FF" : "transparent" }}>{((l.domTrab || 0) + (l.domTrabTriple || 0)) || ""}</td>
-              <td style={{ ...TD, color: "#7C3AED", fontWeight: 600 }}>{(l.bonoDomingo || 0) > 0 ? fmtL(l.bonoDomingo) : ""}</td>
-              <td style={TD}><input type="number" value={l.bq} onChange={e => ul2(l.id, "bq", +e.target.value)} style={INP} /></td>
-              <td style={TD}><input type="number" value={l.o1} onChange={e => ul2(l.id, "o1", +e.target.value)} style={INP} /></td>
-              {is2Q && <>
-                <td style={TD}><input type="number" value={l.isr} onChange={e => ul2(l.id, "isr", +e.target.value)} style={INP} /></td>
-                <td style={TD}>{fmtL(l.ihss)}</td>
-                <td style={TD}>{l.rap > 0 ? fmtL(l.rap) : ""}</td>
-                <td style={TD}><input type="number" value={l.coop} onChange={e => ul2(l.id, "coop", +e.target.value)} style={INP} /></td>
-              </>}
-              <td style={TD}><input type="number" value={l.otros} onChange={e => ul2(l.id, "otros", +e.target.value)} style={INP} /></td>
-              <td style={{ ...TD, fontWeight: 600, color: "#DC2626" }}>{fmtL(c.tDed)}</td>
-              <td style={{ ...TD, fontWeight: 700, color: "#059669" }}>{fmtL(c.neto)}</td>
-              <td style={TD}><input value={l.nota || ""} onChange={e => ul2(l.id, "nota", e.target.value)} style={{ ...INP, width: 90, textAlign: "left" }} placeholder="..." /></td>
-            </tr>; })}</tbody>
-            <tfoot><tr style={{ background: "#F1F5F9", fontWeight: 700, fontSize: 11 }}>
-              <td colSpan={3} style={{ padding: "8px 10px", textAlign: "right" }}>TOTALES:</td>
-              <td style={{ padding: "8px 10px" }}>{fmtL(sums.sb)}</td>
-              <td style={{ padding: "8px 10px", color: "#059669" }}>{sums.dias}</td>
-              <td style={{ padding: "8px 10px", color: "#DC2626" }}>{sums.nsp}</td>
-              <td style={{ padding: "8px 10px" }}>{sums.dNSP > 0 ? fmtL(sums.dNSP) : ""}</td>
-              <td style={{ padding: "8px 10px" }}>{fmtL(sums.so)}</td>
-              <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.dom || ""}</td>
-              <td style={{ padding: "8px 10px", color: "#7C3AED" }}>{sums.bdom > 0 ? fmtL(sums.bdom) : ""}</td>
-              <td style={{ padding: "8px 10px", color: "#9A3412" }}>{sums.fer || ""}</td>
-              <td style={{ padding: "8px 10px", color: "#9A3412" }}>{sums.bfer > 0 ? fmtL(sums.bfer) : ""}</td>
-              <td style={{ padding: "8px 10px" }}>{fmtL(sums.bq)}</td>
-              <td style={{ padding: "8px 10px" }}>{fmtL(sums.oi)}</td>
-              {is2Q && <><td style={{ padding: "8px 10px" }}>{fmtL(sums.isr)}</td><td style={{ padding: "8px 10px" }}>{fmtL(sums.ihss)}</td><td style={{ padding: "8px 10px" }}>{fmtL(sums.rap)}</td><td style={{ padding: "8px 10px" }}>{fmtL(sums.coop)}</td></>}
-              <td style={{ padding: "8px 10px" }}>{fmtL(sums.otros)}</td>
-              <td style={{ padding: "8px 10px", color: "#DC2626" }}>{fmtL(sums.tDed)}</td>
-              <td style={{ padding: "8px 10px", color: "#059669", fontSize: 13 }}>{fmtL(sums.neto)}</td>
-              <td></td>
-            </tr></tfoot>
-          </table>
-        </div>
-      </div>;
-    };
-
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E2E8F0", padding: "20px 24px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            {co === "geotecnica" && <div style={{ width: 48, height: 48, borderRadius: 10, background: "linear-gradient(135deg, #E67E22, #D35400)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 900, fontSize: 22 }}>G</div>}
-            <div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: "#1E293B" }}>{cc.name.toUpperCase()}</div>
-              <div style={{ fontSize: 14, color: "#64748b" }}>Planilla de Sueldos y Salarios</div>
-            </div>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: cc.color }}>{p.quincena === "1Q" ? "Primera" : "Segunda"} Quincena</div>
-            <div style={{ fontSize: 14, color: "#64748b" }}>{(() => {
-              // Parseamos manual para evitar el bug de timezone que hace que
-              // "2026-05" se vea como "abril 2026" en zonas UTC negativas.
-              const [py, pm] = (p.periodo || "").split("-").map(Number);
-              if (!py || !pm) return p.periodo || "";
-              return new Date(py, pm - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }).replace(/^\w/, c => c.toUpperCase());
-            })()}</div>
-          </div>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "2px solid #E2E8F0", paddingTop: 12 }}>
-          <span style={{ fontWeight: 700, color: "#065F46", fontSize: 18 }}>Total Neto: {fmtL(totalNeto)}</span>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Btn small variant="ghost" onClick={doExcel}>📊 Descargar Excel</Btn>
-            <Btn small variant="ghost" onClick={doPDF}>🖨️ Descargar PDF</Btn>
-          </div>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        {Object.entries(projCosts).sort((a, b) => b[1].neto - a[1].neto).map(([pr, d]) => {
-          const pj = hrProjects.find(x => x.short === pr);
-          return <div key={pr} style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 10, padding: "10px 16px", minWidth: 150 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, color: cc.color }}>{pr}</div>
-            {pj && <div style={{ fontSize: 9, color: "#94A3B8" }}>[{pj.code}]</div>}
-            <div style={{ fontSize: 16, fontWeight: 700, color: "#059669" }}>{fmtL(d.neto)}</div>
-            <div style={{ fontSize: 11, color: "#64748b" }}>{d.count} personas</div>
-          </div>;
-        })}
-      </div>
-
-      {renderBlock(permL, "PERMANENTES", "#2563EB")}
-      {renderBlock(tempL, "TEMPORALES", "#D97706")}
-      {renderBlock(honL, "HONORARIOS", "#7C3AED")}
-
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-        <Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>
-        <Btn variant="success" onClick={() => {
-          const updated = { ...p, total: +totalNeto.toFixed(2), lines: lines.map(l => ({ ...l, ...calc2(l) })) };
-          sP(pays.map(x => x.id === p.id ? updated : x));
-          alert("Planilla actualizada");
-        }}>Guardar cambios</Btn>
-      </div>
-    </div>;
-  };
 
   // ── MOVIMIENTOS (Altas y Bajas) ──
   const AltaForm = ({ onSave }) => {
@@ -6922,8 +6767,6 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;
     case "acceso": return <Modal title={m.d ? `Acceso de ${m.d.label}` : "Dar acceso al sistema"} onClose={() => setModal(null)}><AccesoFormImpl acceso={m.d} emps={emps} proyectos={[...hrProjects].sort((a, b) => String(a.short).localeCompare(String(b.short), "es", { sensitivity: "base", numeric: true }))} tomados={[...USERS.map(x => x.username), ...(accesos || []).map(x => x.username)]} userName={userName} onSave={guardarAcceso} onClose={() => setModal(null)} /></Modal>;
     case "ee": return <Modal title="Editar empleado" onClose={() => setModal(null)} wide><EmpForm emp={m.d} onSave={e => sE(emps.map(x => x.id === e.id ? e : x))} /></Modal>;
-    case "pn": return <Modal title={`Planilla — ${cc.name}`} onClose={() => setModal(null)} wide><PayrollGen /></Modal>;
-    case "pd": return <Modal title={`Planilla ${m.d.quincena} ${m.d.periodo}`} onClose={() => setModal(null)} wide><PayDetail p={m.d} /></Modal>;
     {/* Vacaciones y permisos marcan SOLOS la asistencia (syncVacacion /
         syncPermiso) — al editar se limpia el rango viejo antes de aplicar. */}
     case "vn": return <Modal title="Vacaciones" onClose={() => setModal(null)}><VacForm onSave={async v => { await sV([...vacs, v]); await syncVacacion(v, null); }} /></Modal>;
