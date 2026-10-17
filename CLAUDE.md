@@ -15,7 +15,7 @@ cache localStorage. Deploy automático a GitHub Pages al hacer push a `main`.
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
-- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs` y `tests/planilla-calc.test.mjs`.
+- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs`, `tests/planilla-calc.test.mjs` y `tests/abonos.test.mjs`.
 - Deploy: `git push origin main` dispara `.github/workflows/deploy.yml` → gh-pages.
   URL: https://gtrochez-collab.github.io/OPERACION-GT-GEOTECNICA/
 - Verificar deploy: `gh run list` + grep del texto nuevo en el bundle publicado.
@@ -249,6 +249,39 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   pagos** (Gerson: "que salga si es 1 solo pago o plan de pago y ya, de ahí que
   ellos programen los pagos en cuentas por pagar"). `fechaPagoAcordada` se
   RETIRÓ del form: la fecha se pone en Cuentas por pagar, no acá.
+  **ABONOS — pagos parciales con comprobante (17-oct-2026, pedido de
+  Christian)**: una solicitud (normalmente a crédito) se paga por partes y la
+  solicitud NO se cierra hasta cubrir el total. Lógica PURA en `src/abonos.js`
+  (`tests/abonos.test.mjs`); campo ADITIVO `abonos: [{id, monto, fecha,
+  metodo, comprobante {fileId…}, nota, registradoPor, registradoAt, anulado?,
+  anuladoPor?, anuladoAt?, motivoAnulacion?}]` en cp-/mq-purchases (aplica a
+  GeoShopping y GeoMachinery, es el mismo código). `estadoTrasAbonos` manda el
+  estado: con saldo > L 1 (`TOLERANCIA_ABONO`) queda `validado` +
+  treasuryStatus `recibida` SIN datos de pago (sigue en Pendientes,
+  Prioridades, CxP; NO pasa a Por coordinar/Entregas — decisión: la logística
+  arranca al pago completo); al completarse → `finalizado` con fecha, método
+  y comprobante del ÚLTIMO abono (`paidAt` medianoche UTC como el pago normal)
+  + audit `paid` (lo lee el "!" de Ana) y, si es servicio,
+  `cierreServicioAlPagar` (la misma regla que ahora usa PaymentFormImpl).
+  UI en DetailView: "➕ Registrar abono" (mismos permisos que Registrar pago:
+  Carolina + emergencia admin/costos; con abonos vigentes se APAGAN "Registrar
+  pago" completo, "Revertir pago" y la subida del comprobante suelto), panel
+  "Abonos" con barra de avance, "Ver comprobante" (visor) y "Anular"
+  (Carolina/admin, motivo obligatorio; queda TACHADO, nunca se borra);
+  "↔ Pasar a abonos" (Carolina/admin) en una pagada SIN abonos: su pago pasa a
+  ser el abono 1 con su comprobante (caso MAT-2026-0416 de ECOMETAL, marcada
+  pagada completa con solo L 500,000 abonados). Form `AbonoFormImpl` a nivel
+  de módulo, modal `abono` (`modo: "convertir"`). El comprobante se sube a su
+  propia fila `cp-file-<id>` ANTES de guardar (extractFiles no recorre
+  arrays). `sP` RESCATA abonos: si la nube trae abonos/anulaciones que la fila
+  local no tiene (`nubeTraeAbonosNuevos`), los une por id (`unirAbonos`,
+  anulado pegajoso) y recalcula el estado. Saldo visible: chip "Abonada · N" y
+  "falta L X" en la tabla, Prioridades muestra lo que FALTA (Christian manda
+  "el saldito" ahí), Dashboard y la tira de Solicitudes suman `porPagarDe`.
+  Paquete de cierre: fila "Pagada en abonos" + TODOS los comprobantes ("ABONO
+  N DE M"). Pendiente a propósito: GeoCost sigue contando la compra entera
+  como comprometida hasta el pago completo (no parte ejecutado/comprometido),
+  y los pagos programados de `cp-cxp` no se marcan solos al abonar.
   **CALENDARIO DE PAGO (21-sep-2026)**: `renderCalendario`, pestaña después de
   Cuentas por pagar. Mes en la columna izquierda (~1/4) y el detalle del día a
   la derecha, como lo pidió. Une las DOS fuentes: `cp-cxp` (pagos programados,

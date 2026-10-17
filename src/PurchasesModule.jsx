@@ -18,6 +18,9 @@ import { leerPdf, parsearCotizacion, ajusteAlTotal, lineasPresupuestoDesdeLectur
 // GeoSupply (2-oct-2026): los borradores que nacen de una cotización aprobada
 // llevan `origenSupply`; acá solo se rotula su corte.
 import { etiquetaCorte } from "./geosupply-calc.js";
+// Abonos (17-oct-2026): pagos parciales con su comprobante; la solicitud se
+// cierra solo cuando la suma de abonos cubre el total. Lógica pura y probada.
+import { abonosVigentes, todosLosAbonos, tieneAbonos, totalAbonado, saldoDe, esAbonoParcial, porPagarDe, validarAbono, estadoTrasAbonos, cierreServicioAlPagar, unirAbonos, nubeTraeAbonosNuevos } from "./abonos.js";
 
 // Marca Geotecnica
 const ORANGE = "#E8762D";
@@ -2157,22 +2160,16 @@ function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
           // como ya resuelto sin tocar su lógica. Solo si la entrega todavía
           // no avanzó: nunca pisa una ficha adjunta ni una entrega del
           // proveedor ya en curso.
-          const esServicio = purchase.tipoCompra === "servicio"
-            && (!purchase.deliveryStatus || purchase.deliveryStatus === "pendiente_entrega");
+          // La regla vive en abonos.js (`cierreServicioAlPagar`) porque el
+          // último abono que completa un pago parcial la aplica igual.
+          const srv = cierreServicioAlPagar(purchase, new Date().toISOString());
+          const esServicio = srv.esServicio;
           const rec = {
             ...purchase, ...f,
             status: hasReceipt ? "finalizado" : "pagado",
             treasuryStatus: "pagada",
-            deliveryStatus: esServicio ? "cerrado" : (purchase.deliveryStatus || "pendiente_entrega"),
-            delivery: esServicio ? {
-              ...(purchase.delivery || {}),
-              cerradaSinFicha: true,
-              esServicio: true,
-              closingNotes: "Servicio de proveedor — no lleva ficha de recibido",
-              closedBy: "Automático al pagar (servicio)",
-              closedAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            } : (purchase.delivery || {}),
+            deliveryStatus: srv.deliveryStatus,
+            delivery: srv.delivery,
             paidAt: new Date(f.paymentDate).toISOString(),
             finalizedAt: hasReceipt ? new Date().toISOString() : purchase.finalizedAt || null,
           };
@@ -2201,6 +2198,138 @@ function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
           console.groupEnd();
         }
       }}>{saving ? "💾 Guardando..." : "💰 Registrar pago"}</Btn>
+    </div>
+  </div>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// AbonoFormImpl (17-oct-2026, pedido de Christian): registrar un ABONO
+// (pago parcial) a una solicitud, con su comprobante OBLIGATORIO. La
+// solicitud se cierra sola cuando la suma de abonos cubre el total
+// (estadoTrasAbonos de abonos.js). Modo "convertir": una solicitud que se
+// registró como pagada completa pero en realidad solo lleva una parte — el
+// pago que ya tiene pasa a ser el abono 1 con su comprobante.
+// Vive a nivel de módulo (mismo motivo que los demás forms: dentro del
+// componente se remonta con cada refresh y se pierde lo escrito).
+// ─────────────────────────────────────────────────────────────────────────
+function AbonoFormImpl({ purchase, modo = "nuevo", setModal, addAudit, updatePurchase, userName }) {
+  const convertir = modo === "convertir";
+  const base = convertir ? { ...purchase, abonos: [] } : purchase;
+  const falta = saldoDe(base);
+  const nAbonos = abonosVigentes(base).length;
+  const [f, setF] = useState({
+    monto: convertir ? String(num(purchase.amount)) : String(falta),
+    fecha: convertir ? (String(purchase.paymentDate || "").slice(0, 10) || hoyISO()) : hoyISO(),
+    metodo: (convertir && purchase.paymentMethod) || purchase.paymentMethod || "Transferencia BAC",
+    comprobante: convertir ? (purchase.receiptFile || null) : null,
+    nota: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const monto = r2(num(f.monto));
+  const quedaria = r2(Math.max(0, falta - monto));
+  const completa = monto > 0 && quedaria <= 1;
+  const error = validarAbono(base, { monto, fecha: f.fecha, comprobante: f.comprobante });
+
+  const guardar = async () => {
+    if (error) return alert(error);
+    setSaving(true);
+    try {
+      // 1) El comprobante va a su propia fila (cp-file-<id>): dentro del array
+      //    de abonos el extractFiles del guardado no lo vería y la solicitud
+      //    excedería el límite de Supabase.
+      let ref = null;
+      const c = f.comprobante;
+      if (c.fileId) {
+        ref = { fileId: c.fileId, name: c.name, type: c.type, size: c.size };
+      } else {
+        const fileId = uid();
+        const okFile = await store.set(fileKey(fileId), { name: c.name, type: c.type, size: c.size, dataUrl: c.dataUrl });
+        if (!okFile) {
+          alert("⚠️ No se pudo subir el comprobante a la nube. Revisá la conexión y volvé a intentar.\n\nNo se guardó el abono.");
+          return;
+        }
+        ref = { fileId, name: c.name, type: c.type, size: c.size };
+      }
+
+      // 2) Abono nuevo + estado de la solicitud según TODOS sus abonos
+      const ahora = new Date().toISOString();
+      const abono = { id: uid(), monto, fecha: f.fecha, metodo: f.metodo, comprobante: ref, nota: f.nota.trim(), registradoPor: userName || "", registradoAt: ahora };
+      const conAbono = { ...base, abonos: [...todosLosAbonos(base), abono] };
+      const { rec, completo, esServicio, recienCompletada } = estadoTrasAbonos(conAbono, ahora);
+      const n = abonosVigentes(rec).length;
+      const resumen = `abonado ${fmtL(totalAbonado(rec))} de ${fmtL(rec.amount)}${completo ? "" : ` — falta ${fmtL(saldoDe(rec))}`}`;
+      let saved = addAudit(rec, convertir ? "pago_a_abonos" : "abono", convertir
+        ? `El pago registrado pasa a ser el abono 1 (${fmtL(monto)}, ${f.metodo}) — ${resumen}`
+        : `Abono ${n} de ${fmtL(monto)} (${f.metodo}) — ${resumen}`);
+      if (completo && recienCompletada) saved = addAudit(saved, "paid", `Pago completado con ${n} abono${n === 1 ? "" : "s"} — FINALIZADA`);
+      if (completo && recienCompletada && esServicio) saved = addAudit(saved, "closed_no_ficha", "Servicio de proveedor: pasa directo a Por cerrar contable (no se coordina ni lleva ficha)");
+
+      // 3) Guardado robusto (sP: getCloud + merge + verify)
+      const ok = await updatePurchase(saved);
+      if (!ok) {
+        alert("⚠️ El abono NO se sincronizó a la nube. Reintentá en unos segundos (lo que escribiste sigue acá).");
+        return;
+      }
+      setModal({ t: "detail", d: saved });
+      setTimeout(() => alert(completo
+        ? `✓ Abono registrado. Con ${n} abono${n === 1 ? "" : "s"} se completó el pago: la solicitud quedó FINALIZADA.`
+        : `✓ Abono registrado. Falta ${fmtL(saldoDe(saved))}; la solicitud sigue pendiente de pago en Tesorería.`), 100);
+    } catch (err) {
+      console.error("Error registrando abono:", err);
+      alert(`❌ Error registrando el abono: ${err?.message || err}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10 }}>
+      {[
+        ["Monto de la solicitud", fmtL(purchase.amount), CHARCOAL],
+        [convertir ? "Ya abonado" : `Abonado (${nAbonos} abono${nAbonos === 1 ? "" : "s"})`, fmtL(totalAbonado(base)), "#059669"],
+        ["Falta pagar", fmtL(falta), C_AMARILLO.color],
+      ].map(([l, v, c]) => <div key={l} style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: "10px 12px" }}>
+        <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>{l}</div>
+        <div style={{ fontSize: 17, fontWeight: 800, color: c, marginTop: 2 }}>{v}</div>
+      </div>)}
+    </div>
+
+    {convertir && <div style={{ background: C_AMARILLO.bg, border: "1px solid rgba(146,64,14,.25)", borderRadius: 10, padding: 12, fontSize: 13, color: "#78350F", lineHeight: 1.45 }}>
+      Esta solicitud se registró como <b>pagada completa</b>. Poné cuánto se pagó <b>de verdad</b> con ese pago: pasa a ser el <b>abono 1</b> con su comprobante, y lo que falte queda pendiente para los siguientes abonos.
+      {!completa && monto > 0 && <> La solicitud vuelve a <b>pendiente de pago</b> en Tesorería con saldo de <b>{fmtL(quedaria)}</b> y no aparece en Por coordinar ni en Entregas hasta que se complete el pago.</>}
+    </div>}
+
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 14 }}>
+      <Input label={convertir ? "Monto pagado con ese pago (L)" : "Monto del abono (L)"} type="number" min="0" step="0.01" value={f.monto} onChange={e => u("monto", e.target.value)} />
+      <Input label="Fecha del abono" type="date" value={f.fecha} onChange={e => u("fecha", e.target.value)} />
+      <Select label="Método" options={PAYMENT_METHODS} value={f.metodo} onChange={e => u("metodo", e.target.value)} />
+    </div>
+    {!convertir && falta > 0 && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: -6 }}>
+      <button type="button" onClick={() => u("monto", String(falta))} style={{ background: "none", border: "1px solid #CBD5E1", borderRadius: 999, padding: "3px 10px", fontSize: 11.5, fontWeight: 700, color: "#475569", cursor: "pointer", fontFamily: "inherit" }}>Todo lo que falta ({fmtL(falta)})</button>
+    </div>}
+
+    <FileSlot
+      label="🧾 Comprobante de la transferencia (obligatorio)"
+      file={f.comprobante}
+      canUpload
+      accent="#059669"
+      onUpload={fd => u("comprobante", fd)}
+      onRemove={() => u("comprobante", null)}
+    />
+
+    <Textarea label="Nota (opcional)" value={f.nota} onChange={e => u("nota", e.target.value)} placeholder="Ej. segundo abono acordado con el proveedor" />
+
+    {monto > 0 && !error && <div style={{ background: completa ? "#ECFDF5" : "#F8FAFC", border: `1px solid ${completa ? "#6EE7B7" : "#E2E8F0"}`, borderRadius: 10, padding: "10px 14px", fontSize: 13, color: completa ? "#065F46" : "#334155", fontWeight: 600 }}>
+      {completa
+        ? "Con este abono se completa el pago: la solicitud queda FINALIZADA."
+        : `Después de este abono faltará ${fmtL(quedaria)}. La solicitud sigue pendiente de pago.`}
+    </div>}
+    {error && monto > 0 && <div style={{ fontSize: 12.5, color: C_ROJO.color, fontWeight: 700 }}>{error}</div>}
+
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+      <Btn variant="ghost" onClick={() => setModal({ t: "detail", d: purchase })} disabled={saving}>Cancelar</Btn>
+      <Btn variant="success" disabled={saving || !!error} onClick={guardar}>{saving ? "Guardando..." : convertir ? "Pasar a abonos" : "Registrar abono"}</Btn>
     </div>
   </div>;
 }
@@ -3068,28 +3197,46 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       // pago de Carolina la borraba en silencio — revisión adversarial).
       const cloudById = new Map(cloudPreviaArr.map(p => [p.id, p]));
       let rescatadas = 0;
+      let abonosRescatados = 0;
       const dR = d.map(p => {
         const c = cloudById.get(p.id);
         if (!c) return p;
+        let out = p;
         const atsLocal = new Set((p.audit || []).filter(a => a?.action === "partida_reclasificada").map(a => a.at));
         const nuevas = (c.audit || []).filter(a => a?.action === "partida_reclasificada" && !atsLocal.has(a.at));
-        if (!nuevas.length) return p;
-        rescatadas++;
-        // `lineas` (25-sep-2026): "Dividir en ítems" de GeoCost reparte la compra
-        // entre varias partidas — viaja junto con la partida principal.
-        // `ajustaDescripcion` (30-sep-2026): una corrección de sustitutos que
-        // también reescribió la descripción — esa viaja junto con las líneas.
-        const conDesc = nuevas.some(a => a?.ajustaDescripcion);
-        return { ...p, partidaId: c.partidaId, lineas: Array.isArray(c.lineas) ? c.lineas : p.lineas, sobregiroJustificacion: c.sobregiroJustificacion ?? p.sobregiroJustificacion, ...(conDesc ? { description: c.description, detalleExtra: c.detalleExtra } : {}), audit: [...(p.audit || []), ...nuevas] };
+        if (nuevas.length) {
+          rescatadas++;
+          // `lineas` (25-sep-2026): "Dividir en ítems" de GeoCost reparte la compra
+          // entre varias partidas — viaja junto con la partida principal.
+          // `ajustaDescripcion` (30-sep-2026): una corrección de sustitutos que
+          // también reescribió la descripción — esa viaja junto con las líneas.
+          const conDesc = nuevas.some(a => a?.ajustaDescripcion);
+          out = { ...out, partidaId: c.partidaId, lineas: Array.isArray(c.lineas) ? c.lineas : out.lineas, sobregiroJustificacion: c.sobregiroJustificacion ?? out.sobregiroJustificacion, ...(conDesc ? { description: c.description, detalleExtra: c.detalleExtra } : {}), audit: [...(out.audit || []), ...nuevas] };
+        }
+        // ABONOS (17-oct-2026): si la nube trae abonos (o anulaciones) que esta
+        // fila no tiene, otra pantalla los registró después de nuestra foto.
+        // Se UNEN por id y el estado de pago se recalcula con todos — así el
+        // guardado de quien tenía la solicitud abierta de antes no borra el
+        // abono (ni su comprobante) que Tesorería acaba de registrar.
+        if (nubeTraeAbonosNuevos(out, c)) {
+          abonosRescatados++;
+          const ACC = new Set(["abono", "abono_anulado", "pago_a_abonos", "paid", "closed_no_ficha"]);
+          const yaEn = new Set((out.audit || []).map(a => `${a?.action}|${a?.at}`));
+          const auditNube = (c.audit || []).filter(a => ACC.has(a?.action) && !yaEn.has(`${a.action}|${a.at}`));
+          const { rec } = estadoTrasAbonos({ ...out, abonos: unirAbonos(out.abonos, c.abonos) }, new Date().toISOString());
+          out = { ...rec, audit: [...(out.audit || []), ...auditNube] };
+        }
+        return out;
       });
       if (rescatadas > 0) console.log(`[sP] partidas rescatadas de GeoCost: ${rescatadas}`);
+      if (abonosRescatados > 0) console.log(`[sP] abonos rescatados de la nube: ${abonosRescatados}`);
 
       // 3) MERGE: tomar todo lo de cloud + agregar lo nuestro que no este en cloud
       // (basado en id), EXCLUYENDO los que acabamos de borrar. `dR` = `d` con
       // las partidas rescatadas arriba.
       const cloudExtras = cloudPreviaArr.filter(p => !ourIds.has(p.id) && !deletedIds.has(p.id));
       const merged = [...dR, ...cloudExtras];
-      if (cloudExtras.length > 0 || rescatadas > 0) {
+      if (cloudExtras.length > 0 || rescatadas > 0 || abonosRescatados > 0) {
         if (cloudExtras.length > 0) console.warn(`⚠️ Encontradas ${cloudExtras.length} solicitudes en cloud que no estaban en local — mergeadas.`);
         setPurchases(merged); // actualizar UI con merge (+ partidas rescatadas)
       }
@@ -4069,6 +4216,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         cargar(pu.receiptFile), cargar(pu.delivery?.fichaFile), cargar(pu.quoteFile),
         cargar(prov?.constanciaFile), cargar(pu.conta?.facturaFile),
       ]);
+      // Abonos (17-oct-2026): conta necesita TODOS los comprobantes, no solo
+      // el del último abono (que es el que queda en receiptFile).
+      const abonosPaq = abonosVigentes(pu);
+      const compAbonos = abonosPaq.length ? await Promise.all(abonosPaq.map(a => cargar(a.comprobante))) : [];
 
       const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
       const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
@@ -4120,6 +4271,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         ["N° de cotización", pu.quoteNumber || "—"],
         ["Forma / referencia de pago", [pu.paymentMethod, pu.paymentReference].filter(Boolean).join(" · ") || "—"],
         ["Fecha de pago", pu.paidAt ? new Date(pu.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "long", year: "numeric", timeZone: "UTC" }) : "—"],
+        ...(abonosPaq.length ? [["Pagada en abonos", `${abonosPaq.length} abono${abonosPaq.length === 1 ? "" : "s"}: ` + abonosPaq.map(a => `${fL(a.monto)} (${a.fecha})`).join(" · ")]] : []),
         ["Responsable de cierre contable", pu.cierreResponsable || "— sin asignar —"],
       );
       filas.forEach(([k, v]) => {
@@ -4151,7 +4303,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       const sinFichaOk = pu.deliveryStatus === "cerrado" && !ficha;
       const items = [
         ["Ficha de recibido firmada", !!ficha, sinFichaOk ? "No aplica — " + (pu.delivery?.closingNotes || "servicio / renta") : (ficha ? ficha.name : "PENDIENTE"), sinFichaOk],
-        ["Comprobante de pago", !!comp, comp ? comp.name : "PENDIENTE", false],
+        abonosPaq.length
+          ? ["Comprobantes de los abonos", compAbonos.every(Boolean), `${compAbonos.filter(Boolean).length} de ${abonosPaq.length} adjuntos`, false]
+          : ["Comprobante de pago", !!comp, comp ? comp.name : "PENDIENTE", false],
         ["Cotización", !!quote, quote ? quote.name : "PENDIENTE", false],
         ["Constancia de pagos a cuenta", !!constancia, constancia ? constancia.name : "PENDIENTE — subila en la ficha del proveedor", false],
         ["Factura del proveedor", !!factura, factura ? factura.name : "SE ENGRAPA FÍSICAMENTE a este paquete", false],
@@ -4210,10 +4364,16 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         } catch { /* si no se puede leer, mejor adjuntar todo */ }
       }
 
+      // Con abonos van TODOS sus comprobantes aunque la ficha traiga uno
+      // adentro: la ficha solo pudo embeber el que existía cuando se generó.
+      const compAnexos = abonosPaq.length
+        ? compAbonos.map((f, i) => [`COMPROBANTE DE ABONO ${i + 1} DE ${abonosPaq.length}`, f])
+        : (fichaTraeAnexos ? [] : [["COMPROBANTE DE PAGO", comp]]);
       const anexos = [
         ["FACTURA DEL PROVEEDOR", factura],
         ["FICHA DE RECIBIDO FIRMADA", ficha],
-        ...(fichaTraeAnexos ? [] : [["COMPROBANTE DE PAGO", comp], ["COTIZACIÓN", quote]]),
+        ...compAnexos,
+        ...(fichaTraeAnexos ? [] : [["COTIZACIÓN", quote]]),
         ["CONSTANCIA DE PAGOS A CUENTA", constancia],
       ].filter(([, f]) => !!f);
 
@@ -4310,7 +4470,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     validado: cp.filter(p => p.status === "validado").length,
     pagado: cp.filter(p => p.status === "pagado").length,
     finalizado: cp.filter(p => p.status === "finalizado").length,
-    montoPendiente: cp.filter(p => p.status === "validado").reduce((s, p) => s + (Number(p.amount) || 0), 0),
+    montoPendiente: cp.filter(p => p.status === "validado").reduce((s, p) => s + porPagarDe(p), 0),
     // Mismo criterio del Dashboard: slice(0,7) sobre el string UTC de paidAt
     // (getMonth() en hora local corría al mes anterior los pagos del día 1 —
     // el mismo número salía distinto en la tira de Solicitudes y el Dashboard).
@@ -4463,6 +4623,39 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // Flag para mostrar aviso visual cuando admin/costos esta actuando en lugar de Carolina
     const isActingAsEmergency = isEmergencyPayer && !isTesoreria && (p.status === "validado" || p.status === "pagado" || p.status === "finalizado");
 
+    // ── ABONOS (17-oct-2026, pedido de Christian) ──
+    // Mismos permisos que registrar un pago. Con abonos, el pago completo y
+    // "Revertir pago" se apagan: el estado lo manda la suma de los abonos y
+    // cada uno se anula por separado (queda tachado, nunca se borra).
+    const conAbonos = todosLosAbonos(p).length > 0;
+    const hayAbonosVigentes = tieneAbonos(p);
+    const canAbonar = (canPay || isEmergencyPayer) && p.status === "validado";
+    const canAnularAbono = (canPay || isAdmin) && conAbonos;
+    // Una solicitud que se registró pagada completa pero solo lleva una parte
+    // (caso MAT-2026-0416): el pago que tiene pasa a ser el abono 1.
+    const canPasarAAbonos = (canPay || isAdmin) && esPagadaP(p) && !conAbonos;
+    const verComprobanteAbono = async (ref) => {
+      if (!ref?.fileId) return;
+      try {
+        const full = await store.getCloud(fileKey(ref.fileId));
+        if (!full?.dataUrl) return alert(`No se encontró el comprobante "${ref.name}" en la nube.`);
+        const archivo = { ...full, fileId: ref.fileId, name: full.name || ref.name, type: full.type || ref.type };
+        if (archivo.type?.startsWith("image/") || archivo.type === "application/pdf") { setVisor(archivo); return; }
+        const a = document.createElement("a"); a.href = archivo.dataUrl; a.download = archivo.name;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      } catch (e) { alert("Error cargando el comprobante: " + (e?.message || e)); }
+    };
+    const anularAbono = async (a) => {
+      const motivo = prompt(`¿Anular el abono de ${fmtL(a.monto)} del ${fmtCorta(a.fecha) || a.fecha}?\n\nQueda tachado en el historial (no se borra). Escribí el motivo:`);
+      if (motivo === null) return;
+      if (!motivo.trim()) return alert("Escribí el motivo para anular el abono.");
+      const ahora = new Date().toISOString();
+      const abonos = todosLosAbonos(p).map(x => x.id === a.id ? { ...x, anulado: true, anuladoPor: userName || "", anuladoAt: ahora, motivoAnulacion: motivo.trim() } : x);
+      const { rec } = estadoTrasAbonos({ ...p, abonos }, ahora);
+      const saved = addAudit(rec, "abono_anulado", `Abono de ${fmtL(a.monto)} del ${a.fecha} anulado: ${motivo.trim()} — falta ${fmtL(saldoDe(rec))}`);
+      await persistConFeedback(saved, "abono anulado");
+    };
+
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Header de estado */}
       <div style={{ background: s.bg, border: `2px solid ${s.color}`, borderRadius: 12, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
@@ -4479,6 +4672,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 26, fontWeight: 800, color: "#059669" }}>{fmtL(p.amount)}</div>
           <div style={{ fontSize: 11, color: "#64748b" }}>Monto total</div>
+          {hayAbonosVigentes && <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700 }}>
+            <span style={{ color: "#059669" }}>Abonado {fmtL(totalAbonado(p))}</span>
+            {esAbonoParcial(p) && <span style={{ color: C_AMARILLO.color }}> · falta {fmtL(saldoDe(p))}</span>}
+          </div>}
         </div>
       </div>
 
@@ -4600,6 +4797,51 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         </div>
       </div>}
 
+      {/* Abonos (17-oct-2026): pagos parciales, cada uno con su comprobante */}
+      {conAbonos && (() => {
+        const lista = [...todosLosAbonos(p)].sort((a, b) => String(a.fecha || "").localeCompare(String(b.fecha || "")) || String(a.registradoAt || "").localeCompare(String(b.registradoAt || "")));
+        const abonado = totalAbonado(p);
+        const pct = num(p.amount) > 0 ? Math.min(100, (abonado / num(p.amount)) * 100) : 0;
+        const parcial = esAbonoParcial(p);
+        let nVig = 0;
+        return <div style={{ background: "#fff", border: `1px solid ${parcial ? "rgba(146,64,14,.25)" : "#6EE7B7"}`, borderRadius: 12, padding: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>Abonos</div>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>
+              <span style={{ color: "#059669" }}>{fmtL(abonado)}</span>
+              <span style={{ color: "#64748b", fontWeight: 500 }}> de {fmtL(p.amount)}</span>
+              {parcial
+                ? <span style={{ color: C_AMARILLO.color }}> · falta {fmtL(saldoDe(p))}</span>
+                : hayAbonosVigentes && <span style={{ color: "#059669" }}> · pago completo</span>}
+            </div>
+          </div>
+          <div style={{ height: 8, borderRadius: 999, background: "#F1F5F9", overflow: "hidden", marginBottom: 12 }}>
+            <div style={{ width: `${pct}%`, height: "100%", background: parcial ? "#D97706" : "#059669", borderRadius: 999 }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {lista.map(a => {
+              const n = a.anulado ? null : ++nVig;
+              return <div key={a.id} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 10, alignItems: "center", padding: "9px 12px", borderRadius: 10, background: a.anulado ? "#F8FAFC" : "#F8FAF5", border: "1px solid #E2E8F0", opacity: a.anulado ? 0.7 : 1 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, textDecoration: a.anulado ? "line-through" : "none" }}>
+                    {a.anulado ? "Abono anulado" : `Abono ${n}`} · {fmtL(a.monto)}
+                    <span style={{ fontWeight: 500, color: "#64748b" }}> · {fmtCorta(a.fecha) || a.fecha} · {a.metodo || "—"}</span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 2 }}>
+                    registró {a.registradoPor || "—"}{a.nota ? ` · ${a.nota}` : ""}
+                    {a.anulado && <span style={{ color: C_ROJO.color }}> · anuló {a.anuladoPor || "—"}: {a.motivoAnulacion || "sin motivo"}</span>}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  {a.comprobante?.fileId && <Btn small variant="ghost" onClick={() => verComprobanteAbono(a.comprobante)} title={a.comprobante.name}>Ver comprobante</Btn>}
+                  {!a.anulado && canAnularAbono && <Btn small variant="ghost" onClick={() => anularAbono(a)} style={{ color: C_ROJO.color }}>Anular</Btn>}
+                </div>
+              </div>;
+            })}
+          </div>
+        </div>;
+      })()}
+
       {/* Archivos */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
         <FileSlot
@@ -4622,10 +4864,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         />
         <div>
           <FileSlot
-            label="🧾 Comprobante de transferencia"
+            label={conAbonos ? "🧾 Comprobante (último abono)" : "🧾 Comprobante de transferencia"}
             verArchivo={setVisor}
             file={p.receiptFile}
-            canUpload={canUploadReceipt}
+            canUpload={canUploadReceipt && !conAbonos}
             accent="#059669"
             onUpload={setReceiptFile}
             onRemove={removeReceiptFile}
@@ -4780,8 +5022,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           {/* Corregir proyecto/partida de una compra YA PAGADA — solo Gerson y
               Christian (18-sep-2026). No toca el pago ni el comprobante. */}
           {canCorregirPagada && esPagadaP(p) && <Btn variant="ghost" onClick={() => setModal({ t: "corregir", d: p })} title="Corregir el proyecto o la partida presupuestaria">✏️ Corregir proyecto / partida</Btn>}
-          {canRegisterPay && <Btn variant="success" onClick={() => setModal({ t: "pay", d: p })}>💰 Registrar pago{isActingAsEmergency && p.status === "validado" ? " (emergencia)" : ""}</Btn>}
-          {canRevertPay && <Btn variant="warn" onClick={revertToValidado}>↺ Revertir pago</Btn>}
+          {canRegisterPay && !hayAbonosVigentes && <Btn variant="success" onClick={() => setModal({ t: "pay", d: p })}>💰 Registrar pago{isActingAsEmergency && p.status === "validado" ? " (emergencia)" : ""}</Btn>}
+          {canAbonar && <Btn variant={hayAbonosVigentes ? "success" : "ghost"} onClick={() => setModal({ t: "abono", d: p })} title="Pago parcial: se registra con su comprobante y la solicitud se cierra cuando se complete el total">➕ Registrar abono{hayAbonosVigentes ? ` (falta ${fmtL(saldoDe(p))})` : ""}</Btn>}
+          {canPasarAAbonos && <Btn variant="ghost" onClick={() => setModal({ t: "abono", d: p, modo: "convertir" })} title="Se registró como pagada completa pero solo lleva una parte: el pago que tiene pasa a ser el abono 1">↔ Pasar a abonos</Btn>}
+          {canRevertPay && !conAbonos && <Btn variant="warn" onClick={revertToValidado}>↺ Revertir pago</Btn>}
           {canCreate && <Btn variant="danger" onClick={() => { if (confirm(`¿Eliminar la solicitud de ${p.provider}?`)) { removePurchase(p.id); setModal(null); } }}>🗑 Eliminar</Btn>}
         </div>
         <Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>
@@ -5424,7 +5668,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // por mes exige paidAt igual que siempre.
     const enVista = (p) => isPaid(p) && (esGlobal || (!!p.paidAt && String(p.paidAt).slice(0, 7) === mesSel));
 
-    const montoPorPagar = cp.filter(p => p.status === "validado").reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const montoPorPagar = cp.filter(p => p.status === "validado").reduce((s, p) => s + porPagarDe(p), 0);
     const pagadoVista = cp.filter(enVista).reduce((s, p) => s + (Number(p.amount) || 0), 0);
 
     // ── Dona: gasto por proyecto (paleta naranja/carbón/gris) ──
@@ -5460,7 +5704,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       cp.forEach(p => {
         const key = p.projectCode || "_sin_proyecto";
         if (!acc[key]) acc[key] = { porPagar: 0, nPorPagar: 0, pagadoMes: 0, nPagadoMes: 0 };
-        if (p.status === "validado") { acc[key].porPagar += Number(p.amount) || 0; acc[key].nPorPagar++; }
+        if (p.status === "validado") { acc[key].porPagar += porPagarDe(p); acc[key].nPorPagar++; }
         if (enVista(p)) { acc[key].pagadoMes += Number(p.amount) || 0; acc[key].nPagadoMes++; }
       });
       return Object.entries(acc)
@@ -7420,7 +7664,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // Basura: entradas de solicitudes borradas (de cualquier empresa).
     const huerfanas = prioridades.filter(e => !porIdGlobal.has(e.id));
 
-    const total = pendientes.reduce((s, x) => s + (Number(x.p.amount) || 0), 0);
+    // Abonos (17-oct-2026): de una solicitud abonada solo cuenta lo que falta.
+    const total = pendientes.reduce((s, x) => s + porPagarDe(x.p), 0);
     const nUrg = pendientes.filter(x => x.e.urgente).length;
     const nVenc = pendientes.filter(x => estaVencida(x.p)).length;
 
@@ -7532,13 +7777,15 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               Arturo la puso en prioridad que salga que fue él"). */}
           {e.addedBy && <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>la priorizó {e.addedBy}</div>}
           {isMobile && <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 3 }}>
-            <span style={{ font: "800 15px/1 var(--display)", color: "var(--text)" }}>{fmtL(p.amount)}</span>
+            <span style={{ font: "800 15px/1 var(--display)", color: "var(--text)" }}>{fmtL(porPagarDe(p))}</span>
+            {esAbonoParcial(p) && <span style={{ fontSize: 11, color: C_AMARILLO.color, fontWeight: 700 }}>falta de {fmtL(p.amount)}</span>}
             <span style={{ fontSize: 11, color: venc ? C_ROJO.color : "var(--text-3)", fontWeight: venc ? 800 : 500 }}>{dias != null ? `${dias} días` : ""}</span>
           </div>}
         </div>
         {/* Cuánto y desde cuándo */}
         {!isMobile && <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-          <div style={{ font: "800 16px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(p.amount)}</div>
+          <div style={{ font: "800 16px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(porPagarDe(p))}</div>
+          {esAbonoParcial(p) && <div style={{ fontSize: 10.5, marginTop: 2, color: C_AMARILLO.color, fontWeight: 700 }}>falta de {fmtL(p.amount)} · abonado {fmtL(totalAbonado(p))}</div>}
           <div style={{ fontSize: 10.5, marginTop: 3, color: venc ? C_ROJO.color : "var(--text-3)", fontWeight: venc ? 800 : 500 }}>
             {dias != null ? `esperando ${dias} días` : "—"}
           </div>
@@ -8225,6 +8472,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
                   {/* VENCIDA: +2 semanas sin pago (18-sep-2026) */}
                   {venc && <span title={`Lleva ${diasV} días sin pago`} style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_ROJO.color, background: C_ROJO.bg, border: `1px solid ${C_ROJO.borde}`, whiteSpace: "nowrap" }}>Vencida · {diasV} d</span>}
                   <TreasuryBadge status={p.treasuryStatus} />
+                  {/* Abonos (17-oct-2026): pagada por partes, todavía con saldo */}
+                  {esAbonoParcial(p) && <span title={`${abonosVigentes(p).length} abono(s) · ${fmtL(totalAbonado(p))} de ${fmtL(p.amount)}`} style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_AMARILLO.color, background: C_AMARILLO.bg, whiteSpace: "nowrap" }}>Abonada · {abonosVigentes(p).length}</span>}
                   <DeliveryBadge status={
                     // Entregado por Logística pero sin ficha → lo que falta es la ficha.
                     p.deliveryStatus === "pendiente_entrega" && despachos.some(d => d.sourcePurchaseId === p.id && d.estado !== "cancelado" && (d.estado === "entregado" || d.estado === "cerrado"))
@@ -8235,7 +8484,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               <td style={TD}><Badge color={cc.color}>{p.projectCode}</Badge></td>
               <td style={{ ...TD, fontWeight: 600 }}>{p.provider}</td>
               <td style={{ ...TD, maxWidth: 280, whiteSpace: "normal" }}>{p.description}</td>
-              <td style={{ ...TD, fontWeight: 700, color: "var(--text)" }}>{fmtL(p.amount)}</td>
+              <td style={{ ...TD, fontWeight: 700, color: "var(--text)" }}>
+                {fmtL(p.amount)}
+                {esAbonoParcial(p) && <div style={{ fontSize: 11, fontWeight: 700, color: C_AMARILLO.color, marginTop: 2, whiteSpace: "nowrap" }}>falta {fmtL(saldoDe(p))}</div>}
+              </td>
               <td style={TD}>{fmt(p.createdAt)}</td>
               <td style={TD}>{p.paymentDate ? fmt(p.paymentDate) : "—"}</td>
               <td style={TD}>{p.opsResponsible || "—"}</td>
@@ -8348,6 +8600,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       case "borrador-supply": return <Modal title={`${m.d.codigo} — ${m.d.provider}`} onClose={() => setModal(null)} wide><BorradorSupplyFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} puedeEnviar={canCreate} userName={userName} setModal={setModal} updatePurchase={updatePurchase} addAudit={addAudit} enviar={(p) => enviarBorradoresATesoreria([p])} verArchivo={async (ref) => { try { const full = await store.getCloud(fileKey(ref.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el archivo."); setVisorGlobal({ ...full, name: full.name || ref.name }); } catch (e) { alert("Error: " + (e?.message || e)); } }} /></Modal>;
       case "corregir": return <Modal title={`Corregir proyecto / partida — ${m.d.codigo || m.d.provider}`} onClose={() => setModal(null)} wide><CorreccionFormImpl purchase={m.d} setModal={setModal} allProjects={allProjects} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} updatePurchase={updatePurchase} addAudit={addAudit} userName={userName} moduloPartida={CFG.moduloPartida} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
+      case "abono": return <Modal title={`${m.modo === "convertir" ? "Pasar a abonos" : "Registrar abono"} — ${m.d.codigo || m.d.provider}`} onClose={() => setModal({ t: "detail", d: m.d })} wide><AbonoFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} modo={m.modo} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} userName={userName} /></Modal>;
       case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
       case "edit-project": return <Modal title={`Editar proyecto — ${m.d.short}`} onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} project={m.d} /></Modal>;
       case "provider-new":  return <Modal title="Nuevo proveedor" onClose={() => setModal(null)} wide><ProviderFormImpl setModal={setModal} upsertProvider={upsertProvider} subirConstanciaProveedor={subirConstanciaProveedor} /></Modal>;
