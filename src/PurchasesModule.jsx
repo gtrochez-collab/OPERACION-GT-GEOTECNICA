@@ -4630,10 +4630,12 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const conAbonos = todosLosAbonos(p).length > 0;
     const hayAbonosVigentes = tieneAbonos(p);
     const canAbonar = (canPay || isEmergencyPayer) && p.status === "validado";
-    const canAnularAbono = (canPay || isAdmin) && conAbonos;
+    // Christian carga los abonos de las compras a crédito (17-oct-2026): mismo
+    // grupo que ya corrige compras pagadas (Gerson + Christian) + Carolina.
+    const canAnularAbono = (canPay || canCorregirPagada) && conAbonos;
     // Una solicitud que se registró pagada completa pero solo lleva una parte
     // (caso MAT-2026-0416): el pago que tiene pasa a ser el abono 1.
-    const canPasarAAbonos = (canPay || isAdmin) && esPagadaP(p) && !conAbonos;
+    const canPasarAAbonos = (canPay || canCorregirPagada) && esPagadaP(p) && !conAbonos;
     const verComprobanteAbono = async (ref) => {
       if (!ref?.fileId) return;
       try {

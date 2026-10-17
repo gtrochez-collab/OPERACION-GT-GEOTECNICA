@@ -267,8 +267,9 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Carolina + emergencia admin/costos; con abonos vigentes se APAGAN "Registrar
   pago" completo, "Revertir pago" y la subida del comprobante suelto), panel
   "Abonos" con barra de avance, "Ver comprobante" (visor) y "Anular"
-  (Carolina/admin, motivo obligatorio; queda TACHADO, nunca se borra);
-  "↔ Pasar a abonos" (Carolina/admin) en una pagada SIN abonos: su pago pasa a
+  (Carolina, Gerson y Christian — `canCorregirPagada`; motivo obligatorio;
+  queda TACHADO, nunca se borra); "↔ Pasar a abonos" (mismos tres: Christian
+  es quien carga los abonos de las compras a crédito) en una pagada SIN abonos: su pago pasa a
   ser el abono 1 con su comprobante (caso MAT-2026-0416 de ECOMETAL, marcada
   pagada completa con solo L 500,000 abonados). Form `AbonoFormImpl` a nivel
   de módulo, modal `abono` (`modo: "convertir"`). El comprobante se sube a su
