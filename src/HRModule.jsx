@@ -13,6 +13,10 @@ import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./ge
 // Planilla (16-oct-2026): lógica pura + PDF/Excel.
 import { diasDeQuincena, quincenaAnterior as quincenaAnteriorPl, quincenaSiguiente, nombreQuincena, rangoQuincena, etiquetaCorta, asistenciaDe, horasExtrasDe, armarLinea, totalesLinea, lineaParaGuardar, resumenPlanilla, entraEnPlanilla, diasMostrados, lineasConHe, GRUPOS_CT, METODOS_PAGO } from "./planilla-calc.js";
 import { exportarPlanillaPDF, exportarPlanillaExcel } from "./planilla-export.js";
+// Hub de RRHH (20-oct-2026): portal "Mi RRHH" de cada colaborador + bandeja de
+// solicitudes (vacaciones, permisos, constancias, reportes) para RRHH.
+import { KEY_SOLICITUDES, KEY_VINCULOS, vincularEmpleado, siguienteFolio, vacacionDeSolicitud, permisosDeSolicitud, constanciaDoc, textoConstancia, estaAbierta, esAprobador as esAprobadorHub, veTodo as veTodoHub, vacacionesTomadas, rangoCorto as rangoCortoHub } from "./rrhh-solicitudes.js";
+import { PortalRRHH, BandejaRRHH, SolicitudFormImpl, SolicitudDetalleImpl, ModalHub } from "./rrhh-hub.jsx";
 
 // ── GeoInventory → GeoTeam (13-oct-2026): "Equipo asignado" ────────────────
 // Solo lectura: lo que el colaborador tiene a su cargo según inv-items (lee
@@ -740,7 +744,17 @@ function AccesoFormImpl({ acceso, emps, proyectos, tomados, userName, onSave, on
   </div>;
 }
 
-export default function HRModule({ userRole = "admin", userName, onBack, onLogout }) {
+export default function HRModule({ userRole = "admin", userName, userKey, userEmpId = null, onBack, onLogout }) {
+  // Hub de RRHH (20-oct-2026): los roles que NO son de RRHH entran SOLO a su
+  // portal "Mi RRHH" (residentes, Fernando, Arturo, visores…). Los de RRHH
+  // ven además la bandeja "Solicitudes" y su propio "Mi RRHH" al final.
+  const ROLES_RRHH = ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica", "gerencia"];
+  const esPortalSolo = !ROLES_RRHH.includes(userRole);
+  const [solicitudes, setSolicitudes] = useState([]);
+  const [solicitudesErr, setSolicitudesErr] = useState("");
+  const [vinculos, setVinculos] = useState({});
+  const [hubModal, setHubModal] = useState(null);     // {t:"nueva", tipo} | {t:"ver", id}
+  const [solSub, setSolSub] = useState("");           // "" | vacations | leaves | constancias
   // Solo Gerson (admin) da accesos al sistema.
   const puedeAccesos = userRole === "admin";
   const [accesos, setAccesos] = useState(null);     // null = aún no leído
@@ -762,7 +776,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   const hideSalary = isAnaRH || isPhotoOnly || isOscarTardies;
   const isReadOnly = userRole === "gerencia" || userRole === "costos";
   const [co, setCo] = useState("subterra");
-  const [sec, setSec] = useState(isAsistente ? "attendance" : (isPhotoOnly || isAnaRH) ? "employees" : isOscarTardies ? "tardanzas" : "dashboard");
+  const [sec, setSec] = useState(esPortalSolo ? "mi" : isAsistente ? "attendance" : (isPhotoOnly || isAnaRH) ? "employees" : isOscarTardies ? "tardanzas" : "dashboard");
   // Accesos (2-oct-2026): se leen SOLO al entrar a la pestaña y SOLO con
   // getCloud (un cache viejo podría revivir un acceso desactivado). Va acá
   // arriba, antes del return de "Cargando…" — un hook después de un return
@@ -910,6 +924,13 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     if (hsb && typeof hsb === "object" && !Array.isArray(hsb)) setHeSalBase(hsb);
     if (Array.isArray(cpProj)) setHrCustomProjects(cpProj);
     setLoaded(true);
+    // Hub de RRHH: la bandeja SOLO con getCloud (un cache viejo podría
+    // revivir una solicitud ya decidida). Si la nube no responde se avisa.
+    try {
+      const [sol, vin] = await Promise.all([store.getCloud(KEY_SOLICITUDES), store.getCloud(KEY_VINCULOS)]);
+      setSolicitudes(Array.isArray(sol) ? sol : []); setSolicitudesErr("");
+      if (vin && typeof vin === "object" && !Array.isArray(vin)) setVinculos(vin);
+    } catch (e) { setSolicitudesErr("No se pudieron leer las solicitudes de la nube: " + (e?.message || e)); }
     // GeoClock: marcajes de la quincena actual + la anterior, y decisiones
     // de tardanzas. Aparte del Promise.all principal para que un fallo aca
     // nunca bloquee la carga del modulo.
@@ -1357,25 +1378,27 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     // "bonuses" (Bonificaciones) oculto a pedido del usuario 21-jul-2026 —
     // el codigo y la data siguen intactos; re-agregar aqui para reactivar.
     { id: "payroll", icon: "💰", label: "Planilla" },
-    { id: "vacations", icon: "🏖️", label: "Vacaciones" },
-    { id: "leaves", icon: "📋", label: "Permisos" },
+    // Vacaciones · Permisos · Constancias viven dentro de "Solicitudes" (hub,
+    // 20-oct-2026): la bandeja de lo que pide la gente + los registros.
+    { id: "solicitudes", icon: "📥", label: "Solicitudes", badge: solicitudes.filter(x => estaAbierta(x) && x.solicitadoPor?.username !== userKey).length },
     { id: "attendance", icon: "⏱️", label: "Asistencia" },
     { id: "tardanzas", icon: "🕒", label: "Llegadas tardías" },
     { id: "horasextras", icon: "⏰", label: "Horas Extras" },
     { id: "movimientos", icon: "🔄", label: "Movimientos" },
-    { id: "constancias", icon: "📄", label: "Constancias" },
     { id: "costos", icon: "💵", label: "Costos" },
     // Accesos al sistema (solo admin): usuarios de GeoSupply desde la ficha.
     ...(puedeAccesos ? [{ id: "accesos", icon: "🔑", label: "Accesos" }] : []),
+    { id: "mi", icon: "🙋", label: "Mi RRHH" },
   ];
   // Pestañas que ve Ana (asistente_compras): todo lo operativo de personal,
   // sin nada de dinero (planilla/costos) ni el reporte de altas y bajas.
   // "tardanzas" SÍ (ella gestiona las explicaciones), pero los montos del
   // descuento van gateados por hideSalary dentro de la pestaña.
-  const ANA_TABS = ["employees", "contracts", "vacations", "leaves", "attendance", "tardanzas", "horasextras", "constancias"];
-  const nav = isAsistente ? allNav.filter(n => n.id === "attendance")
-    : isPhotoOnly ? allNav.filter(n => n.id === "employees")
-    : isOscarTardies ? allNav.filter(n => n.id === "tardanzas")
+  const ANA_TABS = ["employees", "contracts", "solicitudes", "attendance", "tardanzas", "horasextras", "mi"];
+  const nav = esPortalSolo ? allNav.filter(n => n.id === "mi")
+    : isAsistente ? allNav.filter(n => ["attendance", "mi"].includes(n.id))
+    : isPhotoOnly ? allNav.filter(n => ["employees", "mi"].includes(n.id))
+    : isOscarTardies ? allNav.filter(n => ["tardanzas", "mi"].includes(n.id))
     : isAnaRH ? allNav.filter(n => ANA_TABS.includes(n.id))
     : allNav;
 
@@ -2732,6 +2755,123 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   };
 
   const ConForm = () => { const [eid, setEid] = useState(""); const [tp, setTp] = useState("laboral"); const emp = emps.find(e => e.id === eid); const today = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" }); const txt = emp ? (tp === "laboral" ? `CONSTANCIA LABORAL\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, desde ${fmt(emp.startDate)} a la fecha.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos` : `CONSTANCIA DE INGRESOS\n\nHacemos constar que ${emp.fullName}, identidad ${emp.dni}, labora para ${COMPANIES[emp.company].name}, cargo: ${emp.position}, salario mensual: ${fmtL(emp.salary)}.\n\nSan Pedro Sula, ${today}.\n\nGerson Steve Trochez Cubas\nRecursos Humanos`) : ""; return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}><Select label="Empleado" options={ae.map(e => ({ value: e.id, label: e.fullName }))} value={eid} onChange={e => setEid(e.target.value)} /><Select label="Tipo" options={hideSalary ? [{ value: "laboral", label: "Laboral" }] : [{ value: "laboral", label: "Laboral" }, { value: "ingresos", label: "Ingresos" }]} value={tp} onChange={e => setTp(e.target.value)} /></div>{txt && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: 18 }}><pre style={{ whiteSpace: "pre-wrap", fontFamily: "'Segoe UI'", fontSize: 13, lineHeight: 1.7, margin: 0 }}>{txt}</pre></div>}<div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>{txt && <Btn variant="success" onClick={() => { sC([...cons, { id: uid(), employeeId: eid, type: tp, date: new Date().toISOString(), text: txt }]); navigator.clipboard?.writeText(txt); alert("Copiado"); setModal(null); }}>Copiar y guardar</Btn>}</div></div>; };
+
+  // ═══════════════════════════════════════════════════════════════════
+  // HUB DE RRHH (20-oct-2026): guardado de solicitudes + decisiones
+  // ═══════════════════════════════════════════════════════════════════
+  const hubUser = { username: userKey, nombre: userName, rol: userRole, empId: null };
+  const vinculoYo = vincularEmpleado({ username: userKey, label: userName, empId: userEmpId }, emps, vinculos);
+  const yo = vinculoYo.emp;
+  hubUser.empId = yo?.id || null;
+  const fotoDe = (e) => e?.photo?.fileId ? photoCache[e.photo.fileId] || null : null;
+  const leerMarcas = (periodo, quincena) => store.getCloud(gcMarkKey(periodo, quincena)).then(a => Array.isArray(a) ? a : []).catch(() => []);
+  // La bandeja se escribe SIEMPRE sobre la lista fresca de la nube
+  // (getCloud → fn → set → verify por ids). Si la nube no responde, no se guarda.
+  const sSol = async (fn) => {
+    let cloud;
+    try { cloud = await store.getCloud(KEY_SOLICITUDES); } catch { alert("No se pudo leer la nube. Revisá tu conexión y volvé a intentar."); return false; }
+    const base = Array.isArray(cloud) ? cloud : [];
+    const next = fn(base);
+    if (!next) return false;
+    const ok = await store.set(KEY_SOLICITUDES, next);
+    if (!ok) { alert("No se pudo guardar en la nube."); return false; }
+    try { const back = await store.getCloud(KEY_SOLICITUDES); const ids = new Set((Array.isArray(back) ? back : []).map(x => x.id)); if (!next.every(x => ids.has(x.id))) { alert("La nube no confirmó el guardado. Recargá y revisá."); return false; } setSolicitudes(Array.isArray(back) ? back : next); }
+    catch { setSolicitudes(next); }
+    return true;
+  };
+  // Agrega registros a una key de lista (hr-vacs / hr-lvs / hr-cons) contra la nube.
+  const anexarEn = async (key, items, setter) => {
+    let cloud;
+    try { cloud = await store.getCloud(key); } catch { alert("No se pudo leer la nube para registrar. No se guardó nada."); return false; }
+    const next = [...(Array.isArray(cloud) ? cloud : []), ...items];
+    const ok = await store.set(key, next);
+    if (!ok) { alert("No se pudo guardar en la nube."); return false; }
+    setter(next);
+    return true;
+  };
+  const crearSolicitud = async (s) => {
+    const anio = Number(hoyISO().slice(0, 4));
+    return sSol(list => [...list, { ...s, id: uid(), folio: siguienteFolio(list, anio) }]);
+  };
+  const cancelarSolicitud = (sol) => sSol(list => list.map(x => x.id === sol.id && x.estado === "pendiente" ? { ...x, estado: "cancelada", updatedAt: new Date().toISOString(), historial: [...(x.historial || []), { accion: "cancelada", por: userName, at: new Date().toISOString() }] } : x));
+  const vincularUsuario = async (empId) => {
+    let cloud; try { cloud = await store.getCloud(KEY_VINCULOS); } catch { alert("No se pudo leer la nube."); return false; }
+    const next = { ...(cloud && typeof cloud === "object" && !Array.isArray(cloud) ? cloud : {}), [userKey]: empId };
+    const ok = await store.set(KEY_VINCULOS, next); if (!ok) { alert("No se pudo guardar."); return false; }
+    setVinculos(next); return true;
+  };
+  const decidirSolicitud = async (sol, accion, { motivo = "" } = {}) => {
+    const at = new Date().toISOString(), por = userName;
+    const emp = emps.find(e => e.id === sol.empId);
+    let patch = {}, label = accion;
+    if (accion === "aprobar") {
+      if (!emp) { alert("La ficha de esta persona ya no existe en GeoTeam."); return false; }
+      if (sol.tipo === "vacaciones") {
+        const v = vacacionDeSolicitud(sol, { id: uid(), aprobadoPor: por, at });
+        if (!(await anexarEn("hr-vacs", [v], setVacs))) return false;
+        await syncVacacion(v, null);
+        patch = { estado: "aprobada", resultado: { vacId: v.id, at } };
+      } else if (sol.tipo === "permiso") {
+        const ls = permisosDeSolicitud(sol, { idDe: () => uid(), aprobadoPor: por, at });
+        if (!(await anexarEn("hr-lvs", ls, setLvs))) return false;
+        if (ls.length === 1) await syncPermiso(ls[0], null);
+        else { const r = await marcarEnAsistencia(sol.empId, sol.fecha, sol.hasta, valorPermiso(ls[0]), "aplicar"); if (r.sinNube) alert("El permiso quedó registrado pero NO se marcó en la asistencia (sin nube)."); else if (r.celdas) alert(`✅ ${r.celdas} día(s) marcados en la asistencia (${r.hojas.join(", ")})`); }
+        patch = { estado: "aprobada", resultado: { lvIds: ls.map(l => l.id), at } };
+      } else if (sol.tipo === "constancia") {
+        const tipo = sol.tipoConstancia === "trabajo" ? "trabajo" : "laboral";
+        const doc = constanciaDoc(emp, { tipo, hoy: hoyISO() });
+        const c = { id: uid(), employeeId: emp.id, type: tipo, date: at, text: textoConstancia(emp, { tipo, hoy: hoyISO() }), origenSolicitud: sol.id, emitidaPor: por };
+        await anexarEn("hr-cons", [c], setCons);
+        patch = { estado: "aprobada", resultado: { doc, consId: c.id, at } };
+      } else return false;
+      label = "aprobada";
+    } else if (accion === "denegar") { patch = { estado: "denegada" }; label = "denegada"; }
+    else if (accion === "revision") { patch = { estado: "en_revision" }; label = "en revisión"; }
+    else if (accion === "resolver") { patch = { estado: "resuelta" }; label = "resuelta"; }
+    else return false;
+    return sSol(list => list.map(x => x.id === sol.id ? { ...x, ...patch, decision: { por, at, motivo }, updatedAt: at, historial: [...(x.historial || []), { accion: label, por, at, nota: motivo }] } : x));
+  };
+  const renderMiRRHH = () => <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    {solicitudesErr && <div style={{ background: "rgba(192,57,43,.07)", borderRadius: 14, padding: "10px 14px", fontSize: 12.5, color: "#B03024" }}>{solicitudesErr}</div>}
+    <PortalRRHH user={hubUser} yo={yo} vinculoEstado={vinculoYo.como} emps={emps} vacs={vacs} lvs={lvs} solicitudes={solicitudes} fotoDe={fotoDe} gcTardies={gcTardies} leerMarcas={leerMarcas}
+      onNueva={(tipo) => setHubModal({ t: "nueva", tipo })} onAbrir={(s) => setHubModal({ t: "ver", id: s.id })} onVincular={vincularUsuario} />
+  </div>;
+  const renderSolicitudesHub = () => {
+    if (solSub) return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}><button type="button" className="gt-circulo" onClick={() => setSolSub("")} aria-label="Atrás" style={{ width: 34, height: 34, fontSize: 15 }}>←</button><div style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL }}>{solSub === "vacations" ? "Registro de vacaciones" : solSub === "leaves" ? "Registro de permisos" : "Constancias emitidas"}</div><span style={{ fontSize: 12.5, color: "#6E6862" }}>{cc.name}</span></div>
+      {solSub === "vacations" ? renderVacs() : solSub === "leaves" ? renderLvs() : renderCons()}
+    </div>;
+    const caja = (titulo, n, sub, id) => <div key={id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => setSolSub(id)} onKeyDown={e => { if (e.key === "Enter") setSolSub(id); }} style={{ padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ flex: 1 }}><div style={{ font: "800 14.5px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</div><div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>{sub}</div></div>
+      <div style={{ font: "800 22px/1 var(--display)", color: CHARCOAL }}>{n}</div><span style={{ color: "#A39C92" }}>›</span>
+    </div>;
+    const anio = hoyISO().slice(0, 4);
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {solicitudesErr && <div style={{ background: "rgba(192,57,43,.07)", borderRadius: 14, padding: "10px 14px", fontSize: 12.5, color: "#B03024" }}>{solicitudesErr}</div>}
+      <BandejaRRHH user={hubUser} emps={emps} solicitudes={solicitudes} fotoDe={fotoDe} co={co} onAbrir={(s) => setHubModal({ t: "ver", id: s.id })} onNueva={(tipo) => setHubModal({ t: "nueva", tipo })} />
+      <div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "6px 2px 10px" }}><span style={{ font: "800 16px/1 var(--display)", color: CHARCOAL }}>Registros</span><span style={{ font: "600 13px/1 var(--sans)", color: "#A39C92" }}>{cc.name} · lo aprobado y lo cargado a mano</span></div>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 10 }}>
+          {caja("Vacaciones", cv.filter(v => String(v.startDate || "").startsWith(anio)).length, `registradas en ${anio} · marcan "V" en la asistencia`, "vacations")}
+          {caja("Permisos", cl.filter(l => String(l.date || "").startsWith(anio)).length, `en ${anio} · con o sin goce`, "leaves")}
+          {caja("Constancias", cc2.filter(c => String(c.date || "").startsWith(anio)).length, `emitidas en ${anio}`, "constancias")}
+        </div>
+      </div>
+    </div>;
+  };
+  const renderModalHub = () => {
+    if (!hubModal) return null;
+    if (hubModal.t === "nueva") return <ModalHub title="Nueva solicitud" onClose={() => setHubModal(null)}>
+      <SolicitudFormImpl tipoInicial={hubModal.tipo} emps={emps} yo={yo} user={hubUser} vacs={vacs} fotoDe={fotoDe} onGuardar={crearSolicitud} onClose={() => setHubModal(null)} />
+    </ModalHub>;
+    const sol = solicitudes.find(x => x.id === hubModal.id);
+    if (!sol) return null;
+    const empSol = emps.find(e => e.id === sol.empId);
+    const vistaPrevia = sol.tipo === "constancia" && empSol && estaAbierta(sol) && (sol.tipoConstancia !== "trabajo" || !hideSalary) ? constanciaDoc(empSol, { tipo: sol.tipoConstancia === "trabajo" ? "trabajo" : "laboral", hoy: hoyISO() }) : null;
+    return <ModalHub title={`${sol.folio || "Solicitud"}`} onClose={() => setHubModal(null)} wide={sol.tipo === "constancia"}>
+      <SolicitudDetalleImpl sol={sol} user={hubUser} emps={emps} fotoDe={fotoDe} hoy={hoyISO()} vistaPrevia={vistaPrevia} onDecidir={decidirSolicitud} onCancelar={cancelarSolicitud} onClose={() => setHubModal(null)} />
+    </ModalHub>;
+  };
 
   // ── SECTIONS ──
   // ── HORAS EXTRAS ──
@@ -4535,6 +4675,11 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
           {bloque("Identidad", [fila("DNI", e.dni), fila("Sexo", e.sexo === "femenino" ? "Femenino" : e.sexo === "masculino" ? "Masculino" : null)])}
           {bloque("Contacto", [fila("Teléfono", e.phone), fila("Correo", e.email)])}
           {!hideSalary && bloque("Salario", [fila("Salario mensual", Number(e.salary) ? fmtL(e.salary) : null), fila("Bonificación", Number(e.bonificacion) ? fmtL(e.bonificacion) : null)])}
+          {(() => { const t = vacacionesTomadas(vacs, e.id, hoyISO().slice(0, 4)); return bloque("Vacaciones tomadas", [
+            fila("Este año", `${t.diasAnio} día${t.diasAnio === 1 ? "" : "s"}`),
+            ...t.lista.slice(0, 4).map(v => fila(String(v.startDate).slice(0, 4), `${rangoCortoHub(v.startDate, v.endDate)} · ${v.days} d`)),
+            t.lista.length === 0 ? fila("Historial", "Sin vacaciones registradas") : null,
+          ]); })()}
           <div style={{ marginTop: 16 }}><EquipoAsignadoInv empId={e.id} /></div>
         </div>
         {(puedeEditar || puedeBorrar) && <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", borderTop: "1px solid rgba(44,42,40,.07)", background: "rgba(249,249,248,.9)" }}>
@@ -6829,7 +6974,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     if (!permitidas.includes(sec) && nav.length < allNav.length) return renderSec2(permitidas[0]);
     return renderSec2(sec);
   };
-  const renderSec2 = (s) => { switch (s) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "tardanzas": return renderTardanzas(); case "kpis": return renderKpis(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); case "horasextras": return renderHE(); case "accesos": return renderAccesos(); default: return renderDashboard(); } };
+  const renderSec2 = (s) => { switch (s) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "tardanzas": return renderTardanzas(); case "kpis": return renderKpis(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); case "horasextras": return renderHE(); case "accesos": return renderAccesos(); case "solicitudes": return renderSolicitudesHub(); case "mi": return renderMiRRHH(); default: return renderDashboard(); } };
 
   const renderModal = () => { if (!modal) return null; const m = modal; switch (m.t) {
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;
@@ -6872,7 +7017,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
     default: return null;
   }};
 
-  const roleLabel = userRole === "admin" ? "Recursos Humanos" : userRole === "tesoreria" ? "Tesorería — acceso completo" : userRole === "asistente" ? "Asistente RRHH" : userRole === "gerencia" ? "Gerencia (solo lectura)" : userRole === "costos" ? "Costos (solo lectura)" : userRole === "recepcion" ? "Fotos del personal" : userRole === "asistente_compras" ? "Personal y asistencia" : userRole === "logistica" ? "Aprobador de llegadas tardías (plantel/almacén)" : (userRole || "Usuario");
+  const roleLabel = userRole === "admin" ? "Recursos Humanos" : userRole === "tesoreria" ? "Tesorería — acceso completo" : userRole === "asistente" ? "Asistente RRHH" : userRole === "gerencia" ? "Gerencia (solo lectura)" : userRole === "costos" ? "Costos (solo lectura)" : userRole === "recepcion" ? "Fotos del personal" : userRole === "asistente_compras" ? "Personal y asistencia" : userRole === "logistica" ? "Aprobador de llegadas tardías (plantel/almacén)" : esPortalSolo ? "Mi RRHH" : (userRole || "Usuario");
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
   // ── Encabezado y pestañas (15-oct-2026): mismo estilo que GeoInventory /
@@ -6881,7 +7026,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
   // Dashboard, KPI's y Empleados NO llevan el <fieldset disabled>: solo
   // muestran (los botones que escriben ya se ocultan por rol) y así un rol de
   // solo lectura puede buscar y filtrar.
-  const SIN_CANDADO = ["dashboard", "kpis", "employees", "contracts"];
+  const SIN_CANDADO = ["dashboard", "kpis", "employees", "contracts", "solicitudes", "mi"];
   const secVista = nav.some(n => n.id === sec) ? sec : nav[0]?.id;
   const candado = isReadOnly && !SIN_CANDADO.includes(secVista);
   return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "var(--sans)", background: "var(--bg)", color: CHARCOAL, position: "relative", overflow: "hidden" }}>
@@ -6898,7 +7043,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
         {!isMobile && <div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>GeoTeam</div>}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0, order: isMobile ? 3 : 0, width: isMobile ? "100%" : "auto", justifyContent: isMobile ? "center" : "flex-start" }}>
-        {pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: isMobile ? v.name.split(" ")[0] : v.name, on: co === k, onClick: () => setCo(k) })))}
+        {!esPortalSolo && pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: isMobile ? v.name.split(" ")[0] : v.name, on: co === k, onClick: () => setCo(k) })))}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
         {!isMobile && <div style={{ textAlign: "right" }}>
@@ -6909,7 +7054,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       </div>
     </div>
     {nav.length > 1 && <div style={{ position: "relative", zIndex: 2, display: "flex", borderBottom: "1px solid rgba(44,42,40,.08)", overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0, paddingLeft: isMobile ? 4 : 20, scrollbarWidth: "none" }}>
-      {nav.map(n => { const active = secVista === n.id; return <button key={n.id} onClick={() => setSec(n.id)} style={{ padding: isMobile ? "12px 13px" : "14px 16px", background: "transparent", border: "none", boxShadow: active ? `inset 0 -2px 0 ${ORANGE}` : "none", color: active ? "var(--naranja-tinta)" : "var(--text-3)", font: `${active ? 800 : 600} 13px/1 var(--sans)`, cursor: "pointer", whiteSpace: "nowrap" }}>{n.label}</button>; })}
+      {nav.map(n => { const active = secVista === n.id; return <button key={n.id} onClick={() => setSec(n.id)} style={{ padding: isMobile ? "12px 13px" : "14px 16px", background: "transparent", border: "none", boxShadow: active ? `inset 0 -2px 0 ${ORANGE}` : "none", color: active ? "var(--naranja-tinta)" : "var(--text-3)", font: `${active ? 800 : 600} 13px/1 var(--sans)`, cursor: "pointer", whiteSpace: "nowrap" }}>{n.label}{n.badge > 0 && <span style={{ marginLeft: 6, display: "inline-block", minWidth: 18, padding: "2px 5px", borderRadius: 999, background: ORANGE, color: "#fff", font: "800 10.5px/1.2 var(--sans)", textAlign: "center", verticalAlign: "middle" }}>{n.badge}</span>}</button>; })}
     </div>}
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "12px 12px 24px" : "18px 32px 32px", maxWidth: 1500, margin: "0 auto", boxSizing: "border-box" }}>
@@ -6922,6 +7067,7 @@ export default function HRModule({ userRole = "admin", userName, onBack, onLogou
       </div>
     </div>
     {!isReadOnly && renderModal()}
+    {renderModalHub()}
     {renderCarnet()}
   </div>;
 }

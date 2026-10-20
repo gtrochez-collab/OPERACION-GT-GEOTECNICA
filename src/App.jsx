@@ -39,7 +39,10 @@ const MODULES = [
     // Lic. Carolina (tesoreria): acceso COMPLETO igual que Gerson (18-ago).
     // Oscar (logistica): SOLO el aprobador de Llegadas tardías — responsable
     // de las tardanzas marcadas desde su tablet de plantel/almacén.
-    roles: ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica", "gerencia"],
+    // Hub de RRHH (20-oct-2026): TODOS los usuarios entran (menos la tablet de
+    // marcaje). Los que no son de RRHH ven SOLO su portal "Mi RRHH" (su
+    // asistencia de GeoClock y sus solicitudes); el recorte vive en HRModule.
+    roles: ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica", "gerencia", "coordinador", "coordinador_maquinas", "compras_ops", "residente", "visor_compras", "almacenista", "almacen_visor"],
   },
   {
     id: "compras-operaciones",
@@ -258,9 +261,9 @@ export default function App() {
   useEffect(() => {
     if (!user || activeModule) return;
     const puedeSupply = MODULES.find(m => m.id === "geosupply")?.roles.includes(user.role);
-    if (!puedeSupply) return;
     let vivo = true;
     const leer = async () => {
+      if (!puedeSupply) return;
       try {
         const [sol, cot, cf] = await Promise.all([store.getCloud("sp-solicitudes"), store.getCloud("sp-cotizaciones"), store.getCloud("sp-config")]);
         if (!vivo) return;
@@ -268,8 +271,19 @@ export default function App() {
         setBadges(b => ({ ...b, geosupply: n }));
       } catch (e) { console.warn("[panel] contador GeoSupply:", e?.message || e); }
     };
-    leer();
-    const f = () => { if (document.visibilityState === "visible") leer(); };
+    // Hub de RRHH: a quienes deciden (Gerson, Carolina, Ana) les cuenta lo
+    // que tienen por decidir y no cargaron ellos mismos.
+    const leerRRHH = async () => {
+      if (!["admin", "tesoreria", "asistente_compras"].includes(user.role)) return;
+      try {
+        const sol = await store.getCloud("hr-solicitudes");
+        if (!vivo) return;
+        const n = (Array.isArray(sol) ? sol : []).filter(x => ["pendiente", "en_revision"].includes(x.estado) && x.solicitadoPor?.username !== user.username).length;
+        setBadges(b => ({ ...b, rrhh: n }));
+      } catch (e) { console.warn("[panel] contador RRHH:", e?.message || e); }
+    };
+    leer(); leerRRHH();
+    const f = () => { if (document.visibilityState === "visible") { leer(); leerRRHH(); } };
     window.addEventListener("focus", f);
     return () => { vivo = false; window.removeEventListener("focus", f); };
   }, [user, activeModule]);

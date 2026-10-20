@@ -15,7 +15,7 @@ cache localStorage. Deploy automático a GitHub Pages al hacer push a `main`.
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
-- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs`, `tests/planilla-calc.test.mjs` y `tests/abonos.test.mjs`.
+- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs`, `tests/planilla-calc.test.mjs`, `tests/abonos.test.mjs` y `tests/rrhh-solicitudes.test.mjs`.
 - Deploy: `git push origin main` dispara `.github/workflows/deploy.yml` → gh-pages.
   URL: https://gtrochez-collab.github.io/OPERACION-GT-GEOTECNICA/
 - Verificar deploy: `gh run list` + grep del texto nuevo en el bundle publicado.
@@ -1029,6 +1029,62 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   3,000, Nacho 1,019 vs 1,000, Teófilo 1,980 vs 2,000, coop Nelson 1,056 vs
   1,294.50, Mauro salario 0 vs 54,000; honorarios mensuales según ella:
   Arturo, Gustavo, Mauro, Melissa y Oscar.
+  **HUB DE RRHH (20-oct-2026, pedido de Gerson: "un hub de RRHH para todos:
+  ver su asistencia de GeoClock, pedir vacaciones, permisos, constancias y
+  reportar problemas; Ana carga por la gente de campo y yo apruebo; que
+  quede en la ficha")**: `src/rrhh-solicitudes.js` (lógica PURA,
+  `tests/rrhh-solicitudes.test.mjs`) + `src/rrhh-hub.jsx` (pantallas a
+  nivel de módulo) + integración en HRModule. TODOS los roles entran a
+  GeoTeam (MODULES en App.jsx, menos la tablet `marcaje`): los que NO son de
+  RRHH (`esPortalSolo`: residentes, Fernando, Arturo, visores…) ven SOLO la
+  pestaña **Mi RRHH** (`PortalRRHH`): tarjeta con su ficha, cajas de vidrio
+  Mi asistencia (`MiAsistencia`: marcajes de GeoClock por quincena —entrada
+  primera / salida última / horas con almuerzo / tarde con la decisión de
+  RRHH— leídos con getCloud de `gc-marks-*`) · Vacaciones (días tomados este
+  año) · Permisos · Constancias · Reportar un problema, y "Mis solicitudes".
+  Los de RRHH ven además la pestaña **Solicitudes** (`BandejaRRHH`:
+  contadores por tipo que filtran, Por decidir / Decididas / Todas, buscador,
+  "+ Nueva solicitud") con los REGISTROS de siempre abajo (Vacaciones ·
+  Permisos · Constancias → `renderVacs/renderLvs/renderCons`, que dejaron
+  de ser pestañas) y "Mi RRHH" al final. Badge naranja en la pestaña y en
+  el Panel (`badges.rrhh`, solo admin/tesorería/Ana) con lo que tienen por
+  decidir y no cargaron ellos. **Usuario ↔ ficha** (`vincularEmpleado`):
+  `gt-vinculos` {username: empId} > `empId` de la sesión (accesos de
+  GeoTeam) > nombre (todas las palabras del label, sin títulos, en UNA
+  ficha; el exacto gana); si no se encuentra o es ambiguo, el portal ofrece
+  "Elegir mi ficha" (self-service, se guarda en gt-vinculos). Cualquiera
+  puede pedir **en nombre de otra persona** (queda `solicitadoPor` +
+  `enNombreDe`). Key **`hr-solicitudes`** `[{id, folio RH-AAAA-NNNN, tipo
+  vacaciones|permiso|constancia|reporte, empId, empNombre, company, cargo,
+  solicitadoPor {username, nombre}, enNombreDe, estado pendiente|en_revision|
+  aprobada|resuelta|denegada|cancelada, nota, adjuntos [{fileId…} en
+  cp-file-*: foto comprimida o PDF ≤2 MB], historial[], decision {por, at,
+  motivo}, resultado, …campos del tipo}]`; se escribe SIEMPRE getCloud → fn
+  → set → verify (`sSol`). **Deciden** admin, tesorería y Ana (`puedeDecidir`:
+  nunca el que la cargó; la constancia DE TRABAJO lleva salario → solo
+  Gerson/Carolina). **Al aprobar**: vacaciones → `hr-vacs` (anexar con
+  getCloud) + `syncVacacion` (marca "V"); permiso → un registro por día
+  hábil en `hr-lvs` + marca 1/0; constancia → `hr-cons` + `resultado.doc`;
+  reporte → "Tomar en revisión" / "Responder y resolver". La ficha (dorso
+  del carnet) muestra **Vacaciones tomadas** (`vacacionesTomadas`).
+  **CONSTANCIAS calcadas de la que Gerson firma** (`constanciaDoc`, doc con
+  runs en negrita + tabla; `ConstanciaVista` en pantalla y `constanciaPDF`
+  carta con `escribirRuns`): "CONSTANCIA DE TRABAJO", "el señor/la señora
+  NOMBRE EN MAYÚSCULAS, identificado con el número de identidad …, labora
+  para la empresa <razón social> desde el dos (02) de julio de dos mil
+  veinticinco (2025)…", cargo, modalidad por `contractType`, salario en
+  letras (`lempirasEnLetras`), tabla Salario mensual · (−) IHSS 595.16 ·
+  (−) RAP (solo Geotecnica permanentes) · Salario neto, cierre "a los siete
+  (07) días del mes de … del año …" y firma "Lic. Gerson Trochez ·
+  Coordinador de Operaciones · <razón social>". `EMPRESAS` trae razón
+  social y logo por empresa: Subterra = "SUBTERRA, S.A." (logo
+  `brand/subterra.png`, **PENDIENTE que Gerson mande el PNG** — mientras,
+  sale el nombre en texto) y Geotecnica = "GEOTECNICA SOLUCIONES, S.A."
+  (**confirmar razón social**). Tipos: `trabajo` (con salario) y `laboral`
+  (sin el párrafo del salario). jsPDF no trae "−": `l1()` normaliza guiones
+  al pintar. Probado el 20-oct con solicitudes de prueba de Fernando
+  (borradas después): vacaciones 2030 aprobadas → hr-vacs + carnet; constancia
+  aprobada → vista previa y PDF iguales al modelo.
   **Dashboard gerencial + KPI's (ago 2026, estilo IsTeam)**: `renderDashboard`
   reescrito — `statsDeMes(periodo)` calcula presencia diaria/NSP/INC/VAC/costo
   MO por proyecto desde hr-atts2 (calcCostoMO) + planilla real (hr-pays) +
@@ -1971,7 +2027,9 @@ logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 `gt-todos-<username>` (tareas personales — las comparten la tarjeta TO-DOS de
 la bienvenida y el módulo Mis Tareas; nadie ve las de otro).
 `gt-usuarios` (accesos creados desde GeoTeam → Accesos; el login los lee con
-getCloud después de users.js). GeoSupply (oct 2026): `sp-solicitudes`,
+getCloud después de users.js). `hr-solicitudes` (hub de RRHH: vacaciones/permisos/
+constancias/reportes que pide la gente; al aprobar alimenta hr-vacs/hr-lvs/
+hr-cons) y `gt-vinculos` ({username: empId}). GeoSupply (oct 2026): `sp-solicitudes`,
 `sp-cotizaciones`, `sp-config`, `sp-file-<id>`; campo aditivo `origenSupply`
 en cp-purchases (borradores que vienen de una cotización aprobada).
 GeoInventory (oct 2026): `inv-items`, `inv-ubicaciones`, `inv-mov-AAAA-MM`
