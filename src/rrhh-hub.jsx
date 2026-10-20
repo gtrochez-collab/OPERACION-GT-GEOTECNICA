@@ -358,7 +358,7 @@ function MiAsistencia({ emp, gcTardies, hoy, leerMarcas, noMarca }) {
 // props: user {username, nombre, rol, empId}, yo (ficha vinculada o null),
 // emps, vacs, solicitudes, fotoDe(emp), gcTardies, leerMarcas, onNueva(tipo),
 // onAbrir(sol), onVincular(empId), elegirFicha (cuando no se encontró)
-export function PortalRRHH({ user, yo, emps, vacs, lvs, solicitudes, fotoDe, gcTardies, leerMarcas, onNueva, onAbrir, onVincular, vinculoEstado }) {
+export function PortalRRHH({ user, yo, emps, vacs, lvs, cons = [], solicitudes, fotoDe, gcTardies, leerMarcas, onNueva, onAbrir, onVincular, vinculoEstado }) {
   const isMobile = useIsMobile();
   const hoy = hoyISO();
   const [vista, setVista] = useState("inicio");   // inicio | asistencia
@@ -376,6 +376,42 @@ export function PortalRRHH({ user, yo, emps, vacs, lvs, solicitudes, fotoDe, gcT
   </div>;
   const activos = (emps || []).filter(e => e.status !== "inactive").sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "es"));
   const cand = q.trim().length >= 2 ? activos.filter(e => e.fullName.toLowerCase().includes(q.toLowerCase())).slice(0, 8) : [];
+  const cabecera = (titulo, sub, cta) => <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}><button type="button" className="gt-circulo" onClick={() => setVista("inicio")} aria-label="Atrás" style={{ width: 34, height: 34, fontSize: 15 }}>←</button><div style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</div><span style={{ fontSize: 12.5, color: "#6E6862" }}>{sub}</span><div style={{ flex: 1 }} />{cta}</div>;
+  const tile = (v, l, c = CHARCOAL) => <div className="gt-vidrio" style={{ padding: "12px 14px" }}><div style={{ font: "800 24px/1 var(--display)", color: c, letterSpacing: "-.02em" }}>{v}</div><div style={{ fontSize: 11.5, color: "#6E6862", marginTop: 5 }}>{l}</div></div>;
+  const chipVac = (st) => st === "approved" ? <Chip c={C_VERDE}>Aprobadas</Chip> : st === "rejected" ? <Chip c={C_ROJO}>Rechazadas</Chip> : <Chip c={C_AMARILLO}>Pendientes</Chip>;
+  const porAnio = (lista, fechaDe) => { const g = {}; lista.forEach(x => { const a = String(fechaDe(x) || "").slice(0, 4) || "—"; (g[a] = g[a] || []).push(x); }); return Object.entries(g).sort((a, b) => b[0].localeCompare(a[0])); };
+  const grupo = (anio, filas) => <div key={anio}><div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "8px 2px 8px" }}><span style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>{anio}</span><span style={{ font: "600 12.5px/1 var(--sans)", color: "#A39C92" }}>{filas.length}</span></div><div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{filas}</div></div>;
+  const filaH = (ico, titulo, sub, der, key) => <div key={key} className="gt-vidrio" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", flexWrap: "wrap" }}>
+    <div style={{ width: 36, height: 36, borderRadius: 11, background: "rgba(44,42,40,.06)", color: "#6E6862", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ico} size={18} /></div>
+    <div style={{ flex: 1, minWidth: 160 }}><div style={{ font: "700 14px/1.2 var(--sans)", color: CHARCOAL }}>{titulo}</div>{sub && <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>{sub}</div>}</div>{der}
+  </div>;
+  const vacio = (t) => <div className="gt-vidrio" style={{ padding: 24, textAlign: "center", fontSize: 13, color: "#6E6862" }}>{t}</div>;
+  if (vista === "vacaciones" && yo) {
+    const todas = (vacs || []).filter(v => v.employeeId === yo.id).sort((a, b) => String(b.startDate).localeCompare(String(a.startDate)));
+    const aprob = todas.filter(v => v.status === "approved");
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {cabecera("Mis vacaciones", "lo registrado en GeoTeam", btn("+ Pedir vacaciones", () => onNueva("vacaciones"), { c: ORANGE_DARK, lleno: true, chico: true }))}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>{tile(tomadas?.diasAnio || 0, `días tomados en ${hoy.slice(0, 4)}`)}{tile(aprob.reduce((t, v) => t + (Number(v.days) || 0), 0), "días en total")}{tile(aprob.length, "períodos")}{tile(proxima ? rangoCorto(proxima.startDate, proxima.endDate) : "—", "próximas")}</div>
+      {!todas.length ? vacio("Sin vacaciones registradas todavía.") : porAnio(todas, v => v.startDate).map(([a, f]) => grupo(a, f.map(v => filaH(ICO.vacaciones, `${rangoCorto(v.startDate, v.endDate)} · ${v.days} día${v.days === 1 ? "" : "s"}`, v.notes, chipVac(v.status), v.id))))}
+    </div>;
+  }
+  if (vista === "permisos" && yo) {
+    const todas = (lvs || []).filter(l => l.employeeId === yo.id).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {cabecera("Mis permisos", "lo registrado en GeoTeam", btn("+ Pedir un permiso", () => onNueva("permiso"), { c: ORANGE_DARK, lleno: true, chico: true }))}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>{tile(permisosAnio, `en ${hoy.slice(0, 4)}`)}{tile(todas.length, "en total")}{tile(todas.filter(l => /sin goce/i.test(l.type || "")).length, "sin goce")}</div>
+      {!todas.length ? vacio("Sin permisos registrados todavía.") : porAnio(todas, l => l.date).map(([a, f]) => grupo(a, f.map(l => filaH(ICO.permiso, `${fechaLarga(l.date)} · ${ETIQUETA_PERMISO[l.type] || l.type || "Permiso"}`, l.reason, l.status === "approved" ? <Chip c={C_VERDE}>Aprobado</Chip> : <Chip c={C_AMARILLO}>Pendiente</Chip>, l.id))))}
+    </div>;
+  }
+  if (vista === "constancias" && yo) {
+    const emitidas = (cons || []).filter(c => c.employeeId === yo.id).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const solDe = (c) => c.origenSolicitud ? (solicitudes || []).find(x => x.id === c.origenSolicitud) : null;
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {cabecera("Mis constancias", "las que RRHH ha emitido", btn("+ Pedir una constancia", () => onNueva("constancia"), { c: ORANGE_DARK, lleno: true, chico: true }))}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>{tile(emitidas.filter(c => String(c.date || "").startsWith(hoy.slice(0, 4))).length, `en ${hoy.slice(0, 4)}`)}{tile(emitidas.length, "en total")}</div>
+      {!emitidas.length ? vacio("Todavía no te han emitido constancias. Pedí una y la descargás acá en PDF cuando RRHH la apruebe.") : porAnio(emitidas, c => c.date).map(([a, f]) => grupo(a, f.map(c => { const sol = solDe(c); const ok = sol && puedeDescargarConstancia(sol, user); return filaH(ICO.constancia, `Constancia ${c.type === "trabajo" || c.type === "ingresos" ? "de trabajo (con salario)" : "laboral"}`, `${fechaLarga(String(c.date || "").slice(0, 10))}${c.emitidaPor ? ` · emitida por ${c.emitidaPor}` : ""}`, ok ? btn("Descargar PDF", () => constanciaPDF(sol), { c: ORANGE_DARK, chico: true }) : null, c.id); })))}
+    </div>;
+  }
   if (vista === "asistencia" && yo) return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}><button type="button" className="gt-circulo" onClick={() => setVista("inicio")} aria-label="Atrás" style={{ width: 34, height: 34, fontSize: 15 }}>←</button><div style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL }}>Mi asistencia</div><span style={{ fontSize: 12.5, color: "#6E6862" }}>según tus marcajes en GeoClock</span></div>
     <MiAsistencia emp={yo} gcTardies={gcTardies} hoy={hoy} leerMarcas={leerMarcas} noMarca={!!yo.noMarca} />
@@ -415,9 +451,9 @@ export function PortalRRHH({ user, yo, emps, vacs, lvs, solicitudes, fotoDe, gcT
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gridAutoRows: "1fr", gap: 12 }}>
         {yo ? tarjeta(ICO.asistencia, "Mi asistencia", "Entradas, salidas y horas según GeoClock", () => setVista("asistencia"), { grande: true })
           : tarjeta(ICO.reporte, "Reportar un problema", "Pago, asistencia, equipo, seguridad…", () => onNueva("reporte"), { grande: true })}
-        {tarjeta(ICO.vacaciones, "Vacaciones", yo ? `${tomadas?.diasAnio || 0} días tomados este año${proxima ? ` · próximas ${rangoCorto(proxima.startDate, proxima.endDate)}` : ""}` : "Pedir vacaciones", () => onNueva("vacaciones"), { grande: true })}
-        {tarjeta(ICO.permiso, "Permisos", yo && permisosAnio ? `${permisosAnio} este año · pedir uno nuevo` : "Por un día o varios, con o sin goce", () => onNueva("permiso"), { grande: true })}
-        {tarjeta(ICO.constancia, "Constancias", "De trabajo o laboral, en PDF", () => onNueva("constancia"), { grande: true })}
+        {tarjeta(ICO.vacaciones, "Vacaciones", yo ? `${tomadas?.diasAnio || 0} días tomados este año${proxima ? ` · próximas ${rangoCorto(proxima.startDate, proxima.endDate)}` : ""} · ver historial y pedir` : "Pedir vacaciones", () => yo ? setVista("vacaciones") : onNueva("vacaciones"), { grande: true })}
+        {tarjeta(ICO.permiso, "Permisos", yo ? `${permisosAnio} este año · ver historial y pedir` : "Por un día o varios, con o sin goce", () => yo ? setVista("permisos") : onNueva("permiso"), { grande: true })}
+        {tarjeta(ICO.constancia, "Constancias", yo ? "De trabajo o laboral, en PDF · ver las emitidas y pedir" : "De trabajo o laboral, en PDF", () => yo ? setVista("constancias") : onNueva("constancia"), { grande: true })}
       </div>
     </div>
     {yo && <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => onNueva("reporte")} onKeyDown={e => { if (e.key === "Enter") onNueva("reporte"); }} style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>

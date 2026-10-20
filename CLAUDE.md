@@ -1089,7 +1089,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   **Portal a lo ancho (20-oct, 2ª pasada)**: perfil con foto grande a la
   izquierda y 2+2 cajas (Mi asistencia · Vacaciones / Permisos ·
   Constancias) a la derecha, "Reportar un problema" como fila delgada, y
-  abajo "En trámite" e "Historial" por separado. Probado el 20-oct con solicitudes de prueba de Fernando
+  abajo "En trámite" e "Historial" por separado. **Mi RRHH es la PRIMERA
+  pestaña y la de entrada para TODOS** (incluidos admin y tesorería). Las
+  cajas Vacaciones / Permisos / Constancias abren una sub-vista con el
+  HISTORIAL de la persona (hr-vacs / hr-lvs / hr-cons agrupados por año,
+  tiles, "Descargar PDF" en las constancias que salieron de una solicitud)
+  y el botón "+ Pedir…" (Gerson: "si dice 5 días tomados, ¿dónde los veo?"). Probado el 20-oct con solicitudes de prueba de Fernando
   (borradas después): vacaciones 2030 aprobadas → hr-vacs + carnet; constancia
   aprobada → vista previa y PDF iguales al modelo.
   **Dashboard gerencial + KPI's (ago 2026, estilo IsTeam)**: `renderDashboard`

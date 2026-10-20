@@ -776,7 +776,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const hideSalary = isAnaRH || isPhotoOnly || isOscarTardies;
   const isReadOnly = userRole === "gerencia" || userRole === "costos";
   const [co, setCo] = useState("subterra");
-  const [sec, setSec] = useState(esPortalSolo ? "mi" : isAsistente ? "attendance" : (isPhotoOnly || isAnaRH) ? "employees" : isOscarTardies ? "tardanzas" : "dashboard");
+  const [sec, setSec] = useState("mi");
   // Accesos (2-oct-2026): se leen SOLO al entrar a la pestaña y SOLO con
   // getCloud (un cache viejo podría revivir un acceso desactivado). Va acá
   // arriba, antes del return de "Cargando…" — un hook después de un return
@@ -1371,6 +1371,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const cc = COMPANIES[co];
 
   const allNav = [
+    // Mi RRHH va PRIMERO para todos (20-oct-2026, Gerson: "antes de Dashboard,
+    // también para mí y la Lic. que tenemos acceso completo").
+    { id: "mi", icon: "🙋", label: "Mi RRHH" },
     { id: "dashboard", icon: "📊", label: "Dashboard" },
     { id: "kpis", icon: "📈", label: "KPI's" },
     { id: "employees", icon: "👥", label: "Empleados" },
@@ -1388,7 +1391,6 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     { id: "costos", icon: "💵", label: "Costos" },
     // Accesos al sistema (solo admin): usuarios de GeoSupply desde la ficha.
     ...(puedeAccesos ? [{ id: "accesos", icon: "🔑", label: "Accesos" }] : []),
-    { id: "mi", icon: "🙋", label: "Mi RRHH" },
   ];
   // Pestañas que ve Ana (asistente_compras): todo lo operativo de personal,
   // sin nada de dinero (planilla/costos) ni el reporte de altas y bajas.
@@ -2833,7 +2835,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   };
   const renderMiRRHH = () => <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
     {solicitudesErr && <div style={{ background: "rgba(192,57,43,.07)", borderRadius: 14, padding: "10px 14px", fontSize: 12.5, color: "#B03024" }}>{solicitudesErr}</div>}
-    <PortalRRHH user={hubUser} yo={yo} vinculoEstado={vinculoYo.como} emps={emps} vacs={vacs} lvs={lvs} solicitudes={solicitudes} fotoDe={fotoDe} gcTardies={gcTardies} leerMarcas={leerMarcas}
+    <PortalRRHH user={hubUser} yo={yo} vinculoEstado={vinculoYo.como} emps={emps} vacs={vacs} lvs={lvs} cons={cons} solicitudes={solicitudes} fotoDe={fotoDe} gcTardies={gcTardies} leerMarcas={leerMarcas}
       onNueva={(tipo) => setHubModal({ t: "nueva", tipo })} onAbrir={(s) => setHubModal({ t: "ver", id: s.id })} onVincular={vincularUsuario} />
   </div>;
   const renderSolicitudesHub = () => {
