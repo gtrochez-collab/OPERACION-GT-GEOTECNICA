@@ -1914,6 +1914,10 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Óscar ve "Tus ubicaciones" con el Almacén, puede Agregar y no ve Quitar;
   PDF de etiquetas revisado como imagen. Todo borrado después y el
   responsable real del Almacén (Óscar) quedó intacto.
+  **Segunda foto de la caja (20-oct-2026, Gerson)**: las cajas llevan `foto2`
+  OPCIONAL (cómo se ve la caja con lo que trae). Se carga en Agregar (cuadro
+  "Foto de la caja"), en Editar y "Otra igual" la copia. SOLO se ve en la ficha
+  (al lado de la foto principal); tarjetas y listas siguen con `foto`.
   **Grupos plegables (14-oct-2026)**: en Inicio, "Tus ubicaciones", "Almacén
   y bodegas", "Oficinas de plantel" y "Proyectos" se compactan tocando su
   título (chevron; `cerrados` en localStorage `gt-inv-grupos-cerrados`, es
