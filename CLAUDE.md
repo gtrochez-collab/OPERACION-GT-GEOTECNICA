@@ -1079,7 +1079,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Coordinador de Operaciones · <razón social>". `EMPRESAS` trae razón
   social y logo por empresa: Subterra = "SUBTERRA, S.A." (logo
   `public/brand/subterra.png`, el redondo que mandó Gerson el 20-oct) y
-  Geotecnica = "GEOTECNICA SOLUCIONES, S.A." (**confirmar razón social**;
+  Geotecnica = "GEOSTRUCTURES, S.A. DE C.V." (razón social confirmada por Gerson el 20-oct;
   logo horizontal `public/brand/geotecnica.png`). Tipos: `trabajo` (con
   salario) y `laboral` (sin el párrafo del salario). El PDF va en **Times,
   JUSTIFICADO** (`tokensDe`/`escribirRuns`: una palabra puede mezclar

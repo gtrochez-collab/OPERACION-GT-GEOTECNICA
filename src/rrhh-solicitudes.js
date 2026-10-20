@@ -219,7 +219,7 @@ export function detalleSolicitud(s) {
 // runs en negrita + tabla) para pintarlo igual en pantalla y en el PDF.
 export const EMPRESAS = {
   subterra:   { nombre: "Subterra Honduras", legal: "SUBTERRA, S.A.", logo: "brand/subterra.png" },
-  geotecnica: { nombre: "Geotecnica Soluciones", legal: "GEOTECNICA SOLUCIONES, S.A.", logo: "brand/geotecnica.png" },
+  geotecnica: { nombre: "Geotecnica Soluciones", legal: "GEOSTRUCTURES, S.A. DE C.V.", logo: "brand/geotecnica.png" },
 };
 export const IHSS_CUOTA = 595.16;
 export const RAP_TECHO = 11903.13, RAP_PCT = 0.015;
