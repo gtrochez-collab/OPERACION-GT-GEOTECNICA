@@ -1078,11 +1078,18 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (07) días del mes de … del año …" y firma "Lic. Gerson Trochez ·
   Coordinador de Operaciones · <razón social>". `EMPRESAS` trae razón
   social y logo por empresa: Subterra = "SUBTERRA, S.A." (logo
-  `brand/subterra.png`, **PENDIENTE que Gerson mande el PNG** — mientras,
-  sale el nombre en texto) y Geotecnica = "GEOTECNICA SOLUCIONES, S.A."
-  (**confirmar razón social**). Tipos: `trabajo` (con salario) y `laboral`
-  (sin el párrafo del salario). jsPDF no trae "−": `l1()` normaliza guiones
-  al pintar. Probado el 20-oct con solicitudes de prueba de Fernando
+  `public/brand/subterra.png`, el redondo que mandó Gerson el 20-oct) y
+  Geotecnica = "GEOTECNICA SOLUCIONES, S.A." (**confirmar razón social**;
+  logo horizontal `public/brand/geotecnica.png`). Tipos: `trabajo` (con
+  salario) y `laboral` (sin el párrafo del salario). El PDF va en **Times,
+  JUSTIFICADO** (`tokensDe`/`escribirRuns`: una palabra puede mezclar
+  normal y negrita, ej. "FERNÁNDEZ," con la coma sin negrita; jsPDF no
+  mezcla fuentes en un renglón solo) y tabla con bordes grises, calcado del
+  Word de Gerson. jsPDF no trae "−": `l1()` normaliza guiones al pintar.
+  **Portal a lo ancho (20-oct, 2ª pasada)**: perfil con foto grande a la
+  izquierda y 2+2 cajas (Mi asistencia · Vacaciones / Permisos ·
+  Constancias) a la derecha, "Reportar un problema" como fila delgada, y
+  abajo "En trámite" e "Historial" por separado. Probado el 20-oct con solicitudes de prueba de Fernando
   (borradas después): vacaciones 2030 aprobadas → hr-vacs + carnet; constancia
   aprobada → vista previa y PDF iguales al modelo.
   **Dashboard gerencial + KPI's (ago 2026, estilo IsTeam)**: `renderDashboard`

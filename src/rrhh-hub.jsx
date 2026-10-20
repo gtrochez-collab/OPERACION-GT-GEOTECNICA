@@ -86,20 +86,24 @@ const bajarAdjunto = async (a) => { try { const f = await store.getCloud(`cp-fil
 const cargarImagen = async (url) => {
   try { const resp = await fetch(url); if (!resp.ok) return null; const blob = await resp.blob(); const dataUrl = await leerDataUrl(blob); const dims = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight }); im.onerror = rej; im.src = dataUrl; }); return { dataUrl, ...dims }; } catch { return null; }
 };
-// Escribe runs [texto, negrita] con salto de línea por palabra (mezcla de
-// fuentes en el mismo renglón, cosa que jsPDF no hace solo).
+// Runs [texto, negrita] → tokens (una palabra puede mezclar normal y
+// negrita, ej. "FERNÁNDEZ," con la coma sin negrita) → líneas JUSTIFICADAS,
+// como el Word del modelo. jsPDF no mezcla fuentes en un renglón solo.
+const tokensDe = (runs) => { const toks = []; let cur = null; runs.forEach(([t, b]) => { for (const ch of String(t)) { if (/\s/.test(ch)) { cur = null; continue; } if (!cur) { cur = { segs: [] }; toks.push(cur); } const last = cur.segs[cur.segs.length - 1]; if (last && last.b === !!b) last.t += ch; else cur.segs.push({ t: ch, b: !!b }); } }); return toks; };
 const escribirRuns = (doc, runs, x, y, maxW, lh) => {
-  let cx = x;
-  const palabras = [];
-  runs.forEach(([t, b]) => String(t).split(/(\s+)/).forEach(w => { if (w) palabras.push([w, !!b]); }));
-  palabras.forEach(([w, b]) => {
-    doc.setFont("helvetica", b ? "bold" : "normal");
-    const ww = doc.getTextWidth(w);
-    if (/^\s+$/.test(w)) { if (cx > x) cx += ww; return; }
-    if (cx + ww > x + maxW && cx > x) { cx = x; y += lh; }
-    doc.text(w, cx, y); cx += ww;
+  const toks = tokensDe(runs);
+  const ancho = (tok) => tok.segs.reduce((w, sg) => { doc.setFont("times", sg.b ? "bold" : "normal"); return w + doc.getTextWidth(sg.t); }, 0);
+  doc.setFont("times", "normal"); const sp = doc.getTextWidth(" ");
+  const lines = []; let line = [], w = 0;
+  toks.forEach(t => { const tw = ancho(t); if (line.length && w + sp + tw > maxW) { lines.push({ line, w }); line = []; w = 0; } w += (line.length ? sp : 0) + tw; line.push(t); });
+  if (line.length) lines.push({ line, w });
+  lines.forEach((L, li) => {
+    const extra = (li < lines.length - 1 && L.line.length > 1) ? (maxW - L.w) / (L.line.length - 1) : 0;
+    let cx = x;
+    L.line.forEach(t => { t.segs.forEach(sg => { doc.setFont("times", sg.b ? "bold" : "normal"); doc.text(sg.t, cx, y); cx += doc.getTextWidth(sg.t); }); cx += sp + extra; });
+    y += lh;
   });
-  return y + lh;
+  return y;
 };
 const l1 = (t) => String(t ?? "").replace(/[−–—]/g, "-").replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
 export async function constanciaPDF(sol) {
@@ -107,44 +111,44 @@ export async function constanciaPDF(sol) {
   const d = { ...d0, titulo: l1(d0.titulo), parrafos: d0.parrafos.map(p => p.map(([t, b]) => [l1(t), b])), cierre: d0.cierre.map(([t, b]) => [l1(t), b]), tabla: d0.tabla ? d0.tabla.map(t => ({ ...t, label: l1(t.label), monto: l1(t.monto) })) : null, firma: d0.firma.map(l1) };
   const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
   const doc = new jsPDF({ unit: "mm", format: "letter" });
-  const W = 215.9, M = 25, maxW = W - 2 * M, LH = 6.4;
-  let y = 20;
-  const logo = await cargarImagen(`${import.meta.env.BASE_URL}${d.logo || EMPRESAS[d.empresa]?.logo || "brand/logo-color.png"}`);
-  if (logo) { const h = 22; doc.addImage(logo.dataUrl, "PNG", M, y, (logo.w / logo.h) * h, h); y += h + 16; }
+  const W = 215.9, M = 25.4, maxW = W - 2 * M, LH = 6.1;
+  let y = 18;
+  const logo = await cargarImagen(`${import.meta.env.BASE_URL}${d.logo || EMPRESAS[d.empresa]?.logo || "brand/geotecnica.png"}`);
+  if (logo) { const h = logo.w / logo.h > 1.6 ? 15 : 30; doc.addImage(logo.dataUrl, "PNG", M, y, (logo.w / logo.h) * h, h); y += h + 14; }
   else { doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.setTextColor(232, 118, 45); doc.text(EMPRESAS[d.empresa]?.nombre?.toUpperCase() || "", M, y + 8); y += 26; }
-  doc.setTextColor(0, 0, 0); doc.setFont("helvetica", "bold"); doc.setFontSize(13);
-  doc.text(d.titulo, W / 2, y, { align: "center" }); y += 14;
+  doc.setTextColor(0, 0, 0); doc.setFont("times", "bold"); doc.setFontSize(12.5);
+  doc.text(d.titulo, W / 2, y, { align: "center" }); y += 13;
   doc.setFontSize(11.5);
   d.parrafos.forEach(p => { y = escribirRuns(doc, p, M, y, maxW, LH) + 4; });
   if (d.tabla) {
-    const tw = 90, c1 = 56, x0 = (W - tw) / 2, rh = 7.4;
+    const tw = 86, c1 = 54, x0 = (W - tw) / 2, rh = 6.4;
     y += 1;
-    d.tabla.forEach((t, i) => {
-      doc.setDrawColor(150, 150, 150); doc.setLineWidth(.25);
-      doc.rect(x0, y - 5.2, c1, rh); doc.rect(x0 + c1, y - 5.2, tw - c1, rh);
-      doc.setFont("helvetica", t.negrita ? "bold" : "normal");
-      doc.text(t.label, x0 + 3, y); doc.text(t.monto, x0 + tw - 3, y, { align: "right" });
+    doc.setDrawColor(190, 190, 190); doc.setLineWidth(.25);
+    d.tabla.forEach((t) => {
+      doc.rect(x0, y - 4.6, c1, rh); doc.rect(x0 + c1, y - 4.6, tw - c1, rh);
+      doc.setFont("times", t.negrita ? "bold" : "normal");
+      doc.text(t.label, x0 + 2.5, y); doc.text(t.monto, x0 + tw - 2.5, y, { align: "right" });
       y += rh;
     });
-    y += 8;
+    y += 9;
   }
   y = escribirRuns(doc, d.cierre, M, y, maxW, LH);
-  y = Math.max(y + 26, 200);
-  doc.setDrawColor(0); doc.setLineWidth(.3); doc.line(W / 2 - 40, y, W / 2 + 40, y); y += 5.5;
-  d.firma.forEach((l, i) => { doc.setFont("helvetica", i === 0 ? "bold" : "normal"); doc.text(l, W / 2, y, { align: "center" }); y += 5.5; });
-  doc.setFontSize(8); doc.setTextColor(150, 144, 136); doc.setFont("helvetica", "normal");
-  doc.text(`${sol.folio || ""} · emitida en GeoCore`, W / 2, 268, { align: "center" });
-  doc.save(`Constancia_${d.titulo === "CONSTANCIA DE TRABAJO" && sol.tipoConstancia === "laboral" ? "Laboral" : "Trabajo"}_${String(sol.empNombre || "").replace(/[^A-Za-z0-9]+/g, "_")}.pdf`);
+  y = Math.max(y + 24, 185);
+  doc.setDrawColor(0); doc.setLineWidth(.3); doc.line(W / 2 - 40, y, W / 2 + 40, y); y += 5.2;
+  d.firma.forEach((l, i) => { doc.setFont("times", i === 0 ? "bold" : "normal"); doc.text(l, W / 2, y, { align: "center" }); y += 5.2; });
+  doc.setFontSize(7.5); doc.setTextColor(160, 154, 146); doc.setFont("helvetica", "normal");
+  doc.text(`${sol.folio || ""} · emitida en GeoCore`, W / 2, 270, { align: "center" });
+  doc.save(`Constancia_de_trabajo_${String(sol.empNombre || "").replace(/[^A-Za-z0-9]+/g, "_")}.pdf`);
 }
 // Vista previa en pantalla, igual al PDF.
 export const ConstanciaVista = ({ doc }) => {
   if (!doc) return null;
   const P = ({ runs }) => <p style={{ margin: "0 0 10px", lineHeight: 1.65, textAlign: "justify" }}>{runs.map((r, i) => r[1] ? <b key={i}>{r[0]}</b> : <span key={i}>{r[0]}</span>)}</p>;
   return <div style={{ padding: "22px 26px", borderRadius: 14, background: "#fff", border: "1px solid rgba(44,42,40,.1)", fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 13, color: "#1a1a1a" }}>
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}><img src={`${import.meta.env.BASE_URL}${doc.logo}`} alt="" onError={e => { e.currentTarget.style.display = "none"; }} style={{ height: 44 }} /><span style={{ fontFamily: "var(--display)", fontWeight: 800, color: ORANGE, fontSize: 15 }}>{EMPRESAS[doc.empresa]?.nombre}</span></div>
+    <div style={{ marginBottom: 18 }}><img src={`${import.meta.env.BASE_URL}${doc.logo}`} alt={EMPRESAS[doc.empresa]?.nombre || ""} style={{ height: doc.empresa === "subterra" ? 88 : 46, display: "block" }} /></div>
     <div style={{ textAlign: "center", fontWeight: 800, fontSize: 14, marginBottom: 14 }}>{doc.titulo}</div>
     {doc.parrafos.map((p, i) => <P key={i} runs={p} />)}
-    {doc.tabla && <table style={{ margin: "6px auto 14px", borderCollapse: "collapse", fontSize: 12.5 }}><tbody>{doc.tabla.map((t, i) => <tr key={i}><td style={{ border: "1px solid #999", padding: "4px 12px", fontWeight: t.negrita ? 700 : 400 }}>{t.label}</td><td style={{ border: "1px solid #999", padding: "4px 12px", textAlign: "right", fontWeight: t.negrita ? 700 : 400 }}>{t.monto}</td></tr>)}</tbody></table>}
+    {doc.tabla && <table style={{ margin: "6px auto 14px", borderCollapse: "collapse", fontSize: 12.5, minWidth: 300 }}><tbody>{doc.tabla.map((t, i) => <tr key={i}><td style={{ border: "1px solid #CFCAC3", padding: "4px 12px", fontWeight: t.negrita ? 700 : 400 }}>{t.label}</td><td style={{ border: "1px solid #CFCAC3", padding: "4px 12px", textAlign: "right", fontWeight: t.negrita ? 700 : 400 }}>{t.monto}</td></tr>)}</tbody></table>}
     <P runs={doc.cierre} />
     <div style={{ textAlign: "center", marginTop: 34 }}><div style={{ width: 220, borderTop: "1px solid #222", margin: "0 auto 5px" }} />{doc.firma.map((l, i) => <div key={i} style={{ fontWeight: i === 0 ? 700 : 400 }}>{l}</div>)}</div>
   </div>;
@@ -361,14 +365,13 @@ export function PortalRRHH({ user, yo, emps, vacs, lvs, solicitudes, fotoDe, gcT
   const [q, setQ] = useState("");
   const [eligiendo, setEligiendo] = useState(false);
   const mias = useMemo(() => (solicitudes || []).filter(s => esMia(s, { username: user.username, empId: yo?.id })).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))), [solicitudes, user.username, yo?.id]);
-  const abiertas = mias.filter(estaAbierta);
   const tomadas = yo ? vacacionesTomadas(vacs, yo.id, hoy.slice(0, 4)) : null;
   const proxima = yo ? (vacs || []).filter(v => v.employeeId === yo.id && v.status === "approved" && v.startDate >= hoy).sort((a, b) => a.startDate.localeCompare(b.startDate))[0] : null;
   const permisosAnio = yo ? (lvs || []).filter(l => l.employeeId === yo.id && String(l.date || "").startsWith(hoy.slice(0, 4))).length : 0;
   const tarjeta = (ico, titulo, sub, onClick, { grande = false } = {}) => <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={onClick} onKeyDown={e => { if (e.key === "Enter") onClick(); }}
-    style={{ padding: grande ? "18px 18px" : "16px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer", minHeight: 86 }}>
-    <div style={{ width: 46, height: 46, borderRadius: 14, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ico} size={24} /></div>
-    <div style={{ flex: 1, minWidth: 0 }}><div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</div><div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 4 }}>{sub}</div></div>
+    style={{ padding: grande ? "20px 20px" : "16px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer", minHeight: grande ? 118 : 86, boxSizing: "border-box" }}>
+    <div style={{ width: grande ? 54 : 46, height: grande ? 54 : 46, borderRadius: 16, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ico} size={24} /></div>
+    <div style={{ flex: 1, minWidth: 0 }}><div style={{ font: `800 ${grande ? 17 : 15}px/1.2 var(--display)`, color: CHARCOAL }}>{titulo}</div><div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 4 }}>{sub}</div></div>
     <Ico d={ICO.flecha} size={18} color="#A39C92" />
   </div>;
   const activos = (emps || []).filter(e => e.status !== "inactive").sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "es"));
@@ -377,40 +380,53 @@ export function PortalRRHH({ user, yo, emps, vacs, lvs, solicitudes, fotoDe, gcT
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}><button type="button" className="gt-circulo" onClick={() => setVista("inicio")} aria-label="Atrás" style={{ width: 34, height: 34, fontSize: 15 }}>←</button><div style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL }}>Mi asistencia</div><span style={{ fontSize: 12.5, color: "#6E6862" }}>según tus marcajes en GeoClock</span></div>
     <MiAsistencia emp={yo} gcTardies={gcTardies} hoy={hoy} leerMarcas={leerMarcas} noMarca={!!yo.noMarca} />
   </div>;
-  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-    <div className="gt-vidrio" style={{ padding: isMobile ? 14 : 18, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-      {yo ? <>
-        <Avatar nombre={yo.fullName} dataUrl={fotoDe?.(yo)} size={56} radius={16} />
-        <div style={{ flex: 1, minWidth: 180 }}>
-          <div style={{ font: "800 19px/1.15 var(--display)", color: CHARCOAL, letterSpacing: "-.01em" }}>{yo.fullName}</div>
-          <div style={{ fontSize: 13, color: "#6E6862", marginTop: 3 }}>{yo.position || "—"} · {yo.company === "subterra" ? "Subterra Honduras" : "Geotecnica Soluciones"}{yo.startDate ? ` · desde ${fechaLarga(yo.startDate)}` : ""}</div>
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {abiertas.length > 0 && <Chip c={C_NARANJA}>{abiertas.length} solicitud{abiertas.length > 1 ? "es" : ""} en trámite</Chip>}
+  const enTramite = mias.filter(estaAbierta), historial = mias.filter(s => !estaAbierta(s));
+  const perfil = <div className="gt-vidrio" style={{ padding: isMobile ? 16 : 22, display: "flex", flexDirection: isMobile ? "row" : "column", alignItems: isMobile ? "center" : "stretch", gap: 14, height: "100%", boxSizing: "border-box" }}>
+    {yo ? <>
+      <Avatar nombre={yo.fullName} dataUrl={fotoDe?.(yo)} size={isMobile ? 72 : 132} radius={isMobile ? 18 : 28} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ font: `800 ${isMobile ? 18 : 22}px/1.15 var(--display)`, color: CHARCOAL, letterSpacing: "-.01em" }}>{yo.fullName}</div>
+        <div style={{ fontSize: 13.5, color: "#6E6862", marginTop: 5 }}>{yo.position || "—"}</div>
+        <div style={{ fontSize: 12.5, color: "#A39C92", marginTop: 2 }}>{yo.company === "subterra" ? "Subterra Honduras" : "Geotecnica Soluciones"}{yo.startDate ? ` · desde ${fechaLarga(yo.startDate)}` : ""}</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+          {enTramite.length > 0 && <Chip c={C_NARANJA}>{enTramite.length} en trámite</Chip>}
           {proxima && <Chip c={C_VERDE}>Vacaciones {rangoCorto(proxima.startDate, proxima.endDate)}</Chip>}
+          {!enTramite.length && !proxima && <Chip c={C_GRIS}>Al día</Chip>}
         </div>
-      </> : <div style={{ flex: 1 }}>
-        <div style={{ font: "800 17px/1.2 var(--display)", color: CHARCOAL }}>Hola, {user.nombre}</div>
-        <div style={{ fontSize: 13, color: "#6E6862", marginTop: 4 }}>{vinculoEstado === "ambiguo" ? "Hay más de una ficha con tu nombre. Elegí la tuya para ver tu asistencia y pedir por vos." : "No encontramos tu ficha de colaborador. Elegila para ver tu asistencia y pedir por vos; igual podés pedir en nombre de otra persona."}</div>
-        {!eligiendo ? <div style={{ marginTop: 10 }}>{btn("Elegir mi ficha", () => setEligiendo(true), { c: ORANGE_DARK, lleno: true, chico: true })}</div>
-          : <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6, maxWidth: 420 }}>
-            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Tu nombre…" style={CTRL} />
-            {cand.map(e => <button key={e.id} type="button" onClick={async () => { if (!confirm(`¿Tu ficha es la de ${e.fullName}?`)) return; if (await onVincular(e.id)) { setEligiendo(false); setQ(""); } }} style={{ display: "flex", alignItems: "center", gap: 10, textAlign: "left", padding: "8px 10px", borderRadius: 12, border: "1px solid rgba(44,42,40,.08)", background: "rgba(255,255,255,.8)", cursor: "pointer", fontFamily: "inherit", minHeight: 44 }}><Avatar nombre={e.fullName} dataUrl={fotoDe?.(e)} size={30} radius={9} /><div><div style={{ fontWeight: 700, fontSize: 13.5, color: CHARCOAL }}>{e.fullName}</div><div style={{ fontSize: 11.5, color: "#6E6862" }}>{e.position || ""} · {e.company === "subterra" ? "Subterra" : "Geotecnica"}</div></div></button>)}
-          </div>}
-      </div>}
+      </div>
+    </> : <div style={{ flex: 1 }}>
+      <div style={{ font: "800 17px/1.2 var(--display)", color: CHARCOAL }}>Hola, {user.nombre}</div>
+      <div style={{ fontSize: 13, color: "#6E6862", marginTop: 4 }}>{vinculoEstado === "ambiguo" ? "Hay más de una ficha con tu nombre. Elegí la tuya para ver tu asistencia y pedir por vos." : "No encontramos tu ficha de colaborador. Elegila para ver tu asistencia y pedir por vos; igual podés pedir en nombre de otra persona."}</div>
+      {!eligiendo ? <div style={{ marginTop: 10 }}>{btn("Elegir mi ficha", () => setEligiendo(true), { c: ORANGE_DARK, lleno: true, chico: true })}</div>
+        : <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6, maxWidth: 420 }}>
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Tu nombre…" style={CTRL} />
+          {cand.map(e => <button key={e.id} type="button" onClick={async () => { if (!confirm(`¿Tu ficha es la de ${e.fullName}?`)) return; if (await onVincular(e.id)) { setEligiendo(false); setQ(""); } }} style={{ display: "flex", alignItems: "center", gap: 10, textAlign: "left", padding: "8px 10px", borderRadius: 12, border: "1px solid rgba(44,42,40,.08)", background: "rgba(255,255,255,.8)", cursor: "pointer", fontFamily: "inherit", minHeight: 44 }}><Avatar nombre={e.fullName} dataUrl={fotoDe?.(e)} size={30} radius={9} /><div><div style={{ fontWeight: 700, fontSize: 13.5, color: CHARCOAL }}>{e.fullName}</div><div style={{ fontSize: 11.5, color: "#6E6862" }}>{e.position || ""} · {e.company === "subterra" ? "Subterra" : "Geotecnica"}</div></div></button>)}
+        </div>}
+    </div>}
+  </div>;
+  const seccion = (titulo, n, lista, vacio) => <div>
+    <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "6px 2px 10px" }}><span style={{ font: "800 16px/1 var(--display)", color: CHARCOAL }}>{titulo}</span><span style={{ font: "600 13px/1 var(--sans)", color: "#A39C92" }}>{n}</span></div>
+    {lista.length === 0 ? <div className="gt-vidrio" style={{ padding: 22, textAlign: "center", fontSize: 13, color: "#6E6862" }}>{vacio}</div>
+      : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{lista.map(s => <FilaSolicitud key={s.id} s={s} emps={emps} fotoDe={fotoDe} hoy={hoy} onClick={() => onAbrir(s)} mostrarPersona={!yo || s.empId !== yo.id} />)}</div>}
+  </div>;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(300px, 1.1fr) minmax(0, 2fr)", gap: 12, alignItems: "stretch" }}>
+      {perfil}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gridAutoRows: "1fr", gap: 12 }}>
+        {yo ? tarjeta(ICO.asistencia, "Mi asistencia", "Entradas, salidas y horas según GeoClock", () => setVista("asistencia"), { grande: true })
+          : tarjeta(ICO.reporte, "Reportar un problema", "Pago, asistencia, equipo, seguridad…", () => onNueva("reporte"), { grande: true })}
+        {tarjeta(ICO.vacaciones, "Vacaciones", yo ? `${tomadas?.diasAnio || 0} días tomados este año${proxima ? ` · próximas ${rangoCorto(proxima.startDate, proxima.endDate)}` : ""}` : "Pedir vacaciones", () => onNueva("vacaciones"), { grande: true })}
+        {tarjeta(ICO.permiso, "Permisos", yo && permisosAnio ? `${permisosAnio} este año · pedir uno nuevo` : "Por un día o varios, con o sin goce", () => onNueva("permiso"), { grande: true })}
+        {tarjeta(ICO.constancia, "Constancias", "De trabajo o laboral, en PDF", () => onNueva("constancia"), { grande: true })}
+      </div>
     </div>
-    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-      {yo && tarjeta(ICO.asistencia, "Mi asistencia", "Entradas, salidas y horas según GeoClock", () => setVista("asistencia"))}
-      {tarjeta(ICO.vacaciones, "Vacaciones", yo ? `${tomadas?.diasAnio || 0} días tomados este año${proxima ? ` · próximas ${rangoCorto(proxima.startDate, proxima.endDate)}` : ""}` : "Pedir vacaciones", () => onNueva("vacaciones"))}
-      {tarjeta(ICO.permiso, "Permisos", yo && permisosAnio ? `${permisosAnio} este año · pedir uno nuevo` : "Pedir un permiso por un día o varios", () => onNueva("permiso"))}
-      {tarjeta(ICO.constancia, "Constancias", "Laboral o de ingresos, en PDF", () => onNueva("constancia"))}
-      {tarjeta(ICO.reporte, "Reportar un problema", "Pago, asistencia, equipo, seguridad…", () => onNueva("reporte"))}
-    </div>
-    <div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "6px 2px 10px" }}><span style={{ font: "800 16px/1 var(--display)", color: CHARCOAL }}>Mis solicitudes</span><span style={{ font: "600 13px/1 var(--sans)", color: "#A39C92" }}>{mias.length}</span></div>
-      {mias.length === 0 ? <div className="gt-vidrio" style={{ padding: 26, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Todavía no has pedido nada. Tocá una de las cajitas de arriba.</div>
-        : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{mias.slice(0, 30).map(s => <FilaSolicitud key={s.id} s={s} emps={emps} fotoDe={fotoDe} hoy={hoy} onClick={() => onAbrir(s)} mostrarPersona={!yo || s.empId !== yo.id} />)}</div>}
-    </div>
+    {yo && <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => onNueva("reporte")} onKeyDown={e => { if (e.key === "Enter") onNueva("reporte"); }} style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
+      <div style={{ width: 36, height: 36, borderRadius: 11, background: "rgba(44,42,40,.06)", color: "#6E6862", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO.reporte} size={19} /></div>
+      <div style={{ flex: 1, minWidth: 0 }}><span style={{ font: "700 14px/1.2 var(--sans)", color: CHARCOAL }}>Reportar un problema</span><span style={{ fontSize: 12.5, color: "#6E6862" }}> · pago, asistencia, equipo, seguridad, trato…</span></div>
+      <Ico d={ICO.flecha} size={16} color="#A39C92" />
+    </div>}
+    {seccion("En trámite", enTramite.length, enTramite, "Nada pendiente. Lo que pidás aparece acá hasta que RRHH lo decida.")}
+    {seccion("Historial", historial.length, historial.slice(0, 40), "Todavía no hay solicitudes decididas.")}
   </div>;
 }
 
