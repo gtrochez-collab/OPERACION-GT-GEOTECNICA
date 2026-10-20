@@ -712,6 +712,14 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   const perms = permisosDe(userRole);
   const [loaded, setLoaded] = useState(false);
   const [items, setItems] = useState([]);
+  // La 2ª foto de las cajas solo se ve en la ficha: se precarga en segundo
+  // plano para que al abrir salga al instante (como la principal, que ya
+  // quedó en cache al pintarse en las tarjetas). Ids únicos: muchas cajas
+  // iguales comparten la misma foto.
+  useEffect(() => {
+    const ids = [...new Set(items.filter(x => x.tipo === "caja" && !x.eliminado && x.foto2?.fileId).map(x => x.foto2.fileId))];
+    ids.forEach(id => cargarFoto(id));
+  }, [items]);
   const [ubicGuardadas, setUbicGuardadas] = useState([]);
   const [customProjects, setCustomProjects] = useState([]);
   const [emps, setEmps] = useState([]);
