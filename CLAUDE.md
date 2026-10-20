@@ -1918,6 +1918,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   OPCIONAL (cómo se ve la caja con lo que trae). Se carga en Agregar (cuadro
   "Foto de la caja"), en Editar y "Otra igual" la copia. SOLO se ve en la ficha
   (al lado de la foto principal); tarjetas y listas siguen con `foto`.
+  Se PRE-DECODIFICA en segundo plano al cargar (`precalentarFoto`) para que
+  salga al instante. **Condición** (20-oct-2026): campo aditivo `condicion`
+  nuevo | usado_bueno | usado_malo (`CONDICIONES`) en cajas, por cantidad y
+  herramientas (los individuales comunes ya tienen Bueno/Regular/Malo); se
+  elige al agregar (default Nuevo, se recuerda para el siguiente), chip en la
+  ficha y editable en Editar. Los artículos viejos no la traen.
   **Grupos plegables (14-oct-2026)**: en Inicio, "Tus ubicaciones", "Almacén
   y bodegas", "Oficinas de plantel" y "Proyectos" se compactan tocando su
   título (chevron; `cerrados` en localStorage `gt-inv-grupos-cerrados`, es

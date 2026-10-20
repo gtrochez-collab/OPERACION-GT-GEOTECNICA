@@ -53,6 +53,12 @@ const pillBtn = (label, active, onClick, { n, c, disabled, title, key, grande } 
   style={{ padding: grande ? "11px 16px" : "8px 14px", minHeight: grande ? 44 : 36, borderRadius: 999, border: active ? "none" : "1px solid rgba(44,42,40,.12)", background: active ? (c || ORANGE_DARK) : "rgba(255,255,255,.65)", color: active ? "#fff" : "#5C5853", font: `700 ${grande ? 13.5 : 12.5}px/1 var(--sans)`, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? .5 : 1, display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
   {label}{n != null && <span style={{ opacity: .75, fontWeight: 600 }}>{n}</span>}</button>;
 const Vacio = ({ children }) => <div className="gt-vidrio" style={{ padding: "44px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>{children}</div>;
+// Condición de llegada (20-oct-2026, Gerson): nuevo / usado en buen estado /
+// usado en mal estado. Campo ADITIVO \`condicion\`; los viejos no lo traen.
+const CONDICIONES = [["nuevo", "Nuevo"], ["usado_bueno", "Usado · buen estado"], ["usado_malo", "Usado · mal estado"]];
+const condicionLabel = (k) => (CONDICIONES.find(c => c[0] === k) || [])[1] || "";
+const llevaCondicion = (tipo, categoria) => tipo !== "individual" || categoria === "herramientas_perforacion";
+const chipCondicion = (item) => item?.condicion ? <Chip c={item.condicion === "nuevo" ? C_VERDE : item.condicion === "usado_malo" ? C_ROJO : C_GRIS}>{condicionLabel(item.condicion)}</Chip> : null;
 const chipEstado = (item) => { const e = estadosDe(item)[item?.estado]; return <Chip c={TONO[e?.tono] || C_GRIS}>{e?.label || item?.estado || "—"}</Chip>; };
 const C_NIVEL = { llena: C_VERDE, parcial: C_AMARILLO, vacia: C_GRIS };
 const chipCaja = (item) => { const n = nivelCaja(item?.caja); return <Chip c={C_NIVEL[n]}>{fmtN(item?.caja?.cantidad)} de {fmtN(item?.caja?.capacidad || item?.caja?.cantidad)}</Chip>; };
@@ -121,6 +127,15 @@ const cargarFoto = (fileId) => {
   fotoCache.set(fileId, p);
   return p;
 };
+// Pre-decodifica la imagen (la deja lista para pintar): una foto que nunca se
+// mostró tarda un instante en decodificarse la primera vez aunque ya esté
+// bajada. Se guarda la <img> para que el navegador no la suelte.
+const fotoLista = new Map();
+const precalentarFoto = (fileId) => cargarFoto(fileId).then(d => {
+  if (!d || fotoLista.has(fileId)) return;
+  const img = new Image(); img.src = d; fotoLista.set(fileId, img);
+  img.decode?.().catch(() => {});
+});
 function Foto({ foto, size = 56, radius = 12, onClick, categoria, style: sx }) {
   const fileId = foto?.fileId;
   const [src, setSrc] = useState(() => { const c = fotoCache.get(fileId); return typeof c === "string" ? c : null; });
@@ -210,7 +225,7 @@ function PosicionPicker({ estantes, estanteId, nivel, onChange, requerido, onNue
     {sel && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><span style={LBL}>Nivel</span><Segmentado chico opciones={nivelesDe(sel).map(n => [n, n])} valor={String(nivel || "")} onChange={v => onChange(sel.id, v)} /></div>}
   </div>;
 }
-const FORM_VACIO = { foto: null, foto2: null, foto2De: null, nombre: "", tipo: "cantidad", categoria: "materiales", cantidad: "", unidad: "Unidad", estado: "", asignadoA: "", asignadoNombre: "", iguales: "1", herrTipo: "broca", diametro: "", marca: "", modelo: "", serie: "", notas: "",
+const FORM_VACIO = { condicion: "nuevo", foto: null, foto2: null, foto2De: null, nombre: "", tipo: "cantidad", categoria: "materiales", cantidad: "", unidad: "Unidad", estado: "", asignadoA: "", asignadoNombre: "", iguales: "1", herrTipo: "broca", diametro: "", marca: "", modelo: "", serie: "", notas: "",
   // caja (picas, portapicas): qué trae, cuántas trae, cuántas cajas iguales
   cajaMarca: "", tamano: "", capacidad: "", cajas: "1",
   // posición dentro de la ubicación (estante/rack + nivel), para cualquier tipo
@@ -251,7 +266,7 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, esta
   const elegirExistente = (it) => {
     setExistente(it);
     if (it.tipo === "cantidad") { setSumar(""); }
-    else if (it.tipo === "caja") setF(p => ({ ...p, nombre: it.caja?.contenido || it.nombre, tipo: "caja", categoria: it.categoria, cajaMarca: it.caja?.marca || "", tamano: it.caja?.tamano || "", capacidad: String(it.caja?.capacidad || it.caja?.cantidad || ""), fotoDe: it.foto || null, foto: null, foto2De: it.foto2 || null, foto2: null }));
+    else if (it.tipo === "caja") setF(p => ({ ...p, nombre: it.caja?.contenido || it.nombre, tipo: "caja", categoria: it.categoria, cajaMarca: it.caja?.marca || "", tamano: it.caja?.tamano || "", capacidad: String(it.caja?.capacidad || it.caja?.cantidad || ""), fotoDe: it.foto || null, foto: null, foto2De: it.foto2 || null, foto2: null, condicion: it.condicion || p.condicion }));
     else setF(p => ({ ...p, nombre: it.nombre, tipo: "individual", categoria: it.categoria, marca: it.marca || "", modelo: it.modelo || "", herrTipo: it.herramienta?.tipo || p.herrTipo, diametro: it.herramienta?.diametro || "", unidad: it.unidad || p.unidad, fotoDe: it.foto || null, foto: null }));
   };
   const limpiarExistente = () => { setExistente(null); setSumar(""); setF(p => ({ ...p, fotoDe: null })); };
@@ -277,7 +292,7 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, esta
     else r = await onGuardar({ ...f, estado: f.estado || estadoInicial(f.categoria), ubicacionId: ubicFija }, { fotoDe: f.fotoDe, foto2De: f.foto2De });
     if (!r) return;
     setGuardado(r);
-    const memoria = { tipo: f.tipo, categoria: f.categoria, unidad: f.unidad, herrTipo: f.herrTipo, estanteId: f.estanteId, nivel: f.nivel, cajaMarca: f.cajaMarca, tamano: f.tamano, capacidad: f.capacidad };
+    const memoria = { condicion: f.condicion, tipo: f.tipo, categoria: f.categoria, unidad: f.unidad, herrTipo: f.herrTipo, estanteId: f.estanteId, nivel: f.nivel, cajaMarca: f.cajaMarca, tamano: f.tamano, capacidad: f.capacidad };
     setUltimo(memoria);
     setExistente(null); setSumar("");
     setF({ ...FORM_VACIO, ...memoria });
@@ -363,6 +378,7 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, esta
           <datalist id="inv-marcas-caja">{[...new Set([...MARCAS_CAJA, ...items.filter(i => i.tipo === "caja").map(i => i.caja?.marca).filter(Boolean)])].map(x => <option key={x} value={x} />)}</datalist>
           <Segmentado chico opciones={[["", "Sin tamaño"], ...TAMANOS_CAJA]} valor={f.tamano} onChange={v => u("tamano", v)} />
         </div>
+        {llevaCondicion(f.tipo, f.categoria) && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><span style={LBL}>Condición</span><Segmentado chico opciones={CONDICIONES} valor={f.condicion || "nuevo"} onChange={v => u("condicion", v)} /></div>}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={LBL}>Cuántas trae cada caja</div><input type="number" inputMode="numeric" min="1" step="1" value={f.capacidad} onChange={e => u("capacidad", e.target.value)} placeholder="15" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "center" }} /></div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={LBL}>¿Cuántas cajas iguales?</div><input type="number" inputMode="numeric" min="1" max="200" value={f.cajas} onChange={e => u("cajas", e.target.value)} style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "center" }} /></div>
@@ -375,12 +391,14 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, esta
           <input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} />
           <UnidadSelect value={f.unidad} onChange={v => u("unidad", v)} />
         </div>
+        {llevaCondicion(f.tipo, f.categoria) && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><span style={LBL}>Condición</span><Segmentado chico opciones={CONDICIONES} valor={f.condicion || "nuevo"} onChange={v => u("condicion", v)} /></div>}
       </Paso>
       : <Paso isMobile={isMobile} n="4" titulo={esHer ? "La herramienta" : "Detalle"}>
         {esHer && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "auto minmax(0,1fr)", gap: 8, alignItems: "center" }}>
           <Segmentado opciones={TIPOS_HERRAMIENTA.map(t => [t.id, t.label])} valor={f.herrTipo} onChange={v => u("herrTipo", v)} />
           <input value={f.diametro} onChange={e => u("diametro", e.target.value)} placeholder="Diámetro · ej. 1.20 m" style={{ ...CTRL, fontWeight: 700 }} />
         </div>}
+        {llevaCondicion(f.tipo, f.categoria) && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><span style={LBL}>Condición</span><Segmentado chico opciones={CONDICIONES} valor={f.condicion || "nuevo"} onChange={v => u("condicion", v)} /></div>}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><span style={LBL}>Estado</span>{Object.entries(estados).map(([k, e]) => pillBtn(e.label, (f.estado || estadoInicial(f.categoria)) === k, () => u("estado", k), { key: k, c: TONO[e.tono]?.color }))}</div>
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 8 }}>
           <input value={f.marca} onChange={e => u("marca", e.target.value)} placeholder="Marca (opcional)" style={CTRL} />
@@ -501,6 +519,7 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms: permsBa
           <span style={{ fontFamily: "var(--mono)", fontWeight: 800, fontSize: 14, color: CHARCOAL }}>{item.codigo}</span>
           <Chip c={C_GRIS}>{cat.corto}</Chip>
           {item.tipo === "individual" ? chipEstado(item) : caja ? <Chip c={C_NARANJA}>Caja</Chip> : <Chip c={C_AZUL}>{fmtN(stockDe(item))} {item.unidad}</Chip>}
+          {chipCondicion(item)}
         </div>
         <div style={{ font: "800 20px/1.15 var(--display)", color: CHARCOAL }}>{item.nombre}</div>
         {caja && <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}><span style={{ font: "800 34px/1 var(--display)", color: C_NIVEL[nivelCaja(item.caja)].color }}>{fmtN(item.caja?.cantidad)}</span><span style={{ fontSize: 14, color: "var(--text-2)" }}>de {fmtN(item.caja?.capacidad || item.caja?.cantidad)} {String(item.caja?.contenido || "").toLowerCase()}{num(item.caja?.capacidad || item.caja?.cantidad) === 1 ? "" : "s"} en esta caja</span></div>}
@@ -593,7 +612,7 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms: permsBa
 // EDITAR artículo (modal) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
 function EditarFormImpl({ item, onSave, onClose, ocupado, isMobile }) {
-  const [f, setF] = useState(() => ({ nombre: item.nombre, categoria: item.categoria, unidad: item.unidad || "", marca: item.marca || "", modelo: item.modelo || "", serie: item.serie || "", estante: item.estante || "", notas: item.notas || "", herrTipo: item.herramienta?.tipo || "broca", diametro: item.herramienta?.diametro || "", foto: null, foto2: null,
+  const [f, setF] = useState(() => ({ nombre: item.nombre, categoria: item.categoria, unidad: item.unidad || "", marca: item.marca || "", modelo: item.modelo || "", serie: item.serie || "", estante: item.estante || "", notas: item.notas || "", herrTipo: item.herramienta?.tipo || "broca", diametro: item.herramienta?.diametro || "", foto: null, foto2: null, condicion: item.condicion || "",
     contenido: item.caja?.contenido || "", cajaMarca: item.caja?.marca || "", tamano: item.caja?.tamano || "", capacidad: String(item.caja?.capacidad || "") }));
   const [procesando, setProcesando] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -625,6 +644,7 @@ function EditarFormImpl({ item, onSave, onClose, ocupado, isMobile }) {
     {item.tipo === "cantidad" && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}><Input label="Unidad" list="inv-unidades-e" value={f.unidad} onChange={e => u("unidad", e.target.value)} /><datalist id="inv-unidades-e">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist><Input label="Estante" value={f.estante} onChange={e => u("estante", e.target.value)} /></div>}
     {esHer && item.tipo === "individual" && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}><div style={{ display: "flex", gap: 6, alignItems: "end" }}>{TIPOS_HERRAMIENTA.map(t => pillBtn(t.label, f.herrTipo === t.id, () => u("herrTipo", t.id), { key: t.id }))}</div><Input label="Diámetro" value={f.diametro} onChange={e => u("diametro", e.target.value)} /></div>}
     {item.tipo === "individual" && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 8 }}><Input label="Marca" value={f.marca} onChange={e => u("marca", e.target.value)} /><Input label="Modelo" value={f.modelo} onChange={e => u("modelo", e.target.value)} /><Input label="N° de serie" value={f.serie} onChange={e => u("serie", e.target.value)} /></div>}
+    {llevaCondicion(item.tipo, f.categoria) && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><span style={LBL}>Condición</span><Segmentado chico opciones={CONDICIONES} valor={f.condicion} onChange={v => u("condicion", v)} /></div>}
     <Textarea label="Nota" value={f.notas} onChange={e => u("notas", e.target.value)} style={{ minHeight: 56 }} />
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn variant="ghost" onClick={onClose} disabled={ocupado}>Cancelar</Btn><Btn disabled={ocupado || procesando} onClick={() => { if (item.tipo === "caja" ? !String(f.contenido).trim() : !String(f.nombre).trim()) return alert(item.tipo === "caja" ? "Escribí qué trae la caja." : "Escribí el nombre."); onSave(f); }}>{ocupado ? "Guardando…" : "Guardar cambios"}</Btn></div>
   </div>;
@@ -718,7 +738,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   // iguales comparten la misma foto.
   useEffect(() => {
     const ids = [...new Set(items.filter(x => x.tipo === "caja" && !x.eliminado && x.foto2?.fileId).map(x => x.foto2.fileId))];
-    ids.forEach(id => cargarFoto(id));
+    ids.forEach(id => precalentarFoto(id));
   }, [items]);
   const [ubicGuardadas, setUbicGuardadas] = useState([]);
   const [customProjects, setCustomProjects] = useState([]);
@@ -870,7 +890,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
         // el estante tiene que ser de ESA ubicación (la memoria del form puede traer uno de otra)
         const estanteId = d.estanteId && estantesDe(ubicGuardadas, d.ubicacionId).some(e => e.id === d.estanteId) ? d.estanteId : "";
         for (let k = 0; k < n; k++) {
-          const base = { id: uid(), codigo: codigos[k], tipo: d.tipo, nombre: String(d.nombre).trim(), categoria: cat.id, foto: d.fotoRef !== undefined ? d.fotoRef : fotoRef, marca: d.marca || "", modelo: d.modelo || "", serie: n > 1 ? "" : (d.serie || ""), notas: d.notas || "", createdAt: at, createdBy: userKey, createdByNombre: userName, updatedAt: at };
+          const base = { id: uid(), codigo: codigos[k], tipo: d.tipo, nombre: String(d.nombre).trim(), categoria: cat.id, foto: d.fotoRef !== undefined ? d.fotoRef : fotoRef, marca: d.marca || "", modelo: d.modelo || "", serie: n > 1 ? "" : (d.serie || ""), notas: d.notas || "", ...(llevaCondicion(d.tipo, cat.id) && d.condicion ? { condicion: d.condicion } : {}), createdAt: at, createdBy: userKey, createdByNombre: userName, updatedAt: at };
           const it = d.tipo === "caja"
             ? { ...base, ...(foto2Ref ? { foto2: foto2Ref } : {}), marca: "", nombre: nombreCaja({ contenido: String(d.contenido || d.nombre).trim(), marca: d.cajaMarca || d.marca || "", tamano: d.tamano || "" }), ubicacionId: d.ubicacionId, estanteId, nivel: estanteId ? String(d.nivel || "1") : "", caja: { contenido: String(d.contenido || d.nombre).trim(), marca: d.cajaMarca || d.marca || "", tamano: d.tamano || "", cantidad: num(d.capacidad || d.cantidad), capacidad: num(d.capacidad || d.cantidad) } }
             : d.tipo === "individual"
@@ -910,8 +930,8 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     let foto2Ref;
     if (f.foto2?.dataUrl) { try { foto2Ref = await subirFoto(f.foto2); } catch (e) { alert(e.message); return; } }
     const cambios = item.tipo === "caja"
-      ? (() => { const c = { ...(item.caja || {}), contenido: String(f.contenido).trim(), marca: String(f.cajaMarca || "").trim(), tamano: f.tamano || "", capacidad: Math.max(num(f.capacidad), num(item.caja?.cantidad)) || num(item.caja?.cantidad) }; return { nombre: nombreCaja(c), categoria: f.categoria, caja: c, notas: f.notas, ...(fotoRef ? { foto: fotoRef } : {}), ...(foto2Ref ? { foto2: foto2Ref } : {}) }; })()
-      : { nombre: String(f.nombre).trim(), categoria: f.categoria, marca: f.marca, modelo: f.modelo, serie: f.serie, notas: f.notas, ...(item.tipo === "cantidad" ? { unidad: String(f.unidad || "Unidad").trim(), estante: f.estante } : {}), ...(fotoRef ? { foto: fotoRef } : {}), ...(f.categoria === "herramientas_perforacion" && item.tipo === "individual" ? { herramienta: { tipo: f.herrTipo, diametro: String(f.diametro).trim() } } : {}) };
+      ? (() => { const c = { ...(item.caja || {}), contenido: String(f.contenido).trim(), marca: String(f.cajaMarca || "").trim(), tamano: f.tamano || "", capacidad: Math.max(num(f.capacidad), num(item.caja?.cantidad)) || num(item.caja?.cantidad) }; return { nombre: nombreCaja(c), categoria: f.categoria, caja: c, notas: f.notas, ...(f.condicion ? { condicion: f.condicion } : {}), ...(fotoRef ? { foto: fotoRef } : {}), ...(foto2Ref ? { foto2: foto2Ref } : {}) }; })()
+      : { nombre: String(f.nombre).trim(), categoria: f.categoria, ...(f.condicion && llevaCondicion(item.tipo, f.categoria) ? { condicion: f.condicion } : {}), marca: f.marca, modelo: f.modelo, serie: f.serie, notas: f.notas, ...(item.tipo === "cantidad" ? { unidad: String(f.unidad || "Unidad").trim(), estante: f.estante } : {}), ...(fotoRef ? { foto: fotoRef } : {}), ...(f.categoria === "herramientas_perforacion" && item.tipo === "individual" ? { herramienta: { tipo: f.herrTipo, diametro: String(f.diametro).trim() } } : {}) };
     // Si cambia de familia de estados (herramienta ↔ equipo), el estado se traduce
     if (item.tipo === "individual" && (f.categoria === "herramientas_perforacion") !== esHerramienta(item)) cambios.estado = estadoInicial(f.categoria);
     const ok = await accionSobre(item, { accion: "editar", cambios });
