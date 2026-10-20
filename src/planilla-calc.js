@@ -241,12 +241,15 @@ export const totalesLinea = (l) => {
   const heMonto = num(l.he?.monto);
   const o1 = v3 ? extrasIng : num(l.o1) + num(l.o2);
   const otros = v3 ? extrasDed : num(l.otros) + num(l.aus) + num(l.amdc);
-  const ingresos = r2(num(l.bq) + num(l.bonoDomingo) + num(l.bonoFeriado) + heMonto + o1);
+  // Las HORAS EXTRAS van en su PROPIA planilla (20-oct-2026, Gerson: "que la
+  // planilla de horas extras sea por aparte, no en la misma"): el neto de la
+  // planilla de salarios NO las incluye; `heMonto` se reporta aparte.
+  const ingresos = r2(num(l.bq) + num(l.bonoDomingo) + num(l.bonoFeriado) + o1);
   const dedLey = r2(num(l.isr) + num(l.ihss) + num(l.rap) + num(l.coop));
   const dedAsist = r2(num(l.descuentoNSP) + num(l.descuentoHoras));
   const deducciones = r2(dedLey + otros + dedAsist);
   const neto = r2(ordinario + ingresos - deducciones);
-  return { ordinario, extrasIng: o1, extrasDed: otros, heMonto, ingresos, dedLey, dedAsist, deducciones, neto, bruto: r2(ordinario + ingresos), salarioSinHe: r2(neto - heMonto) };
+  return { ordinario, extrasIng: o1, extrasDed: otros, heMonto, ingresos, dedLey, dedAsist, deducciones, neto, bruto: r2(ordinario + ingresos), salarioSinHe: neto, totalConHe: r2(neto + heMonto) };
 };
 
 /** Línea lista para guardar: suma los campos "clásicos" (o1, otros, so, tDed, tOtros, neto) para lo que aún los lee. */
@@ -257,13 +260,19 @@ export const lineaParaGuardar = (l) => {
 
 /** Resumen de toda la planilla. */
 export const resumenPlanilla = (lines) => {
-  const out = { personas: lines.length, ordinario: 0, ingresos: 0, deducciones: 0, he: 0, heHrs: 0, neto: 0, salarios: 0, nsp: 0, porGrupo: {}, porMetodo: {}, porProyecto: {} };
+  const out = { personas: lines.length, ordinario: 0, ingresos: 0, deducciones: 0, he: 0, heHrs: 0, hePersonas: 0, neto: 0, salarios: 0, nsp: 0, porGrupo: {}, porMetodo: {}, hePorMetodo: {}, porProyecto: {} };
   GRUPOS_CT.forEach(([k, label]) => { out.porGrupo[k] = { label, n: 0, neto: 0 }; });
   METODOS_PAGO.forEach(([k, label]) => { out.porMetodo[k] = { label, n: 0, neto: 0 }; });
   lines.forEach(l => {
     const t = totalesLinea(l);
     out.ordinario += t.ordinario; out.ingresos += t.ingresos; out.deducciones += t.deducciones;
-    out.he += t.heMonto; out.heHrs += num(l.he?.hrs); out.neto += t.neto; out.salarios += t.salarioSinHe; out.nsp += num(l.diasNSP);
+    out.he += t.heMonto; out.heHrs += num(l.he?.hrs); out.neto += t.neto; out.salarios += t.neto; out.nsp += num(l.diasNSP);
+    if (t.heMonto > 0) {
+      out.hePersonas++;
+      const hk = l.metodoPago || "transferencia";
+      const hm = out.hePorMetodo[hk] || (out.hePorMetodo[hk] = { n: 0, monto: 0 });
+      hm.n++; hm.monto += t.heMonto;
+    }
     const g = out.porGrupo[l.ct] || (out.porGrupo[l.ct] = { label: l.ct, n: 0, neto: 0 });
     g.n++; g.neto += t.neto;
     const mk = l.metodoPago || "transferencia";
@@ -275,6 +284,8 @@ export const resumenPlanilla = (lines) => {
     else if (l.proj) out.porProyecto[l.proj] = r2((out.porProyecto[l.proj] || 0) + t.neto);
   });
   ["ordinario", "ingresos", "deducciones", "he", "heHrs", "neto", "salarios"].forEach(k => { out[k] = r2(out[k]); });
+  out.totalGeneral = r2(out.neto + out.he);
+  Object.values(out.hePorMetodo).forEach(g => { g.monto = r2(g.monto); });
   Object.values(out.porGrupo).forEach(g => { g.neto = r2(g.neto); });
   Object.values(out.porMetodo).forEach(g => { g.neto = r2(g.neto); });
   return out;
@@ -286,7 +297,6 @@ export const notaAutomatica = (l) => {
   if (l.ferTrab) p.push(`Feriado trabajado ×${l.ferTrab}`);
   if (l.domTrab) p.push(`Domingo trabajado ×${l.domTrab}`);
   if (l.domTrabTriple) p.push(`Domingo triple ×${l.domTrabTriple}`);
-  if (l.he?.hrs) p.push(`HE ${l.he.hrs} h (${etiquetaCorta(l.he.periodo, l.he.quincena)})`);
   if (l.diasNSP) p.push(`NSP ×${l.diasNSP}`);
   if (l.tardes) p.push(`Llegadas tarde ×${l.tardes}`);
   (l.extras || []).forEach(x => p.push(`${x.tipo === "ingreso" ? "+" : "−"} ${x.concepto || "Extra"}`));
@@ -301,3 +311,6 @@ export const diasMostrados = (l) => {
   return ef != null && ef !== pr ? ef.toFixed(2) : String(pr);
 };
 export const fmtL = (n) => `L ${(num(n)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** Líneas que tienen horas extras (la planilla de horas extras va aparte). */
+export const lineasConHe = (lines) => (lines || []).filter(l => num(l.he?.monto) > 0);

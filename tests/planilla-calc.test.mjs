@@ -90,8 +90,15 @@ test("horas extras de la quincena vencida: bandas, domingo ×2 y monto", () => {
   assert.equal(r.monto, 2 * 1.25 * 125 + 1 * 1.5 * 125 + 3 * 2 * 125);
   assert.equal(horasExtrasDe(he, "e9", hb), null);
   const l = armarLinea({ emp: emp(), periodo: "2026-10", quincena: "1Q", asistencia: asistenciaDe(emp(), "2026-10", "1Q", {}), he: r });
-  assert.equal(totalesLinea(l).heMonto, r.monto);
-  assert.match(notaAutomatica(l), /HE 6 h \(2Q sep 2026\)/);
+  const t = totalesLinea(l);
+  assert.equal(t.heMonto, r.monto);
+  // Planilla de horas extras APARTE: el neto de salarios no las incluye
+  assert.equal(t.neto, 15000 + 2500);
+  assert.equal(t.totalConHe, 15000 + 2500 + r.monto);
+  const res = resumenPlanilla([l]);
+  assert.equal(res.neto, 17500); assert.equal(res.he, r.monto); assert.equal(res.hePersonas, 1);
+  assert.equal(res.totalGeneral, 17500 + r.monto);
+  assert.doesNotMatch(notaAutomatica(l), /HE/);
 });
 
 test("honorarios: quincenal con 12.5 % de ISR; mensual cobra el mes en su quincena y no entra en la otra", () => {

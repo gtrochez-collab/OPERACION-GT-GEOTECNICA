@@ -982,6 +982,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   como ingreso por colaborador (`horasExtrasDe` sobre hr-he con
   `heHoraBase`, que respeta el ajuste de salario base de HE) — con la data
   real de oct-2026 dio L 38,860.41, EXACTO el "HE" del Excel de Carolina.
+  **Planilla de HORAS EXTRAS APARTE (20-oct-2026, Gerson: "que la planilla
+  de horas extras sea por aparte, no en la misma")**: el neto de salarios
+  (`totalesLinea().neto`, `resumenPlanilla().neto`) YA NO incluye HE;
+  `heMonto`/`res.he`/`hePersonas`/`hePorMetodo`/`totalGeneral` van aparte y
+  el registro guarda `total` (salarios) + `totalHe`. En el editor, dos
+  tarjetas arriba "Planilla de salarios" / "Planilla de horas extras"
+  (`payParte`); la de HE (`renderHeParte`) lista por colaborador las bandas,
+  hora base, horas, monto y método de pago. PDF y Excel salen en archivos
+  SEPARADOS (`parte: "salarios" | "he"` en construir/exportar*;
+  `Planilla_Horas_Extras_<empresa>_<Q>_<periodo>`). Regla de siempre: la
+  planilla de la 2Q paga las HE de la 1Q del mismo mes; la 1Q, las de la 2Q
+  del mes anterior. Al 20-oct no existía hoja de HE de la 1Q oct (Gerson ya
+  tenía un borrador de 2Q oct guardado SIN HE): cuando la carguen, "↻ Releer
+  asistencia" la trae.
   Cada línea admite **extras** `[{id, tipo ingreso|deduccion, concepto,
   monto}]` (lo que ella escribía en OTROS INGRESOS/OTRAS DEDUCCIONES con
   nota), `metodoPago` transferencia|cheque|ach (se recuerda en la ficha; el
