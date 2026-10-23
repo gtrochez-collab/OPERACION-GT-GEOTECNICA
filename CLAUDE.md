@@ -2165,6 +2165,12 @@ escritor GeoClock), `gc-firma-<markId>` (firma JPEG), `gc-foto-<markId>`
 separado a propósito para que tablet y RRHH nunca compitan por una key.
 
 ## Convenciones críticas
+- **Aviso de versión nueva (23-oct-2026)**: GitHub Pages cachea index.html 10
+  min (`max-age=600`), así que tras publicar el navegador puede mostrar la
+  versión vieja. `src/version.js` (`vigilarVersion`, iniciado en main.jsx)
+  relee index.html sin caché cada 2 min y al volver a la pestaña; si el
+  bundle cambió, la tablet kiosco (`marcaje`) se recarga sola y los demás
+  ven la pastilla naranja "Hay una versión nueva del sistema · Actualizar".
 - **FECHAS: `hoyISO()` de `src/fechas.js`, NUNCA `new Date().toISOString().slice(0,10)`**
   (23-sep-2026, lo cazó Gerson). `toISOString()` es **UTC**: en Honduras (UTC-6)
   desde las **6:00 p.m.** ya devuelve el día SIGUIENTE. El caso: la Lic. Carolina
