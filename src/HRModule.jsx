@@ -5189,18 +5189,30 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         {asisSub === "hojas" ? renderAtts() : asisSub === "tardanzas" ? renderTardanzas() : renderHE()}
       </div>;
     }
-    const tarjeta = (ico, titulo, sub, n, onClick, tonoN = CHARCOAL) => <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={onClick} onKeyDown={e => { if (e.key === "Enter") onClick(); }}
-      style={{ padding: "18px 20px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer", minHeight: 112, boxSizing: "border-box" }}>
-      <div style={{ width: 52, height: 52, borderRadius: 16, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IcoH d={ico} size={24} /></div>
-      <div style={{ flex: 1, minWidth: 0 }}><div style={{ font: "800 17px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</div><div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 4 }}>{sub}</div></div>
-      {n != null && <div style={{ font: "800 26px/1 var(--display)", color: tonoN, letterSpacing: "-.02em" }}>{n}</div>}
-      <IcoH d={ICO_HUB.flecha} size={18} color="#A39C92" />
+    // Cajas grandes que llenan la pantalla (23-oct-2026): 2×2 que se estiran
+    // al alto disponible; el número y el ícono crecen con ellas.
+    const tarjeta = (ico, titulo, sub, n, onClick, tonoN = CHARCOAL, detalle) => <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={onClick} onKeyDown={e => { if (e.key === "Enter") onClick(); }}
+      style={{ padding: isMobile ? "20px" : "clamp(22px,4vh,40px) clamp(24px,3vw,44px)", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 18, cursor: "pointer", minHeight: isMobile ? 150 : 0, boxSizing: "border-box" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14 }}>
+        <div style={{ width: "clamp(52px,8vh,76px)", height: "clamp(52px,8vh,76px)", borderRadius: 22, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IcoH d={ico} size={36} /></div>
+        {n != null && <div style={{ font: "800 clamp(44px,9vh,84px)/1 var(--display)", color: tonoN, letterSpacing: "-.04em" }}>{n}</div>}
+        {n == null && <div style={{ width: 42, height: 42, borderRadius: "50%", background: "rgba(44,42,40,.05)", display: "flex", alignItems: "center", justifyContent: "center" }}><IcoH d={ICO_HUB.flecha} size={20} color="#6E6862" /></div>}
+      </div>
+      <div>
+        <div style={{ font: "800 clamp(22px,3.6vh,32px)/1.15 var(--display)", color: CHARCOAL, letterSpacing: "-.02em" }}>{titulo}</div>
+        <div style={{ fontSize: "clamp(13px,1.9vh,15.5px)", color: "#6E6862", marginTop: 8, lineHeight: 1.45, maxWidth: 520 }}>{sub}</div>
+        {detalle && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>{detalle}</div>}
+      </div>
     </div>;
-    return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
-      {!soloTard && tarjeta(ICO_HUB.hojas, "Asistencia", ult ? `${ca.length} quincena${ca.length === 1 ? "" : "s"} con hoja · última ${etiquetaCorta(ult.periodo, ult.quincena)}` : "Cuadrillas y hojas por quincena", cq.length, () => setAsisSub("hojas"))}
-      {tarjeta(ICO_HUB.tarde, "Llegadas tardías", nPend ? `${nPend} por decidir · aprobás el día completo o denegás con descuento` : "Nada por decidir", nPend, () => setAsisSub("tardanzas"), nPend ? "#A94E16" : CHARCOAL)}
-      {!soloTard && tarjeta(ICO_HUB.horas, "Horas extras", ultHe ? `Última hoja ${etiquetaCorta(ultHe.periodo, ultHe.quincena)} · ${fmtDias(tHe.hrs)} h${hideSalary ? "" : ` · ${fmtL(tHe.costo)}`}` : "Hojas por quincena, se pagan quincena vencida", che.length, () => setAsisSub("he"))}
-      {puedeClock && tarjeta(ICO_HUB.tablet, "GeoClock", `${entradasHoy} entrada${entradasHoy === 1 ? "" : "s"} hoy · el reloj de las tablets y sus registros`, null, () => onAbrirModulo("geoclock"))}
+    return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gridAutoRows: isMobile ? "auto" : "1fr", gap: 16, minHeight: isMobile ? undefined : "calc(100vh - 200px)" }}>
+      {!soloTard && tarjeta(ICO_HUB.hojas, "Asistencia", ult ? `${ca.length} quincena${ca.length === 1 ? "" : "s"} con hoja · la última es ${etiquetaCorta(ult.periodo, ult.quincena)}` : "Cuadrillas y hojas por quincena", cq.length, () => setAsisSub("hojas"), CHARCOAL,
+        <>{chipH(`${cq.length} cuadrillas`, "gris")}{ult && chipH(etiquetaCorta(ult.periodo, ult.quincena), "verde")}</>)}
+      {tarjeta(ICO_HUB.tarde, "Llegadas tardías", nPend ? "Por decidir: aprobás el día completo o denegás con descuento" : "Nada por decidir", nPend, () => setAsisSub("tardanzas"), nPend ? "#A94E16" : CHARCOAL,
+        <>{chipH(nPend ? `${nPend} por decidir` : "Al día", nPend ? "naranja" : "verde")}{chipH(`${TOLERANCIA_MIN} min de tolerancia`, "gris")}</>)}
+      {!soloTard && tarjeta(ICO_HUB.horas, "Horas extras", ultHe ? `Última hoja: ${etiquetaCorta(ultHe.periodo, ultHe.quincena)} · se paga quincena vencida` : "Hojas por quincena, se pagan quincena vencida", che.length, () => setAsisSub("he"), CHARCOAL,
+        ultHe ? <>{chipH(`${fmtDias(tHe.hrs)} h`, "gris")}{!hideSalary && chipH(fmtL(tHe.costo), "verde")}</> : null)}
+      {puedeClock && tarjeta(ICO_HUB.tablet, "GeoClock", "El reloj de las tablets: marcaje, foto y firma, y el registro de entradas y salidas", null, () => onAbrirModulo("geoclock"), CHARCOAL,
+        <>{chipH(`${entradasHoy} entrada${entradasHoy === 1 ? "" : "s"} hoy`, entradasHoy ? "verde" : "gris")}</>)}
     </div>;
   };
 
