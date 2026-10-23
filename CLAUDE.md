@@ -15,7 +15,7 @@ cache localStorage. Deploy automático a GitHub Pages al hacer push a `main`.
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
-- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs`, `tests/planilla-calc.test.mjs`, `tests/abonos.test.mjs` y `tests/rrhh-solicitudes.test.mjs`.
+- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs`, `tests/planilla-calc.test.mjs`, `tests/abonos.test.mjs`, `tests/rrhh-solicitudes.test.mjs` y `tests/geoclock-calc.test.mjs`.
 - Deploy: `git push origin main` dispara `.github/workflows/deploy.yml` → gh-pages.
   URL: https://gtrochez-collab.github.io/OPERACION-GT-GEOTECNICA/
 - Verificar deploy: `gh run list` + grep del texto nuevo en el bundle publicado.
@@ -1097,6 +1097,66 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   y el botón "+ Pedir…" (Gerson: "si dice 5 días tomados, ¿dónde los veo?"). Probado el 20-oct con solicitudes de prueba de Fernando
   (borradas después): vacaciones 2030 aprobadas → hr-vacs + carnet; constancia
   aprobada → vista previa y PDF iguales al modelo.
+  **HUB DE ASISTENCIA (23-oct-2026, Gerson: "asistencia, llegadas tardías
+  y horas extras juntos en un solo apartado tipo Solicitudes; misma
+  estética, sin tantos colores ni texto, nada de emojis; y que ahí viva
+  GeoClock")**: las pestañas Asistencia · Llegadas tardías · Horas Extras
+  se volvieron UNA pestaña **Asistencia** (`renderAsistenciaHub`, estado
+  `asisSub` "" | hojas | tardanzas | he) con cajas de vidrio: Asistencia
+  (quincenas con cuadrilla / última hoja) · Llegadas tardías (badge = por
+  decidir de la empresa activa, también en la pestaña) · Horas extras
+  (última hoja, horas y L) · GeoClock (entradas de hoy; abre el módulo vía
+  `onAbrirModulo("geoclock")`, prop nueva de `moduleProps` en App.jsx).
+  Cada caja abre la sub-vista con "←". Los atajos viejos (Dashboard
+  "pendientes", avisos de Planilla) pasan por `irA(id)` / `tieneSec(id)`
+  (`SUB_ASIS` traduce attendance/tardanzas/horasextras). Oscar
+  (`isOscarTardies`) solo ve la caja de tardanzas. Helpers de vidrio del
+  componente: `btnH`, `chipH`, `pillH`, `tileH`, `IcoH`, `CTRL_H`,
+  `cabeceraSub`. **Listas** (`renderAtts`, `renderHE`): una fila de vidrio
+  por quincena (1Q/2Q grande + mes, colaboradores · proyectos con chips,
+  Registrada / Sin registrar, Asistencia · Cuadrilla · ✕). **Llegadas
+  tardías** (`renderTardanzas`): tiles por decidir / aprobadas / denegadas /
+  colaboradores, pills de estado, selects de colaborador y quien decide,
+  archivo (Recientes · mes · fecha), y una fila de vidrio por tardanza
+  (avatar, hora en mono, chip "+N min", "decide Ana", chip de estado,
+  explicación entre comillas, descuento en una línea, Ver foto · Ver firma ·
+  Denegar · Aprobar · Revertir · Borrar). La lógica (aprobar/denegar/
+  revertir/borrar, responsables, archivo) NO cambió. **Hojas** (`AttendanceGrid`
+  / `HorasExtrasGrid`): encabezado de vidrio con leyenda, aviso de NSP con
+  acento naranja, resumen en tiles, cada proyecto en un contenedor de vidrio
+  con cabecera clara (ya no la barra de color de la empresa), encabezados de
+  tabla neutros (`TH_H`/`TD_H`, D y F en naranja) y UNA paleta corta de
+  celdas (`PAL_CELDA`: verde presente · gris descanso pagado · rojo NSP ·
+  ámbar incapacidad · azul vacaciones · naranja TF/DT/DT2 · gris bloqueado;
+  el 1* no cambia de color, lo dice el rótulo). Bandas de HE en grises
+  (`HE_BANDAS`), totales en carbón/verde, botones Cerrar · PDF · Guardar
+  (`gt-btn`). La lógica de las grids (ciclo de celdas, overrides, horas de
+  entrada, NSP sugeridos, guardado) quedó INTACTA.
+- `GeoClockModule.jsx` **rediseño GeoCore (23-oct-2026)**: monta GT_CSS +
+  brillos; encabezado con logo, ícono, "GeoClock" y las ubicaciones que
+  cubre la tablet, reloj en mono, pills Registros · Módulos · Salir; búsqueda
+  "Marcá tu asistencia" con tarjetas de vidrio (foto, nombre, cargo, Entrada
+  7:55 / Sin marcar hoy); pantalla de la persona con tarjeta de identidad
+  (horario y tolerancia, chip "Marcás en Plantel/Administración"), botones
+  segmentados Entrada / Salida (carbón), aviso de tarde con acento naranja,
+  **cámara + firma lado a lado** y el botón grande naranja "Registrar
+  entrada · 8:02"; confirmación con círculo verde (o naranja si fue tarde).
+  Sin emojis en ninguna pantalla (también Registros). **FOTO AUTOMÁTICA**
+  (`CamaraMarcaje`, a nivel de módulo): `getUserMedia` frontal con vista
+  previa espejada; al registrar, `camRef.current.capturar()` saca un JPEG de
+  320 px (~10-25 KB) que se guarda en **`gc-foto-<markId>`** ANTES del
+  marcaje (si no se puede subir, no se registra nada, igual que la firma);
+  el mark lleva `fotoId` o `sinFoto: true` (sin cámara o sin permiso el
+  marcaje sigue: la foto es evidencia, no candado). La foto se ve en el
+  detalle del marcaje (Registros) y en "Ver foto" de Llegadas tardías.
+  **UBICACIÓN POR PERSONA** (`src/geoclock-calc.js`, pura, con
+  `tests/geoclock-calc.test.mjs`): la tablet de la pared (`marcaje`) lleva
+  `ubicaciones: ["ADMINISTRACIÓN", "PLANTEL"]` en users.js; `ubicacionDeMarcaje
+  (tablet, emp, asignacionCuadrilla)` decide: la cuadrilla de la quincena
+  si coincide con una ubicación de la tablet → si no, departamento
+  Administración/Contabilidad/RRHH → ADMINISTRACIÓN → el resto PLANTEL
+  (una tablet de una sola ubicación siempre estampa esa). `UBICACIONES_TABLET`
+  (para los NO MARCÓ de Registros) une `ubicacion` + `ubicaciones`.
   **Dashboard gerencial + KPI's (ago 2026, estilo IsTeam)**: `renderDashboard`
   reescrito — `statsDeMes(periodo)` calcula presencia diaria/NSP/INC/VAC/costo
   MO por proyecto desde hr-atts2 (calcCostoMO) + planilla real (hr-pays) +
@@ -2050,7 +2110,8 @@ GeoCost (sep 2026): `cc-config` ({tasa, historialTasa}), `cc-presupuestos`
 (uno por projectCode), `cc-movilizaciones`, `cc-file-<id>` (comprobantes);
 campos aditivos `partidaId` y `sobregiroJustificacion` en cp-/mq-purchases.
 GeoClock (ago 2026): `gc-marks-<periodo>-<quincena>` (marcajes, ÚNICO
-escritor GeoClock), `gc-firma-<markId>` (firma JPEG), `gc-tardies`
+escritor GeoClock), `gc-firma-<markId>` (firma JPEG), `gc-foto-<markId>`
+(foto automática de la tablet, 23-oct-2026), `gc-tardies`
 (decisiones de RRHH sobre tardanzas, ÚNICO escritor HRModule) — ownership
 separado a propósito para que tablet y RRHH nunca compitan por una key.
 

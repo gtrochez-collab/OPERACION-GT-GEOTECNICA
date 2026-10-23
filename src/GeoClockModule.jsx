@@ -9,7 +9,7 @@
 //     hora "local" del dispositivo formateada a otra zona.
 //   • Tolerancia: TOLERANCIA_MIN (15 min) sobre la hora de entrada del
 //     HORARIO del empleado (plantel 7:00–7:15, oficina 8:00–8:15, etc).
-//     Después de eso el marcaje queda como LLEGADA TARDE 😞 y pide una
+//     Después de eso el marcaje queda como LLEGADA TARDE y pide una
 //     explicación que cae al "Reporte de llegadas tardías" de GeoTeam,
 //     donde RRHH aprueba (día completo) o deniega (descuento proporcional).
 //   • CANDADO: sin distribución de cuadrilla de la quincena actual
@@ -30,16 +30,21 @@ import { USERS } from "./users.js";
 import Logo from "./Logo.jsx";
 import { esFeriadoQuincena } from "./holidays.js";
 import { HORARIOS, horarioDe, TOLERANCIA_MIN, gcMarkKey, minTardeDe } from "./HRModule.jsx";
+import { GT_CSS } from "./gt-ui.js";
+import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion } from "./geoclock-calc.js";
 
+// Rediseño GeoCore (23-oct-2026): vidrio, paleta carbón/naranja/gris, sin
+// emojis. La tablet toma una FOTO automática al registrar (anti "marcar por
+// otro") y la ubicación del marcaje la decide la persona (geoclock-calc.js).
 const ORANGE = "#E8762D";
 const ORANGE_DARK = "#C75F1F";
 const CHARCOAL = "#2C2A28";
-const CREAM = "#FFFBF5";
-const BORDER = "#DBD4C8";
-const STONE = "#8B847C";
-const GREEN = "#5A8A4F";
-const RED = "#C0392B";
-const AMBER = "#D4A017";
+const CREAM = "#F9F9F8";
+const BORDER = "rgba(44,42,40,.1)";
+const STONE = "#6E6862";
+const GREEN = "#177243";
+const RED = "#B03024";
+const AMBER = "#A94E16";
 const COMPANIES = {
   subterra: { name: "Subterra Honduras", color: "#3E6A99" },
   geotecnica: { name: "Geotecnica Soluciones", color: "#2C5F5D" },
@@ -88,7 +93,8 @@ const hora12 = (h, m, s) => {
 // estampa la ubicación en cada marcaje, y Registros usa la lista de sedes
 // con tablet para mostrar como NO MARCÓ a los asignados que no marcaron.
 const sinAcentos = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
-const UBICACIONES_TABLET = [...new Set(USERS.map(u => u.ubicacion).filter(Boolean))];
+const UBICACIONES_TABLET = [...new Set(USERS.flatMap(u => ubicacionesDeTablet(u)))];
+const tabletDe = (label) => USERS.find(u => u.label === label) || null;
 // ¿El proyecto asignado (short) pertenece a una sede con tablet?
 const proyectoConTablet = (short) => {
   const p = sinAcentos(short);
@@ -148,6 +154,52 @@ const fmtDiaCorto = (fecha) => {
   const dow = new Date(y, m - 1, d).getDay();
   const dia = DIAS[dow] || "";
   return `${dia.charAt(0).toUpperCase()}${dia.slice(1, 3)} ${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}`;
+};
+
+// ── Cámara de la tablet (23-oct-2026) ──────────────────────────────────
+// Vista previa de la cámara frontal mientras la persona marca; al confirmar
+// se captura un cuadro (JPEG ~320 px, 10-25 KB) que se guarda en
+// gc-foto-<markId>. Si no hay cámara o no dan permiso, el marcaje sigue
+// (queda `sinFoto`) — la foto es evidencia, no candado.
+const CamaraMarcaje = ({ camRef, onEstado }) => {
+  const videoRef = useRef(null);
+  const [estado, setEstado] = useState("pidiendo");   // pidiendo | lista | sin
+  useEffect(() => {
+    let stream = null, vivo = true;
+    const arrancar = async () => {
+      if (!navigator.mediaDevices?.getUserMedia) { setEstado("sin"); onEstado && onEstado(false); return; }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+        if (!vivo) { stream.getTracks().forEach(t => t.stop()); return; }
+        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => {}); }
+        setEstado("lista"); onEstado && onEstado(true);
+      } catch { setEstado("sin"); onEstado && onEstado(false); }
+    };
+    arrancar();
+    if (camRef) camRef.current = {
+      capturar: () => {
+        const v = videoRef.current;
+        if (!v || !v.videoWidth || estado === "sin") return null;
+        try {
+          const W = 320, H = Math.round(W * (v.videoHeight / v.videoWidth));
+          const c = document.createElement("canvas"); c.width = W; c.height = H;
+          const ctx = c.getContext("2d");
+          // Espejo: así la foto queda como la ve la persona en la pantalla.
+          ctx.translate(W, 0); ctx.scale(-1, 1); ctx.drawImage(v, 0, 0, W, H);
+          return c.toDataURL("image/jpeg", 0.7);
+        } catch { return null; }
+      },
+    };
+    return () => { vivo = false; if (stream) stream.getTracks().forEach(t => t.stop()); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return <div style={{ position: "relative", width: "100%", aspectRatio: "4 / 3", borderRadius: 16, overflow: "hidden", background: "#2C2A28" }}>
+    <video ref={videoRef} muted playsInline autoPlay style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: estado === "sin" ? "none" : "block" }} />
+    {estado !== "lista" && <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, color: "rgba(255,255,255,.85)", fontSize: 13, fontWeight: 700, padding: 12, textAlign: "center" }}>
+      {estado === "pidiendo" ? "Encendiendo la cámara…" : "Sin cámara: el marcaje queda sin foto"}
+    </div>}
+    {estado === "lista" && <div style={{ position: "absolute", left: 10, bottom: 8, padding: "4px 10px", borderRadius: 999, background: "rgba(0,0,0,.45)", color: "#fff", fontSize: 11.5, fontWeight: 700 }}>Mirá a la cámara: se toma la foto al registrar</div>}
+  </div>;
 };
 
 // ── Pad de firma (canvas táctil) ──────────────────────────────────────
@@ -221,7 +273,7 @@ const SignaturePad = ({ padRef, onInk }) => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  return <canvas ref={canvasRef} style={{ width: "100%", height: 170, background: "#fff", border: `2px dashed ${BORDER}`, borderRadius: 14, touchAction: "none", cursor: "crosshair", display: "block" }} />;
+  return <canvas ref={canvasRef} style={{ width: "100%", height: 170, background: "#fff", border: "1.5px dashed rgba(44,42,40,.25)", borderRadius: 14, touchAction: "none", cursor: "crosshair", display: "block" }} />;
 };
 
 // ── Módulo ────────────────────────────────────────────────────────────
@@ -274,6 +326,8 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   const [detSaving, setDetSaving] = useState(false);
   const [verHoy, setVerHoy] = useState(false);
   const padRef = useRef(null);
+  const camRef = useRef(null);
+  const [camOk, setCamOk] = useState(null);     // null = sin pedir · true · false
   const idleTimer = useRef(null);
 
   // Reloj en vivo (1 tick por segundo, zona Tegucigalpa)
@@ -514,6 +568,9 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   // Candado de cuadrilla: sin distribución de la quincena ACTUAL para la
   // empresa del colaborador, no hay marcaje.
   const cuadrillaOk = (emp) => cuads.some(c => c && c.company === emp.company && c.periodo === q.periodo && c.quincena === q.quincena);
+  // Proyecto asignado en la cuadrilla de esta quincena (para la ubicación del marcaje).
+  const asignacionDe = (emp) => { const c = cuads.find(x => x && x.company === emp.company && x.periodo === q.periodo && x.quincena === q.quincena); return (c?.assignments || {})[emp.id] || ""; };
+  const ubicacionDe = (emp) => ubicacionDeMarcaje(tabletDe(userName), emp, asignacionDe(emp));
 
   const selEmp = sel ? emps.find(e => e.id === sel.id) || sel : null;
   const horario = selEmp ? horarioDe(selEmp) : HORARIOS.plantel;
@@ -555,9 +612,9 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   };
   const registrar = async () => {
     if (saving || !selEmp) return;
-    if (!padRef.current?.hasInk()) return alert("✍️ Falta tu firma — firmá en el recuadro para registrar.");
-    if (esTarde && !explicacion.trim()) return alert("😞 Llegaste tarde: contanos brevemente por qué. Tu explicación va a RRHH para que decidan si se otorga el permiso.");
-    if (!cuadrillaOk(selEmp)) return alert("🔒 No hay distribución de cuadrilla para esta quincena. Avisale a RRHH.");
+    if (!padRef.current?.hasInk()) return alert("Falta tu firma — firmá en el recuadro para registrar.");
+    if (esTarde && !explicacion.trim()) return alert("Llegaste tarde: contanos brevemente por qué. Tu explicación va a RRHH para que decidan si se otorga el permiso.");
+    if (!cuadrillaOk(selEmp)) return alert("No hay distribución de cuadrilla para esta quincena. Avisale a RRHH.");
     if (tipoAccion === "entrada" && entradaDe(selEmp.id)) return alert(`Ya registraste tu ENTRADA hoy a las ${entradaDe(selEmp.id).hora}.`);
     if (tipoAccion === "salida" && salidaDe(selEmp.id)) return alert(`Ya registraste tu SALIDA hoy a las ${salidaDe(selEmp.id).hora}.`);
     setSaving(true);
@@ -570,7 +627,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       // tardanza SIN explicación. Se re-valida con la hora fresca.
       if (tarde && !explicacion.trim()) {
         setNow(t); // re-render: aparece el panel ámbar con el textarea
-        alert("😞 Justo se pasó la tolerancia — contanos brevemente por qué llegás tarde y volvé a tocar Registrar.");
+        alert("Justo se pasó la tolerancia — contanos brevemente por qué llegás tarde y volvé a tocar Registrar.");
         return;
       }
       // La key se calcula desde la hora RELEÍDA al confirmar (no la del
@@ -584,7 +641,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       //    que la OTRA tablet ya registró a esta persona.
       let cloudArr;
       try { const c = await store.getCloud(keyAtSave); cloudArr = Array.isArray(c) ? c : []; }
-      catch { alert("⚠️ No hay conexión con la nube — el marcaje NO se registró. Avisale al encargado y volvé a intentar."); return; }
+      catch { alert("No hay conexión con la nube — el marcaje NO se registró. Avisale al encargado y volvé a intentar."); return; }
       const dup = cloudArr.find(x => x && x.empId === selEmp.id && x.fecha === t.fecha && x.tipo === tipoAccion);
       if (dup) {
         if (keyAtSave === marksKey) setMarks(cloudArr);
@@ -598,7 +655,13 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         dataUrl: padRef.current.toDataURL(),
         empId: selEmp.id, fecha: t.fecha, tipo: tipoAccion, createdAt: nowIso,
       });
-      if (!firmaOk) { alert("⚠️ No se pudo guardar la firma en la nube. Revisá la señal y volvé a intentar — NO se registró nada."); return; }
+      if (!firmaOk) { alert("No se pudo guardar la firma en la nube. Revisá la señal y volvé a intentar — NO se registró nada."); return; }
+      // 2b) Foto automática de la tablet (evidencia de que marcó la persona).
+      const fotoData = camRef.current?.capturar?.() || null;
+      if (fotoData) {
+        const fotoOk = await store.set(`gc-foto-${id}`, { dataUrl: fotoData, empId: selEmp.id, fecha: t.fecha, tipo: tipoAccion, createdAt: nowIso });
+        if (!fotoOk) { alert("No se pudo guardar la foto en la nube. Revisá la señal y volvé a intentar — NO se registró nada."); return; }
+      }
       // 3) Marcaje: SOLO nube + el mark nuevo. El estado local de React NO
       //    entra al merge — si un admin borró un marcaje desde la nube, la
       //    union con `marks` viejo lo resucitaría.
@@ -618,8 +681,12 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         // Comentario opcional de la SALIDA (ej. "salgo del plantel a proyecto")
         comentario: tipoAccion === "salida" ? comentSalida.trim() : "",
         firmaId: id,
+        fotoId: fotoData ? id : null,
+        sinFoto: !fotoData,
         registradoPor: userName || "GeoClock",
-        ubicacion: ubicacionDeUsuario(userName),
+        // La ubicación la decide la PERSONA (cuadrilla o departamento), no
+        // la tablet: la de la pared cubre administración y plantel.
+        ubicacion: ubicacionDeMarcaje(tabletDe(userName), selEmp, asignacionDe(selEmp)),
         ts: nowIso,
         createdAt: nowIso,
       };
@@ -639,7 +706,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         } catch { break; }
       }
       if (!ok || !verified) {
-        alert("⚠️ El marcaje NO se pudo verificar en la nube. Volvé a intentarlo — si sigue fallando, avisale a RRHH.");
+        alert("El marcaje NO se pudo verificar en la nube. Volvé a intentarlo — si sigue fallando, avisale a RRHH.");
         return;
       }
       setDoneInfo({ tipo: tipoAccion, hora: t.hora, tarde, minTarde: mark.minTarde, nombre: selEmp.fullName.split(" ").slice(0, 2).join(" ") });
@@ -670,7 +737,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       const key = gcMarkKey(q2.periodo, q2.quincena);
       let cloudArr;
       try { const c = await store.getCloud(key); cloudArr = Array.isArray(c) ? c : []; }
-      catch { alert("⚠️ No hay conexión con la nube — no se guardó nada. Reintentá."); return; }
+      catch { alert("No hay conexión con la nube — no se guardó nada. Reintentá."); return; }
       const dup = cloudArr.find(x => x && x.empId === corr.empId && x.fecha === corr.fecha && x.tipo === corr.tipo);
       if (dup) { alert(`Ya existe una ${corr.tipo.toUpperCase()} de ${emp.fullName} ese día (${dup.hora}${dup.manual ? ", manual" : ""}). Quitala primero si está mal.`); return; }
       const nowIso = new Date().toISOString();
@@ -691,11 +758,11 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       const ok = await store.set(key, next);
       let verified = false;
       try { const back = await store.getCloud(key); if (Array.isArray(back) && back.some(x => x && x.id === id)) { verified = true; next = back; } } catch { verified = false; }
-      if (!ok || !verified) { alert("⚠️ No se pudo VERIFICAR el guardado en la nube — reintentá."); return; }
+      if (!ok || !verified) { alert("No se pudo VERIFICAR el guardado en la nube — reintentá."); return; }
       setRegMarks(prev => ({ ...prev, [`${q2.periodo}|${q2.quincena}`]: next }));
       if (key === marksKey) setMarks(next);
       setCorr(null);
-      alert(`✍️ ${corr.tipo === "entrada" ? "ENTRADA" : "SALIDA"} manual guardada para ${emp.fullName} — ${corr.fecha} a las ${hora}. Quedó en el historial con tu justificación.`);
+      alert(`${corr.tipo === "entrada" ? "ENTRADA" : "SALIDA"} manual guardada para ${emp.fullName} — ${corr.fecha} a las ${hora}. Quedó en el historial con tu justificación.`);
     } finally { setCorrSaving(false); }
   };
   const borrarMarcaManual = async (mk) => {
@@ -705,12 +772,12 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
     const key = gcMarkKey(q2.periodo, q2.quincena);
     let cloudArr;
     try { const c = await store.getCloud(key); cloudArr = Array.isArray(c) ? c : []; }
-    catch { return alert("⚠️ Sin conexión con la nube — no se quitó nada."); }
+    catch { return alert("Sin conexión con la nube — no se quitó nada."); }
     const next = cloudArr.filter(x => x && x.id !== mk.id);
     const ok = await store.set(key, next);
     let verified = false;
     try { const back = await store.getCloud(key); verified = Array.isArray(back) && !back.some(x => x && x.id === mk.id); } catch { verified = false; }
-    if (!ok || !verified) return alert("⚠️ No se pudo verificar — reintentá.");
+    if (!ok || !verified) return alert("No se pudo verificar — reintentá.");
     setRegMarks(prev => ({ ...prev, [`${q2.periodo}|${q2.quincena}`]: next }));
     if (key === marksKey) setMarks(next);
     setDet(null);
@@ -745,7 +812,13 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   // quienes pueden corregir). Trae la firma bajo demanda si tiene.
   const abrirDetalle = (mk) => {
     if (!mk) return;
-    setDet({ mk, hora: mk.hora || "", comentario: mk.comentario || "", justif: "", firma: undefined });
+    setDet({ mk, hora: mk.hora || "", comentario: mk.comentario || "", justif: "", firma: undefined, foto: mk.fotoId ? undefined : null });
+    if (mk.fotoId) {
+      (async () => {
+        try { const f = await store.get(`gc-foto-${mk.fotoId}`); setDet(d => (d && d.mk.id === mk.id ? { ...d, foto: f?.dataUrl || null } : d)); }
+        catch { setDet(d => (d && d.mk.id === mk.id ? { ...d, foto: null } : d)); }
+      })();
+    }
     if (mk.firmaId) {
       (async () => {
         try { const f = await store.get(`gc-firma-${mk.firmaId}`); setDet(d => (d && d.mk.id === mk.id ? { ...d, firma: f?.dataUrl || null } : d)); }
@@ -777,7 +850,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       const key = gcMarkKey(q2.periodo, q2.quincena);
       let cloudArr;
       try { const c = await store.getCloud(key); cloudArr = Array.isArray(c) ? c : []; }
-      catch { setDetSaving(false); return alert("⚠️ Sin conexión con la nube — no se guardó nada. Reintentá."); }
+      catch { setDetSaving(false); return alert("Sin conexión con la nube — no se guardó nada. Reintentá."); }
       const actual = cloudArr.find(x => x && x.id === mk.id);
       if (!actual) { setDetSaving(false); return alert("Ese marcaje ya no existe en la nube (alguien lo borró). Cerrá y volvé a abrir Registros."); }
       const emp = emps.find(e => e.id === mk.empId);
@@ -812,11 +885,11 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         verified = Array.isArray(back) && back.some(x => x && x.id === mk.id && x.hora === nuevaHora);
         if (verified) { setRegMarks(prev => ({ ...prev, [`${q2.periodo}|${q2.quincena}`]: back })); if (key === marksKey) setMarks(back); }
       } catch { verified = false; }
-      if (!ok || !verified) { setDetSaving(false); return alert("⚠️ No se pudo VERIFICAR el cambio en la nube — reintentá."); }
+      if (!ok || !verified) { setDetSaving(false); return alert("No se pudo VERIFICAR el cambio en la nube — reintentá."); }
       const avisoTarde = mk.tarde && !tardeNuevo ? "\n\nOJO: con la hora nueva ya NO es llegada tarde. Si tenía decisión de RRHH, revisá la pestaña Llegadas tardías de GeoTeam."
         : (!mk.tarde && tardeNuevo ? "\n\nOJO: con la hora nueva SÍ es llegada tarde — cae en Llegadas tardías de GeoTeam para decidirla." : "");
       setDet(null);
-      alert(`✅ Marcaje actualizado. El cambio quedó en el historial.${avisoTarde}`);
+      alert(`Marcaje actualizado. El cambio quedó en el historial.${avisoTarde}`);
     } finally { setDetSaving(false); }
   };
 
@@ -828,7 +901,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   const esKiosk = userRole === "logistica" || userRole === "asistente_compras" || userRole === "marcaje";
   const conClave = (accion) => {
     if (!esKiosk) return accion();
-    const pass = prompt("🔒 Modo kiosco — contraseña del encargado para salir:");
+    const pass = prompt("Modo kiosco — contraseña del encargado para salir:");
     if (pass === null || pass === "") return;
     const okPass = USERS.some(u => u.label === userName && u.password === pass);
     if (!okPass) return alert("Contraseña incorrecta.");
@@ -841,89 +914,88 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
     boxShadow: disabled ? "none" : "0 6px 18px rgba(44,42,40,0.18)", letterSpacing: 0.3, minHeight: 58,
   });
 
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "'Inter', sans-serif", color: STONE, background: CREAM }}>Cargando GeoClock…</div>;
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "inherit", color: STONE, background: CREAM, fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoClock…</div>;
 
-  return <div style={{ minHeight: "100vh", background: CREAM, fontFamily: '"Inter", "SF Pro Display", -apple-system, sans-serif', color: CHARCOAL, display: "flex", flexDirection: "column" }}>
+  const ubicsTablet = ubicacionesDeTablet(tabletDe(userName));
+  const pill = (label, onClick, { lleno = false, c = CHARCOAL } = {}) => <button type="button" onClick={onClick} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: lleno ? "1px solid transparent" : "1px solid rgba(44,42,40,.14)", background: lleno ? c : "rgba(255,255,255,.75)", color: lleno ? "#fff" : c, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>;
+  return <div className="gt-root gt-entra-modulo" style={{ minHeight: "100vh", background: "var(--bg)", fontFamily: "var(--sans)", color: CHARCOAL, display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
+    <style>{GT_CSS}</style>
+    <div className="gt-brillo gt-brillo-a" aria-hidden />
+    <div className="gt-brillo gt-brillo-b" aria-hidden />
     {/* HEADER: logo + reloj vivo */}
-    <div style={{ background: "#fff", borderBottom: `1px solid ${BORDER}`, padding: "14px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <Logo size={40} />
+    <div style={{ position: "relative", zIndex: 2, borderBottom: "1px solid rgba(44,42,40,.08)", padding: "12px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <Logo size={36} />
+        <div style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg></div>
         <div>
-          <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: 0.2 }}>Geo<span style={{ color: ORANGE }}>Clock</span></div>
-          <div style={{ fontSize: 11, color: STONE }}>Marcaje de entrada y salida · {userName ? `Tablet de ${userName}` : "Grupo Geotecnica"}</div>
+          <div style={{ font: "800 16px/1 var(--display)", color: CHARCOAL }}>GeoClock</div>
+          <div style={{ fontSize: 11.5, color: STONE, marginTop: 3 }}>{ubicsTablet.length ? ubicsTablet.map(nombreUbicacion).join(" · ") : (userName || "Grupo Geotecnica")}</div>
         </div>
       </div>
       <div style={{ textAlign: "right" }}>
-        <div style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace', fontWeight: 800, fontSize: 34, lineHeight: 1, color: CHARCOAL }}>
-          {reloj.txt}<span style={{ fontSize: 18, color: ORANGE }}>:{reloj.seg}</span> <span style={{ fontSize: 16, color: STONE }}>{reloj.ampm}</span>
+        <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 34, lineHeight: 1, color: CHARCOAL, letterSpacing: "-.02em" }}>
+          {reloj.txt}<span style={{ fontSize: 18, color: ORANGE }}>:{reloj.seg}</span> <span style={{ fontSize: 15, color: STONE, fontWeight: 600 }}>{reloj.ampm}</span>
         </div>
-        <div style={{ fontSize: 12, color: STONE, marginTop: 2 }}>{fechaLarga(now.fecha, now.dow)} · 🇭🇳 Tegucigalpa (UTC−6) · {q.quincena} {q.periodo}</div>
+        <div style={{ fontSize: 12, color: STONE, marginTop: 3 }}>{fechaLarga(now.fecha, now.dow)} · {q.quincena} {q.periodo}</div>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
-        {view === "registros"
-          ? <button onClick={reset} style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: ORANGE, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>⏰ Volver a marcar</button>
-          : <button onClick={() => conClave(() => setView("registros"))} style={{ padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${ORANGE}`, background: "#fff", color: ORANGE_DARK, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>{esKiosk ? "🔒 " : ""}📋 Registros</button>}
-        <button onClick={() => conClave(onBack)} style={{ padding: "8px 14px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", color: STONE, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{esKiosk ? "🔒 " : ""}← Módulos</button>
-        <button onClick={() => conClave(onLogout)} style={{ padding: "8px 14px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", color: STONE, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{esKiosk ? "🔒 " : ""}Salir</button>
+        {view === "registros" ? pill("Volver al reloj", reset, { lleno: true, c: ORANGE_DARK }) : pill("Registros", () => conClave(() => setView("registros")))}
+        {pill("Módulos", () => conClave(onBack))}
+        {pill("Salir", () => conClave(onLogout))}
       </div>
     </div>
 
-    <div style={{ flex: 1, maxWidth: 860, width: "100%", margin: "0 auto", padding: "22px 18px 40px", boxSizing: "border-box" }}>
-      {loadErr && <div style={{ background: "#FEE2E2", border: "1px solid #FCA5A5", borderRadius: 12, padding: "12px 16px", fontSize: 13, color: "#991B1B", marginBottom: 14 }}>
-        ⚠️ No se pudo cargar la lista de personal desde la nube. Revisá la conexión y tocá <b onClick={loadAll} style={{ cursor: "pointer", textDecoration: "underline" }}>reintentar</b>.
+    <div style={{ position: "relative", zIndex: 1, flex: 1, maxWidth: 900, width: "100%", margin: "0 auto", padding: "22px 18px 40px", boxSizing: "border-box" }}>
+      {loadErr && <div className="gt-vidrio" style={{ padding: "12px 16px", fontSize: 13, color: RED, marginBottom: 14 }}>
+        No se pudo cargar la lista de personal desde la nube. Revisá la conexión y tocá <b onClick={loadAll} style={{ cursor: "pointer", textDecoration: "underline" }}>reintentar</b>.
       </div>}
 
       {/* ── BÚSQUEDA ── */}
       {view === "search" && <div>
-        <div style={{ textAlign: "center", margin: "6px 0 18px" }}>
-          <div style={{ fontSize: 26, fontWeight: 900 }}>👋 ¡Hola! Marcá tu asistencia</div>
-          <div style={{ fontSize: 14, color: STONE, marginTop: 4 }}>Buscá tu nombre, firmá y registrá tu entrada o salida.</div>
+        <div style={{ textAlign: "center", margin: "4px 0 18px" }}>
+          <div style={{ font: "800 28px/1.15 var(--display)", color: CHARCOAL, letterSpacing: "-.02em" }}>Marcá tu asistencia</div>
+          <div style={{ fontSize: 14, color: STONE, marginTop: 6 }}>Buscá tu nombre, mirá a la cámara y registrá tu entrada o salida.</div>
         </div>
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="🔍 Escribí tu nombre…"
-          autoFocus
-          style={{ width: "100%", boxSizing: "border-box", padding: "16px 20px", fontSize: 19, borderRadius: 16, border: `2px solid ${search ? ORANGE : BORDER}`, outline: "none", background: "#fff", boxShadow: "0 2px 10px rgba(44,42,40,0.05)" }}
-        />
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Escribí tu nombre…" autoFocus
+          style={{ width: "100%", boxSizing: "border-box", padding: "16px 20px", fontSize: 19, borderRadius: 18, border: `1.5px solid ${search ? ORANGE : "rgba(44,42,40,.12)"}`, outline: "none", background: "rgba(255,255,255,.85)", fontFamily: "inherit", color: CHARCOAL, boxShadow: "0 1px 2px rgba(44,42,40,.04)" }} />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10, marginTop: 16 }}>
           {resultados.map(e => {
             const ent = entradaDe(e.id), sal = salidaDe(e.id);
             const co = COMPANIES[e.company] || { name: e.company, color: STONE };
-            return <button key={e.id} onClick={() => seleccionar(e)}
-              style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 14, border: `1px solid ${BORDER}`, background: "#fff", cursor: "pointer", textAlign: "left", minHeight: 64, boxShadow: "0 1px 4px rgba(44,42,40,0.05)" }}>
+            return <button key={e.id} type="button" className="gt-vidrio gt-vidrio-hover" onClick={() => seleccionar(e)}
+              style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", cursor: "pointer", textAlign: "left", fontFamily: "inherit", minHeight: 72 }}>
               {fotos[e.photo?.fileId]
-                ? <img src={fotos[e.photo.fileId]} alt="" style={{ width: 44, height: 44, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} />
-                : <div style={{ width: 44, height: 44, borderRadius: 12, background: co.color, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 15, flexShrink: 0 }}>{iniciales(e.fullName)}</div>}
+                ? <img src={fotos[e.photo.fileId]} alt="" style={{ width: 46, height: 46, borderRadius: 13, objectFit: "cover", flexShrink: 0 }} />
+                : <div style={{ width: 46, height: 46, borderRadius: 13, background: "rgba(44,42,40,.07)", color: STONE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 15, flexShrink: 0 }}>{iniciales(e.fullName)}</div>}
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 800, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.fullName}</div>
-                <div style={{ fontSize: 11, color: STONE, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.position || co.name}</div>
-                <div style={{ fontSize: 10.5, marginTop: 2 }}>
-                  {ent ? <span style={{ color: ent.tarde ? "#B45309" : GREEN, fontWeight: 700 }}>✓ entrada {ent.hora}{ent.tarde ? " (tarde)" : ""}</span> : <span style={{ color: "#B8B0A4" }}>sin marcar hoy</span>}
-                  {sal && <span style={{ color: STONE, fontWeight: 700 }}> · salida {sal.hora}</span>}
+                <div style={{ fontWeight: 700, fontSize: 14, color: CHARCOAL, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.fullName}</div>
+                <div style={{ fontSize: 11.5, color: STONE, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.position || co.name}</div>
+                <div style={{ fontSize: 11, marginTop: 3, fontWeight: 700 }}>
+                  {ent ? <span style={{ color: ent.tarde ? AMBER : GREEN }}>Entrada {ent.hora}{ent.tarde ? " · tarde" : ""}</span> : <span style={{ color: "#B5AFA6", fontWeight: 600 }}>Sin marcar hoy</span>}
+                  {sal && <span style={{ color: STONE }}> · Salida {sal.hora}</span>}
                 </div>
               </div>
             </button>;
           })}
-          {resultados.length === 0 && <div style={{ gridColumn: "1/-1", textAlign: "center", color: STONE, fontSize: 14, padding: 30 }}>No encontramos a nadie con "{search}" — probá con otro nombre.</div>}
+          {resultados.length === 0 && <div className="gt-vidrio" style={{ gridColumn: "1/-1", textAlign: "center", color: STONE, fontSize: 14, padding: 30 }}>No encontramos a nadie con "{search}". Probá con otro nombre o avisale al encargado.</div>}
         </div>
         {/* Marcajes de hoy (para el encargado) */}
-        <div style={{ marginTop: 22, background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 14, padding: "12px 16px" }}>
+        <div className="gt-vidrio" style={{ marginTop: 22, padding: "12px 16px" }}>
           <div onClick={() => setVerHoy(v => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
-            <span style={{ fontWeight: 800, fontSize: 13 }}>📋 Marcajes de hoy ({marksHoy.length})</span>
-            <span style={{ color: STONE, fontSize: 12 }}>{verHoy ? "ocultar ▲" : "ver ▼"}</span>
+            <span style={{ fontWeight: 800, fontSize: 13, color: CHARCOAL }}>Marcajes de hoy <span style={{ color: "#A39C92", fontWeight: 600 }}>{marksHoy.length}</span></span>
+            <span style={{ color: STONE, fontSize: 12 }}>{verHoy ? "ocultar" : "ver"}</span>
           </div>
           {verHoy && <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
             {marksHoy.slice().sort((a, b) => (b.min || 0) - (a.min || 0)).map(mk => (
-              <div key={mk.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, padding: "6px 10px", background: CREAM, borderRadius: 8 }}>
-                <span style={{ fontWeight: 700 }}>{mk.empNombre}</span>
-                <span style={{ color: mk.tipo === "entrada" ? (mk.tarde ? "#B45309" : GREEN) : "#3E6A99", fontWeight: 700 }}>
-                  {mk.tipo === "entrada" ? (mk.tarde ? `⏰ entrada ${mk.hora} (+${mk.minTarde} min)` : `✓ entrada ${mk.hora}`) : `↩ salida ${mk.hora}`}
-                  {mk.comentario ? <span title={mk.comentario} style={{ marginLeft: 6, fontWeight: 400, color: "#3E6A99" }}>💬 {mk.comentario.length > 40 ? mk.comentario.slice(0, 40) + "…" : mk.comentario}</span> : null}
+              <div key={mk.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, padding: "6px 10px", background: "rgba(44,42,40,.035)", borderRadius: 10, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700 }}>{mk.empNombre}{mk.ubicacion ? <span style={{ color: "#A39C92", fontWeight: 600 }}> · {nombreUbicacion(mk.ubicacion)}</span> : null}</span>
+                <span style={{ color: mk.tipo === "entrada" ? (mk.tarde ? AMBER : GREEN) : "#1D5FAF", fontWeight: 700 }}>
+                  {mk.tipo === "entrada" ? (mk.tarde ? `Entrada ${mk.hora} · +${mk.minTarde} min` : `Entrada ${mk.hora}`) : `Salida ${mk.hora}`}
+                  {mk.comentario ? <span title={mk.comentario} style={{ marginLeft: 6, fontWeight: 400, color: STONE }}>{mk.comentario.length > 40 ? mk.comentario.slice(0, 40) + "…" : mk.comentario}</span> : null}
                 </span>
               </div>
             ))}
-            {marksHoy.length === 0 && <div style={{ fontSize: 12, color: STONE, fontStyle: "italic" }}>Nadie ha marcado todavía.</div>}
+            {marksHoy.length === 0 && <div style={{ fontSize: 12, color: STONE }}>Nadie ha marcado todavía.</div>}
           </div>}
         </div>
       </div>}
@@ -936,86 +1008,79 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         const yaMarcoTodo = ent && sal;
         const puedeEntrada = !ent;
         const puedeSalida = !sal;
+        const ubic = ubicacionDe(selEmp);
+        const limite = (() => { const t = entradaMin + TOLERANCIA_MIN; return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; })();
+        const bloqueado = saving || !tieneFirma || (esTarde && !explicacion.trim());
+        const segBtn = (label, on, enabled, onClick) => <button type="button" disabled={!enabled} onClick={onClick}
+          style={{ flex: 1, minHeight: 56, padding: "12px 10px", borderRadius: 16, cursor: enabled ? "pointer" : "not-allowed", font: "800 16px/1.2 var(--display)", border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: on ? CHARCOAL : "rgba(255,255,255,.75)", color: on ? "#fff" : enabled ? CHARCOAL : "#B5AFA6", fontFamily: "inherit" }}>{label}</button>;
         return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <button onClick={reset} style={{ alignSelf: "flex-start", padding: "8px 16px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", color: STONE, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>← No soy yo / buscar otro</button>
-          {/* Tarjeta de identidad */}
-          <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18, padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, boxShadow: "0 2px 10px rgba(44,42,40,0.06)" }}>
+          <button type="button" onClick={reset} style={{ alignSelf: "flex-start", minHeight: 38, padding: "8px 16px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "700 13px/1 var(--sans)", cursor: "pointer" }}>← No soy yo</button>
+          <div className="gt-vidrio" style={{ padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             {fotos[selEmp.photo?.fileId]
-              ? <img src={fotos[selEmp.photo.fileId]} alt="" style={{ width: 72, height: 72, borderRadius: 16, objectFit: "cover" }} />
-              : <div style={{ width: 72, height: 72, borderRadius: 16, background: co.color, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 24 }}>{iniciales(selEmp.fullName)}</div>}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 900, fontSize: 20 }}>{selEmp.fullName}</div>
-              <div style={{ fontSize: 13, color: STONE }}>{selEmp.position || "—"} · {co.name}</div>
-              <div style={{ fontSize: 12, color: "#3E6A99", fontWeight: 700, marginTop: 3 }}>🕒 Tu horario: {horario.entrada} – {horario.salida || "?"} <span style={{ color: STONE, fontWeight: 400 }}>(tolerancia hasta {(() => { const t = entradaMin + TOLERANCIA_MIN; return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; })()})</span></div>
+              ? <img src={fotos[selEmp.photo.fileId]} alt="" style={{ width: 76, height: 76, borderRadius: 20, objectFit: "cover" }} />
+              : <div style={{ width: 76, height: 76, borderRadius: 20, background: "rgba(44,42,40,.07)", color: STONE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 24 }}>{iniciales(selEmp.fullName)}</div>}
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ font: "800 21px/1.15 var(--display)", color: CHARCOAL, letterSpacing: "-.01em" }}>{selEmp.fullName}</div>
+              <div style={{ fontSize: 13, color: STONE, marginTop: 4 }}>{selEmp.position || "—"} · {co.name}</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(44,42,40,.06)", color: STONE, fontSize: 11.5, fontWeight: 700 }}>Horario {horario.entrada} – {horario.salida || "?"} · tolerancia hasta {limite}</span>
+                {ubic && <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(232,118,45,.14)", color: "#A94E16", fontSize: 11.5, fontWeight: 700 }}>Marcás en {nombreUbicacion(ubic)}</span>}
+              </div>
             </div>
-            <div style={{ textAlign: "right", fontSize: 12, color: STONE }}>
-              {ent ? <div style={{ color: ent.tarde ? "#B45309" : GREEN, fontWeight: 800 }}>✓ Entrada {ent.hora}</div> : <div>Entrada pendiente</div>}
-              {sal ? <div style={{ color: "#3E6A99", fontWeight: 800 }}>↩ Salida {sal.hora}</div> : <div>Salida pendiente</div>}
+            <div style={{ textAlign: "right", fontSize: 12.5, display: "flex", flexDirection: "column", gap: 4 }}>
+              {ent ? <span style={{ color: ent.tarde ? AMBER : GREEN, fontWeight: 800 }}>Entrada {ent.hora}</span> : <span style={{ color: "#A39C92" }}>Entrada pendiente</span>}
+              {sal ? <span style={{ color: "#1D5FAF", fontWeight: 800 }}>Salida {sal.hora}</span> : <span style={{ color: "#A39C92" }}>Salida pendiente</span>}
             </div>
           </div>
 
-          {/* CANDADO de cuadrilla */}
-          {!gate && <div style={{ background: "#FEE2E2", border: "2px solid #FCA5A5", borderRadius: 16, padding: "18px 20px", textAlign: "center" }}>
-            <div style={{ fontSize: 34 }}>🔒</div>
-            <div style={{ fontWeight: 900, fontSize: 17, color: "#991B1B" }}>Todavía no se puede marcar esta quincena</div>
-            <div style={{ fontSize: 13.5, color: "#7F1D1D", marginTop: 6, lineHeight: 1.5 }}>
-              No hay <b>distribución de cuadrilla {q.quincena} {q.periodo}</b> para {co.name}.<br />
-              Avisale a RRHH que la genere en <b>GeoTeam → Asistencia</b> — debe estar lista el día antes de iniciar la quincena.
-            </div>
+          {!gate && <div className="gt-vidrio" style={{ padding: "18px 20px", textAlign: "center", boxShadow: "inset 3px 0 0 #B03024" }}>
+            <div style={{ font: "800 17px/1.2 var(--display)", color: RED }}>Todavía no se puede marcar esta quincena</div>
+            <div style={{ fontSize: 13.5, color: STONE, marginTop: 6, lineHeight: 1.5 }}>No hay cuadrilla {q.quincena} {q.periodo} para {co.name}. Avisale a RRHH que la arme en GeoTeam → Asistencia.</div>
           </div>}
 
-          {gate && yaMarcoTodo && <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 16, padding: "18px 20px", textAlign: "center" }}>
-            <div style={{ fontSize: 34 }}>✅</div>
-            <div style={{ fontWeight: 900, fontSize: 17, color: "#166534" }}>¡Ya marcaste entrada y salida hoy!</div>
-            <div style={{ fontSize: 13, color: "#15803D", marginTop: 4 }}>Entrada {ent.hora} · Salida {sal.hora}. Buen trabajo, {selEmp.fullName.split(" ")[0]}. 💪</div>
+          {gate && yaMarcoTodo && <div className="gt-vidrio" style={{ padding: "22px 20px", textAlign: "center" }}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", margin: "0 auto 10px", background: "#DCF3E4", color: GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></div>
+            <div style={{ font: "800 17px/1.2 var(--display)", color: CHARCOAL }}>Ya marcaste entrada y salida hoy</div>
+            <div style={{ fontSize: 13, color: STONE, marginTop: 4 }}>Entrada {ent.hora} · Salida {sal.hora}. Buen trabajo, {selEmp.fullName.split(" ")[0]}.</div>
           </div>}
 
           {gate && !yaMarcoTodo && <>
-            {/* Selector entrada/salida */}
             <div style={{ display: "flex", gap: 10 }}>
-              <button disabled={!puedeEntrada} onClick={() => setTipoAccion("entrada")}
-                style={{ flex: 1, padding: "14px 10px", borderRadius: 14, cursor: puedeEntrada ? "pointer" : "not-allowed", fontSize: 16, fontWeight: 800, border: `2px solid ${tipoAccion === "entrada" && puedeEntrada ? GREEN : BORDER}`, background: tipoAccion === "entrada" && puedeEntrada ? "#F0FDF4" : "#fff", color: puedeEntrada ? "#166534" : "#B8B0A4" }}>
-                🌅 ENTRADA {ent ? `(ya marcada ${ent.hora})` : ""}
-              </button>
-              <button disabled={!puedeSalida} onClick={() => setTipoAccion("salida")}
-                style={{ flex: 1, padding: "14px 10px", borderRadius: 14, cursor: puedeSalida ? "pointer" : "not-allowed", fontSize: 16, fontWeight: 800, border: `2px solid ${tipoAccion === "salida" && puedeSalida ? "#3E6A99" : BORDER}`, background: tipoAccion === "salida" && puedeSalida ? "#EFF6FF" : "#fff", color: puedeSalida ? "#1E40AF" : "#B8B0A4" }}>
-                🌇 SALIDA {sal ? `(ya marcada ${sal.hora})` : ""}
-              </button>
+              {segBtn(ent ? `Entrada · ${ent.hora}` : "Entrada", tipoAccion === "entrada", puedeEntrada, () => setTipoAccion("entrada"))}
+              {segBtn(sal ? `Salida · ${sal.hora}` : "Salida", tipoAccion === "salida", puedeSalida, () => setTipoAccion("salida"))}
             </div>
 
-            {/* Aviso de tarde + explicación */}
-            {esTarde && <div style={{ background: "#FEF3C7", border: "2px solid #F59E0B", borderRadius: 16, padding: "16px 18px" }}>
-              <div style={{ fontWeight: 900, fontSize: 18, color: "#92400E" }}>Llegaste tarde 😞 <span style={{ fontSize: 14 }}>(+{minTarde} min después de tu tolerancia de las {(() => { const t = entradaMin + TOLERANCIA_MIN; return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; })()})</span></div>
-              <div style={{ fontSize: 12.5, color: "#78350F", margin: "6px 0 8px" }}>Contanos por qué — tu explicación va al <b>Reporte de llegadas tardías</b> de RRHH, donde deciden si se otorga el permiso o se aplica el descuento proporcional.</div>
-              <textarea value={explicacion} onChange={e => setExplicacion(e.target.value)} rows={2}
-                placeholder="Ej: se accidentó el bus, cita médica, tráfico en la salida al sur…"
-                style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid #FCD34D", fontSize: 14, fontFamily: "inherit", resize: "vertical", outline: "none" }} />
+            {esTarde && <div className="gt-vidrio" style={{ padding: "14px 16px", boxShadow: "inset 3px 0 0 #E8762D" }}>
+              <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>Llegaste tarde <span style={{ color: AMBER, fontSize: 14 }}>+{minTarde} min después de tu tolerancia ({limite})</span></div>
+              <div style={{ fontSize: 12.5, color: STONE, margin: "6px 0 8px" }}>Contanos por qué. Tu explicación va a RRHH, que decide si se paga el día completo o se descuenta lo que llegaste tarde.</div>
+              <textarea value={explicacion} onChange={e => setExplicacion(e.target.value)} rows={2} placeholder="Ej: se accidentó el bus, cita médica, tráfico en la salida al sur…"
+                style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(44,42,40,.14)", fontSize: 14, fontFamily: "inherit", resize: "vertical", outline: "none", background: "rgba(255,255,255,.85)" }} />
             </div>}
-            {tipoAccion === "entrada" && !esTarde && <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 12, padding: "10px 14px", fontSize: 13.5, color: "#166534", fontWeight: 700 }}>
-              🎉 Vas a tiempo — son las {now.hora} y tu tolerancia va hasta {(() => { const t = entradaMin + TOLERANCIA_MIN; return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; })()}.
+            {tipoAccion === "entrada" && !esTarde && <div style={{ fontSize: 13, color: GREEN, fontWeight: 700, padding: "0 4px" }}>Vas a tiempo: son las {now.hora} y tu tolerancia va hasta las {limite}.</div>}
+
+            {tipoAccion === "salida" && <div className="gt-vidrio" style={{ padding: "12px 16px" }}>
+              <div style={{ fontWeight: 700, fontSize: 13.5, color: CHARCOAL }}>¿Algún comentario? <span style={{ fontWeight: 500, fontSize: 12, color: STONE }}>(opcional) · ej. "salgo del plantel a proyecto"</span></div>
+              <textarea value={comentSalida} onChange={e => setComentSalida(e.target.value)} rows={2} placeholder="Escribí tu comentario acá…"
+                style={{ width: "100%", boxSizing: "border-box", marginTop: 8, padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(44,42,40,.14)", fontSize: 14, fontFamily: "inherit", resize: "vertical", outline: "none", background: "rgba(255,255,255,.85)" }} />
             </div>}
 
-            {/* Comentario opcional de SALIDA (ej. "salgo del plantel a proyecto") */}
-            {tipoAccion === "salida" && <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 16, padding: "14px 16px" }}>
-              <div style={{ fontWeight: 800, fontSize: 14, color: "#1E40AF" }}>💬 ¿Algún comentario? <span style={{ fontWeight: 400, fontSize: 12, color: "#3E6A99" }}>(opcional)</span></div>
-              <div style={{ fontSize: 12, color: "#3E6A99", margin: "4px 0 8px" }}>Ej: "salgo del plantel a proyecto La Cañada", "cita médica autorizada" — queda en el registro para RRHH.</div>
-              <textarea value={comentSalida} onChange={e => setComentSalida(e.target.value)} rows={2}
-                placeholder="Escribí tu comentario acá…"
-                style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid #BFDBFE", fontSize: 14, fontFamily: "inherit", resize: "vertical", outline: "none" }} />
-            </div>}
-
-            {/* Firma */}
-            <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 16, padding: "14px 16px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontWeight: 800, fontSize: 14 }}>✍️ Firmá aquí para confirmar</span>
-                <button onClick={() => padRef.current?.clear()} style={{ padding: "5px 12px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#fff", color: STONE, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Borrar firma</button>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.3fr)", gap: 12 }}>
+              <div className="gt-vidrio" style={{ padding: 12 }}>
+                <div style={{ fontWeight: 800, fontSize: 13, color: CHARCOAL, marginBottom: 8 }}>Tu foto</div>
+                <CamaraMarcaje camRef={camRef} onEstado={setCamOk} />
               </div>
-              <SignaturePad padRef={padRef} onInk={setTieneFirma} />
+              <div className="gt-vidrio" style={{ padding: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontWeight: 800, fontSize: 13, color: CHARCOAL }}>Firmá para confirmar</span>
+                  <button type="button" onClick={() => padRef.current?.clear()} style={{ padding: "5px 12px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: STONE, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Borrar</button>
+                </div>
+                <SignaturePad padRef={padRef} onInk={setTieneFirma} />
+              </div>
             </div>
 
-            <button onClick={registrar} disabled={saving || !tieneFirma || (esTarde && !explicacion.trim())}
-              style={btnBig(tipoAccion === "entrada" ? (esTarde ? "#B45309" : GREEN) : "#3E6A99", saving || !tieneFirma || (esTarde && !explicacion.trim()))}>
-              {saving ? "⏳ Registrando…" : `Registrar ${tipoAccion.toUpperCase()} — ${now.hora}`}
+            <button type="button" onClick={registrar} disabled={bloqueado}
+              style={{ minHeight: 60, padding: "16px 26px", borderRadius: 18, border: "none", cursor: bloqueado ? "not-allowed" : "pointer", background: bloqueado ? "rgba(44,42,40,.18)" : ORANGE_DARK, color: "#fff", font: "800 18px/1 var(--display)", boxShadow: bloqueado ? "none" : "0 8px 22px rgba(199,95,31,.28)", fontFamily: "inherit" }}>
+              {saving ? "Registrando…" : `Registrar ${tipoAccion} · ${now.hora}`}
             </button>
             {!tieneFirma && <div style={{ textAlign: "center", fontSize: 12, color: STONE }}>La firma es obligatoria para registrar.</div>}
           </>}
@@ -1024,18 +1089,18 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
 
       {/* ── CONFIRMACIÓN ── */}
       {view === "done" && doneInfo && <div style={{ textAlign: "center", padding: "40px 10px" }}>
-        <div style={{ width: 110, height: 110, borderRadius: "50%", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 54, background: doneInfo.tarde ? "#FEF3C7" : "#F0FDF4", border: `4px solid ${doneInfo.tarde ? AMBER : GREEN}` }}>
-          {doneInfo.tarde ? "😞" : "✅"}
+        <div style={{ width: 110, height: 110, borderRadius: "50%", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center", background: doneInfo.tarde ? "rgba(232,118,45,.16)" : "#DCF3E4", color: doneInfo.tarde ? AMBER : GREEN }}>
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{doneInfo.tarde ? <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></> : <path d="M5 12.5l4.5 4.5L19 7.5" />}</svg>
         </div>
-        <div style={{ fontSize: 26, fontWeight: 900, marginTop: 16 }}>
-          {doneInfo.tipo === "entrada" ? "Entrada registrada" : "Salida registrada"} — {doneInfo.hora}
+        <div style={{ font: "800 26px/1.15 var(--display)", color: CHARCOAL, marginTop: 16, letterSpacing: "-.02em" }}>
+          {doneInfo.tipo === "entrada" ? "Entrada registrada" : "Salida registrada"} · {doneInfo.hora}
         </div>
-        <div style={{ fontSize: 15, color: STONE, marginTop: 6 }}>
+        <div style={{ fontSize: 15, color: STONE, marginTop: 8, maxWidth: 520, margin: "8px auto 0" }}>
           {doneInfo.tarde
-            ? <>Llegaste <b style={{ color: "#B45309" }}>{doneInfo.minTarde} min tarde</b>. Tu explicación fue enviada a RRHH — ellos deciden si se otorga el permiso. 🤞</>
-            : <>¡{doneInfo.tipo === "entrada" ? "Buen día" : "Buen descanso"}, {doneInfo.nombre}! 💪</>}
+            ? <>Llegaste <b style={{ color: AMBER }}>{doneInfo.minTarde} min tarde</b>. Tu explicación quedó en el reporte de RRHH.</>
+            : <>{doneInfo.tipo === "entrada" ? "Buen día" : "Buen descanso"}, {doneInfo.nombre}.</>}
         </div>
-        <button onClick={reset} style={{ ...btnBig(ORANGE, false), marginTop: 22, padding: "13px 34px" }}>Listo</button>
+        <button type="button" onClick={reset} style={{ marginTop: 22, minHeight: 50, padding: "13px 34px", borderRadius: 16, border: "none", background: ORANGE_DARK, color: "#fff", font: "800 15px/1 var(--display)", cursor: "pointer", fontFamily: "inherit" }}>Listo</button>
       </div>}
 
       {/* ── REGISTROS: reporte de entradas y salidas ── */}
@@ -1058,13 +1123,13 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         const personasOpc = activos.slice().sort((a, b) => String(a.fullName).localeCompare(String(b.fullName)));
         const nombreCorto = (s) => { const p = String(s || "").split(/\s+/); return p.length > 2 ? `${p[0]} ${p[1]} ${p[2][0]}.` : s; };
         const chip = (txt, on, onClick) => (
-          <span key={txt} role="button" onClick={onClick} style={{ padding: "6px 14px", borderRadius: 999, border: `1.5px solid ${on ? ORANGE : BORDER}`, background: on ? ORANGE : "#fff", color: on ? "#fff" : "#5C5853", fontSize: 13, fontWeight: 700, cursor: "pointer", userSelect: "none" }}>{txt}</span>
+          <span key={txt} role="button" onClick={onClick} style={{ padding: "7px 14px", borderRadius: 999, border: `1px solid ${on ? "transparent" : "rgba(44,42,40,.14)"}`, background: on ? ORANGE_DARK : "rgba(255,255,255,.75)", color: on ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", userSelect: "none" }}>{txt}</span>
         );
         const selSt = { padding: "9px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", fontSize: 13, fontFamily: "inherit", outline: "none", minWidth: 160 };
         // ── Exportar CSV (Excel-friendly, con BOM) ──
         const bajarCSV = () => {
           if (!rows.length) return alert("No hay registros en el filtro actual para exportar.");
-          if ((regErr.length || truncado) && !confirm("⚠️ El reporte puede estar INCOMPLETO (" + (regErr.length ? `no se pudieron cargar: ${regErr.join(", ")}` : `el rango se cortó en ${truncado}`) + ").\n\n¿Exportar igual?")) return;
+          if ((regErr.length || truncado) && !confirm("El reporte puede estar INCOMPLETO (" + (regErr.length ? `no se pudieron cargar: ${regErr.join(", ")}` : `el rango se cortó en ${truncado}`) + ").\n\n¿Exportar igual?")) return;
           // Anti-inyección de fórmulas: el comentario es texto libre del
           // empleado — si empieza con = + - @ tab, Excel lo evaluaría como
           // fórmula al abrir el CSV. Se neutraliza con un apóstrofe.
@@ -1129,11 +1194,11 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         };
         return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
-            <div style={{ fontSize: 22, fontWeight: 900 }}>📋 Registros de entradas y salidas</div>
+            <div style={{ font: "800 22px/1.15 var(--display)", color: CHARCOAL, letterSpacing: "-.02em" }}>Registros de entradas y salidas</div>
             <div style={{ fontSize: 13, color: STONE, marginTop: 2 }}>Marcajes del reloj por día, agrupados por proyecto. El total laborado descuenta 1h de almuerzo cuando la jornada cruza el mediodía (12:00–13:00). El día cierra a las 11:59 PM: lo no marcado queda como <b style={{ color: "#B91C1C" }}>NO MARCÓ</b> (sin entrada = no se presentó; el NSP se maneja en la asistencia de GeoTeam){puedeCorregir ? " — vos podés colocar la hora faltante con justificación (queda en el historial)" : ""}.</div>
             {/* Leyenda de colores: qué significa cada chip de la tabla */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8, fontSize: 11 }}>
-              <span style={{ color: STONE, fontWeight: 700, letterSpacing: 0.4 }}>CÓMO LEER:</span>
+              <span style={{ color: STONE, fontWeight: 700, letterSpacing: 0.4 }}>Cómo leer:</span>
               <span style={{ background: "#DCFCE7", color: "#166534", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>+Xm justificada</span>
               <span style={{ color: STONE }}>tarde APROBADA por RRHH — día completo, sin descuento</span>
               <span style={{ background: "#FEE2E2", color: "#B91C1C", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>+Xm se descuenta</span>
@@ -1149,7 +1214,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             </div>
           </div>
           {/* Filtros */}
-          <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 16, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div className="gt-vidrio" style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               {chip("Hoy", regDesde === hoy && regHasta === hoy, () => preset("hoy"))}
               {chip("Esta semana", false, () => preset("semana"))}
@@ -1161,35 +1226,35 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <select value={regPersona} onChange={e => setRegPersona(e.target.value)} style={selSt}>
-                <option value="">👥 Todos los colaboradores</option>
+                <option value="">Todos los colaboradores</option>
                 {personasOpc.map(e => <option key={e.id} value={e.id}>{nombreCorto(e.fullName)}</option>)}
               </select>
               <select value={regProy} onChange={e => setRegProy(e.target.value)} style={selSt}>
-                <option value="">📍 Todos los proyectos</option>
+                <option value="">Todos los proyectos</option>
                 {proyOpciones.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
               <span style={{ flex: 1 }} />
-              {puedeCorregir && <span role="button" onClick={() => setCorr({ empId: "", fecha: ahoraTegus().fecha, tipo: "entrada", hora: "", justif: "" })} style={{ padding: "9px 16px", borderRadius: 10, border: "1.5px solid #6D28D9", background: "#fff", color: "#6D28D9", fontSize: 13, fontWeight: 800, cursor: "pointer", userSelect: "none" }}>✍️ Marcaje manual</span>}
-              <span role="button" onClick={bajarCSV} style={{ padding: "9px 16px", borderRadius: 10, border: `1.5px solid ${GREEN}`, background: "#fff", color: "#166534", fontSize: 13, fontWeight: 800, cursor: "pointer", userSelect: "none" }}>⬇ Descargar CSV</span>
-              <span role="button" onClick={imprimirPDF} style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: ORANGE, color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer", userSelect: "none" }}>🖨 Imprimir / PDF</span>
+              {puedeCorregir && <span role="button" onClick={() => setCorr({ empId: "", fecha: ahoraTegus().fecha, tipo: "entrada", hora: "", justif: "" })} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>Marcaje manual</span>}
+              <span role="button" onClick={bajarCSV} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>Descargar CSV</span>
+              <span role="button" onClick={imprimirPDF} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: "1px solid transparent", background: ORANGE_DARK, color: "#fff", font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>Imprimir / PDF</span>
             </div>
           </div>
           {/* Resumen del filtro */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {[["Registros", rows.length], ["Horas laboradas", fmtHoras(totNetas)], ["Llegadas tarde", totTardes], ["Proyectos", Object.keys(grupos).length]].map(([l, v]) => (
-              <div key={l} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "10px 18px", minWidth: 120 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: STONE }}>{l}</div>
-                <div style={{ fontSize: 20, fontWeight: 900, color: CHARCOAL }}>{v}</div>
+              <div key={l} className="gt-vidrio" style={{ padding: "10px 18px", minWidth: 120 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: STONE }}>{l}</div>
+                <div style={{ font: "800 22px/1 var(--display)", color: CHARCOAL, marginTop: 4 }}>{v}</div>
               </div>
             ))}
           </div>
           {regErr.length > 0 && <div style={{ background: "#FEE2E2", border: "1px solid #FCA5A5", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "#991B1B" }}>
-            ⚠️ No se pudieron cargar los marcajes de: <b>{regErr.join(", ")}</b> — el reporte puede estar INCOMPLETO. Revisá la conexión y volvé a elegir el rango para reintentar.
+            No se pudieron cargar los marcajes de: <b>{regErr.join(", ")}</b> — el reporte puede estar INCOMPLETO. Revisá la conexión y volvé a elegir el rango para reintentar.
           </div>}
           {truncado && <div style={{ background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "#92400E" }}>
-            ⚠️ El rango supera 120 días: se muestra solo hasta el <b>{truncado}</b>. Acortá el rango para ver el resto.
+            El rango supera 120 días: se muestra solo hasta el <b>{truncado}</b>. Acortá el rango para ver el resto.
           </div>}
-          {regLoading && <div style={{ textAlign: "center", color: STONE, fontSize: 13, padding: 10 }}>⏳ Cargando marcajes…</div>}
+          {regLoading && <div style={{ textAlign: "center", color: STONE, fontSize: 13, padding: 10 }}>Cargando marcajes…</div>}
           {!regLoading && rows.length === 0 && <div style={{ background: "#fff", border: `1px dashed ${BORDER}`, borderRadius: 16, padding: 30, textAlign: "center", color: STONE, fontSize: 14 }}>
             No hay marcajes en este rango/filtro. Quien no marcó en el reloj no aparece acá.
           </div>}
@@ -1197,9 +1262,9 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
           {Object.keys(grupos).sort().map(proy => {
             const rs = grupos[proy];
             const sub = rs.reduce((s, r) => s + (r.netas || 0), 0);
-            return <div key={proy} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 16, overflow: "hidden" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "#F8F2E6", borderLeft: `4px solid ${ORANGE}` }}>
-                <span style={{ fontWeight: 900, fontSize: 15 }}>📍 {proy}</span>
+            return <div key={proy} className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid rgba(44,42,40,.07)" }}>
+                <span style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{proy}</span>
                 <span style={{ fontSize: 12.5, color: "#5C5853" }}>{rs.length} registro(s) · <b style={{ color: "#166534" }}>{fmtHoras(sub)}</b> laboradas</span>
               </div>
               <div style={{ overflowX: "auto" }}>
@@ -1214,7 +1279,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
                     <th style={{ textAlign: "right", padding: "8px 14px" }}>Laboradas</th>
                   </tr></thead>
                   <tbody>
-                    {rs.map((r, i) => <tr key={`${r.emp.id}-${r.fecha}`} style={{ borderTop: "1px solid #F1EBE0", background: i % 2 ? "#FFFDF9" : "#fff" }}>
+                    {rs.map((r, i) => <tr key={`${r.emp.id}-${r.fecha}`} style={{ borderTop: "1px solid rgba(44,42,40,.06)", background: i % 2 ? "rgba(44,42,40,.02)" : "transparent" }}>
                       <td style={{ padding: "9px 14px", whiteSpace: "nowrap", color: "#5C5853" }}>{fmtDiaCorto(r.fecha)}</td>
                       <td style={{ padding: "9px 10px", fontWeight: 700 }}>{nombreCorto(r.emp.fullName)}</td>
                       <td style={{ padding: "9px 10px", textAlign: "center", whiteSpace: "nowrap" }}>
@@ -1242,8 +1307,8 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
                               {puedeCorregir && <span role="button" title="Colocar la salida manualmente (con justificación)" onClick={() => setCorr({ empId: r.emp.id, fecha: r.fecha, tipo: "salida", hora: "", justif: "" })} style={{ cursor: "pointer", fontSize: 13, color: ORANGE_DARK, fontWeight: 900 }}>➕</span>}
                             </span>
                           : <span style={{ color: "#B8B0A4" }}>—</span>}
-                        {r.sal && r.sal.comentario && <div title={r.sal.comentario} style={{ fontSize: 10.5, color: "#3E6A99", maxWidth: 200, margin: "2px auto 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>💬 {r.sal.comentario}</div>}
-                        {r.sal && r.sal.manual && r.sal.justificacion && <div title={r.sal.justificacion} style={{ fontSize: 10, color: "#6D28D9", maxWidth: 200, margin: "2px auto 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>✍️ {r.sal.justificacion}</div>}
+                        {r.sal && r.sal.comentario && <div title={r.sal.comentario} style={{ fontSize: 10.5, color: "#3E6A99", maxWidth: 200, margin: "2px auto 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.sal.comentario}</div>}
+                        {r.sal && r.sal.manual && r.sal.justificacion && <div title={r.sal.justificacion} style={{ fontSize: 10, color: "#6D28D9", maxWidth: 200, margin: "2px auto 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.sal.justificacion}</div>}
                       </td>
                       <td style={{ padding: "9px 10px", textAlign: "right", color: "#5C5853", whiteSpace: "nowrap" }}>{r.brutas != null ? fmtHoras(r.brutas) : "—"}</td>
                       <td style={{ padding: "9px 10px", textAlign: "right", color: r.almuerzo ? "#B45309" : "#B8B0A4", whiteSpace: "nowrap" }}>{r.brutas != null ? (r.almuerzo ? "−1h 00m" : "—") : "—"}</td>
@@ -1254,14 +1319,14 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
               </div>
             </div>;
           })}
-          {rows.length > 0 && <div style={{ background: "#F8F2E6", borderLeft: `4px solid ${ORANGE}`, borderRadius: 12, padding: "12px 16px", fontSize: 13.5 }}>
+          {rows.length > 0 && <div className="gt-vidrio" style={{ padding: "12px 16px", fontSize: 13.5 }}>
             <b>TOTAL GENERAL:</b> {rows.length} registro(s) · <b style={{ color: "#166534" }}>{fmtHoras(totNetas)}</b> laboradas · {totTardes} llegada(s) tarde
           </div>}
           {/* ── Modal de MARCAJE MANUAL (justificación obligatoria) ── */}
           {corr && <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }} onClick={() => !corrSaving && setCorr(null)}>
             <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 22px", width: "100%", maxWidth: 460, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 20px 60px rgba(44,42,40,0.3)" }}>
               <div>
-                <div style={{ fontWeight: 900, fontSize: 17 }}>✍️ Marcaje manual</div>
+                <div style={{ fontWeight: 900, fontSize: 17 }}>Marcaje manual</div>
                 <div style={{ fontSize: 12, color: STONE, marginTop: 2 }}>Para cuando el colaborador NO marcó. Queda en el historial: quién lo colocó, cuándo y por qué.</div>
               </div>
               <label style={{ fontSize: 12, fontWeight: 700, color: "#5C5853" }}>Colaborador
@@ -1309,7 +1374,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
               <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: 22, width: 560, maxWidth: "96vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 70px rgba(0,0,0,.25)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
                   <div>
-                    <div style={{ fontSize: 18, fontWeight: 900, color: CHARCOAL }}>{mk.tipo === "entrada" ? "🟢 Entrada" : "🔵 Salida"} · {mk.empNombre}</div>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: CHARCOAL }}>{mk.tipo === "entrada" ? "Entrada" : "Salida"} · {mk.empNombre}</div>
                     <div style={{ fontSize: 12, color: STONE, marginTop: 2 }}>{fmtDiaCorto(mk.fecha)} de {mk.fecha.slice(0, 4)} · {(COMPANIES[mk.company] || {}).name || mk.company}</div>
                   </div>
                   <button onClick={() => !detSaving && setDet(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: STONE }}>✕</button>
@@ -1326,19 +1391,25 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
 
                 {mk.tarde && <div style={{ marginTop: 12, background: st.bg, border: `1px solid ${st.fg}33`, borderRadius: 12, padding: "10px 14px" }}>
                   <div style={{ fontSize: 12, fontWeight: 800, color: st.fg }}>
-                    {dec ? (dec.estado === "aprobada" ? "✓ Tardanza APROBADA por RRHH — el día se paga completo" : "✕ Tardanza DENEGADA — se aplica descuento proporcional") : "⏳ Tardanza PENDIENTE de decisión en GeoTeam"}
+                    {dec ? (dec.estado === "aprobada" ? "✓ Tardanza APROBADA por RRHH — el día se paga completo" : "✕ Tardanza DENEGADA — se aplica descuento proporcional") : "Tardanza PENDIENTE de decisión en GeoTeam"}
                   </div>
-                  {mk.explicacion && <div style={{ fontSize: 12.5, color: CHARCOAL, marginTop: 4, fontStyle: "italic" }}>😞 "{mk.explicacion}"</div>}
+                  {mk.explicacion && <div style={{ fontSize: 12.5, color: CHARCOAL, marginTop: 4, fontStyle: "italic" }}>"{mk.explicacion}"</div>}
                   <div style={{ fontSize: 11, color: st.fg, marginTop: 4 }}>Llegó {minTardeMk(mk)} min después de su tolerancia (marcó {mk.hora}, límite {(() => { const t = minDe(mk.horarioEntrada || horarioDe(emp).entrada) + TOLERANCIA_MIN; return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; })()}).</div>
                 </div>}
 
                 {mk.manual && <div style={{ marginTop: 12, background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 12, padding: "10px 14px" }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: "#6D28D9" }}>✍️ Marcaje colocado MANUALMENTE por {mk.editadoPor || "—"}</div>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#6D28D9" }}>Marcaje colocado MANUALMENTE por {mk.editadoPor || "—"}</div>
                   <div style={{ fontSize: 12.5, color: CHARCOAL, marginTop: 3 }}>{mk.justificacion || "—"}</div>
                 </div>}
 
-                {mk.comentario && !det.editando && <div style={{ marginTop: 12, fontSize: 12.5, color: "#3E6A99" }}>💬 {mk.comentario}</div>}
+                {mk.comentario && !det.editando && <div style={{ marginTop: 12, fontSize: 12.5, color: "#3E6A99" }}>{mk.comentario}</div>}
 
+                {mk.fotoId && <div style={{ marginTop: 12 }}>
+                  <div style={lbl}>Foto al marcar</div>
+                  {det.foto === undefined ? <div style={{ fontSize: 12, color: STONE }}>Cargando…</div>
+                    : det.foto ? <img src={det.foto} alt="foto del marcaje" style={{ maxWidth: 240, borderRadius: 14, border: `1px solid ${BORDER}`, marginTop: 4, display: "block" }} />
+                      : <div style={{ fontSize: 12, color: STONE }}>No se pudo cargar la foto.</div>}
+                </div>}
                 {mk.firmaId && <div style={{ marginTop: 12 }}>
                   <div style={lbl}>Firma</div>
                   {det.firma === undefined ? <div style={{ fontSize: 12, color: STONE }}>Cargando…</div>
@@ -1399,8 +1470,8 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       })()}
     </div>
 
-    <div style={{ textAlign: "center", padding: "12px 0 18px", fontSize: 11, color: "#B8B0A4", borderTop: `1px solid ${BORDER}`, background: "#fff" }}>
-      GeoClock · Grupo Geotecnica — plantel central y oficina · los marcajes alimentan la asistencia de GeoTeam
+    <div style={{ position: "relative", zIndex: 1, textAlign: "center", padding: "12px 0 18px", fontSize: 11, color: "#A39C92" }}>
+      GeoClock · Grupo Geotecnica · los marcajes alimentan la asistencia de GeoTeam
     </div>
   </div>;
 }

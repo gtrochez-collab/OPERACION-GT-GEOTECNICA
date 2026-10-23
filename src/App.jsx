@@ -366,7 +366,7 @@ export default function App() {
   // ── Modulo activo ──
   // `userKey` = el username (estable, sin acentos): las keys por-usuario
   // (tareas, "visto" de la bandeja de compras) cuelgan de él.
-  const moduleProps = { userRole: user.role, userName: user.label, userKey: user.username, userProyectos: user.proyectos || [], userEmpId: user.empId || null, onBack: () => setActiveModule(null), onLogout: logout };
+  const moduleProps = { userRole: user.role, userName: user.label, userKey: user.username, userProyectos: user.proyectos || [], userEmpId: user.empId || null, onBack: () => setActiveModule(null), onLogout: logout, onAbrirModulo: (id) => { if (MODULES.some(m => m.id === id && m.roles.includes(user.role))) setActiveModule(id); } };
   // Wrapper con la animación de entrada. key=activeModule para que al cambiar
   // de módulo vuelva a entrar. El transform del keyframe dura 560 ms: los
   // position:fixed del módulo (brillos, modales) se referencian al wrapper

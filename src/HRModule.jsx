@@ -16,7 +16,7 @@ import { exportarPlanillaPDF, exportarPlanillaExcel } from "./planilla-export.js
 // Hub de RRHH (20-oct-2026): portal "Mi RRHH" de cada colaborador + bandeja de
 // solicitudes (vacaciones, permisos, constancias, reportes) para RRHH.
 import { KEY_SOLICITUDES, KEY_VINCULOS, vincularEmpleado, siguienteFolio, vacacionDeSolicitud, permisosDeSolicitud, constanciaDoc, textoConstancia, estaAbierta, esAprobador as esAprobadorHub, veTodo as veTodoHub, vacacionesTomadas, rangoCorto as rangoCortoHub } from "./rrhh-solicitudes.js";
-import { PortalRRHH, BandejaRRHH, SolicitudFormImpl, SolicitudDetalleImpl, ModalHub } from "./rrhh-hub.jsx";
+import { PortalRRHH, BandejaRRHH, SolicitudFormImpl, SolicitudDetalleImpl, ModalHub, ICO as ICO_HUB } from "./rrhh-hub.jsx";
 
 // ── GeoInventory → GeoTeam (13-oct-2026): "Equipo asignado" ────────────────
 // Solo lectura: lo que el colaborador tiene a su cargo según inv-items (lee
@@ -432,6 +432,20 @@ const StatCard = ({ label, value, icon, color = "#0F4C75" }) => <div style={{ ba
 const AlertCard = ({ label, value, icon, color }) => <div style={{ background: "#fff", borderRadius: 12, padding: "14px 18px", border: `1px solid ${color}30`, borderLeft: `4px solid ${color}` }}><div style={{ display: "flex", alignItems: "center", gap: 12 }}><div style={{ fontSize: 24 }}>{icon}</div><div><div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1.1 }}>{value}</div><div style={{ fontSize: 11, color: "#5C5853", marginTop: 2, fontWeight: 600 }}>{label}</div></div></div></div>;
 
 const TH = { padding: "8px 10px", textAlign: "left", color: "#475569", fontWeight: 600, borderBottom: "2px solid #E2E8F0", whiteSpace: "nowrap", fontSize: 11 };
+// Hojas de asistencia y HE (rediseño 23-oct-2026): encabezados neutros y UNA
+// paleta corta para las celdas — verde presente · gris descanso pagado · rojo
+// NSP · ámbar incapacidad · azul vacaciones · naranja feriado/domingo trabajado.
+const TH_H = { padding: "8px 10px", textAlign: "left", color: "#6E6862", fontWeight: 700, borderBottom: "1px solid rgba(44,42,40,.08)", whiteSpace: "nowrap", fontSize: 11 };
+const TD_H = { padding: "6px 10px", color: "#2C2A28", whiteSpace: "nowrap" };
+const PAL_CELDA = {
+  presente: { bg: "#DCF3E4", fg: "#177243" },
+  descanso: { bg: "#F1F0ED", fg: "#8B847C" },
+  nsp: { bg: "#F7DEDC", fg: "#B03024" },
+  inc: { bg: "#FBEFC4", fg: "#8A5A00" },
+  vac: { bg: "#DDE9FA", fg: "#1D5FAF" },
+  extra: { bg: "#FBE3D0", fg: "#A94E16" },
+  bloq: { bg: "#EEEDEA", fg: "#B5AFA6" },
+};
 const TD = { padding: "6px 10px", color: "#334155", whiteSpace: "nowrap" };
 const INP = { width: 75, padding: "4px 6px", border: "1px solid #E2E8F0", borderRadius: 6, fontSize: 12, textAlign: "right", background: "#F8FAFC" };
 
@@ -744,7 +758,7 @@ function AccesoFormImpl({ acceso, emps, proyectos, tomados, userName, onSave, on
   </div>;
 }
 
-export default function HRModule({ userRole = "admin", userName, userKey, userEmpId = null, onBack, onLogout }) {
+export default function HRModule({ userRole = "admin", userName, userKey, userEmpId = null, onBack, onLogout, onAbrirModulo }) {
   // Hub de RRHH (20-oct-2026): los roles que NO son de RRHH entran SOLO a su
   // portal "Mi RRHH" (residentes, Fernando, Arturo, visores…). Los de RRHH
   // ven además la bandeja "Solicitudes" y su propio "Mi RRHH" al final.
@@ -755,6 +769,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const [vinculos, setVinculos] = useState({});
   const [hubModal, setHubModal] = useState(null);     // {t:"nueva", tipo} | {t:"ver", id}
   const [solSub, setSolSub] = useState("");           // "" | vacations | leaves | constancias
+  // Hub de ASISTENCIA (23-oct-2026): Asistencia · Llegadas tardías · Horas
+  // extras (y el acceso a GeoClock) viven en UNA pestaña con cajas de vidrio.
+  const [asisSub, setAsisSub] = useState("");         // "" | hojas | tardanzas | he
   // Solo Gerson (admin) da accesos al sistema.
   const puedeAccesos = userRole === "admin";
   const [accesos, setAccesos] = useState(null);     // null = aún no leído
@@ -1384,9 +1401,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     // Vacaciones · Permisos · Constancias viven dentro de "Solicitudes" (hub,
     // 20-oct-2026): la bandeja de lo que pide la gente + los registros.
     { id: "solicitudes", icon: "📥", label: "Solicitudes", badge: solicitudes.filter(x => estaAbierta(x) && x.solicitadoPor?.username !== userKey).length },
-    { id: "attendance", icon: "⏱️", label: "Asistencia" },
-    { id: "tardanzas", icon: "🕒", label: "Llegadas tardías" },
-    { id: "horasextras", icon: "⏰", label: "Horas Extras" },
+    // Asistencia · Llegadas tardías · Horas extras · GeoClock = UNA pestaña
+    // (hub, 23-oct-2026). Badge = llegadas tarde sin decidir de esta empresa.
+    { id: "asistencia", icon: "⏱️", label: "Asistencia", badge: Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.tarde && !(gcTardies || []).some(t => t && t.markId === mk.id && (t.estado === "aprobada" || t.estado === "denegada"))).length },
     { id: "movimientos", icon: "🔄", label: "Movimientos" },
     { id: "costos", icon: "💵", label: "Costos" },
     // Accesos al sistema (solo admin): usuarios de GeoSupply desde la ficha.
@@ -1396,13 +1413,18 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   // sin nada de dinero (planilla/costos) ni el reporte de altas y bajas.
   // "tardanzas" SÍ (ella gestiona las explicaciones), pero los montos del
   // descuento van gateados por hideSalary dentro de la pestaña.
-  const ANA_TABS = ["employees", "contracts", "solicitudes", "attendance", "tardanzas", "horasextras", "mi"];
+  const ANA_TABS = ["employees", "contracts", "solicitudes", "asistencia", "mi"];
   const nav = esPortalSolo ? allNav.filter(n => n.id === "mi")
-    : isAsistente ? allNav.filter(n => ["attendance", "mi"].includes(n.id))
+    : isAsistente ? allNav.filter(n => ["asistencia", "mi"].includes(n.id))
     : isPhotoOnly ? allNav.filter(n => ["employees", "mi"].includes(n.id))
-    : isOscarTardies ? allNav.filter(n => ["tardanzas", "mi"].includes(n.id))
+    : isOscarTardies ? allNav.filter(n => ["asistencia", "mi"].includes(n.id))
     : isAnaRH ? allNav.filter(n => ANA_TABS.includes(n.id))
     : allNav;
+  // Las secciones viejas (attendance / tardanzas / horasextras) ahora viven
+  // dentro del hub "asistencia": estos dos helpers traducen los atajos.
+  const SUB_ASIS = { attendance: "hojas", tardanzas: "tardanzas", horasextras: "he" };
+  const tieneSec = (id) => nav.some(n => n.id === (SUB_ASIS[id] ? "asistencia" : id));
+  const irA = (id) => { if (SUB_ASIS[id]) { setAsisSub(SUB_ASIS[id]); setSec("asistencia"); } else setSec(id); };
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
@@ -2051,21 +2073,16 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     //   - "1" en feriado  → naranja claro (pagado por ley, no trabajo)
     //   - "1" en domingo  → azul claro (descanso pagado, no trabajo)
     //   - "1" en regular  → verde (presente trabajando)
-    const cellColor = (v, hasOvr, dayObj) => {
-      if (hasOvr) return v === "1" ? "#DBEAFE" : v === "0" ? "#FEE2E2" : v === "INC" ? "#FEF9C3" : v === "V" ? "#CCFBF1" : "#EFF6FF";
-      if (v === "TF") return "#FED7AA";   // naranja fuerte - feriado trabajado (triple)
-      if (v === "DT") return "#E9D5FF";   // morado claro - domingo trabajado (doble)
-      if (v === "DT2") return "#A855F7";  // morado oscuro - domingo trabajado triple
-      if (v === "1") {
-        if (dayObj?.isHoliday) return "#FFEDD5"; // naranja muy claro - feriado pagado por ley
-        if (dayObj?.isSun) return "#DBEAFE";     // azul claro - domingo de descanso pagado
-        return "#DCFCE7";                         // verde - presente regular
-      }
-      if (v === "0") return "#FEE2E2";
-      if (v === "INC") return "#FEF9C3";
-      if (v === "V") return "#CCFBF1"; // teal claro - vacaciones (dia pagado)
-      return "transparent";
+    const palDe = (v, dayObj) => {
+      if (v === "TF" || v === "DT" || v === "DT2") return PAL_CELDA.extra;
+      if (v === "1") return (dayObj?.isHoliday || dayObj?.isSun) ? PAL_CELDA.descanso : PAL_CELDA.presente;
+      if (v === "0") return PAL_CELDA.nsp;
+      if (v === "INC") return PAL_CELDA.inc;
+      if (v === "V") return PAL_CELDA.vac;
+      return null;
     };
+    // El override (1*) no cambia el color: lo dice el rótulo chico de abajo.
+    const cellColor = (v, hasOvr, dayObj) => palDe(v, dayObj)?.bg || "transparent";
     const cellText = (v, ovr) => {
       const t = v === "1" ? "1"
         : v === "0" ? "0"
@@ -2077,17 +2094,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         : "";
       return ovr ? `${t}*` : t;
     };
-    const cellFontColor = (v, dayObj) => {
-      if (v === "TF") return "#9A3412";
-      if (v === "DT") return "#6B21A8";
-      if (v === "DT2") return "#FFFFFF";
-      if (v === "1") {
-        if (dayObj?.isHoliday) return "#9A3412";
-        if (dayObj?.isSun) return "#1E40AF";
-        return "#166534";
-      }
-      return v === "0" ? "#991B1B" : v === "INC" ? "#92400E" : v === "V" ? "#0F766E" : "#CBD5E1";
-    };
+    const cellFontColor = (v, dayObj) => palDe(v, dayObj)?.fg || "#D8D4CE";
     const cellFontSize = v => (v === "TF" || v === "DT" || v === "DT2") ? 9 : 11;
 
     // Calcula la fraccion del dia trabajado (1.0 = dia completo) para un
@@ -2141,48 +2148,33 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     };
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 12, fontSize: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-        <span style={{ color: "#1E40AF", fontWeight: 600, fontSize: 14 }}>Asistencia {sheet.quincena} {sheet.periodo} — {cc.name}</span>
-        <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-          <span style={{ background: "#DCFCE7", padding: "2px 8px", borderRadius: 4 }}>1 = Presente</span>
-          <span style={{ background: "#FEE2E2", padding: "2px 8px", borderRadius: 4 }}>0 = NSP</span>
-          <span style={{ background: "#FEF9C3", padding: "2px 8px", borderRadius: 4 }}>I = Incapacidad</span>
-          <span style={{ background: "#CCFBF1", padding: "2px 8px", borderRadius: 4, color: "#0F766E" }}>V = Vacaciones</span>
-          <span style={{ background: "#FED7AA", padding: "2px 8px", borderRadius: 4, color: "#9A3412" }}>TF = Trabajó feriado (×3)</span>
-          <span style={{ background: "#E9D5FF", padding: "2px 8px", borderRadius: 4, color: "#6B21A8" }}>DT = Domingo trabajado (×2)</span>
-          <span style={{ background: "#A855F7", padding: "2px 8px", borderRadius: 4, color: "#fff" }}>DT2 = Domingo triple (×3)</span>
-          <span style={{ background: "#DBEAFE", padding: "2px 8px", borderRadius: 4 }}>1* = Otro proyecto</span>
-          <span style={{ background: "#E5E7EB", padding: "2px 8px", borderRadius: 4, color: "#6B7280" }}>—  = Bloqueado (alta/baja)</span>
-        </span>
+      <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>{etiquetaCorta(sheet.periodo, sheet.quincena)} · {cc.name}</div>
+          <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>Tocá una celda para cambiarla (1 → 0 → INC → V). Click derecho: otro proyecto u hora de entrada. Domingos y feriados vienen pagados por ley; tocalos si se trabajaron.</div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          {[["1", "Presente", PAL_CELDA.presente], ["1", "Descanso pagado", PAL_CELDA.descanso], ["0", "NSP", PAL_CELDA.nsp], ["I", "Incapacidad", PAL_CELDA.inc], ["V", "Vacaciones", PAL_CELDA.vac], ["TF · DT · DT2", "Feriado o domingo trabajado", PAL_CELDA.extra], ["1*", "Otro proyecto", PAL_CELDA.presente], ["—", "Bloqueado", PAL_CELDA.bloq]].map(([k, l, c]) => <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6E6862" }}><span style={{ minWidth: 22, textAlign: "center", padding: "2px 6px", borderRadius: 6, background: c.bg, color: c.fg, fontWeight: 800, fontSize: 10.5 }}>{k}</span>{l}</span>)}
+        </div>
       </div>
 
       {/* Posibles NSP según GeoClock — el humano confirma el 0 */}
       {nspSugeridos.length > 0 && (
-        <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 10, padding: "12px 16px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+        <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, boxShadow: "inset 3px 0 0 #E8762D" }}>
           <div style={{ flex: 1, minWidth: 260 }}>
-            <div style={{ fontWeight: 800, color: "#B91C1C", fontSize: 13 }}>⏰ Posibles NSP según GeoClock</div>
-            <div style={{ fontSize: 12, color: "#7F1D1D", marginTop: 4 }}>
-              Hubo marcaje en la tablet esos días, pero estas personas de PLANTEL/ADMINISTRACIÓN no marcaron entrada y su celda sigue vacía:
-            </div>
+            <div style={{ font: "700 13px/1.2 var(--sans)", color: CHARCOAL }}>Posibles NSP según GeoClock</div>
+            <div style={{ fontSize: 12, color: "#6E6862", marginTop: 4 }}>Hubo marcaje en la tablet esos días, pero estas personas de plantel / administración no marcaron entrada y su celda sigue vacía. Nada se guarda hasta tocar Guardar.</div>
             <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {nspSugeridos.map(({ e, dias }) => (
-                <span key={e.id} style={{ background: "#FEE2E2", borderRadius: 6, padding: "2px 8px", fontSize: 12, color: "#7F1D1D" }}>
-                  <strong>{e.fullName}</strong> · día{dias.length > 1 ? "s" : ""} {dias.join(", ")}
-                </span>
-              ))}
-            </div>
-            <div style={{ fontSize: 11, color: "#991B1B", marginTop: 6 }}>
-              Vos decidís: aplicá los 0 y corregí a mano si alguien tenía permiso, vacación o andaba en proyecto. Nada se guarda hasta tocar "Guardar asistencia".
+              {nspSugeridos.map(({ e, dias }) => <span key={e.id} style={{ background: "rgba(44,42,40,.06)", borderRadius: 999, padding: "3px 10px", fontSize: 12, color: CHARCOAL }}><b>{e.fullName}</b> · día{dias.length > 1 ? "s" : ""} {dias.join(", ")}</span>)}
             </div>
           </div>
-          <Btn small variant="danger" onClick={aplicarNsp}>Marcar 0 (NSP)</Btn>
+          {btnH("Marcar 0 (NSP)", aplicarNsp, { c: "#B03024", chico: true })}
         </div>
       )}
 
       {/* Resumen por proyecto — sin valores monetarios */}
-      <div style={{ background: "#FFFBF5", border: "1px solid #DBD4C8", borderRadius: 10, padding: "14px 16px" }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "#8B847C", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 8 }}>Resumen de la quincena</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+      <div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8 }}>
           {projGroups.map((proj) => {
             // Resumen simple a pedido del usuario: personas asignadas +
             // inasistencias (NSP) + incapacidades (INC). El costeo de mano
@@ -2200,14 +2192,12 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
               });
             });
             return (
-              <div key={proj.short} style={{ background: "#F8F2E6", padding: "10px 14px", borderRadius: 8, borderLeft: "3px solid #E8762D" }}>
-                <div style={{ fontWeight: 700, color: "#2C2A28", fontSize: 13 }}>{proj.short}</div>
-                <div style={{ fontSize: 11, color: "#5C5853", marginTop: 2 }}>{proj.name}</div>
-                <div style={{ marginTop: 8, display: "flex", gap: 12, fontSize: 12, flexWrap: "wrap" }}>
-                  <span><strong style={{ color: "#E8762D" }}>{pEmps.length}</strong> persona{pEmps.length !== 1 ? "s" : ""} asignada{pEmps.length !== 1 ? "s" : ""}</span>
-                  <span title="Inasistencias (no se presento, dias regulares)" style={{ color: nsp > 0 ? "#DC2626" : "#B9B2A8" }}><strong>{nsp}</strong> NSP</span>
-                  <span title="Incapacidades" style={{ color: inc > 0 ? "#92400E" : "#B9B2A8" }}><strong>{inc}</strong> INC</span>
-                  <span title="Vacaciones" style={{ color: vac > 0 ? "#0F766E" : "#B9B2A8" }}><strong>{vac}</strong> VAC</span>
+              <div key={proj.short} className="gt-vidrio" style={{ padding: "11px 14px" }}>
+                <div style={{ font: "800 13.5px/1.2 var(--display)", color: CHARCOAL }}>{proj.short}</div>
+                <div style={{ fontSize: 11, color: "#A39C92", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{proj.name}</div>
+                <div style={{ marginTop: 8, display: "flex", gap: 6, fontSize: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ color: "#6E6862" }}><b style={{ color: CHARCOAL }}>{pEmps.length}</b> persona{pEmps.length !== 1 ? "s" : ""}</span>
+                  {nsp > 0 && chipH(`${nsp} NSP`, "rojo")}{inc > 0 && chipH(`${inc} INC`, "ambar")}{vac > 0 && chipH(`${vac} VAC`, "azul")}
                 </div>
               </div>
             );
@@ -2217,11 +2207,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       {projGroups.map(proj => {
         const pEmps = ae.filter(e => assignments[e.id] === proj.short);
         if (pEmps.length === 0) return null;
-        return <div key={proj.short} style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden" }}>
-          <div style={{ background: cc.color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span>{proj.short} ({pEmps.length})</span>
+        return <div key={proj.short} className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", borderBottom: "1px solid rgba(44,42,40,.07)" }}>
+            <span style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>{proj.short} <span style={{ color: "#A39C92", fontWeight: 600, fontSize: 12.5 }}>{pEmps.length}</span></span>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ fontWeight: 400, fontSize: 10, opacity: 0.7 }}>{proj.code ? `[${proj.code}]` : ""}</span>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "#A39C92" }}>{proj.code || ""}</span>
               {(() => {
                 // Detecta si todas las celdas editables de este proyecto ya tienen valor.
                 // Si si → boton en modo "Limpiar". Si no → boton en modo "Marcar completa".
@@ -2253,8 +2243,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
                     }
                     setData(newData);
                     setDirty(true);
-                  }} style={{ background: allFilled ? "rgba(220,38,38,0.25)" : "rgba(255,255,255,0.2)", border: `1px solid ${allFilled ? "rgba(248,113,113,0.6)" : "rgba(255,255,255,0.4)"}`, borderRadius: 6, color: "#fff", padding: "3px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
-                    {allFilled ? "✗ Limpiar asistencia" : "✓ Asistencia completa"}
+                  }} style={{ minHeight: 30, padding: "5px 12px", borderRadius: 999, border: allFilled ? "1px solid rgba(192,57,43,.3)" : "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: allFilled ? "#B03024" : CHARCOAL, font: "700 12px/1 var(--sans)", cursor: "pointer" }}>
+                    {allFilled ? "Limpiar" : "Todos presentes"}
                   </button>
                 );
               })()}
@@ -2262,11 +2252,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           </div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ background: "#F1F5F9" }}>
-                <th style={{ ...TH, position: "sticky", left: 0, background: "#F1F5F9", zIndex: 2, minWidth: 170 }}>Nombre</th>
+              <thead><tr style={{ background: "rgba(44,42,40,.025)" }}>
+                <th style={{ ...TH_H, position: "sticky", left: 0, background: "#FAFAF9", zIndex: 2, minWidth: 170 }}>Colaborador</th>
                 {days.map(d => {
-                  const bg = d.isHoliday ? "#FED7AA" : d.isSun ? "#F3E8FF" : d.isSat ? "#FEF3C7" : "#F1F5F9";
-                  const labelColor = d.isHoliday ? "#9A3412" : "#94A3B8";
+                  const bg = "transparent";
+                  const labelColor = (d.isHoliday || d.isSun) ? "#A94E16" : "#A39C92";
                   return (
                     <th
                       key={d.day}
@@ -2280,19 +2270,19 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
                     </th>
                   );
                 })}
-                <th style={{ ...TH, textAlign: "center", background: "#ECFDF5" }}>Dias</th>
-                <th style={{ ...TH, textAlign: "center", background: "#F3E8FF", color: "#7C3AED" }}>DOM</th>
-                <th style={{ ...TH, textAlign: "center", background: "#FED7AA", color: "#9A3412" }}>FER</th>
-                <th style={{ ...TH, textAlign: "center", background: "#FEE2E2" }}>NSP</th>
-                <th style={{ ...TH, textAlign: "center", background: "#FEF9C3" }}>INC</th>
+                <th style={{ ...TH_H, textAlign: "center" }}>Días</th>
+                <th style={{ ...TH_H, textAlign: "center" }}>DOM</th>
+                <th style={{ ...TH_H, textAlign: "center" }}>FER</th>
+                <th style={{ ...TH_H, textAlign: "center" }}>NSP</th>
+                <th style={{ ...TH_H, textAlign: "center" }}>INC</th>
               </tr></thead>
               <tbody>{pEmps.map(e => {
                 const st = empStats(e.id);
-                return <tr key={e.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
-                  <td style={{ ...TD, position: "sticky", left: 0, background: "#fff", zIndex: 1, fontWeight: 600, fontSize: 11 }}>
+                return <tr key={e.id} style={{ borderBottom: "1px solid rgba(44,42,40,.06)" }}>
+                  <td style={{ ...TD_H, position: "sticky", left: 0, background: "#FAFAF9", zIndex: 1, fontWeight: 600, fontSize: 11 }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                       <span>{e.fullName}</span>
-                      <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 9, fontWeight: 700, color: "#E8762D", letterSpacing: 0.5 }}>{genEmpCode(e.fullName, e.dni)}</span>
+                      <span style={{ fontFamily: "var(--mono)", fontSize: 9, fontWeight: 600, color: "#A39C92", letterSpacing: 0.5 }}>{genEmpCode(e.fullName, e.dni)}</span>
                     </div>
                   </td>
                   {days.map(d => {
@@ -2306,7 +2296,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
                         <td
                           key={d.day}
                           title={lockReason}
-                          style={{ ...TD, textAlign: "center", background: "#E5E7EB", color: "#9CA3AF", fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid #F1F5F9", fontSize: 11, cursor: "not-allowed" }}
+                          style={{ ...TD_H, textAlign: "center", background: PAL_CELDA.bloq.bg, color: PAL_CELDA.bloq.fg, fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid rgba(44,42,40,.06)", fontSize: 11, cursor: "not-allowed" }}
                         >
                           —
                         </td>
@@ -2319,13 +2309,13 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
                       : ovr
                       ? `Reasignado a ${ovr}. Click derecho para cambiar.`
                       : "Click derecho para reasignar proyecto";
-                    return <td key={d.day} style={{ ...TD, textAlign: "center", cursor: "pointer", background: cellColor(val, ovr, d), color: cellFontColor(val, d), fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid #F1F5F9", position: "relative", fontSize: cellFontSize(val) }}
+                    return <td key={d.day} style={{ ...TD_H, textAlign: "center", cursor: "pointer", background: cellColor(val, ovr, d), color: cellFontColor(val, d), fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid rgba(44,42,40,.06)", position: "relative", fontSize: cellFontSize(val) }}
                       onClick={() => cycle(e.id, d.day)}
                       onContextMenu={(ev) => { ev.preventDefault(); setEditingCell(isEditing ? null : k); }}
                       title={cellTitle}>
-                      {cellText(val, ovr) || <span style={{ color: "#E2E8F0" }}>·</span>}
-                      {ovr && <div style={{ fontSize: 7, color: "#2563EB", lineHeight: 1 }}>{ovr}</div>}
-                      {arrivalTimes[k] && <div style={{ fontSize: 7, color: "#92400E", lineHeight: 1, fontWeight: 700, background: "#FEF3C7", borderRadius: 2, marginTop: 1, padding: "0 2px" }}>{arrivalTimes[k]}</div>}
+                      {cellText(val, ovr) || <span style={{ color: "#D8D4CE" }}>·</span>}
+                      {ovr && <div style={{ fontSize: 7, color: "#6E6862", lineHeight: 1 }}>{ovr}</div>}
+                      {arrivalTimes[k] && <div style={{ fontSize: 7, color: "#8A5A00", lineHeight: 1, fontWeight: 700, background: "#FBEFC4", borderRadius: 2, marginTop: 1, padding: "0 2px" }}>{arrivalTimes[k]}</div>}
                       {isEditing && <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 6, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 160 }} onClick={ev => ev.stopPropagation()}>
                         <div style={{ padding: "4px 8px", fontSize: 10, color: "#64748b", borderBottom: "1px solid #F1F5F9" }}>Proyecto para este dia:</div>
                         <div style={{ padding: "4px 8px", fontSize: 11, cursor: "pointer", background: !ovr ? "#EFF6FF" : "transparent" }} onClick={() => setOverride(e.id, d.day, null)}>✓ {assignments[e.id]} (base)</div>
@@ -2342,23 +2332,20 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
                       </div>}
                     </td>;
                   })}
-                  <td title={st.presentEffective !== st.present ? `${st.present} dias marcados · ${st.presentEffective.toFixed(2)} dias efectivos (proporcional por hora de entrada)` : `${st.present} dias`} style={{ ...TD, textAlign: "center", fontWeight: 700, background: "#ECFDF5", color: "#059669" }}>{st.presentEffective !== st.present ? st.presentEffective.toFixed(2) : st.present}</td>
-                  <td title={st.domTrabTriple > 0 ? `${st.domTrab} DT + ${st.domTrabTriple} DT2 (triple)` : `${st.domTrab} DT`} style={{ ...TD, textAlign: "center", fontWeight: 700, background: (st.domTrab + st.domTrabTriple) > 0 ? "#F3E8FF" : "transparent", color: "#7C3AED" }}>{(st.domTrab + st.domTrabTriple) || ""}</td>
-                  <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.ferTrab > 0 ? "#FED7AA" : "transparent", color: "#9A3412" }}>{st.ferTrab || ""}</td>
-                  <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.absent > 0 ? "#FEE2E2" : "transparent", color: "#DC2626" }}>{st.absent || ""}</td>
-                  <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: st.incap > 0 ? "#FEF9C3" : "transparent", color: "#92400E" }}>{st.incap || ""}</td>
+                  <td title={st.presentEffective !== st.present ? `${st.present} dias marcados · ${st.presentEffective.toFixed(2)} dias efectivos (proporcional por hora de entrada)` : `${st.present} dias`} style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: CHARCOAL }}>{st.presentEffective !== st.present ? st.presentEffective.toFixed(2) : st.present}</td>
+                  <td title={st.domTrabTriple > 0 ? `${st.domTrab} DT + ${st.domTrabTriple} DT2 (triple)` : `${st.domTrab} DT`} style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: (st.domTrab + st.domTrabTriple) > 0 ? "#A94E16" : "#D8D4CE" }}>{(st.domTrab + st.domTrabTriple) || ""}</td>
+                  <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: st.ferTrab > 0 ? "#A94E16" : "#D8D4CE" }}>{st.ferTrab || ""}</td>
+                  <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: st.absent > 0 ? "#B03024" : "#D8D4CE" }}>{st.absent || ""}</td>
+                  <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: st.incap > 0 ? "#8A5A00" : "#D8D4CE" }}>{st.incap || ""}</td>
                 </tr>;
               })}</tbody>
             </table>
           </div>
         </div>;
       })}
-      {dirty && <div style={{ background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#92400E", marginTop: 4 }}>
-        <span style={{ fontSize: 16 }}>⚠️</span>
-        <span><b>Tenés cambios sin guardar.</b> Hacé click en <b>Guardar asistencia</b> antes de cerrar o se van a perder.</span>
-      </div>}
+      {dirty && <div className="gt-vidrio" style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: CHARCOAL }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE }} /><b>Tenés cambios sin guardar.</b> Tocá Guardar asistencia antes de cerrar.</div>}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-        <Btn variant="ghost" onClick={() => {
+        <button type="button" className="gt-btn" onClick={() => {
           if (dirty) {
             const ok = confirm(
               "Tenés cambios SIN GUARDAR.\n\n" +
@@ -2369,9 +2356,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           }
           attDraftRef.current = null; // descarte explicito del respaldo
           setModal(null);
-        }}>Cerrar</Btn>
-        <Btn variant="info" onClick={() => exportAttendancePDF()}>📄 Exportar PDF</Btn>
-        <Btn variant="success" onClick={async () => {
+        }}>Cerrar</button>
+        {btnH("Exportar PDF", () => exportAttendancePDF())}
+        <button type="button" className="gt-btn gt-btn-primario" onClick={async () => {
           if (attSavingRef.current) return; // anti doble-clic
           attSavingRef.current = true;
           try {
@@ -2447,7 +2434,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           } finally {
             attSavingRef.current = false;
           }
-        }}>Guardar asistencia</Btn>
+        }}>Guardar asistencia</button>
       </div>
     </div>;
 
@@ -2886,9 +2873,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   // Pago quincena vencida: HE de 1Q se pagan a fin de mes (planilla 2Q);
   // HE de 2Q se pagan el 15 del mes siguiente (planilla 1Q).
   const HE_BANDAS = [
-    { k: "b1", label: "4-7", mult: 1.25, bg: "#FEF9C3", fg: "#854D0E" },
-    { k: "b2", label: "7-10", mult: 1.50, bg: "#FED7AA", fg: "#9A3412" },
-    { k: "b3", label: "10-12", mult: 1.75, bg: "#FECACA", fg: "#991B1B" },
+    { k: "b1", label: "4-7", mult: 1.25, bg: "#F3F2EF", fg: "#6E6862" },
+    { k: "b2", label: "7-10", mult: 1.50, bg: "#ECEAE6", fg: "#6E6862" },
+    { k: "b3", label: "10-12", mult: 1.75, bg: "#E5E2DC", fg: "#6E6862" },
   ];
   const heNum = (x) => { const n = parseFloat(String(x ?? "").replace(",", ".")); return isNaN(n) ? 0 : n; };
   const heMult = (isSun, band) => isSun ? 2 : band.mult;
@@ -3112,7 +3099,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       setDirty(false); setModal(null);
     };
 
-    const inputStyle = (bg) => ({ width: 34, padding: "3px 2px", border: "1px solid #E2E8F0", borderRadius: 4, fontSize: 11, textAlign: "center", background: bg, outline: "none" });
+    const inputStyle = (bg) => ({ width: 34, padding: "3px 2px", border: "1px solid rgba(44,42,40,.1)", borderRadius: 6, fontSize: 11, textAlign: "center", background: bg, outline: "none", fontFamily: "inherit", color: CHARCOAL });
 
     // ── Reporte PDF de Horas Extras ──
     // ESTRUCTURA (pedido de Gerson/la Lic., ago 2026):
@@ -3313,23 +3300,19 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     };
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 12, fontSize: 12, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-        <span style={{ color: "#1E40AF", fontWeight: 600, fontSize: 14 }}>Horas Extras {sheet.quincena} {sheet.periodo} — {cc.name}</span>
-        <span style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
-          <span style={{ background: "#FEF9C3", padding: "2px 8px", borderRadius: 4, color: "#854D0E" }}>4-7pm +25%</span>
-          <span style={{ background: "#FED7AA", padding: "2px 8px", borderRadius: 4, color: "#9A3412" }}>7-10pm +50%</span>
-          <span style={{ background: "#FECACA", padding: "2px 8px", borderRadius: 4, color: "#991B1B" }}>10pm-12am +75%</span>
-          <span style={{ background: "#E9D5FF", padding: "2px 8px", borderRadius: 4, color: "#6B21A8" }}>Domingo ×2 (todas)</span>
-          <span style={{ background: "#FEF3C7", padding: "2px 8px", borderRadius: 4, color: "#92400E" }}>Sábado: jornada hasta 11am (banda 1 = 11-7)</span>
-          <span style={{ background: "#DBEAFE", padding: "2px 8px", borderRadius: 4, color: "#1E40AF" }}>Click derecho = HE de otro proyecto</span>
-        </span>
+      <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>Horas extras {etiquetaCorta(sheet.periodo, sheet.quincena)} · {cc.name}</div>
+          <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>Horas por banda y por día. Click derecho en una celda: cargar esas horas a otro proyecto. {hePagoLabel(sheet.quincena).toLowerCase().replace(/(\d)q/g, "$1Q").replace(/^se pagan/, "Se pagan")}.</div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          {[["4–7 pm", "+25 %"], ["7–10 pm", "+50 %"], ["10–12", "+75 %"], ["Domingo", "×2"], ["Sábado", "banda 1 desde 11 am"]].map(([k, l]) => <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6E6862" }}><span style={{ padding: "2px 7px", borderRadius: 6, background: "rgba(44,42,40,.06)", color: CHARCOAL, fontWeight: 800, fontSize: 10.5 }}>{k}</span>{l}</span>)}
+        </div>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <div style={{ background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 10, padding: "9px 14px", fontSize: 12, color: "#9A3412", flex: 1, minWidth: 260 }}>
-          💡 Pago quincena vencida: estas HE de <b>{sheet.quincena} {sheet.periodo}</b> {hePagoLabel(sheet.quincena)}. En el tab Costos aparecen en la quincena en que se pagan.
-        </div>
+        <div style={{ flex: 1 }} />
         {/* El overlay muestra salarios reales — solo para quien puede verlos */}
-        {!hideSalary && <Btn small variant="ghost" onClick={() => setSalBaseOpen(true)}>⚙ Salario base de HE{nAjustes ? ` · ${nAjustes} ajustado${nAjustes > 1 ? "s" : ""}` : ""}</Btn>}
+        {!hideSalary && btnH(`Salario base de HE${nAjustes ? ` · ${nAjustes} ajustado${nAjustes > 1 ? "s" : ""}` : ""}`, () => setSalBaseOpen(true), { chico: true })}
       </div>
 
       {/* Overlay: ajustar el salario base sobre el que se paga la HORA EXTRA
@@ -3395,10 +3378,10 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         if (pEmps.length === 0 && subHrs <= 0) return null;
         const rows = pEmps.map(e => ({ e, t: empTotals(e) }));
         granHrs += subHrs; granCosto += subCosto;
-        return <div key={proj.short} style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden" }}>
-          <div style={{ background: cc.color, color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span>{proj.short} ({pEmps.length})</span>
-            <span style={{ fontSize: 12 }}>{fmtDias(subHrs)} hrs · <b>{fmtL(subCosto)}</b></span>
+        return <div key={proj.short} className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", borderBottom: "1px solid rgba(44,42,40,.07)" }}>
+            <span style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>{proj.short} <span style={{ color: "#A39C92", fontWeight: 600, fontSize: 12.5 }}>{pEmps.length}</span></span>
+            <span style={{ fontSize: 12.5, color: "#6E6862" }}>{fmtDias(subHrs)} h{hideSalary ? "" : <> · <b style={{ color: "#177243" }}>{fmtL(subCosto)}</b></>}</span>
           </div>
           {pEmps.length === 0 && (
             <div style={{ padding: "8px 14px", fontSize: 11, color: "#64748b", fontStyle: "italic" }}>
@@ -3408,18 +3391,18 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           {pEmps.length > 0 && <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse", fontSize: 11 }}>
               <thead>
-                <tr style={{ background: "#F1F5F9" }}>
-                  <th rowSpan={2} style={{ ...TH, position: "sticky", left: 0, background: "#F1F5F9", zIndex: 2, minWidth: 160, verticalAlign: "bottom" }}>Nombre</th>
+                <tr style={{ background: "rgba(44,42,40,.025)" }}>
+                  <th rowSpan={2} style={{ ...TH_H, position: "sticky", left: 0, background: "#FAFAF9", zIndex: 2, minWidth: 160, verticalAlign: "bottom" }}>Colaborador</th>
                   {days.map(d => (
-                    <th key={d.day} colSpan={3} title={d.isHoliday ? "Feriado" : d.isSun ? "Domingo — todas las bandas ×2" : d.isSat ? "Sábado — jornada hasta 11am; la 1ª banda (+25%) va de 11am a 7pm" : ""} style={{ ...TH, textAlign: "center", background: d.isSun ? "#F3E8FF" : d.isHoliday ? "#FED7AA" : d.isSat ? "#FEF3C7" : "#F1F5F9", borderLeft: "2px solid #E2E8F0" }}>
-                      <div style={{ fontSize: 9, color: d.isSun ? "#7C3AED" : d.isSat ? "#B45309" : "#94A3B8" }}>{d.dow}{d.isSun ? " ×2" : d.isSat ? " ⏱11am" : ""}</div>
+                    <th key={d.day} colSpan={3} title={d.isHoliday ? "Feriado" : d.isSun ? "Domingo — todas las bandas ×2" : d.isSat ? "Sábado — jornada hasta 11am; la 1ª banda (+25%) va de 11am a 7pm" : ""} style={{ ...TH_H, textAlign: "center", background: d.isSun ? "rgba(232,118,45,.06)" : "transparent", borderLeft: "2px solid rgba(44,42,40,.07)" }}>
+                      <div style={{ fontSize: 9, color: d.isSun ? "#A94E16" : "#A39C92" }}>{d.dow}{d.isSun ? " ×2" : d.isSat ? " 11am" : ""}</div>
                       {d.day}
                     </th>
                   ))}
-                  <th rowSpan={2} style={{ ...TH, textAlign: "center", background: "#ECFDF5", verticalAlign: "bottom" }}>Hrs</th>
-                  <th rowSpan={2} style={{ ...TH, textAlign: "right", background: "#ECFDF5", verticalAlign: "bottom" }}>Total L</th>
+                  <th rowSpan={2} style={{ ...TH_H, textAlign: "center", verticalAlign: "bottom" }}>Horas</th>
+                  <th rowSpan={2} style={{ ...TH_H, textAlign: "right", verticalAlign: "bottom" }}>Total</th>
                 </tr>
-                <tr style={{ background: "#F8FAFC" }}>
+                <tr>
                   {days.map(d => HE_BANDAS.map((b, i) => (
                     <th key={`${d.day}-${b.k}`} title={d.isSat && b.k === "b1" ? "Sábado: 11am-7pm (+25%)" : ""} style={{ padding: "2px 1px", fontSize: 8, fontWeight: 700, color: b.fg, background: b.bg, textAlign: "center", minWidth: 36, borderLeft: i === 0 ? "2px solid #E2E8F0" : "1px solid #F1F5F9" }}>{bandLbl(b, d)}</th>
                   )))}
@@ -3427,8 +3410,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
               </thead>
               <tbody>
                 {rows.map(({ e, t }) => (
-                  <tr key={e.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
-                    <td style={{ ...TD, position: "sticky", left: 0, background: "#fff", zIndex: 1, fontWeight: 600, fontSize: 11 }}>
+                  <tr key={e.id} style={{ borderBottom: "1px solid rgba(44,42,40,.06)" }}>
+                    <td style={{ ...TD_H, position: "sticky", left: 0, background: "#FAFAF9", zIndex: 1, fontWeight: 600, fontSize: 11 }}>
                       <div>{e.fullName}</div>
                       {/* La hora base delata el salario (×240): oculta para roles sin acceso a montos */}
                       {!hideSalary && <div title={tieneAjuste(e) ? `Hora extra pactada sobre salario base especial de ${fmtL(Number(salBaseEdits[e.id]))} (arreglo), no su salario real` : "Hora base = salario ÷ 30 ÷ 8"} style={{ fontSize: 9, color: tieneAjuste(e) ? "#B45309" : "#94A3B8", fontWeight: tieneAjuste(e) ? 700 : 400, cursor: "pointer" }} onClick={() => setSalBaseOpen(true)}>hora: {fmtL(hbOf(e))}{tieneAjuste(e) ? " *" : ""}</div>}
@@ -3441,9 +3424,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
                       return <td key={`${k}-${b.k}`}
                         onContextMenu={(ev) => { ev.preventDefault(); setEditingCell(isEditing ? null : k); }}
                         title={ovr ? `HE cargadas a ${ovr} — click derecho para cambiar` : "Click derecho: cargar estas HE a otro proyecto"}
-                        style={{ padding: "3px 2px", textAlign: "center", borderLeft: i === 0 ? "2px solid #F1F5F9" : "none", background: ovr ? "#DBEAFE" : d.isSun ? "#FAF5FF" : "transparent", position: "relative" }}>
+                        style={{ padding: "3px 2px", textAlign: "center", borderLeft: i === 0 ? "2px solid rgba(44,42,40,.07)" : "none", background: ovr ? "rgba(29,95,175,.08)" : d.isSun ? "rgba(232,118,45,.05)" : "transparent", position: "relative" }}>
                         <input value={val} onChange={ev => setCell(e.id, d.day, b.k, ev.target.value)} placeholder="·" style={inputStyle(val ? b.bg : ovr ? "#EFF6FF" : "#fff")} />
-                        {ovr && i === 0 && <div style={{ fontSize: 7, color: "#1E40AF", fontWeight: 700, lineHeight: 1, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden" }}>{ovr}</div>}
+                        {ovr && i === 0 && <div style={{ fontSize: 7, color: "#6E6862", fontWeight: 700, lineHeight: 1, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden" }}>{ovr}</div>}
                         {isEditing && i === 0 && (
                           <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 6, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 170, maxHeight: 220, overflowY: "auto", textAlign: "left" }} onClick={ev => ev.stopPropagation()}>
                             <div style={{ padding: "4px 8px", fontSize: 10, color: "#64748b", borderBottom: "1px solid #F1F5F9" }}>HE del día {d.day} se cargan a:</div>
@@ -3455,8 +3438,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
                         )}
                       </td>;
                     }))}
-                    <td style={{ ...TD, textAlign: "center", fontWeight: 700, background: "#ECFDF5", color: "#059669" }}>{t.hrs > 0 ? fmtDias(t.hrs) : ""}</td>
-                    <td style={{ ...TD, textAlign: "right", fontWeight: 700, background: "#ECFDF5", color: "#059669", whiteSpace: "nowrap" }}>{t.costo > 0 ? fmtL(t.costo) : ""}</td>
+                    <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: CHARCOAL }}>{t.hrs > 0 ? fmtDias(t.hrs) : ""}</td>
+                    <td style={{ ...TD_H, textAlign: "right", fontWeight: 700, color: "#177243", whiteSpace: "nowrap" }}>{t.costo > 0 && !hideSalary ? fmtL(t.costo) : ""}</td>
                   </tr>
                 ))}
               </tbody>
@@ -3465,23 +3448,20 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         </div>;
       })}
 
-      {/* Gran total */}
-      <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 12, padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <span style={{ fontWeight: 800, color: "#065F46" }}>TOTAL HORAS EXTRAS · {sheet.quincena} {sheet.periodo}</span>
-        <span style={{ fontWeight: 800, color: "#059669", fontSize: 18 }}>{fmtDias(granHrs)} hrs · {fmtL(granCosto)}</span>
+      <div className="gt-vidrio" style={{ padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <span style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>Total de la quincena</span>
+        <span style={{ font: "800 18px/1 var(--display)", color: CHARCOAL }}>{fmtDias(granHrs)} h{hideSalary ? "" : <span style={{ color: "#177243" }}> · {fmtL(granCosto)}</span>}</span>
       </div>
 
-      {dirty && <div style={{ background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#92400E" }}>
-        ⚠️ <b>Tenés cambios sin guardar.</b> Tocá <b>Guardar horas extras</b> antes de cerrar.
-      </div>}
+      {dirty && <div className="gt-vidrio" style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: CHARCOAL }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE }} /><b>Tenés cambios sin guardar.</b> Tocá Guardar horas extras antes de cerrar.</div>}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-        <Btn variant="ghost" onClick={() => {
+        <button type="button" className="gt-btn" onClick={() => {
           if (dirty && !confirm("Tenés cambios SIN GUARDAR.\n\n¿Cerrar sin guardar?")) return;
           heDraftRef.current = null; // descarte explicito del respaldo
           setModal(null);
-        }}>Cerrar</Btn>
-        <Btn variant="info" onClick={exportHePDF}>📄 PDF para planilla</Btn>
-        <Btn variant="success" onClick={guardar}>Guardar horas extras</Btn>
+        }}>Cerrar</button>
+        {btnH("PDF para planilla", exportHePDF)}
+        <button type="button" className="gt-btn gt-btn-primario" onClick={guardar}>Guardar horas extras</button>
       </div>
     </div>;
   };
@@ -3552,62 +3532,46 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   };
 
   const renderHE = () => {
-    // Filas: union de quincenas con cuadrilla y hojas HE ya creadas (una hoja
-    // HE puede existir sin cuadrilla propia, ej. 1Q julio con distribucion
-    // copiada de la 2Q).
+    // Filas: unión de quincenas con cuadrilla y hojas HE ya creadas (una hoja
+    // HE puede existir sin cuadrilla propia, ej. 1Q julio con distribución
+    // copiada de la 2Q). Si hay hojas duplicadas gana la de último guardado.
     const rowsMap = {};
     cq.forEach(c => { rowsMap[`${c.periodo}|${c.quincena}`] = { periodo: c.periodo, quincena: c.quincena, cuad: c, he: null }; });
     che.forEach(h => {
       const k = `${h.periodo}|${h.quincena}`;
       if (!rowsMap[k]) rowsMap[k] = { periodo: h.periodo, quincena: h.quincena, cuad: null, he: h };
-      // Si hubiera hojas duplicadas de la misma quincena, gana la de ultimo
-      // guardado (que un duplicado vacio no "esconda" las horas reales).
       else if (!rowsMap[k].he || String(h.lastSaved || "") > String(rowsMap[k].he.lastSaved || "")) rowsMap[k].he = h;
     });
     const rows = Object.values(rowsMap).sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`));
-
     const openHeRow = (r) => {
-      const existing = r.he || che.filter(h => h.periodo === r.periodo && h.quincena === r.quincena)
-        .sort((a, b) => String(b.lastSaved || "").localeCompare(String(a.lastSaved || "")))[0];
-      if (existing) {
-        // Si la quincena tiene cuadrilla propia, refrescamos assignments desde
-        // ahi (fuente de verdad); si no (hoja con distribucion copiada), se
-        // usan las asignaciones guardadas en la propia hoja.
-        setModal({ t: "he", d: { ...existing, assignments: r.cuad ? r.cuad.assignments : existing.assignments } });
-      } else if (r.cuad) {
-        setModal({ t: "he", d: { id: uid(), company: co, periodo: r.periodo, quincena: r.quincena, assignments: r.cuad.assignments, hours: {}, date: new Date().toISOString() } });
-      }
+      const existing = r.he || che.filter(h => h.periodo === r.periodo && h.quincena === r.quincena).sort((a, b) => String(b.lastSaved || "").localeCompare(String(a.lastSaved || "")))[0];
+      if (existing) setModal({ t: "he", d: { ...existing, assignments: r.cuad ? r.cuad.assignments : existing.assignments } });
+      else if (r.cuad) setModal({ t: "he", d: { id: uid(), company: co, periodo: r.periodo, quincena: r.quincena, assignments: r.cuad.assignments, hours: {}, date: new Date().toISOString() } });
     };
-
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ background: "#FFFBF5", border: "1px solid #DBD4C8", borderRadius: 12, padding: "12px 16px", fontSize: 12, color: "#5C5853", lineHeight: 1.5, flex: 1, minWidth: 280 }}>
-          ⏰ <b>Cómo funciona:</b> las HE se registran en la quincena en que se <b>trabajaron</b> y se pagan <b>quincena vencida</b>: las de 1Q a fin de mes (planilla 2Q), las de 2Q el 15 del mes siguiente (planilla 1Q).
-          Hora base = salario ÷ 30 ÷ 8 · 4-7pm +25% · 7-10pm +50% · 10pm-12am +75% · <b>domingo ×2</b> · <b>sábado</b> jornada hasta 11am (1ª banda 11am-7pm). En <b>Costos</b> aparecen en la quincena en que se pagan.
-        </div>
-        <Btn onClick={() => setModal({ t: "he-new" })}>+ Hoja de horas extras</Btn>
+    const sePaga = (r) => { if (r.quincena === "1Q") return `fin de mes · 2Q ${mesLabel(r.periodo)}`; const [py, pm] = r.periodo.split("-").map(Number); const d = new Date(py, pm, 1); return `el 15 · 1Q ${mesLabel(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`)}`; };
+    return <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, color: "#6E6862" }}>Se registran en la quincena en que se trabajaron y se pagan quincena vencida. Hora base = salario ÷ 30 ÷ 8 · 4–7 pm +25 % · 7–10 pm +50 % · 10–12 +75 % · domingo ×2.</span>
+        {!isReadOnly && btnH("+ Hoja de horas extras", () => setModal({ t: "he-new" }), { c: ORANGE_DARK, lleno: true, chico: true })}
       </div>
-      {rows.length === 0 && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: 20, textAlign: "center", color: "#92400E" }}>Creá tu primera hoja con <b>+ Hoja de horas extras</b> (usa la distribución de una cuadrilla existente).</div>}
-      <Table columns={[
-        { key: "p", label: "Quincena trabajada", render: r => <b>{r.quincena} {r.periodo}</b> },
-        { key: "he", label: "HE registradas", render: r => {
-          const rec = r.he;
-          if (!rec || !Object.keys(rec.hours || {}).length) return <Badge color="#94A3B8">Sin registrar</Badge>;
-          const t = heTotalsOf(rec);
-          return <span style={{ fontSize: 12 }}><b style={{ color: "#059669" }}>{fmtDias(t.hrs)} hrs</b> · {fmtL(t.costo)}</span>;
-        } },
-        { key: "pago", label: "Se pagan", render: r => {
-          if (r.quincena === "1Q") return <span style={{ fontSize: 11, color: "#9A3412" }}>Fin de mes (2Q {r.periodo})</span>;
-          const [py, pm] = r.periodo.split("-").map(Number);
-          const d = new Date(py, pm, 1);
-          return <span style={{ fontSize: 11, color: "#9A3412" }}>15 del mes sig. (1Q {d.getFullYear()}-{String(d.getMonth() + 1).padStart(2, "0")})</span>;
-        } },
-        { key: "dist", label: "Distribución", render: r => r.cuad
-          ? <span style={{ fontSize: 11, color: "#64748b" }}>Cuadrilla propia</span>
-          : <span style={{ fontSize: 11, color: "#7C3AED" }}>Copiada{r.he?.basedOn ? ` de ${r.he.basedOn}` : ""}</span> },
-      ]} data={rows} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-        <Btn small variant="primary" onClick={() => openHeRow(r)}>⏰ Horas extras</Btn>
-      </div>} />
+      {rows.length === 0 && <div className="gt-vidrio" style={{ padding: 28, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Todavía no hay hojas de horas extras.</div>}
+      {rows.map(r => {
+        const rec = r.he; const hay = rec && Object.keys(rec.hours || {}).length > 0; const t = hay ? heTotalsOf(rec) : null;
+        return <div key={`${r.periodo}|${r.quincena}`} className="gt-vidrio" style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", flexWrap: "wrap" }}>
+          <div style={{ width: 86, flexShrink: 0 }}>
+            <div style={{ font: "800 22px/1 var(--display)", color: CHARCOAL }}>{r.quincena}</div>
+            <div style={{ fontSize: 11.5, color: "#6E6862", marginTop: 4 }}>{mesLabel(r.periodo)}</div>
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            {hay ? <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{fmtDias(t.hrs)} horas{hideSalary ? "" : <span style={{ color: "#177243" }}> · {fmtL(t.costo)}</span>}</div> : <div style={{ fontSize: 13.5, fontWeight: 700, color: "#A39C92" }}>Sin registrar</div>}
+            <div style={{ fontSize: 12, color: "#6E6862", marginTop: 4 }}>Se paga {sePaga(r)}</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {r.cuad ? chipH("Cuadrilla propia", "gris") : chipH(`Copiada${r.he?.basedOn ? ` de ${r.he.basedOn}` : ""}`, "azul")}
+          </div>
+          {btnH("Horas extras", () => openHeRow(r), { c: ORANGE_DARK, lleno: true, chico: true })}
+        </div>;
+      })}
     </div>;
   };
 
@@ -4335,6 +4299,22 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     {opciones.map(o => <span key={o.k} role="button" title={o.title} onClick={o.onClick} style={{ padding: "7px 12px", borderRadius: 9, background: o.on ? "#fff" : "transparent", boxShadow: o.on ? "0 1px 3px rgba(44,42,40,.14)" : "none", color: o.on ? CHARCOAL : "#6E6862", font: `${o.on ? 800 : 600} 12.5px/1 var(--sans)`, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>{o.label}</span>)}
   </div>;
 
+  // ── Piezas de vidrio compartidas por el hub de Asistencia (23-oct-2026) ──
+  const btnH = (label, onClick, { c = CHARCOAL, lleno = false, chico = false, disabled = false, title, key } = {}) => <button key={key} type="button" title={title} onClick={onClick} disabled={disabled}
+    style={{ minHeight: chico ? 34 : 42, padding: chico ? "6px 13px" : "9px 18px", borderRadius: 11, border: lleno ? "1px solid transparent" : `1px solid ${c === CHARCOAL ? "rgba(44,42,40,.14)" : c + "55"}`, background: lleno ? c : "rgba(255,255,255,.75)", color: lleno ? "#fff" : c, font: `700 ${chico ? 12.5 : 13.5}px/1 var(--sans)`, cursor: disabled ? "default" : "pointer", opacity: disabled ? .5 : 1, whiteSpace: "nowrap" }}>{label}</button>;
+  const TONO_H = { gris: { color: "#6E6862", bg: "rgba(44,42,40,.06)" }, verde: { color: "#177243", bg: "#DCF3E4" }, azul: { color: "#1D5FAF", bg: "#DDE9FA" }, ambar: { color: "#8A5A00", bg: "#FBEFC4" }, naranja: { color: "#A94E16", bg: "rgba(232,118,45,.14)" }, rojo: { color: "#B03024", bg: "rgba(192,57,43,.07)" } };
+  const chipH = (txt, tono = "gris", sx) => <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, color: TONO_H[tono].color, background: TONO_H[tono].bg, whiteSpace: "nowrap", ...(sx || {}) }}>{txt}</span>;
+  const pillH = (label, on, onClick, key) => <button key={key} type="button" onClick={onClick} aria-pressed={on} style={{ padding: "7px 13px", borderRadius: 999, border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: on ? ORANGE_DARK : "rgba(255,255,255,.7)", color: on ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>;
+  const tileH = (v, l, c = CHARCOAL, onClick) => <div className={onClick ? "gt-vidrio gt-vidrio-hover" : "gt-vidrio"} role={onClick ? "button" : undefined} onClick={onClick} style={{ padding: "12px 14px", cursor: onClick ? "pointer" : "default" }}><div style={{ font: "800 24px/1 var(--display)", color: c, letterSpacing: "-.02em" }}>{v}</div><div style={{ fontSize: 11.5, color: "#6E6862", marginTop: 5 }}>{l}</div></div>;
+  const IcoH = ({ d, size = 20, color = "currentColor" }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{d}</svg>;
+  const CTRL_H = { minHeight: 36, padding: "6px 12px", borderRadius: 11, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.85)", fontSize: 13, fontFamily: "inherit", color: CHARCOAL, outline: "none" };
+  const cabeceraSub = (titulo, sub, derecha, volver) => <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+    <button type="button" className="gt-circulo" onClick={volver} aria-label="Atrás" style={{ width: 34, height: 34, fontSize: 15 }}>←</button>
+    <div style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</div>
+    {sub && <span style={{ fontSize: 12.5, color: "#6E6862" }}>{sub}</span>}
+    <div style={{ flex: 1 }} />{derecha}
+  </div>;
+
   const renderDashboard = () => {
     const tmp = ae.filter(e => e.contractType === "temporary");
     const activos = ae.filter(e => e.status === "active");
@@ -4440,8 +4420,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             <div className="gt-label" style={{ color: "#A39C92", fontSize: 9 }}>Pendientes</div>
             {pendientes.length === 0 && <div style={{ display: "flex", alignItems: "center", gap: 8, font: "600 13px/1.3 var(--sans)", color: "#3E8E5A" }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#3E8E5A" }} />Todo al día</div>}
             {pendientes.map(p => {
-              const ir = permitidas.includes(p.k);
-              return <div key={p.k} role={ir ? "button" : undefined} onClick={ir ? () => setSec(p.k) : undefined} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: "rgba(232,118,45,.07)", cursor: ir ? "pointer" : "default" }}>
+              const ir = tieneSec(p.k);
+              return <div key={p.k} role={ir ? "button" : undefined} onClick={ir ? () => irA(p.k) : undefined} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: "rgba(232,118,45,.07)", cursor: ir ? "pointer" : "default" }}>
                 <span style={{ font: "800 20px/1 var(--display)", color: ORANGE_DARK, minWidth: 22 }}>{p.n}</span>
                 <span style={{ minWidth: 0, flex: 1 }}>
                   <span style={{ display: "block", font: "600 12.5px/1.3 var(--sans)", color: CHARCOAL }}>{p.txt}</span>
@@ -4897,7 +4877,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     </div>;
     if (!d.heDe || !res.he) return <div className="gt-vidrio" style={{ padding: 34, textAlign: "center", color: "#6E6862", fontSize: 13.5, lineHeight: 1.6 }}>
       {d.heFaltante ? `No hay hoja de horas extras de ${etiquetaCorta(d.heFaltante.periodo, d.heFaltante.quincena)}.` : "Nadie tiene horas extras para pagar en esta quincena."}
-      {nav.some(n => n.id === "horasextras") && <div><span role="button" onClick={() => setSec("horasextras")} style={{ color: ORANGE_DARK, fontWeight: 700, cursor: "pointer" }}>Ir a Horas Extras →</span></div>}
+      {tieneSec("horasextras") && <div><span role="button" onClick={() => irA("horasextras")} style={{ color: ORANGE_DARK, fontWeight: 700, cursor: "pointer" }}>Ir a Horas Extras →</span></div>}
     </div>;
     return <>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(4, minmax(0,1fr))", gap: 10 }}>
@@ -5104,9 +5084,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {d.sinAsistencia ? aviso("Sin asistencia registrada: se paga la quincena completa, sin NSP ni feriados", "naranja", nav.some(n => n.id === "attendance") ? () => setSec("attendance") : undefined) : aviso("Asistencia leída de la hoja de la quincena", "verde")}
+        {d.sinAsistencia ? aviso("Sin asistencia registrada: se paga la quincena completa, sin NSP ni feriados", "naranja", tieneSec("attendance") ? () => irA("attendance") : undefined) : aviso("Asistencia leída de la hoja de la quincena", "verde")}
         {d.heDe ? aviso(`Horas extras de ${etiquetaCorta(d.heDe.periodo, d.heDe.quincena)}: ${res.heHrs ? `${res.heHrs} h · ${fmtL(res.he)}` : "sin horas"}`, res.he ? "verde" : "gris", res.he && payParte !== "he" ? () => setPayParte("he") : undefined) : d.heFaltante ? aviso(`No hay hoja de horas extras de ${etiquetaCorta(d.heFaltante.periodo, d.heFaltante.quincena)}`, "gris", nav.some(n => n.id === "horasextras") ? () => setSec("horasextras") : undefined) : null}
-        {Array.isArray(d.tardesPend) && d.tardesPend.length > 0 && aviso(`${d.tardesPend.length} llegada${d.tardesPend.length > 1 ? "s" : ""} tarde sin decidir: se paga el día completo`, "naranja", nav.some(n => n.id === "tardanzas") ? () => setSec("tardanzas") : undefined)}
+        {Array.isArray(d.tardesPend) && d.tardesPend.length > 0 && aviso(`${d.tardesPend.length} llegada${d.tardesPend.length > 1 ? "s" : ""} tarde sin decidir: se paga el día completo`, "naranja", tieneSec("tardanzas") ? () => irA("tardanzas") : undefined)}
         {aviso(ley ? "Segunda quincena: aplican IHSS, RAP e ISR" : "Primera quincena: las deducciones de ley van en la 2Q", "gris")}
       </div>
 
@@ -5186,6 +5166,43 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
 
   const renderLvs = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cl.length} permisos</span><Btn onClick={() => setModal({ t: "ln" })}>+ Nuevo</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "d", label: "Fecha", render: r => fmt(r.date) }, { key: "t", label: "Tipo", render: r => <Badge>{r.type}</Badge> }, { key: "r", label: "Motivo", render: r => r.reason }, { key: "s", label: "Estado", render: r => <Badge color={r.status === "approved" ? "#059669" : "#D97706"}>{r.status === "approved" ? "Aprobado" : "Pendiente"}</Badge> }]} data={cl} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setModal({ t: "le", d: r })}>Editar</Btn><Btn small variant="danger" onClick={async () => { if (!confirm(`¿Eliminar el permiso de ${en(r.employeeId)} del ${fmt(r.date)}?\n\nTambién se desmarca el día en la asistencia.`)) return; await sL(lvs.filter(l => l.id !== r.id)); await syncPermiso(null, r); }}>×</Btn></div>} /></div>;
 
+  // ═══════════════════════════════════════════════════════════════════
+  // HUB DE ASISTENCIA (23-oct-2026, Gerson: "asistencia, llegadas tardías y
+  // horas extras juntos en un solo apartado, tipo Solicitudes; misma
+  // estética, sin tantos colores ni texto; y que ahí viva GeoClock")
+  // ═══════════════════════════════════════════════════════════════════
+  const renderAsistenciaHub = () => {
+    const hoy = hoyTegus();
+    const marcasTardeCo = Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.tarde);
+    const nPend = marcasTardeCo.filter(mk => !(gcTardies || []).some(t => t && t.markId === mk.id && (t.estado === "aprobada" || t.estado === "denegada"))).length;
+    const entradasHoy = Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.fecha === hoy).length;
+    const ult = ca.slice().sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`))[0];
+    const ultHe = che.filter(h => Object.keys(h.hours || {}).length).sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`))[0];
+    const tHe = ultHe ? heTotalsOf(ultHe) : null;
+    const puedeClock = ["admin", "coordinador", "tesoreria", "asistente_compras", "logistica"].includes(userRole) && typeof onAbrirModulo === "function";
+    const soloTard = isOscarTardies;
+    if (asisSub) {
+      const t = asisSub === "hojas" ? ["Asistencia", "hojas por quincena · " + cc.name] : asisSub === "tardanzas" ? ["Llegadas tardías", `${TOLERANCIA_MIN} min de tolerancia sobre el horario de cada quien · ${cc.name}`] : ["Horas extras", "se pagan quincena vencida · " + cc.name];
+      return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {cabeceraSub(t[0], t[1], null, () => setAsisSub(""))}
+        {asisSub === "hojas" ? renderAtts() : asisSub === "tardanzas" ? renderTardanzas() : renderHE()}
+      </div>;
+    }
+    const tarjeta = (ico, titulo, sub, n, onClick, tonoN = CHARCOAL) => <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={onClick} onKeyDown={e => { if (e.key === "Enter") onClick(); }}
+      style={{ padding: "18px 20px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer", minHeight: 112, boxSizing: "border-box" }}>
+      <div style={{ width: 52, height: 52, borderRadius: 16, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IcoH d={ico} size={24} /></div>
+      <div style={{ flex: 1, minWidth: 0 }}><div style={{ font: "800 17px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</div><div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 4 }}>{sub}</div></div>
+      {n != null && <div style={{ font: "800 26px/1 var(--display)", color: tonoN, letterSpacing: "-.02em" }}>{n}</div>}
+      <IcoH d={ICO_HUB.flecha} size={18} color="#A39C92" />
+    </div>;
+    return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+      {!soloTard && tarjeta(ICO_HUB.hojas, "Asistencia", ult ? `${ca.length} quincena${ca.length === 1 ? "" : "s"} con hoja · última ${etiquetaCorta(ult.periodo, ult.quincena)}` : "Cuadrillas y hojas por quincena", cq.length, () => setAsisSub("hojas"))}
+      {tarjeta(ICO_HUB.tarde, "Llegadas tardías", nPend ? `${nPend} por decidir · aprobás el día completo o denegás con descuento` : "Nada por decidir", nPend, () => setAsisSub("tardanzas"), nPend ? "#A94E16" : CHARCOAL)}
+      {!soloTard && tarjeta(ICO_HUB.horas, "Horas extras", ultHe ? `Última hoja ${etiquetaCorta(ultHe.periodo, ultHe.quincena)} · ${fmtDias(tHe.hrs)} h${hideSalary ? "" : ` · ${fmtL(tHe.costo)}`}` : "Hojas por quincena, se pagan quincena vencida", che.length, () => setAsisSub("he"))}
+      {puedeClock && tarjeta(ICO_HUB.tablet, "GeoClock", `${entradasHoy} entrada${entradasHoy === 1 ? "" : "s"} hoy · el reloj de las tablets y sus registros`, null, () => onAbrirModulo("geoclock"))}
+    </div>;
+  };
+
   const renderAtts = () => {
     const openGrid = async (cuad) => {
       // Refresca los marcajes GeoClock de esta quincena Y las decisiones de
@@ -5193,94 +5210,81 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       // "1" y las horas de denegadas con lo ultimo que hay en la nube.
       await Promise.all([refreshMarksFor(cuad.periodo, cuad.quincena), refreshTardies()]);
       const existing = ca.find(a => a.periodo === cuad.periodo && a.quincena === cuad.quincena);
-      // La cuadrilla es la fuente de verdad de las asignaciones empleado→proyecto.
-      // Si la asistencia ya existe, refrescamos sus assignments con los de la cuadrilla
-      // actual para que cualquier cambio posterior (mover empleados, agregar nuevos)
-      // se vea reflejado al abrir la grilla. La data de asistencia (grid, overrides)
-      // se conserva intacta.
-      if (existing) {
-        setModal({ t: "ag", d: { ...existing, assignments: cuad.assignments } });
-      } else {
-        setModal({ t: "ag", d: { id: uid(), company: co, periodo: cuad.periodo, quincena: cuad.quincena, assignments: cuad.assignments, grid: {}, date: new Date().toISOString() } });
-      }
+      // La cuadrilla es la fuente de verdad de las asignaciones empleado→proyecto:
+      // al abrir se refrescan los assignments; grid/overrides se conservan.
+      if (existing) setModal({ t: "ag", d: { ...existing, assignments: cuad.assignments } });
+      else setModal({ t: "ag", d: { id: uid(), company: co, periodo: cuad.periodo, quincena: cuad.quincena, assignments: cuad.assignments, grid: {}, date: new Date().toISOString() } });
     };
-    // Asistencias huerfanas: hojas guardadas de esta empresa cuya quincena ya
-    // NO tiene cuadrilla (ej. cuadrillas borradas por accidente). Cada hoja
-    // guarda sus propios assignments, asi que se pueden abrir directo — sin
-    // esto, el historico queda invisible e inaccesible.
+    // Hojas huérfanas: asistencias de esta empresa cuya quincena ya no tiene
+    // cuadrilla. Guardan sus propios assignments, así que se abren igual.
     const orphanAtts = ca.filter(a => !cq.some(c => c.periodo === a.periodo && c.quincena === a.quincena));
-
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-        <span style={{ color: "#64748b", fontSize: 13 }}>{cq.length} distribuciones | {ca.length} asistencias</span>
-        <Btn onClick={() => setModal({ t: "cuad" })}>+ Distribucion de cuadrilla</Btn>
+    const filas = cq.slice().sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`));
+    const chipGris = { fontSize: 11, fontWeight: 600, color: "#6E6862", background: "rgba(44,42,40,.06)", borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap" };
+    return <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, color: "#6E6862" }}>{cq.length} quincena{cq.length === 1 ? "" : "s"} con cuadrilla · {ca.length} con asistencia registrada</span>
+        {!isReadOnly && btnH("+ Cuadrilla de la quincena", () => setModal({ t: "cuad" }), { c: ORANGE_DARK, lleno: true, chico: true })}
       </div>
-      {cq.length === 0 && <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: 20, textAlign: "center", color: "#92400E" }}>Paso 1: Cree una distribucion de cuadrilla para iniciar el tracking de asistencia.</div>}
-      {orphanAtts.length > 0 && (
-        <div style={{ background: "#FFF7ED", border: "1px solid #FDBA74", borderRadius: 12, padding: 14 }}>
-          <div style={{ fontWeight: 700, fontSize: 13, color: "#9A3412", marginBottom: 4 }}>
-            📂 Asistencias históricas sin cuadrilla ({orphanAtts.length})
+      {cq.length === 0 && <div className="gt-vidrio" style={{ padding: 28, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Primero armá la cuadrilla de la quincena: quién trabaja en qué proyecto. Después se abre la hoja de asistencia.</div>}
+      {orphanAtts.length > 0 && <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ font: "700 13px/1.2 var(--sans)", color: CHARCOAL }}>Hojas sin cuadrilla <span style={{ color: "#A39C92", fontWeight: 600 }}>{orphanAtts.length}</span></div>
+        <div style={{ fontSize: 12, color: "#6E6862" }}>Quedaron sin su cuadrilla, pero la asistencia está intacta: se abren igual y se puede reconstruir la cuadrilla desde la propia hoja.</div>
+        {orphanAtts.slice().reverse().map(a => <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 0", borderTop: "1px solid rgba(44,42,40,.06)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <b style={{ fontSize: 13, color: CHARCOAL }}>{etiquetaCorta(a.periodo, a.quincena)}</b>
+            <span style={{ fontSize: 11.5, color: "#6E6862" }}>{Object.keys(a.assignments || {}).length} colaboradores · {Object.keys(a.grid || {}).length} celdas{a.lastSaved ? ` · guardada ${fmt(a.lastSaved.slice(0, 10))}` : ""}</span>
           </div>
-          <div style={{ fontSize: 11, color: "#7C2D12", marginBottom: 10 }}>
-            Estas hojas quedaron sin su distribución de cuadrilla (probablemente se borró), pero la asistencia está intacta y se puede abrir. Solo lectura/edición normal — al guardar se conservan igual.
+          <div style={{ display: "flex", gap: 6 }}>
+            {btnH("Abrir", async () => { await Promise.all([refreshMarksFor(a.periodo, a.quincena), refreshTardies()]); setModal({ t: "ag", d: { ...a } }); }, { c: ORANGE_DARK, lleno: true, chico: true })}
+            {!isReadOnly && btnH("Reconstruir cuadrilla", async () => {
+              const asg = { ...(a.assignments || {}) };
+              const n = Object.values(asg).filter(Boolean).length;
+              if (!n) return alert("Esta hoja no tiene asignaciones de proyecto guardadas — hay que armar la cuadrilla a mano.");
+              const proys = [...new Set(Object.values(asg).filter(Boolean))];
+              if (!confirm(`¿Reconstruir la cuadrilla ${a.quincena} ${a.periodo} de ${cc.name} desde esta asistencia?\n\n${n} colaborador(es) en ${proys.length} proyecto(s):\n${proys.map(p => "  · " + p).join("\n")}`)) return;
+              const record = { id: uid(), company: a.company, periodo: a.periodo, quincena: a.quincena, assignments: asg, date: new Date().toISOString() };
+              const sinEsta = cuadrillas.filter(c => !(c.company === a.company && c.periodo === a.periodo && c.quincena === a.quincena));
+              const ok = await sCq([...sinEsta, record]);
+              alert(ok ? `Cuadrilla ${a.quincena} ${a.periodo} reconstruida y verificada en la nube.` : "No se pudo guardar la cuadrilla en la nube. Revisá tu conexión y volvé a intentar.");
+            }, { chico: true })}
+            {userRole === "admin" && btnH("Borrar", async () => {
+              if (!confirm(`¿Borrar DEFINITIVAMENTE la asistencia ${a.quincena} ${a.periodo} de ${cc.name} (${Object.keys(a.grid || {}).length} celdas)?\n\nEsta acción NO se puede deshacer.`)) return;
+              const ok = await sA(atts.filter(x => x.id !== a.id));
+              if (!ok) alert("Se borró en este dispositivo pero NO se sincronizó a la nube. Reintentá cuando tengas conexión.");
+            }, { c: "#B03024", chico: true })}
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {orphanAtts.slice().reverse().map(a => (
-              <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, background: "#fff", border: "1px solid #FED7AA", borderRadius: 8, padding: "8px 12px", flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  <b style={{ fontSize: 13, color: "#2C2A28" }}>{a.quincena} {a.periodo}</b>
-                  <span style={{ fontSize: 11, color: "#8B847C" }}>{Object.keys(a.assignments || {}).length} empleados · {Object.keys(a.grid || {}).length} celdas</span>
-                  {a.lastSaved && <span style={{ fontSize: 10, color: "#94A3B8" }}>guardada {fmt(a.lastSaved.slice(0, 10))}</span>}
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <Btn small variant="primary" onClick={async () => { await Promise.all([refreshMarksFor(a.periodo, a.quincena), refreshTardies()]); setModal({ t: "ag", d: { ...a } }); }}>Abrir asistencia</Btn>
-                  {/* Reconstruir la cuadrilla desde la propia hoja: sus
-                      assignments quedaron intactos, así que la distribución
-                      se recupera tal cual y vuelven a aparecer las HE. */}
-                  <Btn small variant="success" onClick={async () => {
-                    const asg = { ...(a.assignments || {}) };
-                    const n = Object.values(asg).filter(Boolean).length;
-                    if (!n) return alert("Esta hoja no tiene asignaciones de proyecto guardadas — hay que armar la cuadrilla a mano.");
-                    const proys = [...new Set(Object.values(asg).filter(Boolean))];
-                    if (!confirm(`¿Reconstruir la distribución de cuadrilla ${a.quincena} ${a.periodo} de ${cc.name} desde esta asistencia?\n\n${n} colaborador(es) en ${proys.length} proyecto(s):\n${proys.map(p => "  • " + p).join("\n")}\n\nLa asistencia NO se toca. Con esto vuelve a aparecer la hoja de Horas Extras de la quincena.`)) return;
-                    const record = { id: uid(), company: a.company, periodo: a.periodo, quincena: a.quincena, assignments: asg, date: new Date().toISOString() };
-                    const sinEsta = cuadrillas.filter(c => !(c.company === a.company && c.periodo === a.periodo && c.quincena === a.quincena));
-                    const ok = await sCq([...sinEsta, record]);
-                    alert(ok
-                      ? `✅ Cuadrilla ${a.quincena} ${a.periodo} reconstruida y verificada en la nube.\n\nYa podés generar sus Horas Extras y la distribución de la quincena siguiente.`
-                      : "⚠️ No se pudo guardar la cuadrilla en la nube. Revisá tu conexión y volvé a intentar.");
-                  }}>🔧 Reconstruir cuadrilla</Btn>
-                  {userRole === "admin" && (
-                    <Btn small variant="danger" onClick={async () => {
-                      if (!confirm(`¿Borrar DEFINITIVAMENTE la asistencia ${a.quincena} ${a.periodo} de ${cc.name} (${Object.keys(a.grid || {}).length} celdas)?\n\nEsta accion NO se puede deshacer.`)) return;
-                      const ok = await sA(atts.filter(x => x.id !== a.id));
-                      if (!ok) alert("⚠️ Se borro en este dispositivo pero NO se sincronizo a la nube. Reintenta cuando tengas conexion.");
-                    }}>🗑 Borrar</Btn>
-                  )}
-                </div>
-              </div>
-            ))}
+        </div>)}
+      </div>}
+      {filas.map(r => {
+        const a = r.assignments || {};
+        const n = Object.values(a).filter(Boolean).length;
+        const ps = [...new Set(Object.values(a).filter(Boolean))];
+        const has = ca.find(x => x.periodo === r.periodo && x.quincena === r.quincena);
+        return <div key={r.id} className="gt-vidrio" style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", flexWrap: "wrap" }}>
+          <div style={{ width: 86, flexShrink: 0 }}>
+            <div style={{ font: "800 22px/1 var(--display)", color: CHARCOAL }}>{r.quincena}</div>
+            <div style={{ fontSize: 11.5, color: "#6E6862", marginTop: 4 }}>{mesLabel(r.periodo)}</div>
           </div>
-        </div>
-      )}
-      <Table columns={[
-        { key: "p", label: "Periodo", render: r => <b>{r.quincena} {r.periodo}</b> },
-        { key: "c", label: "Empleados asignados", render: r => { const a = r.assignments || {}; return Object.values(a).filter(v => v).length; } },
-        { key: "pr", label: "Proyectos", render: r => { const a = r.assignments || {}; const ps = [...new Set(Object.values(a).filter(v => v))]; return <span style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{ps.map(p => <Badge key={p} color={cc.color}>{p}</Badge>)}</span>; } },
-        { key: "att", label: "Asistencia", render: r => { const has = ca.find(a => a.periodo === r.periodo && a.quincena === r.quincena); return has ? <Badge color="#059669">Registrada</Badge> : <Badge color="#D97706">Pendiente</Badge>; } },
-        { key: "d", label: "Fecha", render: r => fmt(r.date) },
-      ]} data={cq.slice().reverse()} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-        <Btn small variant="primary" onClick={() => openGrid(r)}>Asistencia</Btn>
-        <Btn small variant="ghost" onClick={() => setModal({ t: "cuad-edit", d: r })}>Editar cuadrilla</Btn>
-        <Btn small variant="danger" onClick={async () => {
-          const hasAtt = ca.find(a => a.periodo === r.periodo && a.quincena === r.quincena);
-          const msg = `¿Eliminar la distribucion ${r.quincena} ${r.periodo}?` +
-            (hasAtt ? "\n\n⚠️ OJO: esta quincena YA tiene asistencia registrada. Sin la cuadrilla no vas a poder abrir esa asistencia desde esta tabla (la hoja no se borra, pero queda sin acceso). Lo normal es NO borrarla." : "");
-          if (!confirm(msg)) return;
-          const ok = await sCq(cuadrillas.filter(x => x.id !== r.id));
-          if (!ok) alert("⚠️ Se elimino en este dispositivo pero NO se sincronizo a la nube. Reintenta cuando tengas conexion.");
-        }}>×</Btn>
-      </div>} />
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{n} colaborador{n === 1 ? "" : "es"} · {ps.length} proyecto{ps.length === 1 ? "" : "s"}</div>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>{ps.slice(0, 5).map(p => <span key={p} style={chipGris}>{p}</span>)}{ps.length > 5 && <span style={chipGris}>+{ps.length - 5}</span>}</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {has ? chipH("Registrada", "verde") : chipH("Sin registrar", "naranja")}
+            {has?.lastSaved && <span style={{ fontSize: 11.5, color: "#A39C92" }}>guardada {fmt(has.lastSaved.slice(0, 10))}</span>}
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {btnH("Asistencia", () => openGrid(r), { c: ORANGE_DARK, lleno: true, chico: true })}
+            {!isReadOnly && btnH("Cuadrilla", () => setModal({ t: "cuad-edit", d: r }), { chico: true })}
+            {!isReadOnly && btnH("✕", async () => {
+              const msg = `¿Eliminar la cuadrilla ${r.quincena} ${r.periodo}?` + (has ? "\n\nOJO: esta quincena YA tiene asistencia registrada. Sin la cuadrilla, la hoja queda en \"Hojas sin cuadrilla\" (no se borra). Lo normal es NO borrar." : "");
+              if (!confirm(msg)) return;
+              const ok = await sCq(cuadrillas.filter(x => x.id !== r.id));
+              if (!ok) alert("Se eliminó en este dispositivo pero NO se sincronizó a la nube. Reintentá cuando tengas conexión.");
+            }, { c: "#B03024", chico: true, title: "Eliminar cuadrilla" })}
+          </div>
+        </div>;
+      })}
     </div>;
   };
 
@@ -5463,114 +5467,108 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const ok = await sGcTardies({ upsert: reg });
       alert(ok ? "↩️ Decisión revertida — la tardanza vuelve a Pendientes (el historial se conserva)." : "⚠️ No se pudo guardar la reversión en la nube. Reintentá.");
     };
-    const chipMin = (mk) => <span style={{ background: "#FEE2E2", color: "#B91C1C", fontWeight: 800, borderRadius: 6, padding: "2px 8px", fontSize: 12 }}>+{mk.minTarde ?? "?"} min</span>;
+    const verFoto = async (mk) => {
+      const k = `foto:${mk.id}`;
+      if (firmaCache[k]) { setFirmaCache(p => { const n = { ...p }; delete n[k]; return n; }); return; }
+      try {
+        const f = await store.get(`gc-foto-${mk.fotoId || mk.id}`);
+        if (f?.dataUrl) setFirmaCache(p => ({ ...p, [k]: f.dataUrl }));
+        else alert("Este marcaje no tiene foto (se tomó antes de que la tablet tuviera cámara, o la cámara no estaba disponible).");
+      } catch { alert("No se pudo cargar la foto — revisá tu conexión."); }
+    };
+    const nAprob = decididasTodas.filter(mk => decisionDe(mk).estado === "aprobada").length;
+    const nDeneg = decididasTodas.filter(mk => decisionDe(mk).estado === "denegada").length;
+    const rangoTxt = tardFecha ? fmt(tardFecha) : tardMes ? mesLabel(tardMes) : "quincena actual y anterior";
     const cardTardanza = (mk, dec) => {
       const e = empDe(mk);
       const d = e ? descuentoDe(mk, e) : null;
-      return <div key={mk.id} style={{ background: "#fff", border: `1px solid ${dec ? "#E2E8F0" : "#FCD34D"}`, borderLeft: `4px solid ${dec ? (dec.estado === "aprobada" ? "#059669" : "#DC2626") : "#F59E0B"}`, borderRadius: 12, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <EmpAvatar name={mk.empNombre || en(mk.empId)} dataUrl={e?.photo?.fileId ? photoCache[e.photo.fileId] : null} size={38} />
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 14, color: "#2C2A28" }}>{mk.empNombre || en(mk.empId)}</div>
-              <div style={{ fontSize: 11, color: "#8B847C" }}>{e?.position || ""} · horario {e ? horarioDe(e).entrada : "7:00"} · {fmt(mk.fecha)}</div>
-            </div>
+      const reg = registroDe(mk);
+      const resp = responsableDe(mk);
+      return <div key={mk.id} className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <EmpAvatar name={mk.empNombre || en(mk.empId)} dataUrl={e?.photo?.fileId ? photoCache[e.photo.fileId] : null} size={40} borderRadius={12} suave />
+          <div style={{ flex: 1, minWidth: 180 }}>
+            <div style={{ font: "700 14px/1.2 var(--sans)", color: CHARCOAL }}>{mk.empNombre || en(mk.empId)}</div>
+            <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>{e?.position ? `${e.position} · ` : ""}{fmt(mk.fecha)} · horario {e ? horarioDe(e).entrada : "7:00"}</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 800, fontSize: 15, color: "#B45309" }}>marcó {mk.hora}</span>
-            {chipMin(mk)}
-            <span title={`Marcada desde: ${mk.registradoPor || "GeoClock"}`} style={{ fontSize: 10.5, background: "#EFF6FF", color: "#1E40AF", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>
-              Aprueba: {responsableDe(mk) ? responsableDe(mk).split(" ")[0] : "Gerson/Carolina"}
-            </span>
-            {dec && <Badge color={dec.estado === "aprobada" ? "#059669" : "#DC2626"}>{dec.estado === "aprobada" ? "✓ Aprobada (día completo)" : "✕ Denegada (con descuento)"}</Badge>}
+            <span style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 15, color: CHARCOAL }}>{mk.hora}</span>
+            {chipH(`+${minTardeMk(mk)} min`, "naranja")}
+            <span title={`Marcada desde: ${mk.registradoPor || "GeoClock"}`} style={{ fontSize: 11.5, color: "#A39C92" }}>decide {resp ? resp.split(" ")[0] : "Gerson / Carolina"}</span>
+            {dec ? chipH(dec.estado === "aprobada" ? "Aprobada · día completo" : "Denegada · con descuento", dec.estado === "aprobada" ? "verde" : "rojo") : chipH("Por decidir", "ambar")}
           </div>
         </div>
-        <div style={{ background: "#FFFBEB", border: "1px dashed #FDE68A", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#78350F" }}>
-          😞 <i>{mk.explicacion || "(sin explicación)"}</i>
+        <div style={{ fontSize: 13, color: CHARCOAL, padding: "8px 12px", borderRadius: 12, background: "rgba(44,42,40,.035)" }}>
+          {mk.explicacion ? <>“{mk.explicacion}”</> : <span style={{ color: "#A39C92" }}>Sin explicación</span>}
         </div>
-        {!hideSalary && d && <div style={{ fontSize: 12, color: dec?.estado === "aprobada" ? "#94A3B8" : "#B91C1C" }}>
-          Descuento proporcional{dec?.estado === "aprobada" ? " (NO aplicado)" : dec?.estado === "denegada" ? " APLICADO" : " si se deniega"}: <b>{fmtL(d.monto)}</b> — {(d.horasTarde * 60).toFixed(0)} min tarde = {(d.horasTarde / 8 * 100).toFixed(1)}% del día ({fmtL((Number(e?.salary) || 0) / 30)} diario).
+        {!hideSalary && d && <div style={{ fontSize: 12, color: dec?.estado === "aprobada" ? "#A39C92" : dec?.estado === "denegada" ? "#B03024" : "#6E6862" }}>
+          {dec?.estado === "aprobada" ? "Sin descuento" : dec?.estado === "denegada" ? "Descuento aplicado" : "Si se deniega se descuenta"}: <b>{fmtL(d.monto)}</b> · {(d.horasTarde * 60).toFixed(0)} min = {(d.horasTarde / 8 * 100).toFixed(1)} % del día{e?.salary ? ` (L ${(Number(e.salary) / 30).toFixed(2)} diario)` : ""}
         </div>}
-        {firmaCache[mk.id] && <div style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, padding: 8, textAlign: "center" }}>
-          <img src={firmaCache[mk.id]} alt="Firma" style={{ maxHeight: 90, maxWidth: "100%" }} />
-          <div style={{ fontSize: 10, color: "#94A3B8" }}>Firma del marcaje · registrado en {mk.registradoPor ? `la tablet de ${mk.registradoPor}` : "GeoClock"}</div>
+        {(firmaCache[mk.id] || firmaCache[`foto:${mk.id}`]) && <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {firmaCache[`foto:${mk.id}`] && <img src={firmaCache[`foto:${mk.id}`]} alt="Foto del marcaje" style={{ height: 120, borderRadius: 14, border: "1px solid rgba(44,42,40,.1)" }} />}
+          {firmaCache[mk.id] && <img src={firmaCache[mk.id]} alt="Firma" style={{ height: 90, maxWidth: "100%", borderRadius: 12, border: "1px solid rgba(44,42,40,.1)", background: "#fff" }} />}
         </div>}
-        {/* HISTORIAL del cuadrito: cada decisión y reversión con quién y cuándo */}
-        {(registroDe(mk)?.historial || []).length > 0 && <div style={{ fontSize: 11, color: "#64748b", background: "#F8FAFC", border: "1px solid #EEF2F7", borderRadius: 8, padding: "6px 10px", display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", color: "#94A3B8" }}>Historial</span>
-          {registroDe(mk).historial.map((h, i) => (
-            <span key={i}>
-              {h.accion === "aprobada" ? "✓" : h.accion === "denegada" ? "✕" : "↩"}{" "}
-              {h.accion.charAt(0).toUpperCase() + h.accion.slice(1)} por <b>{h.por}</b> · {fmt(h.fecha || String(h.at || "").slice(0, 10))}
-            </span>
-          ))}
+        {(reg?.historial || []).length > 0 && <div style={{ fontSize: 11.5, color: "#6E6862", display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {reg.historial.map((h, i) => <span key={i}>{h.accion.charAt(0).toUpperCase() + h.accion.slice(1)} por <b>{h.por}</b> · {fmt(h.fecha || String(h.at || "").slice(0, 10))}</span>)}
         </div>}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap" }}>
-          <NavBtn onClick={() => verFirma(mk)}>{firmaCache[mk.id] ? "Ocultar firma" : "✍️ Ver firma"}</NavBtn>
+        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap" }}>
+          {btnH(firmaCache[`foto:${mk.id}`] ? "Ocultar foto" : "Ver foto", () => verFoto(mk), { chico: true })}
+          {btnH(firmaCache[mk.id] ? "Ocultar firma" : "Ver firma", () => verFirma(mk), { chico: true })}
           {!dec && puedeDecidir(mk) && <>
-            <Btn small variant="success" onClick={() => aprobar(mk)}>✓ Aprobar (día completo)</Btn>
-            <Btn small variant="danger" onClick={() => denegar(mk)}>✕ Denegar (aplicar descuento)</Btn>
+            {btnH("Denegar", () => denegar(mk), { c: "#B03024", chico: true })}
+            {btnH("Aprobar", () => aprobar(mk), { c: "#177243", lleno: true, chico: true })}
           </>}
-          {!dec && !puedeDecidir(mk) && <span style={{ fontSize: 11.5, color: "#94A3B8", fontStyle: "italic" }}>Solo visualización — la decide {responsableDe(mk) || "Gerson / Lic. Carolina"}.</span>}
-          {dec && puedeDecidir(mk) && <Btn small variant="ghost" onClick={() => revertir(mk, dec)}>↩ Revertir decisión</Btn>}
-          {puedeBorrarTardanza && <Btn small variant="danger" onClick={() => borrarTardanza(mk, dec)} style={{ opacity: 0.85 }}>🗑 Borrar</Btn>}
+          {!dec && !puedeDecidir(mk) && <span style={{ fontSize: 11.5, color: "#A39C92" }}>La decide {resp || "Gerson / Lic. Carolina"}</span>}
+          {dec && puedeDecidir(mk) && btnH("Revertir", () => revertir(mk, dec), { chico: true })}
+          {puedeBorrarTardanza && <button type="button" onClick={() => borrarTardanza(mk, dec)} style={{ background: "none", border: "none", color: "#B03024", font: "700 12px/1 var(--sans)", cursor: "pointer", padding: "6px 4px" }}>Borrar</button>}
         </div>
-        {dec && <div style={{ fontSize: 10, color: "#94A3B8", textAlign: "right" }}>Decidido por {dec.decididoPor} · {fmt(dec.fechaDecision || String(dec.decididoAt || "").slice(0, 10))}</div>}
+        {dec && <div style={{ fontSize: 11, color: "#A39C92", textAlign: "right" }}>Decidido por {dec.decididoPor} · {fmt(dec.fechaDecision || String(dec.decididoAt || "").slice(0, 10))}</div>}
       </div>;
     };
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontWeight: 800, fontSize: 16, color: "#2C2A28" }}>Reporte de llegadas tardías — {cc.name}</div>
-          <div style={{ fontSize: 12, color: "#8B847C" }}>Marcajes de GeoClock después de la tolerancia ({TOLERANCIA_MIN} min sobre el horario de cada quien). Aprobá la explicación (día completo) o denegala (descuento proporcional, como José Miguel).</div>
-        </div>
-        <NavBtn onClick={refrescar}>🔄 Actualizar</NavBtn>
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+        {tileH(pendientes.length, `por decidir · ${rangoTxt}`, pendientes.length ? "#A94E16" : CHARCOAL, () => setTardEstado("pendientes"))}
+        {tileH(nAprob, "aprobadas", CHARCOAL, () => setTardEstado("aprobadas"))}
+        {tileH(nDeneg, "denegadas", CHARCOAL, () => setTardEstado("denegadas"))}
+        {tileH(personasConTarde.length, "colaboradores con llegadas tarde")}
       </div>
-      {/* Filtros: estado (chips) + colaborador + responsable */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: "10px 14px" }}>
-        {[["", "Todas"], ["pendientes", "⏳ Pendientes"], ["aprobadas", "✓ Aprobadas"], ["denegadas", "✕ Denegadas"]].map(([v, l]) => (
-          <span key={v} role="button" onClick={() => setTardEstado(v)}
-            style={{ padding: "5px 12px", borderRadius: 999, border: `1.5px solid ${tardEstado === v ? "#B45309" : "#DBD4C8"}`, background: tardEstado === v ? "#B45309" : "#fff", color: tardEstado === v ? "#fff" : "#5C5853", fontSize: 12, fontWeight: 700, cursor: "pointer", userSelect: "none" }}>{l}</span>
-        ))}
-        <select value={tardPersona} onChange={e => setTardPersona(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #DBD4C8", fontSize: 12, fontFamily: "inherit", outline: "none" }}>
-          <option value="">👥 Todos los colaboradores</option>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 6 }}>{[["", "Todas"], ["pendientes", "Por decidir"], ["aprobadas", "Aprobadas"], ["denegadas", "Denegadas"]].map(([v, l]) => pillH(l, tardEstado === v, () => setTardEstado(v), v))}</div>
+        <select value={tardPersona} onChange={e => setTardPersona(e.target.value)} style={CTRL_H}>
+          <option value="">Todos los colaboradores</option>
           {personasConTarde.map(([id, nom]) => <option key={id} value={id}>{nom}</option>)}
         </select>
-        <select value={tardResp} onChange={e => setTardResp(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #DBD4C8", fontSize: 12, fontFamily: "inherit", outline: "none" }}>
-          <option value="">🗂 Todos los responsables</option>
-          <option value="Oscar Paz">Aprueba Oscar (plantel/almacén)</option>
-          <option value="Ana Vasquez">Aprueba Ana (oficina)</option>
-          <option value="supers">Aprueban Gerson / Lic. Carolina</option>
+        <select value={tardResp} onChange={e => setTardResp(e.target.value)} style={CTRL_H}>
+          <option value="">Quien decide: todos</option>
+          <option value="Oscar Paz">Decide Oscar (plantel / almacén)</option>
+          <option value="Ana Vasquez">Decide Ana (oficina)</option>
+          <option value="supers">Deciden Gerson / Lic. Carolina</option>
         </select>
-        {/* Archivo: mes o fecha exacta (carga esas quincenas de la nube) */}
-        <span style={{ fontSize: 11, color: "#8B847C", marginLeft: 4 }}>📁 Archivo:</span>
-        <span role="button" onClick={() => { setTardMes(""); setTardFecha(""); }}
-          style={{ padding: "5px 12px", borderRadius: 999, border: `1.5px solid ${!tardMes && !tardFecha ? "#2C5F5D" : "#DBD4C8"}`, background: !tardMes && !tardFecha ? "#2C5F5D" : "#fff", color: !tardMes && !tardFecha ? "#fff" : "#5C5853", fontSize: 12, fontWeight: 700, cursor: "pointer", userSelect: "none" }}>Recientes</span>
-        <input type="month" value={tardMes} onChange={e => { setTardMes(e.target.value); setTardFecha(""); }}
-          title="Ver el archivo de un mes completo"
-          style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${tardMes ? "#2C5F5D" : "#DBD4C8"}`, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
-        <input type="date" value={tardFecha} onChange={e => { setTardFecha(e.target.value); setTardMes(""); }}
-          title="Ver una fecha exacta"
-          style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${tardFecha ? "#2C5F5D" : "#DBD4C8"}`, fontSize: 12, fontFamily: "inherit", outline: "none" }} />
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {pillH("Recientes", !tardMes && !tardFecha, () => { setTardMes(""); setTardFecha(""); })}
+          <input type="month" value={tardMes} onChange={e => { setTardMes(e.target.value); setTardFecha(""); }} title="Ver un mes completo" style={CTRL_H} />
+          <input type="date" value={tardFecha} onChange={e => { setTardFecha(e.target.value); setTardMes(""); }} title="Ver una fecha exacta" style={CTRL_H} />
+        </div>
+        <div style={{ flex: 1 }} />
+        {btnH("Actualizar", refrescar, { chico: true })}
       </div>
       {(!tardEstado || tardEstado === "pendientes") && <>
-        <div style={{ fontWeight: 700, fontSize: 13, color: "#92400E" }}>⏳ Pendientes de decisión ({pendientes.length})</div>
-        {pendientes.length === 0 && <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10, padding: 16, fontSize: 13, color: "#166534" }}>Sin llegadas tardías pendientes{tardPersona || tardResp ? " con este filtro" : ""}. 🎉 Las nuevas caen acá solas cuando alguien marca después de la tolerancia en GeoClock.</div>}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "4px 2px 0" }}><span style={{ font: "800 16px/1 var(--display)", color: CHARCOAL }}>Por decidir</span><span style={{ font: "600 13px/1 var(--sans)", color: "#A39C92" }}>{pendientes.length}</span></div>
+        {pendientes.length === 0 && <div className="gt-vidrio" style={{ padding: 24, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Nada por decidir{tardPersona || tardResp ? " con este filtro" : ""}.</div>}
         {pendientes.map(mk => cardTardanza(mk, null))}
       </>}
       {tardEstado !== "pendientes" && decididas.length > 0 && <>
-        <div style={{ fontWeight: 700, fontSize: 13, color: "#64748b", marginTop: 8 }}>📋 Decididas ({decididas.length})</div>
-        {/* ARCHIVO por mes: las decididas se agrupan en carpetas mensuales */}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "8px 2px 0" }}><span style={{ font: "800 16px/1 var(--display)", color: CHARCOAL }}>Decididas</span><span style={{ font: "600 13px/1 var(--sans)", color: "#A39C92" }}>{decididas.length}</span></div>
         {(() => {
           const porMes = {};
           decididas.forEach(mk => { const m2 = String(mk.fecha || "").slice(0, 7); (porMes[m2] = porMes[m2] || []).push(mk); });
           return Object.keys(porMes).sort((a, b) => b.localeCompare(a)).map(m2 => <div key={m2} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: "#8B847C", background: "#F8F2E6", borderRadius: 8, padding: "6px 12px", borderLeft: "3px solid #E8762D" }}>📁 {mesLabel(m2)} ({porMes[m2].length})</div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: "#6E6862", margin: "2px 2px 0" }}>{mesLabel(m2)} <span style={{ color: "#A39C92", fontWeight: 600 }}>{porMes[m2].length}</span></div>
             {porMes[m2].map(mk => cardTardanza(mk, decisionDe(mk)))}
           </div>);
         })()}
       </>}
-      <div style={{ fontSize: 11, color: "#94A3B8" }}>Se muestran la quincena actual y la anterior. El descuento denegado se fija como hora de entrada en la hoja de asistencia y se aplica automáticamente en Planilla y Costos MO.</div>
+      <div style={{ fontSize: 11.5, color: "#A39C92" }}>Denegar fija la hora real de llegada en la hoja de asistencia y el descuento sale solo en planilla y costos. Aprobar paga el día completo.</div>
     </div>;
   };
 
@@ -6976,7 +6974,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     if (!permitidas.includes(sec) && nav.length < allNav.length) return renderSec2(permitidas[0]);
     return renderSec2(sec);
   };
-  const renderSec2 = (s) => { switch (s) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "tardanzas": return renderTardanzas(); case "kpis": return renderKpis(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); case "horasextras": return renderHE(); case "accesos": return renderAccesos(); case "solicitudes": return renderSolicitudesHub(); case "mi": return renderMiRRHH(); default: return renderDashboard(); } };
+  const renderSec2 = (s) => { switch (s) { case "employees": return renderEmps(); case "contracts": return renderContracts(); case "bonuses": return renderBonuses(); case "payroll": return renderPayroll(); case "vacations": return renderVacs(); case "leaves": return renderLvs(); case "attendance": return renderAtts(); case "tardanzas": return renderTardanzas(); case "kpis": return renderKpis(); case "movimientos": return renderMovs(); case "constancias": return renderCons(); case "costos": return renderCostosMO(); case "horasextras": return renderHE(); case "accesos": return renderAccesos(); case "solicitudes": return renderSolicitudesHub(); case "mi": return renderMiRRHH(); case "asistencia": return renderAsistenciaHub(); default: return renderDashboard(); } };
 
   const renderModal = () => { if (!modal) return null; const m = modal; switch (m.t) {
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;

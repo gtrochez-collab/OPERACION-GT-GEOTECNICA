@@ -37,7 +37,10 @@ export const USERS = [
   // e Ing. César Iglesias como visualizador de todo (gerencia = solo lectura).
   { username: "raul.flores",   password: "GeoCore-i2Ro4f",  role: "admin",                label: "Dr. Raúl Flores" },
   { username: "cesar.iglesias", password: "GeoCore-K6pdC8", role: "gerencia",             label: "Ing. César Iglesias" },
-  { username: "marcaje",       password: "marcaje1234",    role: "marcaje",              label: "Marcaje de Asistencia", ubicacion: "ADMINISTRACIÓN" },
+  // 23-oct-2026: la tablet de la pared cubre ADMINISTRACIÓN y PLANTEL (ahí
+  // marcan oficinas, taller y almacén). La ubicación de cada marcaje la decide
+  // la PERSONA (cuadrilla o departamento) — ver geoclock-calc.js.
+  { username: "marcaje",       password: "marcaje1234",    role: "marcaje",              label: "Marcaje de Asistencia", ubicacion: "ADMINISTRACIÓN", ubicaciones: ["ADMINISTRACIÓN", "PLANTEL"] },
 ];
 
 export const ROLE_LABEL = {
