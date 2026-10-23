@@ -1014,18 +1014,23 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
               {ubicsTablet.length > 1 && <div style={{ display: "flex", gap: 6 }}>{pillF("Todos", !filtroUbic, () => setFiltroUbic(""), "t")}{ubicsTablet.map(u => pillF(nombreUbicacion(u), filtroUbic === u, () => setFiltroUbic(filtroUbic === u ? "" : u), u))}</div>}
               <div style={{ display: "flex", gap: 2, flexWrap: "wrap", marginLeft: "auto" }}>{letras.map(l => <button key={l} type="button" onClick={() => setLetra(letra === l ? "" : l)} style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: letra === l ? ORANGE_DARK : "transparent", color: letra === l ? "#fff" : STONE, font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{l}</button>)}</div>
             </div>}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(118px, 1fr))", gap: 8 }}>
+            {/* Personas SIN caja (23-oct-2026, Gerson: "demasiados cuadritos, me
+                cansa la vista"): foto redonda, nombre y punto de estado, como
+                los contactos del iPhone; el fondo aparece solo al pasar/tocar. */}
+            <div className="gc-personas" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(112px, 1fr))", gap: "6px 4px" }}>
+              <style>{`.gc-persona{background:transparent;border:none;border-radius:18px;transition:background .15s}.gc-persona:hover,.gc-persona:focus-visible{background:rgba(255,255,255,.75);outline:none}.gc-persona:active{background:rgba(232,118,45,.10)}`}</style>
               {lista.map(e => {
                 const ent = entradaDe(e.id), sal = salidaDe(e.id);
-                return <button key={e.id} type="button" className="gt-vidrio gt-vidrio-hover" onClick={() => seleccionar(e)}
-                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, padding: "12px 8px 10px", cursor: "pointer", textAlign: "center", fontFamily: "inherit", minHeight: 128 }}>
-                  {fotos[e.photo?.fileId]
-                    ? <img src={fotos[e.photo.fileId]} alt="" style={{ width: 54, height: 54, borderRadius: 17, objectFit: "cover" }} />
-                    : <div style={{ width: 54, height: 54, borderRadius: 17, background: "rgba(44,42,40,.07)", color: STONE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 17 }}>{iniciales(e.fullName)}</div>}
-                  <div style={{ font: "700 12.5px/1.25 var(--sans)", color: CHARCOAL, width: "100%", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{nombreCortoF(e.fullName)}</div>
-                  <div style={{ fontSize: 11.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 5, color: ent ? (ent.tarde ? AMBER : GREEN) : "#B5AFA6" }}>
-                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: ent ? (ent.tarde ? ORANGE : GREEN) : "#D8D4CE" }} />{ent ? `${ent.hora}${sal ? ` → ${sal.hora}` : ""}` : "Sin marcar"}
-                  </div>
+                const anillo = ent ? (ent.tarde ? ORANGE : GREEN) : "transparent";
+                return <button key={e.id} type="button" className="gc-persona" onClick={() => seleccionar(e)}
+                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "12px 6px 10px", cursor: "pointer", textAlign: "center", fontFamily: "inherit" }}>
+                  <span style={{ padding: 2.5, borderRadius: "50%", border: `2px solid ${anillo}`, display: "inline-flex" }}>
+                    {fotos[e.photo?.fileId]
+                      ? <img src={fotos[e.photo.fileId]} alt="" style={{ width: 62, height: 62, borderRadius: "50%", objectFit: "cover", display: "block" }} />
+                      : <span style={{ width: 62, height: 62, borderRadius: "50%", background: "rgba(44,42,40,.07)", color: STONE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 18 }}>{iniciales(e.fullName)}</span>}
+                  </span>
+                  <span style={{ font: "600 12.5px/1.25 var(--sans)", color: CHARCOAL, width: "100%", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{nombreCortoF(e.fullName)}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: ent ? (ent.tarde ? AMBER : GREEN) : "#C2BCB3" }}>{ent ? `${ent.hora}${sal ? ` → ${sal.hora}` : ""}` : "Sin marcar"}</span>
                 </button>;
               })}
               {lista.length === 0 && <div className="gt-vidrio" style={{ gridColumn: "1/-1", textAlign: "center", color: STONE, fontSize: 14, padding: 30 }}>{search ? <>No encontramos a nadie con "{search}". Probá con otro nombre o avisale al encargado.</> : "Nadie con este filtro."}</div>}

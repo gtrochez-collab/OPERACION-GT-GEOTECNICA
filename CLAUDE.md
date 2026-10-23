@@ -1180,6 +1180,11 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   pasaron al tooltip de Horas; "manual" / "editada" van en chiquito junto a
   la hora; un ausente muestra "—" + "+" (el Estado ya lo dice). Una nota de
   una línea al pie.
+  **5ª pasada (23-oct, "demasiados cuadritos, me cansa la vista")**: las
+  personas del reloj ya NO van en tarjetas: foto REDONDA de 62 px, nombre y
+  hora debajo, sin caja (`.gc-persona`: fondo solo al pasar o tocar); un
+  anillo verde (a tiempo) o naranja (tarde) alrededor de la foto de quien
+  ya marcó. El panel del reloj y los últimos marcajes siguen a la derecha.
   **2ª pasada del mismo día**: GeoClock lleva `oculto: true` en MODULES (se
   abre desde GeoTeam → Asistencia; la tablet `marcaje` lo sigue viendo porque
   `availableModules` cae a TODOS los permitidos cuando no queda ninguno
