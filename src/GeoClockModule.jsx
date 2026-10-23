@@ -808,9 +808,9 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   // día completo), rojo si la denegó (se descuenta), ámbar si está pendiente.
   const estiloTarde = (mk) => {
     const dec = decisionDe(mk);
-    if (!dec) return { bg: "#FEF3C7", fg: "#92400E", txt: "pendiente", hora: "#B45309" };
-    if (dec.estado === "aprobada") return { bg: "#DCFCE7", fg: "#166534", txt: "justificada", hora: "#166534" };
-    return { bg: "#FEE2E2", fg: "#B91C1C", txt: "se descuenta", hora: "#B91C1C" };
+    if (!dec) return { bg: "#FBEFC4", fg: "#8A5A00", txt: "por decidir", hora: AMBER };
+    if (dec.estado === "aprobada") return { bg: "#DCF3E4", fg: GREEN, txt: "justificada", hora: GREEN };
+    return { bg: "rgba(192,57,43,.08)", fg: RED, txt: "se descuenta", hora: RED };
   };
 
   // Abre el detalle de un marcaje (lo ven TODOS los roles; editar solo
@@ -931,30 +931,30 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
     <style>{GT_CSS}</style>
     <div className="gt-brillo gt-brillo-a" aria-hidden />
     <div className="gt-brillo gt-brillo-b" aria-hidden />
-    {/* HEADER: logo + reloj vivo */}
-    <div style={{ position: "relative", zIndex: 2, borderBottom: "1px solid rgba(44,42,40,.08)", padding: "12px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <Logo size={36} />
-        <div style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg></div>
-        <div>
-          <div style={{ font: "800 16px/1 var(--display)", color: CHARCOAL }}>GeoClock</div>
-          <div style={{ fontSize: 11.5, color: STONE, marginTop: 3 }}>{ubicsTablet.length ? ubicsTablet.map(nombreUbicacion).join(" · ") : (userName || "Grupo Geotecnica")}</div>
-        </div>
+    {/* HEADER igual al de GeoTeam / GeoInventory (23-oct-2026): ← · logo ·
+        ícono · nombre | usuario · Cerrar sesión; debajo las pestañas. En la
+        tablet kiosco salir pide la clave del encargado (conClave). */}
+    <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: ancho < 768 ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: ancho < 768 ? 8 : 12, minWidth: 0 }}>
+        <button type="button" className="gt-circulo" onClick={() => conClave(onBack)} title={volverA ? `Volver a ${volverA}` : "Volver al panel"} aria-label="Volver" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>
+        <Logo size={ancho < 768 ? 28 : 34} />
+        <div style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg></div>
+        {ancho >= 768 && <div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>GeoClock</div>}
       </div>
-      {view !== "search" && <div style={{ textAlign: "right" }}>
-        <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 26, lineHeight: 1, color: CHARCOAL, letterSpacing: "-.02em" }}>
-          {reloj.txt}<span style={{ fontSize: 14, color: ORANGE }}>:{reloj.seg}</span> <span style={{ fontSize: 13, color: STONE, fontWeight: 600 }}>{reloj.ampm}</span>
-        </div>
-        <div style={{ fontSize: 11.5, color: STONE, marginTop: 3 }}>{fechaLarga(now.fecha, now.dow)} · {q.quincena} {q.periodo}</div>
-      </div>}
-      <div style={{ display: "flex", gap: 8 }}>
-        {view === "registros" ? pill("Volver al reloj", reset, { lleno: true, c: ORANGE_DARK }) : pill("Registros", () => conClave(() => setView("registros")))}
-        {pill(volverA ? `← ${volverA}` : "Módulos", () => conClave(onBack))}
-        {pill("Salir", () => conClave(onLogout))}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
+        {ancho >= 768 && <div style={{ textAlign: "right" }}>
+          <div style={{ font: "600 13px/1.3 var(--sans)", color: CHARCOAL }}>{userName || "GeoClock"}</div>
+          <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2 }}>{ubicsTablet.length ? ubicsTablet.map(nombreUbicacion).join(" · ") : "Marcaje de asistencia"}</div>
+        </div>}
+        <button type="button" onClick={() => conClave(onLogout)} title="Cerrar sesión" style={{ minHeight: 36, padding: "8px 14px", borderRadius: 999, border: "1px solid rgba(192,57,43,.25)", background: "rgba(192,57,43,.06)", color: "#B03024", font: "700 12px/1 var(--sans)", cursor: "pointer" }}>{ancho < 768 ? "Salir" : "Cerrar sesión"}</button>
       </div>
     </div>
+    <div style={{ position: "relative", zIndex: 2, display: "flex", borderBottom: "1px solid rgba(44,42,40,.08)", flexShrink: 0, paddingLeft: ancho < 768 ? 4 : 20 }}>
+      {[["search", "Reloj"], ["registros", "Registros"]].map(([id, label]) => { const on = (view === "registros") === (id === "registros"); return <button key={id} type="button" onClick={() => id === "registros" ? (view !== "registros" && conClave(() => setView("registros"))) : (view === "registros" && reset())}
+        style={{ padding: ancho < 768 ? "12px 13px" : "14px 18px", background: "transparent", border: "none", boxShadow: on ? `inset 0 -2px 0 ${ORANGE}` : "none", color: on ? "var(--naranja-tinta)" : "var(--text-3)", font: `${on ? 800 : 600} 13px/1 var(--sans)`, cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>; })}
+    </div>
 
-    <div style={{ position: "relative", zIndex: 1, flex: 1, maxWidth: view === "search" ? 1320 : 900, width: "100%", margin: "0 auto", padding: "18px 18px 40px", boxSizing: "border-box" }}>
+    <div style={{ position: "relative", zIndex: 1, flex: 1, maxWidth: view === "person" || view === "done" ? 900 : "none", width: "100%", margin: "0 auto", padding: ancho < 768 ? "12px 12px 32px" : "18px 24px 32px", boxSizing: "border-box" }}>
       {loadErr && <div className="gt-vidrio" style={{ padding: "12px 16px", fontSize: 13, color: RED, marginBottom: 14 }}>
         No se pudo cargar la lista de personal desde la nube. Revisá la conexión y tocá <b onClick={loadAll} style={{ cursor: "pointer", textDecoration: "underline" }}>reintentar</b>.
       </div>}
@@ -962,51 +962,67 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       {/* ── BÚSQUEDA ── */}
       {view === "search" && (() => {
         const dos = ancho >= 1000;
-        const nEnt = marksHoy.filter(mk => mk.tipo === "entrada").length, nSal = marksHoy.filter(mk => mk.tipo === "salida").length;
-        // Tarjeta del reloj: a la derecha en pantallas anchas; arriba, como
-        // una franja, en la tablet en vertical.
-        const tarjetaReloj = <div className="gt-vidrio" style={{ padding: dos ? "24px 24px 20px" : "16px 20px", display: "flex", flexDirection: dos ? "column" : "row", alignItems: dos ? "stretch" : "center", justifyContent: "space-between", gap: dos ? 14 : 18, position: dos ? "sticky" : "static", top: 16 }}>
-          <div style={{ order: dos ? 2 : 1, minWidth: 0 }}>
-            <div style={{ font: `800 ${dos ? 24 : 22}px/1.1 var(--display)`, color: CHARCOAL, letterSpacing: "-.02em" }}>Marcá tu asistencia</div>
-            <div style={{ fontSize: 13.5, color: STONE, marginTop: 6, lineHeight: 1.45 }}>Hay que dar el mejor de los esfuerzos hoy.</div>
-            {!dos && <div style={{ fontSize: 12, color: "#A39C92", marginTop: 8 }}>{nEnt} entrada{nEnt === 1 ? "" : "s"} · {nSal} salida{nSal === 1 ? "" : "s"} hoy</div>}
-          </div>
-          <div style={{ order: dos ? 1 : 2, textAlign: dos ? "left" : "right", flexShrink: 0 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "#A39C92" }}>{fechaLarga(now.fecha, now.dow)}</div>
-            <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: dos ? 58 : 44, lineHeight: 1, color: CHARCOAL, letterSpacing: "-.03em", marginTop: 6, whiteSpace: "nowrap" }}>
-              {reloj.txt}<span style={{ fontSize: dos ? 26 : 20, color: ORANGE }}>:{reloj.seg}</span>
-              <span style={{ fontSize: dos ? 18 : 15, color: STONE, fontWeight: 600, marginLeft: 8 }}>{reloj.ampm}</span>
+        const nEnt = marksHoy.filter(mk => mk.tipo === "entrada").length, nSal = marksHoy.filter(mk => mk.tipo === "salida").length, nTarde = marksHoy.filter(mk => mk.tipo === "entrada" && mk.tarde).length;
+        const lista = resultados.filter(e => (!filtroUbic || ubicacionDe(e) === filtroUbic) && (!letra || normaliza(e.fullName).startsWith(normaliza(letra))));
+        const letras = [...new Set(resultados.map(e => normaliza(e.fullName).charAt(0).toUpperCase()))].filter(Boolean).sort();
+        const nombreCortoF = (n) => { const p = String(n || "").trim().split(/\s+/); return p.length >= 3 ? `${p[0]} ${p[2]}` : p.join(" "); };
+        const pillF = (label, on, onClick, key) => <button key={key} type="button" onClick={onClick} style={{ minHeight: 34, padding: "6px 13px", borderRadius: 999, border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: on ? ORANGE_DARK : "rgba(255,255,255,.75)", color: on ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{label}</button>;
+        const ultimos = marksHoy.slice().sort((a, b) => (b.min || 0) - (a.min || 0) || String(b.ts || "").localeCompare(String(a.ts || "")));
+        const stat = (v, l, c = CHARCOAL) => <div style={{ flex: 1, padding: "10px 12px", borderRadius: 14, background: "rgba(44,42,40,.04)" }}><div style={{ font: "800 22px/1 var(--display)", color: c }}>{v}</div><div style={{ fontSize: 11, color: STONE, marginTop: 4 }}>{l}</div></div>;
+        // Panel del reloj: alto completo a la derecha en pantalla ancha (con
+        // los últimos marcajes del día); franja arriba en la tablet vertical.
+        const panel = dos
+          ? <div className="gt-vidrio" style={{ position: "sticky", top: 16, padding: "24px 22px", display: "flex", flexDirection: "column", gap: 16, height: "calc(100vh - 150px)", minHeight: 460, boxSizing: "border-box" }}>
+              <div>
+                <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "#A39C92" }}>{fechaLarga(now.fecha, now.dow)}</div>
+                <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 62, lineHeight: 1, color: CHARCOAL, letterSpacing: "-.03em", marginTop: 8, whiteSpace: "nowrap" }}>{reloj.txt}<span style={{ fontSize: 26, color: ORANGE }}>:{reloj.seg}</span><span style={{ fontSize: 18, color: STONE, fontWeight: 600, marginLeft: 8 }}>{reloj.ampm}</span></div>
+                <div style={{ font: "800 22px/1.15 var(--display)", color: CHARCOAL, letterSpacing: "-.02em", marginTop: 16 }}>Marcá tu asistencia</div>
+                <div style={{ fontSize: 13.5, color: STONE, marginTop: 4 }}>Hay que dar el mejor de los esfuerzos hoy.</div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>{stat(nEnt, "entradas")}{stat(nSal, "salidas")}{stat(nTarde, "tarde", nTarde ? AMBER : CHARCOAL)}</div>
+              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: STONE, marginBottom: 8 }}>Últimos marcajes</div>
+                <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2, marginRight: -6, paddingRight: 6 }}>
+                  {ultimos.length === 0 && <div style={{ fontSize: 12.5, color: "#A39C92" }}>Nadie ha marcado todavía.</div>}
+                  {ultimos.map(mk => <div key={mk.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 2px", borderBottom: "1px solid rgba(44,42,40,.05)" }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: mk.tipo === "salida" ? "#1D5FAF" : mk.tarde ? ORANGE : GREEN }} />
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: CHARCOAL, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nombreCortoF(mk.empNombre)}</span>
+                    <span style={{ fontSize: 11.5, color: STONE }}>{mk.tipo === "entrada" ? "entró" : "salió"}</span>
+                    <span style={{ fontFamily: "var(--mono)", fontSize: 12.5, fontWeight: 700, color: mk.tipo === "salida" ? "#1D5FAF" : mk.tarde ? AMBER : GREEN }}>{mk.hora}</span>
+                  </div>)}
+                </div>
+              </div>
+              <div style={{ fontSize: 11.5, color: "#A39C92" }}>{q.quincena} {q.periodo}{ubicsTablet.length ? ` · ${ubicsTablet.map(nombreUbicacion).join(" · ")}` : ""}</div>
             </div>
-          </div>
-          {dos && <div style={{ order: 3, borderTop: "1px solid rgba(44,42,40,.08)", paddingTop: 12, display: "flex", flexDirection: "column", gap: 6, fontSize: 12.5, color: STONE }}>
-            <div><b style={{ color: CHARCOAL }}>{nEnt}</b> entrada{nEnt === 1 ? "" : "s"} · <b style={{ color: CHARCOAL }}>{nSal}</b> salida{nSal === 1 ? "" : "s"} hoy</div>
-            <div>{q.quincena} {q.periodo}{ubicsTablet.length ? ` · ${ubicsTablet.map(nombreUbicacion).join(" · ")}` : ""}</div>
-          </div>}
-        </div>;
-        return <div style={{ display: "grid", gridTemplateColumns: dos ? "minmax(0, 1fr) 320px" : "minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
-        {!dos && tarjetaReloj}
-        <div>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Escribí tu nombre…" autoFocus
-          style={{ width: "100%", boxSizing: "border-box", padding: "14px 18px", fontSize: 18, borderRadius: 16, border: `1.5px solid ${search ? ORANGE : "rgba(44,42,40,.12)"}`, outline: "none", background: "rgba(255,255,255,.85)", fontFamily: "inherit", color: CHARCOAL, boxShadow: "0 1px 2px rgba(44,42,40,.04)" }} />
-        {(() => {
-          const lista = resultados.filter(e => (!filtroUbic || ubicacionDe(e) === filtroUbic) && (!letra || normaliza(e.fullName).startsWith(normaliza(letra))));
-          const letras = [...new Set(resultados.map(e => normaliza(e.fullName).charAt(0).toUpperCase()))].filter(Boolean).sort();
-          const pillF = (label, on, onClick, key) => <button key={key} type="button" onClick={onClick} style={{ minHeight: 34, padding: "6px 12px", borderRadius: 999, border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: on ? CHARCOAL : "rgba(255,255,255,.75)", color: on ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", fontFamily: "inherit" }}>{label}</button>;
-          const nombreCorto = (n) => { const p = String(n || "").trim().split(/\s+/); return p.length >= 3 ? `${p[0]} ${p[2]}` : p.join(" "); };
-          return <>
-            {!search && <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 14 }}>
+          : <div className="gt-vidrio" style={{ padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ font: "800 22px/1.1 var(--display)", color: CHARCOAL, letterSpacing: "-.02em" }}>Marcá tu asistencia</div>
+                <div style={{ fontSize: 13.5, color: STONE, marginTop: 6 }}>Hay que dar el mejor de los esfuerzos hoy.</div>
+                <div style={{ fontSize: 12, color: "#A39C92", marginTop: 8 }}>{nEnt} entrada{nEnt === 1 ? "" : "s"} · {nSal} salida{nSal === 1 ? "" : "s"} hoy</div>
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "#A39C92" }}>{fechaLarga(now.fecha, now.dow)}</div>
+                <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 44, lineHeight: 1, color: CHARCOAL, letterSpacing: "-.03em", marginTop: 6, whiteSpace: "nowrap" }}>{reloj.txt}<span style={{ fontSize: 20, color: ORANGE }}>:{reloj.seg}</span><span style={{ fontSize: 15, color: STONE, fontWeight: 600, marginLeft: 8 }}>{reloj.ampm}</span></div>
+              </div>
+            </div>;
+        return <div style={{ display: "grid", gridTemplateColumns: dos ? "minmax(0, 1fr) 360px" : "minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
+          {!dos && panel}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Escribí tu nombre…" autoFocus
+              style={{ width: "100%", boxSizing: "border-box", padding: "14px 18px", fontSize: 18, borderRadius: 16, border: `1.5px solid ${search ? ORANGE : "rgba(44,42,40,.12)"}`, outline: "none", background: "rgba(255,255,255,.85)", fontFamily: "inherit", color: CHARCOAL }} />
+            {!search && <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               {ubicsTablet.length > 1 && <div style={{ display: "flex", gap: 6 }}>{pillF("Todos", !filtroUbic, () => setFiltroUbic(""), "t")}{ubicsTablet.map(u => pillF(nombreUbicacion(u), filtroUbic === u, () => setFiltroUbic(filtroUbic === u ? "" : u), u))}</div>}
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginLeft: "auto" }}>{letras.map(l => <button key={l} type="button" onClick={() => setLetra(letra === l ? "" : l)} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: letra === l ? ORANGE_DARK : "transparent", color: letra === l ? "#fff" : STONE, font: "700 12px/1 var(--sans)", cursor: "pointer", fontFamily: "inherit" }}>{l}</button>)}</div>
+              <div style={{ display: "flex", gap: 2, flexWrap: "wrap", marginLeft: "auto" }}>{letras.map(l => <button key={l} type="button" onClick={() => setLetra(letra === l ? "" : l)} style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: letra === l ? ORANGE_DARK : "transparent", color: letra === l ? "#fff" : STONE, font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{l}</button>)}</div>
             </div>}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(112px, 1fr))", gap: 8, marginTop: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(118px, 1fr))", gap: 8 }}>
               {lista.map(e => {
                 const ent = entradaDe(e.id), sal = salidaDe(e.id);
                 return <button key={e.id} type="button" className="gt-vidrio gt-vidrio-hover" onClick={() => seleccionar(e)}
-                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, padding: "12px 8px 10px", cursor: "pointer", textAlign: "center", fontFamily: "inherit", minHeight: 132 }}>
+                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, padding: "12px 8px 10px", cursor: "pointer", textAlign: "center", fontFamily: "inherit", minHeight: 128 }}>
                   {fotos[e.photo?.fileId]
-                    ? <img src={fotos[e.photo.fileId]} alt="" style={{ width: 56, height: 56, borderRadius: 18, objectFit: "cover" }} />
-                    : <div style={{ width: 56, height: 56, borderRadius: 18, background: "rgba(44,42,40,.07)", color: STONE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 18 }}>{iniciales(e.fullName)}</div>}
-                  <div style={{ font: "700 12.5px/1.25 var(--sans)", color: CHARCOAL, minWidth: 0, width: "100%", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{nombreCorto(e.fullName)}</div>
+                    ? <img src={fotos[e.photo.fileId]} alt="" style={{ width: 54, height: 54, borderRadius: 17, objectFit: "cover" }} />
+                    : <div style={{ width: 54, height: 54, borderRadius: 17, background: "rgba(44,42,40,.07)", color: STONE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 17 }}>{iniciales(e.fullName)}</div>}
+                  <div style={{ font: "700 12.5px/1.25 var(--sans)", color: CHARCOAL, width: "100%", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{nombreCortoF(e.fullName)}</div>
                   <div style={{ fontSize: 11.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 5, color: ent ? (ent.tarde ? AMBER : GREEN) : "#B5AFA6" }}>
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: ent ? (ent.tarde ? ORANGE : GREEN) : "#D8D4CE" }} />{ent ? `${ent.hora}${sal ? ` → ${sal.hora}` : ""}` : "Sin marcar"}
                   </div>
@@ -1014,29 +1030,8 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
               })}
               {lista.length === 0 && <div className="gt-vidrio" style={{ gridColumn: "1/-1", textAlign: "center", color: STONE, fontSize: 14, padding: 30 }}>{search ? <>No encontramos a nadie con "{search}". Probá con otro nombre o avisale al encargado.</> : "Nadie con este filtro."}</div>}
             </div>
-          </>;
-        })()}
-        {/* Marcajes de hoy (para el encargado) */}
-        <div className="gt-vidrio" style={{ marginTop: 22, padding: "12px 16px" }}>
-          <div onClick={() => setVerHoy(v => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
-            <span style={{ fontWeight: 800, fontSize: 13, color: CHARCOAL }}>Marcajes de hoy <span style={{ color: "#A39C92", fontWeight: 600 }}>{marksHoy.length}</span></span>
-            <span style={{ color: STONE, fontSize: 12 }}>{verHoy ? "ocultar" : "ver"}</span>
           </div>
-          {verHoy && <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
-            {marksHoy.slice().sort((a, b) => (b.min || 0) - (a.min || 0)).map(mk => (
-              <div key={mk.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, padding: "6px 10px", background: "rgba(44,42,40,.035)", borderRadius: 10, flexWrap: "wrap" }}>
-                <span style={{ fontWeight: 700 }}>{mk.empNombre}{mk.ubicacion ? <span style={{ color: "#A39C92", fontWeight: 600 }}> · {nombreUbicacion(mk.ubicacion)}</span> : null}</span>
-                <span style={{ color: mk.tipo === "entrada" ? (mk.tarde ? AMBER : GREEN) : "#1D5FAF", fontWeight: 700 }}>
-                  {mk.tipo === "entrada" ? (mk.tarde ? `Entrada ${mk.hora} · +${mk.minTarde} min` : `Entrada ${mk.hora}`) : `Salida ${mk.hora}`}
-                  {mk.comentario ? <span title={mk.comentario} style={{ marginLeft: 6, fontWeight: 400, color: STONE }}>{mk.comentario.length > 40 ? mk.comentario.slice(0, 40) + "…" : mk.comentario}</span> : null}
-                </span>
-              </div>
-            ))}
-            {marksHoy.length === 0 && <div style={{ fontSize: 12, color: STONE }}>Nadie ha marcado todavía.</div>}
-          </div>}
-        </div>
-        </div>
-        {dos && tarjetaReloj}
+          {dos && panel}
         </div>;
       })()}
 
@@ -1052,7 +1047,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         const limite = (() => { const t = entradaMin + TOLERANCIA_MIN; return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; })();
         const bloqueado = saving || !tieneFirma || (esTarde && !explicacion.trim());
         const segBtn = (label, on, enabled, onClick) => <button type="button" disabled={!enabled} onClick={onClick}
-          style={{ flex: 1, minHeight: 56, padding: "12px 10px", borderRadius: 16, cursor: enabled ? "pointer" : "not-allowed", font: "800 16px/1.2 var(--display)", border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: on ? CHARCOAL : "rgba(255,255,255,.75)", color: on ? "#fff" : enabled ? CHARCOAL : "#B5AFA6", fontFamily: "inherit" }}>{label}</button>;
+          style={{ flex: 1, minHeight: 56, padding: "12px 10px", borderRadius: 16, cursor: enabled ? "pointer" : "not-allowed", font: "800 16px/1.2 var(--display)", border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: on ? CHARCOAL : "rgba(255,255,255,.75)", color: on ? "#fff" : enabled ? CHARCOAL : "#B5AFA6" }}>{label}</button>;
         return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <button type="button" onClick={reset} style={{ alignSelf: "flex-start", minHeight: 38, padding: "8px 16px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "700 13px/1 var(--sans)", cursor: "pointer" }}>← No soy yo</button>
           <div className="gt-vidrio" style={{ padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
@@ -1119,7 +1114,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             </div>
 
             <button type="button" onClick={registrar} disabled={bloqueado}
-              style={{ minHeight: 60, padding: "16px 26px", borderRadius: 18, border: "none", cursor: bloqueado ? "not-allowed" : "pointer", background: bloqueado ? "rgba(44,42,40,.18)" : ORANGE_DARK, color: "#fff", font: "800 18px/1 var(--display)", boxShadow: bloqueado ? "none" : "0 8px 22px rgba(199,95,31,.28)", fontFamily: "inherit" }}>
+              style={{ minHeight: 60, padding: "16px 26px", borderRadius: 18, border: "none", cursor: bloqueado ? "not-allowed" : "pointer", background: bloqueado ? "rgba(44,42,40,.18)" : ORANGE_DARK, color: "#fff", font: "800 18px/1 var(--display)", boxShadow: bloqueado ? "none" : "0 8px 22px rgba(199,95,31,.28)" }}>
               {saving ? "Registrando…" : `Registrar ${tipoAccion} · ${now.hora}`}
             </button>
             {!tieneFirma && <div style={{ textAlign: "center", fontSize: 12, color: STONE }}>La firma es obligatoria para registrar.</div>}
@@ -1140,7 +1135,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             ? <>Llegaste <b style={{ color: AMBER }}>{doneInfo.minTarde} min tarde</b>. Tu explicación quedó en el reporte de RRHH.</>
             : <>{doneInfo.tipo === "entrada" ? "Buen día" : "Buen descanso"}, {doneInfo.nombre}.</>}
         </div>
-        <button type="button" onClick={reset} style={{ marginTop: 22, minHeight: 50, padding: "13px 34px", borderRadius: 16, border: "none", background: ORANGE_DARK, color: "#fff", font: "800 15px/1 var(--display)", cursor: "pointer", fontFamily: "inherit" }}>Listo</button>
+        <button type="button" onClick={reset} style={{ marginTop: 22, minHeight: 50, padding: "13px 34px", borderRadius: 16, border: "none", background: ORANGE_DARK, color: "#fff", font: "800 15px/1 var(--display)", cursor: "pointer" }}>Listo</button>
       </div>}
 
       {/* ── REGISTROS: reporte de entradas y salidas ── */}
@@ -1165,7 +1160,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         const chip = (txt, on, onClick) => (
           <span key={txt} role="button" onClick={onClick} style={{ padding: "7px 14px", borderRadius: 999, border: `1px solid ${on ? "transparent" : "rgba(44,42,40,.14)"}`, background: on ? ORANGE_DARK : "rgba(255,255,255,.75)", color: on ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", userSelect: "none" }}>{txt}</span>
         );
-        const selSt = { padding: "9px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", fontSize: 13, fontFamily: "inherit", outline: "none", minWidth: 160 };
+        const selSt = { minHeight: 36, padding: "6px 12px", borderRadius: 11, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.85)", fontSize: 13, fontFamily: "inherit", color: CHARCOAL, outline: "none" };
         // ── Exportar CSV (Excel-friendly, con BOM) ──
         const bajarCSV = () => {
           if (!rows.length) return alert("No hay registros en el filtro actual para exportar.");
@@ -1232,136 +1227,96 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             `<br><button class='np' onclick='window.print()' style='padding:10px 24px;font-size:13px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px'>Imprimir / Guardar como PDF</button></body></html>`);
           w.document.close();
         };
-        return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <div style={{ font: "800 22px/1.15 var(--display)", color: CHARCOAL, letterSpacing: "-.02em" }}>Registros de entradas y salidas</div>
-            <div style={{ fontSize: 13, color: STONE, marginTop: 2 }}>Marcajes del reloj por día, agrupados por proyecto. El total laborado descuenta 1h de almuerzo cuando la jornada cruza el mediodía (12:00–13:00). El día cierra a las 11:59 PM: lo no marcado queda como <b style={{ color: "#B91C1C" }}>NO MARCÓ</b> (sin entrada = no se presentó; el NSP se maneja en la asistencia de GeoTeam){puedeCorregir ? " — vos podés colocar la hora faltante con justificación (queda en el historial)" : ""}.</div>
-            {/* Leyenda de colores: qué significa cada chip de la tabla */}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8, fontSize: 11 }}>
-              <span style={{ color: STONE, fontWeight: 700, letterSpacing: 0.4 }}>Cómo leer:</span>
-              <span style={{ background: "#DCFCE7", color: "#166534", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>+Xm justificada</span>
-              <span style={{ color: STONE }}>tarde APROBADA por RRHH — día completo, sin descuento</span>
-              <span style={{ background: "#FEE2E2", color: "#B91C1C", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>+Xm se descuenta</span>
-              <span style={{ color: STONE }}>DENEGADA — descuento proporcional</span>
-              <span style={{ background: "#FEF3C7", color: "#92400E", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>+Xm pendiente</span>
-              <span style={{ color: STONE }}>sin decidir en GeoTeam</span>
-              <span style={{ background: "#EDE9FE", color: "#6D28D9", borderRadius: 6, padding: "2px 8px", fontWeight: 800 }}>MANUAL</span>
-              <span style={{ background: "#E0E7FF", color: "#3730A3", borderRadius: 6, padding: "2px 8px", fontWeight: 800 }}>✎</span>
-              <span style={{ color: STONE }}>con cambios — tocá la hora para ver el historial</span>
-            </div>
-            <div style={{ fontSize: 11, color: STONE, marginTop: 4 }}>
-              Los minutos tarde se cuentan desde que <b>vence la tolerancia</b> ({TOLERANCIA_MIN} min): con horario 8:00, marcar 8:20 son <b>5 minutos</b> tarde.
-            </div>
-          </div>
-          {/* Filtros */}
-          <div className="gt-vidrio" style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        const varios = regDesde !== regHasta;
+        const btnR = (label, onClick, lleno) => <button type="button" onClick={onClick} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: lleno ? "1px solid transparent" : "1px solid rgba(44,42,40,.14)", background: lleno ? ORANGE_DARK : "rgba(255,255,255,.75)", color: lleno ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>;
+        const chipR = (txt, c, bg, title) => <span title={title} style={{ display: "inline-flex", alignItems: "center", padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700, color: c, background: bg, whiteSpace: "nowrap" }}>{txt}</span>;
+        const hora = (mk, color) => <span role="button" title="Ver foto, firma e historial" onClick={() => abrirDetalle(mk)} style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 13.5, color, cursor: "pointer" }}>{mk.hora}{mk.manual ? <span style={{ fontFamily: "var(--sans)", fontSize: 10, color: "#6E6862", marginLeft: 5 }}>manual</span> : (mk.historial || []).length ? <span style={{ fontFamily: "var(--sans)", fontSize: 10, color: "#6E6862", marginLeft: 5 }}>editada</span> : null}</span>;
+        // Un ausente (sin ningún marcaje) ya lo dice la columna Estado: en sus
+        // celdas solo va el "+" para colocar la hora a mano. "No marcó" en rojo
+        // queda para cuando falta UNA de las dos marcas.
+        const falta = (r, tipo) => <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{r.ausente ? <span style={{ color: "#C9C3BA" }}>—</span> : chipR("No marcó", RED, "rgba(192,57,43,.08)", tipo === "entrada" ? "Día cerrado sin entrada" : "No marcó su salida ese día")}{puedeCorregir && <button type="button" title={`Colocar la ${tipo} a mano (con justificación)`} onClick={() => setCorr({ empId: r.emp.id, fecha: r.fecha, tipo, hora: "", justif: "" })} style={{ width: 24, height: 24, borderRadius: "50%", border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: ORANGE_DARK, font: "800 14px/1 var(--sans)", cursor: "pointer", padding: 0 }}>+</button>}</span>;
+        const estadoDe = (r) => {
+          if (r.netas != null) return chipR("Completo", GREEN, "#DCF3E4");
+          if (r.estado === "en curso") return chipR("En jornada", STONE, "rgba(44,42,40,.06)");
+          if (r.ausente) return chipR("No se presentó", RED, "rgba(192,57,43,.08)");
+          if (r.ent && !r.sal && r.cerrado) return chipR("Sin salida", AMBER, "rgba(232,118,45,.14)");
+          if (!r.ent && r.sal) return chipR("Sin entrada", AMBER, "rgba(232,118,45,.14)");
+          return chipR(r.estado || "—", STONE, "rgba(44,42,40,.06)");
+        };
+        const COLS = varios ? "92px minmax(0,1.6fr) 1fr 1fr 90px 130px" : "minmax(0,1.6fr) 1fr 1fr 90px 130px";
+        return <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 1320, margin: "0 auto" }}>
+          {/* Barra: rango · filtros · acciones */}
+          <div className="gt-vidrio" style={{ padding: "12px 14px", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 6 }}>
               {chip("Hoy", regDesde === hoy && regHasta === hoy, () => preset("hoy"))}
               {chip("Esta semana", false, () => preset("semana"))}
               {chip("Este mes", regDesde === `${hoy.slice(0, 7)}-01` && regHasta === hoy, () => preset("mes"))}
-              <span style={{ fontSize: 12, color: STONE, marginLeft: 4 }}>o elegí el rango:</span>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <input type="date" value={regDesde} onChange={e => e.target.value && setRegDesde(e.target.value)} style={selSt} />
-              <span style={{ color: STONE }}>→</span>
+              <span style={{ color: "#A39C92", fontSize: 12 }}>a</span>
               <input type="date" value={regHasta} onChange={e => e.target.value && setRegHasta(e.target.value)} style={selSt} />
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <select value={regPersona} onChange={e => setRegPersona(e.target.value)} style={selSt}>
-                <option value="">Todos los colaboradores</option>
-                {personasOpc.map(e => <option key={e.id} value={e.id}>{nombreCorto(e.fullName)}</option>)}
-              </select>
-              <select value={regProy} onChange={e => setRegProy(e.target.value)} style={selSt}>
-                <option value="">Todos los proyectos</option>
-                {proyOpciones.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-              <span style={{ flex: 1 }} />
-              {puedeCorregir && <span role="button" onClick={() => setCorr({ empId: "", fecha: ahoraTegus().fecha, tipo: "entrada", hora: "", justif: "" })} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>Marcaje manual</span>}
-              <span role="button" onClick={bajarCSV} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>Descargar CSV</span>
-              <span role="button" onClick={imprimirPDF} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: "1px solid transparent", background: ORANGE_DARK, color: "#fff", font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>Imprimir / PDF</span>
-            </div>
+            <select value={regPersona} onChange={e => setRegPersona(e.target.value)} style={{ ...selSt, maxWidth: 210 }}>
+              <option value="">Todos los colaboradores</option>
+              {personasOpc.map(e => <option key={e.id} value={e.id}>{nombreCorto(e.fullName)}</option>)}
+            </select>
+            <select value={regProy} onChange={e => setRegProy(e.target.value)} style={{ ...selSt, maxWidth: 210 }}>
+              <option value="">Todos los proyectos</option>
+              {proyOpciones.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <div style={{ flex: 1 }} />
+            {puedeCorregir && btnR("Marcaje manual", () => setCorr({ empId: "", fecha: ahoraTegus().fecha, tipo: "entrada", hora: "", justif: "" }))}
+            {btnR("CSV", bajarCSV)}
+            {btnR("PDF", imprimirPDF)}
           </div>
-          {/* Resumen del filtro */}
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {[["Registros", rows.length], ["Horas laboradas", fmtHoras(totNetas)], ["Llegadas tarde", totTardes], ["Proyectos", Object.keys(grupos).length]].map(([l, v]) => (
-              <div key={l} className="gt-vidrio" style={{ padding: "10px 18px", minWidth: 120 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: STONE }}>{l}</div>
-                <div style={{ font: "800 22px/1 var(--display)", color: CHARCOAL, marginTop: 4 }}>{v}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+            {[["Registros", rows.length, CHARCOAL], ["Horas laboradas", fmtHoras(totNetas), CHARCOAL], ["Llegadas tarde", totTardes, totTardes ? AMBER : CHARCOAL], ["Proyectos", Object.keys(grupos).length, CHARCOAL]].map(([l, v, c]) => (
+              <div key={l} className="gt-vidrio" style={{ padding: "12px 16px" }}>
+                <div style={{ font: "800 24px/1 var(--display)", color: c, letterSpacing: "-.02em" }}>{v}</div>
+                <div style={{ fontSize: 11.5, color: STONE, marginTop: 5 }}>{l}</div>
               </div>
             ))}
           </div>
-          {regErr.length > 0 && <div style={{ background: "#FEE2E2", border: "1px solid #FCA5A5", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "#991B1B" }}>
-            No se pudieron cargar los marcajes de: <b>{regErr.join(", ")}</b> — el reporte puede estar INCOMPLETO. Revisá la conexión y volvé a elegir el rango para reintentar.
-          </div>}
-          {truncado && <div style={{ background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "#92400E" }}>
-            El rango supera 120 días: se muestra solo hasta el <b>{truncado}</b>. Acortá el rango para ver el resto.
-          </div>}
+          {regErr.length > 0 && <div className="gt-vidrio" style={{ padding: "10px 14px", fontSize: 13, color: RED }}>No se pudieron cargar los marcajes de {regErr.join(", ")}. El reporte puede estar incompleto: revisá la conexión y volvé a elegir el rango.</div>}
+          {truncado && <div className="gt-vidrio" style={{ padding: "10px 14px", fontSize: 13, color: AMBER }}>El rango supera 120 días: se muestra hasta el {truncado}.</div>}
           {regLoading && <div style={{ textAlign: "center", color: STONE, fontSize: 13, padding: 10 }}>Cargando marcajes…</div>}
-          {!regLoading && rows.length === 0 && <div style={{ background: "#fff", border: `1px dashed ${BORDER}`, borderRadius: 16, padding: 30, textAlign: "center", color: STONE, fontSize: 14 }}>
-            No hay marcajes en este rango/filtro. Quien no marcó en el reloj no aparece acá.
-          </div>}
-          {/* Grupos por proyecto */}
+          {!regLoading && rows.length === 0 && <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", color: STONE, fontSize: 14 }}>No hay marcajes en este rango.</div>}
           {Object.keys(grupos).sort().map(proy => {
             const rs = grupos[proy];
-            const sub = rs.reduce((s, r) => s + (r.netas || 0), 0);
+            const sub = rs.reduce((t, r) => t + (r.netas || 0), 0);
             return <div key={proy} className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid rgba(44,42,40,.07)" }}>
-                <span style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{proy}</span>
-                <span style={{ fontSize: 12.5, color: "#5C5853" }}>{rs.length} registro(s) · <b style={{ color: "#166534" }}>{fmtHoras(sub)}</b> laboradas</span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, padding: "12px 18px", borderBottom: "1px solid rgba(44,42,40,.07)" }}>
+                <span style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{proy} <span style={{ color: "#A39C92", fontWeight: 600, fontSize: 12.5 }}>{rs.length}</span></span>
+                <span style={{ fontSize: 12.5, color: STONE }}>{fmtHoras(sub)} laboradas</span>
               </div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
-                  <thead><tr style={{ color: STONE, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                    <th style={{ textAlign: "left", padding: "8px 14px" }}>Fecha</th>
-                    <th style={{ textAlign: "left", padding: "8px 10px" }}>Colaborador</th>
-                    <th style={{ textAlign: "center", padding: "8px 10px" }}>Entrada</th>
-                    <th style={{ textAlign: "center", padding: "8px 10px" }}>Salida</th>
-                    <th style={{ textAlign: "right", padding: "8px 10px" }}>Brutas</th>
-                    <th style={{ textAlign: "right", padding: "8px 10px" }}>Almuerzo</th>
-                    <th style={{ textAlign: "right", padding: "8px 14px" }}>Laboradas</th>
-                  </tr></thead>
-                  <tbody>
-                    {rs.map((r, i) => <tr key={`${r.emp.id}-${r.fecha}`} style={{ borderTop: "1px solid rgba(44,42,40,.06)", background: i % 2 ? "rgba(44,42,40,.02)" : "transparent" }}>
-                      <td style={{ padding: "9px 14px", whiteSpace: "nowrap", color: "#5C5853" }}>{fmtDiaCorto(r.fecha)}</td>
-                      <td style={{ padding: "9px 10px", fontWeight: 700 }}>{nombreCorto(r.emp.fullName)}</td>
-                      <td style={{ padding: "9px 10px", textAlign: "center", whiteSpace: "nowrap" }}>
-                        {r.ent ? (() => { const st = r.ent.tarde ? estiloTarde(r.ent) : null; return (
-                          <span role="button" title="Ver detalle e historial de este marcaje" onClick={() => abrirDetalle(r.ent)} style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700, color: st ? st.hora : "#166534", cursor: "pointer", borderBottom: "1px dotted #C9C1B4" }}>
-                          {r.ent.hora}
-                          {st && <span title={`Llegó ${minTardeMk(r.ent)} min después de su tolerancia — ${st.txt}`} style={{ fontSize: 10, background: st.bg, color: st.fg, borderRadius: 5, padding: "1px 5px", marginLeft: 5, fontWeight: 800 }}>+{minTardeMk(r.ent)}m</span>}
-                          {r.ent.manual && <span title={`MANUAL — colocada por ${r.ent.editadoPor}. Justificación: ${r.ent.justificacion || "—"}`} style={{ fontSize: 9, background: "#EDE9FE", color: "#6D28D9", borderRadius: 5, padding: "1px 5px", marginLeft: 5, fontWeight: 800 }}>MANUAL</span>}
-                          {(r.ent.historial || []).length > 0 && !r.ent.manual && <span title="Este marcaje tiene cambios registrados" style={{ fontSize: 9, background: "#E0E7FF", color: "#3730A3", borderRadius: 5, padding: "1px 5px", marginLeft: 4, fontWeight: 800 }}>✎</span>}
-                        </span>); })() : r.cerrado
-                          ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                              <span style={{ fontSize: 10.5, fontWeight: 800, color: "#B91C1C", background: "#FEE2E2", borderRadius: 5, padding: "2px 7px" }} title="Día cerrado sin entrada: se entiende como NO SE PRESENTÓ (el NSP se marca en la asistencia de GeoTeam)">NO MARCÓ</span>
-                              {puedeCorregir && <span role="button" title="Colocar la entrada manualmente (con justificación)" onClick={() => setCorr({ empId: r.emp.id, fecha: r.fecha, tipo: "entrada", hora: "", justif: "" })} style={{ cursor: "pointer", fontSize: 13, color: ORANGE_DARK, fontWeight: 900 }}>➕</span>}
-                            </span>
-                          : <span style={{ color: "#B8B0A4" }}>—</span>}
-                      </td>
-                      <td style={{ padding: "9px 10px", textAlign: "center" }}>
-                        {r.sal ? <span role="button" title="Ver detalle e historial de este marcaje" onClick={() => abrirDetalle(r.sal)} style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700, color: "#3E6A99", cursor: "pointer", borderBottom: "1px dotted #C9C1B4" }}>
-                          {r.sal.hora}
-                          {r.sal.manual && <span title={`MANUAL — colocada por ${r.sal.editadoPor}. Justificación: ${r.sal.justificacion || "—"}`} style={{ fontSize: 9, background: "#EDE9FE", color: "#6D28D9", borderRadius: 5, padding: "1px 5px", marginLeft: 5, fontWeight: 800 }}>MANUAL</span>}
-                          {(r.sal.historial || []).length > 0 && !r.sal.manual && <span title="Este marcaje tiene cambios registrados" style={{ fontSize: 9, background: "#E0E7FF", color: "#3730A3", borderRadius: 5, padding: "1px 5px", marginLeft: 4, fontWeight: 800 }}>✎</span>}
-                        </span> : r.cerrado
-                          ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                              <span style={{ fontSize: 10.5, fontWeight: 800, color: "#B91C1C", background: "#FEE2E2", borderRadius: 5, padding: "2px 7px" }} title="El colaborador no marcó su salida ese día (el día cierra 11:59 PM)">NO MARCÓ</span>
-                              {puedeCorregir && <span role="button" title="Colocar la salida manualmente (con justificación)" onClick={() => setCorr({ empId: r.emp.id, fecha: r.fecha, tipo: "salida", hora: "", justif: "" })} style={{ cursor: "pointer", fontSize: 13, color: ORANGE_DARK, fontWeight: 900 }}>➕</span>}
-                            </span>
-                          : <span style={{ color: "#B8B0A4" }}>—</span>}
-                        {r.sal && r.sal.comentario && <div title={r.sal.comentario} style={{ fontSize: 10.5, color: "#3E6A99", maxWidth: 200, margin: "2px auto 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.sal.comentario}</div>}
-                        {r.sal && r.sal.manual && r.sal.justificacion && <div title={r.sal.justificacion} style={{ fontSize: 10, color: "#6D28D9", maxWidth: 200, margin: "2px auto 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.sal.justificacion}</div>}
-                      </td>
-                      <td style={{ padding: "9px 10px", textAlign: "right", color: "#5C5853", whiteSpace: "nowrap" }}>{r.brutas != null ? fmtHoras(r.brutas) : "—"}</td>
-                      <td style={{ padding: "9px 10px", textAlign: "right", color: r.almuerzo ? "#B45309" : "#B8B0A4", whiteSpace: "nowrap" }}>{r.brutas != null ? (r.almuerzo ? "−1h 00m" : "—") : "—"}</td>
-                      <td style={{ padding: "9px 14px", textAlign: "right", fontWeight: 900, color: r.netas != null ? "#166534" : r.estado === "en curso" ? "#B45309" : "#B91C1C", whiteSpace: "nowrap" }}>{r.netas != null ? fmtHoras(r.netas) : (r.estado || "—")}</td>
-                    </tr>)}
-                  </tbody>
-                </table>
+              <div style={{ display: "grid", gridTemplateColumns: COLS, gap: 10, padding: "8px 18px", fontSize: 11, fontWeight: 700, color: "#A39C92" }}>
+                {varios && <span>Fecha</span>}<span>Colaborador</span><span>Entrada</span><span>Salida</span><span style={{ textAlign: "right" }}>Horas</span><span style={{ textAlign: "right" }}>Estado</span>
               </div>
+              {rs.map(r => {
+                const st = r.ent && r.ent.tarde ? estiloTarde(r.ent) : null;
+                const ef = (r.emp && emps.find(x => x.id === r.emp.id)) || r.emp;
+                return <div key={`${r.emp.id}-${r.fecha}`} style={{ display: "grid", gridTemplateColumns: COLS, gap: 10, alignItems: "center", padding: "9px 18px", borderTop: "1px solid rgba(44,42,40,.05)" }}>
+                  {varios && <span style={{ fontSize: 12.5, color: STONE }}>{fmtDiaCorto(r.fecha)}</span>}
+                  <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                    {fotos[ef?.photo?.fileId] ? <img src={fotos[ef.photo.fileId]} alt="" style={{ width: 30, height: 30, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} /> : <span style={{ width: 30, height: 30, borderRadius: 10, background: "rgba(44,42,40,.07)", color: STONE, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0 }}>{iniciales(r.emp.fullName)}</span>}
+                    <span style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nombreCorto(r.emp.fullName)}</span>
+                  </span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    {r.ent ? hora(r.ent, st ? st.hora : GREEN) : r.cerrado ? falta(r, "entrada") : <span style={{ color: "#C9C3BA" }}>—</span>}
+                    {st && chipR(`+${minTardeMk(r.ent)} min`, st.fg, st.bg, `Tarde · ${st.txt}`)}
+                  </span>
+                  <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                    <span>{r.sal ? hora(r.sal, "#1D5FAF") : r.cerrado ? falta(r, "salida") : <span style={{ color: "#C9C3BA" }}>—</span>}</span>
+                    {r.sal && r.sal.comentario && <span title={r.sal.comentario} style={{ fontSize: 11, color: STONE, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.sal.comentario}</span>}
+                  </span>
+                  <span title={r.brutas != null ? `${fmtHoras(r.brutas)} brutas${r.almuerzo ? " − 1 h de almuerzo" : ""}` : ""} style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 13, fontWeight: 700, color: r.netas != null ? CHARCOAL : "#C9C3BA" }}>{r.netas != null ? fmtHoras(r.netas) : "—"}</span>
+                  <span style={{ textAlign: "right" }}>{estadoDe(r)}</span>
+                </div>;
+              })}
             </div>;
           })}
-          {rows.length > 0 && <div className="gt-vidrio" style={{ padding: "12px 16px", fontSize: 13.5 }}>
-            <b>TOTAL GENERAL:</b> {rows.length} registro(s) · <b style={{ color: "#166534" }}>{fmtHoras(totNetas)}</b> laboradas · {totTardes} llegada(s) tarde
-          </div>}
+          {rows.length > 0 && <div style={{ fontSize: 11.5, color: "#A39C92", padding: "0 4px" }}>Tocá una hora para ver la foto, la firma y el historial. Las horas descuentan 1 h de almuerzo cuando la jornada cruza el mediodía. Los minutos tarde se cuentan desde que vence la tolerancia de {TOLERANCIA_MIN} min.</div>}
           {/* ── Modal de MARCAJE MANUAL (justificación obligatoria) ── */}
           {corr && <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }} onClick={() => !corrSaving && setCorr(null)}>
             <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 22px", width: "100%", maxWidth: 460, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 20px 60px rgba(44,42,40,0.3)" }}>

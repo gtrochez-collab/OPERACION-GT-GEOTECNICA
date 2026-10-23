@@ -619,8 +619,8 @@ const CURVAS_CUERPO = (
 );
 const CURVAS_CARNET = (
   <svg viewBox={`0 0 ${curvasPath.W} ${curvasPath.H}`} preserveAspectRatio="xMidYMid slice" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
-    <path d={curvasPath.tenues} fill="none" stroke="rgba(255,255,255,.17)" strokeWidth=".7" strokeLinecap="round" />
-    <path d={curvasPath.naranja} fill="none" stroke="rgba(232,118,45,.85)" strokeWidth="1" strokeLinecap="round" />
+    <path d={curvasPath.tenues} fill="none" stroke="rgba(232,118,45,.32)" strokeWidth=".7" strokeLinecap="round" />
+    <path d={curvasPath.naranja} fill="none" stroke="rgba(232,118,45,.9)" strokeWidth="1" strokeLinecap="round" />
   </svg>
 );
 // Fin de contrato de un temporal: texto + color según los días que faltan.

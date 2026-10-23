@@ -1163,6 +1163,23 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Administración/Contabilidad/RRHH → ADMINISTRACIÓN → el resto PLANTEL
   (una tablet de una sola ubicación siempre estampa esa). `UBICACIONES_TABLET`
   (para los NO MARCÓ de Registros) une `ubicacion` + `ubicaciones`.
+  **4ª pasada (23-oct, "no me convence; los botones en otra posición que el
+  resto de GeoTeam; Registros es un chorizote")**: encabezado IGUAL al de
+  GeoTeam/GeoInventory (← en círculo · logo · ícono · GeoClock | usuario +
+  ubicaciones · Cerrar sesión) y debajo PESTAÑAS Reloj · Registros (salir y
+  Registros siguen pidiendo la clave en el kiosco). Reloj a todo el ancho:
+  fichas a la izquierda y a la derecha un panel de vidrio de ALTO COMPLETO
+  (fecha, reloj 62 px, "Marcá tu asistencia", 3 contadores entradas /
+  salidas / tarde y "Últimos marcajes" con scroll). **Registros sin
+  texto**: se retiraron el párrafo y la leyenda "Cómo leer"; una barra de
+  vidrio (Hoy · Esta semana · Este mes · rango · colaborador · proyecto ·
+  Marcaje manual · CSV · PDF), 4 tiles, y por proyecto una lista en grilla
+  (Fecha solo si el rango es de varios días · foto + nombre · Entrada con
+  chip "+N min" · Salida + comentario · Horas · Estado: Completo / En
+  jornada / Sin salida / Sin entrada / No se presentó). Brutas y almuerzo
+  pasaron al tooltip de Horas; "manual" / "editada" van en chiquito junto a
+  la hora; un ausente muestra "—" + "+" (el Estado ya lo dice). Una nota de
+  una línea al pie.
   **2ª pasada del mismo día**: GeoClock lleva `oculto: true` en MODULES (se
   abre desde GeoTeam → Asistencia; la tablet `marcaje` lo sigue viendo porque
   `availableModules` cae a TODOS los permitidos cuando no queda ninguno
