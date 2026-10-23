@@ -771,7 +771,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const [solSub, setSolSub] = useState("");           // "" | vacations | leaves | constancias
   // Hub de ASISTENCIA (23-oct-2026): Asistencia · Llegadas tardías · Horas
   // extras (y el acceso a GeoClock) viven en UNA pestaña con cajas de vidrio.
-  const [asisSub, setAsisSub] = useState("");         // "" | hojas | tardanzas | he
+  const [asisSub, setAsisSubRaw] = useState(() => { try { return sessionStorage.getItem("gt-hr-asis") || ""; } catch { return ""; } });
+  const setAsisSub = (v) => { setAsisSubRaw(v); try { sessionStorage.setItem("gt-hr-asis", v); } catch { /* sin storage */ } };
   // Solo Gerson (admin) da accesos al sistema.
   const puedeAccesos = userRole === "admin";
   const [accesos, setAccesos] = useState(null);     // null = aún no leído
@@ -793,7 +794,10 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const hideSalary = isAnaRH || isPhotoOnly || isOscarTardies;
   const isReadOnly = userRole === "gerencia" || userRole === "costos";
   const [co, setCo] = useState("subterra");
-  const [sec, setSec] = useState("mi");
+  // La sección se recuerda en la sesión: al volver de GeoClock (abierto desde
+  // Asistencia) GeoTeam cae otra vez en Asistencia, no en Mi RRHH.
+  const [sec, setSecRaw] = useState(() => { try { return sessionStorage.getItem("gt-hr-sec") || "mi"; } catch { return "mi"; } });
+  const setSec = (v) => { setSecRaw(v); try { sessionStorage.setItem("gt-hr-sec", v); } catch { /* sin storage */ } };
   // Accesos (2-oct-2026): se leen SOLO al entrar a la pestaña y SOLO con
   // getCloud (un cache viejo podría revivir un acceso desactivado). Va acá
   // arriba, antes del return de "Cargando…" — un hook después de un return
@@ -2160,13 +2164,10 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
 
       {/* Posibles NSP según GeoClock — el humano confirma el 0 */}
       {nspSugeridos.length > 0 && (
-        <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, boxShadow: "inset 3px 0 0 #E8762D" }}>
-          <div style={{ flex: 1, minWidth: 260 }}>
-            <div style={{ font: "700 13px/1.2 var(--sans)", color: CHARCOAL }}>Posibles NSP según GeoClock</div>
-            <div style={{ fontSize: 12, color: "#6E6862", marginTop: 4 }}>Hubo marcaje en la tablet esos días, pero estas personas de plantel / administración no marcaron entrada y su celda sigue vacía. Nada se guarda hasta tocar Guardar.</div>
-            <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {nspSugeridos.map(({ e, dias }) => <span key={e.id} style={{ background: "rgba(44,42,40,.06)", borderRadius: 999, padding: "3px 10px", fontSize: 12, color: CHARCOAL }}><b>{e.fullName}</b> · día{dias.length > 1 ? "s" : ""} {dias.join(", ")}</span>)}
-            </div>
+        <div className="gt-vidrio" title="Hubo marcaje en la tablet esos días y estas personas no marcaron entrada. Vos decidís: marcá 0 y corregí a mano si alguien tenía permiso, vacación o andaba en proyecto. Nada se guarda hasta tocar Guardar." style={{ padding: "10px 16px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, boxShadow: "inset 3px 0 0 #E8762D" }}>
+          <span style={{ font: "700 13px/1.2 var(--sans)", color: CHARCOAL, whiteSpace: "nowrap" }}>Sin marcaje en GeoClock <span style={{ color: "#A39C92", fontWeight: 600 }}>{nspSugeridos.length}</span></span>
+          <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: 6, minWidth: 200 }}>
+            {nspSugeridos.map(({ e, dias }) => <span key={e.id} style={{ background: "rgba(44,42,40,.06)", borderRadius: 999, padding: "3px 10px", fontSize: 12, color: CHARCOAL }}><b>{e.fullName.split(" ").slice(0, 2).join(" ")}</b> · {dias.join(", ")}</span>)}
           </div>
           {btnH("Marcar 0 (NSP)", aplicarNsp, { c: "#B03024", chico: true })}
         </div>

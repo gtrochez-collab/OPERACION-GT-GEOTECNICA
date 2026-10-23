@@ -277,7 +277,7 @@ const SignaturePad = ({ padRef, onInk }) => {
 };
 
 // ── Módulo ────────────────────────────────────────────────────────────
-export default function GeoClockModule({ userRole = "admin", userName, onBack, onLogout }) {
+export default function GeoClockModule({ userRole = "admin", userName, onBack, onLogout, volverA = null }) {
   const [emps, setEmps] = useState([]);
   const [cuads, setCuads] = useState([]);
   const [marks, setMarks] = useState([]);
@@ -328,6 +328,8 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   const padRef = useRef(null);
   const camRef = useRef(null);
   const [camOk, setCamOk] = useState(null);     // null = sin pedir · true · false
+  const [filtroUbic, setFiltroUbic] = useState("");   // búsqueda: pill de ubicación
+  const [letra, setLetra] = useState("");             // búsqueda: índice A–Z
   const idleTimer = useRef(null);
 
   // Reloj en vivo (1 tick por segundo, zona Tegucigalpa)
@@ -917,8 +919,12 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "inherit", color: STONE, background: CREAM, fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoClock…</div>;
 
   const ubicsTablet = ubicacionesDeTablet(tabletDe(userName));
+  // Modo liviano en las tablets kiosk y en equipos flojos (el vidrio con
+  // desenfoque las trababa — Honor/Xiaomi).
+  const liviano = esKiosk || (navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 4;
+
   const pill = (label, onClick, { lleno = false, c = CHARCOAL } = {}) => <button type="button" onClick={onClick} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: lleno ? "1px solid transparent" : "1px solid rgba(44,42,40,.14)", background: lleno ? c : "rgba(255,255,255,.75)", color: lleno ? "#fff" : c, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>;
-  return <div className="gt-root gt-entra-modulo" style={{ minHeight: "100vh", background: "var(--bg)", fontFamily: "var(--sans)", color: CHARCOAL, display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
+  return <div className={`gt-root gt-entra-modulo${liviano ? " gt-liviano" : ""}`} style={{ minHeight: "100vh", background: "var(--bg)", fontFamily: "var(--sans)", color: CHARCOAL, display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
     <style>{GT_CSS}</style>
     <div className="gt-brillo gt-brillo-a" aria-hidden />
     <div className="gt-brillo gt-brillo-b" aria-hidden />
@@ -940,7 +946,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         {view === "registros" ? pill("Volver al reloj", reset, { lleno: true, c: ORANGE_DARK }) : pill("Registros", () => conClave(() => setView("registros")))}
-        {pill("Módulos", () => conClave(onBack))}
+        {pill(volverA ? `← ${volverA}` : "Módulos", () => conClave(onBack))}
         {pill("Salir", () => conClave(onLogout))}
       </div>
     </div>
@@ -958,27 +964,34 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         </div>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Escribí tu nombre…" autoFocus
           style={{ width: "100%", boxSizing: "border-box", padding: "16px 20px", fontSize: 19, borderRadius: 18, border: `1.5px solid ${search ? ORANGE : "rgba(44,42,40,.12)"}`, outline: "none", background: "rgba(255,255,255,.85)", fontFamily: "inherit", color: CHARCOAL, boxShadow: "0 1px 2px rgba(44,42,40,.04)" }} />
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10, marginTop: 16 }}>
-          {resultados.map(e => {
-            const ent = entradaDe(e.id), sal = salidaDe(e.id);
-            const co = COMPANIES[e.company] || { name: e.company, color: STONE };
-            return <button key={e.id} type="button" className="gt-vidrio gt-vidrio-hover" onClick={() => seleccionar(e)}
-              style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", cursor: "pointer", textAlign: "left", fontFamily: "inherit", minHeight: 72 }}>
-              {fotos[e.photo?.fileId]
-                ? <img src={fotos[e.photo.fileId]} alt="" style={{ width: 46, height: 46, borderRadius: 13, objectFit: "cover", flexShrink: 0 }} />
-                : <div style={{ width: 46, height: 46, borderRadius: 13, background: "rgba(44,42,40,.07)", color: STONE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 15, flexShrink: 0 }}>{iniciales(e.fullName)}</div>}
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, color: CHARCOAL, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.fullName}</div>
-                <div style={{ fontSize: 11.5, color: STONE, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.position || co.name}</div>
-                <div style={{ fontSize: 11, marginTop: 3, fontWeight: 700 }}>
-                  {ent ? <span style={{ color: ent.tarde ? AMBER : GREEN }}>Entrada {ent.hora}{ent.tarde ? " · tarde" : ""}</span> : <span style={{ color: "#B5AFA6", fontWeight: 600 }}>Sin marcar hoy</span>}
-                  {sal && <span style={{ color: STONE }}> · Salida {sal.hora}</span>}
-                </div>
-              </div>
-            </button>;
-          })}
-          {resultados.length === 0 && <div className="gt-vidrio" style={{ gridColumn: "1/-1", textAlign: "center", color: STONE, fontSize: 14, padding: 30 }}>No encontramos a nadie con "{search}". Probá con otro nombre o avisale al encargado.</div>}
-        </div>
+        {(() => {
+          const lista = resultados.filter(e => (!filtroUbic || ubicacionDe(e) === filtroUbic) && (!letra || normaliza(e.fullName).startsWith(normaliza(letra))));
+          const letras = [...new Set(resultados.map(e => normaliza(e.fullName).charAt(0).toUpperCase()))].filter(Boolean).sort();
+          const pillF = (label, on, onClick, key) => <button key={key} type="button" onClick={onClick} style={{ minHeight: 34, padding: "6px 12px", borderRadius: 999, border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: on ? CHARCOAL : "rgba(255,255,255,.75)", color: on ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", fontFamily: "inherit" }}>{label}</button>;
+          const nombreCorto = (n) => { const p = String(n || "").trim().split(/\s+/); return p.length >= 3 ? `${p[0]} ${p[2]}` : p.join(" "); };
+          return <>
+            {!search && <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 14 }}>
+              {ubicsTablet.length > 1 && <div style={{ display: "flex", gap: 6 }}>{pillF("Todos", !filtroUbic, () => setFiltroUbic(""), "t")}{ubicsTablet.map(u => pillF(nombreUbicacion(u), filtroUbic === u, () => setFiltroUbic(filtroUbic === u ? "" : u), u))}</div>}
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginLeft: "auto" }}>{letras.map(l => <button key={l} type="button" onClick={() => setLetra(letra === l ? "" : l)} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: letra === l ? ORANGE_DARK : "transparent", color: letra === l ? "#fff" : STONE, font: "700 12px/1 var(--sans)", cursor: "pointer", fontFamily: "inherit" }}>{l}</button>)}</div>
+            </div>}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(128px, 1fr))", gap: 10, marginTop: 14 }}>
+              {lista.map(e => {
+                const ent = entradaDe(e.id), sal = salidaDe(e.id);
+                return <button key={e.id} type="button" className="gt-vidrio gt-vidrio-hover" onClick={() => seleccionar(e)}
+                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "14px 10px 12px", cursor: "pointer", textAlign: "center", fontFamily: "inherit", minHeight: 150 }}>
+                  {fotos[e.photo?.fileId]
+                    ? <img src={fotos[e.photo.fileId]} alt="" style={{ width: 64, height: 64, borderRadius: 20, objectFit: "cover" }} />
+                    : <div style={{ width: 64, height: 64, borderRadius: 20, background: "rgba(44,42,40,.07)", color: STONE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 20 }}>{iniciales(e.fullName)}</div>}
+                  <div style={{ font: "700 13px/1.25 var(--sans)", color: CHARCOAL, minWidth: 0, width: "100%", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{nombreCorto(e.fullName)}</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 5, color: ent ? (ent.tarde ? AMBER : GREEN) : "#B5AFA6" }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: ent ? (ent.tarde ? ORANGE : GREEN) : "#D8D4CE" }} />{ent ? `${ent.hora}${sal ? ` → ${sal.hora}` : ""}` : "Sin marcar"}
+                  </div>
+                </button>;
+              })}
+              {lista.length === 0 && <div className="gt-vidrio" style={{ gridColumn: "1/-1", textAlign: "center", color: STONE, fontSize: 14, padding: 30 }}>{search ? <>No encontramos a nadie con "{search}". Probá con otro nombre o avisale al encargado.</> : "Nadie con este filtro."}</div>}
+            </div>
+          </>;
+        })()}
         {/* Marcajes de hoy (para el encargado) */}
         <div className="gt-vidrio" style={{ marginTop: 22, padding: "12px 16px" }}>
           <div onClick={() => setVerHoy(v => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>

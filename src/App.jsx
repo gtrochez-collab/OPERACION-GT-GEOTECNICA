@@ -128,6 +128,9 @@ const MODULES = [
     // (tablet de administración — SOLO ve este módulo). Gerson supervisa.
     // Lic. Carolina (tesoreria) entra para corregir marcajes manuales.
     roles: ["admin", "coordinador", "tesoreria", "asistente_compras", "logistica", "marcaje"],
+    // 23-oct-2026: GeoClock se abre desde GeoTeam → Asistencia; no sale en el
+    // panel. La tablet (rol marcaje) lo sigue viendo porque es su único módulo.
+    oculto: true,
   },
   {
     id: "geodrill-vault",
@@ -336,6 +339,7 @@ export default function App() {
   // preferido → directo.
   const [saliendo, setSaliendo] = useState(false);
   const salidaRef = useRef(null);   // timer del fade — se cancela en logout/volver
+  const origenModuloRef = useRef(null);   // módulo desde el que se abrió el actual (onAbrirModulo)
   const abrirModulo = (id) => {
     if (saliendo) return;           // doble tap en dos tarjetas: gana el primero
     if (prefiereMenosMovimiento()) { setActiveModule(id); return; }
@@ -366,7 +370,13 @@ export default function App() {
   // ── Modulo activo ──
   // `userKey` = el username (estable, sin acentos): las keys por-usuario
   // (tareas, "visto" de la bandeja de compras) cuelgan de él.
-  const moduleProps = { userRole: user.role, userName: user.label, userKey: user.username, userProyectos: user.proyectos || [], userEmpId: user.empId || null, onBack: () => setActiveModule(null), onLogout: logout, onAbrirModulo: (id) => { if (MODULES.some(m => m.id === id && m.roles.includes(user.role))) setActiveModule(id); } };
+  // Un módulo abierto DESDE otro (GeoTeam → Asistencia → GeoClock) vuelve a
+  // ese módulo con "←", no al panel (23-oct-2026, Gerson: "no me deja regresar").
+  const moduleProps = { userRole: user.role, userName: user.label, userKey: user.username, userProyectos: user.proyectos || [], userEmpId: user.empId || null,
+    onBack: () => { const o = origenModuloRef.current; origenModuloRef.current = null; setActiveModule(o || null); },
+    volverA: origenModuloRef.current ? (MODULES.find(m => m.id === origenModuloRef.current)?.name || null) : null,
+    onLogout: logout,
+    onAbrirModulo: (id) => { if (MODULES.some(m => m.id === id && m.roles.includes(user.role))) { origenModuloRef.current = activeModule; setActiveModule(id); } } };
   // Wrapper con la animación de entrada. key=activeModule para que al cambiar
   // de módulo vuelva a entrar. El transform del keyframe dura 560 ms: los
   // position:fixed del módulo (brillos, modales) se referencian al wrapper
@@ -397,7 +407,8 @@ export default function App() {
   // `oculto` (14-oct-2026): GeoSafety, GeoDrill Vault y Mis Tareas no salen en
   // el panel por ahora. Mis Tareas sigue abriéndose desde la tarjeta TO-DOS de
   // la bienvenida (onAbrirTareas), que no pasa por esta lista.
-  const availableModules = MODULES.filter((m) => m.roles.includes(user.role) && !m.oculto);
+  const permitidos = MODULES.filter((m) => m.roles.includes(user.role));
+  const availableModules = permitidos.some((m) => !m.oculto) ? permitidos.filter((m) => !m.oculto) : permitidos;
 
   // ── Bienvenida del día (todos menos la tablet kiosco de marcaje) ──
   if (!welcomeDone && user.role !== "marcaje") {

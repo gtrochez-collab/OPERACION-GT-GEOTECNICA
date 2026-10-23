@@ -6,6 +6,13 @@
 // los izaría al <head> para siempre y el CSS se filtraría a todos lados.
 // ═══════════════════════════════════════════════════════════════════════════
 export const GT_CSS = `
+/* Modo liviano (23-oct-2026): tablets Android baratas (Honor/Xiaomi) se
+   trababan con el desenfoque del vidrio y las manchas de brillo. Con la
+   clase gt-liviano en el root el vidrio es sólido y no hay brillos. */
+.gt-liviano .gt-vidrio{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(255,255,255,.93)!important}
+.gt-liviano .gt-brillo{display:none!important}
+.gt-liviano *{transition-duration:0s!important}
+
 :root{
   --marca:#2C2A28;          /* carbón Geotecnica */
   --marca-2:#E8762D;        /* naranja Geotecnica */

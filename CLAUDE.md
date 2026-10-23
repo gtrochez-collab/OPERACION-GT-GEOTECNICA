@@ -1157,6 +1157,22 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Administración/Contabilidad/RRHH → ADMINISTRACIÓN → el resto PLANTEL
   (una tablet de una sola ubicación siempre estampa esa). `UBICACIONES_TABLET`
   (para los NO MARCÓ de Registros) une `ubicacion` + `ubicaciones`.
+  **2ª pasada del mismo día**: GeoClock lleva `oculto: true` en MODULES (se
+  abre desde GeoTeam → Asistencia; la tablet `marcaje` lo sigue viendo porque
+  `availableModules` cae a TODOS los permitidos cuando no queda ninguno
+  visible). `onAbrirModulo` guarda el módulo de origen (`origenModuloRef` en
+  App) y el `onBack` del módulo abierto vuelve AHÍ (el botón dice "← GeoTeam",
+  prop `volverA`); GeoTeam recuerda `sec`/`asisSub` en sessionStorage
+  (`gt-hr-sec`, `gt-hr-asis`) para caer otra vez en Asistencia. La lista de
+  personas del reloj son FICHAS de foto (64 px, nombre corto en 2 líneas,
+  punto verde/naranja con la hora o "Sin marcar"), con pills de ubicación
+  (Todos · Administración · Plantel, solo si la tablet cubre varias) y un
+  índice A–Z; al escribir se filtra como siempre. **Modo liviano**
+  (`gt-liviano` en GT_CSS: vidrio sólido, sin brillos ni transiciones) en
+  las tablets kiosk y en equipos con ≤4 núcleos o ≤4 GB — las Honor/Xiaomi
+  se trababan con el desenfoque. El aviso de NSP sugeridos de la hoja quedó
+  en UNA línea ("Sin marcaje en GeoClock · N" + chips + botón; la explicación
+  va en el tooltip).
   **Dashboard gerencial + KPI's (ago 2026, estilo IsTeam)**: `renderDashboard`
   reescrito — `statsDeMes(periodo)` calcula presencia diaria/NSP/INC/VAC/costo
   MO por proyecto desde hr-atts2 (calcCostoMO) + planilla real (hr-pays) +

@@ -500,7 +500,7 @@ export function BandejaRRHH({ user, emps, solicitudes, fotoDe, onAbrir, onNueva,
       <div style={{ flex: 1 }} />
       {btn("+ Nueva solicitud", () => onNueva("vacaciones"), { c: ORANGE_DARK, lleno: true, chico: true })}
     </div>
-    {lista.length === 0 ? <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", fontSize: 13, color: "#6E6862" }}>{estado === "abiertas" ? "Nada por decidir. 🙌" : "Sin solicitudes."}</div>
+    {lista.length === 0 ? <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", fontSize: 13, color: "#6E6862" }}>{estado === "abiertas" ? "Nada por decidir." : "Sin solicitudes."}</div>
       : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{lista.slice(0, 120).map(s => <FilaSolicitud key={s.id} s={s} emps={emps} fotoDe={fotoDe} hoy={hoy} onClick={() => onAbrir(s)} />)}</div>}
   </div>;
 }
