@@ -507,14 +507,14 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
   const esHero = fase === "hero";
 
   return (
-    <div className="gt-ui" style={{ display: "flex", flexDirection: "column", position: "relative", overflow: "hidden", height: esHero ? "100dvh" : undefined, opacity: saliendo ? 0 : 1, pointerEvents: saliendo ? "none" : "auto", transition: "opacity 260ms var(--curva)" }}>
+    <div className="gt-ui" style={{ display: "flex", flexDirection: "column", position: "relative", overflow: "hidden", height: esHero ? "100dvh" : undefined, minHeight: "100dvh", opacity: saliendo ? 0 : 1, pointerEvents: saliendo ? "none" : "auto", transition: "opacity 260ms var(--curva)" }}>
       <style>{UI_CSS}</style>
       <div className="gt-brillo gt-brillo-a" aria-hidden />
       <div className="gt-brillo gt-brillo-b" aria-hidden />
 
       {/* Header estilo IST: [← bienvenida] [tuerquita] [logo] · usuario a la derecha.
           A todo el ancho (SIN maxWidth): Gerson lo quiere pegado a la esquina. */}
-      <header style={{ position: "relative", zIndex: 2, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "18px 24px", width: "100%", boxSizing: "border-box" }}>
+      <header style={{ position: "relative", zIndex: 2, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "clamp(8px,1.6vh,18px) 24px", width: "100%", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {user.role !== "marcaje" && (
             <button className="gt-circulo" onClick={onVolverBienvenida} title="Volver a la bienvenida" aria-label="Volver a la bienvenida"><IconoFlecha /></button>
@@ -529,12 +529,12 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
       </header>
 
       {/* Título: nace centrado XL y VIAJA a su lugar (TituloHero mide y anima) */}
-      <div style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", boxSizing: "border-box", padding: "40px 28px 8px" }}>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", boxSizing: "border-box", padding: "clamp(6px,3vh,40px) 28px 0" }}>
         <TituloHero esHero={esHero} escala={1.4}>
           <div className="gt-label gt-aparece" style={{ color: "var(--text-3)" }}>
             GeoCore · Grupo Geotecnica · Honduras
           </div>
-          <h1 className="gt-sube" style={{ font: "800 clamp(40px,5vw,64px)/1.05 var(--display)", letterSpacing: "-.025em", color: "var(--text)", margin: "14px 0 0" }}>
+          <h1 className="gt-sube" style={{ font: "800 clamp(32px,min(5vw,7.5vh),64px)/1.05 var(--display)", letterSpacing: "-.025em", color: "var(--text)", margin: "clamp(6px,1.4vh,14px) 0 0" }}>
             Panel de <span style={{ color: "var(--marca-2)" }}>Control</span>
           </h1>
         </TituloHero>
@@ -544,8 +544,8 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
           visibility+inert (no opacity en el padre): un padre con opacity <1
           apaga el backdrop-filter del vidrio, y opacity 0 dejaba las
           tarjetas alcanzables con Tab+Enter. */}
-      <main inert={esHero || undefined} style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", padding: "34px 28px 64px", boxSizing: "border-box", flex: 1, visibility: esHero ? "hidden" : "visible" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(340px,100%), 1fr))", gap: 18 }}>
+      <main inert={esHero || undefined} style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", padding: "clamp(12px,3vh,34px) 28px 8px", boxSizing: "border-box", flex: 1, visibility: esHero ? "hidden" : "visible" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(300px,100%), 1fr))", gap: "clamp(10px,1.8vh,18px)" }}>
           {availableModules.map((m, i) => (
             <PanelCard key={m.id} m={m} index={i} animar={!esHero} onOpen={() => onOpen(m.id)} badge={badges[m.id] || 0} />
           ))}
@@ -554,7 +554,7 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
 
       {/* Footer */}
       {!esHero && (
-        <footer className="gt-aparece" style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", padding: "20px 28px 26px", boxSizing: "border-box", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, color: "var(--text-3)", fontSize: 12 }}>
+        <footer className="gt-aparece" style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", padding: "clamp(6px,1.4vh,20px) 28px clamp(8px,2vh,26px)", boxSizing: "border-box", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, color: "var(--text-3)", fontSize: 12 }}>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }}><GeoCoreSello size={20} fontSize={13} /><span>© Grupo Geotecnica</span></div>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: syncOk ? "#059669" : BRAND.red }} />
@@ -639,15 +639,15 @@ function PanelCard({ m, onOpen, index = 0, animar = true, badge = 0 }) {
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
-      style={{ padding: "26px 26px 24px", cursor: "pointer", animationDelay: `${90 + index * 60}ms`, outline: "none", position: "relative" }}
+      style={{ padding: "clamp(14px,2.6vh,26px) 24px clamp(12px,2.4vh,24px)", cursor: "pointer", animationDelay: `${90 + index * 60}ms`, outline: "none", position: "relative" }}
     >
       <div
         style={{
-          width: 54, height: 54, borderRadius: 16,
+          width: "clamp(38px,6vh,54px)", height: "clamp(38px,6vh,54px)", borderRadius: 14,
           background: hover ? "rgba(232,118,45,.14)" : "rgba(44,42,40,.06)",
           color: hover ? "var(--marca-2)" : "var(--text-3)",
           display: "flex", alignItems: "center", justifyContent: "center",
-          marginBottom: 20,
+          marginBottom: "clamp(8px,2vh,20px)",
           transition: "transform var(--mov-base) var(--curva), background var(--mov-base) var(--curva), color var(--mov-base) var(--curva)",
           transform: hover ? "scale(1.06)" : "scale(1)",
         }}
@@ -657,10 +657,10 @@ function PanelCard({ m, onOpen, index = 0, animar = true, badge = 0 }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         {/* Título en el MISMO gris que el icono (pedido 31-ago: simetría);
             el hover pinta título+icono+flecha de naranja a la vez. */}
-        <div style={{ font: "800 24px/1.2 var(--display)", letterSpacing: "-.015em", color: hover ? "var(--marca-2)" : "var(--text-3)", transition: "color var(--mov-base) var(--curva)" }}>{m.name}</div>
+        <div style={{ font: "800 clamp(18px,3vh,24px)/1.2 var(--display)", letterSpacing: "-.015em", color: hover ? "var(--marca-2)" : "var(--text-3)", transition: "color var(--mov-base) var(--curva)" }}>{m.name}</div>
         <span aria-hidden style={{ fontSize: 20, color: hover ? "var(--marca-2)" : "var(--text-faint)", transition: "transform var(--mov-base) var(--curva), color var(--mov-base)", transform: hover ? "translateX(4px)" : "translateX(0)" }}>→</span>
       </div>
-      <div style={{ font: "400 14px/1.5 var(--sans)", color: "var(--text-2)", marginTop: 6 }}>{m.desc}</div>
+      <div style={{ font: "400 clamp(12.5px,1.9vh,14px)/1.4 var(--sans)", color: "var(--text-2)", marginTop: 4 }}>{m.desc}</div>
     </div>
   );
 }
