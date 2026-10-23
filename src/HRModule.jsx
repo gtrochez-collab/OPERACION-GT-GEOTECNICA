@@ -578,11 +578,49 @@ const NavBtn = ({ children, onClick, style: sx }) => (
 // info". A NIVEL DE MÓDULO (definidos adentro se remontarían en cada render).
 const CT_LABEL = { permanent: "Permanente", temporary: "Temporal", honorarios: "Honorarios" };
 const CT_COLOR = { permanent: CHARCOAL, temporary: ORANGE_DARK, honorarios: "#6E6862" };
+// Curvas de nivel del carnet (23-oct-2026, Gerson: "ponele la topografía del
+// login"): el mismo ruido + marching squares del fondo del login, pero
+// calculado UNA vez y dibujado como un <path> SVG estático (sin canvas, así
+// el carnet que viaja/voltea no cuesta nada). Los niveles de abajo van en
+// blanco tenue y UNO en naranja, como el resplandor del login.
+const curvasDe = (W, H, N, M, seed, niveles, nivelNaranja) => {
+  // celdas del muestreo N×M sobre un lienzo W×H
+  const perm = (() => { const p = [...Array(256).keys()]; let sd = seed; for (let i = 255; i > 0; i--) { sd = (sd * 16807) % 2147483647; const j = sd % (i + 1); [p[i], p[j]] = [p[j], p[i]]; } const o = new Uint8Array(512); for (let i = 0; i < 512; i++) o[i] = p[i & 255]; return o; })();
+  const fade = (t) => t * t * (3 - 2 * t);
+  const n2 = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), X = xi & 255, Y = yi & 255, xf = x - xi, yf = y - yi; const h = (a, b) => perm[perm[(X + a) & 255] + ((Y + b) & 255)] / 255; const u = fade(xf), v = fade(yf); return (h(0, 0) * (1 - u) + h(1, 0) * u) * (1 - v) + (h(0, 1) * (1 - u) + h(1, 1) * u) * v; };
+  const f = (x, y) => n2(x, y) * .6 + n2(x * 2.1 + 7.3, y * 2.1 + 3.1) * .3 + n2(x * 4.4 + 1.7, y * 4.4 + 9.2) * .1;
+  const g = []; for (let j = 0; j <= M; j++) { g[j] = []; for (let i = 0; i <= N; i++) g[j][i] = f(i * 0.11, j * 0.19); }
+  const cw = W / N, ch = H / M;
+  const nivel = (lv) => {
+    let d = "";
+    const lerp = (a, b, va, vb) => (lv - va) / (vb - va || 1e-9) * (b - a) + a;
+    for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) {
+      const a = g[j][i], b = g[j][i + 1], c = g[j + 1][i + 1], dd = g[j + 1][i];
+      const x0 = i * cw, x1 = (i + 1) * cw, y0 = j * ch, y1 = (j + 1) * ch;
+      const idx = (a > lv ? 8 : 0) | (b > lv ? 4 : 0) | (c > lv ? 2 : 0) | (dd > lv ? 1 : 0);
+      if (idx === 0 || idx === 15) continue;
+      const T = [lerp(x0, x1, a, b), y0], R = [x1, lerp(y0, y1, b, c)], B = [lerp(x0, x1, dd, c), y1], L = [x0, lerp(y0, y1, a, dd)];
+      const seg = { 1: [L, B], 2: [B, R], 3: [L, R], 4: [T, R], 5: [T, L, B, R], 6: [T, B], 7: [T, L], 8: [T, L], 9: [T, B], 10: [T, R, L, B], 11: [T, R], 12: [L, R], 13: [B, R], 14: [L, B] }[idx];
+      for (let k = 0; k < seg.length; k += 2) d += `M${seg[k][0].toFixed(1)} ${seg[k][1].toFixed(1)}L${seg[k + 1][0].toFixed(1)} ${seg[k + 1][1].toFixed(1)}`;
+    }
+    return d;
+  };
+  return { tenues: niveles.map(nivel).join(""), naranja: nivelNaranja != null ? nivel(nivelNaranja) : "", W, H };
+};
+const curvasPath = curvasDe(240, 70, 56, 17, 20261023, [.34, .40, .46, .52, .58, .64], .49);
+// Cuerpo blanco del carnet: las mismas curvas pero en NARANJA tenue, como el
+// resplandor del login (pedido de Gerson, 23-oct).
+const curvasCuerpo = curvasDe(240, 200, 60, 50, 20261024, [.30, .36, .42, .48, .54, .60, .66, .72], .51);
+const CURVAS_CUERPO = (
+  <svg viewBox={`0 0 ${curvasCuerpo.W} ${curvasCuerpo.H}`} preserveAspectRatio="xMidYMid slice" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+    <path d={curvasCuerpo.tenues} fill="none" stroke="rgba(232,118,45,.13)" strokeWidth=".6" strokeLinecap="round" />
+    <path d={curvasCuerpo.naranja} fill="none" stroke="rgba(232,118,45,.30)" strokeWidth=".9" strokeLinecap="round" />
+  </svg>
+);
 const CURVAS_CARNET = (
-  <svg viewBox="0 0 240 70" preserveAspectRatio="none" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
-    <path d="M-10 52c40-26 70-26 110-6s80 18 150-14" fill="none" stroke="rgba(232,118,45,.55)" strokeWidth="2" />
-    <path d="M-10 36c40-26 70-26 110-6s80 18 150-14" fill="none" stroke="rgba(255,255,255,.16)" strokeWidth="1.5" />
-    <path d="M-10 20c40-26 70-26 110-6s80 18 150-14" fill="none" stroke="rgba(255,255,255,.09)" strokeWidth="1.5" />
+  <svg viewBox={`0 0 ${curvasPath.W} ${curvasPath.H}`} preserveAspectRatio="xMidYMid slice" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+    <path d={curvasPath.tenues} fill="none" stroke="rgba(255,255,255,.17)" strokeWidth=".7" strokeLinecap="round" />
+    <path d={curvasPath.naranja} fill="none" stroke="rgba(232,118,45,.85)" strokeWidth="1" strokeLinecap="round" />
   </svg>
 );
 // Fin de contrato de un temporal: texto + color según los días que faltan.
@@ -598,7 +636,8 @@ function CarnetFrente({ e, foto, empresa, grande = false }) {
   const activo = e.status === "active";
   const fin = finContratoDe(e);
   const s = grande ? 1.45 : 1;
-  return <div style={{ display: "flex", flexDirection: "column", height: "100%", borderRadius: "inherit", overflow: "hidden" }}>
+  return <div style={{ display: "flex", flexDirection: "column", height: "100%", borderRadius: "inherit", overflow: "hidden", position: "relative" }}>
+    {CURVAS_CUERPO}
     <div style={{ position: "relative", height: 62 * s, flexShrink: 0, background: "linear-gradient(135deg,#2C2A28 0%,#3A3633 100%)", padding: `${10 * s}px ${14 * s}px`, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
       {CURVAS_CARNET}
       <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 7 * s }}>
