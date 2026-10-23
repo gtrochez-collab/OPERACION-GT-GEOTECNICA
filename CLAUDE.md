@@ -1173,6 +1173,16 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   se trababan con el desenfoque. El aviso de NSP sugeridos de la hoja quedó
   en UNA línea ("Sin marcaje en GeoClock · N" + chips + botón; la explicación
   va en el tooltip).
+  **3ª pasada (23-oct, "aprovechemos el ancho y la tablet; la hora grande
+  en un cuadradito a la derecha")**: la búsqueda del reloj es a DOS
+  columnas desde 1000 px (`ancho` por `resize`): izquierda buscador +
+  filtros + fichas (112 px, foto 56); derecha una tarjeta de vidrio
+  pegajosa con la fecha en mayúsculas chicas, el reloj corriendo (58 px,
+  segundos en naranja), "Marcá tu asistencia", "Hay que dar el mejor de los
+  esfuerzos hoy." y el conteo de entradas/salidas del día + quincena +
+  ubicaciones. En la tablet en vertical la misma tarjeta va ARRIBA como
+  franja (texto a la izquierda, reloj a la derecha). El reloj del
+  encabezado solo aparece fuera de la búsqueda (compacto).
   **Dashboard gerencial + KPI's (ago 2026, estilo IsTeam)**: `renderDashboard`
   reescrito — `statsDeMes(periodo)` calcula presencia diaria/NSP/INC/VAC/costo
   MO por proyecto desde hr-atts2 (calcCostoMO) + planilla real (hr-pays) +

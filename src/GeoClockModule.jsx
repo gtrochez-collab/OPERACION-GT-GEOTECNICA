@@ -328,6 +328,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   const padRef = useRef(null);
   const camRef = useRef(null);
   const [camOk, setCamOk] = useState(null);     // null = sin pedir · true · false
+  const [ancho, setAncho] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
   const [filtroUbic, setFiltroUbic] = useState("");   // búsqueda: pill de ubicación
   const [letra, setLetra] = useState("");             // búsqueda: índice A–Z
   const idleTimer = useRef(null);
@@ -548,6 +549,8 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
     return { rows, grupos, proyOpciones, totNetas, totTardes, truncado };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [regMarks, regDesde, regHasta, regPersona, regProy, emps, cuads, now.fecha]);
+
+  useEffect(() => { const f = () => setAncho(window.innerWidth); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
 
   const reset = () => {
     setView("search"); setSel(null); setSearch(""); setExplicacion("");
@@ -938,12 +941,12 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
           <div style={{ fontSize: 11.5, color: STONE, marginTop: 3 }}>{ubicsTablet.length ? ubicsTablet.map(nombreUbicacion).join(" · ") : (userName || "Grupo Geotecnica")}</div>
         </div>
       </div>
-      <div style={{ textAlign: "right" }}>
-        <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 34, lineHeight: 1, color: CHARCOAL, letterSpacing: "-.02em" }}>
-          {reloj.txt}<span style={{ fontSize: 18, color: ORANGE }}>:{reloj.seg}</span> <span style={{ fontSize: 15, color: STONE, fontWeight: 600 }}>{reloj.ampm}</span>
+      {view !== "search" && <div style={{ textAlign: "right" }}>
+        <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 26, lineHeight: 1, color: CHARCOAL, letterSpacing: "-.02em" }}>
+          {reloj.txt}<span style={{ fontSize: 14, color: ORANGE }}>:{reloj.seg}</span> <span style={{ fontSize: 13, color: STONE, fontWeight: 600 }}>{reloj.ampm}</span>
         </div>
-        <div style={{ fontSize: 12, color: STONE, marginTop: 3 }}>{fechaLarga(now.fecha, now.dow)} · {q.quincena} {q.periodo}</div>
-      </div>
+        <div style={{ fontSize: 11.5, color: STONE, marginTop: 3 }}>{fechaLarga(now.fecha, now.dow)} · {q.quincena} {q.periodo}</div>
+      </div>}
       <div style={{ display: "flex", gap: 8 }}>
         {view === "registros" ? pill("Volver al reloj", reset, { lleno: true, c: ORANGE_DARK }) : pill("Registros", () => conClave(() => setView("registros")))}
         {pill(volverA ? `← ${volverA}` : "Módulos", () => conClave(onBack))}
@@ -951,19 +954,40 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       </div>
     </div>
 
-    <div style={{ position: "relative", zIndex: 1, flex: 1, maxWidth: 900, width: "100%", margin: "0 auto", padding: "22px 18px 40px", boxSizing: "border-box" }}>
+    <div style={{ position: "relative", zIndex: 1, flex: 1, maxWidth: view === "search" ? 1320 : 900, width: "100%", margin: "0 auto", padding: "18px 18px 40px", boxSizing: "border-box" }}>
       {loadErr && <div className="gt-vidrio" style={{ padding: "12px 16px", fontSize: 13, color: RED, marginBottom: 14 }}>
         No se pudo cargar la lista de personal desde la nube. Revisá la conexión y tocá <b onClick={loadAll} style={{ cursor: "pointer", textDecoration: "underline" }}>reintentar</b>.
       </div>}
 
       {/* ── BÚSQUEDA ── */}
-      {view === "search" && <div>
-        <div style={{ textAlign: "center", margin: "4px 0 18px" }}>
-          <div style={{ font: "800 28px/1.15 var(--display)", color: CHARCOAL, letterSpacing: "-.02em" }}>Marcá tu asistencia</div>
-          <div style={{ fontSize: 14, color: STONE, marginTop: 6 }}>Buscá tu nombre, mirá a la cámara y registrá tu entrada o salida.</div>
-        </div>
+      {view === "search" && (() => {
+        const dos = ancho >= 1000;
+        const nEnt = marksHoy.filter(mk => mk.tipo === "entrada").length, nSal = marksHoy.filter(mk => mk.tipo === "salida").length;
+        // Tarjeta del reloj: a la derecha en pantallas anchas; arriba, como
+        // una franja, en la tablet en vertical.
+        const tarjetaReloj = <div className="gt-vidrio" style={{ padding: dos ? "24px 24px 20px" : "16px 20px", display: "flex", flexDirection: dos ? "column" : "row", alignItems: dos ? "stretch" : "center", justifyContent: "space-between", gap: dos ? 14 : 18, position: dos ? "sticky" : "static", top: 16 }}>
+          <div style={{ order: dos ? 2 : 1, minWidth: 0 }}>
+            <div style={{ font: `800 ${dos ? 24 : 22}px/1.1 var(--display)`, color: CHARCOAL, letterSpacing: "-.02em" }}>Marcá tu asistencia</div>
+            <div style={{ fontSize: 13.5, color: STONE, marginTop: 6, lineHeight: 1.45 }}>Hay que dar el mejor de los esfuerzos hoy.</div>
+            {!dos && <div style={{ fontSize: 12, color: "#A39C92", marginTop: 8 }}>{nEnt} entrada{nEnt === 1 ? "" : "s"} · {nSal} salida{nSal === 1 ? "" : "s"} hoy</div>}
+          </div>
+          <div style={{ order: dos ? 1 : 2, textAlign: dos ? "left" : "right", flexShrink: 0 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "#A39C92" }}>{fechaLarga(now.fecha, now.dow)}</div>
+            <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: dos ? 58 : 44, lineHeight: 1, color: CHARCOAL, letterSpacing: "-.03em", marginTop: 6, whiteSpace: "nowrap" }}>
+              {reloj.txt}<span style={{ fontSize: dos ? 26 : 20, color: ORANGE }}>:{reloj.seg}</span>
+              <span style={{ fontSize: dos ? 18 : 15, color: STONE, fontWeight: 600, marginLeft: 8 }}>{reloj.ampm}</span>
+            </div>
+          </div>
+          {dos && <div style={{ order: 3, borderTop: "1px solid rgba(44,42,40,.08)", paddingTop: 12, display: "flex", flexDirection: "column", gap: 6, fontSize: 12.5, color: STONE }}>
+            <div><b style={{ color: CHARCOAL }}>{nEnt}</b> entrada{nEnt === 1 ? "" : "s"} · <b style={{ color: CHARCOAL }}>{nSal}</b> salida{nSal === 1 ? "" : "s"} hoy</div>
+            <div>{q.quincena} {q.periodo}{ubicsTablet.length ? ` · ${ubicsTablet.map(nombreUbicacion).join(" · ")}` : ""}</div>
+          </div>}
+        </div>;
+        return <div style={{ display: "grid", gridTemplateColumns: dos ? "minmax(0, 1fr) 320px" : "minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
+        {!dos && tarjetaReloj}
+        <div>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Escribí tu nombre…" autoFocus
-          style={{ width: "100%", boxSizing: "border-box", padding: "16px 20px", fontSize: 19, borderRadius: 18, border: `1.5px solid ${search ? ORANGE : "rgba(44,42,40,.12)"}`, outline: "none", background: "rgba(255,255,255,.85)", fontFamily: "inherit", color: CHARCOAL, boxShadow: "0 1px 2px rgba(44,42,40,.04)" }} />
+          style={{ width: "100%", boxSizing: "border-box", padding: "14px 18px", fontSize: 18, borderRadius: 16, border: `1.5px solid ${search ? ORANGE : "rgba(44,42,40,.12)"}`, outline: "none", background: "rgba(255,255,255,.85)", fontFamily: "inherit", color: CHARCOAL, boxShadow: "0 1px 2px rgba(44,42,40,.04)" }} />
         {(() => {
           const lista = resultados.filter(e => (!filtroUbic || ubicacionDe(e) === filtroUbic) && (!letra || normaliza(e.fullName).startsWith(normaliza(letra))));
           const letras = [...new Set(resultados.map(e => normaliza(e.fullName).charAt(0).toUpperCase()))].filter(Boolean).sort();
@@ -974,15 +998,15 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
               {ubicsTablet.length > 1 && <div style={{ display: "flex", gap: 6 }}>{pillF("Todos", !filtroUbic, () => setFiltroUbic(""), "t")}{ubicsTablet.map(u => pillF(nombreUbicacion(u), filtroUbic === u, () => setFiltroUbic(filtroUbic === u ? "" : u), u))}</div>}
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginLeft: "auto" }}>{letras.map(l => <button key={l} type="button" onClick={() => setLetra(letra === l ? "" : l)} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: letra === l ? ORANGE_DARK : "transparent", color: letra === l ? "#fff" : STONE, font: "700 12px/1 var(--sans)", cursor: "pointer", fontFamily: "inherit" }}>{l}</button>)}</div>
             </div>}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(128px, 1fr))", gap: 10, marginTop: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(112px, 1fr))", gap: 8, marginTop: 12 }}>
               {lista.map(e => {
                 const ent = entradaDe(e.id), sal = salidaDe(e.id);
                 return <button key={e.id} type="button" className="gt-vidrio gt-vidrio-hover" onClick={() => seleccionar(e)}
-                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "14px 10px 12px", cursor: "pointer", textAlign: "center", fontFamily: "inherit", minHeight: 150 }}>
+                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, padding: "12px 8px 10px", cursor: "pointer", textAlign: "center", fontFamily: "inherit", minHeight: 132 }}>
                   {fotos[e.photo?.fileId]
-                    ? <img src={fotos[e.photo.fileId]} alt="" style={{ width: 64, height: 64, borderRadius: 20, objectFit: "cover" }} />
-                    : <div style={{ width: 64, height: 64, borderRadius: 20, background: "rgba(44,42,40,.07)", color: STONE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 20 }}>{iniciales(e.fullName)}</div>}
-                  <div style={{ font: "700 13px/1.25 var(--sans)", color: CHARCOAL, minWidth: 0, width: "100%", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{nombreCorto(e.fullName)}</div>
+                    ? <img src={fotos[e.photo.fileId]} alt="" style={{ width: 56, height: 56, borderRadius: 18, objectFit: "cover" }} />
+                    : <div style={{ width: 56, height: 56, borderRadius: 18, background: "rgba(44,42,40,.07)", color: STONE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 18 }}>{iniciales(e.fullName)}</div>}
+                  <div style={{ font: "700 12.5px/1.25 var(--sans)", color: CHARCOAL, minWidth: 0, width: "100%", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{nombreCorto(e.fullName)}</div>
                   <div style={{ fontSize: 11.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 5, color: ent ? (ent.tarde ? AMBER : GREEN) : "#B5AFA6" }}>
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: ent ? (ent.tarde ? ORANGE : GREEN) : "#D8D4CE" }} />{ent ? `${ent.hora}${sal ? ` → ${sal.hora}` : ""}` : "Sin marcar"}
                   </div>
@@ -1011,7 +1035,10 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             {marksHoy.length === 0 && <div style={{ fontSize: 12, color: STONE }}>Nadie ha marcado todavía.</div>}
           </div>}
         </div>
-      </div>}
+        </div>
+        {dos && tarjetaReloj}
+        </div>;
+      })()}
 
       {/* ── PERSONA: marcar ── */}
       {view === "person" && selEmp && (() => {
