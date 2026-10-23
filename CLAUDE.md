@@ -100,6 +100,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
     los contenedores ocultos usan visibility+inert, NO opacity (un padre con
     opacity<1 apaga el backdrop-filter del vidrio y opacity 0 dejaba
     tarjetas alcanzables con Tab+Enter).
+  - **Panel sin scroll (23-oct-2026, "que todo quepa en la pantalla, incluso el
+    pie, en el monitor y en la Surface chica")**: header, título, tarjetas y pie
+    usan `clamp(..., vh, ...)` en paddings, gaps, ícono, título y descripción
+    (`PanelCard`, `PanelControl`), grilla `minmax(300px)` y `minHeight: 100dvh`
+    en la raíz (el pie queda abajo). Verificado a 1280×680 y 1368×912: sin
+    scroll con 7 módulos.
   - **Entrada a módulos (3-sep)**: `abrirModulo(id)` desvanece el panel
     260 ms (`saliendo` → opacity 0 + scale 1.012 en el root de
     PanelControl) y recién ahí monta el módulo envuelto en
