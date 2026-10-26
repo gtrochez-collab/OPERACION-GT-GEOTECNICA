@@ -104,7 +104,9 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); json.dump\\(d[0]['value'], open\\('/private/tmp/claude-501/-Users-gersontrochez-MODULO-RRHH/f6d20046-3d94-437e-814d-411eae71af31/scratchpad/mq-purchases-backup-$\\(date +%Y%m%d-%H%M\\).json','w'\\), indent=1\\); print\\('backup ok:', len\\(d[0]['value']\\), 'solicitudes'\\)\")",
       "Bash(sed -n 200/280p /dev/null; sed -n '200,290p' \"/Users/gersontrochez/MODULO RRHH/src/supabase.js\")",
       "Bash(curl -s 'https://bvwqtfhezfgafwjcgrpv.supabase.co/rest/v1/app_data?key=eq.cp-purchases&select=value' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ2d3F0ZmhlemZnYWZ3amNncnB2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDc5NjYsImV4cCI6MjA5MTQyMzk2Nn0.EYcJBnYRnQRCzFwidfsCkaEGHGlDEAAvlsX5BrYNPRU' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ2d3F0ZmhlemZnYWZ3amNncnB2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NDc5NjYsImV4cCI6MjA5MTQyMzk2Nn0.EYcJBnYRnQRCzFwidfsCkaEGHGlDEAAvlsX5BrYNPRU')",
-      "Bash(node /private/tmp/claude-501/-Users-gersontrochez-MODULO-RRHH/f6d20046-3d94-437e-814d-411eae71af31/scratchpad/check-ids.mjs)"
+      "Bash(node /private/tmp/claude-501/-Users-gersontrochez-MODULO-RRHH/f6d20046-3d94-437e-814d-411eae71af31/scratchpad/check-ids.mjs)",
+      "Bash(npm test *)",
+      "Bash(git fetch *)"
     ]
   }
 }

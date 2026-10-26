@@ -1607,6 +1607,11 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   30-sep: Gravín 3/8 (L 27,520, con ISV) y Arena de río (L 29,600, exento),
   32 m3 cada uno, como sustitutos del concreto premezclado. A futuro Gerson
   quiere "materiales permitidos" por partida en el presupuesto (aún NO).
+  **P.U. REAL por ítem (26-oct-2026)**: `precioUnitarioReal(movs)` en
+  `resumenPresupuesto` = (comprometido + ejecutado) ÷ cantidad comprada, solo
+  de las líneas con cantidad en la unidad de la partida (`cantidadPartida`;
+  sustitutos y líneas manuales no cuentan). En Proyectos sale "Real $ X /
+  unidad (±N %)": verde igual o abajo del P.U. del PM, rojo si va +3 % arriba.
   **Dashboard v4 (25-sep-2026)**: la columna del medio (una tarjeta con
   anillo POR proyecto, apiladas) no escalaba — "ahorita son 2 pero serán
   más" — y con nombres largos el título se encimaba con el anillo. La
@@ -2106,6 +2111,11 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   herramientas (los individuales comunes ya tienen Bueno/Regular/Malo); se
   elige al agregar (default Nuevo, se recuerda para el siguiente), chip en la
   ficha y editable en Editar. Los artículos viejos no la traen.
+  **Dar salida (26-oct-2026)**: botón carbón junto a Agregar en Inicio →
+  `SalidaPickerImpl` (escanear QR o buscar; solo lo que esa persona puede
+  sacar) → abre la ficha con la salida ya desplegada (`accionInicial`;
+  individuales abren Mover). "Tus ubicaciones" ya NO se excluyen de su grupo
+  (el Vault sale en Almacén y bodegas aunque seas su responsable).
   **Grupos plegables (14-oct-2026)**: en Inicio, "Tus ubicaciones", "Almacén
   y bodegas", "Oficinas de plantel" y "Proyectos" se compactan tocando su
   título (chevron; `cerrados` en localStorage `gt-inv-grupos-cerrados`, es
