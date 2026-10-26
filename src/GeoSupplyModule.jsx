@@ -236,7 +236,7 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
       <Input label="Lo necesito en obra el *" type="date" value={f.fechaRequeridaObra || ""} min={hoyISO()} onChange={e => u("fechaRequeridaObra", e.target.value)} />
     </div>
     {esPlantel && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AZUL.bg, color: C_AZUL.color, fontSize: 12.5 }}>Le llega directo a Almacén (Óscar), que te lo va enviando según se produzca. Si no lo hay, te lo devuelve con una nota.</div>}
-    {!esPlantel && f.projectCode && !pres && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12.5 }}>Este proyecto no tiene receta: pedí lo que haga falta y lo aprueba el Coordinador.</div>}
+    {!esPlantel && f.projectCode && !pres && <div style={{ padding: "10px 14px", borderRadius: 12, background: "rgba(44,42,40,.05)", color: "var(--text-2)", fontSize: 12.5 }}>Este proyecto no tiene receta: pedí lo que haga falta y lo aprueba el Coordinador.</div>}
 
     {/* Buscador de la receta */}
     {pres && <div className="gt-vidrio" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -303,8 +303,8 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
           <button type="button" onClick={() => quitar(l.id)} title="Quitar" style={{ background: "none", border: "none", color: "var(--text-3)", fontSize: 16, cursor: "pointer" }}>✕</button>
         </div>;
       })}
-      {fuera && <div style={{ padding: 12, borderRadius: 14, background: C_AMARILLO.bg, border: `1px solid rgba(138,90,0,.2)`, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr 1fr", gap: 8 }}>
-        <div style={{ gridColumn: "1/-1", fontSize: 12, color: C_AMARILLO.color, fontWeight: 700 }}>{libre ? "Qué necesitás" : "Ítem fuera de presupuesto — lo revisa el Coordinador antes de seguir"}</div>
+      {fuera && <div style={{ padding: 12, borderRadius: 14, background: libre ? "rgba(44,42,40,.04)" : C_AMARILLO.bg, border: libre ? "1px solid rgba(44,42,40,.10)" : `1px solid rgba(138,90,0,.2)`, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr 1fr", gap: 8 }}>
+        <div style={{ gridColumn: "1/-1", fontSize: 12, color: libre ? CHARCOAL : C_AMARILLO.color, fontWeight: 700 }}>{libre ? "Qué necesitás" : "Ítem fuera de presupuesto — lo revisa el Coordinador antes de seguir"}</div>
         <input value={fuera.descripcion} onChange={e => setFuera({ ...fuera, descripcion: e.target.value })} placeholder={esPlantel ? "Qué es (ej. Placa 0.20×0.20 m × 12 mm + tuerca y arandela) *" : "Qué es (ej. Cinta métrica 50 m) *"} style={{ ...CTRL, background: "#fff" }} />
         <input list="sp-unidades" value={fuera.unidad} onChange={e => setFuera({ ...fuera, unidad: e.target.value })} placeholder="Unidad" style={{ ...CTRL, background: "#fff" }} />
         <datalist id="sp-unidades">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist>
