@@ -1612,6 +1612,14 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   de las líneas con cantidad en la unidad de la partida (`cantidadPartida`;
   sustitutos y líneas manuales no cuentan). En Proyectos sale "Real $ X /
   unidad (±N %)": verde igual o abajo del P.U. del PM, rojo si va +3 % arriba.
+  Partida alimentada con SUSTITUTOS (se fabrica: concreto del Fiori en Villa
+  San Miguel) → no se calcula de las compras (`fabricada`); el costo sale de
+  la ficha de costo: "Poner costo real" (admin/costos/compras_ops) guarda
+  `puRealManual` (USD) + `puRealFuente` en la partida (`guardarCostoReal`,
+  solo toca esa partida sobre la nube fresca) y manda sobre el cálculo. VSM
+  concreto = $161.90/m³ (ficha Fiori oct-2026). El 26-oct se corrigieron en
+  la nube MAT-2026-0513/0579/0581 (decían 480/1/200 m³ de concreto; eran
+  480/480/200 bolsas de cemento) → sustitutos, misma partida.
   **Dashboard v4 (25-sep-2026)**: la columna del medio (una tarjeta con
   anillo POR proyecto, apiladas) no escalaba — "ahorita son 2 pero serán
   más" — y con nombres largos el título se encimaba con el anillo. La

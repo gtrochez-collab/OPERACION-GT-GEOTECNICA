@@ -151,6 +151,32 @@ const MONO = { fontFamily: "var(--mono)", fontVariantNumeric: "tabular-nums" };
 const onKeyActivar = (fn) => (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); } };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Costo real por unidad escrito a mano (26-oct-2026): para las partidas que
+// se FABRICAN (concreto del Fiori), sale de la ficha de costo.
+function CostoRealForm({ partida, onSave, onClose }) {
+  const [valor, setValor] = useState(num(partida.puRealManual) > 0 ? String(partida.puRealManual) : "");
+  const [fuente, setFuente] = useState(partida.puRealFuente || "");
+  const [guardando, setGuardando] = useState(false);
+  const enviar = async (v, f) => { setGuardando(true); const ok = await onSave(v, f); setGuardando(false); if (ok) onClose(); };
+  const CT = { padding: "11px 13px", borderRadius: 12, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", fontSize: 14, fontFamily: "inherit", outline: "none", width: "100%", boxSizing: "border-box" };
+  return <Modal title="Costo real por unidad" onClose={onClose}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 13.5, color: "var(--text-2)" }}>{partida.nombre}<div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 3 }}>Presupuesto: {num(partida.pu) > 0 ? `${fmtUSD(num(partida.pu))} / ${partida.unidad || "unidad"}` : "sin P.U."}</div></div>
+      <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><Label>Costo real en dólares por {partida.unidad || "unidad"}</Label>
+        <input type="number" inputMode="decimal" step="0.01" min="0" value={valor} onChange={e => setValor(e.target.value)} autoFocus placeholder="161.90" style={{ ...CT, fontFamily: "var(--mono)", fontWeight: 700 }} /></label>
+      <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><Label>De dónde sale</Label>
+        <input value={fuente} onChange={e => setFuente(e.target.value)} placeholder="Ficha de costo del Fiori · octubre 2026" style={CT} /></label>
+      <div style={{ display: "flex", gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
+        {num(partida.puRealManual) > 0 ? <Btn variant="ghost" disabled={guardando} onClick={() => { if (confirm("¿Quitar el costo real escrito a mano?")) enviar(null, ""); }}>Quitar</Btn> : <span />}
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
+          <Btn disabled={guardando || !(num(valor) > 0)} onClick={() => enviar(Math.round(num(valor) * 100) / 100, fuente.trim())}>{guardando ? "Guardando…" : "Guardar"}</Btn>
+        </div>
+      </div>
+    </div>
+  </Modal>;
+}
+
 export default function GeoCostModule({ userRole, userName, onBack, onLogout }) {
   const isMobile = useIsMobile();
   const reduceMotion = prefiereMenosMovimiento();
@@ -356,6 +382,28 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       const back = await store.getCloud("cc-presupuestos");
       const mio = Array.isArray(back) ? back.find(x => x.id === id) : null;
       if (!mio || (mio.partidas || []).length !== (pres.partidas || []).length) { alert("VERIFICACIÓN FALLÓ: el presupuesto no quedó como se guardó. Revisá antes de seguir."); return false; }
+      setPresupuestos(back);
+    } catch { alert("Se guardó, pero no se pudo verificar con la nube. Recargá para confirmar."); return false; }
+    stamp();
+    return true;
+  };
+
+  // Solo toca ESA partida sobre el presupuesto FRESCO de la nube.
+  const guardarCostoReal = async (presId, partidaId, valor, fuente) => {
+    const c = await leerNube("cc-presupuestos"); if (!c.ok) return false;
+    const lista = Array.isArray(c.value) ? c.value : [];
+    const pres = lista.find(x => x.id === presId);
+    if (!pres || !(pres.partidas || []).some(p => p.id === partidaId)) { alert("No encontré esa partida en la nube. Recargá."); return false; }
+    const at = new Date().toISOString();
+    const next = lista.map(x => x.id !== presId ? x : { ...x, updatedAt: at, updatedBy: userName,
+      partidas: x.partidas.map(p => { if (p.id !== partidaId) return p; const { puRealManual, puRealFuente, puRealAt, puRealPor, ...resto } = p; return valor ? { ...resto, puRealManual: valor, puRealFuente: fuente, puRealAt: at, puRealPor: userName } : resto; }),
+      historial: [...(x.historial || []), { at, por: userName, accion: valor ? `costo real de "${(pres.partidas.find(p => p.id === partidaId) || {}).nombre}": ${valor} USD` : "costo real quitado" }] });
+    const ok = await store.set("cc-presupuestos", next);
+    if (!ok) { alert("No se pudo guardar en la nube."); return false; }
+    try {
+      const back = await store.getCloud("cc-presupuestos");
+      const pp = (back || []).find(x => x.id === presId)?.partidas?.find(p => p.id === partidaId);
+      if (!pp || num(pp.puRealManual) !== num(valor)) { alert("VERIFICACIÓN FALLÓ: el costo real no quedó guardado."); return false; }
       setPresupuestos(back);
     } catch { alert("Se guardó, pero no se pudo verificar con la nube. Recargá para confirmar."); return false; }
     stamp();
@@ -1030,7 +1078,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
               if (pp.puRealUSD == null) return null;
               const pu0 = num(pp.pu), dif = pu0 > 0 ? (pp.puRealUSD - pu0) / pu0 : 0;
               const c = pu0 > 0 && dif > 0.03 ? "#B42318" : pu0 > 0 ? "#067647" : "var(--text-2)";
-              return <span title={`Promedio de ${num(pp.cantidadComprada).toLocaleString("es-HN")} ${pp.unidad || "unidades"} compradas${pu0 > 0 ? ` · ${dif >= 0 ? "+" : ""}${Math.round(dif * 100)} % contra el presupuesto` : ""}`}>
+              return <span title={`${pp.puRealManual ? (pp.puRealFuente || "Costo real escrito a mano") : `Promedio de ${num(pp.cantidadComprada).toLocaleString("es-HN")} ${pp.unidad || "unidades"} compradas`}${pu0 > 0 ? ` · ${dif >= 0 ? "+" : ""}${Math.round(dif * 100)} % contra el presupuesto` : ""}`}>
                 {sep ? " · " : ""}<b style={{ color: c, fontWeight: 700 }}>Real {fmtUSD(pp.puRealUSD)}{pp.unidad ? ` / ${pp.unidad}` : ""}</b>
                 {pu0 > 0 && Math.abs(dif) >= 0.005 && <span style={{ color: c }}> ({dif > 0 ? "+" : ""}{Math.round(dif * 100)} %)</span>}
               </span>;
@@ -1040,7 +1088,8 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
                 style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1.4fr) minmax(160px, 1fr) auto", gap: isMobile ? 8 : 18, alignItems: "center", padding: "10px 10px" }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{p.nombre}</div>
-                  {(sub || p.puRealUSD != null) && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 2 }}>{sub}{puReal(p, !!sub)}</div>}
+                  {(sub || p.puRealUSD != null) && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 2 }}>{sub}{puReal(p, !!sub)}
+                    {puedeEditarPresupuesto && (p.fabricada || p.puRealManual) && <button type="button" onClick={(e) => { e.stopPropagation(); setModal({ t: "costoReal", presId: pres.id, partidaId: p.id }); }} style={{ marginLeft: 8, padding: 0, border: "none", background: "none", color: ORANGE_DARK, fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit" }}>{p.puRealManual ? "Editar costo real" : "Poner costo real"}</button>}</div>}
                 </div>
                 <div>{barraDoble({ presupuestoUSD: p.montoUSD ?? montoPartida(p), ejecutadoUSD: p.ejecutadoUSD, comprometidoUSD: p.comprometidoUSD }, { alto: 8, delay: ci * 60 + pi * 40 })}</div>
                 <div style={{ textAlign: isMobile ? "left" : "right", minWidth: isMobile ? 0 : 200 }}>
@@ -1170,6 +1219,12 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       const mov = { sourceKey: esMq ? "mq-purchases" : "cp-purchases", origen: purchase };
       return <DividirItemsModal purchase={purchase} pres={pres} tasa={tasa} disponibleDe={disponibleDe} onClose={cerrar}
         onSave={(datos) => guardarItems(mov, datos)} Modal={Modal} Textarea={Textarea} Btn={Btn} modulo={esMq ? "maquinas" : "compras"} />;
+    }
+    if (modal.t === "costoReal") {
+      if (!puedeEditarPresupuesto) return null;
+      const pp = presupuestos.find(x => x.id === modal.presId)?.partidas?.find(p => p.id === modal.partidaId);
+      if (!pp) return null;
+      return <CostoRealForm partida={pp} onSave={(v, f) => guardarCostoReal(modal.presId, modal.partidaId, v, f)} onClose={cerrar} />;
     }
     if (modal.t === "tasa") return <AjustesTasa config={config || { tasa: TASA_DEFAULT }} puedeEditar={puedeTasa} onSave={guardarConfig} onClose={cerrar} />;
     if (modal.t === "presupuesto") {

@@ -67,3 +67,10 @@ test("P.U. real: una partida que se fabrica con sustitutos no lo calcula", async
   ]);
   assert.equal(r.puRealUSD, null);
 });
+
+test("P.U. real: el costo escrito a mano (ficha de costo) manda", async () => {
+  const { precioUnitarioReal } = await import("../src/geocost-calc.js");
+  const r = precioUnitarioReal([{ estado: "ejecutado", cantidadPartida: 0, montoUSD: 1000, sustituto: true }], { puRealManual: 161.9, puRealFuente: "Ficha Fiori" });
+  assert.equal(r.puRealUSD, 161.9);
+  assert.equal(r.puRealManual, true);
+});

@@ -620,7 +620,12 @@ const restarMeses = (yyyyMm, n) => {
 // concreto se fabrica con cemento, arena y grava), las cantidades compradas
 // no son unidades de la partida (bolsas, m3 de arena…): no hay P.U. real
 // que calcular desde las compras y no se muestra.
-export const precioUnitarioReal = (movs) => {
+// COSTO REAL MANUAL (26-oct-2026, Gerson): en una partida que se fabrica
+// (el concreto del Fiori) el costo por unidad sale de la FICHA DE COSTO
+// (insumos + leasing + operador), no de las compras: `partida.puRealManual`
+// (USD) con `puRealFuente`. Si existe, manda sobre el cálculo.
+export const precioUnitarioReal = (movs, partida = null) => {
+  if (num(partida?.puRealManual) > 0) return { cantidadComprada: 0, puRealUSD: round2(num(partida.puRealManual)), puRealManual: true, puRealFuente: partida.puRealFuente || "" };
   if ((movs || []).some(m => m && m.sustituto)) return { cantidadComprada: 0, puRealUSD: null, fabricada: true };
   const conCant = (movs || []).filter(m => m && m.estado && num(m.cantidadPartida) > 0);
   const cantidadComprada = round2(conCant.reduce((s, m) => s + num(m.cantidadPartida), 0));
@@ -661,7 +666,7 @@ export const resumenPresupuesto = (pres, movs, hoy) => {
   });
   const partidas = partidasBase.map(p => {
     const pm = porPartida.get(p.id) || [];
-    return { ...p, montoUSD: montoPartida(p), ...conPct(montoPartida(p), sumar(pm)), movs: pm, ...precioUnitarioReal(pm) };
+    return { ...p, montoUSD: montoPartida(p), ...conPct(montoPartida(p), sumar(pm)), movs: pm, ...precioUnitarioReal(pm, p) };
   });
   const categorias = ordenCategorias(partidasBase).map(cat => {
     const ps = partidas.filter(p => (p.categoria || "Otros") === cat);
