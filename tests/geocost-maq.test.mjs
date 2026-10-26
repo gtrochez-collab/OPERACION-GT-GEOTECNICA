@@ -58,3 +58,12 @@ test("P.U. real por partida: solo ítems con cantidad en la unidad de la partida
   assert.equal(r.puRealUSD, 5.4);
   assert.equal(precioUnitarioReal([]).puRealUSD, null);
 });
+
+test("P.U. real: una partida que se fabrica con sustitutos no lo calcula", async () => {
+  const { precioUnitarioReal } = await import("../src/geocost-calc.js");
+  const r = precioUnitarioReal([
+    { estado: "ejecutado", cantidadPartida: 480, montoUSD: 4177 },   // cemento cargado sin marcar
+    { estado: "ejecutado", cantidadPartida: 0, montoUSD: 1019, sustituto: true },
+  ]);
+  assert.equal(r.puRealUSD, null);
+});

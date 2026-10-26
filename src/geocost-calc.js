@@ -616,7 +616,12 @@ const restarMeses = (yyyyMm, n) => {
 // en los ítems que traen cantidad en la unidad de la partida ÷ esa cantidad.
 // Los movimientos sin cantidad (compras viejas de texto libre, MO,
 // movilizaciones) no entran: no se sabe cuántas unidades fueron.
+// Si la partida se alimenta con SUSTITUTOS (caso Villa San Miguel: el
+// concreto se fabrica con cemento, arena y grava), las cantidades compradas
+// no son unidades de la partida (bolsas, m3 de arena…): no hay P.U. real
+// que calcular desde las compras y no se muestra.
 export const precioUnitarioReal = (movs) => {
+  if ((movs || []).some(m => m && m.sustituto)) return { cantidadComprada: 0, puRealUSD: null, fabricada: true };
   const conCant = (movs || []).filter(m => m && m.estado && num(m.cantidadPartida) > 0);
   const cantidadComprada = round2(conCant.reduce((s, m) => s + num(m.cantidadPartida), 0));
   const usd = conCant.reduce((s, m) => s + num(m.montoUSD), 0);
