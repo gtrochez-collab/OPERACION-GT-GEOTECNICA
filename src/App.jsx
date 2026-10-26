@@ -303,7 +303,7 @@ export default function App() {
         const nube = await store.getCloud("gt-usuarios");
         const c = (Array.isArray(nube) ? nube : []).find((x) => x && x.activo !== false && x.username === u && x.password === password);
         if (c) session = { username: c.username, role: c.role, label: c.label, empId: c.empId || null, proyectos: Array.isArray(c.proyectos) ? c.proyectos : [] };
-      } catch (e) { console.warn("[login] no se pudo leer gt-usuarios:", e?.message || e); }
+      } catch (e) { console.warn("[login] no se pudo leer gt-usuarios:", e?.message || e); return "sin_red"; }
     }
     if (!session) return false;
     setUser(session);
@@ -1006,7 +1006,8 @@ function LoginScreen({ onLogin }) {
     await new Promise(r => setTimeout(r, 350));
     let ok = false;
     try { ok = await onLogin(username, password); } catch { ok = false; }
-    if (!ok) setError("Usuario o clave incorrecta");
+    if (ok === "sin_red") setError("No hay conexión con la nube. Esperá unos segundos y volvé a intentar.");
+    else if (!ok) setError("Usuario o clave incorrecta");
     setLoading(false);
   };
 

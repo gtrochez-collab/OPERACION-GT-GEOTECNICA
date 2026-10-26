@@ -42,6 +42,8 @@ const SKIP_LOCAL_PREFIXES = [
   'cp-file-',       // archivos PDF/foto de compras (cloud es source of truth)
   'cc-file-',       // comprobantes PDF/foto de GeoCost (cloud es source of truth, lectura on-demand)
   'sp-file-',       // PDFs de cotizaciones de GeoSupply (cloud es source of truth, lectura on-demand)
+  'sp-solicitudes', // GeoSupply (26-oct-2026): SOLO se leen con getCloud; sin cache no hay re-sync posible
+  'sp-cotizaciones',
   'chat-channel-',  // mensajes de canales (cloud es source of truth)
   'chat-dm-',       // mensajes directos (cloud es source of truth)
   // GeoClock (ago 2026): las firmas pesan ~10KB c/u y se acumulan (2 marcajes

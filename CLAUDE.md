@@ -1895,6 +1895,32 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   sin reiniciar por año (`LUNES_PRIMER_CORTE`, `numeroCorte`); lo anterior
   conserva "Corte NN · AAAA". El `id` (C44-2026) no cambió. (Reemplaza el
   nombre "Corte 40 · 2026" de la Fase 0.)
+  **REVISIÓN DE SINCRONIZACIÓN antes del arranque real (26-oct-2026, noche)**:
+  revisión adversarial + corrida real de punta a punta (datos ZZ borrados).
+  Corregido: (1) CRÍTICO — una cotización que cubre ítems de VARIAS
+  solicitudes solo actualizaba la primera (`cot.requestId`) y las demás
+  quedaban trabadas en "cotizada" para siempre; `aprobarCotizacion` ahora
+  agrupa por `linea.requestId` y actualiza cada solicitud; `renderAprobar`/
+  `renderDetalle` buscan las líneas en todas. (2) `aprobarCotizacion` relee
+  cp-purchases / sp-solicitudes / sp-cotizaciones JUSTO antes de cada
+  escritura (antes usaba fotos de varios segundos y podía pisar un pago de
+  Tesorería o una solicitud recién enviada) y VALIDA antes de crear el MAT
+  que cada línea esté "cotizada" en esa cotización (si no, aborta: evita la
+  compra doble). (3) `escribirLista` hace una SEGUNDA lectura ~1.2 s después
+  del verify: si otro guardado simultáneo pisó el mío devuelve "perdida" y
+  `crearEn`/`actualizarEn` rehacen la operación sobre la nube fresca (hasta
+  2 reintentos; el folio se recalcula); si el verify no responde avisa "se
+  guardó pero no pude confirmarlo" en vez de "no se guardó". (4) Guardia
+  anti-pisada `lastLocalMutAtRef` (8 s) en `cargar`, y el latido/foco es
+  LIVIANO (solo sp-solicitudes/sp-cotizaciones; todo lo demás cada 5
+  latidos). (5) `guardarCotizacion`: si al enviar no se pudieron marcar las
+  líneas, la cotización vuelve a borrador; `accionLineas` avisa cuando
+  ninguna línea estaba en el estado esperado. (6) Login: si la nube no
+  responde dice "No hay conexión" (antes "clave incorrecta"). (7) El
+  contador de Almacén suma los pedidos al plantel. (8) sp-solicitudes y
+  sp-cotizaciones en SKIP_LOCAL_PREFIXES. Pendiente (BAJO): archivos
+  cp-file-* huérfanos al cancelar un form con cotización adjunta; archivar
+  solicitudes viejas cuando sp-solicitudes pase ~1 MB.
   **PEDIR AL PLANTEL / TALLER (26-oct-2026)**: caso Ing. Yurien (Cataleya):
   placas de anclaje y varillas roscadas que se producen en soldadura/torno y
   Almacén va enviando según se necesita — NO es compra. Al crear la solicitud

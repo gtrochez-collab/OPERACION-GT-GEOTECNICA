@@ -649,14 +649,28 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   useEffect(() => { const t = setInterval(() => setAhora(new Date()), 30000); return () => clearInterval(t); }, []);
 
   const leer = async (k) => { try { return await store.getCloud(k); } catch (e) { console.warn(`[GeoSupply] no se pudo leer ${k}:`, e?.message || e); return undefined; } };
-  const cargar = async () => {
+  // Guardia anti-pisada (26-oct-2026, revisión adversarial): los diálogos
+  // nativos disparan `focus` → `cargar` corre EN PARALELO con un guardado y
+  // puede pisar la pantalla con la foto de ANTES (patrón de GeoShopping).
+  // Toda escritura estampa `lastLocalMutAtRef`; el refresh se salta si hubo
+  // una mutación local hace < 8 s (antes y después de leer).
+  const lastLocalMutAtRef = useRef(0);
+  const marcarMutacion = () => { lastLocalMutAtRef.current = Date.now(); };
+  const hayMutacionReciente = () => Date.now() - lastLocalMutAtRef.current < 8000;
+  // `ligero`: el latido y el foco releen SOLO lo que cambia seguido (solicitudes
+  // y cotizaciones); el resto (compras, despachos, recetas, proveedores…) se
+  // relee completo al entrar, al cambiar de simulación y cada ~5 latidos.
+  const cargar = async ({ ligero = false } = {}) => {
+    if (ligero && hayMutacionReciente()) return;
     const k = kRef.current;
     const enSim = k.pur !== "cp-purchases";
     const [sol, cot, cf, pr, cc, cp, pv, pu, us, dp, sp] = await Promise.all([
-      leer(k.sol), leer(k.cot), leer("sp-config"), leer("cc-presupuestos"), leer("cc-config"),
-      leer("cp-projects"), leer("cp-providers"), leer("cp-purchases"), leer("gt-usuarios"), leer("lg-despachos"),
+      leer(k.sol), leer(k.cot),
+      ...(ligero ? [undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined] : [leer("sp-config"), leer("cc-presupuestos"), leer("cc-config"), leer("cp-projects"), leer("cp-providers"), leer("cp-purchases"), leer("gt-usuarios"), leer("lg-despachos")]),
       enSim ? leer(k.pur) : Promise.resolve([]),
     ]);
+    if (ligero && hayMutacionReciente()) return;
+    if (kRef.current.sol !== k.sol) return;   // cambió la simulación mientras leía
     // Key ausente (null) = lista vacía; undefined = la nube no respondió.
     if (Array.isArray(sol) || sol === null) setSolicitudes(sol || []);
     if (Array.isArray(cot) || cot === null) setCotizaciones(cot || []);
@@ -679,8 +693,9 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   // Latido: las bandejas son colas de trabajo — al volver a la pestaña y cada
   // 90 s con la pestaña visible (sin modal abierto, para no pisar lo que se tipea).
   const modalRef = useRef(null); modalRef.current = modal;
+  const latidosRef = useRef(0);
   useEffect(() => {
-    const f = () => { if (document.visibilityState === "visible" && !modalRef.current) cargar(); };
+    const f = () => { if (document.visibilityState === "visible" && !modalRef.current) { latidosRef.current++; cargar({ ligero: latidosRef.current % 5 !== 0 }); } };
     window.addEventListener("focus", f);
     const t = setInterval(f, 90000);
     return () => { window.removeEventListener("focus", f); clearInterval(t); };
@@ -712,29 +727,51 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
 
   // ── Guardado: SIEMPRE sobre el registro fresco de la nube ──
   const auditEntry = (action, note, extra = {}) => ({ action, by: userName, role: userRole, at: new Date().toISOString(), note: note || "", ...extra });
+  // Devuelve "ok" | "perdida" (otro guardado simultáneo pisó el mío: hay que
+  // rehacer la operación sobre la nube fresca) | "sin_verificar" (se guardó
+  // pero la nube no respondió al confirmar) | false (no se guardó).
+  // La "perdida" se detecta con una SEGUNDA lectura ~1.2 s después: dos
+  // personas que guardan en la misma ventana leen el mismo array y la última
+  // escritura borra a la primera, y la verificación inmediata no lo ve.
   const escribirLista = async (key, next, idVerificar, updatedAt, setter) => {
+    marcarMutacion();
     const ok = await store.set(key, next);
     if (!ok) { alert("No se pudo guardar en la nube. Reintentá."); return false; }
-    const back = await store.getCloud(key);
+    let back;
+    try { back = await store.getCloud(key); } catch { alert("Se guardó, pero no pude confirmarlo con la nube. Recargá la página antes de volver a intentar (no lo repitas: podría quedar doble)."); return "sin_verificar"; }
     const fila = Array.isArray(back) ? back.find(x => x.id === idVerificar) : null;
-    if (!fila || fila.updatedAt !== updatedAt) { alert("VERIFICACIÓN FALLÓ: la nube no refleja el cambio. Recargá y revisá."); return false; }
+    if (!fila || fila.updatedAt !== updatedAt) return "perdida";
+    await new Promise(r => setTimeout(r, 1200));
+    try {
+      const back2 = await store.getCloud(key);
+      const fila2 = Array.isArray(back2) ? back2.find(x => x.id === idVerificar) : null;
+      if (!fila2 || fila2.updatedAt !== updatedAt) return "perdida";
+      back = back2;
+    } catch { /* la primera confirmación ya pasó */ }
+    marcarMutacion();
     setter(back);
-    return true;
+    return "ok";
   };
+  const REINTENTOS_ESCRITURA = 2;
   // fn(registroFresco) → registro nuevo (o null para abortar). Devuelve el registro guardado o null.
   const actualizarEn = async (key, setter, id, fn) => {
     if (ocupado) return null;
     setOcupado(true);
     try {
-      const c = await store.getCloud(key);
-      const arr = Array.isArray(c) ? c : [];
-      const cur = arr.find(x => x.id === id);
-      if (!cur) { alert("El registro ya no está en la nube."); return null; }
-      const next = fn(cur);
-      if (!next) return null;
-      const rec = { ...next, updatedAt: new Date().toISOString() };
-      const ok = await escribirLista(key, arr.map(x => x.id === id ? rec : x), id, rec.updatedAt, setter);
-      return ok ? rec : null;
+      for (let intento = 0; ; intento++) {
+        const c = await store.getCloud(key);
+        const arr = Array.isArray(c) ? c : [];
+        const cur = arr.find(x => x.id === id);
+        if (!cur) { alert("El registro ya no está en la nube."); return null; }
+        const next = fn(cur);
+        if (!next) return null;
+        const rec = { ...next, updatedAt: new Date().toISOString() };
+        const r = await escribirLista(key, arr.map(x => x.id === id ? rec : x), id, rec.updatedAt, setter);
+        if (r === "ok") return rec;
+        if (r === "perdida" && intento < REINTENTOS_ESCRITURA) { console.warn("[GeoSupply] escritura pisada por otro usuario; reintento", intento + 1); continue; }
+        if (r === "perdida") alert("Alguien más guardó al mismo tiempo y mi cambio no quedó. Recargá y volvé a intentar.");
+        return null;
+      }
     } catch (e) { alert("Sin conexión con la nube: no se guardó."); console.warn("[GeoSupply]", e); return null; }
     finally { setOcupado(false); }
   };
@@ -742,13 +779,18 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     if (ocupado) return null;
     setOcupado(true);
     try {
-      const c = await store.getCloud(key);
-      const arr = Array.isArray(c) ? c : [];
-      const rec = armar(arr);
-      if (!rec) return null;
-      const full = { ...rec, updatedAt: new Date().toISOString() };
-      const ok = await escribirLista(key, [...arr, full], full.id, full.updatedAt, setter);
-      return ok ? full : null;
+      for (let intento = 0; ; intento++) {
+        const c = await store.getCloud(key);
+        const arr = Array.isArray(c) ? c : [];
+        const rec = armar(arr);   // el folio se recalcula sobre la lista fresca
+        if (!rec) return null;
+        const full = { ...rec, updatedAt: new Date().toISOString() };
+        const r = await escribirLista(key, [...arr, full], full.id, full.updatedAt, setter);
+        if (r === "ok") return full;
+        if (r === "perdida" && intento < REINTENTOS_ESCRITURA) { console.warn("[GeoSupply] creación pisada por otro usuario; reintento", intento + 1); continue; }
+        if (r === "perdida") alert("Alguien más guardó al mismo tiempo y lo tuyo no quedó. Volvé a intentar.");
+        return null;
+      }
     } catch (e) { alert("Sin conexión con la nube: no se guardó."); console.warn("[GeoSupply]", e); return null; }
     finally { setOcupado(false); }
   };
@@ -778,7 +820,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         lineas = lineas.map(x => x.id === id ? r.linea : x);
         aud.push(auditEntry(accion, nota || `${l.descripcion}: ${l.estado} → ${r.linea.estado}`, { lineaId: id, de: l.estado, a: r.linea.estado }));
       });
-      if (!aud.length) return null;
+      if (!aud.length) { alert("Ninguno de esos ítems estaba en el estado esperado (alguien más los trabajó). Recargá."); return null; }
       const s2 = { ...s, lineas, audit: [...(s.audit || []), ...aud] };
       return { ...s2, estado: estadoCabecera(s2) };
     });
@@ -895,7 +937,14 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     if (enviar) {
       const porSol = {};
       rec.lineas.forEach(l => { (porSol[l.requestId] = porSol[l.requestId] || []).push(l.requestLineId); });
-      for (const [solId, ids] of Object.entries(porSol)) await accionLineas(solId, ids, "cotizar", { quoteId: rec.id }, `Cotizada en ${rec.folio} (${rec.provider})`);
+      let fallo = false;
+      for (const [solId, ids] of Object.entries(porSol)) { const ok = await accionLineas(solId, ids, "cotizar", { quoteId: rec.id }, `Cotizada en ${rec.folio} (${rec.provider})`); if (!ok) fallo = true; }
+      // Si las líneas no quedaron marcadas, la cotización NO puede quedar
+      // "enviada": seguirían en Por cotizar y se cotizarían dos veces.
+      if (fallo) {
+        await actualizarCotizacion(rec.id, (q) => ({ ...q, estado: "borrador", enviadaAt: null, audit: [...(q.audit || []), auditEntry("editada", "Volvió a borrador: no se pudieron marcar los ítems de la solicitud")] }));
+        alert(`${rec.folio} quedó como BORRADOR: no se pudieron marcar los ítems en la solicitud. Abrila y volvé a enviarla.`);
+      }
     }
     setModal(null);
   };
@@ -927,12 +976,23 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       const cots = Array.isArray(cotsC) ? cotsC : [], sols = Array.isArray(solsC) ? solsC : [], purs = Array.isArray(pursC) ? pursC : [], provs = Array.isArray(provsC) ? provsC : [];
       const cot = cots.find(x => x.id === q.id);
       if (!cot || cot.estado !== "enviada") { alert("La cotización ya no está por aprobar (alguien más la trabajó)."); return false; }
-      const sol = sols.find(s => s.id === cot.requestId);
-      if (!sol) { alert("La solicitud de esta cotización ya no existe."); return false; }
+      // Una cotización puede cubrir ítems de VARIAS solicitudes del mismo
+      // proyecto (26-oct-2026, revisión adversarial: antes solo se actualizaba
+      // la primera y las demás quedaban trabadas en "cotizada" para siempre).
+      const solIdDe = (cl) => cl.requestId || cot.requestId;
+      const solIds = [...new Set(cot.lineas.map(solIdDe))];
+      const solsCot = solIds.map(id => sols.find(s => s.id === id)).filter(Boolean);
+      const sol = solsCot[0];
+      if (!sol || solsCot.length !== solIds.length) { alert("Alguna solicitud de esta cotización ya no existe."); return false; }
       const tasaC = num(ccC?.tasa) || TASA_DEFAULT;
       const lineaSolDe = (lid) => sols.flatMap(s => s.lineas || []).find(l => l.id === lid) || null;
       const ev = evaluarCotizacion({ cotizacion: cot, tasa: tasaC, cfg, partidaDe: (pid) => partidaDe(cot.projectCode, pid), lineaSolicitudDe: lineaSolDe });
       if (!ev.ok) { alert("La cotización tiene errores y no se puede aprobar:\n" + ev.errores.join("\n")); return false; }
+      // ANTES de crear el borrador: cada ítem tiene que estar "cotizada" en ESTA
+      // cotización y aceptar la cantidad. Si no, abortar (sin esto se creaba el
+      // MAT y las líneas quedaban sin marcar → compra doble).
+      const mal = cot.lineas.map(cl => { const l = lineaSolDe(cl.requestLineId); if (!l) return `${cl.descripcion || cl.requestLineId}: ya no está en la solicitud`; if (l.estado !== "cotizada" || !(l.quoteIds || []).includes(cot.id)) return `${l.descripcion}: está en "${ESTADOS_LINEA[l.estado]?.label || l.estado}", no cotizada en ${cot.folio}`; const r = aplicarAccionLinea(l, "aprobar_cot", { quoteId: cot.id, cantidad: num(cl.cantidad) }); return r.ok ? null : `${l.descripcion}: ${r.error}`; }).filter(Boolean);
+      if (mal.length) { alert("No se puede aprobar todavía:\n" + mal.join("\n") + "\n\nCompras tiene que reenviar la cotización."); return false; }
       // Enriquecer las líneas con la partida (para los ítems del borrador).
       ev.lineas = ev.lineas.map(l => { const ls = lineaSolDe(l.requestLineId); const pa = ls ? partidaDe(cot.projectCode, ls.partidaId) : null; return { ...l, id: l.requestLineId, partidaId: ls?.partidaId || null, ...(ls?.varilla ? { varilla: { ...ls.varilla, lances: l.lances != null ? num(l.lances) : ls.varilla.lances } } : {}), categoria: pa?.categoria || "", nombrePartida: pa?.nombre || ls?.descripcion || "", unidadPartida: pa?.unidad || ls?.unidad || "", solucion: pa?.solucion || "", fueraPresupuesto: !!ls?.fueraPresupuesto }; });
       const ahoraISO = new Date().toISOString();
@@ -941,35 +1001,56 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       if (!purchase) {
         const proveedor = provs.find(p => p.id === cot.providerId) || provs.find(p => p.name === cot.provider) || null;
         const armado = borradorDesdeCotizacion({ cotizacion: cot, evaluacion: ev, solicitud: sol, proveedor, proyecto: proyectoDe(cot.projectCode), aprobadoPor: userName, tasa: tasaC, cfg, hoy: hoyISO(), ahoraISO, id: uid(), codigo: siguienteCodigoCompra(purs, new Date(ahoraISO).getFullYear(), sim ? "SIM" : "MAT") });
-        if (sim) purchase = { ...purchase, simulacion: true };
-        purchase = armado.purchase;
-        const ok = await store.set(K.pur, [...purs, purchase]);
-        if (!ok) { alert("No se pudo crear el borrador en GeoShopping. Nada se aprobó."); return false; }
-        const back = await store.getCloud(K.pur);
-        if (!Array.isArray(back) || !back.some(p => p.id === purchase.id)) { alert("VERIFICACIÓN FALLÓ: el borrador no quedó en la nube. Nada se aprobó."); return false; }
-        (sim ? setSimPurchases : setPurchases)(back);
+        purchase = sim ? { ...armado.purchase, simulacion: true } : armado.purchase;
+        // Releer cp-purchases JUSTO antes de escribir (la foto de arriba tiene
+        // varios segundos): un pago de Tesorería en el medio se perdería.
+        const frescoP = await store.getCloud(K.pur); const basePur = Array.isArray(frescoP) ? frescoP : [];
+        if (basePur.some(p => p.origenSupply?.quoteId === cot.id)) { purchase = basePur.find(p => p.origenSupply?.quoteId === cot.id); }
+        else {
+          if (basePur.some(p => p.codigo === purchase.codigo)) purchase = { ...purchase, codigo: siguienteCodigoCompra(basePur, new Date(ahoraISO).getFullYear(), sim ? "SIM" : "MAT") };
+          marcarMutacion();
+          const ok = await store.set(K.pur, [...basePur, purchase]);
+          if (!ok) { alert("No se pudo crear el borrador en GeoShopping. Nada se aprobó."); return false; }
+          const back = await store.getCloud(K.pur);
+          if (!Array.isArray(back) || !back.some(p => p.id === purchase.id)) { alert("VERIFICACIÓN FALLÓ: el borrador no quedó en la nube. Nada se aprobó."); return false; }
+          const idsBase = new Set(basePur.map(p => p.id)); const perdidas = [...idsBase].filter(id => !back.some(p => p.id === id));
+          if (perdidas.length) console.warn("[GeoSupply] cp-purchases: filas que no volvieron tras el guardado", perdidas);
+          (sim ? setSimPurchases : setPurchases)(back);
+        }
         // Proveedor nuevo → al maestro (best effort; Finanzas completa lo bancario).
         if (!proveedor && cot.provider && !sim) {
           try { const pv = await store.getCloud("cp-providers"); const arr = Array.isArray(pv) ? pv : []; if (!arr.some(p => p.name === cot.provider)) { await store.set("cp-providers", [...arr, { id: uid(), name: cot.provider, rtn: "", phones: [], contactName: "", contactEmail: "", notes: `Creado desde GeoSupply (${cot.folio}) — completar datos.`, bankAccounts: [], autoImported: true, createdAt: ahoraISO, updatedAt: ahoraISO }]); } } catch (e) { console.warn("[GeoSupply] proveedor nuevo no se guardó:", e); }
         }
       }
-      // 2) Las líneas de la solicitud: cantidad comprada + estado.
-      let lineas = sol.lineas || []; const aud = [];
-      cot.lineas.forEach(cl => {
-        const l = lineas.find(x => x.id === cl.requestLineId); if (!l) return;
-        const r = aplicarAccionLinea(l, "aprobar_cot", { quoteId: cot.id, cantidad: num(cl.cantidad) });
-        if (!r.ok) return;
-        lineas = lineas.map(x => x.id === l.id ? r.linea : x);
-        aud.push(auditEntry("aprobar_cot", `${l.descripcion}: aprobada en ${cot.folio} → ${purchase.codigo}`, { lineaId: l.id, de: l.estado, a: r.linea.estado }));
-      });
-      const sol2 = { ...sol, lineas, estado: estadoCabecera({ ...sol, lineas }), audit: [...(sol.audit || []), ...aud], updatedAt: ahoraISO };
-      const okS = await store.set(K.sol, sols.map(s => s.id === sol.id ? sol2 : s));
-      if (!okS) { alert(`El borrador ${purchase.codigo} se creó pero la solicitud no se actualizó. Volvé a aprobar: no se duplica.`); return false; }
+      // 2) Las líneas de CADA solicitud cubierta: cantidad comprada + estado.
+      //    Sobre la nube FRESCA (otra persona pudo tocar otra línea en el medio).
+      const frescoS = await store.getCloud(K.sol); const baseSol = Array.isArray(frescoS) ? frescoS : [];
+      const actualizadas = {};
+      for (const sid of solIds) {
+        const s0 = baseSol.find(s => s.id === sid); if (!s0) continue;
+        let lineas = s0.lineas || []; const aud = [];
+        cot.lineas.filter(cl => solIdDe(cl) === sid).forEach(cl => {
+          const l = lineas.find(x => x.id === cl.requestLineId); if (!l) return;
+          const r = aplicarAccionLinea(l, "aprobar_cot", { quoteId: cot.id, cantidad: num(cl.cantidad) });
+          if (!r.ok) return;   // ya aprobada en un intento anterior (idempotente)
+          lineas = lineas.map(x => x.id === l.id ? r.linea : x);
+          aud.push(auditEntry("aprobar_cot", `${l.descripcion}: aprobada en ${cot.folio} → ${purchase.codigo}`, { lineaId: l.id, de: l.estado, a: r.linea.estado }));
+        });
+        if (aud.length) actualizadas[sid] = { ...s0, lineas, estado: estadoCabecera({ ...s0, lineas }), audit: [...(s0.audit || []), ...aud], updatedAt: ahoraISO };
+      }
+      if (Object.keys(actualizadas).length) {
+        marcarMutacion();
+        const okS = await store.set(K.sol, baseSol.map(s => actualizadas[s.id] || s));
+        if (!okS) { alert(`El borrador ${purchase.codigo} se creó pero la solicitud no se actualizó. Volvé a aprobar: no se duplica.`); return false; }
+      }
       // 3) La cotización: aprobada, con la tasa usada y el borrador que generó.
       const cot2 = { ...cot, estado: "aprobada", aprobadoPor: userName, aprobadoAt: ahoraISO, comentario: comentario || "", tasaCambioUsada: tasaC, purchaseId: purchase.id, purchaseCodigo: purchase.codigo, evaluacion: { lineas: ev.lineas, suma: ev.suma, peor: ev.peor, todasVerdes: ev.todasVerdes }, avisos: purchase.origenSupply?.avisos || [], audit: [...(cot.audit || []), auditEntry("aprobada", `Aprobada → borrador ${purchase.codigo} en GeoShopping${comentario ? ` · ${comentario}` : ""}`)], updatedAt: ahoraISO };
-      const okC = await store.set(K.cot, cots.map(x => x.id === cot.id ? cot2 : x));
+      const frescoC = await store.getCloud(K.cot); const baseCot = Array.isArray(frescoC) ? frescoC : [];
+      marcarMutacion();
+      const okC = await store.set(K.cot, baseCot.map(x => x.id === cot.id ? cot2 : x));
       if (!okC) { alert(`El borrador ${purchase.codigo} se creó pero la cotización no se marcó. Volvé a aprobar: no se duplica.`); return false; }
       const [bs, bc] = await Promise.all([store.getCloud(K.sol), store.getCloud(K.cot)]);
+      marcarMutacion();
       if (Array.isArray(bs)) setSolicitudes(bs); if (Array.isArray(bc)) setCotizaciones(bc);
       return purchase;
     } catch (e) { alert("Sin conexión con la nube: no se aprobó."); console.warn("[GeoSupply] aprobar", e); return false; }
@@ -1027,7 +1108,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const cotEnviadas = cotizaciones.filter(q => q.estado === "enviada");
   const n = {
     alertas: lineasEf.filter(x => x.ef.estado === "pendiente_coord").length,
-    almacen: lineasEf.filter(x => x.ef.estado === "revision_almacen").length,
+    almacen: lineasEf.filter(x => x.ef.estado === "revision_almacen" || x.ef.estado === "plantel_pendiente").length,
     porCotizar: lineasEf.filter(x => x.ef.estado === "por_cotizar").length,
     cotizadas: cotEnviadas.length,
     devueltas: cotizaciones.filter(q => q.estado === "devuelta").length,
@@ -1399,7 +1480,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const esMia = s.residente === userKey;
     const plantel = esPedidoPlantel(s);
     const lleg = s.corte && !plantel ? llegadaEstimada(s.corte, cfg) : null;
-    const cots = cotizaciones.filter(q => q.requestId === s.id);
+    const cots = cotizaciones.filter(q => q.requestId === s.id || (q.lineas || []).some(l => l.requestId === s.id));
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         {chipEstado(ESTADOS_SOLICITUD, est)}{esPedidoPlantel(s) && <Chip c={C_AZUL}>Pedido al plantel / taller</Chip>}{s.urgente && <Chip c={C_ROJO}>Urgente</Chip>}{fueraDeCorte(s, cfg, ahora) && <Chip c={C_ROJO}>Fuera de corte</Chip>}
@@ -1477,7 +1558,8 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const renderAprobar = (q0) => {
     const q = cotizaciones.find(x => x.id === q0.id) || q0;
     const s = solicitudes.find(x => x.id === q.requestId);
-    const lineaSolDe = (lid) => (s?.lineas || []).find(l => l.id === lid) || null;
+    // La cotización puede cubrir ítems de varias solicitudes: buscar la línea en TODAS.
+    const lineaSolDe = (lid) => solicitudes.flatMap(x => x.lineas || []).find(l => l.id === lid) || null;
     const ev = evaluarCotizacion({ cotizacion: q, tasa, cfg, partidaDe: (pid) => partidaDe(q.projectCode, pid), lineaSolicitudDe: lineaSolDe });
     const puede = esCoordinador && q.estado === "enviada";
     const [com, setCom] = [modal?.comentario || "", (v) => setModal({ ...modal, comentario: v })];
