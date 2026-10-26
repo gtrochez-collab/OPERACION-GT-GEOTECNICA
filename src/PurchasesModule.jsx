@@ -18,6 +18,7 @@ import { leerPdf, parsearCotizacion, ajusteAlTotal, lineasPresupuestoDesdeLectur
 // GeoSupply (2-oct-2026): los borradores que nacen de una cotización aprobada
 // llevan `origenSupply`; acá solo se rotula su corte.
 import { etiquetaCorte } from "./geosupply-calc.js";
+import { reporteHTML, abrirReporte, rKpis, rSeccion, rTabla, rChip, rBarra, rDona, colorPaleta, RP, PDF_TEMA, pdfCabecera, pdfPie, latin1, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 // Abonos (17-oct-2026): pagos parciales con su comprobante; la solicitud se
 // cierra solo cuando la suma de abonos cubre el total. Lógica pura y probada.
 import { abonosVigentes, todosLosAbonos, tieneAbonos, totalAbonado, saldoDe, esAbonoParcial, porPagarDe, validarAbono, estadoTrasAbonos, cierreServicioAlPagar, unirAbonos, nubeTraeAbonosNuevos } from "./abonos.js";
@@ -555,103 +556,71 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
 
-  // Logo real de la empresa (public/brand/logo-color.png). Si por cualquier
-  // razon no carga (offline, ruta), se cae al monograma "GT" naranja.
-  let logoImg = null;
-  try {
-    const resp = await fetch(`${import.meta.env.BASE_URL}brand/logo-color.png`);
-    if (resp.ok) {
-      const blob = await resp.blob();
-      const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
-      const dims = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight }); im.onerror = rej; im.src = dataUrl; });
-      const hMM = 14;
-      logoImg = { dataUrl, h: hMM, w: (dims.w / dims.h) * hMM };
-    }
-  } catch { /* fallback al monograma */ }
   const PW = 297, PH = 210, M = 14, CW = PW - 2 * M; // util: 269mm ancho
 
-  const today = new Date().toLocaleDateString("es-HN", { day: "2-digit", month: "long", year: "numeric" });
   const projFull = projectObj ? `${projectObj.short} — ${projectObj.name}` : (purchase.projectCode || "—");
   const fileName = `Ficha-Recibido-${purchase.projectCode}-${(purchase.provider || "").replace(/[^a-zA-Z0-9]/g, "_")}.pdf`;
   const hasQuotePDF = purchase.quoteFile?.dataUrl && purchase.quoteFile.type === "application/pdf";
   const hasQuoteImg = purchase.quoteFile?.dataUrl && purchase.quoteFile.type?.startsWith("image/");
   const hasReceiptPDF = purchase.receiptFile?.dataUrl && purchase.receiptFile.type === "application/pdf";
   const hasReceiptImg = purchase.receiptFile?.dataUrl && purchase.receiptFile.type?.startsWith("image/");
-  const hasAnyPDFAttachment = hasQuotePDF || hasReceiptPDF;
 
-  // Paleta de MARCA — mismo look del modulo: naranja Geotecnica + carbon +
-  // beige calido (antes era azul marino generico).
-  const B  = [232, 118, 45],  BL = [255, 251, 245];   // naranja #E8762D / beige #FFFBF5
-  const G  = [5, 150, 105],   GL = [220, 252, 231];   // verde (montos)
-  const GR = [122, 114, 104], GL2 = [248, 250, 252];  // stone calido #7A7268
-  const DK = [44, 42, 40],   BD = [219, 212, 200];    // carbon #2C2A28 / borde beige #DBD4C8
-  const W  = [255, 255, 255], BK = [26, 26, 26];
-
+  // Estilo único de reportes (26-oct-2026, src/reporte-estilo.js): blanco,
+  // carbón, UN acento naranja, tarjetas gris clarito y líneas finas.
+  const T = PDF_TEMA;
   const tc = c => doc.setTextColor(...c);
   const fc = c => doc.setFillColor(...c);
   const dc = c => doc.setDrawColor(...c);
   const lw = n => doc.setLineWidth(n);
   const f  = (n, s = "normal") => { doc.setFontSize(n); doc.setFont("helvetica", s); };
   const ln = (x1, y1, x2, y2) => doc.line(x1, y1, x2, y2);
-  const rc = (x, y, w, h, s = "S") => doc.rect(x, y, w, h, s);
+  const tx = (t, x, y, op) => doc.text(latin1(t), x, y, op);
 
   // Etiqueta de campo (gris pequeño)
-  const lbl = (t, x, y) => { f(7, "bold"); tc(GR); doc.text(t.toUpperCase(), x, y); };
+  const lbl = (t, x, y) => { f(6.8, "bold"); tc(T.texto3); tx(String(t).toUpperCase(), x, y, { charSpace: 0.2 }); };
   // Valor relleno (bold oscuro)
   const val = (v, x, y, mw) => {
-    f(9.5, "bold"); tc(DK);
-    if (mw) { doc.text(doc.splitTextToSize(String(v || "—"), mw)[0], x, y); }
-    else     { doc.text(String(v || "—"), x, y); }
+    f(9.5, "bold"); tc(T.carbon);
+    const t = latin1(String(v || "—"));
+    doc.text(mw ? (doc.splitTextToSize(t, mw)[0] || "") : t, x, y);
   };
   // Linea en blanco para firma
-  const blk = (x, y, w) => { dc(BK); lw(0.4); ln(x, y, x + w, y); };
+  const blk = (x, y, w) => { dc(T.carbon); lw(0.3); ln(x, y, x + w, y); };
   // Casilla de verificacion
-  const cbx = (x, y) => { dc(BK); lw(0.35); rc(x, y, 3.8, 3.8, "S"); };
+  const cbx = (x, y) => { dc(T.texto2); lw(0.3); doc.roundedRect(x, y, 3.8, 3.8, 0.6, 0.6, "S"); };
 
   // ════════════════════════════════════════════════════════
-  // 1. HEADER  (y: 14 → 38)
+  // 1. CABECERA estándar (marca GeoCore, logo de la empresa, título)
   // ════════════════════════════════════════════════════════
-  let y = M;
-
-  // Logo real de la empresa; monograma naranja como respaldo
-  let tx = M + 14;
-  if (logoImg) {
-    try {
-      doc.addImage(logoImg.dataUrl, "PNG", M, y + 1, logoImg.w, logoImg.h);
-      tx = M + logoImg.w + 6;
-    } catch { logoImg = null; }
-  }
-  if (!logoImg) {
-    fc(B); rc(M, y, 11, 22, "F");
-    f(11, "bold"); tc(W); doc.text("GT", M + 2, y + 13);
-  }
-  f(14, "bold"); tc(B); doc.text("ACTA DE ENTREGA Y RECEPCION DE MATERIALES", tx, y + 8);
-  f(9, "normal"); tc(GR); doc.text(`Grupo Geotecnica · ${companyName || "Geotecnica Soluciones"}`, tx, y + 15);
-
-  f(9, "normal"); tc(GR);
-  doc.text("Folio N°: _______________", PW - M, y + 7, { align: "right" });
-  doc.text(`Generada: ${today}`, PW - M, y + 14, { align: "right" });
+  const empresaKey = purchase.company === "subterra" || /subterra/i.test(companyName || "") ? "subterra" : "geotecnica";
+  let y = await pdfCabecera(doc, {
+    titulo: "Acta de entrega y recepción",
+    subtitulo: [purchase.codigo, purchase.projectCode, companyName || "Geotecnica Soluciones"].filter(Boolean).join("  ·  "),
+    empresa: empresaKey, margen: M, y: M,
+  });
+  // A la derecha, a la altura del título: folio a mano, ID y anexos.
+  f(9, "normal"); tc(T.texto2);
+  tx("Folio N°: _______________", PW - M, M + 16, { align: "right" });
+  f(6.8, "normal"); tc(T.texto3);
+  tx(`ID ${purchase.id}`, PW - M, M + 21.5, { align: "right" });
   if (hasQuotePDF || hasQuoteImg || hasReceiptPDF || hasReceiptImg) {
-    f(7.5, "italic"); tc(B);
     const partes = [];
     if (hasQuotePDF || hasQuoteImg) partes.push("Cotizacion");
     if (hasReceiptPDF || hasReceiptImg) partes.push("Transferencia");
-    doc.text(`* ${partes.join(" + ")} incluida${partes.length > 1 ? "s" : ""} en pag. 2+`, PW - M, y + 20, { align: "right" });
+    f(7.5, "bold"); tc(T.naranjaTexto);
+    tx(`${partes.join(" + ")} incluida${partes.length > 1 ? "s" : ""} en pag. 2+`, PW - M, M + 26.5, { align: "right" });
   }
 
-  y += 25; dc(B); lw(1.1); ln(M, y, PW - M, y); y += 4;
-
   // ════════════════════════════════════════════════════════
-  // 2. REFERENCIA DE LA COMPRA — pre-llenado  (y: 43 → 79)
+  // 2. REFERENCIA DE LA COMPRA — pre-llenado (tarjeta gris clarito)
   // ════════════════════════════════════════════════════════
   const refY = y, refH = 35;
-  fc(BL); rc(M, y, CW, refH, "F");
-  fc(B);  rc(M, y, 3, refH, "F");
-  f(7.5, "bold"); tc(B); doc.text("REFERENCIA DE LA COMPRA", M + 5, y + 5);
+  fc(T.fondo); doc.roundedRect(M, y, CW, refH, 3, 3, "F");
+  f(6.8, "bold"); tc(T.texto2); tx("REFERENCIA DE LA COMPRA", M + 5, y + 5.5, { charSpace: 0.3 });
 
   // Columna izquierda (120mm): 3 filas de datos
   const Lx = M + 5, Lw = 115, halfL = (Lw - 4) / 2;
-  const r1 = y + 10, r2 = y + 19, r3 = y + 28;
+  const r1 = y + 11, r2 = y + 20, r3 = y + 29;
 
   lbl("Proyecto", Lx, r1); lbl("N° Cotizacion", Lx + halfL + 4, r1);
   val(projFull, Lx, r1 + 4, halfL); val(purchase.quoteNumber || "—", Lx + halfL + 4, r1 + 4, halfL);
@@ -662,19 +631,19 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   lbl("Metodo de pago", Lx, r3); lbl("Fecha de pago", Lx + halfL + 4, r3);
   val(purchase.paymentMethod || "—", Lx, r3 + 4, halfL); val(fmt(purchase.paymentDate), Lx + halfL + 4, r3 + 4, halfL);
 
-  // Divisor vertical suave
-  dc(B); lw(0.15); ln(M + 121, refY + 7, M + 121, refY + refH - 3);
+  // Divisor vertical fino
+  dc(T.lineaFuerte); lw(0.2); ln(M + 121, refY + 7, M + 121, refY + refH - 4);
 
   // Columna derecha: Descripcion + Monto
-  const Rx = M + 126, Rw = CW - 126 - 3;
+  const Rx = M + 126, Rw = CW - 126 - 4;
   lbl("Descripcion de materiales / servicio", Rx, r1);
-  f(9.5, "bold"); tc(DK);
-  doc.text(doc.splitTextToSize(purchase.description || "—", Rw).slice(0, 2), Rx, r1 + 4);
+  f(9.5, "bold"); tc(T.carbon);
+  doc.text(doc.splitTextToSize(latin1(purchase.description || "—"), Rw).slice(0, 2), Rx, r1 + 4);
 
   lbl("Monto total pagado", Rx, r3);
-  f(15, "bold"); tc(G); doc.text(fmtL(purchase.amount), Rx, r3 + 5);
+  f(15, "bold"); tc(T.verde); tx(fmtL(purchase.amount), Rx, r3 + 5.5);
 
-  y = refY + refH + 4;
+  y = refY + refH + 4.5;
 
   // ════════════════════════════════════════════════════════
   // 3. AVISO AL MOTORISTA — la ficha es UNA sola pagina (acta completa):
@@ -682,11 +651,11 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   //    usuario 23-jul-2026: sin paginas repetidas ni filas de relleno.
   //    (Texto plano: la helvetica de jsPDF no soporta emojis.)
   // ════════════════════════════════════════════════════════
-  fc([254, 243, 199]); dc([217, 119, 6]); lw(0.4); rc(M, y, CW, 13, "FD");
-  f(8.5, "bold"); tc([146, 64, 14]);
-  doc.text("ATENCION MOTORISTA: cotejar UNA POR UNA las cantidades entregadas contra el detalle de abajo ANTES de solicitar la firma.", M + 4, y + 5.5);
-  doc.text("El Ingeniero/Residente firma que recibe EXACTAMENTE lo descrito en la cotizacion pagada con esta solicitud.", M + 4, y + 10.5);
-  let ay = y + 17;
+  const avisoTxt = "Motorista: cotejar UNA POR UNA las cantidades entregadas contra el detalle de abajo ANTES de solicitar la firma. El Ingeniero/Residente firma que recibe EXACTAMENTE lo descrito en la cotizacion pagada con esta solicitud.";
+  const avisoLns = doc.splitTextToSize(latin1(avisoTxt), CW - 6);
+  fc(T.naranja); doc.roundedRect(M, y - 2.6, 1, avisoLns.length * 3.6 + 1.2, 0.5, 0.5, "F");
+  f(7.8, "normal"); tc(T.texto2); doc.text(avisoLns, M + 4, y);
+  let ay = y + avisoLns.length * 3.6 + 3;
 
   // ── Tabla de cantidades ──
   const xN = M, xCant = M + 8, xDesc = M + 30, xOk = M + 195, xObs = M + 221;
@@ -698,32 +667,30 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   // Header de la tabla — solo se dibuja cuando hay items estructurados
   // (sin items, el detalle va en un recuadro y el header sobraria).
   const drawTableHeader = () => {
-    fc(B); rc(M, ay, CW, 7, "F");
-    f(7.5, "bold"); tc(W);
-    doc.text("#", xN + 2, ay + 4.8);
-    doc.text("CANT.", xCant + 2, ay + 4.8);
-    doc.text("DESCRIPCION DEL MATERIAL / SERVICIO", xDesc, ay + 4.8);
-    doc.text("ENTREGADO", xOk, ay + 4.8);
-    doc.text("OBSERVACION", xObs, ay + 4.8);
+    f(6.8, "bold"); tc(T.texto3);
+    const o = { charSpace: 0.2 };
+    tx("#", xN + 2, ay + 4.6, o);
+    tx("CANT.", xCant + 2, ay + 4.6, o);
+    tx("DESCRIPCION DEL MATERIAL / SERVICIO", xDesc, ay + 4.6, o);
+    tx("ENTREGADO", xOk, ay + 4.6, o);
+    tx("OBSERVACION", xObs, ay + 4.6, o);
+    dc(T.lineaFuerte); lw(0.3); ln(M, ay + 7, PW - M, ay + 7);
     ay += 7;
   };
 
   const drawRow = (num, cant, descTxt) => {
     if (ay + rowH > tableBottom) return false;
-    dc(BD); lw(0.2); rc(M, ay, CW, rowH, "S");
-    ln(xCant - 1, ay, xCant - 1, ay + rowH);
-    ln(xDesc - 2, ay, xDesc - 2, ay + rowH);
-    ln(xOk - 2, ay, xOk - 2, ay + rowH);
-    ln(xObs - 2, ay, xObs - 2, ay + rowH);
-    f(8.5, "normal"); tc(DK);
-    doc.text(String(num), xN + 2, ay + 5.3);
-    if (cant) { f(9, "bold"); doc.text(String(cant).slice(0, 12), xCant + 2, ay + 5.3); }
+    dc(T.linea); lw(0.2); ln(M, ay + rowH, PW - M, ay + rowH);
+    f(8.5, "normal"); tc(T.texto3);
+    tx(String(num), xN + 2, ay + 5.3);
+    tc(T.carbon);
+    if (cant) { f(9, "bold"); tx(String(cant).slice(0, 12), xCant + 2, ay + 5.3); }
     else blk(xCant + 2, ay + 5.5, 16);
-    f(8.5, "normal"); tc(DK);
-    if (descTxt) doc.text(doc.splitTextToSize(descTxt, wDesc)[0] || "", xDesc, ay + 5.3);
-    else { dc(BD); lw(0.25); ln(xDesc, ay + 5.5, xDesc + wDesc - 4, ay + 5.5); }
+    f(8.5, "normal"); tc(T.carbon);
+    if (descTxt) doc.text(doc.splitTextToSize(latin1(descTxt), wDesc)[0] || "", xDesc, ay + 5.3);
+    else { dc(T.lineaFuerte); lw(0.25); ln(xDesc, ay + 5.5, xDesc + wDesc - 4, ay + 5.5); }
     cbx(xOk + 7, ay + 2);
-    dc(BD); lw(0.25); ln(xObs, ay + 5.5, xObs + wObs - 4, ay + 5.5);
+    dc(T.lineaFuerte); lw(0.25); ln(xObs, ay + 5.5, xObs + wObs - 4, ay + 5.5);
     ay += rowH;
     return true;
   };
@@ -744,24 +711,23 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
       rowNum++; dibujados++;
     }
     if (dibujados < itemsArr.length) {
-      f(7.5, "italic"); tc(GR);
-      doc.text(`(+${itemsArr.length - dibujados} item(s) mas — cotejar contra la cotizacion anexa)`, M + 2, ay + 4);
+      f(7.5, "normal"); tc(T.texto3);
+      tx(`(+${itemsArr.length - dibujados} item(s) mas — cotejar contra la cotizacion anexa)`, M + 2, ay + 4);
       ay += 6;
     }
   } else {
     // Sin items estructurados: el detalle pagado va en un recuadro amplio —
     // eso es lo que el motorista coteja y el ingeniero firma. Sin filas de
     // relleno (se sentian repetitivas).
-    f(7.5, "bold"); tc(B); doc.text("DETALLE SEGUN COTIZACION PAGADA (cotejar contra esto):", M + 2, ay + 4);
+    f(6.8, "bold"); tc(T.texto3); tx("DETALLE SEGUN COTIZACION PAGADA (COTEJAR CONTRA ESTO)", M, ay + 4, { charSpace: 0.2 });
     ay += 6;
-    fc(BL); dc(BD); lw(0.25);
     // Clamp por espacio: la descripcion nunca se come el recuadro de
     // observaciones (~20mm reservados) ni desborda sobre las firmas.
     const maxLines = Math.max(2, Math.floor((tableBottom - ay - 24 - 4) / 4.5));
-    const descLines = doc.splitTextToSize(purchase.description || "—", CW - 8).slice(0, Math.min(10, maxLines));
+    const descLines = doc.splitTextToSize(latin1(purchase.description || "—"), CW - 8).slice(0, Math.min(10, maxLines));
     const descBoxH = 4 + descLines.length * 4.5;
-    rc(M, ay, CW, descBoxH, "FD");
-    f(9, "bold"); tc(DK); doc.text(descLines, M + 4, ay + 5);
+    fc(T.fondo); doc.roundedRect(M, ay, CW, descBoxH, 2.5, 2.5, "F");
+    f(9, "bold"); tc(T.carbon); doc.text(descLines, M + 4, ay + 5);
     ay += descBoxH + 3;
   }
 
@@ -769,45 +735,37 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
   // Espacio para anotar a mano, p.ej. "fui por 20 varillas y el proveedor
   // solo tenia 10" — llena el espacio libre hasta las firmas.
   if (tableBottom - ay > 10) {
-    f(7.5, "bold"); tc(B);
-    doc.text("OBSERVACIONES DE LA ENTREGA (faltantes, entregas parciales, diferencias):", M + 2, ay + 4);
+    f(6.8, "bold"); tc(T.texto3);
+    tx("OBSERVACIONES DE LA ENTREGA (FALTANTES, ENTREGAS PARCIALES, DIFERENCIAS)", M, ay + 4, { charSpace: 0.2 });
     ay += 6;
     const obsH = tableBottom - ay;
-    dc(BD); lw(0.3); rc(M, ay, CW, obsH, "S");
-    dc(BD); lw(0.2);
+    dc(T.lineaFuerte); lw(0.25); doc.roundedRect(M, ay, CW, obsH, 2.5, 2.5, "S");
+    dc(T.linea); lw(0.2);
     for (let ly = ay + 8; ly < ay + obsH - 2; ly += 8) ln(M + 4, ly, PW - M - 4, ly);
     ay += obsH;
   }
 
   // ── Firmas grandes ──
   const sigW2 = (CW - 10) / 2;
-  // Ingeniero / Residente RECIBE (azul)
-  fc(BL); dc(DK); lw(0.5); rc(M, firmasTop, sigW2, 48, "FD");
-  f(9.5, "bold"); tc(DK); doc.text("INGENIERO / RESIDENTE — RECIBE", M + sigW2 / 2, firmasTop + 6.5, { align: "center" });
-  let sl = firmasTop + 14;
-  lbl("Nombre completo", M + 5, sl); blk(M + 5, sl + 4.5, sigW2 - 10); sl += 10;
-  lbl("Cargo", M + 5, sl); blk(M + 5, sl + 4.5, (sigW2 - 14) / 2);
-  lbl("DNI", M + 5 + (sigW2 - 14) / 2 + 6, sl); blk(M + 5 + (sigW2 - 14) / 2 + 6, sl + 4.5, (sigW2 - 14) / 2); sl += 10;
-  lbl("Firma", M + 5, sl); blk(M + 5, sl + 4.5, sigW2 - 10); sl += 9;
-  f(6.5, "italic"); tc(GR);
-  doc.text("Al firmar certifico que RECIBI las cantidades exactas arriba detalladas, completas y en buen estado.", M + 5, sl + 3, { maxWidth: sigW2 - 10 });
-
-  // Motorista ENTREGA (naranja)
-  const mx = M + sigW2 + 10;
-  fc([253, 240, 230]); dc(B); lw(0.5); rc(mx, firmasTop, sigW2, 48, "FD");
-  f(9.5, "bold"); tc(B); doc.text("MOTORISTA — ENTREGA", mx + sigW2 / 2, firmasTop + 6.5, { align: "center" });
-  sl = firmasTop + 14;
-  lbl("Nombre completo", mx + 5, sl); blk(mx + 5, sl + 4.5, sigW2 - 10); sl += 10;
-  lbl("Placa vehiculo", mx + 5, sl); blk(mx + 5, sl + 4.5, (sigW2 - 14) / 2);
-  lbl("Fecha / Hora", mx + 5 + (sigW2 - 14) / 2 + 6, sl); blk(mx + 5 + (sigW2 - 14) / 2 + 6, sl + 4.5, (sigW2 - 14) / 2); sl += 10;
-  lbl("Firma", mx + 5, sl); blk(mx + 5, sl + 4.5, sigW2 - 10); sl += 9;
-  f(6.5, "italic"); tc(GR);
-  doc.text("Confirmo que coteje y ENTREGUE las cantidades exactas al Ingeniero/Residente indicado.", mx + 5, sl + 3, { maxWidth: sigW2 - 10 });
-
-  // Footer pag. 2
-  dc(BD); lw(0.25); ln(M, PH - M + 2, PW - M, PH - M + 2);
-  f(7, "normal"); tc([148, 163, 184]);
-  doc.text(`Grupo Geotecnica · Acta de Entrega y Recepcion · ${today} · Proy: ${purchase.projectCode} · ${purchase.provider} · ID: ${purchase.id}`, PW / 2, PH - M + 6, { align: "center" });
+  const cajaFirma = (x, titulo, campos, nota) => {
+    fc(T.fondo); doc.roundedRect(x, firmasTop, sigW2, 48, 3, 3, "F");
+    fc(T.naranja); doc.roundedRect(x + sigW2 / 2 - 6, firmasTop + 2.6, 12, 0.8, 0.4, 0.4, "F");
+    f(9.5, "bold"); tc(T.carbon); tx(titulo, x + sigW2 / 2, firmasTop + 8.5, { align: "center" });
+    let sl = firmasTop + 15;
+    lbl(campos[0], x + 5, sl); blk(x + 5, sl + 4.5, sigW2 - 10); sl += 10;
+    const half = (sigW2 - 14) / 2;
+    lbl(campos[1], x + 5, sl); blk(x + 5, sl + 4.5, half);
+    lbl(campos[2], x + 5 + half + 6, sl); blk(x + 5 + half + 6, sl + 4.5, half); sl += 10;
+    lbl("Firma", x + 5, sl); blk(x + 5, sl + 4.5, sigW2 - 10); sl += 9;
+    f(6.5, "normal"); tc(T.texto3);
+    tx(nota, x + 5, sl + 2.5, { maxWidth: sigW2 - 10 });
+  };
+  // Ingeniero / Residente RECIBE
+  cajaFirma(M, "INGENIERO / RESIDENTE — RECIBE", ["Nombre completo", "Cargo", "DNI"],
+    "Al firmar certifico que RECIBI las cantidades exactas arriba detalladas, completas y en buen estado.");
+  // Motorista ENTREGA
+  cajaFirma(M + sigW2 + 10, "MOTORISTA — ENTREGA", ["Nombre completo", "Placa vehiculo", "Fecha / Hora"],
+    "Confirmo que coteje y ENTREGUE las cantidades exactas al Ingeniero/Residente indicado.");
 
   // ════════════════════════════════════════════════════════
   // PAG. 2+: Adjuntos en orden — Cotizacion + Transferencia de pago
@@ -831,6 +789,7 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
 
   // Si no hay nada que adjuntar, guardar y salir
   if (anexos.length === 0) {
+    pdfPie(doc, { margen: M });
     doc.save(fileName);
     return;
   }
@@ -841,15 +800,18 @@ export const generateFichaPDF = async (purchaseLight, projectObj, companyName) =
 
   imgAnexos.forEach(({ titulo, subtitulo, file }) => {
     doc.addPage();
-    f(11, "bold"); tc(B); doc.text(titulo, PW / 2, 14, { align: "center" });
-    f(8.5, "normal"); tc(GR); doc.text(subtitulo, PW / 2, 20, { align: "center" });
-    dc(B); lw(0.5); ln(M, 23, PW - M, 23);
+    f(11, "bold"); tc(T.carbon); tx(titulo, PW / 2, 14, { align: "center" });
+    f(8.5, "normal"); tc(T.texto2); tx(subtitulo, PW / 2, 20, { align: "center" });
+    dc(T.lineaFuerte); lw(0.25); ln(M, 23, PW - M, 23);
     try {
-      doc.addImage(file.dataUrl, file.type.includes("png") ? "PNG" : "JPEG", M, 26, CW, PH - 36);
+      doc.addImage(file.dataUrl, file.type.includes("png") ? "PNG" : "JPEG", M, 26, CW, PH - 40);
     } catch {
-      f(10, "normal"); tc(GR); doc.text("(imagen no incrustable)", PW / 2, PH / 2, { align: "center" });
+      f(10, "normal"); tc(T.texto3); tx("(imagen no incrustable)", PW / 2, PH / 2, { align: "center" });
     }
   });
+  // Pie estándar en las páginas hechas con jsPDF (acta + imágenes anexas);
+  // los PDFs anexos se pegan después tal cual, sin tocarlos.
+  pdfPie(doc, { margen: M });
 
   // Si no hay PDFs que mergear → guardar directo
   if (pdfAnexos.length === 0) {
@@ -4223,44 +4185,26 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
       const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
       const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const PW = 210, PH = 297, M = 16;
+      const PW = 210, PH = 297, M = 16, CW = PW - 2 * M;
+      const T = PDF_TEMA;
       const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 });
-      const ORANGE = [232, 118, 45], CARBON = [44, 42, 40], GRAY = [110, 105, 100], GREEN = [5, 150, 105], RED = [185, 28, 28];
-      const tc = (c) => doc.setTextColor(c[0], c[1], c[2]);
+      const tc = (c) => doc.setTextColor(...c);
       const fs = (n, st) => doc.setFont("helvetica", st || "normal").setFontSize(n);
+      const tx = (t, x, yy, op) => doc.text(latin1(t), x, yy, op);
 
-      // Logo (con fallback al monograma si no carga)
-      let logo = null;
-      try {
-        const resp = await fetch(`${import.meta.env.BASE_URL}brand/logo-color.png`);
-        if (resp.ok) {
-          const blob = await resp.blob();
-          const du = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
-          const dims = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight }); im.onerror = rej; im.src = du; });
-          const hMM = 15;
-          logo = { du, h: hMM, w: (dims.w / dims.h) * hMM };
-        }
-      } catch { /* sin logo */ }
+      // ── PORTADA (estilo único de reportes, 26-oct-2026) ──
+      const nombreEmp = COMPANIES[pu.company]?.name || pu.company || "";
+      let y = await pdfCabecera(doc, {
+        titulo: "Paquete de cierre contable",
+        subtitulo: [CFG.nombre, pu.codigo || "sin código", nombreEmp].filter(Boolean).join("  ·  "),
+        empresa: pu.company === "subterra" ? "subterra" : "geotecnica", margen: M, y: M,
+      });
 
-      // ── PORTADA ──
-      let y = M;
-      if (logo) { try { doc.addImage(logo.du, "PNG", M, y, logo.w, logo.h); } catch { /* noop */ } }
-      else { fs(20, "bold"); tc(ORANGE); doc.text("GT", M, y + 11); }
-      const xTxt = M + (logo ? logo.w + 6 : 16);
-      fs(7.5, "bold"); tc(ORANGE); doc.text("GRUPO GEOTECNICA · GEOSHOPPING", xTxt, y + 4);
-      fs(16, "bold"); tc(CARBON); doc.text("PAQUETE DE CIERRE CONTABLE", xTxt, y + 11.5);
-      fs(9, "normal"); tc(GRAY);
-      doc.text(String(pu.codigo || "sin código") + "  ·  " + (COMPANIES[pu.company]?.name || pu.company || ""), xTxt, y + 16.5);
-      fs(7.5, "normal"); tc(GRAY);
-      doc.text("Generado " + new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" }), PW - M, y + 5, { align: "right" });
-      y += logo ? logo.h + 5 : 22;
-      doc.setFillColor(ORANGE[0], ORANGE[1], ORANGE[2]); doc.rect(M, y, PW - 2 * M, 1.6, "F");
-      y += 9;
-
-      // Datos de la compra
+      // Datos de la compra: una tabla limpia (etiqueta gris · valor carbón,
+      // línea fina entre filas) sobre una tarjeta gris clarita.
       const filas = [
         ["Código de solicitud", String(pu.codigo || "— sin asignar —")],
-        ["Empresa", COMPANIES[pu.company]?.name || pu.company || "—"],
+        ["Empresa", nombreEmp || "—"],
         ["Proyecto", pu.projectCode || "—"],
       ];
       filas.push(
@@ -4274,32 +4218,34 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         ...(abonosPaq.length ? [["Pagada en abonos", `${abonosPaq.length} abono${abonosPaq.length === 1 ? "" : "s"}: ` + abonosPaq.map(a => `${fL(a.monto)} (${a.fecha})`).join(" · ")]] : []),
         ["Responsable de cierre contable", pu.cierreResponsable || "— sin asignar —"],
       );
-      filas.forEach(([k, v]) => {
-        doc.setFillColor(255, 251, 245); doc.rect(M, y, 62, 8, "F");
-        doc.setDrawColor(219, 212, 200); doc.setLineWidth(0.2);
-        doc.rect(M, y, 62, 8); doc.rect(M + 62, y, PW - 2 * M - 62, 8);
-        fs(8, "bold"); tc(CARBON); doc.text(String(k), M + 2.5, y + 5.3);
-        fs(8.5, "normal"); tc([60, 58, 56]);
-        doc.text(doc.splitTextToSize(String(v), PW - 2 * M - 68)[0] || "", M + 64.5, y + 5.3);
-        y += 8;
+      const filaH = 7.6, colV = M + 62;
+      doc.setFillColor(...T.fondo); doc.roundedRect(M, y, CW, filas.length * filaH + 4, 3, 3, "F");
+      y += 2;
+      filas.forEach(([k, v], i) => {
+        if (i > 0) { doc.setDrawColor(...T.linea); doc.setLineWidth(0.2); doc.line(M + 4, y, PW - M - 4, y); }
+        fs(6.8, "bold"); tc(T.texto3); tx(String(k).toUpperCase(), M + 5, y + 4.9, { charSpace: 0.2 });
+        const esMonto = k === "Monto";
+        fs(esMonto ? 10 : 8.8, esMonto ? "bold" : "normal"); tc(T.carbon);
+        tx(doc.splitTextToSize(latin1(String(v)), PW - M - 5 - colV)[0] || "", colV, y + 5.1);
+        y += filaH;
       });
-      y += 7;
+      y += 2 + 9;
 
       // Detalle de materiales (si lo registraron)
       // Solo si aporta algo DISTINTO de la descripción: desde el 20-ago-2026 el
       // detalle según cotización y la descripción son el mismo campo, así que
       // en las solicitudes nuevas esto no se repite.
       if (pu.detalleMateriales && String(pu.detalleMateriales).trim() !== String(pu.description || "").trim()) {
-        fs(8, "bold"); tc(ORANGE); doc.text("DETALLE SEGÚN COTIZACIÓN", M, y); y += 4.5;
-        fs(8, "normal"); tc([60, 58, 56]);
-        const lineas = doc.splitTextToSize(String(pu.detalleMateriales), PW - 2 * M - 4).slice(0, 12);
-        lineas.forEach(l => { doc.text(l, M + 2, y); y += 4; });
-        y += 4;
+        fs(7, "bold"); tc(T.texto3); tx("DETALLE SEGÚN COTIZACIÓN", M, y, { charSpace: 0.3 }); y += 5;
+        fs(8.5, "normal"); tc(T.carbon);
+        const lineas = doc.splitTextToSize(latin1(String(pu.detalleMateriales)), CW - 4).slice(0, 12);
+        lineas.forEach(l => { doc.text(l, M, y); y += 4; });
+        y += 6;
       }
 
       // Checklist de Contabilidad
-      fs(9, "bold"); tc(CARBON); doc.text("DOCUMENTOS DEL PAQUETE", M, y); y += 2;
-      doc.setDrawColor(219, 212, 200); doc.line(M, y, PW - M, y); y += 6;
+      fs(11, "bold"); tc(T.carbon); tx("Documentos del paquete", M, y); y += 2.5;
+      doc.setDrawColor(...T.lineaFuerte); doc.setLineWidth(0.25); doc.line(M, y, PW - M, y); y += 7;
       const sinFichaOk = pu.deliveryStatus === "cerrado" && !ficha;
       const items = [
         ["Ficha de recibido firmada", !!ficha, sinFichaOk ? "No aplica — " + (pu.delivery?.closingNotes || "servicio / renta") : (ficha ? ficha.name : "PENDIENTE"), sinFichaOk],
@@ -4310,23 +4256,34 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         ["Constancia de pagos a cuenta", !!constancia, constancia ? constancia.name : "PENDIENTE — subila en la ficha del proveedor", false],
         ["Factura del proveedor", !!factura, factura ? factura.name : "SE ENGRAPA FÍSICAMENTE a este paquete", false],
       ];
+      // Marca dibujada (Helvetica no trae ✓/✗): círculo verde con palomita
+      // = está; círculo gris con raya = no aplica; círculo rojo vacío = falta.
       items.forEach(([label, ok, nota, na]) => {
-        fs(11, "bold"); tc(ok ? GREEN : (na ? GRAY : RED));
-        doc.text(ok ? "\u2713" : (na ? "\u2014" : "\u2717"), M + 1, y);
-        fs(9, "bold"); tc(CARBON); doc.text(String(label), M + 8, y);
-        fs(7.5, "normal"); tc(GRAY); doc.text(String(nota).slice(0, 70), M + 78, y);
-        y += 6.5;
+        const cx = M + 2.6, cy = y - 1.3, r = 2.4;
+        doc.setLineWidth(0.35);
+        if (ok) {
+          doc.setFillColor(...T.verde); doc.circle(cx, cy, r, "F");
+          doc.setDrawColor(...T.blanco); doc.setLineWidth(0.5);
+          doc.line(cx - 1.1, cy + 0.05, cx - 0.3, cy + 0.85); doc.line(cx - 0.3, cy + 0.85, cx + 1.2, cy - 0.8);
+        } else if (na) {
+          doc.setDrawColor(...T.texto3); doc.circle(cx, cy, r, "S"); doc.line(cx - 1.1, cy, cx + 1.1, cy);
+        } else {
+          doc.setDrawColor(...T.rojo); doc.circle(cx, cy, r, "S");
+        }
+        fs(9.5, "bold"); tc(T.carbon); tx(String(label), M + 8, y);
+        fs(7.8, "normal"); tc(ok ? T.texto2 : (na ? T.texto3 : T.rojo)); tx(String(nota).slice(0, 70), M + 78, y);
+        y += 5;
+        doc.setDrawColor(...T.linea); doc.setLineWidth(0.2); doc.line(M + 8, y - 1, PW - M, y - 1);
+        y += 3.5;
       });
-      y += 3;
-      doc.setFillColor(248, 242, 230); doc.rect(M, y, PW - 2 * M, 13, "F");
-      fs(7.5, "normal"); tc([90, 85, 80]);
-      doc.text("Los documentos digitalizados van en las páginas siguientes. Engrape la FACTURA ORIGINAL a este paquete", M + 3, y + 5);
-      doc.text("y súbalo escaneado en \"Por cerrar contable\" para dejar la compra cerrada en el sistema.", M + 3, y + 9.5);
+      y += 4;
+      fs(7.8, "normal"); tc(T.texto3);
+      doc.text(doc.splitTextToSize(latin1("Los documentos digitalizados van en las páginas siguientes. Engrapá la factura original a este paquete y subilo escaneado en \"Por cerrar contable\" para dejar la compra cerrada en el sistema."), CW), M, y);
 
       // Pie de portada
-      fs(7, "normal"); tc(GRAY);
-      doc.text(`${CFG.nombre} — Sistema de Operaciones · Grupo Geotecnica`, M, PH - 10);
-      doc.text("Preparado por " + (userName || "Operaciones"), PW - M, PH - 10, { align: "right" });
+      fs(7, "normal"); tc(T.texto3);
+      tx("Preparado por " + (userName || "Operaciones") + "  ·  " + CFG.nombre, PW - M, PH - 15, { align: "right" });
+      pdfPie(doc, { margen: M });
 
       // ── ANEXOS ─────────────────────────────────────────────────────────
       // Se ensamblan TODOS con pdf-lib para respetar el ORDEN exacto y el
@@ -5273,127 +5230,48 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const totalG = rowsProy.reduce((sm, r) => sm + r.total, 0);
     const w = window.open("", "_blank");
     if (!w) return alert("Permití pop-ups para generar el PDF.");
-    const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
-    const genFecha = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" });
-    const PALETA = ["#7C3AED", "#E8762D", "#2C5F5D", "#3E6A99", "#B45309", "#0E7490", "#BE3455", "#15803D"];
-    const top = rowsProy.slice(0, 8), otros = rowsProy.slice(8);
+    // Estilo único de reportes (26-oct-2026): src/reporte-estilo.js
+    const top = rowsProy.slice(0, 7), otros = rowsProy.slice(7);
+    const totOtros = otros.reduce((sm, r) => sm + r.total, 0);
     const segs = [
-      ...top.map((r, i) => ({ label: r.short, val: r.total, color: PALETA[i % PALETA.length] })),
-      ...(otros.length ? [{ label: `Otros (${otros.length})`, val: otros.reduce((sm, r) => sm + r.total, 0), color: "#94A3B8" }] : []),
+      ...top.map((r, i) => ({ label: r.short, valor: r.total, valorTxt: fL(r.total), color: colorPaleta(i) })),
+      ...(otros.length ? [{ label: `Otros (${otros.length})`, valor: totOtros, valorTxt: fL(totOtros), color: RP.lineaFuerte }] : []),
     ];
-    const RAD = 62, CIRC = 2 * Math.PI * RAD;
-    let acum = 0;
-    const donaSegs = segs.map(sg => {
-      const frac = totalG > 0 ? sg.val / totalG : 0;
-      const el = `<circle r="${RAD}" cx="90" cy="90" fill="transparent" stroke="${sg.color}" stroke-width="34" stroke-dasharray="${(frac * CIRC).toFixed(2)} ${CIRC.toFixed(2)}" stroke-dashoffset="${(-acum * CIRC).toFixed(2)}" transform="rotate(-90 90 90)"/>`;
-      acum += frac; return el;
-    }).join("");
-    const donaLeyenda = segs.map(sg => `<div style="display:flex;align-items:center;gap:7px;font-size:10.5px;margin-bottom:5px">
-      <span style="width:10px;height:10px;border-radius:3px;background:${sg.color};flex-shrink:0"></span>
-      <span style="font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sg.label)}</span>
-      <span style="color:#64748b;min-width:42px;text-align:right">${totalG > 0 ? ((sg.val / totalG) * 100).toFixed(1) : "0"}%</span>
-      <span style="font-weight:700;min-width:96px;text-align:right">${fL(sg.val)}</span>
-    </div>`).join("");
     const maxMaq = Math.max(...rowsMaq.map(r => r.total), 1);
-    const barrasMaq = rowsMaq.slice(0, 12).map(r => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:10px">
-      <span style="width:130px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;color:${r.key === "__sin__" ? "#B45309" : "#1E293B"}">${esc(r.nombre)}</span>
-      <div style="flex:1;height:16px;background:#F8FAFC;border-radius:4px;overflow:hidden">
-        <div style="width:${Math.max(2, (r.total / maxMaq) * 100).toFixed(1)}%;height:100%;background:${r.key === "__sin__" ? "#F59E0B" : "#7C3AED"}"></div>
-      </div>
-      <span style="width:92px;text-align:right;font-weight:700;flex-shrink:0">${fL(r.total)}</span>
-    </div>`).join("");
-    const kpi = (label, val, color, sub) => `<div style="flex:1;min-width:130px;border:1px solid #E2E8F0;border-radius:10px;padding:11px 14px">
-      <div style="font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:0.6px;font-weight:700">${label}</div>
-      <div style="font-size:17px;font-weight:800;color:${color};margin-top:3px;letter-spacing:-0.3px">${val}</div>
-      ${sub ? `<div style="font-size:9px;color:#94A3B8;margin-top:1px">${sub}</div>` : ""}
-    </div>`;
-    const chipCo = (c2) => `<span style="display:inline-block;background:${c2 === "subterra" ? "#2C5F5D" : "#E8762D"};color:#fff;border-radius:4px;padding:1px 6px;font-size:8px;font-weight:800;letter-spacing:0.5px;vertical-align:1px">${TAG[c2] || "GEO"}</span>`;
-    const projBlocks = rowsProy.map(r => {
+    const barrasMaq = rowsMaq.slice(0, 12).map(r => `<div style="margin-bottom:9px">
+        <div style="display:flex;justify-content:space-between;gap:10px;font-size:10.5px;margin-bottom:4px"><b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${r.key === "__sin__" ? `color:${RP.naranjaTexto}` : ""}">${esc(r.nombre)}</b><span class="mono">${fL(r.total)}</span></div>
+        ${rBarra([{ valor: r.total, color: r.key === "__sin__" ? RP.naranja : RP.carbon }], maxMaq)}
+      </div>`).join("");
+    const chipCo = (c2) => rChip(TAG[c2] || "GEO", c2 === "subterra" ? "naranja" : "");
+    const fechaPago = (x) => x.paidAt ? new Date(x.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", timeZone: "UTC" }) : "—";
+    const detalleDe = (x) => esc(x.description || "—") + (x.detalleMateriales && String(x.detalleMateriales).trim() !== String(x.description || "").trim() ? `<div class="rp-nota" style="white-space:pre-wrap">${esc(x.detalleMateriales)}</div>` : "");
+    const bloques = rowsProy.map(r => {
       const maqsOrd = Object.entries(r.maqs).map(([mk, v]) => ({ mk, nombre: nombreMaq(mk), ...v })).sort((a, b) => b.total - a.total);
-      return `
-    <div style="margin-bottom:16px;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
-      <div style="background:#2C2A28;color:#fff;padding:8px 14px;font-weight:700;font-size:12.5px;display:flex;justify-content:space-between;align-items:center">
-        <span>${esc(r.short)}</span>
-        <span style="font-size:10px;font-weight:600;opacity:.85">${maqsOrd.length} máquina${maqsOrd.length !== 1 ? "s" : ""} · ${r.n} pago${r.n !== 1 ? "s" : ""} &nbsp;<span style="font-size:13px;font-weight:800;opacity:1">${fL(r.total)}</span></span>
-      </div>
-      ${maqsOrd.map(mq2 => `
-        <div style="background:#F3E8FF;padding:6px 14px;font-size:11px;font-weight:800;color:#5B21B6;display:flex;justify-content:space-between;border-top:1px solid #E9D5FF">
-          <span>⚙ ${esc(mq2.nombre)}</span><span>${fL(mq2.total)}</span>
-        </div>
-        <table style="width:100%;border-collapse:collapse;font-size:10.5px">
-          <tbody>
-            ${mq2.items.map(x => `<tr style="border-top:1px solid #F1F5F9;vertical-align:top">
-              <td style="padding:5px 14px;font-weight:600;white-space:nowrap;width:190px">${chipCo(x.company === "subterra" ? "subterra" : "geotecnica")} ${esc(x.provider || "—")}</td>
-              <td style="padding:5px 8px;color:#334155">${esc(x.description || "—")}${x.detalleMateriales && String(x.detalleMateriales).trim() !== String(x.description || "").trim() ? `<div style="color:#64748b;font-size:9px;white-space:pre-wrap;margin-top:2px;border-left:2px solid #E2E8F0;padding-left:6px">${esc(x.detalleMateriales)}</div>` : ""}</td>
-              <td style="padding:5px 8px;text-align:right;white-space:nowrap;color:#64748b;width:64px">${x.paidAt ? new Date(x.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", timeZone: "UTC" }) : "—"}</td>
-              <td style="padding:5px 14px;text-align:right;font-weight:700;white-space:nowrap;width:110px">${fL(x.amount)}</td>
-            </tr>`).join("")}
-          </tbody>
-        </table>`).join("")}
-      <div style="background:#F8FAFC;font-weight:700;border-top:1px solid #E2E8F0;padding:6px 14px;display:flex;justify-content:space-between;font-size:11px">
-        <span>Subtotal ${esc(r.short)}</span><span style="color:#059669">${fL(r.total)}</span>
-      </div>
-    </div>`;
+      const filas = [];
+      maqsOrd.forEach(mq2 => {
+        filas.push({ clase: "sub", celdas: [esc(mq2.nombre), `<span class="suave">${mq2.items.length} pago${mq2.items.length !== 1 ? "s" : ""}</span>`, "", fL(mq2.total)] });
+        mq2.items.forEach(x => filas.push([`${chipCo(x.company === "subterra" ? "subterra" : "geotecnica")} <b>${esc(x.provider || "—")}</b>`, detalleDe(x), `<span class="suave">${fechaPago(x)}</span>`, fL(x.amount)]));
+      });
+      return rSeccion(r.short,
+        rTabla({
+          columnas: [{ t: "Proveedor", ancho: "26%" }, { t: "Qué se pagó" }, { t: "Pagada", num: true, ancho: "70px" }, { t: "Monto", num: true, ancho: "110px" }],
+          filas,
+          total: [`Subtotal ${esc(r.short)}`, `${maqsOrd.length} máquina${maqsOrd.length !== 1 ? "s" : ""} · ${r.n} pago${r.n !== 1 ? "s" : ""}`, "", fL(r.total)],
+        }), `<span class="mono">${fL(r.total)}</span>`);
     }).join("");
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costo de Maquinaria — ${mesTitulo} · Grupo Geotecnica</title>
-    <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#1E293B;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{.np{display:none}}thead{display:table-header-group}tr{page-break-inside:avoid}</style>
-    </head><body>
-    <div style="page-break-after:always">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px">
-        <div style="display:flex;align-items:center;gap:14px">
-          <img src="${logoUrl}" style="height:52px" onerror="this.style.display='none'" />
-          <div>
-            <div style="font-size:9px;color:#7C3AED;font-weight:800;letter-spacing:1.8px;text-transform:uppercase">Grupo Geotecnica · Maquinaria</div>
-            <div style="font-size:23px;font-weight:800;letter-spacing:-0.4px;color:#2C2A28">Costo de Maquinaria</div>
-            <div style="font-size:13px;color:#64748b">Reporte ejecutivo mensual — <b style="color:#2C2A28">${mesTitulo}</b> · repuestos y mantenimiento</div>
-          </div>
-        </div>
-        <div style="text-align:right;font-size:10px;color:#64748b">
-          <div style="font-weight:800;color:#E8762D">Geotecnica Soluciones</div>
-          <div style="font-weight:800;color:#2C5F5D">Subterra Honduras</div>
-          <div style="margin-top:3px">Generado ${genFecha}</div>
-        </div>
-      </div>
-      <div style="height:4px;background:linear-gradient(90deg,#7C3AED,#E8762D,#2C5F5D);border-radius:2px;margin:13px 0 16px"></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
-        ${kpi("Gasto total en maquinaria", fL(totalG), "#059669", `${delMes.length} pagos · ${rowsMaq.length} máquinas · ${rowsProy.length} proyectos`)}
-        ${["geotecnica", "subterra"].filter(c2 => porEmp[c2].total > 0).map(c2 => kpi(c2 === "subterra" ? "Subterra Honduras" : "Geotecnica Soluciones", fL(porEmp[c2].total), c2 === "subterra" ? "#2C5F5D" : "#E8762D", `${porEmp[c2].n} pagos`)).join("")}
-        ${kpi("Máquina más costosa", rowsMaq.length ? esc(rowsMaq[0].nombre) : "—", "#7C3AED", rowsMaq.length ? fL(rowsMaq[0].total) : "")}
-      </div>
-      <div style="display:flex;gap:14px;align-items:flex-start">
-        <div style="flex:1.15;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
-          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Distribución del gasto por proyecto</div>
-          <div style="display:flex;gap:14px;align-items:center">
-            <svg width="140" height="140" viewBox="0 0 180 180" style="flex-shrink:0">
-              ${donaSegs}
-              <text x="90" y="86" text-anchor="middle" style="font-size:11px;font-weight:800;fill:#2C2A28">${rowsProy.length}</text>
-              <text x="90" y="100" text-anchor="middle" style="font-size:8px;fill:#64748b">proyectos</text>
-            </svg>
-            <div style="flex:1">${donaLeyenda}</div>
-          </div>
-        </div>
-        <div style="flex:1;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
-          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:9px">Gasto por máquina</div>
-          ${barrasMaq}
-        </div>
-      </div>
-    </div>
-    <div style="border-left:4px solid #7C3AED;padding-left:12px;margin-bottom:14px">
-      <div style="font-size:9px;color:#7C3AED;font-weight:800;letter-spacing:1.5px;text-transform:uppercase">Detalle por proyecto y máquina · ${mesTitulo}</div>
-      <div style="font-size:11px;color:#64748b">Cada pago con su empresa: ${chipCo("geotecnica")} Geotecnica Soluciones · ${chipCo("subterra")} Subterra Honduras. Cada máquina bajo el proyecto al que está asignada.</div>
-    </div>
-    ${projBlocks}
-    <div style="background:#2C2A28;color:#fff;border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;page-break-inside:avoid">
-      <span style="font-size:12px;font-weight:700">GASTO TOTAL EN MAQUINARIA DEL GRUPO — ${mesTitulo}</span>
-      <span style="font-size:17px;font-weight:800;color:#6EE7B7">${fL(totalG)}</span>
-    </div>
-    <div style="font-size:9px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:8px;margin-top:12px;line-height:1.5;page-break-inside:avoid">
-      <b>Metodología:</b> se incluyen las solicitudes de pago de repuestos/mantenimiento con pago realizado cuya fecha de pago cae en ${mesTitulo}, de ambas empresas, agrupadas por el proyecto de la solicitud y la máquina vinculada. No incluye materiales de construcción (ver el reporte de GeoShopping).
-      Preparado por ${esc(userName || "Operaciones")} · GeoMachinery — Sistema de Operaciones.
-    </div>
-    <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#7C3AED;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
-    </body></html>`);
-    w.document.close();
+    const empresasConGasto = ["geotecnica", "subterra"].filter(c2 => porEmp[c2].total > 0);
+    const cuerpo = rKpis([
+      { label: "Gasto total en maquinaria", valor: fL(totalG), sub: `${delMes.length} pagos · ${rowsMaq.length} máquinas · ${rowsProy.length} proyectos` },
+      ...empresasConGasto.map(c2 => ({ label: c2 === "subterra" ? "Subterra Honduras" : "Geotecnica Soluciones", valor: fL(porEmp[c2].total), sub: `${porEmp[c2].n} pagos` })),
+      { label: "Máquina más costosa", valor: rowsMaq.length ? rowsMaq[0].nombre : "—", sub: rowsMaq.length ? fL(rowsMaq[0].total) : "", mono: false },
+    ])
+      + `<div class="rp-grid2"><div class="rp-caja">${rSeccion("Por proyecto", rDona(segs, { tam: 150, centro: String(rowsProy.length), centroSub: "proyectos" }))}</div><div class="rp-caja">${rSeccion("Por máquina", barrasMaq)}</div></div>`
+      + `<div class="rp-salto"></div>`
+      + `<div class="rp-nota" style="margin:0 0 14px">Cada pago con su empresa: ${chipCo("geotecnica")} Geotecnica Soluciones · ${chipCo("subterra")} Subterra Honduras. Cada máquina bajo el proyecto de la solicitud.</div>`
+      + bloques
+      + rTabla({ columnas: [{ t: "" }, { t: "", num: true }], filas: [], total: [`Gasto total en maquinaria del grupo · ${mesTitulo}`, fL(totalG)] })
+      + `<div class="rp-nota" style="margin-top:14px">Solicitudes de repuestos y mantenimiento con pago realizado y fecha de pago en ${esc(mesTitulo)}, de ambas empresas, agrupadas por el proyecto de la solicitud y la máquina vinculada. No incluye materiales de construcción (ver GeoShopping). Preparado por ${esc(userName || "Operaciones")} · GeoMachinery.</div>`;
+    abrirReporte(w, reporteHTML({ titulo: "Costo de maquinaria", subtitulo: `Reporte ejecutivo mensual · ${mesTitulo} · repuestos y mantenimiento`, cuerpo }));
   };
 
   const renderCostosMaq = () => {
@@ -5929,19 +5807,30 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           const gastoMaq = Object.entries(acc).map(([k, v]) => ({ key: k, nombre: k === "__sin__" ? "Sin máquina asignada" : (machines.find(m => m.id === k)?.nombre || "Máquina eliminada"), ...v })).sort((a, b) => b.monto - a.monto);
           const tot = gastoMaq.reduce((sm, r) => sm + r.monto, 0);
           const maxG = Math.max(1, ...gastoMaq.map(r => r.monto));
-          const csv = () => {
-            const enc = (v) => { let t = String(v ?? ""); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
-            const lines = [["Mes", "Maquina", "Solicitudes", "Gasto (L)", "Proyectos"].map(enc).join(",")];
-            gastoMaq.forEach(r => lines.push([esGlobal ? "global" : mesSel, r.nombre, r.n, r.monto.toFixed(2), Object.entries(r.proys).map(([pk, v]) => `${pk}: L ${v.toFixed(2)}`).join(" | ")].map(enc).join(",")));
-            lines.push(["", "TOTAL", gastoMaq.reduce((sm, r) => sm + r.n, 0), tot.toFixed(2), ""].map(enc).join(","));
-            const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-            const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `gasto-maquinas-${esGlobal ? "global" : mesSel}.csv`; a.click(); URL.revokeObjectURL(a.href);
+          const excel = async () => {
+            try {
+              const periodo = esGlobal ? "global" : mesSel;
+              const wb = await libroExcel();
+              hojaExcel(wb, {
+                nombre: "Gasto por máquina", titulo: "Gasto por máquina", subtitulo: `GeoMachinery · ${mesSelLabel}`,
+                columnas: [
+                  { t: "Mes", key: "mes", ancho: 10, formato: "texto" },
+                  { t: "Máquina", key: "maquina", ancho: 32, formato: "texto" },
+                  { t: "Solicitudes", key: "n", ancho: 12, formato: "num" },
+                  { t: "Gasto (L)", key: "monto", ancho: 18, formato: "lps" },
+                  { t: "Proyectos", key: "proys", ancho: 60, formato: "texto" },
+                ],
+                filas: gastoMaq.map(r => ({ mes: periodo, maquina: r.nombre, n: r.n, monto: Math.round(r.monto * 100) / 100, proys: Object.entries(r.proys).map(([pk, v]) => `${pk}: L ${v.toFixed(2)}`).join(" | ") })),
+                total: { maquina: "TOTAL", n: gastoMaq.reduce((sm, r) => sm + r.n, 0), monto: Math.round(tot * 100) / 100 },
+              });
+              await descargarExcel(wb, `gasto-maquinas-${periodo}.xlsx`);
+            } catch (err) { if (!err?.isStaleChunk) alert("No se pudo generar el Excel: " + (err?.message || err)); }
           };
           return <div className="gt-vidrio" style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <div className="gt-label" style={{ color: "var(--text-2)" }}>Gasto por máquina — {mesSelLabel}</div>
-              {(canSeeCostosMaq || isVisorCompras) && gastoMaq.length > 0 && <button onClick={csv}
-                style={{ padding: "5px 12px", borderRadius: 999, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-2)", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>CSV</button>}
+              {(canSeeCostosMaq || isVisorCompras) && gastoMaq.length > 0 && <button onClick={excel}
+                style={{ padding: "5px 12px", borderRadius: 999, border: "1px solid var(--hairline)", background: "var(--surface)", color: "var(--text-2)", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Excel</button>}
             </div>
             {gastoMaq.length === 0
               ? <div style={{ fontSize: 12.5, color: "var(--text-3)", fontStyle: "italic", padding: "10px 2px" }}>Ningún pago de repuestos o mantenimiento en {mesSelLabel}.</div>
@@ -6056,151 +5945,39 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const totalG = rowsG.reduce((sm, r) => sm + r.total, 0);
     const w = window.open("", "_blank");
     if (!w) return alert("Permití pop-ups para generar el PDF.");
-    const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
-    const genFecha = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" });
-    const PALETA = ["#E8762D", "#2C5F5D", "#3E6A99", "#B45309", "#6D28D9", "#0E7490", "#BE3455", "#15803D"];
-    const top = rowsG.slice(0, 8), otros = rowsG.slice(8);
+    // Estilo único de reportes (26-oct-2026): src/reporte-estilo.js
+    const top = rowsG.slice(0, 7), otros = rowsG.slice(7);
     const segs = [
-      ...top.map((r, i) => ({ label: r.short, val: r.total, color: PALETA[i % PALETA.length] })),
-      ...(otros.length ? [{ label: `Otros (${otros.length})`, val: otros.reduce((sm, r) => sm + r.total, 0), color: "#94A3B8" }] : []),
+      ...top.map((r, i) => ({ label: r.short, valor: r.total, valorTxt: fL(r.total), color: colorPaleta(i) })),
+      ...(otros.length ? [{ label: `Otros (${otros.length})`, valor: otros.reduce((sm, r) => sm + r.total, 0), valorTxt: fL(otros.reduce((sm, r) => sm + r.total, 0)), color: "#DDDBD7" }] : []),
     ];
-    const RAD = 62, CIRC = 2 * Math.PI * RAD;
-    let acum = 0;
-    const donaSegs = segs.map(sg => {
-      const frac = totalG > 0 ? sg.val / totalG : 0;
-      const el = `<circle r="${RAD}" cx="90" cy="90" fill="transparent" stroke="${sg.color}" stroke-width="34" stroke-dasharray="${(frac * CIRC).toFixed(2)} ${CIRC.toFixed(2)}" stroke-dashoffset="${(-acum * CIRC).toFixed(2)}" transform="rotate(-90 90 90)"/>`;
-      acum += frac; return el;
-    }).join("");
-    const donaLeyenda = segs.map(sg => `<div style="display:flex;align-items:center;gap:7px;font-size:10.5px;margin-bottom:5px">
-      <span style="width:10px;height:10px;border-radius:3px;background:${sg.color};flex-shrink:0"></span>
-      <span style="font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sg.label)}</span>
-      <span style="color:#64748b;min-width:42px;text-align:right">${totalG > 0 ? ((sg.val / totalG) * 100).toFixed(1) : "0"}%</span>
-      <span style="font-weight:700;min-width:96px;text-align:right">${fL(sg.val)}</span>
-    </div>`).join("");
-    const maxEmp = Math.max(porEmp.geotecnica.total, porEmp.subterra.total, 1);
     const empresasConGasto = ["geotecnica", "subterra"].filter(c2 => porEmp[c2].total > 0);
-    const barrasEmp = empresasConGasto.map(c2 => {
-      const d = porEmp[c2];
-      const pct = totalG > 0 ? (d.total / totalG) * 100 : 0;
-      return `<div style="margin-bottom:12px">
-        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
-          <span style="font-weight:800;color:${COMPANIES[c2].color}">${esc(COMPANIES[c2].name)}</span>
-          <span style="color:#64748b">${d.n} compra${d.n !== 1 ? "s" : ""} · ${pct.toFixed(1)}% del grupo</span>
-        </div>
-        <div style="background:#F1F5F9;border-radius:6px;height:26px;position:relative;overflow:hidden">
-          <div style="width:${Math.max(2, (d.total / maxEmp) * 100).toFixed(1)}%;height:100%;background:${COMPANIES[c2].color};border-radius:6px"></div>
-          <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11.5px;font-weight:800;color:#1E293B">${fL(d.total)}</span>
-        </div>
-      </div>`;
-    }).join("");
-    const topMix = rowsG.slice(0, 10);
-    const maxProy = Math.max(...topMix.map(r => r.total), 1);
-    const barrasProy = topMix.map(r => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:10px">
-      <span style="width:118px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">${esc(r.short)}</span>
-      <div style="flex:1;display:flex;height:16px;background:#F8FAFC;border-radius:4px;overflow:hidden">
-        ${r.porCo.geotecnica > 0 ? `<div style="width:${((r.porCo.geotecnica / maxProy) * 100).toFixed(1)}%;background:${COMPANIES.geotecnica.color}"></div>` : ""}
-        ${r.porCo.subterra > 0 ? `<div style="width:${((r.porCo.subterra / maxProy) * 100).toFixed(1)}%;background:${COMPANIES.subterra.color}"></div>` : ""}
-      </div>
-      <span style="width:92px;text-align:right;font-weight:700;flex-shrink:0">${fL(r.total)}</span>
-    </div>`).join("");
-    const kpi = (label, val, color, sub) => `<div style="flex:1;min-width:130px;border:1px solid #E2E8F0;border-radius:10px;padding:11px 14px">
-      <div style="font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:0.6px;font-weight:700">${label}</div>
-      <div style="font-size:17px;font-weight:800;color:${color};margin-top:3px;letter-spacing:-0.3px">${val}</div>
-      ${sub ? `<div style="font-size:9px;color:#94A3B8;margin-top:1px">${sub}</div>` : ""}
-    </div>`;
-    const chipCo = (c2) => `<span style="display:inline-block;background:${COMPANIES[c2]?.color || "#64748b"};color:#fff;border-radius:4px;padding:1px 6px;font-size:8px;font-weight:800;letter-spacing:0.5px;vertical-align:1px">${TAG[c2] || "?"}</span>`;
-    const projBlocks = rowsG.map(r => `
-    <div style="margin-bottom:16px;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
-      <div style="background:#2C2A28;color:#fff;padding:8px 14px;font-weight:700;font-size:12.5px;display:flex;justify-content:space-between;align-items:center">
-        <span>${esc(r.short)}${r.name ? ` <span style="font-weight:400;font-size:10px;opacity:.7">${esc(r.name)}</span>` : ""}</span>
-        <span style="font-size:10px;font-weight:600;opacity:.85">${r.n} compra${r.n !== 1 ? "s" : ""} &nbsp;<span style="font-size:13px;font-weight:800;opacity:1">${fL(r.total)}</span></span>
-      </div>
-      <table style="width:100%;border-collapse:collapse;font-size:10.5px">
-        <thead><tr style="background:#F1F5F9">
-          <th style="text-align:left;padding:6px 12px;font-size:8.5px;color:#64748b;letter-spacing:0.4px">PROVEEDOR</th>
-          <th style="text-align:left;padding:6px 8px;font-size:8.5px;color:#64748b;letter-spacing:0.4px">DESCRIPCIÓN / MATERIALES</th>
-          <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">PAGADA</th>
-          <th style="text-align:right;padding:6px 12px;font-size:8.5px;color:#64748b">MONTO</th>
-        </tr></thead>
-        <tbody>
-          ${r.items.map(x => `<tr style="border-top:1px solid #F1F5F9;vertical-align:top">
-            <td style="padding:5px 12px;font-weight:600;white-space:nowrap">${chipCo(x.company === "subterra" ? "subterra" : "geotecnica")} ${esc(x.provider || "—")}</td>
-            <td style="padding:5px 8px;color:#334155">${esc(x.description || "—")}${x.detalleMateriales && String(x.detalleMateriales).trim() !== String(x.description || "").trim() ? `<div style="color:#64748b;font-size:9px;white-space:pre-wrap;margin-top:2px;border-left:2px solid #E2E8F0;padding-left:6px">${esc(x.detalleMateriales)}</div>` : ""}</td>
-            <td style="padding:5px 8px;text-align:right;white-space:nowrap;color:#64748b">${x.paidAt ? new Date(x.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", timeZone: "UTC" }) : "—"}</td>
-            <td style="padding:5px 12px;text-align:right;font-weight:700;white-space:nowrap">${fL(x.amount)}</td>
-          </tr>`).join("")}
-          <tr style="background:#F8FAFC;font-weight:700;border-top:1px solid #E2E8F0">
-            <td colspan="3" style="padding:6px 12px">Subtotal ${esc(r.short)} · ${r.n} compra${r.n !== 1 ? "s" : ""}${r.porCo.geotecnica > 0 ? ` · GEO ${fL(r.porCo.geotecnica)}` : ""}${r.porCo.subterra > 0 ? ` · SUB ${fL(r.porCo.subterra)}` : ""}</td>
-            <td style="padding:6px 12px;text-align:right;color:#059669">${fL(r.total)}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>`).join("");
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costo de Materiales — ${mesTitulo} · Grupo Geotecnica</title>
-    <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#1E293B;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{.np{display:none}}thead{display:table-header-group}tr{page-break-inside:avoid}</style>
-    </head><body>
-    <div style="page-break-after:always">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px">
-        <div style="display:flex;align-items:center;gap:14px">
-          <img src="${logoUrl}" style="height:52px" onerror="this.style.display='none'" />
-          <div>
-            <div style="font-size:9px;color:#E8762D;font-weight:800;letter-spacing:1.8px;text-transform:uppercase">Grupo Geotecnica · Compras</div>
-            <div style="font-size:23px;font-weight:800;letter-spacing:-0.4px;color:#2C2A28">Costo de Materiales</div>
-            <div style="font-size:13px;color:#64748b">Reporte ejecutivo mensual — <b style="color:#2C2A28">${mesTitulo}</b></div>
-          </div>
-        </div>
-        <div style="text-align:right;font-size:10px;color:#64748b">
-          <div style="font-weight:800;color:${COMPANIES.geotecnica.color}">Geotecnica Soluciones</div>
-          <div style="font-weight:800;color:${COMPANIES.subterra.color}">Subterra Honduras</div>
-          <div style="margin-top:3px">Generado ${genFecha}</div>
-        </div>
-      </div>
-      <div style="height:4px;background:linear-gradient(90deg,#E8762D,${COMPANIES.geotecnica.color},${COMPANIES.subterra.color});border-radius:2px;margin:13px 0 16px"></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
-        ${kpi("Gasto total del grupo", fL(totalG), "#059669", `${delMes.length} compras · ${rowsG.length} proyectos`)}
-        ${empresasConGasto.map(c2 => kpi(COMPANIES[c2].name, fL(porEmp[c2].total), COMPANIES[c2].color, `${porEmp[c2].n} compras`)).join("")}
-        ${kpi("Ticket promedio", fL(delMes.length ? totalG / delMes.length : 0), "#3E6A99", "por compra pagada")}
-      </div>
-      <div style="display:flex;gap:14px;align-items:flex-start">
-        <div style="flex:1.15;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
-          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Distribución del gasto por proyecto</div>
-          <div style="display:flex;gap:14px;align-items:center">
-            <svg width="140" height="140" viewBox="0 0 180 180" style="flex-shrink:0">
-              ${donaSegs}
-              <text x="90" y="86" text-anchor="middle" style="font-size:11px;font-weight:800;fill:#2C2A28">${rowsG.length}</text>
-              <text x="90" y="100" text-anchor="middle" style="font-size:8px;fill:#64748b">proyectos</text>
-            </svg>
-            <div style="flex:1">${donaLeyenda}</div>
-          </div>
-        </div>
-        <div style="flex:1;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
-          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:9px">Gasto por empresa</div>
-          ${barrasEmp}
-          <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin:11px 0 7px">Mezcla por proyecto</div>
-          <div style="display:flex;gap:12px;font-size:9px;color:#64748b;margin-bottom:6px">
-            <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${COMPANIES.geotecnica.color};vertical-align:-1px"></span> Geotecnica</span>
-            <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${COMPANIES.subterra.color};vertical-align:-1px"></span> Subterra</span>
-          </div>
-          ${barrasProy}
-        </div>
-      </div>
-    </div>
-    <div style="border-left:4px solid #E8762D;padding-left:12px;margin-bottom:14px">
-      <div style="font-size:9px;color:#E8762D;font-weight:800;letter-spacing:1.5px;text-transform:uppercase">Detalle por proyecto · ${mesTitulo}</div>
-      <div style="font-size:11px;color:#64748b">Cada compra con su empresa: ${chipCo("geotecnica")} Geotecnica Soluciones · ${chipCo("subterra")} Subterra Honduras. El detalle de materiales sale tal cual la cotización cuando fue registrado.</div>
-    </div>
-    ${projBlocks}
-    <div style="background:#2C2A28;color:#fff;border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;page-break-inside:avoid">
-      <span style="font-size:12px;font-weight:700">GASTO TOTAL EN MATERIALES DEL GRUPO — ${mesTitulo}</span>
-      <span style="font-size:17px;font-weight:800;color:#6EE7B7">${fL(totalG)}</span>
-    </div>
-    <div style="font-size:9px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:8px;margin-top:12px;line-height:1.5;page-break-inside:avoid">
-      <b>Metodología:</b> se incluyen las solicitudes de compra con pago realizado (estado pagado o finalizado) cuya fecha de pago cae en ${mesTitulo}, de ambas empresas. Los montos son los de la solicitud aprobada. No incluye compras de repuestos de maquinaria (ver el reporte de GeoMachinery).
-      Preparado por ${esc(userName || "Operaciones")} · ${CFG.nombre} — Sistema de Operaciones.
-    </div>
-    <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
-    </body></html>`);
-    w.document.close();
+    const COLOR_EMP = { geotecnica: RP.carbon, subterra: RP.naranja };
+    const maxEmp = Math.max(...empresasConGasto.map(c2 => porEmp[c2].total), 1);
+    const barrasEmp = empresasConGasto.map(c2 => `<div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;font-size:10.5px;margin-bottom:5px"><b>${esc(COMPANIES[c2].name)}</b><span class="mono">${fL(porEmp[c2].total)}</span></div>
+        ${rBarra([{ valor: porEmp[c2].total, color: COLOR_EMP[c2] }], maxEmp)}
+        <div class="rp-nota">${porEmp[c2].n} compra${porEmp[c2].n !== 1 ? "s" : ""} · ${totalG > 0 ? ((porEmp[c2].total / totalG) * 100).toFixed(1) : "0"} % del grupo</div>
+      </div>`).join("");
+    const chipCo = (c2) => rChip(TAG[c2] || "?", c2 === "subterra" ? "naranja" : "");
+    const fechaPago = (x) => x.paidAt ? new Date(x.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", timeZone: "UTC" }) : "—";
+    const detalleDe = (x) => esc(x.description || "—") + (x.detalleMateriales && String(x.detalleMateriales).trim() !== String(x.description || "").trim() ? `<div class="rp-nota" style="white-space:pre-wrap">${esc(x.detalleMateriales)}</div>` : "");
+    const bloques = rowsG.map(r => rSeccion(`${r.short}${r.name ? " · " + r.name : ""}`,
+      rTabla({
+        columnas: [{ t: "Proveedor", ancho: "26%" }, { t: "Qué se compró" }, { t: "Pagada", num: true, ancho: "70px" }, { t: "Monto", num: true, ancho: "110px" }],
+        filas: r.items.map(x => [`${chipCo(x.company === "subterra" ? "subterra" : "geotecnica")} <b>${esc(x.provider || "—")}</b>`, detalleDe(x), `<span class="suave">${fechaPago(x)}</span>`, fL(x.amount)]),
+        total: [`${r.n} compra${r.n !== 1 ? "s" : ""}`, [r.porCo.geotecnica > 0 ? `GEO ${fL(r.porCo.geotecnica)}` : "", r.porCo.subterra > 0 ? `SUB ${fL(r.porCo.subterra)}` : ""].filter(Boolean).join(" · "), "", fL(r.total)],
+      }), `<span class="mono">${fL(r.total)}</span>`)).join("");
+    const cuerpo = rKpis([
+      { label: "Gasto total del grupo", valor: fL(totalG), sub: `${delMes.length} compras · ${rowsG.length} proyectos` },
+      ...empresasConGasto.map(c2 => ({ label: COMPANIES[c2].name, valor: fL(porEmp[c2].total), sub: `${porEmp[c2].n} compras` })),
+      { label: "Ticket promedio", valor: fL(delMes.length ? totalG / delMes.length : 0), sub: "por compra pagada" },
+    ])
+      + `<div class="rp-grid2"><div class="rp-caja">${rSeccion("Por proyecto", rDona(segs, { tam: 150, centro: String(rowsG.length), centroSub: "proyectos" }))}</div><div class="rp-caja">${rSeccion("Por empresa", barrasEmp)}</div></div>`
+      + `<div class="rp-salto"></div>` + bloques
+      + rTabla({ columnas: [{ t: "" }, { t: "", num: true }], filas: [], total: [`Gasto total en materiales · ${mesTitulo}`, fL(totalG)] })
+      + `<div class="rp-nota" style="margin-top:14px">Compras pagadas (pagado o finalizado) con fecha de pago en ${esc(mesTitulo)}, de ambas empresas, por el monto de la solicitud aprobada. No incluye repuestos de maquinaria (ver GeoMachinery). Preparado por ${esc(userName || "Operaciones")}.</div>`;
+    abrirReporte(w, reporteHTML({ titulo: "Costo de materiales", subtitulo: `Reporte ejecutivo mensual · ${mesTitulo}`, cuerpo }));
   };
 
   const renderCostos = () => {

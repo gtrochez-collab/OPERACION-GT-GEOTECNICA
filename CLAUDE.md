@@ -2223,6 +2223,29 @@ escritor GeoClock), `gc-firma-<markId>` (firma JPEG), `gc-foto-<markId>`
 separado a propósito para que tablet y RRHH nunca compitan por una key.
 
 ## Convenciones críticas
+- **ESTILO ÚNICO DE REPORTES (26-oct-2026, Gerson: "todo reporte que
+  exportemos, PDF o Excel, en estilo Apple")**: `src/reporte-estilo.js` es la
+  ÚNICA fuente — reportes HTML para "Guardar PDF" (`reporteHTML` +
+  `abrirReporte` + piezas `rKpis`/`rSeccion`/`rTabla`/`rChip`/`rBarra`/
+  `rDona`), jsPDF (`PDF_TEMA`, `pdfCabecera`, `pdfPie`, `pdfKpi`, `latin1`) y
+  Excel con exceljs (`libroExcel`, `hojaExcel`, `descargarExcel`; los CSV
+  viejos pasaron a .xlsx). Blanco, carbón, UN naranja, grises; verde solo
+  pagado/positivo, rojo solo negativo; empresas = carbón (Geotecnica) /
+  naranja (Subterra); cero arcoíris y cero emojis. Convertidos: ejecutivos de
+  materiales y maquinaria, Excel de máquinas, Acta de entrega, portada del
+  Paquete de cierre, Ficha y Reporte de GeoCost, Planilla (PDF y Excel),
+  Asistencia, Horas extras, Costos MO (+Excel), Costo ejecutivo MO,
+  Movimientos (+Excel) y Registros de GeoClock (+Excel). A propósito NO: la
+  constancia (calcada del Word), las etiquetas QR, GeoSafety/GeoDrill Vault
+  (ocultos) y la plantilla CSV de importar de GeoInventory. Todo reporte
+  nuevo usa este módulo.
+- **Constancias desde GeoTeam (26-oct-2026)**: el "+ Generar" de Solicitudes
+  → Constancias abría el `ConForm` VIEJO (texto para copiar). Ahora abre
+  `GenerarConstanciaImpl` (rrhh-hub.jsx): colaborador, tipo (de trabajo solo
+  si !hideSalary), vista previa calcada del Word y "Generar PDF" (guarda en
+  hr-cons con `doc`). Cada registro tiene botón "PDF"
+  (`pdfDeRegistroConstancia`: usa `doc`, el de su solicitud, o lo rearma con
+  la ficha y la fecha de emisión).
 - **Aviso de versión nueva (23-oct-2026)**: GitHub Pages cachea index.html 10
   min (`max-age=600`), así que tras publicar el navegador puede mostrar la
   versión vieja. `src/version.js` (`vigilarVersion`, iniciado en main.jsx)

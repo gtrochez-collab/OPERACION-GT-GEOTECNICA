@@ -18,6 +18,7 @@ import {
   puedeDecidir, puedeCancelar, puedeDescargarConstancia, esMia, veTodo, esAprobador,
   validarSolicitud, armarSolicitud, detalleSolicitud, fechaLarga, rangoCorto, diasHabiles, diasCalendario,
   diasDeMarcas, resumenAsistencia, quincenasRecientes, nombreQuincenaCorto, vacacionesTomadas, EMPRESAS,
+  constanciaDoc, textoConstancia,
 } from "./rrhh-solicitudes.js";
 
 const C_ROJO = { color: "#B03024", bg: "rgba(192,57,43,.07)" };
@@ -145,6 +146,64 @@ export async function constanciaPDF(sol) {
   doc.save(`Constancia_de_trabajo_${String(sol.empNombre || "").replace(/[^A-Za-z0-9]+/g, "_")}.pdf`);
 }
 // Vista previa en pantalla, igual al PDF.
+// PDF de un registro de hr-cons (26-oct-2026): usa el documento guardado; las
+// viejas (sin `doc`) se rearman con la ficha actual y su fecha de emisión.
+export async function pdfDeRegistroConstancia(reg, emp) {
+  const doc = reg?.doc || (emp ? constanciaDoc(emp, { tipo: reg.type === "laboral" ? "laboral" : "trabajo", hoy: String(reg.date || hoyISO()).slice(0, 10) }) : null);
+  if (!doc) return alert("No encontré la ficha de este colaborador.");
+  return constanciaPDF({ resultado: { doc } });
+}
+
+// GENERAR UNA CONSTANCIA DIRECTO (26-oct-2026, Gerson: "al generar
+// constancias no me sale el PDF como ya lo habíamos definido"): el "+ Generar"
+// de Constancias usaba el form viejo (texto para copiar). Ahora arma el MISMO
+// documento calcado del Word (constanciaDoc), con vista previa y PDF.
+export function GenerarConstanciaImpl({ emps, puedeTrabajo = true, onGuardar, onClose }) {
+  const activos = useMemo(() => (emps || []).filter(e => e.status !== "inactive").sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "es")), [emps]);
+  const [q, setQ] = useState("");
+  const [empId, setEmpId] = useState("");
+  const [tipo, setTipo] = useState(puedeTrabajo ? "trabajo" : "laboral");
+  const [ocupado, setOcupado] = useState(false);
+  const emp = activos.find(e => e.id === empId) || null;
+  const doc = emp ? constanciaDoc(emp, { tipo, hoy: hoyISO() }) : null;
+  const t = q.trim().toLowerCase();
+  const lista = t ? activos.filter(e => `${e.fullName} ${e.dni || ""} ${e.position || ""}`.toLowerCase().includes(t)).slice(0, 8) : [];
+  const faltan = emp ? [!emp.dni && "identidad", !emp.startDate && "fecha de ingreso", tipo === "trabajo" && !(Number(emp.salary) > 0) && "salario", !emp.sexo && "sexo (para el señor/la señora)"].filter(Boolean) : [];
+  const generar = async () => {
+    if (!emp || !doc) return;
+    setOcupado(true);
+    try {
+      const reg = { id: uid(), employeeId: emp.id, type: tipo, date: new Date().toISOString(), text: textoConstancia(emp, { tipo, hoy: hoyISO() }), doc };
+      const ok = await onGuardar(reg);
+      if (ok) { await constanciaPDF({ resultado: { doc } }); onClose(); }
+    } finally { setOcupado(false); }
+  };
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    {puedeTrabajo && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, padding: 4, borderRadius: 14, background: "rgba(44,42,40,.06)" }}>
+      {Object.entries(TIPOS_CONSTANCIA).map(([k, l]) => <button key={k} type="button" onClick={() => setTipo(k)} aria-pressed={tipo === k} style={{ padding: "9px 12px", borderRadius: 11, border: "none", background: tipo === k ? "#fff" : "transparent", boxShadow: tipo === k ? "0 2px 8px rgba(44,42,40,.12)" : "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 800, color: tipo === k ? CHARCOAL : "#6E6862" }}>{l}</button>)}
+    </div>}
+    {!emp ? <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={LBL}>Colaborador</div>
+      <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Buscá por nombre, identidad o cargo…" style={CTRL} />
+      {lista.map(e => <button key={e.id} type="button" onClick={() => { setEmpId(e.id); setQ(""); }} style={{ textAlign: "left", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(44,42,40,.08)", background: "rgba(255,255,255,.8)", cursor: "pointer", fontFamily: "inherit" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: CHARCOAL }}>{e.fullName}</div>
+        <div style={{ fontSize: 12, color: "#9A948D" }}>{[e.position, EMPRESAS[e.company]?.legal].filter(Boolean).join(" · ")}</div>
+      </button>)}
+    </div> : <>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, fontSize: 14, fontWeight: 800, color: CHARCOAL }}>{emp.fullName}<div style={{ fontSize: 12, fontWeight: 400, color: "#9A948D" }}>{emp.position} · {EMPRESAS[emp.company]?.legal}</div></div>
+        <button type="button" onClick={() => setEmpId("")} style={{ background: "none", border: "none", color: ORANGE_DARK, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>Cambiar</button>
+      </div>
+      {faltan.length > 0 && <div style={{ padding: "9px 12px", borderRadius: 12, background: "rgba(44,42,40,.05)", color: "#6E6862", fontSize: 12.5 }}>A la ficha le falta: <b>{faltan.join(", ")}</b>. Completala en Empleados para que la constancia salga bien.</div>}
+      <div style={{ maxHeight: "50vh", overflowY: "auto" }}><ConstanciaVista doc={doc} /></div>
+    </>}
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+      <button type="button" onClick={onClose} style={{ padding: "10px 18px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "#fff", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancelar</button>
+      <button type="button" disabled={!emp || ocupado} onClick={generar} style={{ padding: "10px 18px", borderRadius: 999, border: "none", background: !emp || ocupado ? "#E9C3A6" : ORANGE_DARK, color: "#fff", fontWeight: 800, cursor: !emp || ocupado ? "default" : "pointer", fontFamily: "inherit" }}>{ocupado ? "Generando…" : "Generar PDF"}</button>
+    </div>
+  </div>;
+}
+
 export const ConstanciaVista = ({ doc }) => {
   if (!doc) return null;
   const P = ({ runs }) => <p style={{ margin: "0 0 10px", lineHeight: 1.65, textAlign: "justify" }}>{runs.map((r, i) => r[1] ? <b key={i}>{r[0]}</b> : <span key={i}>{r[0]}</span>)}</p>;

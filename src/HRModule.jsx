@@ -8,6 +8,7 @@ import { hoyISO } from "./fechas.js";
 // GT_CSS (vidrio): desde el 15-oct-2026 lo monta TODO GeoTeam (rediseño de
 // encabezado, Dashboard, KPI's y Empleados).
 import { GT_CSS } from "./gt-ui.js";
+import { reporteHTML, abrirReporte, rKpis, rSeccion, rTabla, rChip, rBarra, rDona, colorPaleta, RP, escHTML, fmtLps, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES, USUARIOS_DE_BAJA } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
 // Planilla (16-oct-2026): lógica pura + PDF/Excel.
@@ -16,7 +17,7 @@ import { exportarPlanillaPDF, exportarPlanillaExcel } from "./planilla-export.js
 // Hub de RRHH (20-oct-2026): portal "Mi RRHH" de cada colaborador + bandeja de
 // solicitudes (vacaciones, permisos, constancias, reportes) para RRHH.
 import { KEY_SOLICITUDES, KEY_VINCULOS, vincularEmpleado, siguienteFolio, vacacionDeSolicitud, permisosDeSolicitud, constanciaDoc, textoConstancia, estaAbierta, esAprobador as esAprobadorHub, veTodo as veTodoHub, vacacionesTomadas, rangoCorto as rangoCortoHub } from "./rrhh-solicitudes.js";
-import { PortalRRHH, BandejaRRHH, SolicitudFormImpl, SolicitudDetalleImpl, ModalHub, ICO as ICO_HUB } from "./rrhh-hub.jsx";
+import { PortalRRHH, BandejaRRHH, SolicitudFormImpl, SolicitudDetalleImpl, ModalHub, ICO as ICO_HUB, GenerarConstanciaImpl, pdfDeRegistroConstancia } from "./rrhh-hub.jsx";
 
 // ── GeoInventory → GeoTeam (13-oct-2026): "Equipo asignado" ────────────────
 // Solo lectura: lo que el colaborador tiene a su cargo según inv-items (lee
@@ -2482,15 +2483,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const w = window.open("", "_blank");
       if (!w) { alert("Permite popups para imprimir"); return; }
 
-      // Construir resumen por proyecto. Cuenta cada estado:
-      //   - totalDias: dias pagados (1, TF, DT, DT2, INC). Para empleados
-      //     payByHour cuenta proporcional por hora de entrada.
-      //   - totalDom: domingos efectivamente trabajados (DT + DT2)
-      //   - totalFer: feriados efectivamente trabajados (TF)
-      //   - totalNSP: "0" en dia regular (en domingo/feriado no descuenta)
-      //   - totalINC: incapacidades
       // Resumen simple (igual que en pantalla): personas asignadas + NSP +
-      // INC. El costeo de mano de obra se hara como reporte aparte.
+      // INC por proyecto. El costeo de mano de obra es reporte aparte.
       const summary = projGroups.map((proj) => {
         const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
         let nsp = 0, inc = 0;
@@ -2524,60 +2518,29 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         return out.sort((a, b) => b.dias.length - a.dias.length);
       };
       const rNsp = resumenDe("NSP"), rInc = resumenDe("INC"), rVac = resumenDe("V");
-      const resumenSection = (titulo, color, soft, rows, vacio) => `
-        <div style="border:1px solid ${color}55;border-radius:10px;overflow:hidden;page-break-inside:avoid;margin-bottom:12px">
-          <div style="background:${color};color:#fff;padding:7px 12px;font-size:11.5px;font-weight:800;letter-spacing:0.5px;display:flex;justify-content:space-between">
-            <span>${titulo}</span><span>${rows.length ? rows.length + " colaborador" + (rows.length !== 1 ? "es" : "") : ""}</span>
-          </div>
-          ${rows.length ? `<table style="width:100%;border-collapse:collapse">
-            <thead><tr>
-              <th style="text-align:left;padding:4px 12px;font-size:8.5px;color:#7A7268;background:${soft};text-transform:uppercase;letter-spacing:0.5px">Colaborador</th>
-              <th style="text-align:left;padding:4px 8px;font-size:8.5px;color:#7A7268;background:${soft};text-transform:uppercase;letter-spacing:0.5px">Proyecto</th>
-              <th style="text-align:left;padding:4px 8px;font-size:8.5px;color:#7A7268;background:${soft};text-transform:uppercase;letter-spacing:0.5px">Días (del mes)</th>
-              <th style="text-align:right;padding:4px 12px;font-size:8.5px;color:#7A7268;background:${soft};text-transform:uppercase;letter-spacing:0.5px">Total</th>
-            </tr></thead>
-            <tbody>${rows.map((r) => `<tr>
-              <td style="padding:5px 12px;font-size:10.5px;font-weight:700;border-top:1px solid #F1EBE0">${r.e.fullName}<span style="font-family:monospace;color:#B9B2A8;font-size:8px"> ${genEmpCode(r.e.fullName, r.e.dni)}</span></td>
-              <td style="padding:5px 8px;font-size:9px;font-family:monospace;border-top:1px solid #F1EBE0">${r.proj}</td>
-              <td style="padding:5px 8px;font-size:10px;border-top:1px solid #F1EBE0">${r.dias.join(", ")}</td>
-              <td style="padding:5px 12px;font-size:12px;font-weight:800;text-align:right;color:${color};border-top:1px solid #F1EBE0">${r.dias.length}</td>
-            </tr>`).join("")}</tbody>
-          </table>` : `<div style="padding:11px 14px;font-size:10.5px;color:#8B847C">${vacio}</div>`}
-        </div>`;
-      const resumenPlanillaHtml = `
-        <div style="page-break-before:always">
-          <div style="font-size:15px;font-weight:800;color:#2C2A28;letter-spacing:-0.2px;margin-bottom:2px">RESUMEN PARA PLANILLA</div>
-          <div style="font-size:10.5px;color:#7A7268;margin-bottom:10px">${cc.name} · ${sheet.quincena} ${sheet.periodo} — detalle de deducciones y días especiales</div>
-          <div style="height:3px;background:#E8762D;border-radius:2px;margin-bottom:14px;width:120px"></div>
-          ${resumenSection("AUSENCIAS SIN GOCE DE SUELDO (NSP)", "#DC2626", "#FEE2E2", rNsp, "Sin ausencias esta quincena — asistencia completa. ✔")}
-          ${resumenSection("INCAPACIDADES", "#B45309", "#FEF9C3", rInc, "Sin incapacidades esta quincena.")}
-          ${resumenSection("VACACIONES", "#0F766E", "#CCFBF1", rVac, "Sin vacaciones esta quincena.")}
-        </div>`;
+      const resumenSection = (titulo, color, rows, vacio) => rSeccion(titulo,
+        rows.length ? rTabla({
+          columnas: [{ t: "Colaborador" }, { t: "Proyecto", ancho: "130px" }, { t: "Días (del mes)" }, { t: "Total", num: true, ancho: "60px" }],
+          filas: rows.map((r) => [
+            `<b>${escHTML(r.e.fullName)}</b> <span class="mono" style="color:${RP.texto3};font-size:8.5px">${escHTML(genEmpCode(r.e.fullName, r.e.dni))}</span>`,
+            `<span class="mono suave">${escHTML(r.proj)}</span>`,
+            `<span class="mono">${r.dias.join(", ")}</span>`,
+            `<b style="color:${color}">${r.dias.length}</b>`,
+          ]),
+        }) : `<div class="rp-nota">${vacio}</div>`,
+        rows.length ? `${rows.length} colaborador${rows.length !== 1 ? "es" : ""}` : "");
+      const resumenPlanillaHtml = `<div class="rp-salto"></div>
+        <div class="rp-titulo" style="font-size:20px">Resumen para planilla</div>
+        <div class="rp-sub">${escHTML(cc.name)} · ${escHTML(sheet.quincena)} ${escHTML(sheet.periodo)} — detalle de deducciones y días especiales</div>
+        <div class="rp-acento"></div>
+        ${resumenSection("Ausencias sin goce de sueldo (NSP)", PAL_CELDA.nsp.fg, rNsp, "Sin ausencias esta quincena — asistencia completa.")}
+        ${resumenSection("Incapacidades", PAL_CELDA.inc.fg, rInc, "Sin incapacidades esta quincena.")}
+        ${resumenSection("Vacaciones", PAL_CELDA.vac.fg, rVac, "Sin vacaciones esta quincena.")}`;
 
-      // ── Paleta por PROYECTO ──
-      // Cada proyecto tiene su color: encabezado de su seccion, su tarjeta de
-      // resumen, y las celdas con override (1*) se tintean con el color del
-      // proyecto DONDE trabajo ese dia (pedido del usuario 30-jul-2026: que
-      // se entienda de un vistazo que Jose Henry trabajo la quincena en otro
-      // proyecto). Cubre tambien proyectos que solo aparecen via override.
-      // SIN ROJOS NI ROSADOS (30-sep-2026, pedido de Gerson): el rojo es el
-      // color del NSP, y una celda "1*" pintada de rojo (Villa San Miguel era
-      // vino) la Lic. Carolina la podía leer como inasistencia. Se sacaron
-      // frambuesa, vino y magenta; entraron pizarra, café y petróleo.
-      const PROJ_PALETTE = [
-        { main: "#C75F1F", soft: "#FBE7D6" }, // naranja Geotecnica
-        { main: "#2C5F5D", soft: "#DCEBEA" }, // verde acero
-        { main: "#6D28D9", soft: "#EAE2FB" }, // morado
-        { main: "#1D6AC0", soft: "#DEEBFA" }, // azul
-        { main: "#475569", soft: "#E2E8F0" }, // pizarra
-        { main: "#996A00", soft: "#F5EBCE" }, // ambar
-        { main: "#0E7490", soft: "#D9F0F6" }, // teal
-        { main: "#15803D", soft: "#DEF2E4" }, // verde
-        { main: "#7C5A3A", soft: "#EFE6DC" }, // café
-        { main: "#4338CA", soft: "#E4E2FA" }, // indigo
-        { main: "#3F6212", soft: "#E9F1D8" }, // oliva
-        { main: "#155E75", soft: "#D5ECF2" }, // petróleo
-      ];
+      // ── Color por PROYECTO solo para las celdas "1*" (días trabajados en
+      // OTRO proyecto). Paleta de la casa (carbón/naranja/grises): nada de
+      // rojos, que se leerían como NSP. Cubre proyectos que solo aparecen
+      // vía override.
       const projColor = {};
       {
         const shorts = [];
@@ -2587,88 +2550,61 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           const s = o ? resolveShortHR(o) : null;
           if (s && !shorts.includes(s)) shorts.push(s);
         }));
-        shorts.forEach((s, i) => { projColor[s] = PROJ_PALETTE[i % PROJ_PALETTE.length]; });
+        shorts.forEach((s, i) => { projColor[s] = colorPaleta(i); });
       }
 
       const dayHeaderHtml = days
         .map((d) => {
-          const bg = d.isHoliday ? "#FED7AA" : d.isSun ? "#F3E8FF" : d.isSat ? "#FEF3C7" : "#F4F1EA";
-          const labelColor = d.isHoliday ? "#9A3412" : d.isSun ? "#7C3AED" : "#8B847C";
-          return `<th style="background:${bg};text-align:center;font-size:8px;padding:3px 2px;border:1px solid #E7E1D5">
-            <div style="color:${labelColor};font-weight:${d.isHoliday ? 700 : 600};font-size:7px">${d.isHoliday ? "F" : d.dow}</div>
-            <div>${d.day}</div>
-          </th>`;
+          const esp = d.isHoliday || d.isSun;
+          return `<th class="d" style="${esp ? `background:${RP.fondo};` : ""}"><div style="color:${esp ? RP.naranjaTexto : RP.texto3};font-size:6.5px">${d.isHoliday ? "F" : d.dow}</div><div style="color:${RP.carbon}">${d.day}</div></th>`;
         })
         .join("");
 
+      const celda = (bg, fg, txt, extra = "") => `<td class="d" style="background:${bg};color:${fg};${extra}">${txt}</td>`;
       let firstSection = true;
       const projTablesHtml = projGroups
         .map((proj) => {
           const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
           if (pEmps.length === 0) return "";
-          const pc = projColor[proj.short] || { main: cc.color, soft: "#F4F1EA" };
           const rows = pEmps
-            .map((e, ri) => {
+            .map((e) => {
               const st = empStats(e.id);
               const code = genEmpCode(e.fullName, e.dni);
-              const zebra = ri % 2 ? "#FBF9F4" : "#fff";
               const cells = days
                 .map((d) => {
-                  const lockReason = dayLockReason(e, d);
-                  if (lockReason) {
-                    return `<td style="background:#E9E6DF;color:#A8A096;text-align:center;font-size:9px;padding:3px 2px;border:1px solid #E7E1D5;font-weight:700">—</td>`;
-                  }
+                  if (dayLockReason(e, d)) return celda(PAL_CELDA.bloq.bg, PAL_CELDA.bloq.fg, "—");
                   const v = getVal(e.id, d.day);
                   const ovr = getProj(e.id, d.day);
-                  // Color del proyecto donde REALMENTE trabajo ese dia (override):
-                  // la celda se pinta con el color de ESE proyecto.
                   const oc = ovr ? projColor[resolveShortHR(ovr)] : null;
-                  // Determinar background, color y texto segun el estado.
-                  //   1 en feriado  → naranja claro (pagado por ley)
-                  //   1 en domingo  → azul claro  (descanso pagado)
-                  //   1 regular     → verde       (presente trabajando)
-                  //   con override  → colores del proyecto destino + "*"
-                  let bg = "transparent", color = "#CBD5E1", txt = "·", fontSize = 9;
-                  if (v === "TF") {
-                    bg = "#FED7AA"; color = "#9A3412"; txt = ovr ? "TF*" : "TF"; fontSize = 8;
-                  } else if (v === "DT") {
-                    bg = "#E9D5FF"; color = "#6B21A8"; txt = ovr ? "DT*" : "DT"; fontSize = 8;
-                  } else if (v === "DT2") {
-                    bg = "#A855F7"; color = "#FFFFFF"; txt = ovr ? "DT2*" : "DT2"; fontSize = 7;
-                  } else if (v === "1") {
-                    // "1" regular va en BLANCO (pedido 30-jul-2026): asi los
-                    // colores de proyecto quedan reservados para los "1*"
-                    // (dias trabajados en OTRO proyecto) y no se confunden
-                    // con proyectos cuyo color coincide (caso Cataleya verde).
-                    if (d.isHoliday) { bg = "#FFEDD5"; color = "#9A3412"; txt = ovr ? "1*" : "1"; }
-                    else if (d.isSun) { bg = "#DBEAFE"; color = "#1E40AF"; txt = ovr ? "1*" : "1"; }
-                    else { bg = "transparent"; color = "#2C2A28"; txt = ovr ? "1*" : "1"; }
-                  } else if (v === "0") {
-                    bg = "#FEE2E2"; color = "#991B1B"; txt = "0";
-                  } else if (v === "INC") {
-                    bg = "#FEF9C3"; color = "#92400E"; txt = ovr ? "I*" : "I";
-                  } else if (v === "V") {
-                    bg = "#CCFBF1"; color = "#0F766E"; txt = ovr ? "V*" : "V";
-                  }
-                  // El override MANDA sobre el color base (dias normales):
-                  // celda con el color del proyecto destino, para que se vea
-                  // de un vistazo donde anduvo la persona.
-                  if (oc && v && v !== "0") { bg = oc.soft; color = oc.main; }
+                  const st2 = ovr ? "*" : "";
+                  let p = null, txt = "·";
+                  if (v === "TF") { p = PAL_CELDA.extra; txt = "TF" + st2; }
+                  else if (v === "DT") { p = PAL_CELDA.extra; txt = "DT" + st2; }
+                  else if (v === "DT2") { p = PAL_CELDA.extra; txt = "DT2" + st2; }
+                  else if (v === "1") { p = (d.isHoliday || d.isSun) ? PAL_CELDA.descanso : null; txt = "1" + st2; }
+                  else if (v === "0") { p = PAL_CELDA.nsp; txt = "0"; }
+                  else if (v === "INC") { p = PAL_CELDA.inc; txt = "I" + st2; }
+                  else if (v === "V") { p = PAL_CELDA.vac; txt = "V" + st2; }
+                  let bg = p ? p.bg : "transparent";
+                  let fg = p ? p.fg : (v === "1" ? RP.carbon : RP.lineaFuerte);
+                  // Trabajó ese día en OTRO proyecto: tinte suave del color de
+                  // ese proyecto + rayita abajo, para leerlo de un vistazo.
+                  let extra = "";
+                  if (oc && v && v !== "0") { bg = `${oc}1F`; fg = RP.carbon; extra = `box-shadow:inset 0 -2px 0 ${oc};`; }
                   const arr = arrivalTimes[`${e.id}-${d.day}`];
-                  const arrivalHtml = arr ? `<div style="font-size:6px;color:#92400E;font-weight:700;background:#FEF3C7;line-height:1;margin-top:1px">${arr}</div>` : "";
-                  return `<td style="background:${bg};color:${color};text-align:center;font-size:${fontSize}px;padding:3px 2px;border:1px solid #E7E1D5;font-weight:700">${txt}${arrivalHtml}</td>`;
+                  const arrivalHtml = arr ? `<div class="mono" style="font-size:5.5px;color:${RP.naranjaTexto};line-height:1;margin-top:1px">${arr}</div>` : "";
+                  return celda(bg, fg, txt + arrivalHtml, extra);
                 })
                 .join("");
-              return `<tr style="background:${zebra}">
-                <td style="padding:5px 8px;border:1px solid #E7E1D5;font-size:10px;font-weight:600">
-                  ${e.fullName}<br><span style="font-family:monospace;color:${pc.main};font-size:8px">${code}</span>
-                </td>
+              const dom = st.domTrab + st.domTrabTriple;
+              return `<tr>
+                <td class="n"><b>${escHTML(e.fullName)}</b><br><span class="mono" style="color:${RP.texto3};font-size:7.5px">${escHTML(code)}</span></td>
                 ${cells}
-                <td style="text-align:center;background:#ECFDF5;color:#059669;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5" title="${st.presentEffective !== st.present ? `${st.present} marcados · ${st.presentEffective.toFixed(2)} efectivos` : ""}">${st.presentEffective !== st.present ? st.presentEffective.toFixed(2) : st.present}</td>
-                <td style="text-align:center;background:${(st.domTrab + st.domTrabTriple) > 0 ? "#F3E8FF" : "transparent"};color:#7C3AED;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5">${(st.domTrab + st.domTrabTriple) || ""}</td>
-                <td style="text-align:center;background:${st.ferTrab > 0 ? "#FED7AA" : "transparent"};color:#9A3412;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5">${st.ferTrab || ""}</td>
-                <td style="text-align:center;background:${st.absent > 0 ? "#FEE2E2" : "transparent"};color:#DC2626;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5">${st.absent || ""}</td>
-                <td style="text-align:center;background:${st.incap > 0 ? "#FEF9C3" : "transparent"};color:#92400E;font-weight:700;padding:3px 6px;border:1px solid #E7E1D5">${st.incap || ""}</td>
+                <td class="t" style="color:${RP.verde}" title="${st.presentEffective !== st.present ? `${st.present} marcados · ${st.presentEffective.toFixed(2)} efectivos` : ""}">${st.presentEffective !== st.present ? st.presentEffective.toFixed(2) : st.present}</td>
+                <td class="t" style="color:${PAL_CELDA.extra.fg}">${dom || ""}</td>
+                <td class="t" style="color:${PAL_CELDA.extra.fg}">${st.ferTrab || ""}</td>
+                <td class="t" style="color:${PAL_CELDA.nsp.fg}">${st.absent || ""}</td>
+                <td class="t" style="color:${PAL_CELDA.inc.fg}">${st.incap || ""}</td>
               </tr>`;
             })
             .join("");
@@ -2677,109 +2613,57 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           // primero se queda con el resumen en la pagina 1.
           const breakBefore = !firstSection && pEmps.length >= 6 ? "page-break-before:always;" : "";
           firstSection = false;
-          return `
-            <div style="margin-top:16px;page-break-inside:avoid;break-inside:avoid;${breakBefore}">
-              <h3 style="background:${pc.main};color:#fff;padding:7px 12px;font-size:12px;margin:0;border-radius:8px 8px 0 0;display:flex;justify-content:space-between;align-items:center">
-                <span>${proj.short} <span style="font-weight:400;opacity:.85">— ${proj.name}</span></span>
-                <span style="font-weight:400;font-size:10px;opacity:.85">[${proj.code}] · ${pEmps.length} persona${pEmps.length !== 1 ? "s" : ""}</span>
-              </h3>
-              <table style="border-collapse:collapse;width:100%;margin-top:0;border:1px solid ${pc.main}33">
-                <thead><tr>
-                  <th style="background:#F4F1EA;text-align:left;font-size:9px;padding:4px 8px;border:1px solid #E7E1D5">Empleado</th>
-                  ${dayHeaderHtml}
-                  <th style="background:#ECFDF5;font-size:9px;padding:4px 6px;border:1px solid #E7E1D5">Días</th>
-                  <th style="background:#F3E8FF;color:#7C3AED;font-size:9px;padding:4px 6px;border:1px solid #E7E1D5">DOM</th>
-                  <th style="background:#FED7AA;color:#9A3412;font-size:9px;padding:4px 6px;border:1px solid #E7E1D5">FER</th>
-                  <th style="background:#FEE2E2;font-size:9px;padding:4px 6px;border:1px solid #E7E1D5">NSP</th>
-                  <th style="background:#FEF9C3;font-size:9px;padding:4px 6px;border:1px solid #E7E1D5">INC</th>
-                </tr></thead>
-                <tbody>${rows}</tbody>
-              </table>
-            </div>`;
+          return `<div style="page-break-inside:avoid;break-inside:avoid;${breakBefore}">${rSeccion(`${proj.short} · ${proj.name}`,
+            `<table class="asis"><thead><tr>
+                <th class="n">Colaborador</th>${dayHeaderHtml}
+                <th class="t">Días</th><th class="t">Dom</th><th class="t">Fer</th><th class="t">NSP</th><th class="t">INC</th>
+              </tr></thead><tbody>${rows}</tbody></table>`,
+            `<span class="mono">${escHTML(proj.code || "")}</span> · ${pEmps.length} persona${pEmps.length !== 1 ? "s" : ""}`)}</div>`;
         })
         .join("");
 
-      const summaryHtml = summary
-        .filter((s) => s.pEmps.length > 0)
-        .map((s) => {
-          const pc = projColor[s.proj.short] || { main: "#E8762D", soft: "#F8F2E6" };
-          return `
-          <div style="background:${pc.soft};border-left:4px solid ${pc.main};padding:10px 14px;border-radius:8px">
-            <div style="font-weight:800;color:${pc.main};font-size:13px">${s.proj.short}</div>
-            <div style="font-size:10.5px;color:#5C5853;margin-top:2px">${s.proj.name}</div>
-            <div style="margin-top:7px;font-size:11px;display:flex;gap:12px;flex-wrap:wrap">
-              <span><strong style="color:${pc.main}">${s.pEmps.length}</strong> persona${s.pEmps.length !== 1 ? "s" : ""}</span>
-              <span style="color:${s.nsp > 0 ? "#DC2626" : "#B9B2A8"}"><strong>${s.nsp}</strong> NSP</span>
-              <span style="color:${s.inc > 0 ? "#92400E" : "#B9B2A8"}"><strong>${s.inc}</strong> INC</span>
-            </div>
-          </div>`;
-        })
-        .join("");
-      // KPIs globales para el encabezado
+      const conGente = summary.filter((s) => s.pEmps.length > 0);
       const totPersonas = summary.reduce((s, x) => s + x.pEmps.length, 0);
       const totNSP = summary.reduce((s, x) => s + x.nsp, 0);
       const totINC = summary.reduce((s, x) => s + x.inc, 0);
-      const nProy = summary.filter((s) => s.pEmps.length > 0).length;
-      const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
-      // Leyenda de colores por proyecto (para leer las celdas con *)
-      const projLegendHtml = Object.entries(projColor)
-        .map(([s, pc]) => `<span style="background:${pc.soft};color:${pc.main};padding:2px 8px;border-radius:4px;border:1px solid ${pc.main}55;font-weight:700">● ${s}</span>`)
-        .join("");
+      const resumenProyHtml = rTabla({
+        columnas: [{ t: "Proyecto" }, { t: "Personas", num: true, ancho: "80px" }, { t: "NSP", num: true, ancho: "70px" }, { t: "INC", num: true, ancho: "70px" }],
+        filas: conGente.map((s) => [
+          `<b>${escHTML(s.proj.short)}</b> <span class="suave">· ${escHTML(s.proj.name)}</span>`,
+          s.pEmps.length,
+          s.nsp > 0 ? `<b style="color:${PAL_CELDA.nsp.fg}">${s.nsp}</b>` : `<span style="color:${RP.texto3}">0</span>`,
+          s.inc > 0 ? `<b style="color:${PAL_CELDA.inc.fg}">${s.inc}</b>` : `<span style="color:${RP.texto3}">0</span>`,
+        ]),
+      });
+      const chipCelda = (p, cod, txt) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;white-space:nowrap"><span class="mono" style="background:${p ? p.bg : "#fff"};color:${p ? p.fg : RP.carbon};border:${p ? "none" : `1px solid ${RP.linea}`};border-radius:4px;padding:0 5px;font-weight:700">${cod}</span>${txt}</span>`;
+      const leyendaHtml = `<div class="rp-nota" style="line-height:2">
+          ${chipCelda(null, "1", "Presente")}${chipCelda(PAL_CELDA.descanso, "1", "domingo/feriado = descanso pagado")}${chipCelda(PAL_CELDA.nsp, "0", "NSP")}${chipCelda(PAL_CELDA.inc, "I", "Incapacidad")}${chipCelda(PAL_CELDA.vac, "V", "Vacaciones")}${chipCelda(PAL_CELDA.extra, "TF", "Feriado trabajado (×3)")}${chipCelda(PAL_CELDA.extra, "DT", "Domingo trabajado (×2)")}${chipCelda(PAL_CELDA.extra, "DT2", "Domingo triple (×3)")}${chipCelda(PAL_CELDA.bloq, "—", "bloqueado por alta/baja")}
+        </div>
+        <div class="rp-nota" style="line-height:2"><b>*</b> = ese día trabajó en otro proyecto (tinte y rayita con el color de ese proyecto):
+          ${Object.entries(projColor).map(([s, c]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;white-space:nowrap"><span style="width:9px;height:9px;border-radius:3px;background:${c}"></span>${escHTML(s)}</span>`).join("")}
+        </div>`;
 
-      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Asistencia ${sheet.quincena} ${sheet.periodo}</title>
-        <style>
-          *{margin:0;padding:0;box-sizing:border-box}
-          body{font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;padding:24px;color:#2C2A28;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-          thead{display:table-header-group}
-          tr{page-break-inside:avoid}
-          @media print {.np{display:none}}
-        </style>
-      </head><body>
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
-          <div style="display:flex;align-items:center;gap:14px">
-            <img src="${logoUrl}" style="height:44px" onerror="this.style.display='none'" />
-            <div>
-              <div style="font-size:20px;font-weight:800;color:#E8762D;letter-spacing:-0.3px">REPORTE DE ASISTENCIA</div>
-              <div style="font-size:12px;color:#7A7268;margin-top:2px">${cc.name} · Quincena: <b>${sheet.quincena} ${sheet.periodo}</b></div>
-            </div>
-          </div>
-          <div style="text-align:right;font-size:11px;color:#7A7268">Generado: ${new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" })}</div>
-        </div>
-        <div style="height:4px;background:#E8762D;border-radius:2px;margin:14px 0 14px"></div>
-
-        <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
-          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:8px 16px"><div style="font-size:9px;color:#7A7268;text-transform:uppercase">Personas asignadas</div><div style="font-size:18px;font-weight:800;color:#E8762D">${totPersonas}</div></div>
-          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:8px 16px"><div style="font-size:9px;color:#7A7268;text-transform:uppercase">Proyectos</div><div style="font-size:18px;font-weight:800;color:#2C2A28">${nProy}</div></div>
-          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:8px 16px"><div style="font-size:9px;color:#7A7268;text-transform:uppercase">Inasistencias (NSP)</div><div style="font-size:18px;font-weight:800;color:${totNSP > 0 ? "#DC2626" : "#B9B2A8"}">${totNSP}</div></div>
-          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:8px 16px"><div style="font-size:9px;color:#7A7268;text-transform:uppercase">Incapacidades</div><div style="font-size:18px;font-weight:800;color:${totINC > 0 ? "#92400E" : "#B9B2A8"}">${totINC}</div></div>
-        </div>
-
-        <div style="font-size:11px;font-weight:700;color:#8B847C;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Resumen por proyecto</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:14px">
-          ${summaryHtml}
-        </div>
-        <div style="font-size:10px;color:#8B847C;display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
-          <b style="font-size:9px;text-transform:uppercase;letter-spacing:1px">Colores por proyecto:</b>
-          ${projLegendHtml}
-          <span>· una celda de color con <b>*</b> = ese día la persona trabajó en <b>ese</b> proyecto</span>
-        </div>
-        ${projTablesHtml}
-        <div style="margin-top:20px;padding-top:12px;border-top:1px solid #DBD4C8;font-size:10px;color:#8B847C;display:flex;gap:10px;flex-wrap:wrap;page-break-inside:avoid">
-          <span style="background:#fff;color:#2C2A28;padding:2px 6px;border-radius:3px;border:1px solid #DBD4C8"><strong>1</strong> = Presente</span>
-          <span style="background:#FEE2E2;color:#991B1B;padding:2px 6px;border-radius:3px"><strong>0</strong> = NSP</span>
-          <span style="background:#FEF9C3;color:#92400E;padding:2px 6px;border-radius:3px"><strong>I</strong> = Incapacidad</span>
-          <span style="background:#CCFBF1;color:#0F766E;padding:2px 6px;border-radius:3px"><strong>V</strong> = Vacaciones</span>
-          <span style="background:#FED7AA;color:#9A3412;padding:2px 6px;border-radius:3px"><strong>TF</strong> = Feriado trabajado (×3)</span>
-          <span style="background:#E9D5FF;color:#6B21A8;padding:2px 6px;border-radius:3px"><strong>DT</strong> = Domingo trabajado (×2)</span>
-          <span style="background:#A855F7;color:#fff;padding:2px 6px;border-radius:3px"><strong>DT2</strong> = Domingo triple (×3)</span>
-          <span style="background:#DBEAFE;color:#1E40AF;padding:2px 6px;border-radius:3px"><strong>1</strong> en domingo = descanso pagado</span>
-          <span><strong>*</strong> = trabajó en otro proyecto (celda con el color de ese proyecto)</span>
-          <span><strong>—</strong> = bloqueado por alta/baja</span>
-        </div>
-        ${resumenPlanillaHtml}
-        <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:white;border:none;border-radius:8px;font-weight:600">Imprimir / Guardar como PDF</button>
-      </body></html>`);
-      w.document.close();
+      const cuerpo = `<style>
+          table.asis{width:100%;border-collapse:collapse;font-size:9px}
+          .asis th{font-size:7.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${RP.texto3};padding:4px 2px;border-bottom:1px solid ${RP.lineaFuerte};text-align:center}
+          .asis th.n{text-align:left;padding-left:6px}
+          .asis td{border-bottom:1px solid ${RP.linea};padding:3px 2px}
+          .asis td.d{text-align:center;font-weight:700;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-size:8.5px;border-left:1px solid #fff}
+          .asis td.n{padding:4px 6px;font-size:9.5px;white-space:nowrap}
+          .asis td.t,.asis th.t{text-align:center;font-weight:700;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;padding:3px 5px}
+        </style>`
+        + rKpis([
+          { label: "Personas asignadas", valor: totPersonas },
+          { label: "Proyectos", valor: conGente.length },
+          { label: "Inasistencias (NSP)", valor: totNSP, tono: totNSP > 0 ? "rojo" : undefined },
+          { label: "Incapacidades", valor: totINC, tono: totINC > 0 ? PAL_CELDA.inc.fg : undefined },
+        ])
+        + rSeccion("Resumen por proyecto", resumenProyHtml)
+        + leyendaHtml
+        + `<div style="height:14px"></div>`
+        + projTablesHtml
+        + resumenPlanillaHtml;
+      abrirReporte(w, reporteHTML({ titulo: "Reporte de asistencia", subtitulo: `${cc.name} · Quincena ${sheet.quincena} ${sheet.periodo}`, empresa: sheet.company || co, cuerpo, horizontal: true }));
     };
   };
 
@@ -3152,7 +3036,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const exportHePDF = () => {
       const w = window.open("", "_blank");
       if (!w) { alert("Permite popups para generar el PDF"); return; }
-      const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 });
+      const fL = fmtLps;
       const fH = (n) => Number.isInteger(n) ? n : n.toFixed(2);
       const pago = sheet.quincena === "1Q"
         ? `2Q ${sheet.periodo} (fin de mes)`
@@ -3190,48 +3074,28 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const granL = proyOrden.reduce((s, [, p]) => s + p.costo, 0);
       const nColab = new Set(proyOrden.flatMap(([, p]) => Object.keys(p.emps))).size;
       const projFullName = (short) => { const p = hrProjects.find(x => x.short === short); return (p && p.name && p.name !== short) ? p.name : ""; };
-      const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
-      const TD1 = "padding:6px 8px;border-bottom:1px solid #F1EBE0;font-size:11px";
-      const THc = "padding:6px 8px;font-size:9.5px;color:#7A7268;font-weight:800;background:#F7F1E8;border-bottom:2px solid #E8762D";
-      // Una seccion (tabla) por proyecto: colaboradores + subtotal del proyecto.
+      // Misma tabla para el resumen por colaborador y el detalle por proyecto.
+      const COLS_HE = [
+        { t: "Colaborador" }, { t: "L/hora", num: true, ancho: "88px" },
+        { t: "+25% · 4-7pm, sáb 11-7", num: true, ancho: "70px" }, { t: "+50% · 7-10pm", num: true, ancho: "62px" },
+        { t: "+75% · 10-12am", num: true, ancho: "62px" }, { t: "×2 · domingo", num: true, ancho: "62px" },
+        { t: "Horas", num: true, ancho: "52px" }, { t: "Total", num: true, ancho: "100px" },
+      ];
+      const nh = (n) => n ? fH(n) : `<span style="color:${RP.texto3}">—</span>`;
+      const tablaHe = (rows, etiquetaSub, hrs, tot) => rTabla({
+        columnas: COLS_HE,
+        filas: rows.map(r => [
+          `<b>${escHTML(r.e.fullName)}</b>`,
+          `${fL(r.hb)}${r.ajuste ? ` <b style="color:${RP.naranjaTexto}">*</b>` : ""}`,
+          nh(r.b1), nh(r.b2), nh(r.b3), nh(r.dom),
+          `<b>${fH(r.hrs)}</b>`, `<b>${fL(r.total)}</b>`,
+        ]),
+        total: [escHTML(etiquetaSub), "", "", "", "", "", fH(hrs), fL(tot)],
+      });
       const projSection = ([pr, P]) => {
         const rows = Object.values(P.emps).sort((a, b) => b.total - a.total);
         const fn = projFullName(pr);
-        return `<div style="margin-bottom:14px;border:1px solid #DBD4C8;border-radius:10px;overflow:hidden">
-          <div style="background:#2C2A28;color:#fff;padding:8px 13px;display:flex;justify-content:space-between;align-items:center;gap:10px">
-            <span style="font-weight:800;font-size:13px">📍 ${pr}${fn ? ` <span style="font-weight:400;color:#C9C2B7;font-size:11px">· ${fn}</span>` : ""}</span>
-            <span style="font-size:12px;color:#F3D9C4">${fH(P.hrs)} hrs · <b style="color:#fff">${fL(P.costo)}</b></span>
-          </div>
-          <table style="width:100%;border-collapse:collapse">
-            <thead><tr>
-              <th style="${THc};text-align:left">COLABORADOR</th>
-              <th style="${THc};text-align:right">L/HORA</th>
-              <th style="${THc};text-align:right">+25%<div style="font-size:7.5px;font-weight:400">4-7pm·sáb11-7</div></th>
-              <th style="${THc};text-align:right">+50%<div style="font-size:7.5px;font-weight:400">7-10pm</div></th>
-              <th style="${THc};text-align:right">+75%<div style="font-size:7.5px;font-weight:400">10-12am</div></th>
-              <th style="${THc};text-align:right">×2<div style="font-size:7.5px;font-weight:400">domingo</div></th>
-              <th style="${THc};text-align:right">HRS</th>
-              <th style="${THc};text-align:right">TOTAL L</th>
-            </tr></thead>
-            <tbody>
-              ${rows.map(r => `<tr>
-                <td style="${TD1};font-weight:700">${r.e.fullName}</td>
-                <td style="${TD1};text-align:right">${fL(r.hb)}${r.ajuste ? ' <span style="color:#B45309;font-weight:800">*</span>' : ''}</td>
-                <td style="${TD1};text-align:right">${r.b1 ? fH(r.b1) : "—"}</td>
-                <td style="${TD1};text-align:right">${r.b2 ? fH(r.b2) : "—"}</td>
-                <td style="${TD1};text-align:right">${r.b3 ? fH(r.b3) : "—"}</td>
-                <td style="${TD1};text-align:right">${r.dom ? fH(r.dom) : "—"}</td>
-                <td style="${TD1};text-align:right;font-weight:700">${fH(r.hrs)}</td>
-                <td style="${TD1};text-align:right;font-weight:800;color:#059669">${fL(r.total)}</td>
-              </tr>`).join("")}
-              <tr style="background:#FFFBF5;font-weight:800">
-                <td style="padding:7px 8px;font-size:11px" colspan="6">Subtotal ${pr}</td>
-                <td style="padding:7px 8px;text-align:right;font-size:11px">${fH(P.hrs)}</td>
-                <td style="padding:7px 8px;text-align:right;color:#059669;font-size:12px">${fL(P.costo)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>`;
+        return rSeccion(`${pr}${fn ? ` · ${fn}` : ""}`, tablaHe(rows, `Subtotal ${pr}`, P.hrs, P.costo), `<span class="mono">${fH(P.hrs)} hrs · ${fL(P.costo)}</span>`);
       };
 
       // ── RESUMEN GENERAL POR COLABORADOR (para planilla) ──
@@ -3249,94 +3113,28 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const bloques = ["PERMANENTES", "TEMPORALES", "OTROS (HONORARIOS / SIN CONTRATO)"]
         .map((g) => [g, Object.values(perEmp).filter((r) => grupoDe(r.e) === g).sort((a, b) => String(a.e.fullName).localeCompare(b.e.fullName))])
         .filter(([, rows]) => rows.length);
+      const NOMBRE_GRUPO = { "PERMANENTES": "Permanentes", "TEMPORALES": "Temporales", "OTROS (HONORARIOS / SIN CONTRATO)": "Otros (honorarios / sin contrato)" };
       const bloqueSection = ([g, rows]) => {
         const hrsG = rows.reduce((s, r) => s + r.hrs, 0), totG = rows.reduce((s, r) => s + r.total, 0);
-        const color = g === "PERMANENTES" ? "#065F46" : g === "TEMPORALES" ? "#B45309" : "#475569";
-        const icon = g === "PERMANENTES" ? "🟢" : g === "TEMPORALES" ? "🟠" : "⚪";
-        return `<div style="margin-bottom:14px;border:1px solid #DBD4C8;border-radius:10px;overflow:hidden">
-          <div style="background:${color};color:#fff;padding:8px 13px;display:flex;justify-content:space-between;align-items:center;gap:10px">
-            <span style="font-weight:800;font-size:13px">${icon} ${g} <span style="font-weight:400;color:rgba(255,255,255,0.75);font-size:11px">· ${rows.length} colaborador${rows.length !== 1 ? "es" : ""}</span></span>
-            <span style="font-size:12px;color:rgba(255,255,255,0.85)">${fH(hrsG)} hrs · <b style="color:#fff">${fL(totG)}</b></span>
-          </div>
-          <table style="width:100%;border-collapse:collapse">
-            <thead><tr>
-              <th style="${THc};text-align:left">COLABORADOR</th>
-              <th style="${THc};text-align:right">L/HORA</th>
-              <th style="${THc};text-align:right">+25%<div style="font-size:7.5px;font-weight:400">4-7pm·sáb11-7</div></th>
-              <th style="${THc};text-align:right">+50%<div style="font-size:7.5px;font-weight:400">7-10pm</div></th>
-              <th style="${THc};text-align:right">+75%<div style="font-size:7.5px;font-weight:400">10-12am</div></th>
-              <th style="${THc};text-align:right">×2<div style="font-size:7.5px;font-weight:400">domingo</div></th>
-              <th style="${THc};text-align:right">HRS</th>
-              <th style="${THc};text-align:right">TOTAL L</th>
-            </tr></thead>
-            <tbody>
-              ${rows.map(r => `<tr>
-                <td style="${TD1};font-weight:700">${r.e.fullName}</td>
-                <td style="${TD1};text-align:right">${fL(r.hb)}${r.ajuste ? ' <span style="color:#B45309;font-weight:800">*</span>' : ''}</td>
-                <td style="${TD1};text-align:right">${r.b1 ? fH(r.b1) : "—"}</td>
-                <td style="${TD1};text-align:right">${r.b2 ? fH(r.b2) : "—"}</td>
-                <td style="${TD1};text-align:right">${r.b3 ? fH(r.b3) : "—"}</td>
-                <td style="${TD1};text-align:right">${r.dom ? fH(r.dom) : "—"}</td>
-                <td style="${TD1};text-align:right;font-weight:700">${fH(r.hrs)}</td>
-                <td style="${TD1};text-align:right;font-weight:800;color:#059669">${fL(r.total)}</td>
-              </tr>`).join("")}
-              <tr style="background:#FFFBF5;font-weight:800">
-                <td style="padding:7px 8px;font-size:11px" colspan="6">Subtotal ${g.toLowerCase()}</td>
-                <td style="padding:7px 8px;text-align:right;font-size:11px">${fH(hrsG)}</td>
-                <td style="padding:7px 8px;text-align:right;color:#059669;font-size:12px">${fL(totG)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>`;
+        return rSeccion(`${NOMBRE_GRUPO[g]} · ${rows.length} colaborador${rows.length !== 1 ? "es" : ""}`,
+          tablaHe(rows, `Subtotal ${g.toLowerCase()}`, hrsG, totG), `<span class="mono">${fH(hrsG)} hrs · ${fL(totG)}</span>`);
       };
 
-      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Horas Extras ${sheet.quincena} ${sheet.periodo}</title>
-        <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#2C2A28}@media print{.np{display:none}}</style>
-        </head><body>
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
-          <div style="display:flex;align-items:center;gap:14px">
-            <img src="${logoUrl}" style="height:44px" onerror="this.style.display='none'" />
-            <div>
-              <div style="font-size:20px;font-weight:800;color:#E8762D;letter-spacing:-0.3px">REPORTE DE HORAS EXTRAS</div>
-              <div style="font-size:12px;color:#7A7268;margin-top:2px">${cc.name} · Quincena trabajada: <b>${sheet.quincena} ${sheet.periodo}</b></div>
-            </div>
-          </div>
-          <div style="text-align:right;font-size:11px;color:#7A7268">
-            <div>Generado: ${new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" })}</div>
-            <div style="margin-top:4px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:5px 10px;color:#92400E;font-weight:700">Se paga en planilla ${pago}</div>
-          </div>
-        </div>
-        <div style="height:4px;background:#E8762D;border-radius:2px;margin:14px 0 16px"></div>
-
-        <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#7A7268;text-transform:uppercase">Total a pagar</div><div style="font-size:20px;font-weight:800;color:#059669">${fL(granL)}</div></div>
-          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#7A7268;text-transform:uppercase">Horas extras</div><div style="font-size:20px;font-weight:800;color:#2C2A28">${fH(granH)}</div></div>
-          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#7A7268;text-transform:uppercase">Colaboradores</div><div style="font-size:20px;font-weight:800;color:#E8762D">${nColab}</div></div>
-          <div style="border:1px solid #DBD4C8;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#7A7268;text-transform:uppercase">Proyectos</div><div style="font-size:20px;font-weight:800;color:#2C2A28">${proyOrden.length}</div></div>
-        </div>
-
-        <div style="font-size:11px;font-weight:700;color:#7A7268;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Resumen general por colaborador (para planilla)</div>
-        ${bloques.map(bloqueSection).join("")}
-
-        <div style="background:#065F46;color:#fff;border-radius:10px;padding:11px 16px;display:flex;justify-content:space-between;align-items:center;margin:4px 0 16px">
-          <span style="font-weight:800;font-size:13px">TOTAL GENERAL · ${sheet.quincena} ${sheet.periodo}</span>
-          <span style="font-size:14px;font-weight:800">${fH(granH)} hrs · ${fL(granL)}</span>
-        </div>
-
-        <div style="page-break-before:always">
-          <div style="font-size:11px;font-weight:700;color:#7A7268;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;padding-top:10px">Detalle por proyecto (para costos por proyecto)</div>
-          ${proyOrden.map(projSection).join("")}
-        </div>
-
-        <div style="font-size:9.5px;color:#94A3B8;line-height:1.5">
-          Hora base = salario ÷ 30 ÷ 8 (sin bonificación) · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2 en todas las bandas.
-          <b>Sábados:</b> la jornada termina a las 11am, por lo que la 1ª banda (+25%) corre de 11am-7pm.
-          ${hayAjuste ? '<b style="color:#B45309">* Hora extra pactada sobre un salario base especial</b> (arreglo), distinto del salario real. ' : ''}
-          Pago quincena vencida: estas HE de ${sheet.quincena} ${sheet.periodo} se pagan en la planilla ${pago}. Proyectos según cuadrilla + reasignaciones por día.
-        </div>
-        <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
-        </body></html>`);
-      w.document.close();
+      const cuerpo = rKpis([
+        { label: "Total a pagar", valor: fL(granL), sub: `se paga en planilla ${pago}` },
+        { label: "Horas extras", valor: fH(granH) },
+        { label: "Colaboradores", valor: nColab },
+        { label: "Proyectos", valor: proyOrden.length },
+      ])
+        + `<div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${RP.texto3};margin-bottom:10px">Resumen general por colaborador · para planilla</div>`
+        + bloques.map(bloqueSection).join("")
+        + rTabla({ columnas: [{ t: "" }, { t: "", num: true }], filas: [], total: [`Total general · ${sheet.quincena} ${sheet.periodo}`, `${fH(granH)} hrs · ${fL(granL)}`] })
+        + `<div class="rp-salto"></div>`
+        + `<div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${RP.texto3};margin-bottom:10px">Detalle por proyecto · para costos por proyecto</div>`
+        + proyOrden.map(projSection).join("")
+        + `<div class="rp-nota" style="line-height:1.6">Hora base = salario ÷ 30 ÷ 8 (sin bonificación) · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2 en todas las bandas. Sábados: la jornada termina a las 11am, la 1ª banda (+25%) corre de 11am-7pm.
+          ${hayAjuste ? `<b style="color:${RP.naranjaTexto}">* Hora extra pactada sobre un salario base especial</b> (arreglo), distinto del salario real. ` : ""}Pago quincena vencida: estas HE de ${sheet.quincena} ${sheet.periodo} se pagan en la planilla ${pago}. Proyectos según cuadrilla + reasignaciones por día.</div>`;
+      abrirReporte(w, reporteHTML({ titulo: "Reporte de horas extras", subtitulo: `${cc.name} · Quincena trabajada ${sheet.quincena} ${sheet.periodo} · se paga en planilla ${pago}`, empresa: sheet.company || co, cuerpo }));
     };
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -3785,94 +3583,69 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     }
 
     const { rows, total, totalDias, totalHeHrs, totalHeCosto, prevQLabel, hayHe, personas } = calcCostoMO(sheet);
-    const genFecha = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" });
     const titulo = `Costo de Mano de Obra — ${sheet.quincena} ${sheet.periodo}`;
 
-    const exportCostosCSV = () => {
-      const headers = ["Proyecto", "Empleado", "Cargo", "Salario mensual", "Bonificacion mensual", "Costo diario (sal+bonif)/30", "Dias pagados", "Costo dias (L)", `HE hrs (de ${prevQLabel})`, "Costo HE (L)", "Total (L)"];
-      const lines = [];
-      rows.forEach(r => {
-        r.emps.forEach(x => {
-          lines.push([`"${r.short}"`, `"${x.emp.fullName}"`, `"${x.emp.position || ""}"`, (Number(x.emp.salary) || 0).toFixed(2), (Number(x.emp.bonificacion) || 0).toFixed(2), x.sd.toFixed(2), fmtDias(x.dias), x.costoDias.toFixed(2), fmtDias(x.heHrs), x.heCosto.toFixed(2), x.costo.toFixed(2)].join(","));
+    const exportCostosExcel = async () => {
+      try {
+        const filas = [];
+        rows.forEach(r => {
+          r.emps.forEach(x => {
+            filas.push({ proy: r.short, emp: x.emp.fullName, cargo: x.emp.position || "", sal: Number(x.emp.salary) || 0, bon: Number(x.emp.bonificacion) || 0, sd: x.sd, dias: x.dias, cdias: x.costoDias, hehrs: x.heHrs, hecosto: x.heCosto, total: x.costo });
+          });
+          filas.push({ _sub: true, proy: r.short, emp: "SUBTOTAL", cargo: "", sal: null, bon: null, sd: null, dias: r.diasPag, cdias: r.costoDias, hehrs: r.heHrs, hecosto: r.heCosto, total: r.costo });
         });
-        lines.push([`"${r.short}"`, `"SUBTOTAL"`, "", "", "", "", fmtDias(r.diasPag), r.costoDias.toFixed(2), fmtDias(r.heHrs), r.heCosto.toFixed(2), r.costo.toFixed(2)].join(","));
-      });
-      lines.push(["TOTAL", "", "", "", "", "", fmtDias(totalDias), (total - totalHeCosto).toFixed(2), fmtDias(totalHeHrs), totalHeCosto.toFixed(2), total.toFixed(2)].join(","));
-      const csv = [headers.join(","), ...lines].join("\n");
-      const a = document.createElement("a");
-      a.href = "data:text/csv;charset=utf-8," + encodeURIComponent("﻿" + csv);
-      a.download = `CostoMO_${cc.name.replace(/ /g, "_")}_${sheet.quincena}_${sheet.periodo}.csv`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        const wb = await libroExcel();
+        hojaExcel(wb, {
+          nombre: "Costo MO", titulo, subtitulo: cc.name,
+          columnas: [
+            { t: "Proyecto", key: "proy", ancho: 18, formato: "texto" },
+            { t: "Empleado", key: "emp", ancho: 30, formato: "texto" },
+            { t: "Cargo", key: "cargo", ancho: 22, formato: "texto" },
+            { t: "Salario mensual", key: "sal", ancho: 15, formato: "lps" },
+            { t: "Bonificación mensual", key: "bon", ancho: 15, formato: "lps" },
+            { t: "Costo diario (sal+bonif)/30", key: "sd", ancho: 15, formato: "lps" },
+            { t: "Días pagados", key: "dias", ancho: 11, formato: "num2" },
+            { t: "Costo días", key: "cdias", ancho: 15, formato: "lps" },
+            { t: `HE hrs (de ${prevQLabel})`, key: "hehrs", ancho: 12, formato: "num2" },
+            { t: "Costo HE", key: "hecosto", ancho: 14, formato: "lps" },
+            { t: "Total", key: "total", ancho: 16, formato: "lps" },
+          ],
+          filas,
+          total: { proy: "TOTAL", dias: totalDias, cdias: total - totalHeCosto, hehrs: totalHeHrs, hecosto: totalHeCosto, total },
+        });
+        await descargarExcel(wb, `CostoMO_${cc.name.replace(/ /g, "_")}_${sheet.quincena}_${sheet.periodo}.xlsx`);
+      } catch (err) {
+        alert("No se pudo generar el Excel: " + (err?.message || err));
+      }
     };
 
     const exportCostosPDF = () => {
       const w = window.open("", "_blank");
       if (!w) { alert("Permite popups para imprimir"); return; }
-      const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 });
-      const projBlocks = rows.map(r => `
-        <div style="margin-bottom:18px;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
-          <div style="background:#2C5F5D;color:#fff;padding:8px 14px;font-weight:700;font-size:13px;display:flex;justify-content:space-between">
-            <span>${r.short}${r.code ? ` <span style="font-weight:400;font-size:10px;opacity:.75">[${r.code}]</span>` : ""}</span>
-            <span>${fL(r.costo)}</span>
-          </div>
-          <table style="width:100%;border-collapse:collapse;font-size:11px">
-            <thead><tr style="background:#F1F5F9">
-              <th style="text-align:left;padding:5px 10px;border-bottom:1px solid #E2E8F0">Empleado</th>
-              <th style="text-align:left;padding:5px 10px;border-bottom:1px solid #E2E8F0">Cargo</th>
-              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Costo diario</th>
-              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Días pag.</th>
-              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Costo días</th>
-              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">HE hrs</th>
-              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Costo HE</th>
-              <th style="text-align:right;padding:5px 10px;border-bottom:1px solid #E2E8F0">Total</th>
-            </tr></thead>
-            <tbody>
-              ${r.emps.map(x => `<tr>
-                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9">${x.emp.fullName}</td>
-                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;color:#64748b">${x.emp.position || "—"}</td>
-                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right">${fL(x.sd)}</td>
-                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right">${fmtDias(x.dias)}</td>
-                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right">${fL(x.costoDias)}</td>
-                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right;color:#D97706">${x.heHrs > 0 ? fmtDias(x.heHrs) : "—"}</td>
-                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right;color:#D97706">${x.heCosto > 0 ? fL(x.heCosto) : "—"}</td>
-                <td style="padding:4px 10px;border-bottom:1px solid #F1F5F9;text-align:right;font-weight:700">${fL(x.costo)}</td>
-              </tr>`).join("")}
-              <tr style="background:#F8FAFC;font-weight:700">
-                <td style="padding:5px 10px" colspan="3">Subtotal ${r.short} · ${r.emps.length} persona${r.emps.length !== 1 ? "s" : ""}</td>
-                <td style="padding:5px 10px;text-align:right">${fmtDias(r.diasPag)}</td>
-                <td style="padding:5px 10px;text-align:right">${fL(r.costoDias)}</td>
-                <td style="padding:5px 10px;text-align:right;color:#D97706">${r.heHrs > 0 ? fmtDias(r.heHrs) : "—"}</td>
-                <td style="padding:5px 10px;text-align:right;color:#D97706">${r.heCosto > 0 ? fL(r.heCosto) : "—"}</td>
-                <td style="padding:5px 10px;text-align:right;color:#059669">${fL(r.costo)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>`).join("");
-      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${titulo}</title>
-        <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#1E293B}@media print{.np{display:none}}</style>
-        </head><body>
-        <div style="border-left:4px solid #E8762D;padding-left:14px;margin-bottom:16px">
-          <div style="font-size:9px;color:#E8762D;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">Grupo Geotecnica · RRHH</div>
-          <h1 style="font-size:20px;letter-spacing:-0.3px">${titulo}</h1>
-          <div style="font-size:12px;color:#64748b;margin-top:2px">${cc.name} · Generado ${genFecha}</div>
-        </div>
-        <div style="display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap">
-          <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Costo total mano de obra</div><div style="font-size:19px;font-weight:800;color:#059669">${fL(total)}</div></div>
-          <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Días pagados</div><div style="font-size:19px;font-weight:800">${fmtDias(totalDias)}</div></div>
-          <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">HE pagadas (de ${prevQLabel})</div><div style="font-size:19px;font-weight:800;color:#D97706">${fL(totalHeCosto)}</div><div style="font-size:10px;color:#94A3B8">${fmtDias(totalHeHrs)} horas</div></div>
-          <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Personas</div><div style="font-size:19px;font-weight:800">${personas}</div></div>
-          <div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 18px"><div style="font-size:10px;color:#64748b;text-transform:uppercase">Proyectos</div><div style="font-size:19px;font-weight:800">${rows.length}</div></div>
-        </div>
-        ${projBlocks}
-        <div style="font-size:9.5px;color:#94A3B8;margin-top:10px;line-height:1.5">
-          Metodología: costo diario = (salario + bonificación mensual) ÷ 30; costo = costo diario × días pagados atribuidos al proyecto según cuadrilla y reasignaciones diarias (1*).
-          Domingos/feriados de descanso pagan 1 día; domingo trabajado (DT) ×2, domingo triple (DT2) y feriado trabajado (TF) ×3; incapacidad (INC) paga 1 día; NSP no paga.
+      const fL = fmtLps;
+      const he = (n, txt) => n > 0 ? `<span style="color:${RP.naranjaTexto}">${txt}</span>` : `<span style="color:${RP.texto3}">—</span>`;
+      const projBlocks = rows.map(r => `<div style="page-break-inside:avoid">${rSeccion(`${r.short}${r.code ? ` · ${r.code}` : ""}`,
+        rTabla({
+          columnas: [{ t: "Empleado" }, { t: "Cargo" }, { t: "Costo diario", num: true }, { t: "Días pag.", num: true }, { t: "Costo días", num: true }, { t: "HE hrs", num: true }, { t: "Costo HE", num: true }, { t: "Total", num: true }],
+          filas: r.emps.map(x => [
+            `<b>${escHTML(x.emp.fullName)}</b>`, `<span class="suave">${escHTML(x.emp.position || "—")}</span>`,
+            fL(x.sd), fmtDias(x.dias), fL(x.costoDias), he(x.heHrs, fmtDias(x.heHrs)), he(x.heCosto, fL(x.heCosto)), `<b>${fL(x.costo)}</b>`,
+          ]),
+          total: [`Subtotal ${escHTML(r.short)} · ${r.emps.length} persona${r.emps.length !== 1 ? "s" : ""}`, "", "", fmtDias(r.diasPag), fL(r.costoDias), r.heHrs > 0 ? fmtDias(r.heHrs) : "—", r.heCosto > 0 ? fL(r.heCosto) : "—", fL(r.costo)],
+        }), `<span class="mono">${fL(r.costo)}</span>`)}</div>`).join("");
+      const cuerpo = rKpis([
+        { label: "Costo total mano de obra", valor: fL(total) },
+        { label: "Días pagados", valor: fmtDias(totalDias) },
+        { label: `HE pagadas (de ${prevQLabel})`, valor: fL(totalHeCosto), sub: `${fmtDias(totalHeHrs)} horas`, tono: "naranjaTexto" },
+        { label: "Personas", valor: personas },
+        { label: "Proyectos", valor: rows.length },
+      ])
+        + projBlocks
+        + rTabla({ columnas: [{ t: "" }, { t: "", num: true }], filas: [], total: [`Costo total mano de obra · ${sheet.quincena} ${sheet.periodo}`, fL(total)] })
+        + `<div class="rp-nota" style="margin-top:14px;line-height:1.6">Metodología: costo diario = (salario + bonificación mensual) ÷ 30; costo = costo diario × días pagados atribuidos al proyecto según cuadrilla y reasignaciones diarias (1*). Domingos/feriados de descanso pagan 1 día; domingo trabajado (DT) ×2, domingo triple (DT2) y feriado trabajado (TF) ×3; incapacidad (INC) paga 1 día; NSP no paga.
           Horas extras: hora base = salario ÷ 30 ÷ 8 · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2. Las HE mostradas corresponden a las trabajadas en ${prevQLabel}, pagadas en esta quincena (pago quincena vencida).
-          No incluye cargas patronales. Fuente: asistencia ${sheet.quincena} ${sheet.periodo}${sheet.lastSaved ? ` (guardada ${fmt(sheet.lastSaved.slice(0, 10))})` : ""}.
-        </div>
-        <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#059669;color:#fff;border:none;border-radius:8px">Imprimir / Guardar como PDF</button>
-        </body></html>`);
-      w.document.close();
+          No incluye cargas patronales. Fuente: asistencia ${sheet.quincena} ${sheet.periodo}${sheet.lastSaved ? ` (guardada ${fmt(sheet.lastSaved.slice(0, 10))})` : ""}.</div>`;
+      abrirReporte(w, reporteHTML({ titulo: "Costo de mano de obra", subtitulo: `${cc.name} · Quincena ${sheet.quincena} ${sheet.periodo}`, empresa: sheet.company || co, cuerpo }));
     };
 
     // ══════════ REPORTE EJECUTIVO MENSUAL GLOBALIZADO (ago 2026) ══════════
@@ -3941,202 +3714,76 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const personasG = new Set([...porEmp.geotecnica.personas, ...porEmp.subterra.personas]).size;
       const w = window.open("", "_blank");
       if (!w) { alert("Permite popups para generar el PDF"); return; }
-      const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
-      const genFecha = new Date().toLocaleDateString("es-HN", { day: "numeric", month: "long", year: "numeric" });
+      // Estilo único de reportes (26-oct-2026): src/reporte-estilo.js
+      // Empresas: Geotecnica en carbón, Subterra en naranja (como Compras).
+      const COLOR_EMP = { geotecnica: RP.carbon, subterra: RP.naranja };
 
-      // ── Grafica 1: DONA de distribucion del costo por proyecto (SVG) ──
-      const PALETA = ["#E8762D", "#2C5F5D", "#3E6A99", "#B45309", "#6D28D9", "#0E7490", "#BE3455", "#15803D"];
+      // ── Gráfica 1: DONA de distribución del costo por proyecto ──
       const top = rowsG.slice(0, 8);
       const otros = rowsG.slice(8);
+      const otrosTot = otros.reduce((s, r) => s + r.total, 0);
       const segs = [
-        ...top.map((r, i) => ({ label: r.short, val: r.total, color: PALETA[i % PALETA.length] })),
-        ...(otros.length ? [{ label: `Otros (${otros.length})`, val: otros.reduce((s, r) => s + r.total, 0), color: "#94A3B8" }] : []),
+        ...top.map((r, i) => ({ label: r.short, valor: r.total, valorTxt: fL(r.total), color: colorPaleta(i) })),
+        ...(otros.length ? [{ label: `Otros (${otros.length})`, valor: otrosTot, valorTxt: fL(otrosTot), color: RP.lineaFuerte }] : []),
       ];
-      const RAD = 62, CIRC = 2 * Math.PI * RAD;
-      let acum = 0;
-      const donaSegs = segs.map(s => {
-        const frac = totalG > 0 ? s.val / totalG : 0;
-        const el = `<circle r="${RAD}" cx="90" cy="90" fill="transparent" stroke="${s.color}" stroke-width="34" stroke-dasharray="${(frac * CIRC).toFixed(2)} ${CIRC.toFixed(2)}" stroke-dashoffset="${(-acum * CIRC).toFixed(2)}" transform="rotate(-90 90 90)"/>`;
-        acum += frac;
-        return el;
-      }).join("");
-      const donaLeyenda = segs.map(s => `<div style="display:flex;align-items:center;gap:7px;font-size:10.5px;margin-bottom:5px">
-        <span style="width:10px;height:10px;border-radius:3px;background:${s.color};flex-shrink:0"></span>
-        <span style="font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.label)}</span>
-        <span style="color:#64748b;min-width:42px;text-align:right">${totalG > 0 ? ((s.val / totalG) * 100).toFixed(1) : "0"}%</span>
-        <span style="font-weight:700;min-width:96px;text-align:right">${fL(s.val)}</span>
-      </div>`).join("");
 
-      // ── Grafica 2: barras horizontales por empresa ──
+      // ── Gráfica 2: barras por empresa ──
       const maxEmpTotal = Math.max(porEmp.geotecnica.total, porEmp.subterra.total, 1);
       const barrasEmp = EMPRESAS.map(c => {
         const d = porEmp[c];
         const pct = totalG > 0 ? (d.total / totalG) * 100 : 0;
-        const wpct = Math.max(2, (d.total / maxEmpTotal) * 100);
         return `<div style="margin-bottom:12px">
-          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
-            <span style="font-weight:800;color:${COMPANIES[c].color}">${esc(COMPANIES[c].name)}</span>
-            <span style="color:#64748b">${d.personas.size} persona${d.personas.size !== 1 ? "s" : ""} · ${pct.toFixed(1)}% del grupo</span>
-          </div>
-          <div style="background:#F1F5F9;border-radius:6px;height:26px;position:relative;overflow:hidden">
-            <div style="width:${wpct.toFixed(1)}%;height:100%;background:${COMPANIES[c].color};border-radius:6px"></div>
-            <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11.5px;font-weight:800;color:#1E293B">${fL(d.total)}</span>
-          </div>
-          <div style="display:flex;gap:14px;font-size:9.5px;color:#64748b;margin-top:3px">
-            <span>Días: <b>${fmtDias(d.dias)}</b> · ${fL(d.costoDias)}</span>
-            <span style="color:#D97706">HE: <b>${fmtDias(d.heHrs)} hrs</b> · ${fL(d.heCosto)}</span>
-          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10.5px;margin-bottom:5px"><b>${esc(COMPANIES[c].name)}</b><span class="mono">${fL(d.total)}</span></div>
+          ${rBarra([{ valor: d.total, color: COLOR_EMP[c] }], maxEmpTotal)}
+          <div class="rp-nota">${d.personas.size} persona${d.personas.size !== 1 ? "s" : ""} · ${pct.toFixed(1)} % del grupo · días ${fmtDias(d.dias)} (${fL(d.costoDias)}) · HE ${fmtDias(d.heHrs)} hrs (${fL(d.heCosto)})</div>
         </div>`;
       }).join("");
 
-      // ── Grafica 3: mezcla GEO/SUB por proyecto (barras apiladas, top 10) ──
+      // ── Gráfica 3: mezcla GEO/SUB por proyecto (barras apiladas, top 10) ──
       const topMix = rowsG.slice(0, 10);
       const maxProy = Math.max(...topMix.map(r => r.total), 1);
-      const barrasProy = topMix.map(r => {
-        const wG = (r.porCo.geotecnica / maxProy) * 100;
-        const wS = (r.porCo.subterra / maxProy) * 100;
-        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:10px">
+      const barrasProy = topMix.map(r => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:10px">
           <span style="width:118px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">${esc(r.short)}</span>
-          <div style="flex:1;display:flex;height:16px;background:#F8FAFC;border-radius:4px;overflow:hidden">
-            ${wG > 0 ? `<div style="width:${wG.toFixed(1)}%;background:${COMPANIES.geotecnica.color}"></div>` : ""}
-            ${wS > 0 ? `<div style="width:${wS.toFixed(1)}%;background:${COMPANIES.subterra.color}"></div>` : ""}
-          </div>
-          <span style="width:92px;text-align:right;font-weight:700;flex-shrink:0">${fL(r.total)}</span>
-        </div>`;
-      }).join("");
+          <div style="flex:1">${rBarra([{ valor: r.porCo.geotecnica, color: COLOR_EMP.geotecnica }, { valor: r.porCo.subterra, color: COLOR_EMP.subterra }], maxProy)}</div>
+          <span class="mono" style="width:96px;text-align:right;font-weight:700;flex-shrink:0">${fL(r.total)}</span>
+        </div>`).join("");
+      const leyEmp = `<div class="rp-nota" style="display:flex;gap:14px;margin:0 0 8px">${EMPRESAS.map(c => `<span><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:${COLOR_EMP[c]};vertical-align:-1px"></span> ${esc(COMPANIES[c].name)}</span>`).join("")}</div>`;
+      const chipCo = (c) => rChip(TAG[c], c === "subterra" ? "naranja" : "");
 
-      // ── KPI cards de la portada ──
-      const kpi = (label, val, color, sub) => `<div style="flex:1;min-width:130px;border:1px solid #E2E8F0;border-radius:10px;padding:11px 14px">
-        <div style="font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:0.6px;font-weight:700">${label}</div>
-        <div style="font-size:17px;font-weight:800;color:${color};margin-top:3px;letter-spacing:-0.3px">${val}</div>
-        ${sub ? `<div style="font-size:9px;color:#94A3B8;margin-top:1px">${sub}</div>` : ""}
-      </div>`;
-      const chipCo = (c) => `<span style="display:inline-block;background:${COMPANIES[c].color};color:#fff;border-radius:4px;padding:1px 6px;font-size:8px;font-weight:800;letter-spacing:0.5px;vertical-align:1px">${TAG[c]}</span>`;
-
-      // ── Tablas por proyecto (paginas 2+) con chip de empresa por empleado ──
-      const projBlocks = rowsG.map(r => `
-      <div style="margin-bottom:16px;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
-        <div style="background:#2C2A28;color:#fff;padding:8px 14px;font-weight:700;font-size:12.5px;display:flex;justify-content:space-between;align-items:center">
-          <span>${esc(r.short)}${r.code ? ` <span style="font-weight:400;font-size:10px;opacity:.7">[${esc(r.code)}]</span>` : ""}</span>
-          <span style="font-size:10px;font-weight:600;opacity:.85">
-            ${r.porCo.geotecnica > 0 ? `GEO ${fL(r.porCo.geotecnica)}` : ""}${r.porCo.geotecnica > 0 && r.porCo.subterra > 0 ? " · " : ""}${r.porCo.subterra > 0 ? `SUB ${fL(r.porCo.subterra)}` : ""}
-            &nbsp;&nbsp;<span style="font-size:13px;font-weight:800;opacity:1">${fL(r.total)}</span>
-          </span>
-        </div>
-        <table style="width:100%;border-collapse:collapse;font-size:10.5px">
-          <thead><tr style="background:#F1F5F9">
-            <th style="text-align:left;padding:6px 12px;font-size:8.5px;color:#64748b;letter-spacing:0.4px">EMPLEADO</th>
-            <th style="text-align:left;padding:6px 8px;font-size:8.5px;color:#64748b;letter-spacing:0.4px">CARGO</th>
-            <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">COSTO DIARIO</th>
-            <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">DÍAS PAG.</th>
-            <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">COSTO DÍAS</th>
-            <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">HE HRS</th>
-            <th style="text-align:right;padding:6px 8px;font-size:8.5px;color:#64748b">COSTO HE</th>
-            <th style="text-align:right;padding:6px 12px;font-size:8.5px;color:#64748b">TOTAL</th>
-          </tr></thead>
-          <tbody>
-            ${r.emps.map(x => `<tr style="border-top:1px solid #F1F5F9">
-              <td style="padding:5px 12px;font-weight:600">${chipCo(x.co)} ${esc(x.emp.fullName)}</td>
-              <td style="padding:5px 8px;color:#64748b">${esc(x.emp.position || "—")}</td>
-              <td style="padding:5px 8px;text-align:right">${fL(x.sd)}</td>
-              <td style="padding:5px 8px;text-align:right">${fmtDias(x.dias)}</td>
-              <td style="padding:5px 8px;text-align:right">${fL(x.costoDias)}</td>
-              <td style="padding:5px 8px;text-align:right;color:#D97706">${x.heHrs > 0 ? fmtDias(x.heHrs) : "—"}</td>
-              <td style="padding:5px 8px;text-align:right;color:#D97706">${x.heCosto > 0 ? fL(x.heCosto) : "—"}</td>
-              <td style="padding:5px 12px;text-align:right;font-weight:700">${fL(x.costo)}</td>
-            </tr>`).join("")}
-            <tr style="background:#F8FAFC;font-weight:700;border-top:1px solid #E2E8F0">
-              <td colspan="3" style="padding:6px 12px">Subtotal ${esc(r.short)} · ${r.emps.length} persona${r.emps.length !== 1 ? "s" : ""}</td>
-              <td style="padding:6px 8px;text-align:right">${fmtDias(r.dias)}</td>
-              <td style="padding:6px 8px;text-align:right">${fL(r.costoDias)}</td>
-              <td style="padding:6px 8px;text-align:right;color:#D97706">${r.heHrs > 0 ? fmtDias(r.heHrs) : "—"}</td>
-              <td style="padding:6px 8px;text-align:right;color:#D97706">${r.heCosto > 0 ? fL(r.heCosto) : "—"}</td>
-              <td style="padding:6px 12px;text-align:right;color:#059669">${fL(r.total)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>`).join("");
+      // ── Tablas por proyecto con chip de empresa por empleado ──
+      const he = (n, txt) => n > 0 ? `<span style="color:${RP.naranjaTexto}">${txt}</span>` : `<span style="color:${RP.texto3}">—</span>`;
+      const projBlocks = rowsG.map(r => rSeccion(`${r.short}${r.code ? ` · ${r.code}` : ""}`,
+        rTabla({
+          columnas: [{ t: "Empleado" }, { t: "Cargo" }, { t: "Costo diario", num: true }, { t: "Días pag.", num: true }, { t: "Costo días", num: true }, { t: "HE hrs", num: true }, { t: "Costo HE", num: true }, { t: "Total", num: true }],
+          filas: r.emps.map(x => [
+            `${chipCo(x.co)} <b>${esc(x.emp.fullName)}</b>`, `<span class="suave">${esc(x.emp.position || "—")}</span>`,
+            fL(x.sd), fmtDias(x.dias), fL(x.costoDias), he(x.heHrs, fmtDias(x.heHrs)), he(x.heCosto, fL(x.heCosto)), `<b>${fL(x.costo)}</b>`,
+          ]),
+          total: [`Subtotal ${esc(r.short)} · ${r.emps.length} persona${r.emps.length !== 1 ? "s" : ""}`, "", "", fmtDias(r.dias), fL(r.costoDias), r.heHrs > 0 ? fmtDias(r.heHrs) : "—", r.heCosto > 0 ? fL(r.heCosto) : "—", fL(r.total)],
+        }),
+        `${[r.porCo.geotecnica > 0 ? `GEO ${fL(r.porCo.geotecnica)}` : "", r.porCo.subterra > 0 ? `SUB ${fL(r.porCo.subterra)}` : ""].filter(Boolean).join(" · ")} · <b class="mono">${fL(r.total)}</b>`)).join("");
 
       const [pyy, pmm] = [yy, mmn - 1 === 0 ? 12 : mmn - 1];
       const mesAnt = `${mmn - 1 === 0 ? yy - 1 : pyy}-${String(pmm).padStart(2, "0")}`;
-      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Costo de Mano de Obra — ${mesTitulo} · Grupo Geotecnica</title>
-      <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:26px;color:#1E293B;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{.np{display:none}}thead{display:table-header-group}tr{page-break-inside:avoid}</style>
-      </head><body>
-
-      <!-- ═══════ PAGINA 1: PORTADA EJECUTIVA ═══════ -->
-      <div style="page-break-after:always">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:14px">
-          <div style="display:flex;align-items:center;gap:14px">
-            <img src="${logoUrl}" style="height:52px" onerror="this.style.display='none'" />
-            <div>
-              <div style="font-size:9px;color:#E8762D;font-weight:800;letter-spacing:1.8px;text-transform:uppercase">Grupo Geotecnica · Recursos Humanos</div>
-              <div style="font-size:23px;font-weight:800;letter-spacing:-0.4px;color:#2C2A28">Costo de Mano de Obra</div>
-              <div style="font-size:13px;color:#64748b">Reporte ejecutivo mensual — <b style="color:#2C2A28">${mesTitulo}</b></div>
-            </div>
-          </div>
-          <div style="text-align:right;font-size:10px;color:#64748b">
-            <div style="font-weight:800;color:${COMPANIES.geotecnica.color}">Geotecnica Soluciones</div>
-            <div style="font-weight:800;color:${COMPANIES.subterra.color}">Subterra Honduras</div>
-            <div style="margin-top:3px">Generado ${genFecha}</div>
-          </div>
-        </div>
-        <div style="height:4px;background:linear-gradient(90deg,#E8762D,${COMPANIES.geotecnica.color},${COMPANIES.subterra.color});border-radius:2px;margin:13px 0 16px"></div>
-
-        ${faltantes.length ? `<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:8px 12px;font-size:10.5px;color:#78350F;margin-bottom:14px"><b>⚠ Datos incompletos:</b> ${faltantes.map(esc).join(" · ")} — los totales reflejan solo lo registrado.</div>` : ""}
-
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
-          ${kpi("Costo total del grupo", fL(totalG), "#059669", `${personasG} colaboradores · ${rowsG.length} proyectos`)}
-          ${kpi("Costo días laborados", fL(costoDiasG), "#2563EB", `${fmtDias(diasG)} días pagados`)}
-          ${kpi("Horas extras pagadas", fL(heCostoG), "#D97706", `${fmtDias(heHrsG)} horas`)}
-          ${kpi("Geotecnica Soluciones", fL(porEmp.geotecnica.total), COMPANIES.geotecnica.color, `${porEmp.geotecnica.personas.size} personas`)}
-          ${kpi("Subterra Honduras", fL(porEmp.subterra.total), COMPANIES.subterra.color, `${porEmp.subterra.personas.size} personas`)}
-        </div>
-
-        <div style="display:flex;gap:14px;align-items:flex-start">
-          <div style="flex:1.15;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
-            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Distribución del costo por proyecto</div>
-            <div style="display:flex;gap:14px;align-items:center">
-              <svg width="140" height="140" viewBox="0 0 180 180" style="flex-shrink:0">
-                ${donaSegs}
-                <text x="90" y="86" text-anchor="middle" style="font-size:11px;font-weight:800;fill:#2C2A28">${rowsG.length}</text>
-                <text x="90" y="100" text-anchor="middle" style="font-size:8px;fill:#64748b">proyectos</text>
-              </svg>
-              <div style="flex:1">${donaLeyenda}</div>
-            </div>
-          </div>
-          <div style="flex:1;border:1px solid #E2E8F0;border-radius:10px;padding:12px;page-break-inside:avoid">
-            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:9px">Costo por empresa</div>
-            ${barrasEmp}
-            <div style="font-size:10px;font-weight:800;color:#2C2A28;text-transform:uppercase;letter-spacing:0.8px;margin:11px 0 7px">Mezcla de personal por proyecto</div>
-            <div style="display:flex;gap:12px;font-size:9px;color:#64748b;margin-bottom:6px">
-              <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${COMPANIES.geotecnica.color};vertical-align:-1px"></span> Geotecnica</span>
-              <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${COMPANIES.subterra.color};vertical-align:-1px"></span> Subterra</span>
-            </div>
-            ${barrasProy}
-          </div>
-        </div>
-      </div>
-
-      <!-- ═══════ PAGINAS 2+: DETALLE POR PROYECTO ═══════ -->
-      <div style="border-left:4px solid #E8762D;padding-left:12px;margin-bottom:14px">
-        <div style="font-size:9px;color:#E8762D;font-weight:800;letter-spacing:1.5px;text-transform:uppercase">Detalle por proyecto · ${mesTitulo}</div>
-        <div style="font-size:11px;color:#64748b">Cada colaborador con su empresa: ${chipCo("geotecnica")} Geotecnica Soluciones · ${chipCo("subterra")} Subterra Honduras</div>
-      </div>
-      ${projBlocks}
-      <div style="background:#2C2A28;color:#fff;border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;page-break-inside:avoid">
-        <span style="font-size:12px;font-weight:700">TOTAL MANO DE OBRA DEL GRUPO — ${mesTitulo}</span>
-        <span style="font-size:17px;font-weight:800;color:#6EE7B7">${fL(totalG)}</span>
-      </div>
-      <!-- Metodologia al FINAL (antes vivia en la portada y se derramaba a
-           una pagina 2 casi en blanco al imprimir en horizontal) -->
-      <div style="font-size:9px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:8px;margin-top:12px;line-height:1.5;page-break-inside:avoid">
-        <b>Metodología:</b> costo diario = (salario + bonificación mensual) ÷ 30 × días pagados. Domingo/feriado de descanso paga 1; DT ×2, DT2/TF ×3; INC/V pagan 1; NSP no paga.
-        Horas extras: hora base = salario ÷ 30 ÷ 8 · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2 (pago quincena vencida: en ${mesTitulo} se desembolsan las HE de 2Q ${mesAnt} y las de 1Q ${mesEjec}).
-        No incluye cargas patronales. Preparado por ${esc(userName || "Operaciones")} · GeoTeam — Sistema de Operaciones.
-      </div>
-      <br><button class="np" onclick="window.print()" style="padding:10px 24px;font-size:14px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px;font-weight:700">Imprimir / Guardar como PDF</button>
-      </body></html>`);
-      w.document.close();
+      const cuerpo = (faltantes.length ? `<div class="rp-caja" style="background:${RP.tinte};border-color:${RP.tinte};margin-bottom:16px;font-size:10.5px;color:${RP.naranjaTexto}"><b>Datos incompletos:</b> ${faltantes.map(esc).join(" · ")} — los totales reflejan solo lo registrado.</div>` : "")
+        + rKpis([
+          { label: "Costo total del grupo", valor: fL(totalG), sub: `${personasG} colaboradores · ${rowsG.length} proyectos` },
+          { label: "Costo días laborados", valor: fL(costoDiasG), sub: `${fmtDias(diasG)} días pagados` },
+          { label: "Horas extras pagadas", valor: fL(heCostoG), sub: `${fmtDias(heHrsG)} horas`, tono: "naranjaTexto" },
+          { label: "Geotecnica Soluciones", valor: fL(porEmp.geotecnica.total), sub: `${porEmp.geotecnica.personas.size} personas` },
+          { label: "Subterra Honduras", valor: fL(porEmp.subterra.total), sub: `${porEmp.subterra.personas.size} personas` },
+        ])
+        + `<div class="rp-grid2"><div class="rp-caja">${rSeccion("Distribución del costo por proyecto", rDona(segs, { tam: 150, centro: String(rowsG.length), centroSub: "proyectos" }))}</div>`
+        + `<div class="rp-caja">${rSeccion("Costo por empresa", barrasEmp)}${rSeccion("Mezcla de personal por proyecto", leyEmp + barrasProy)}</div></div>`
+        + `<div class="rp-salto"></div>`
+        + `<div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${RP.texto3};margin-bottom:4px">Detalle por proyecto · ${esc(mesTitulo)}</div>`
+        + `<div class="rp-nota" style="margin:0 0 14px">Cada colaborador con su empresa: ${chipCo("geotecnica")} Geotecnica Soluciones · ${chipCo("subterra")} Subterra Honduras</div>`
+        + projBlocks
+        + rTabla({ columnas: [{ t: "" }, { t: "", num: true }], filas: [], total: [`Total mano de obra del grupo · ${esc(mesTitulo)}`, fL(totalG)] })
+        + `<div class="rp-nota" style="margin-top:14px;line-height:1.6"><b>Metodología:</b> costo diario = (salario + bonificación mensual) ÷ 30 × días pagados. Domingo/feriado de descanso paga 1; DT ×2, DT2/TF ×3; INC/V pagan 1; NSP no paga.
+          Horas extras: hora base = salario ÷ 30 ÷ 8 · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2 (pago quincena vencida: en ${esc(mesTitulo)} se desembolsan las HE de 2Q ${mesAnt} y las de 1Q ${mesEjec}).
+          No incluye cargas patronales. Preparado por ${esc(userName || "Operaciones")}.</div>`;
+      abrirReporte(w, reporteHTML({ titulo: "Costo de mano de obra", subtitulo: `Reporte ejecutivo mensual · ${mesTitulo} · ambas empresas`, cuerpo, horizontal: true }));
     };
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -4153,7 +3800,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
               {sheets.map(s => <option key={s.id} value={s.id}>{s.quincena} {s.periodo}</option>)}
             </select>
           </div>
-          <Btn variant="ghost" onClick={exportCostosCSV}>📊 CSV</Btn>
+          <Btn variant="ghost" onClick={exportCostosExcel}>📊 Excel</Btn>
           <Btn variant="info" onClick={exportCostosPDF}>📄 Descargar reporte PDF</Btn>
           {/* Reporte EJECUTIVO del MES con ambas empresas (para direccion) */}
           <div style={{ width: 1, alignSelf: "stretch", background: "#E2E8F0", margin: "0 4px" }} />
@@ -5624,7 +5271,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     </div>;
   };
 
-  const renderCons = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cc2.length} emitidas</span><Btn onClick={() => setModal({ t: "cn" })}>+ Generar</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "t", label: "Tipo", render: r => <Badge color="#0891B2">{r.type === "laboral" ? "Laboral" : "Ingresos"}</Badge> }, { key: "d", label: "Fecha", render: r => fmt(r.date) }]} data={cc2} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>{(!hideSalary || r.type !== "ingresos") && <Btn small variant="ghost" onClick={() => { navigator.clipboard?.writeText(r.text); alert("Copiado"); }}>Copiar</Btn>}<Btn small variant="danger" onClick={() => { if (!confirm(`¿Eliminar la constancia de ${en(r.employeeId)} del ${fmt(r.date)}?`)) return; sC(cons.filter(c => c.id !== r.id)); }}>×</Btn></div>} /></div>;
+  const renderCons = () => <div style={{ display: "flex", flexDirection: "column", gap: 16 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#64748b", fontSize: 13 }}>{cc2.length} emitidas</span><Btn onClick={() => setModal({ t: "cn" })}>+ Generar</Btn></div><Table columns={[{ key: "e", label: "Empleado", render: r => en(r.employeeId) }, { key: "t", label: "Tipo", render: r => <Badge color="#6E6862">{r.type === "laboral" ? "Laboral" : "De trabajo"}</Badge> }, { key: "d", label: "Fecha", render: r => fmt(r.date) }]} data={cc2} actions={r => <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>{(!hideSalary || (r.type !== "ingresos" && r.type !== "trabajo")) && <Btn small variant="ghost" onClick={() => { const e = emps.find(x => x.id === r.employeeId); const doc = r.doc || solicitudes.find(x => x.id === r.origenSolicitud)?.resultado?.doc; pdfDeRegistroConstancia({ ...r, doc }, e); }}>PDF</Btn>}<Btn small variant="danger" onClick={() => { if (!confirm(`¿Eliminar la constancia de ${en(r.employeeId)} del ${fmt(r.date)}?`)) return; sC(cons.filter(c => c.id !== r.id)); }}>×</Btn></div>} /></div>;
 
   // ── MOVIMIENTOS (Altas y Bajas) ──
   const AltaForm = ({ onSave }) => {
@@ -6018,97 +5665,97 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       return `${fmt(inicio)} \u2192 ${fmt(fin)}`;
     };
 
-    const exportMovsCSV = () => {
-      const headers = ["Tipo", "D\u00EDa 1 colaborador", "Fecha movimiento", "Quincena", "Grupo", "Nombre", "DNI", "Posicion", "Empresa", "Contrato", "Duracion contrato", "Salario", "Motivo", "Notas"];
-      const rows = filtered.map(m => {
-        const q = getQuincena(m.date);
-        const dia1 = getDia1(m);
-        const dur = getDuracionContrato(m);
-        return [m.tipo.toUpperCase(), dia1 || "", m.date, `${q.quincena} ${q.periodo}`, m.grupo, '"' + m.fullName + '"', m.dni, '"' + (m.position || "") + '"',
-          COMPANIES[m.company]?.name || "", m.contractType, '"' + dur + '"', m.salary, '"' + (m.motivo || "") + '"', '"' + (m.notas || "") + '"'].join(",");
-      });
-      const csv = [headers.join(","), ...rows].join("\n");
-      const a = document.createElement("a");
-      a.href = "data:text/csv;charset=utf-8," + encodeURIComponent("\uFEFF" + csv);
-      a.download = `Movimientos_${cc.name.replace(/ /g, "_")}_${filterPer || "todos"}${filterQ ? "_" + filterQ : ""}.csv`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    const exportMovsExcel = async () => {
+      try {
+        const filas = filtered.map(m => {
+          const q = getQuincena(m.date);
+          return { tipo: m.tipo.toUpperCase(), dia1: getDia1(m) || "", fecha: m.date, q: `${q.quincena} ${q.periodo}`, grupo: m.grupo, nombre: m.fullName, dni: m.dni, pos: m.position || "",
+            empresa: COMPANIES[m.company]?.name || "", contrato: m.contractType, dur: getDuracionContrato(m), salario: Number(m.salary) || 0, motivo: m.motivo || "", notas: m.notas || "" };
+        });
+        const wb = await libroExcel();
+        hojaExcel(wb, {
+          nombre: "Movimientos", titulo: `Movimientos — ${cc.name}`,
+          subtitulo: `${filterPer ? `Periodo ${filterQ || ""} ${filterPer}`.replace("  ", " ") : "Todos los periodos"} · ${altas.length} altas · ${bajas.length} bajas`,
+          columnas: [
+            { t: "Tipo", key: "tipo", ancho: 8, formato: "texto" },
+            { t: "Día 1 colaborador", key: "dia1", ancho: 13, formato: "texto" },
+            { t: "Fecha movimiento", key: "fecha", ancho: 13, formato: "texto" },
+            { t: "Quincena", key: "q", ancho: 12, formato: "texto" },
+            { t: "Grupo", key: "grupo", ancho: 7, formato: "texto" },
+            { t: "Nombre", key: "nombre", ancho: 30, formato: "texto" },
+            { t: "DNI", key: "dni", ancho: 17, formato: "texto" },
+            { t: "Posición", key: "pos", ancho: 22, formato: "texto" },
+            { t: "Empresa", key: "empresa", ancho: 20, formato: "texto" },
+            { t: "Contrato", key: "contrato", ancho: 12, formato: "texto" },
+            { t: "Duración contrato", key: "dur", ancho: 24, formato: "texto" },
+            { t: "Salario", key: "salario", ancho: 14, formato: "lps" },
+            { t: "Motivo", key: "motivo", ancho: 24, formato: "texto" },
+            { t: "Notas", key: "notas", ancho: 30, formato: "texto" },
+          ],
+          filas,
+        });
+        await descargarExcel(wb, `Movimientos_${cc.name.replace(/ /g, "_")}_${filterPer || "todos"}${filterQ ? "_" + filterQ : ""}.xlsx`);
+      } catch (err) {
+        alert("No se pudo generar el Excel: " + (err?.message || err));
+      }
     };
 
     const exportMovsPDF = () => {
-      const titulo = `Reporte de Movimientos — ${cc.name.toUpperCase()}`;
+      const w = window.open("", "_blank");
+      if (!w) { alert("Permite popups para imprimir"); return; }
       const sub = filterPer ? `Periodo: ${filterQ || ""} ${filterPer}` : "Todos los periodos";
+      const salario = (m) => fmtLps(m.salary);
+      const chipTipo = (m) => rChip(m.tipo.toUpperCase(), m.tipo === "alta" ? "verde" : "rojo");
 
       // ALTAS: muestran "Día 1 del colaborador" (startDate) + Duración contrato (solo grupo B).
-      const renderRowsAltas = (rows, color) => rows.map(m => {
-        const q = getQuincena(m.date);
-        const dia1 = getDia1(m);
-        const dur = getDuracionContrato(m);
-        const durColor = dur === "—" ? "#94A3B8" : "#D97706";
-        return `<tr>
-          <td style='background:${color};color:#fff;font-weight:bold;text-align:center'>${m.tipo.toUpperCase()}</td>
-          <td style='font-weight:600'>${dia1 ? fmt(dia1) : "—"}</td>
-          <td style='font-size:9px;color:#94A3B8'>—</td>
-          <td>${q.quincena}</td>
-          <td style='text-align:center;font-weight:bold;background:${GRUPO_COLOR[m.grupo]}22;color:${GRUPO_COLOR[m.grupo]}'>${m.grupo}</td>
-          <td>${m.fullName}</td>
-          <td>${m.dni}</td>
-          <td>${m.position || ""}</td>
-          <td>${COMPANIES[m.company]?.name || ""}</td>
-          <td>${m.contractType}</td>
-          <td style='color:${durColor};font-weight:${dur === "—" ? 400 : 700};font-size:10px;white-space:nowrap'>${dur}</td>
-          <td style='text-align:right'>L ${Number(m.salary || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</td>
-          <td>${m.motivo || ""}</td>
-          <td>${m.notas || ""}</td>
-        </tr>`;
-      }).join("");
+      const tablaAltas = rTabla({
+        columnas: [{ t: "Tipo" }, { t: "Día 1 del colaborador" }, { t: "Fecha mov." }, { t: "Q" }, { t: "Grupo" }, { t: "Nombre" }, { t: "DNI" }, { t: "Posición" }, { t: "Empresa" }, { t: "Contrato" }, { t: "Duración contrato" }, { t: "Salario", num: true }, { t: "Motivo" }, { t: "Notas" }],
+        filas: altas.map(m => {
+          const q = getQuincena(m.date);
+          const dia1 = getDia1(m);
+          const dur = getDuracionContrato(m);
+          return [chipTipo(m), `<b>${dia1 ? fmt(dia1) : "—"}</b>`, `<span style="color:${RP.texto3}">—</span>`, q.quincena, rChip(m.grupo, "carbon"),
+            `<b>${escHTML(m.fullName)}</b>`, `<span class="mono">${escHTML(m.dni)}</span>`, escHTML(m.position || ""), escHTML(COMPANIES[m.company]?.name || ""), escHTML(m.contractType),
+            dur === "—" ? `<span style="color:${RP.texto3}">—</span>` : `<span style="white-space:nowrap;color:${RP.naranjaTexto};font-weight:700">${dur}</span>`,
+            salario(m), escHTML(m.motivo || ""), `<span class="suave">${escHTML(m.notas || "")}</span>`];
+        }),
+      });
 
       // BAJAS: "Último día del colaborador en la empresa" = hasta ahí se le paga;
       // la asistencia se bloquea desde el día siguiente. Sin Duración contrato ni Fecha mov.
-      const renderRowsBajas = (rows, color) => rows.map(m => {
-        const q = getQuincena(m.date);
-        return `<tr>
-          <td style='background:${color};color:#fff;font-weight:bold;text-align:center'>${m.tipo.toUpperCase()}</td>
-          <td style='font-weight:600;color:#991B1B'>${m.date ? fmt(m.date) : "—"}</td>
-          <td>${q.quincena}</td>
-          <td style='text-align:center;font-weight:bold;background:${GRUPO_COLOR[m.grupo]}22;color:${GRUPO_COLOR[m.grupo]}'>${m.grupo}</td>
-          <td>${m.fullName}</td>
-          <td>${m.dni}</td>
-          <td>${m.position || ""}</td>
-          <td>${COMPANIES[m.company]?.name || ""}</td>
-          <td>${m.contractType}</td>
-          <td style='text-align:right'>L ${Number(m.salary || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</td>
-          <td>${m.motivo || ""}</td>
-          <td>${m.notas || ""}</td>
-        </tr>`;
-      }).join("");
+      const tablaBajas = rTabla({
+        columnas: [{ t: "Tipo" }, { t: "Último día del colaborador en la empresa" }, { t: "Q" }, { t: "Grupo" }, { t: "Nombre" }, { t: "DNI" }, { t: "Posición" }, { t: "Empresa" }, { t: "Contrato" }, { t: "Salario", num: true }, { t: "Motivo" }, { t: "Notas" }],
+        filas: bajas.map(m => {
+          const q = getQuincena(m.date);
+          return [chipTipo(m), `<b style="color:${RP.rojo}">${m.date ? fmt(m.date) : "—"}</b>`, q.quincena, rChip(m.grupo, "carbon"),
+            `<b>${escHTML(m.fullName)}</b>`, `<span class="mono">${escHTML(m.dni)}</span>`, escHTML(m.position || ""), escHTML(COMPANIES[m.company]?.name || ""), escHTML(m.contractType),
+            salario(m), escHTML(m.motivo || ""), `<span class="suave">${escHTML(m.notas || "")}</span>`];
+        }),
+      });
 
-      const w = window.open("", "_blank");
-      if (!w) { alert("Permite popups para imprimir"); return; }
-      w.document.write("<!DOCTYPE html><html><head><meta charset='utf-8'><title>" + titulo + "</title><style>@page{size:landscape}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;padding:30px}h1{font-size:18px}h2{font-size:13px;color:#666;margin:6px 0 10px}h3{font-size:14px;margin:18px 0 6px}table{border-collapse:collapse;width:100%;margin-top:8px}th,td{border:1px solid #ccc;padding:5px 8px;font-size:10px;text-align:left}th{background:#eee}.np{margin-top:18px}@media print{.np{display:none}}</style></head><body>");
-      w.document.write("<h1>" + titulo + "</h1><h2>" + sub + "</h2>");
-      w.document.write(`<p style='font-size:12px'><b>Total altas:</b> ${altas.length} &nbsp;|&nbsp; <b>Total bajas:</b> ${bajas.length}</p>`);
-      const headerAltas = "<tr><th>Tipo</th><th>Día 1 del colaborador</th><th>Fecha mov.</th><th>Q</th><th>Grupo</th><th>Nombre</th><th>DNI</th><th>Posicion</th><th>Empresa</th><th>Contrato</th><th>Duración contrato</th><th>Salario</th><th>Motivo</th><th>Notas</th></tr>";
-      const headerBajas = "<tr><th>Tipo</th><th>Último día del colaborador en la empresa</th><th>Q</th><th>Grupo</th><th>Nombre</th><th>DNI</th><th>Posicion</th><th>Empresa</th><th>Contrato</th><th>Salario</th><th>Motivo</th><th>Notas</th></tr>";
-      if (altas.length > 0) {
-        w.document.write("<h3 style='color:#059669'>ALTAS (" + altas.length + ")</h3>");
-        w.document.write("<table><thead>" + headerAltas + "</thead><tbody>" + renderRowsAltas(altas, "#059669") + "</tbody></table>");
-      }
-      if (bajas.length > 0) {
-        w.document.write("<h3 style='color:#DC2626'>BAJAS (" + bajas.length + ")</h3>");
-        w.document.write("<table><thead>" + headerBajas + "</thead><tbody>" + renderRowsBajas(bajas, "#DC2626") + "</tbody></table>");
-      }
       // Resumen por grupo
       const grupoStats = {};
       ["A", "B", "C", "D"].forEach(g => grupoStats[g] = { altas: 0, bajas: 0 });
       filtered.forEach(m => { if (grupoStats[m.grupo]) grupoStats[m.grupo][m.tipo === "alta" ? "altas" : "bajas"]++; });
-      w.document.write("<h3>Resumen por Grupo</h3><table><thead><tr><th>Grupo</th><th>Descripcion</th><th>Altas</th><th>Bajas</th><th>Neto</th></tr></thead><tbody>");
-      ["A", "B", "C", "D"].forEach(g => {
-        const s = grupoStats[g];
-        w.document.write(`<tr><td style='font-weight:bold;background:${GRUPO_COLOR[g]}22;color:${GRUPO_COLOR[g]};text-align:center'>${g}</td><td>${GRUPO_DESC[g]}</td><td style='color:#059669;font-weight:bold;text-align:center'>${s.altas}</td><td style='color:#DC2626;font-weight:bold;text-align:center'>${s.bajas}</td><td style='font-weight:bold;text-align:center'>${s.altas - s.bajas >= 0 ? "+" : ""}${s.altas - s.bajas}</td></tr>`);
+      const tablaGrupos = rTabla({
+        columnas: [{ t: "Grupo", ancho: "60px" }, { t: "Descripción" }, { t: "Altas", num: true, ancho: "70px" }, { t: "Bajas", num: true, ancho: "70px" }, { t: "Neto", num: true, ancho: "70px" }],
+        filas: ["A", "B", "C", "D"].map(g => {
+          const s = grupoStats[g];
+          const neto = s.altas - s.bajas;
+          return [rChip(g, "carbon"), escHTML(GRUPO_DESC[g]),
+            `<b style="color:${s.altas ? RP.verde : RP.texto3}">${s.altas}</b>`, `<b style="color:${s.bajas ? RP.rojo : RP.texto3}">${s.bajas}</b>`, `<b>${neto >= 0 ? "+" : ""}${neto}</b>`];
+        }),
       });
-      w.document.write("</tbody></table>");
-      w.document.write("<button class='np' onclick='window.print()' style='padding:10px 24px;font-size:14px;cursor:pointer;background:#059669;color:white;border:none;border-radius:8px'>Imprimir / Guardar como PDF</button></body></html>");
-      w.document.close();
+
+      const cuerpo = rKpis([
+        { label: "Altas", valor: altas.length, tono: altas.length ? "verde" : undefined },
+        { label: "Bajas", valor: bajas.length, tono: bajas.length ? "rojo" : undefined },
+        { label: "Neto", valor: `${altas.length - bajas.length >= 0 ? "+" : ""}${altas.length - bajas.length}` },
+      ])
+        + (altas.length > 0 ? rSeccion(`Altas (${altas.length})`, tablaAltas) : "")
+        + (bajas.length > 0 ? rSeccion(`Bajas (${bajas.length})`, tablaBajas) : "")
+        + rSeccion("Resumen por grupo", tablaGrupos);
+      abrirReporte(w, reporteHTML({ titulo: "Reporte de movimientos", subtitulo: `${cc.name} · ${sub}`, empresa: co, cuerpo, horizontal: true }));
     };
 
     // Stats por grupo
@@ -6210,7 +5857,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       </div>}
 
       {filtered.length > 0 && <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <Btn small variant="ghost" onClick={exportMovsCSV}>📊 Descargar CSV</Btn>
+        <Btn small variant="ghost" onClick={exportMovsExcel}>📊 Descargar Excel</Btn>
         <Btn small variant="ghost" onClick={exportMovsPDF}>🖨️ Imprimir / PDF</Btn>
       </div>}
     </div>;
@@ -7059,7 +6706,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     case "mn": return <Modal title="Registrar ALTA de empleado" onClose={() => setModal(null)} wide><AltaForm /></Modal>;
     case "mb": return <Modal title="Registrar BAJA de empleado" onClose={() => setModal(null)} wide><BajaForm /></Modal>;
     case "me": return <Modal title={`Editar movimiento — ${m.d.fullName}`} onClose={() => setModal(null)} wide><EditMovForm mov={m.d} onSave={updated => sM(movs.map(x => x.id === updated.id ? updated : x))} /></Modal>;
-    case "cn": return <Modal title="Constancia" onClose={() => setModal(null)} wide><ConForm /></Modal>;
+    // 26-oct-2026: el "+ Generar" arma la constancia CALCADA del Word (la misma
+    // del hub de RRHH) con vista previa y PDF; el ConForm viejo de texto quedó sin uso.
+    case "cn": return <Modal title="Generar constancia" onClose={() => setModal(null)} wide><GenerarConstanciaImpl emps={emps} puedeTrabajo={!hideSalary} onGuardar={(reg) => anexarEn("hr-cons", [{ ...reg, emitidaPor: userName }], setCons)} onClose={() => setModal(null)} /></Modal>;
     case "ctn": return <Modal title="Nuevo contrato" onClose={() => setModal(null)} wide><ContractForm presetEmpId={m.presetEmpId} onSave={() => {}} /></Modal>;
     case "cte": return <Modal title="Editar contrato" onClose={() => setModal(null)} wide><ContractForm contract={m.d} onSave={() => {}} /></Modal>;
     case "ctr": return <Modal title="Renovar contrato" onClose={() => setModal(null)} wide><ContractForm parent={m.d} onSave={() => {}} /></Modal>;

@@ -3,27 +3,26 @@
 // jsPDF se carga bajo demanda con safeDynamicImport (maneja el "stale chunk"
 // tras un deploy). Helvetica NO soporta emojis ni nada fuera de Latin-1: TODO
 // el texto pasa por latin1() antes de tocar el documento. A4 vertical,
-// márgenes 16 mm, salto de página cuando y pasa de 270 mm, pie "Pág. N de M".
+// márgenes 16 mm, salto de página cuando y pasa de 270 mm.
 // Sin React, sin store: recibe los datos ya calculados (pres, resumen de
 // resumenPresupuesto, movs de movimientosDeProyecto) y solo dibuja.
-// No importa geocost-calc a propósito: queda autocontenido y testeable en
-// Node (construirFichaDoc / construirReporteDoc devuelven el doc sin guardar).
+// No importa geocost-calc a propósito (ningún test importa este archivo).
+// 26-oct-2026: estilo único de reportes (reporte-estilo.js) — cabecera y pie
+// de la casa, KPIs en tiles grises, tablas con líneas finas, UN acento naranja.
 // ═══════════════════════════════════════════════════════════════════════════
 import { safeDynamicImport } from "./lazyLoad.js";
+import { PDF_TEMA, pdfCabecera, pdfPie, pdfKpi } from "./reporte-estilo.js";
 
-// ── Paleta (RGB para jsPDF) ──
-const rgb = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
-const NARANJA = rgb("#E8762D"), TINTA = rgb("#C75F1F"), CARBON = rgb("#2C2A28");
-const GRIS = rgb("#6E6862"), GRIS_CLARO = rgb("#EFEFED"), TINTE = rgb("#FDEBDD");
-const VERDE = rgb("#177243"), NARANJA_TEXTO = rgb("#A94E16");
-const AMARILLO_BG = rgb("#FBEFC4"), AMARILLO_TX = rgb("#8A5A00");
-const BLANCO = [255, 255, 255], LINEA = rgb("#DDDBD7");
-const NARANJA_SUAVE = rgb("#F5B48A"); // disponible negativo sobre fondo carbón
+// ── Paleta (RGB para jsPDF) — la del estilo único ──
+const T_ = PDF_TEMA;
+const NARANJA = T_.naranja, CARBON = T_.carbon, GRIS = T_.texto2, GRIS_SUAVE = T_.texto3;
+const FONDO = T_.fondo, TINTE = T_.tinte, VERDE = T_.verde, ROJO = T_.rojo, NARANJA_TEXTO = T_.naranjaTexto;
+const LINEA = T_.linea, LINEA_FUERTE = T_.lineaFuerte, BLANCO = T_.blanco;
+const ROJO_FONDO = [251, 234, 232];
 
 // ── Página ──
 const PW = 210, PH = 297, M = 16, CW = PW - 2 * M; // 178 mm útiles
 const Y_MAX = 270;                                  // pasado esto → addPage
-const Y_PIE = PH - 9;
 
 // Espejo mínimo de geocost-calc (si cambia allá, cambiar acá).
 const CATEGORIAS = ["Generales", "Materiales", "Personal", "Equipos", "Servicios subcontratados", "Otros"];
@@ -143,18 +142,6 @@ const maquinasDeFicha = (ficha, machines) => {
 
 const slug = (s) => latin1(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9.-]+/g, "_").replace(/^_+|_+$/g, "") || "proyecto";
 
-// ── Logo (public/brand/logo-color.png); si no carga → texto de marca ──
-const cargarLogo = async (hMM) => {
-  try {
-    const resp = await fetch(`${import.meta.env.BASE_URL}brand/logo-color.png`);
-    if (!resp.ok) return null;
-    const blob = await resp.blob();
-    const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
-    const dims = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight }); im.onerror = rej; im.src = dataUrl; });
-    return { dataUrl, h: hMM, w: (dims.w / dims.h) * hMM };
-  } catch { return null; }
-};
-
 // ── Pluma: atajos sobre el doc (todo texto sanitizado) ──
 const pluma = (doc) => ({
   doc,
@@ -173,30 +160,18 @@ const encoger = (P, s, w, min = 6) => { let size = P.doc.getFontSize(); while (s
 const recortar = (P, s, w) => { let t = latin1(s); if (P.ancho(t) <= w) return t; while (t.length > 1 && P.ancho(t + "...") > w) t = t.slice(0, -1); return t.replace(/\s+$/, "") + "..."; };
 const rr = (P, x, y, w, h, r, style = "F") => { const rad = Math.max(0, Math.min(r, w / 2, h / 2)); P.doc.roundedRect(x, y, Math.max(0.1, w), Math.max(0.1, h), rad, rad, style); };
 
-// Header de cada página: logo a la izquierda, título/sub a la derecha, línea.
+// Páginas 2+: cabecera compacta (marca a la izquierda, título a la derecha,
+// línea fina). La página 1 lleva la cabecera grande de pdfCabecera.
 const encabezado = (ctx) => {
   const { doc, P, cab } = ctx;
   const y = M;
-  if (ctx.logo) { try { doc.addImage(ctx.logo.dataUrl, "PNG", M, y, ctx.logo.w, ctx.logo.h); } catch { ctx.logo = null; } }
-  if (!ctx.logo) { P.f(10, "bold"); P.tc(NARANJA); P.t("GEOTECNICA SOLUCIONES", M, y + 7.5); }
-  P.f(11, "bold"); P.tc(CARBON); P.t(cab.titulo, PW - M, y + 5, { align: "right" });
-  P.f(9); P.tc(GRIS); P.t(cab.sub, PW - M, y + 10, { align: "right" });
-  P.dc(LINEA); P.lw(0.3); doc.line(M, y + 15, PW - M, y + 15);
-  return y + 23;
+  P.f(7, "bold"); P.tc(GRIS_SUAVE); P.t("GEOCORE · GRUPO GEOTECNICA", M, y + 3.2, { charSpace: 0.4 });
+  P.f(9, "bold"); P.tc(CARBON); P.t(recortar(P, cab.titulo, CW - 70), PW - M, y + 3.2, { align: "right" });
+  P.dc(LINEA); P.lw(0.2); doc.line(M, y + 7, PW - M, y + 7);
+  return y + 13;
 };
 const nuevaPagina = (ctx) => { ctx.doc.addPage(); ctx.y = encabezado(ctx); };
 const asegurar = (ctx, h) => { if (ctx.y + h > Y_MAX) { nuevaPagina(ctx); return true; } return false; };
-
-// Pie en TODAS las páginas: texto a la izquierda + "Pág. N de M".
-const pies = (ctx, izq) => {
-  const { doc, P } = ctx, n = doc.getNumberOfPages();
-  for (let i = 1; i <= n; i++) {
-    doc.setPage(i);
-    P.f(8); P.tc(GRIS);
-    P.t(izq, M, Y_PIE);
-    P.t(`Pág. ${i} de ${n}`, PW - M, Y_PIE, { align: "right" });
-  }
-};
 
 // Chip redondeado; devuelve su ancho/alto.
 const chip = (ctx, texto, x, y, { fill, color, fs = 8.5, bold = true }) => {
@@ -216,12 +191,27 @@ const parrafo = (ctx, texto, x, w, { fs = 9.5, color = CARBON, bold = false } = 
   ls.forEach(l => { asegurar(ctx, lh); P.f(fs, bold ? "bold" : "normal"); P.tc(color); P.t(l, x, ctx.y + lh * 0.75); ctx.y += lh; });
 };
 
+// cab: { titulo (nombre del proyecto), sub, tipo ("Ficha de proyecto"…) }.
+// Si el nombre no cabe en una línea de la cabecera, la cabecera lleva el tipo
+// de documento y el nombre se dibuja abajo, en varias líneas (`nombreAbajo`).
 const prepararDoc = async (cab) => {
   const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
-  const logo = await cargarLogo(12);
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const ctx = { doc, P: pluma(doc), logo, cab, y: 0 };
-  ctx.y = encabezado(ctx);
+  const ctx = { doc, P: pluma(doc), cab, y: 0, nombreAbajo: false };
+  doc.setFont("helvetica", "bold"); doc.setFontSize(19);
+  ctx.nombreAbajo = ctx.P.ancho(cab.titulo) > CW;
+  ctx.y = await pdfCabecera(doc, {
+    titulo: ctx.nombreAbajo ? cab.tipo : cab.titulo,
+    subtitulo: ctx.nombreAbajo ? cab.sub : `${cab.tipo} · ${cab.sub}`,
+    margen: M, y: 14,
+  });
+  if (ctx.nombreAbajo) {
+    const { P } = ctx;
+    P.f(15, "bold"); P.tc(CARBON);
+    const tl = P.lineas(cab.titulo, CW);
+    tl.forEach((l, i) => P.t(l, M, ctx.y + 4 + i * 6.5));
+    ctx.y += 4 + tl.length * 6.5 + 2;
+  }
   return ctx;
 };
 
@@ -231,24 +221,18 @@ const prepararDoc = async (cab) => {
 const dibujarFicha = (ctx, { pres, proyecto, machines }) => {
   const { doc, P } = ctx;
   const ficha = pres?.ficha || {};
-  const nombre = proyecto?.name || pres?.projectCode || "Proyecto";
   const codigo = ficha.codigo || proyecto?.code || "";
   const cliente = ficha.cliente || proyecto?.client || "";
+  // El nombre del proyecto va en la cabecera (prepararDoc).
 
-  // Solución (chip naranja tenue)
+  // Solución (chip naranja tenue) + cliente
   if (ficha.solucion) {
-    P.f(8); P.tc(GRIS); P.t("Solución", M, ctx.y);
+    P.f(6.5, "bold"); P.tc(GRIS_SUAVE); P.t("SOLUCIÓN", M, ctx.y, { charSpace: 0.3 });
     ctx.y += 2.5;
     const c = chip(ctx, ficha.solucion, M, ctx.y, { fill: TINTE, color: NARANJA_TEXTO, fs: 9 });
     ctx.y += c.h + 7;
   }
-
-  // Título + cliente
-  P.f(24, "bold"); P.tc(CARBON);
-  const tl = P.lineas(nombre, CW);
-  tl.forEach((l, i) => P.t(l, M, ctx.y + 7 + i * 10));
-  ctx.y += 7 + tl.length * 10 + 3;
-  P.f(8); P.tc(GRIS); P.t("Cliente", M, ctx.y);
+  P.f(6.5, "bold"); P.tc(GRIS_SUAVE); P.t("CLIENTE", M, ctx.y, { charSpace: 0.3 });
   ctx.y += 5.5;
   P.f(12, "bold"); P.tc(CARBON); P.t(cliente || "-", M, ctx.y);
   ctx.y += 11;
@@ -264,7 +248,7 @@ const dibujarFicha = (ctx, { pres, proyecto, machines }) => {
   const cw4 = CW / 4;
   datos.forEach(([l, v], i) => {
     const x = M + i * cw4;
-    P.f(8); P.tc(GRIS); P.t(l, x, ctx.y);
+    P.f(6.5, "bold"); P.tc(GRIS_SUAVE); P.t(l.toUpperCase(), x, ctx.y, { charSpace: 0.3 });
     P.f(11, "bold"); P.tc(CARBON); encoger(P, v, cw4 - 4, 8); P.t(v, x, ctx.y + 5.5);
   });
   ctx.y += 15;
@@ -273,10 +257,10 @@ const dibujarFicha = (ctx, { pres, proyecto, machines }) => {
   const eje = ejeMeses(ficha.fechaInicio, ficha.fechaFin);
   if (eje) {
     const seg = CW / 5;
-    P.f(8); P.tc(GRIS);
+    P.f(8); P.tc(GRIS_SUAVE);
     eje.labels.forEach((l, i) => P.t(l, M + i * seg + seg / 2, ctx.y, { align: "center" }));
     ctx.y += 3;
-    P.fc(GRIS_CLARO); rr(P, M, ctx.y, CW, 5, 2.5);
+    P.fc(FONDO); rr(P, M, ctx.y, CW, 5, 2.5);
     // Divisores de mes solo sobre la pista gris: el segmento naranja va encima
     // y queda continuo (con los divisores encima parecían dos tramos).
     P.dc(BLANCO); P.lw(0.5);
@@ -295,8 +279,8 @@ const dibujarFicha = (ctx, { pres, proyecto, machines }) => {
   const boxH = 14 + maqLineas.reduce((s, ls) => s + ls.length * 4.6 + 2, 0);
   asegurar(ctx, Math.min(boxH, 40) + 8);
   const y0 = ctx.y, pag0 = doc.getNumberOfPages();
-  P.fc(TINTE); rr(P, M, y0, LW, boxH, 4);
-  P.f(8.5, "bold"); P.tc(NARANJA_TEXTO); P.t("Maquinaria asignada", M + 6, y0 + 7);
+  P.fc(FONDO); rr(P, M, y0, LW, boxH, 4);
+  P.f(6.5, "bold"); P.tc(GRIS_SUAVE); P.t("MAQUINARIA ASIGNADA", M + 6, y0 + 7, { charSpace: 0.3 });
   let yi = y0 + 14.5;
   maqLineas.forEach(ls => {
     if (maqs.length) { P.fc(NARANJA); doc.circle(M + 7.6, yi - 1.3, 1.1, "F"); }
@@ -309,12 +293,12 @@ const dibujarFicha = (ctx, { pres, proyecto, machines }) => {
   // Materiales recurrentes
   const CANT_R = RX + RW - 24, UNI_X = RX + RW - 21, DESC_W = RW - 40;
   const cabMat = (yTop) => {
-    P.f(8.5, "bold"); P.tc(CARBON); P.t("Materiales recurrentes", RX, yTop + 7);
-    P.f(7.5); P.tc(GRIS);
-    P.t("Descripción", RX, yTop + 13.5);
-    P.t("Cantidad", CANT_R, yTop + 13.5, { align: "right" });
-    P.t("Unidad", UNI_X, yTop + 13.5);
-    P.dc(CARBON); P.lw(0.35); doc.line(RX, yTop + 15.5, RX + RW, yTop + 15.5);
+    P.f(11, "bold"); P.tc(CARBON); P.t("Materiales recurrentes", RX, yTop + 7);
+    P.f(6.5, "bold"); P.tc(GRIS_SUAVE);
+    P.t("DESCRIPCIÓN", RX, yTop + 13.5);
+    P.t("CANTIDAD", CANT_R, yTop + 13.5, { align: "right" });
+    P.t("UNIDAD", UNI_X, yTop + 13.5);
+    P.dc(LINEA_FUERTE); P.lw(0.25); doc.line(RX, yTop + 15.5, RX + RW, yTop + 15.5);
     return yTop + 17.5;
   };
   let yd = cabMat(y0);
@@ -337,17 +321,18 @@ const dibujarFicha = (ctx, { pres, proyecto, machines }) => {
   // Notas
   if (String(ficha.notas || "").trim()) {
     asegurar(ctx, 18);
-    P.f(9, "bold"); P.tc(CARBON); P.t("Notas", M, ctx.y);
-    P.dc(NARANJA); P.lw(0.8); doc.line(M, ctx.y + 1.8, M + 12, ctx.y + 1.8);
-    ctx.y += 6.5;
+    P.f(11, "bold"); P.tc(CARBON); P.t("Notas", M, ctx.y);
+    P.dc(LINEA_FUERTE); P.lw(0.25); doc.line(M, ctx.y + 2.2, M + CW, ctx.y + 2.2);
+    ctx.y += 7.5;
     parrafo(ctx, ficha.notas, M, CW, { fs: 9.5, color: CARBON });
   }
 };
 
 export const construirFichaDoc = async ({ pres, proyecto, machines, tasa }) => {
-  const ctx = await prepararDoc({ titulo: "Ficha de proyecto", sub: `Compras recurrentes · ${fmtMesAnio()}` });
+  const nombre = proyecto?.name || pres?.projectCode || "Proyecto";
+  const ctx = await prepararDoc({ titulo: nombre, tipo: "Ficha de proyecto", sub: `Compras recurrentes · ${fmtMesAnio()}` });
   dibujarFicha(ctx, { pres, proyecto, machines, tasa });
-  pies(ctx, `Generado por GeoCost · ${fechaLarga()}`);
+  pdfPie(ctx.doc, { margen: M });
   const base = pres?.ficha?.codigo || pres?.projectCode || proyecto?.short || "proyecto";
   return { doc: ctx.doc, nombre: `FICHA-${slug(base)}.pdf` };
 };
@@ -363,9 +348,9 @@ export const fichaProyectoPDF = async (args) => {
 const FUENTES = { compras: "Compras", maquinas: "Máquinas", mo: "Mano de obra", movilizacion: "Movilización" };
 const semaforoDe = (pct) => pct > 1 ? "sobregiro" : pct >= 0.8 ? "alerta" : "ok";
 const SEMAFORO_PDF = {
-  ok:        { label: "En rango",  fill: GRIS_CLARO, color: GRIS },
+  ok:        { label: "En rango",  fill: FONDO,      color: GRIS },
   alerta:    { label: "80 % +",    fill: TINTE,      color: NARANJA_TEXTO },
-  sobregiro: { label: "Sobregiro", fill: TINTA,      color: BLANCO },
+  sobregiro: { label: "Sobregiro", fill: ROJO_FONDO, color: ROJO },
 };
 
 // Completa lo que falte del resumen (si viene incompleto o sin movimientos,
@@ -397,36 +382,29 @@ const normalizarResumen = (pres, resumen) => {
   return { presupuestoUSD, ...numsDe(R, presupuestoUSD), categorias, sinClasificar };
 };
 
-const dibujarPortada = (ctx, { pres, proyecto, R, tasa, machines }) => {
+const dibujarPortada = (ctx, { pres, proyecto, R, tasa, machines, userName }) => {
   const { doc, P } = ctx;
   const ficha = pres?.ficha || {};
-  const nombre = proyecto?.name || pres?.projectCode || "Proyecto";
   const codigo = ficha.codigo || proyecto?.code || "";
   const cliente = ficha.cliente || proyecto?.client || "";
 
-  // Título
-  P.f(24, "bold"); P.tc(CARBON);
-  const tl = P.lineas(nombre, CW);
-  tl.forEach((l, i) => P.t(l, M, ctx.y + 7 + i * 10));
-  ctx.y += 7 + tl.length * 10 + 4;
+  // El nombre del proyecto va en la cabecera (prepararDoc).
   const sub = [codigo, cliente].filter(Boolean).join("  ·  ");
-  if (sub) { P.f(10); P.tc(GRIS); P.t(sub, M, ctx.y); ctx.y += 5.5; }
+  if (sub) { P.f(10, "bold"); P.tc(CARBON); P.t(sub, M, ctx.y); ctx.y += 5.5; }
   P.f(9); P.tc(GRIS);
-  P.t(`Generado el ${fechaLarga()}  ·  Tasa: L ${nf(tasa)} / $`, M, ctx.y);
+  P.t(`Generado el ${fechaLarga()}${userName ? ` por ${userName}` : ""}  ·  Tasa: L ${nf(tasa)} / $`, M, ctx.y);
   ctx.y += 5;
   const maqs = maquinasDeFicha(ficha, machines);
   if (maqs.length) { P.t(recortar(P, `Maquinaria: ${maqs.join(", ")}`, CW), M, ctx.y); ctx.y += 5; }
   ctx.y += 5;
 
-  // 4 KPI
+  // 4 KPI (tile de la casa + el equivalente en L abajo, dentro del mismo tile)
   const kw = (CW - 12) / 4, kh = 22;
   [["Presupuesto", R.presupuestoUSD], ["Comprometido", R.comprometidoUSD], ["Ejecutado", R.ejecutadoUSD], ["Disponible", R.disponibleUSD]].forEach(([l, v], i) => {
     const x = M + i * (kw + 4);
-    P.fc(GRIS_CLARO); rr(P, x, ctx.y, kw, kh, 3.5);
-    P.f(7.5, "bold"); P.tc(GRIS); P.t(l.toUpperCase(), x + 4, ctx.y + 6);
-    P.f(13, "bold"); P.tc(l === "Disponible" && v < 0 ? TINTA : l === "Ejecutado" ? VERDE : CARBON);
-    const s = fmtUSD(v); encoger(P, s, kw - 8, 8); P.t(s, x + 4, ctx.y + 13.5);
-    P.f(8); P.tc(GRIS); P.t(fmtL(v * tasa), x + 4, ctx.y + 18.5);
+    P.fc(FONDO); rr(P, x, ctx.y, kw, kh, 3);
+    pdfKpi(doc, x, ctx.y, kw, 16.5, l, fmtUSD(v), { tono: l === "Disponible" && v < 0 ? "rojo" : l === "Ejecutado" ? "verde" : undefined });
+    P.f(7.5); P.tc(GRIS_SUAVE); P.t(fmtL(v * tasa), x + 4, ctx.y + 18.5);
   });
   ctx.y += kh + 9;
 
@@ -435,17 +413,17 @@ const dibujarPortada = (ctx, { pres, proyecto, R, tasa, machines }) => {
   const pr = R.presupuestoUSD;
   const fe = pr > 0 ? Math.min(1, Math.max(0, R.ejecutadoUSD / pr)) : 0;
   const fu = pr > 0 ? Math.min(1, Math.max(0, R.usadoUSD / pr)) : 0;
-  P.fc(GRIS_CLARO); rr(P, M, ctx.y, bw, bh, 4);
+  P.fc(FONDO); rr(P, M, ctx.y, bw, bh, 4);
   if (fu > 0) { P.fc(NARANJA); rr(P, M, ctx.y, Math.max(bw * fu, 4), bh, 4); }
   if (fe > 0) { P.fc(CARBON); rr(P, M, ctx.y, Math.max(bw * fe, 4), bh, 4); }
   const sem = SEMAFORO_PDF[R.semaforo] || SEMAFORO_PDF.ok;
-  P.f(14, "bold"); P.tc(sem === SEMAFORO_PDF.sobregiro ? TINTA : CARBON);
+  P.f(14, "bold"); P.tc(sem === SEMAFORO_PDF.sobregiro ? ROJO : CARBON);
   const pctTxt = fmtPct(R.pct);
   P.t(pctTxt, M + bw + 5, ctx.y + 6.4);
   chip(ctx, sem.label, M + bw + 5 + P.ancho(pctTxt) + 3, ctx.y + 0.7, { fill: sem.fill, color: sem.color, fs: 8 });
   ctx.y += bh + 6;
   let lx = M;
-  [[CARBON, "Ejecutado"], [NARANJA, "Comprometido"], [GRIS_CLARO, "Disponible"]].forEach(([c, l]) => {
+  [[CARBON, "Ejecutado"], [NARANJA, "Comprometido"], [LINEA_FUERTE, "Disponible"]].forEach(([c, l]) => {
     P.fc(c); rr(P, lx, ctx.y - 2.4, 3, 3, 0.8);
     P.f(8); P.tc(GRIS); P.t(l, lx + 4.5, ctx.y);
     lx += 4.5 + P.ancho(l) + 7;
@@ -468,21 +446,21 @@ const tablaPartidas = (ctx, R) => {
   const montos = (o, yb, opts) => {
     celda(4, nf(o.presupuestoUSD), yb, opts);
     celda(5, nf(o.comprometidoUSD), yb, opts);
-    celda(6, nf(o.ejecutadoUSD), yb, { ...opts, color: opts.color === BLANCO ? BLANCO : VERDE });
-    celda(7, nf(o.disponibleUSD), yb, { ...opts, bold: true, color: o.disponibleUSD < 0 ? (opts.color === BLANCO ? NARANJA_SUAVE : TINTA) : opts.color });
+    celda(6, nf(o.ejecutadoUSD), yb, { ...opts, color: VERDE });
+    celda(7, nf(o.disponibleUSD), yb, { ...opts, bold: true, color: o.disponibleUSD < 0 ? ROJO : opts.color });
     const sem = o.semaforo || semaforoDe(o.pct);
-    celda(8, `${Math.round((o.pct || 0) * 100)}%`, yb, { ...opts, color: opts.color === BLANCO ? BLANCO : sem === "sobregiro" ? TINTA : sem === "alerta" ? NARANJA_TEXTO : GRIS });
+    celda(8, `${Math.round((o.pct || 0) * 100)}%`, yb, { ...opts, color: sem === "sobregiro" ? ROJO : sem === "alerta" ? NARANJA_TEXTO : GRIS });
   };
   const cabecera = () => {
-    cols.forEach((c, i) => celda(i, c.t, ctx.y + 4.8, { fs: 7, bold: true, color: GRIS }));
-    P.dc(CARBON); P.lw(0.4); doc.line(M, ctx.y + 7, M + CW, ctx.y + 7);
+    cols.forEach((c, i) => celda(i, c.t.toUpperCase(), ctx.y + 4.8, { fs: 6.3, bold: true, color: GRIS_SUAVE }));
+    P.dc(LINEA_FUERTE); P.lw(0.25); doc.line(M, ctx.y + 7, M + CW, ctx.y + 7);
     ctx.y += 8.5;
   };
   const salto = (h) => { if (ctx.y + h > Y_MAX) { nuevaPagina(ctx); cabecera(); } };
 
   asegurar(ctx, 40);
   P.f(12, "bold"); P.tc(CARBON); P.t("Presupuesto por partida", M, ctx.y + 4);
-  P.f(8); P.tc(GRIS); P.t("Montos en USD", M + CW, ctx.y + 4, { align: "right" });
+  P.f(8); P.tc(GRIS_SUAVE); P.t("Montos en USD", M + CW, ctx.y + 4, { align: "right" });
   ctx.y += 9;
   cabecera();
 
@@ -506,7 +484,7 @@ const tablaPartidas = (ctx, R) => {
       P.dc(LINEA); P.lw(0.2); doc.line(M, ctx.y, M + CW, ctx.y);
     });
     const h = 7; salto(h);
-    P.fc(GRIS_CLARO); doc.rect(M, ctx.y, CW, h, "F");
+    P.fc(FONDO); doc.rect(M, ctx.y, CW, h, "F");
     const yb = ctx.y + 4.8;
     celda(0, `Subtotal ${cat.categoria}`, yb, { bold: true });
     montos(cat, yb, { bold: true, color: CARBON });
@@ -517,23 +495,23 @@ const tablaPartidas = (ctx, R) => {
   const sc = R.sinClasificar;
   if (sc && (sc.usadoUSD > 0 || (sc.movs || []).length)) {
     const h = 7; salto(h);
-    P.fc(AMARILLO_BG); doc.rect(M, ctx.y, CW, h, "F");
+    P.fc(TINTE); doc.rect(M, ctx.y, CW, h, "F");
     const yb = ctx.y + 4.8;
-    celda(0, `Por clasificar${sc.movs?.length ? ` (${sc.movs.length})` : ""}`, yb, { bold: true, color: AMARILLO_TX });
-    celda(4, "-", yb, { color: AMARILLO_TX });
-    celda(5, nf(sc.comprometidoUSD), yb, { bold: true, color: AMARILLO_TX });
-    celda(6, nf(sc.ejecutadoUSD), yb, { bold: true, color: AMARILLO_TX });
-    celda(7, "-", yb, { color: AMARILLO_TX });
-    celda(8, "-", yb, { color: AMARILLO_TX });
+    celda(0, `Por clasificar${sc.movs?.length ? ` (${sc.movs.length})` : ""}`, yb, { bold: true, color: NARANJA_TEXTO });
+    celda(4, "-", yb, { color: NARANJA_TEXTO });
+    celda(5, nf(sc.comprometidoUSD), yb, { bold: true, color: NARANJA_TEXTO });
+    celda(6, nf(sc.ejecutadoUSD), yb, { bold: true, color: NARANJA_TEXTO });
+    celda(7, "-", yb, { color: NARANJA_TEXTO });
+    celda(8, "-", yb, { color: NARANJA_TEXTO });
     ctx.y += h + 1.5;
   }
 
-  // TOTAL
+  // TOTAL (línea carbón arriba, en negrita — como los totales de la casa)
   const h = 9; salto(h);
-  P.fc(CARBON); rr(P, M, ctx.y, CW, h, 2);
-  const yb = ctx.y + 5.9;
-  celda(0, "TOTAL", yb, { fs: 8.5, bold: true, color: BLANCO });
-  montos(R, yb, { fs: 8, bold: true, color: BLANCO });
+  P.dc(CARBON); P.lw(0.45); doc.line(M, ctx.y + 0.5, M + CW, ctx.y + 0.5);
+  const yb = ctx.y + 6;
+  celda(0, "TOTAL", yb, { fs: 8.5, bold: true });
+  montos(R, yb, { fs: 8, bold: true, color: CARBON });
   ctx.y += h + 4;
 };
 
@@ -546,7 +524,7 @@ const paginaMovimientos = (ctx, { pres, movs, tasa }) => {
 
   nuevaPagina(ctx);
   P.f(12, "bold"); P.tc(CARBON); P.t("Movimientos", M, ctx.y + 4);
-  P.f(8); P.tc(GRIS);
+  P.f(8); P.tc(GRIS_SUAVE);
   P.t(lista.length ? `${lista.length} movimiento${lista.length === 1 ? "" : "s"} · del más reciente al más antiguo` : "Sin movimientos", M + CW, ctx.y + 4, { align: "right" });
   ctx.y += 9;
   if (!lista.length) return;
@@ -568,8 +546,8 @@ const paginaMovimientos = (ctx, { pres, movs, tasa }) => {
     if (c.a === "right") P.t(txt, c.x + c.w - 1.2, yb, { align: "right" }); else P.t(txt, c.x + 1.2, yb);
   };
   const cabecera = () => {
-    cols.forEach((c, i) => celda(i, c.t, ctx.y + 4.8, { fs: 7, bold: true, color: GRIS, ajuste: "encoger" }));
-    P.dc(CARBON); P.lw(0.4); doc.line(M, ctx.y + 7, M + CW, ctx.y + 7);
+    cols.forEach((c, i) => celda(i, c.t.toUpperCase(), ctx.y + 4.8, { fs: 6.3, bold: true, color: GRIS_SUAVE, ajuste: "encoger" }));
+    P.dc(LINEA_FUERTE); P.lw(0.25); doc.line(M, ctx.y + 7, M + CW, ctx.y + 7);
     ctx.y += 8.5;
   };
   const salto = (h) => { if (ctx.y + h > Y_MAX) { nuevaPagina(ctx); cabecera(); } };
@@ -592,9 +570,9 @@ const paginaMovimientos = (ctx, { pres, movs, tasa }) => {
     P.f(7); P.tc(CARBON); ls.forEach((l, j) => P.t(l, cols[3].x + 1.2, yb + j * 3.2));
     if (det) { P.f(6.5); P.tc(GRIS); P.t(recortar(P, det, cols[3].w - 2.4), cols[3].x + 1.2, yb + ls.length * 3.2); }
     const nomP = (m.partidaId && nombrePartida.get(m.partidaId)) || (m.fuente === "mo" && partidaMO?.nombre) || null;
-    celda(4, nomP || "Por clasificar", yb, { color: nomP ? CARBON : AMARILLO_TX, bold: !nomP });
+    celda(4, nomP || "Por clasificar", yb, { color: nomP ? CARBON : NARANJA_TEXTO, bold: !nomP });
     const ejecutado = m.estado === "ejecutado";
-    celda(5, ejecutado ? (m.enCurso ? "En curso" : "Ejecutado") : "Comprometido", yb, { color: ejecutado ? (m.enCurso ? AMARILLO_TX : VERDE) : GRIS, ajuste: "encoger" });
+    celda(5, ejecutado ? (m.enCurso ? "En curso" : "Ejecutado") : "Comprometido", yb, { color: ejecutado ? (m.enCurso ? NARANJA_TEXTO : VERDE) : GRIS, ajuste: "encoger" });
     celda(6, nf(hnl), yb);
     celda(7, nf(usd), yb, { bold: true });
     ctx.y += h;
@@ -602,8 +580,8 @@ const paginaMovimientos = (ctx, { pres, movs, tasa }) => {
   });
 
   const h = 8; salto(h);
-  P.fc(GRIS_CLARO); doc.rect(M, ctx.y, CW, h, "F");
-  const yb = ctx.y + 5.3;
+  P.dc(CARBON); P.lw(0.45); doc.line(M, ctx.y + 0.5, M + CW, ctx.y + 0.5);
+  const yb = ctx.y + 5.5;
   celda(0, `Total · ${lista.length} movimiento${lista.length === 1 ? "" : "s"}`, yb, { fs: 7.5, bold: true, ajuste: "no" });
   celda(6, nf(totL), yb, { fs: 7.5, bold: true });
   celda(7, nf(totUSD), yb, { fs: 7.5, bold: true });
@@ -614,19 +592,20 @@ export const construirReporteDoc = async ({ pres, proyecto, resumen, movs, tasa,
   const T = num(tasa) > 0 ? num(tasa) : 27;
   const R = normalizarResumen(pres, resumen);
   const short = pres?.projectCode || proyecto?.short || "proyecto";
-  const ctx = await prepararDoc({ titulo: "Reporte de costos", sub: `Central de costos · ${fmtMesAnio()}` });
-  dibujarPortada(ctx, { pres, proyecto, R, tasa: T, machines });
+  const nombre = proyecto?.name || pres?.projectCode || "Proyecto";
+  const ctx = await prepararDoc({ titulo: nombre, tipo: "Reporte de costos", sub: `Central de costos · ${fmtMesAnio()}` });
+  dibujarPortada(ctx, { pres, proyecto, R, tasa: T, machines, userName });
   tablaPartidas(ctx, R);
   paginaMovimientos(ctx, { pres, movs, tasa: T });
 
   // Nota fija al pie de la portada (la tabla puede seguir en la pág. 2).
   const { doc, P } = ctx;
   doc.setPage(1);
-  P.f(8); P.tc(GRIS);
+  P.f(7.5); P.tc(GRIS_SUAVE);
   P.lineas("Comprometido = aprobado sin pagar · Ejecutado = pagado. Mano de obra según asistencia de GeoTeam.", CW)
     .forEach((l, i) => P.t(l, M, PH - 21 + i * 3.6));
 
-  pies(ctx, `Generado por GeoCost · ${fechaLarga()}${userName ? ` · ${userName}` : ""}`);
+  pdfPie(doc, { margen: M });
   return { doc, nombre: `COSTOS-${slug(short)}-${hoyYMD()}.pdf` };
 };
 

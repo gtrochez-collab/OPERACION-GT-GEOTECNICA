@@ -32,6 +32,7 @@ import { esFeriadoQuincena } from "./holidays.js";
 import { HORARIOS, horarioDe, TOLERANCIA_MIN, gcMarkKey, minTardeDe } from "./HRModule.jsx";
 import { GT_CSS } from "./gt-ui.js";
 import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion } from "./geoclock-calc.js";
+import { reporteHTML, abrirReporte, rKpis, rSeccion, rTabla, rChip, RP, escHTML, fmtNum, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 
 // Rediseño GeoCore (23-oct-2026): vidrio, paleta carbón/naranja/gris, sin
 // emojis. La tablet toma una FOTO automática al registrar (anti "marcar por
@@ -1166,71 +1167,81 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
           <span key={txt} role="button" onClick={onClick} style={{ padding: "7px 14px", borderRadius: 999, border: `1px solid ${on ? "transparent" : "rgba(44,42,40,.14)"}`, background: on ? ORANGE_DARK : "rgba(255,255,255,.75)", color: on ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", userSelect: "none" }}>{txt}</span>
         );
         const selSt = { minHeight: 36, padding: "6px 12px", borderRadius: 11, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.85)", fontSize: 13, fontFamily: "inherit", color: CHARCOAL, outline: "none" };
-        // ── Exportar CSV (Excel-friendly, con BOM) ──
-        const bajarCSV = () => {
+        // ── Exportar Excel (estilo único de reportes, reporte-estilo.js) ──
+        // exceljs escribe el texto como TEXTO: un comentario que empiece con
+        // = + - @ ya no se evalúa como fórmula (el apóstrofe del CSV sobraba).
+        const filtrosTxt = [
+          `${fmtDiaCorto(regDesde)} ${regDesde.slice(0, 4)}${regDesde !== regHasta ? ` a ${fmtDiaCorto(regHasta)} ${regHasta.slice(0, 4)}` : ""}`,
+          regPersona ? ((emps.find(e => e.id === regPersona) || {}).fullName || "") : "Todos los colaboradores",
+          regProy || "Todos los proyectos",
+        ].join(" · ");
+        const estadoTardanza = (mk) => { const d = decisionDe(mk); return d ? (d.estado === "aprobada" ? "Justificada (aprobada)" : "Se descuenta (denegada)") : "Pendiente de decision"; };
+        const bajarExcel = async () => {
           if (!rows.length) return alert("No hay registros en el filtro actual para exportar.");
           if ((regErr.length || truncado) && !confirm("El reporte puede estar INCOMPLETO (" + (regErr.length ? `no se pudieron cargar: ${regErr.join(", ")}` : `el rango se cortó en ${truncado}`) + ").\n\n¿Exportar igual?")) return;
-          // Anti-inyección de fórmulas: el comentario es texto libre del
-          // empleado — si empieza con = + - @ tab, Excel lo evaluaría como
-          // fórmula al abrir el CSV. Se neutraliza con un apóstrofe.
-          const enc = (s) => {
-            const v = String(s ?? "");
-            const safe = /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
-            return `"${safe.replace(/"/g, '""')}"`;
-          };
-          const head = ["Fecha", "Dia", "Colaborador", "Empresa", "Proyecto", "Entrada", "Min tarde", "Estado tardanza", "Salida", "Comentario salida", "Manual / Justificacion", "Horas brutas", "Almuerzo (h)", "Horas laboradas"];
-          const lines = [head.map(enc).join(",")];
-          rows.forEach(r => lines.push([
-            r.fecha, fmtDiaCorto(r.fecha), r.emp.fullName, (COMPANIES[r.emp.company] || {}).name || r.emp.company, r.proy,
-            r.ent ? r.ent.hora : (r.cerrado ? "NO MARCO" : ""), r.ent && r.ent.tarde ? minTardeMk(r.ent) : "",
-            r.ent && r.ent.tarde ? (decisionDe(r.ent) ? (decisionDe(r.ent).estado === "aprobada" ? "Justificada (aprobada)" : "Se descuenta (denegada)") : "Pendiente de decision") : "",
-            r.sal ? r.sal.hora : (r.cerrado ? "NO MARCO" : ""), (r.sal && r.sal.comentario) || "",
-            [r.ent && r.ent.manual ? `ENTRADA manual por ${r.ent.editadoPor}: ${r.ent.justificacion || ""}` : "", r.sal && r.sal.manual ? `SALIDA manual por ${r.sal.editadoPor}: ${r.sal.justificacion || ""}` : ""].filter(Boolean).join(" | "),
-            r.brutas != null ? r.brutas.toFixed(2) : "", r.brutas != null ? r.almuerzo.toFixed(2) : "",
-            r.netas != null ? r.netas.toFixed(2) : "",
-          ].map(enc).join(",")));
-          const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-          const a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
-          a.download = `GeoClock_registros_${regDesde}_a_${regHasta}.csv`;
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+          try {
+            const wb = await libroExcel();
+            hojaExcel(wb, {
+              nombre: "Registros", titulo: "GeoClock · Entradas y salidas", subtitulo: filtrosTxt,
+              columnas: [
+                { t: "Fecha", key: "fecha", ancho: 12 }, { t: "Dia", key: "dia", ancho: 11 }, { t: "Colaborador", key: "colab", ancho: 32 },
+                { t: "Empresa", key: "empresa", ancho: 20 }, { t: "Proyecto", key: "proy", ancho: 22 }, { t: "Entrada", key: "ent", ancho: 11 },
+                { t: "Min tarde", key: "minTarde", ancho: 10, formato: "num" }, { t: "Estado tardanza", key: "estTarde", ancho: 22 },
+                { t: "Salida", key: "sal", ancho: 11 }, { t: "Comentario salida", key: "coment", ancho: 30 },
+                { t: "Manual / Justificacion", key: "manual", ancho: 40 }, { t: "Horas brutas", key: "brutas", ancho: 12, formato: "num2" },
+                { t: "Almuerzo (h)", key: "almuerzo", ancho: 12, formato: "num2" }, { t: "Horas laboradas", key: "netas", ancho: 14, formato: "num2" },
+              ],
+              filas: rows.map(r => ({
+                fecha: r.fecha, dia: fmtDiaCorto(r.fecha), colab: r.emp.fullName, empresa: (COMPANIES[r.emp.company] || {}).name || r.emp.company, proy: r.proy,
+                ent: r.ent ? r.ent.hora : (r.cerrado ? "NO MARCO" : ""), minTarde: r.ent && r.ent.tarde ? Number(minTardeMk(r.ent)) || 0 : null,
+                estTarde: r.ent && r.ent.tarde ? estadoTardanza(r.ent) : "",
+                sal: r.sal ? r.sal.hora : (r.cerrado ? "NO MARCO" : ""), coment: (r.sal && r.sal.comentario) || "",
+                manual: [r.ent && r.ent.manual ? `ENTRADA manual por ${r.ent.editadoPor}: ${r.ent.justificacion || ""}` : "", r.sal && r.sal.manual ? `SALIDA manual por ${r.sal.editadoPor}: ${r.sal.justificacion || ""}` : ""].filter(Boolean).join(" | "),
+                brutas: r.brutas != null ? Math.round(r.brutas * 100) / 100 : null, almuerzo: r.brutas != null ? Math.round(r.almuerzo * 100) / 100 : null,
+                netas: r.netas != null ? Math.round(r.netas * 100) / 100 : null,
+              })),
+              total: { fecha: "Total", colab: `${rows.length} registro(s)`, minTarde: null, netas: Math.round(totNetas * 100) / 100 },
+            });
+            await descargarExcel(wb, `GeoClock_registros_${regDesde}_a_${regHasta}.xlsx`);
+          } catch (e) { alert("No se pudo generar el Excel: " + (e?.message || e)); }
         };
-        // ── Imprimir / PDF (helvetica, sin emojis — convención jsPDF/print) ──
+        // ── PDF: reporte HTML con el estilo único (window.open síncrono en el click) ──
         const imprimirPDF = () => {
           if (!rows.length) return alert("No hay registros en el filtro actual para imprimir.");
           const w = window.open("", "_blank");
           if (!w) return alert("Permití las ventanas emergentes para imprimir.");
-          const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
-          const filtros = [
-            `Rango: ${regDesde} a ${regHasta}`,
-            regPersona ? `Colaborador: ${esc((emps.find(e => e.id === regPersona) || {}).fullName || "")}` : "Todos los colaboradores",
-            regProy ? `Proyecto: ${esc(regProy)}` : "Todos los proyectos",
-          ].join(" &middot; ");
-          let cuerpo = "";
+          const noMarco = rChip("No marcó", "rojo");
+          let cuerpo = rKpis([
+            { label: "Registros", valor: fmtNum(rows.length) },
+            { label: "Horas laboradas", valor: fmtHoras(totNetas) },
+            { label: "Llegadas tarde", valor: fmtNum(totTardes), tono: totTardes ? "naranja" : undefined },
+            { label: "Proyectos", valor: fmtNum(Object.keys(grupos).length) },
+          ]);
           Object.keys(grupos).sort().forEach(proy => {
             const rs = grupos[proy];
             const sub = rs.reduce((s, r) => s + (r.netas || 0), 0);
-            cuerpo += `<h3 style='margin:18px 0 6px;color:#C75F1F;font-size:13px'>${esc(proy)} <span style='color:#8B847C;font-weight:400'>&mdash; ${rs.length} registro(s) &middot; ${fmtHoras(sub)} laboradas</span></h3>`;
-            cuerpo += "<table><thead><tr><th>Fecha</th><th>Colaborador</th><th>Entrada</th><th>Salida</th><th>Comentario</th><th style='text-align:right'>Brutas</th><th style='text-align:right'>Almuerzo</th><th style='text-align:right'>Laboradas</th></tr></thead><tbody>";
-            rs.forEach(r => {
-              const noMarco = "<span style='color:#C0392B;font-weight:bold'>NO MARCO</span>";
+            const filas = rs.map(r => {
               const justifs = [r.ent && r.ent.manual ? `Entrada manual por ${r.ent.editadoPor}: ${r.ent.justificacion || ""}` : "", r.sal && r.sal.manual ? `Salida manual por ${r.sal.editadoPor}: ${r.sal.justificacion || ""}` : "", (r.sal && r.sal.comentario) || ""].filter(Boolean).join(" | ");
-              cuerpo += `<tr><td>${fmtDiaCorto(r.fecha)} ${r.fecha.slice(0, 4)}</td><td>${esc(r.emp.fullName)}</td>` +
-                `<td>${r.ent ? esc(r.ent.hora) + (r.ent.manual ? " <b>(manual)</b>" : "") + (r.ent.tarde ? (() => { const d = decisionDe(r.ent); const c = d ? (d.estado === "aprobada" ? "#166534" : "#B91C1C") : "#92400E"; const t = d ? (d.estado === "aprobada" ? "justificada" : "se descuenta") : "pendiente"; return ` <span style='color:${c};font-weight:bold'>(+${minTardeMk(r.ent)} min ${t})</span>`; })() : "") : (r.cerrado ? noMarco : "&mdash;")}</td>` +
-                `<td>${r.sal ? esc(r.sal.hora) + (r.sal.manual ? " <b>(manual)</b>" : "") : (r.cerrado ? noMarco : "&mdash;")}</td><td style='font-size:9px;color:#555'>${esc(justifs)}</td>` +
-                `<td style='text-align:right'>${r.brutas != null ? fmtHoras(r.brutas) : "&mdash;"}</td>` +
-                `<td style='text-align:right'>${r.brutas != null ? (r.almuerzo ? "1h 00m" : "&mdash;") : "&mdash;"}</td>` +
-                `<td style='text-align:right;font-weight:bold;color:#166534'>${r.netas != null ? fmtHoras(r.netas) : esc(r.estado || "—")}</td></tr>`;
+              const tarde = r.ent && r.ent.tarde ? (() => { const d = decisionDe(r.ent); const tono = d ? (d.estado === "aprobada" ? "verde" : "rojo") : "naranja"; const t = d ? (d.estado === "aprobada" ? "justificada" : "se descuenta") : "pendiente"; return " " + rChip(`+${minTardeMk(r.ent)} min ${t}`, tono); })() : "";
+              return [
+                `<span class="mono">${escHTML(fmtDiaCorto(r.fecha))} ${r.fecha.slice(0, 4)}</span>`,
+                `<b>${escHTML(r.emp.fullName)}</b>`,
+                r.ent ? `<span class="mono">${escHTML(r.ent.hora)}</span>${r.ent.manual ? ` <span style="color:${RP.texto3}">manual</span>` : ""}${tarde}` : (r.cerrado ? noMarco : "—"),
+                r.sal ? `<span class="mono">${escHTML(r.sal.hora)}</span>${r.sal.manual ? ` <span style="color:${RP.texto3}">manual</span>` : ""}` : (r.cerrado ? noMarco : "—"),
+                justifs ? `<span style="font-size:9.5px;color:${RP.texto2}">${escHTML(justifs)}</span>` : "",
+                r.brutas != null ? fmtHoras(r.brutas) : "—",
+                r.brutas != null ? (r.almuerzo ? "1h 00m" : "—") : "—",
+                r.netas != null ? `<b>${fmtHoras(r.netas)}</b>` : `<span style="color:${RP.texto3}">${escHTML(r.estado || "—")}</span>`,
+              ];
             });
-            cuerpo += "</tbody></table>";
+            cuerpo += rSeccion(proy, rTabla({
+              columnas: [{ t: "Fecha", ancho: "86px" }, { t: "Colaborador" }, { t: "Entrada" }, { t: "Salida", ancho: "70px" }, { t: "Comentario" }, { t: "Brutas", num: true, ancho: "64px" }, { t: "Almuerzo", num: true, ancho: "64px" }, { t: "Laboradas", num: true, ancho: "72px" }],
+              filas,
+              total: ["", `${rs.length} registro(s)`, "", "", "", "", "", fmtHoras(sub)],
+            }), `${rs.length} registro(s) · ${fmtHoras(sub)} laboradas`);
           });
-          w.document.write(`<!DOCTYPE html><html><head><meta charset='utf-8'><title>GeoClock - Registros</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:Helvetica,Arial,sans-serif;padding:28px;color:#2C2A28}table{border-collapse:collapse;width:100%;margin-top:4px}th,td{border:1px solid #DBD4C8;padding:4px 7px;font-size:10px}th{background:#F8F2E6;text-align:left}@media print{.np{display:none}}</style></head><body>` +
-            `<div style='display:flex;justify-content:space-between;align-items:baseline;border-bottom:3px solid #E8762D;padding-bottom:8px'><div><h1 style='font-size:18px'>GeoClock &mdash; Reporte de entradas y salidas</h1><div style='font-size:11px;color:#8B847C'>Grupo Geotecnica &middot; ${filtros}</div></div><div style='font-size:10px;color:#8B847C'>Generado: ${hoy}</div></div>` +
-            cuerpo +
-            `<div style='margin-top:14px;padding:10px 14px;background:#F8F2E6;border-left:4px solid #E8762D;font-size:12px'><b>TOTAL GENERAL:</b> ${rows.length} registro(s) &middot; ${fmtHoras(totNetas)} laboradas &middot; ${totTardes} llegada(s) tarde. <span style='color:#8B847C'>El total descuenta 1h de almuerzo cuando la jornada cruza el mediodia (12:00-13:00).</span></div>` +
-            `<br><button class='np' onclick='window.print()' style='padding:10px 24px;font-size:13px;cursor:pointer;background:#E8762D;color:#fff;border:none;border-radius:8px'>Imprimir / Guardar como PDF</button></body></html>`);
-          w.document.close();
+          cuerpo += `<div class="rp-nota">El total descuenta 1 h de almuerzo cuando la jornada cruza el mediodía (12:00 – 13:00).</div>`;
+          abrirReporte(w, reporteHTML({ titulo: "Entradas y salidas", subtitulo: `GeoClock · ${filtrosTxt}`, cuerpo, horizontal: true }));
         };
         const varios = regDesde !== regHasta;
         const btnR = (label, onClick, lleno) => <button type="button" onClick={onClick} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: lleno ? "1px solid transparent" : "1px solid rgba(44,42,40,.14)", background: lleno ? ORANGE_DARK : "rgba(255,255,255,.75)", color: lleno ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>;
@@ -1272,7 +1283,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             </select>
             <div style={{ flex: 1 }} />
             {puedeCorregir && btnR("Marcaje manual", () => setCorr({ empId: "", fecha: ahoraTegus().fecha, tipo: "entrada", hora: "", justif: "" }))}
-            {btnR("CSV", bajarCSV)}
+            {btnR("Excel", bajarExcel)}
             {btnR("PDF", imprimirPDF)}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>

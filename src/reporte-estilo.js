@@ -1,0 +1,266 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// ESTILO ÚNICO DE REPORTES (26-oct-2026, Gerson: "todo reporte que exportemos
+// del sistema, en PDF o Excel, en estilo Apple, así como hemos hecho todo").
+//
+// Tres salidas, la MISMA cara:
+//   1) Reportes HTML que se abren en una pestaña y se guardan como PDF
+//      (`reporteHTML` + `abrirReporte` + piezas r*).
+//   2) PDFs hechos con jsPDF (`PDF_TEMA` + `pdfCabecera` / `pdfPie`).
+//   3) Excel con exceljs (`libroExcel` + `hojaExcel` + `descargarExcel`):
+//      reemplaza a los CSV sin formato.
+//
+// Reglas de la casa: fondo blanco, texto carbón, UN acento naranja, grises
+// cálidos para lo secundario, verde solo para "pagado/positivo" y rojo solo
+// para "negativo/vencido". Nada de arcoíris ni emojis. Montos en mono.
+// ═══════════════════════════════════════════════════════════════════════════
+import { safeDynamicImport } from "./lazyLoad.js";
+
+export const RP = {
+  carbon: "#2C2A28", naranja: "#E8762D", naranjaTexto: "#A94E16",
+  texto2: "#6E6862", texto3: "#9A948D", linea: "#ECEAE6", lineaFuerte: "#DDDBD7",
+  fondo: "#F7F7F5", tinte: "#FDF1E7", verde: "#1F7A4D", rojo: "#B42318",
+};
+// Para gráficos con varias tajadas/barras: carbón, naranja y grises (nunca arcoíris).
+export const PALETA_REPORTE = ["#2C2A28", "#E8762D", "#8A847D", "#F2A36B", "#5B5650", "#C9C4BD", "#B5571C", "#A8A29B"];
+export const colorPaleta = (i) => PALETA_REPORTE[i % PALETA_REPORTE.length];
+
+export const escHTML = (t) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+export const fmtLps = (n) => "L " + (Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const fmtNum = (n, d = 0) => (Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: d, maximumFractionDigits: d });
+export const fechaGenerado = () => new Date().toLocaleString("es-HN", { timeZone: "America/Tegucigalpa", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" });
+
+const LOGO_EMPRESA = { geotecnica: "brand/logo-color.png", subterra: "brand/subterra.png" };
+
+// ── 1) REPORTES HTML ────────────────────────────────────────────────────────
+export const REPORTE_CSS = `
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:${RP.carbon};background:#fff;padding:34px 38px 54px;font-size:11px;line-height:1.45}
+.mono,.num{font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+.num{text-align:right;white-space:nowrap}
+.rp-top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:26px}
+.rp-marca{display:flex;align-items:center;gap:9px;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:${RP.texto3}}
+.rp-marca img{width:22px;height:22px;border-radius:6px}
+.rp-empresa{height:30px;object-fit:contain}
+.rp-titulo{font-size:27px;font-weight:800;letter-spacing:-.025em;line-height:1.1}
+.rp-sub{font-size:12.5px;color:${RP.texto2};margin-top:6px}
+.rp-acento{width:44px;height:3px;border-radius:3px;background:${RP.naranja};margin:16px 0 22px}
+.rp-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:24px}
+.rp-kpi{background:${RP.fondo};border-radius:14px;padding:13px 15px}
+.rp-kpi .l{font-size:8.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${RP.texto3}}
+.rp-kpi .v{font-size:19px;font-weight:800;letter-spacing:-.02em;margin-top:5px}
+.rp-kpi .s{font-size:9.5px;color:${RP.texto3};margin-top:2px}
+.rp-sec{margin:0 0 22px}
+.rp-sec-t{display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-bottom:1px solid ${RP.lineaFuerte};padding-bottom:7px;margin-bottom:8px}
+.rp-sec-t h2{font-size:13.5px;font-weight:800;letter-spacing:-.01em}
+.rp-sec-t .x{font-size:10.5px;color:${RP.texto2}}
+.rp-caja{border:1px solid ${RP.linea};border-radius:16px;padding:16px 18px}
+.rp-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px}
+table.rp-t{width:100%;border-collapse:collapse}
+.rp-t th{font-size:8.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:${RP.texto3};text-align:left;padding:7px 8px;border-bottom:1px solid ${RP.lineaFuerte}}
+.rp-t td{padding:7px 8px;border-bottom:1px solid ${RP.linea};vertical-align:top}
+.rp-t th.num,.rp-t td.num{text-align:right}
+.rp-t tr.total td{border-top:1.5px solid ${RP.carbon};border-bottom:none;font-weight:800;padding-top:9px}
+.rp-t tr.sub td{background:${RP.fondo};font-weight:700}
+.rp-t td.suave{color:${RP.texto2}}
+.rp-chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:8.5px;font-weight:700;background:${RP.fondo};color:${RP.texto2};white-space:nowrap}
+.rp-chip.naranja{background:${RP.tinte};color:${RP.naranjaTexto}}
+.rp-chip.verde{background:#E7F3EC;color:${RP.verde}}
+.rp-chip.rojo{background:#FBEAE8;color:${RP.rojo}}
+.rp-chip.carbon{background:${RP.carbon};color:#fff}
+.rp-barra{height:8px;border-radius:99px;background:${RP.fondo};overflow:hidden;display:flex}
+.rp-barra i{display:block;height:100%}
+.rp-ley{display:flex;align-items:center;gap:8px;font-size:10.5px;margin-bottom:6px}
+.rp-ley b{flex:1;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rp-ley .p{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+.rp-nota{font-size:10px;color:${RP.texto3};margin-top:6px}
+.rp-pie{margin-top:30px;padding-top:10px;border-top:1px solid ${RP.linea};display:flex;justify-content:space-between;font-size:9px;color:${RP.texto3}}
+.rp-firmas{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:48px}
+.rp-firmas div{border-top:1px solid ${RP.carbon};padding-top:6px;font-size:10px;text-align:center;color:${RP.texto2}}
+.np{position:fixed;top:14px;right:14px;display:flex;gap:8px;z-index:5}
+.np button{font:700 12px 'Plus Jakarta Sans',sans-serif;padding:9px 16px;border-radius:999px;border:none;cursor:pointer;background:${RP.carbon};color:#fff}
+.np button.g{background:${RP.fondo};color:${RP.carbon}}
+thead{display:table-header-group}
+tr,.rp-kpi,.rp-caja{page-break-inside:avoid}
+.rp-salto{page-break-before:always}
+@media print{.np{display:none}body{padding:0}}
+`;
+
+/**
+ * Documento HTML completo de un reporte.
+ * @param titulo     "Costo de Mano de Obra"
+ * @param subtitulo  "Octubre 2026 · Subterra"
+ * @param empresa    "geotecnica" | "subterra" | null (null = Grupo Geotecnica)
+ * @param cuerpo     HTML (usar las piezas r*)
+ * @param horizontal hoja apaisada
+ */
+export const reporteHTML = ({ titulo, subtitulo = "", empresa = null, cuerpo = "", horizontal = false, base = import.meta.env.BASE_URL }) => {
+  const logoEmp = `${base}${LOGO_EMPRESA[empresa] || LOGO_EMPRESA.geotecnica}`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>${escHTML(titulo)}${subtitulo ? " — " + escHTML(subtitulo) : ""} · GeoCore</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<style>@page{size:${horizontal ? "letter landscape" : "letter"};margin:14mm 13mm}${REPORTE_CSS}</style></head><body>
+<div class="np"><button class="g" onclick="window.close()">Cerrar</button><button onclick="window.print()">Guardar PDF</button></div>
+<div class="rp-top"><div class="rp-marca"><img src="${base}brand/geocore/geocore-180.png" alt="">GeoCore · Grupo Geotecnica</div><img class="rp-empresa" src="${logoEmp}" alt=""></div>
+<div class="rp-titulo">${escHTML(titulo)}</div>${subtitulo ? `<div class="rp-sub">${escHTML(subtitulo)}</div>` : ""}<div class="rp-acento"></div>
+${cuerpo}
+<div class="rp-pie"><span>GeoCore · Grupo Geotecnica</span><span>Generado el ${escHTML(fechaGenerado())}</span></div>
+</body></html>`;
+};
+
+/** Escribe el reporte en una pestaña YA abierta (window.open síncrono en el click) y abre el diálogo de imprimir. */
+export const abrirReporte = (w, html, { imprimir = true } = {}) => {
+  if (!w) { alert("Permití las ventanas emergentes para generar el reporte."); return false; }
+  w.document.open(); w.document.write(html); w.document.close();
+  if (imprimir) {
+    const lanzar = () => setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 350);
+    try { (w.document.fonts?.ready || Promise.resolve()).then(() => { if (w.document.readyState === "complete") lanzar(); else w.addEventListener("load", lanzar, { once: true }); }); } catch { lanzar(); }
+  }
+  return true;
+};
+
+// Piezas (devuelven strings HTML)
+/** items: [{label, valor, sub?, tono?: "naranja"|"verde"|"rojo"}] */
+export const rKpis = (items) => `<div class="rp-kpis">${items.filter(Boolean).map(k => `<div class="rp-kpi"><div class="l">${escHTML(k.label)}</div><div class="v ${k.mono === false ? "" : "mono"}" style="${k.tono ? `color:${RP[k.tono] || k.tono}` : ""}">${k.valorHTML ?? escHTML(k.valor)}</div>${k.sub ? `<div class="s">${escHTML(k.sub)}</div>` : ""}</div>`).join("")}</div>`;
+export const rSeccion = (titulo, html, extra = "") => `<div class="rp-sec"><div class="rp-sec-t"><h2>${escHTML(titulo)}</h2>${extra ? `<span class="x">${extra}</span>` : ""}</div>${html}</div>`;
+export const rChip = (texto, tono = "") => `<span class="rp-chip ${tono}">${escHTML(texto)}</span>`;
+/**
+ * Tabla. columnas: [{t, num?, ancho?}] · filas: [[celdas HTML]] · total: [celdas] (opcional)
+ * Las celdas son HTML (escapar con escHTML antes). Una fila puede ser {celdas, clase}.
+ */
+export const rTabla = ({ columnas, filas, total = null }) => `<table class="rp-t"><thead><tr>${columnas.map(c => `<th class="${c.num ? "num" : ""}" style="${c.ancho ? `width:${c.ancho}` : ""}">${escHTML(c.t)}</th>`).join("")}</tr></thead><tbody>
+${filas.map(f => { const celdas = Array.isArray(f) ? f : f.celdas; const clase = Array.isArray(f) ? "" : (f.clase || ""); return `<tr class="${clase}">${celdas.map((x, i) => `<td class="${columnas[i]?.num ? "num" : ""}">${x ?? ""}</td>`).join("")}</tr>`; }).join("")}
+${total ? `<tr class="total">${total.map((x, i) => `<td class="${columnas[i]?.num ? "num" : ""}">${x ?? ""}</td>`).join("")}</tr>` : ""}</tbody></table>`;
+/** Barra apilada: segs [{valor, color}] sobre `maximo`. */
+export const rBarra = (segs, maximo) => `<div class="rp-barra">${segs.filter(s => s.valor > 0).map(s => `<i style="width:${Math.max(0.5, (s.valor / (maximo || 1)) * 100).toFixed(1)}%;background:${s.color}"></i>`).join("")}</div>`;
+/** Dona SVG + leyenda. segs [{label, valor, color}] */
+export const rDona = (segs, { tam = 170, centro = "", centroSub = "" } = {}) => {
+  const total = segs.reduce((s, x) => s + (Number(x.valor) || 0), 0);
+  const R = tam * 0.36, C = 2 * Math.PI * R, c = tam / 2;
+  let acum = 0;
+  const arcos = segs.map(sg => { const f = total > 0 ? sg.valor / total : 0; const el = `<circle r="${R}" cx="${c}" cy="${c}" fill="none" stroke="${sg.color}" stroke-width="${tam * 0.16}" stroke-dasharray="${(f * C).toFixed(2)} ${C.toFixed(2)}" stroke-dashoffset="${(-acum * C).toFixed(2)}" transform="rotate(-90 ${c} ${c})"/>`; acum += f; return el; }).join("");
+  const svg = `<svg width="${tam}" height="${tam}" viewBox="0 0 ${tam} ${tam}"><circle r="${R}" cx="${c}" cy="${c}" fill="none" stroke="${RP.fondo}" stroke-width="${tam * 0.16}"/>${arcos}${centro ? `<text x="${c}" y="${c - 2}" text-anchor="middle" font-family="IBM Plex Mono" font-weight="700" font-size="${tam * 0.085}" fill="${RP.carbon}">${escHTML(centro)}</text>` : ""}${centroSub ? `<text x="${c}" y="${c + tam * 0.09}" text-anchor="middle" font-family="Plus Jakarta Sans" font-size="${tam * 0.055}" fill="${RP.texto3}">${escHTML(centroSub)}</text>` : ""}</svg>`;
+  const ley = segs.map(sg => `<div class="rp-ley"><span class="p" style="background:${sg.color}"></span><b>${escHTML(sg.label)}</b><span class="mono" style="color:${RP.texto3}">${total > 0 ? ((sg.valor / total) * 100).toFixed(1) : "0"}%</span>${sg.valorTxt != null ? `<span class="mono" style="min-width:90px;text-align:right;font-weight:700">${escHTML(sg.valorTxt)}</span>` : ""}</div>`).join("");
+  return `<div style="display:flex;align-items:center;gap:22px">${svg}<div style="flex:1;min-width:0">${ley}</div></div>`;
+};
+
+// ── 2) jsPDF ────────────────────────────────────────────────────────────────
+const rgb = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+export const PDF_TEMA = {
+  carbon: rgb(RP.carbon), naranja: rgb(RP.naranja), naranjaTexto: rgb(RP.naranjaTexto), texto2: rgb(RP.texto2), texto3: rgb(RP.texto3),
+  linea: rgb(RP.linea), lineaFuerte: rgb(RP.lineaFuerte), fondo: rgb(RP.fondo), tinte: rgb(RP.tinte), verde: rgb(RP.verde), rojo: rgb(RP.rojo), blanco: [255, 255, 255],
+};
+const MAPA_L1 = { "–": "-", "—": "-", "‘": "'", "’": "'", "“": '"', "”": '"', "…": "...", "×": "x", "→": "->", "✓": "si", "−": "-" };
+/** Helvetica de jsPDF solo trae Latin-1: todo texto pasa por acá. */
+export const latin1 = (s) => String(s ?? "").replace(/[–—‘’“”…×→✓−]/g, c => MAPA_L1[c] ?? "").replace(/[^\u0000-ÿ]/g, "");
+const imgCache = {};
+export const cargarImagen = async (ruta) => {
+  if (imgCache[ruta]) return imgCache[ruta];
+  try {
+    const resp = await fetch(`${import.meta.env.BASE_URL}${ruta}`);
+    const blob = await resp.blob();
+    const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+    const dims = await new Promise((res) => { const im = new Image(); im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight }); im.onerror = () => res({ w: 1, h: 1 }); im.src = dataUrl; });
+    return (imgCache[ruta] = { dataUrl, ...dims });
+  } catch { return null; }
+};
+/**
+ * Cabecera estándar de una página jsPDF (unidad mm). Devuelve la Y donde
+ * sigue el contenido. Dibuja: marca GeoCore arriba a la izquierda, logo de la
+ * empresa a la derecha, título grande, subtítulo gris y el acento naranja.
+ */
+export const pdfCabecera = async (doc, { titulo, subtitulo = "", empresa = null, margen = 14, y = 14 } = {}) => {
+  const W = doc.internal.pageSize.getWidth();
+  const T = PDF_TEMA;
+  const marca = await cargarImagen("brand/geocore/geocore-180.png");
+  if (marca) doc.addImage(marca.dataUrl, "PNG", margen, y - 1, 6, 6);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...T.texto3);
+  doc.text(latin1("GEOCORE · GRUPO GEOTECNICA"), margen + (marca ? 8 : 0), y + 3.2, { charSpace: 0.4 });
+  const logo = await cargarImagen(LOGO_EMPRESA[empresa] || LOGO_EMPRESA.geotecnica);
+  if (logo) { const h = 9, w = Math.min(42, h * logo.w / logo.h); doc.addImage(logo.dataUrl, "PNG", W - margen - w, y - 2.5, w, h); }
+  let yy = y + 16;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(19); doc.setTextColor(...T.carbon);
+  doc.text(latin1(titulo), margen, yy);
+  if (subtitulo) { yy += 6; doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(...T.texto2); doc.text(latin1(subtitulo), margen, yy); }
+  yy += 5;
+  doc.setFillColor(...T.naranja); doc.roundedRect(margen, yy, 12, 0.9, 0.45, 0.45, "F");
+  return yy + 8;
+};
+/** Pie en TODAS las páginas: marca a la izquierda, "Generado el … · página N de M" a la derecha. */
+export const pdfPie = (doc, { margen = 14 } = {}) => {
+  const n = doc.getNumberOfPages();
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(...PDF_TEMA.linea); doc.setLineWidth(0.2); doc.line(margen, H - 11, W - margen, H - 11);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...PDF_TEMA.texto3);
+    doc.text("GeoCore · Grupo Geotecnica", margen, H - 7);
+    doc.text(latin1(`Generado el ${fechaGenerado()}  ·  página ${i} de ${n}`), W - margen, H - 7, { align: "right" });
+  }
+};
+/** Tile tipo KPI (fondo gris claro redondeado). */
+export const pdfKpi = (doc, x, y, w, h, label, valor, { tono } = {}) => {
+  const T = PDF_TEMA;
+  doc.setFillColor(...T.fondo); doc.roundedRect(x, y, w, h, 3, 3, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(...T.texto3);
+  doc.text(latin1(String(label).toUpperCase()), x + 4, y + 5.5, { charSpace: 0.3 });
+  doc.setFontSize(12.5); doc.setTextColor(...(tono ? T[tono] : T.carbon));
+  doc.text(latin1(valor), x + 4, y + h - 4.5);
+};
+
+// ── 3) EXCEL (exceljs) ──────────────────────────────────────────────────────
+const ARGB = (h) => "FF" + h.replace("#", "").toUpperCase();
+export const libroExcel = async () => {
+  const mod = await safeDynamicImport(() => import("exceljs/dist/exceljs.min.js"), "excel");
+  const ExcelJS = mod.default || mod;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "GeoCore · Grupo Geotecnica"; wb.created = new Date();
+  return wb;
+};
+/**
+ * Hoja con el estilo de la casa: título grande, subtítulo gris, encabezados
+ * en gris pequeño con línea abajo, filas con línea fina, totales en negrita
+ * con línea carbón arriba, columnas congeladas y anchos fijos.
+ * columnas: [{t, key, ancho, formato: "lps"|"num"|"num2"|"pct"|"fecha"|"texto"}]
+ * filas: [{[key]: valor, _sub?: true}] · total: {[key]: valor} | null
+ */
+export const hojaExcel = (wb, { nombre, titulo, subtitulo = "", columnas, filas, total = null }) => {
+  const ws = wb.addWorksheet(String(nombre || "Reporte").slice(0, 31), { views: [{ state: "frozen", ySplit: 4, showGridLines: false }] });
+  const FUENTE = "Helvetica Neue";
+  ws.columns = columnas.map(c => ({ key: c.key, width: c.ancho || 16 }));
+  ws.getCell(1, 1).value = titulo; ws.getCell(1, 1).font = { name: FUENTE, size: 16, bold: true, color: { argb: ARGB(RP.carbon) } };
+  ws.getRow(1).height = 24;
+  ws.getCell(2, 1).value = [subtitulo, `GeoCore · Grupo Geotecnica · generado el ${fechaGenerado()}`].filter(Boolean).join("  ·  ");
+  ws.getCell(2, 1).font = { name: FUENTE, size: 10, color: { argb: ARGB(RP.texto2) } };
+  const enc = ws.getRow(4);
+  columnas.forEach((c, i) => {
+    const cell = enc.getCell(i + 1);
+    cell.value = String(c.t).toUpperCase();
+    cell.font = { name: FUENTE, size: 8.5, bold: true, color: { argb: ARGB(RP.texto3) } };
+    cell.alignment = { horizontal: ["lps", "num", "num2", "pct"].includes(c.formato) ? "right" : "left", vertical: "middle" };
+    cell.border = { bottom: { style: "thin", color: { argb: ARGB(RP.lineaFuerte) } } };
+  });
+  enc.height = 20;
+  const FMT = { lps: '"L "#,##0.00', num: "#,##0", num2: "#,##0.00", pct: "0.0%", fecha: "dd-mmm-yyyy" };
+  const pintar = (row, esTotal, esSub) => {
+    columnas.forEach((c, i) => {
+      const cell = row.getCell(i + 1);
+      cell.font = { name: c.formato && c.formato !== "texto" && c.formato !== "fecha" ? "Menlo" : FUENTE, size: 10, bold: esTotal || esSub, color: { argb: ARGB(RP.carbon) } };
+      if (FMT[c.formato]) cell.numFmt = FMT[c.formato];
+      cell.alignment = { vertical: "top", wrapText: c.formato === "texto" || !c.formato, horizontal: ["lps", "num", "num2", "pct"].includes(c.formato) ? "right" : "left" };
+      cell.border = esTotal ? { top: { style: "medium", color: { argb: ARGB(RP.carbon) } } } : { bottom: { style: "hair", color: { argb: ARGB(RP.lineaFuerte) } } };
+      if (esSub) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ARGB(RP.fondo) } };
+    });
+  };
+  filas.forEach(f => { const row = ws.addRow(columnas.map(c => f[c.key] ?? null)); pintar(row, false, !!f._sub); });
+  if (total) { const row = ws.addRow(columnas.map(c => total[c.key] ?? null)); pintar(row, true, false); }
+  return ws;
+};
+export const descargarExcel = async (wb, nombreArchivo) => {
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = nombreArchivo.endsWith(".xlsx") ? nombreArchivo : nombreArchivo + ".xlsx";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+};
