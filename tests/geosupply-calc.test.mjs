@@ -243,3 +243,15 @@ test("métricas del dashboard", () => {
   assert.equal(metricasDashboard({ solicitudes: sols, cotizaciones: cots, filtros: { projectCode: "P2" } }).total, 0);
   assert.equal(metricasDashboard({ solicitudes: sols, cotizaciones: cots, filtros: { corteId: "C40-2026" } }).total, 2);
 });
+
+test("Lo pide Almacén (sinAlmacen): sin alerta va directo a cotizar; con alerta, al aprobar", async () => {
+  const { estadoInicialLinea, aplicarAccionLinea, alertasDeLinea, puedeCancelar } = await import("../src/geosupply-calc.js");
+  const sol = { sinAlmacen: true };
+  assert.equal(estadoInicialLinea({ cantidad: 2 }, sol), "por_cotizar");
+  const libre = { cantidad: 1, fueraPresupuesto: true, sinReceta: true };
+  assert.deepEqual(alertasDeLinea(libre, sol), ["sin_receta"]);
+  assert.equal(estadoInicialLinea(libre, sol), "pendiente_coord");
+  assert.equal(aplicarAccionLinea({ ...libre, estado: "pendiente_coord" }, "aprobar_coord", { sinAlmacen: true }).linea.estado, "por_cotizar");
+  assert.equal(aplicarAccionLinea({ ...libre, estado: "pendiente_coord" }, "aprobar_coord").linea.estado, "revision_almacen");
+  assert.equal(puedeCancelar({ estado: "enviada", sinAlmacen: true, lineas: [{ estado: "por_cotizar", quoteIds: [] }] }), true);
+});

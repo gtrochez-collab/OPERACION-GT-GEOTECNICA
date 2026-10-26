@@ -18,7 +18,7 @@ import { store, onSyncStateChange } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
 import Logo, { GeoCoreSello } from "./Logo.jsx";
 import { BRAND, FONT } from "./theme.js";
-import { USERS, ROLE_LABEL } from "./users.js";
+import { USERS, ROLE_LABEL, USUARIOS_DE_BAJA } from "./users.js";
 // GeoSupply (2-oct-2026): contador de pendientes por rol en la tarjeta del Panel.
 import { contarPendientes, configEfectiva } from "./geosupply-calc.js";
 
@@ -249,7 +249,9 @@ export default function App() {
   useEffect(() => {
     try {
       const s = sessionStorage.getItem("gt-session");
-      if (s) setUser(JSON.parse(s));
+      const ses = s ? JSON.parse(s) : null;
+      if (ses && USUARIOS_DE_BAJA.includes(ses.username)) sessionStorage.removeItem("gt-session");
+      else if (ses) setUser(ses);
     } catch {}
   }, []);
 
@@ -293,6 +295,7 @@ export default function App() {
 
   const login = async (username, password) => {
     const u = String(username || "").trim();
+    if (USUARIOS_DE_BAJA.includes(u)) return false;
     const found = USERS.find((x) => x.username === u && x.password === password);
     let session = found ? { username: found.username, role: found.role, label: found.label } : null;
     if (!session) {

@@ -153,14 +153,15 @@ function PasosLinea({ paso, compact }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // FORM DE SOLICITUD (residente) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
-function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, userKey, onGuardar, onClose, isMobile }) {
-  const [f, setF] = useState(() => solicitud ? { ...solicitud, lineas: (solicitud.lineas || []).map(l => ({ ...l })) } : { projectCode: "", fechaRequeridaObra: "", urgente: false, justificacionUrgencia: "", notas: "", lineas: [] });
+function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, userKey, onGuardar, onClose, isMobile, proyectoInicial = "" }) {
+  const [f, setF] = useState(() => solicitud ? { ...solicitud, lineas: (solicitud.lineas || []).map(l => ({ ...l })) } : { projectCode: proyectoInicial, fechaRequeridaObra: "", urgente: false, justificacionUrgencia: "", notas: "", lineas: [] });
   const [q, setQ] = useState("");
   const [sol, setSol] = useState("");
   const [fuera, setFuera] = useState(null);     // { descripcion, unidad, cantidad, justificacion }
   const [saving, setSaving] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const pres = presDe(f.projectCode);
+  const sinReceta = !!f.projectCode && !pres;
   const pedibles = partidasPedibles(pres);
   const soluciones = [...new Set(pedibles.map(p => String(p.solucion || "").trim()).filter(Boolean))];
   const norm = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -197,7 +198,7 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
     f.lineas.forEach(l => {
       if (l.varilla && enviar && (!l.varilla.n || !(num(l.varilla.lances) > 0))) e.push(`${l.descripcion || "Varilla"}: elegí la varilla y cuántos lances.`);
       else if (enviar && !(num(l.cantidad) > 0)) e.push(`${l.descripcion || "Ítem"}: la cantidad debe ser mayor que 0.`);
-      if (l.fueraPresupuesto && (!String(l.descripcion || "").trim() || (enviar && String(l.justificacion || "").trim().length < 5))) e.push(`${l.descripcion || "Ítem fuera de presupuesto"}: escribí qué es y por qué no está en la receta.`);
+      if (l.fueraPresupuesto && (!String(l.descripcion || "").trim() || (enviar && !sinReceta && String(l.justificacion || "").trim().length < 5))) e.push(`${l.descripcion || "Ítem fuera de presupuesto"}: escribí qué es y por qué no está en la receta.`);
     });
     if (f.urgente && enviar && String(f.justificacionUrgencia || "").trim().length < 5) e.push("Una urgente necesita justificación.");
     return e;
@@ -208,7 +209,7 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
     if (enviar && f.urgente && !confirm("Marcaste la solicitud como URGENTE: se salta el corte, pero cada ítem pasa primero por el Coordinador y queda medido. ¿Enviar igual?")) return;
     setSaving(true);
     try {
-      const lineas = f.lineas.map(l => ({ ...l, cantidad: num(l.cantidad), excedeSaldo: excede(l),
+      const lineas = f.lineas.map(l => ({ ...l, cantidad: num(l.cantidad), excedeSaldo: excede(l), ...(l.fueraPresupuesto ? { sinReceta } : {}),
         // La varilla se describe por lo que se pide: "Varilla #5 (5/8") de 9 m · 20 lances"
         ...(l.varilla && l.varilla.n ? { varilla: { n: Number(l.varilla.n), largo: Number(l.varilla.largo || 9), lances: num(l.varilla.lances) }, descripcion: `${nombreVarilla(l.varilla)} · ${num(l.varilla.lances).toLocaleString("es-HN")} lances` } : {}) }));
       await onGuardar({ ...f, lineas }, enviar);
@@ -220,7 +221,7 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
       <Select label="Proyecto *" options={[{ group: "Con receta en GeoCost", options: proyectos.filter(p => presDe(p.short)).map(p => ({ value: p.short, label: p.name || p.short })) }, { group: "Sin receta", options: proyectos.filter(p => !presDe(p.short)).map(p => ({ value: p.short, label: p.name || p.short })) }].filter(g => g.options.length)} value={f.projectCode} onChange={e => { u("projectCode", e.target.value); u("lineas", f.lineas.filter(l => l.fueraPresupuesto)); setSol(""); }} emptyLabel="Elegí el proyecto" disabled={!!solicitud && solicitud.estado !== "borrador"} />
       <Input label="Lo necesito en obra el *" type="date" value={f.fechaRequeridaObra || ""} min={hoyISO()} onChange={e => u("fechaRequeridaObra", e.target.value)} />
     </div>
-    {f.projectCode && !pres && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12.5 }}>Este proyecto no tiene receta en GeoCost: todo lo que pidás va como <b>fuera de presupuesto</b> y lo revisa el Coordinador.</div>}
+    {f.projectCode && !pres && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12.5 }}>Este proyecto no tiene receta: pedí lo que haga falta y lo aprueba el Coordinador.</div>}
 
     {/* Buscador de la receta */}
     {pres && <div className="gt-vidrio" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -253,21 +254,21 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div className="gt-label" style={{ color: "var(--text-3)" }}>Lo que pedís · {f.lineas.length} {f.lineas.length === 1 ? "ítem" : "ítems"}</div>
-        {!fuera && <button type="button" onClick={() => setFuera({ descripcion: "", unidad: "", cantidad: "", justificacion: "" })} style={{ background: "none", border: "none", color: "var(--naranja-texto-chico)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>+ Agregar ítem fuera de presupuesto</button>}
+        {!fuera && <button type="button" onClick={() => setFuera({ descripcion: "", unidad: "", cantidad: "", justificacion: "" })} style={{ background: "none", border: "none", color: "var(--naranja-texto-chico)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{sinReceta ? "+ Agregar ítem" : "+ Agregar ítem fuera de presupuesto"}</button>}
       </div>
       {f.lineas.length === 0 && !fuera && <div style={{ padding: "18px", textAlign: "center", color: "var(--text-3)", fontSize: 13, border: "1px dashed rgba(44,42,40,.18)", borderRadius: 14 }}>Todavía no agregaste nada.</div>}
       {f.lineas.map(l => {
         const s = saldoLinea(l);
         const ex = excede(l);
-        return <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 14, background: l.fueraPresupuesto ? C_AMARILLO.bg : ex ? C_NARANJA.bg : "rgba(255,255,255,.75)", border: "1px solid rgba(44,42,40,.08)", flexWrap: "wrap" }}>
+        return <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 14, background: l.fueraPresupuesto && !sinReceta ? C_AMARILLO.bg : ex ? C_NARANJA.bg : "rgba(255,255,255,.75)", border: "1px solid rgba(44,42,40,.08)", flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 180 }}>
             <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{l.descripcion}</div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 3 }}>
-              {l.fueraPresupuesto ? <Chip c={C_AMARILLO}>Fuera de presupuesto</Chip> : <span style={{ fontSize: 11, color: "var(--text-3)" }}>{[l.solucion, l.categoria].filter(Boolean).join(" · ")}</span>}
+              {l.fueraPresupuesto ? (sinReceta ? null : <Chip c={C_AMARILLO}>Fuera de presupuesto</Chip>) : <span style={{ fontSize: 11, color: "var(--text-3)" }}>{[l.solucion, l.categoria].filter(Boolean).join(" · ")}</span>}
               {s && !s.sinCantidad && <span style={{ fontSize: 11, color: ex ? C_ROJO.color : "var(--text-3)", fontWeight: ex ? 800 : 500 }}>saldo {fmtCant(s.saldo)} {l.unidad}</span>}
               {ex && <Chip c={C_ROJO}>Excede el saldo · lo aprueba el Coordinador</Chip>}
             </div>
-            {l.fueraPresupuesto && <input value={l.justificacion || ""} onChange={e => uLinea(l.id, "justificacion", e.target.value)} placeholder="Por qué hace falta y no está en la receta *" style={{ ...CTRL, width: "100%", marginTop: 6, background: "#fff" }} />}
+            {l.fueraPresupuesto && !sinReceta && <input value={l.justificacion || ""} onChange={e => uLinea(l.id, "justificacion", e.target.value)} placeholder="Por qué hace falta y no está en la receta *" style={{ ...CTRL, width: "100%", marginTop: 6, background: "#fff" }} />}
           </div>
           {l.varilla
             ? <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -288,16 +289,16 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
         </div>;
       })}
       {fuera && <div style={{ padding: 12, borderRadius: 14, background: C_AMARILLO.bg, border: `1px solid rgba(138,90,0,.2)`, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr 1fr", gap: 8 }}>
-        <div style={{ gridColumn: "1/-1", fontSize: 12, color: C_AMARILLO.color, fontWeight: 700 }}>Ítem fuera de presupuesto — lo revisa el Coordinador antes de seguir</div>
+        <div style={{ gridColumn: "1/-1", fontSize: 12, color: C_AMARILLO.color, fontWeight: 700 }}>{sinReceta ? "Qué necesitás" : "Ítem fuera de presupuesto — lo revisa el Coordinador antes de seguir"}</div>
         <input value={fuera.descripcion} onChange={e => setFuera({ ...fuera, descripcion: e.target.value })} placeholder="Qué es (ej. Cinta métrica 50 m) *" style={{ ...CTRL, background: "#fff" }} />
         <input list="sp-unidades" value={fuera.unidad} onChange={e => setFuera({ ...fuera, unidad: e.target.value })} placeholder="Unidad" style={{ ...CTRL, background: "#fff" }} />
         <datalist id="sp-unidades">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist>
         <input type="number" min="0" step="any" value={fuera.cantidad} onChange={e => setFuera({ ...fuera, cantidad: e.target.value })} placeholder="Cantidad *" style={{ ...CTRL, background: "#fff" }} />
-        <input value={fuera.justificacion} onChange={e => setFuera({ ...fuera, justificacion: e.target.value })} placeholder="Por qué hace falta y no está en la receta *" style={{ ...CTRL, background: "#fff", gridColumn: "1/-1" }} />
+        <input value={fuera.justificacion} onChange={e => setFuera({ ...fuera, justificacion: e.target.value })} placeholder={sinReceta ? "Para qué es (opcional: ej. mantenimiento de la soldadora)" : "Por qué hace falta y no está en la receta *"} style={{ ...CTRL, background: "#fff", gridColumn: "1/-1" }} />
         <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <Btn small variant="ghost" onClick={() => setFuera(null)}>Cancelar</Btn>
           <Btn small onClick={() => {
-            if (!fuera.descripcion.trim() || !(num(fuera.cantidad) > 0) || fuera.justificacion.trim().length < 5) return alert("Completá qué es, la cantidad y la justificación.");
+            if (!fuera.descripcion.trim() || !(num(fuera.cantidad) > 0) || (!sinReceta && fuera.justificacion.trim().length < 5)) return alert(sinReceta ? "Completá qué es y la cantidad." : "Completá qué es, la cantidad y la justificación.");
             u("lineas", [...f.lineas, { id: uid(), partidaId: null, descripcion: fuera.descripcion.trim(), unidad: fuera.unidad.trim(), categoria: "", cantidad: fuera.cantidad, fueraPresupuesto: true, justificacion: fuera.justificacion.trim() }]);
             setFuera(null);
           }}>Agregar</Btn>
@@ -491,7 +492,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
             <input type="checkbox" checked={inc} onChange={() => toggle(c)} />
             <div style={{ flex: 1, minWidth: 180 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{c.l.descripcion}</div>
-              <div style={{ fontSize: 11, color: "var(--text-3)" }}>{c.sol.folio} · pendiente <b>{fmtCant(c.pendiente)} {c.l.unidad}</b> · requerido {fmtDiaCorto(c.sol.fechaRequeridaObra)}{c.l.sinRevisionAlmacen ? " · sin revisión de almacén" : ""}{c.l.fueraPresupuesto ? " · fuera de presupuesto" : puPres ? ` · presupuesto ${fmtUSD(puPres)} / ${c.l.unidad} (≈ ${fmtL(puPres * tasa)})` : ""}</div>
+              <div style={{ fontSize: 11, color: "var(--text-3)" }}>{c.sol.folio} · pendiente <b>{fmtCant(c.pendiente)} {c.l.unidad}</b> · requerido {fmtDiaCorto(c.sol.fechaRequeridaObra)}{c.l.sinRevisionAlmacen ? " · sin revisión de almacén" : ""}{c.l.fueraPresupuesto ? (c.l.sinReceta ? " · sin receta" : " · fuera de presupuesto") : puPres ? ` · presupuesto ${fmtUSD(puPres)} / ${c.l.unidad} (≈ ${fmtL(puPres * tasa)})` : ""}</div>
             </div>
             {inc && e && chipSem(e.semaforo)}
           </div>
@@ -749,7 +750,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       });
     } else {
       rec = await crearEn(K.sol, setSolicitudes, (arr) => {
-        const base = { id: uid(), folio: siguienteFolio(arr, "SUP", new Date(ahoraISO).getFullYear()), projectCode: f.projectCode, residente: userKey, fechaRequeridaObra: f.fechaRequeridaObra, urgente: !!f.urgente, justificacionUrgencia: f.justificacionUrgencia || "", notas: f.notas || "", estado: "borrador", lineas: f.lineas, createdAt: ahoraISO, audit: [auditEntry("creada", "Borrador creado")] };
+        const base = { id: uid(), folio: siguienteFolio(arr, "SUP", new Date(ahoraISO).getFullYear()), projectCode: f.projectCode, residente: userKey, ...(rol === "almacen" ? { sinAlmacen: true } : {}), fechaRequeridaObra: f.fechaRequeridaObra, urgente: !!f.urgente, justificacionUrgencia: f.justificacionUrgencia || "", notas: f.notas || "", estado: "borrador", lineas: f.lineas, createdAt: ahoraISO, audit: [auditEntry("creada", "Borrador creado")] };
         return enviar ? prepararEnvio(base) : base;
       });
     }
@@ -1102,7 +1103,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         {barraGrupos("alertas", grupos)}
         {grupos.map(g => <Grupo key={g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · lo más urgente para ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("alertas", g.k)} onToggle={() => toggleGrupo("alertas", g.k)} alerta={g.items.some(x => x.s.urgente)}>
           {g.items.map(x => filaLinea({ ...x, derecha: <>
-            <Btn small variant="success" disabled={ocupado} onClick={() => accionLinea(x.s.id, x.l.id, "aprobar_coord", {}, `${x.l.descripcion}: alerta aprobada → almacén`)}>Aprobar</Btn>
+            <Btn small variant="success" disabled={ocupado} onClick={() => accionLinea(x.s.id, x.l.id, "aprobar_coord", { sinAlmacen: !!x.s.sinAlmacen }, `${x.l.descripcion}: aprobado → ${x.s.sinAlmacen ? "compras" : "almacén"}`)}>Aprobar</Btn>
             <Btn small variant="danger" disabled={ocupado} onClick={() => setModal({ t: "rechazar-linea", s: x.s, l: x.l })}>Rechazar</Btn>
             <button onClick={() => setModal({ t: "detalle", id: x.s.id })} style={{ background: "none", border: "none", color: "var(--text-3)", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Ver solicitud</button>
           </> }))}
@@ -1241,7 +1242,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
     const proyectosConSol = [...new Set(base.map(s => s.projectCode))];
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {esResidente && <div className="gt-vidrio" style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+      {(esResidente || rol === "almacen") && <div className="gt-vidrio" style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
         <div>
           <div style={{ font: "800 15px/1.1 var(--display)", color: CHARCOAL }}>{etq.titulo}</div>
           <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 4 }}>
@@ -1398,7 +1399,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
             const pa = ls ? partidaDe(q.projectCode, ls.partidaId) : null;
             const sd = ls?.partidaId ? saldoDe(q.projectCode, ls.partidaId) : null;
             return <tr key={l.requestLineId || i} style={{ background: "rgba(255,255,255,.75)" }}>
-              <td style={{ padding: "10px", borderRadius: "12px 0 0 12px", verticalAlign: "top" }}><div style={{ fontWeight: 800, color: CHARCOAL }}>{ls?.descripcion || l.descripcion}</div><div style={{ color: "var(--text-3)", fontSize: 11.5 }}>{ls ? `${fmtCant(ls.cantidad)} ${ls.unidad} pedidos · ${fmtCant(l.pendiente ?? 0)} por comprar` : ""}{ls?.fueraPresupuesto ? " · fuera de presupuesto" : ""}</div></td>
+              <td style={{ padding: "10px", borderRadius: "12px 0 0 12px", verticalAlign: "top" }}><div style={{ fontWeight: 800, color: CHARCOAL }}>{ls?.descripcion || l.descripcion}</div><div style={{ color: "var(--text-3)", fontSize: 11.5 }}>{ls ? `${fmtCant(ls.cantidad)} ${ls.unidad} pedidos · ${fmtCant(l.pendiente ?? 0)} por comprar` : ""}{ls?.fueraPresupuesto ? (ls.sinReceta ? " · sin receta" : " · fuera de presupuesto") : ""}</div></td>
               <td style={{ padding: "10px", verticalAlign: "top" }}><div style={{ fontWeight: 800, color: CHARCOAL }}>{fmtCant(l.cantidad)} {l.unidad} × {fmtL(l.puLps)}{l.parcial ? <Chip c={C_AMARILLO} style={{ marginLeft: 6 }}>Parcial</Chip> : null}</div><div style={{ color: "var(--text-3)", fontSize: 11.5 }}>subtotal {fmtL(l.subtotal)} · {fmtUSD(l.puUSD)} / {l.unidad}</div>{l.justificacion && <div style={{ fontSize: 11.5, color: C_ROJO.color, fontStyle: "italic" }}>"{l.justificacion}"</div>}</td>
               <td style={{ padding: "10px", verticalAlign: "top" }}>{pa ? <><div style={{ fontWeight: 700, color: CHARCOAL }}>{fmtUSD(l.puPresupuestoUSD)} / {pa.unidad || l.unidad} <span style={{ color: "var(--text-3)", fontWeight: 500 }}>(≈ {fmtL(l.puPresupuestoUSD * tasa)})</span></div><div style={{ color: "var(--text-3)", fontSize: 11.5 }}>{pa.nombre}{sd && !sd.sinCantidad ? ` · saldo ${fmtCant(sd.saldo)} ${pa.unidad}` : ""}</div></> : <span style={{ color: "var(--text-3)" }}>Sin partida</span>}</td>
               <td style={{ padding: "10px", borderRadius: "0 12px 12px 0", verticalAlign: "top", textAlign: "right" }}>{chipSem(l.semaforo)}<div style={{ fontSize: 11.5, color: SEM[l.semaforo]?.c.color, fontWeight: 700, marginTop: 4 }}>{fmtPct(l.variacionPct)}</div></td>
@@ -1553,7 +1554,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const m = modal;
     switch (m.t) {
       case "solicitud": return <Modal title={m.s ? `Editar ${m.s.folio}` : "Nueva solicitud de material"} onClose={() => setModal(null)} wide fondoCierra={false}>
-        <SolicitudFormImpl solicitud={m.s} proyectos={misProyectos} presDe={presDe} saldoDe={saldoDe} cfg={cfg} ahora={ahora} userKey={userKey} onGuardar={guardarSolicitud} onClose={() => setModal(null)} isMobile={isMobile} />
+        <SolicitudFormImpl proyectoInicial={rol === "almacen" && proyectos.some(p => p.short === "PLANTEL") ? "PLANTEL" : ""} solicitud={m.s} proyectos={misProyectos} presDe={presDe} saldoDe={saldoDe} cfg={cfg} ahora={ahora} userKey={userKey} onGuardar={guardarSolicitud} onClose={() => setModal(null)} isMobile={isMobile} />
       </Modal>;
       case "detalle": return <Modal title={solicitudes.find(x => x.id === m.id)?.folio || "Solicitud"} onClose={() => setModal(null)} wide>{renderDetalle(m.id)}</Modal>;
       case "rechazar-linea": return <Modal title={`Rechazar: ${m.l.descripcion}`} onClose={() => setModal(null)}>

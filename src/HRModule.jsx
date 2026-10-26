@@ -8,7 +8,7 @@ import { hoyISO } from "./fechas.js";
 // GT_CSS (vidrio): desde el 15-oct-2026 lo monta TODO GeoTeam (rediseño de
 // encabezado, Dashboard, KPI's y Empleados).
 import { GT_CSS } from "./gt-ui.js";
-import { USERS, ROLE_LABEL, ROLES_ASIGNABLES } from "./users.js";
+import { USERS, ROLE_LABEL, ROLES_ASIGNABLES, USUARIOS_DE_BAJA } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
 // Planilla (16-oct-2026): lógica pura + PDF/Excel.
 import { diasDeQuincena, quincenaAnterior as quincenaAnteriorPl, quincenaSiguiente, nombreQuincena, rangoQuincena, etiquetaCorta, asistenciaDe, horasExtrasDe, armarLinea, totalesLinea, lineaParaGuardar, resumenPlanilla, entraEnPlanilla, diasMostrados, lineasConHe, GRUPOS_CT, METODOS_PAGO } from "./planilla-calc.js";
@@ -6978,7 +6978,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   };
   const renderAccesos = () => {
     const lista = accesos || [];
-    const tomados = [...USERS.map(x => x.username), ...lista.map(x => x.username)];
+    const tomados = [...USERS.map(x => x.username), ...USUARIOS_DE_BAJA, ...lista.map(x => x.username)];
     const proyectosOrd = [...hrProjects].sort((a, b) => String(a.short).localeCompare(String(b.short), "es", { sensitivity: "base", numeric: true }));
     const chipRol = (r) => <span style={{ display: "inline-flex", padding: "4px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, color: r === "residente" ? "#A94E16" : "#6E6862", background: r === "residente" ? "rgba(232,118,45,.14)" : "rgba(44,42,40,.06)", whiteSpace: "nowrap" }}>{ROLE_LABEL[r] || r}</span>;
     const fila = (x, fijo) => <div key={x.id || x.username} className={fijo ? "gt-vidrio" : "gt-vidrio gt-vidrio-hover"} onClick={fijo ? undefined : () => setModal({ t: "acceso", d: x })} style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", cursor: fijo ? "default" : "pointer", opacity: x.activo === false ? .6 : 1 }}>
@@ -7030,7 +7030,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
 
   const renderModal = () => { if (!modal) return null; const m = modal; switch (m.t) {
     case "en": return <Modal title="Nuevo empleado" onClose={() => setModal(null)} wide><EmpForm onSave={e => sE([...emps, e])} /></Modal>;
-    case "acceso": return <Modal title={m.d ? `Acceso de ${m.d.label}` : "Dar acceso al sistema"} onClose={() => setModal(null)}><AccesoFormImpl acceso={m.d} emps={emps} proyectos={[...hrProjects].sort((a, b) => String(a.short).localeCompare(String(b.short), "es", { sensitivity: "base", numeric: true }))} tomados={[...USERS.map(x => x.username), ...(accesos || []).map(x => x.username)]} userName={userName} onSave={guardarAcceso} onClose={() => setModal(null)} /></Modal>;
+    case "acceso": return <Modal title={m.d ? `Acceso de ${m.d.label}` : "Dar acceso al sistema"} onClose={() => setModal(null)}><AccesoFormImpl acceso={m.d} emps={emps} proyectos={[...hrProjects].sort((a, b) => String(a.short).localeCompare(String(b.short), "es", { sensitivity: "base", numeric: true }))} tomados={[...USERS.map(x => x.username), ...USUARIOS_DE_BAJA, ...(accesos || []).map(x => x.username)]} userName={userName} onSave={guardarAcceso} onClose={() => setModal(null)} /></Modal>;
     case "ee": return <Modal title="Editar empleado" onClose={() => setModal(null)} wide><EmpForm emp={m.d} onSave={e => sE(emps.map(x => x.id === e.id ? e : x))} /></Modal>;
     {/* Vacaciones y permisos marcan SOLOS la asistencia (syncVacacion /
         syncPermiso) — al editar se limpia el rango viejo antes de aplicar. */}

@@ -1875,6 +1875,14 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   borradores de sp-sim-purchases que salieron de esas cotizaciones y sus PDF;
   cada key con getCloud → quitar → set → verify. En simulación el saldo usa
   `purchasesVista` = reales + simulados. `gt-supply-sim` en sessionStorage.
+  **Óscar PIDE para el plantel y el taller (26-oct-2026)**: el rol almacén
+  también ve "+ Nueva solicitud" en Solicitudes (proyecto PLANTEL ya
+  elegido). Sus solicitudes llevan `sinAlmacen: true`: no pasan por la
+  revisión de almacén (sin alerta → `por_cotizar` directo; con alerta, al
+  aprobarla el Coordinador → `por_cotizar`). **Proyecto SIN receta** (el
+  plantel): los ítems se piden libres, SIN justificación obligatoria
+  (`linea.sinReceta`, alerta "Sin receta"), todos pasan por el Coordinador
+  (aprueba o rechaza) y siguen el proceso normal de compra.
   **VARILLA POR PESO (12-oct-2026, caso acero de Villa San Miguel)**: el PM
   manda el acero como UNA partida en **Ton** ("Acero de construcción, varios
   diámetros", 46.22 Ton a $1,050) pero se compra en LANCES. Decisión de
@@ -2379,6 +2387,10 @@ de llegadas tardías de su tablet) · marcaje="Marcaje de Asistencia" (tablet
 de oficina/administración: SOLO GeoClock, kiosco) · compras_ops=arturo ·
 gerencia (solo lectura). El horario 7–16 se llama "Campo" en UI (key
 interna sigue siendo "plantel" por compatibilidad de fichas guardadas).
+
+Arturo (compras_ops) salió de la empresa: usuario retirado el 26-oct-2026
+(`USUARIOS_DE_BAJA` en users.js: el login lo rechaza, una sesión abierta se
+cierra al recargar y GeoTeam → Accesos no deja recrear ese usuario).
 
 ## Pendientes conocidos
 - Duplicado Junior Josue Zambrano: RESUELTO (borrado por el usuario, ago 2026).

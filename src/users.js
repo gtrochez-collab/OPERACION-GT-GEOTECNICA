@@ -25,11 +25,8 @@ export const USERS = [
   { username: "fernando",      password: "fernando1234",   role: "coordinador_maquinas", label: "Lic. Fernando Diaz" },
   { username: "almacen",       password: "almacen1234",    role: "almacenista",          label: "Encargado de Almacen" },
   { username: "jose",          password: "jose1234",       role: "almacen_visor",        label: "Jose (Asistente Almacen)" },
-  // Arturo: pidio (ago 2026) los MISMOS permisos que Christian en GeoShopping
-  // — crear solicitudes, validar, proyectos, proveedores, fichas. Se le dio un
-  // rol propio en vez de "costos" para NO abrirle GeoTeam (planilla/salarios).
-  // En GeoMachinery sigue siendo solo lectura, como antes.
-  { username: "arturo",        password: "arturo1234",     role: "compras_ops",          label: "Arturo Trochez" },
+  // Arturo (compras_ops) salió de la empresa: se retiró su usuario el
+  // 26-oct-2026. El rol compras_ops queda en el código por si se reasigna.
   // Tablet de marcaje de OFICINA/ADMINISTRACIÓN (ago 2026): solo GeoClock.
   // Sus marcajes los aprueba Ana en Llegadas tardías (GeoTeam). La clave
   // también es el candado del modo kiosco para salir del reloj.
@@ -87,3 +84,8 @@ export const userInitials = (label) => {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length > 2 ? 2 : 1][0]).toUpperCase();
 };
+
+// Usuarios dados de baja (26-oct-2026): si alguien quedó con la sesión
+// abierta en un navegador, App la cierra al recargar. También bloquea que
+// alguien les recree el acceso desde GeoTeam → Accesos con el mismo usuario.
+export const USUARIOS_DE_BAJA = ["arturo"];

@@ -226,6 +226,7 @@ export const ESTADOS_COTIZACION = {
 
 export const ALERTAS = {
   fuera_presupuesto: "Fuera de presupuesto",
+  sin_receta: "Sin receta",
   excede_saldo: "Excede el saldo",
   urgente: "Urgente",
   sin_cantidad: "Partida sin cantidad",
@@ -234,7 +235,9 @@ export const ALERTAS = {
 /** Qué alertas trae una línea (las que la mandan al Coordinador). */
 export const alertasDeLinea = (l, sol) => {
   const a = [];
-  if (l?.fueraPresupuesto) a.push("fuera_presupuesto");
+  // Proyecto SIN receta (26-oct-2026, el plantel): todo se pide libre y lo
+  // aprueba el Coordinador, sin justificar "por qué no está en la receta".
+  if (l?.fueraPresupuesto) a.push(l.sinReceta ? "sin_receta" : "fuera_presupuesto");
   if (l?.excedeSaldo) a.push("excede_saldo");
   if (sol?.urgente) a.push("urgente");
   return a;
@@ -242,7 +245,10 @@ export const alertasDeLinea = (l, sol) => {
 export const lineaConAlerta = (l, sol) => alertasDeLinea(l, sol).length > 0;
 
 /** Estado con el que nace una línea al ENVIAR la solicitud. */
-export const estadoInicialLinea = (l, sol) => (lineaConAlerta(l, sol) ? "pendiente_coord" : "revision_almacen");
+// `sol.sinAlmacen` (26-oct-2026): lo pide el propio Almacén (Óscar, para el
+// plantel y el taller) — no tiene sentido que se revise a sí mismo: sin
+// alerta va directo a cotizar, y con alerta, al aprobarla.
+export const estadoInicialLinea = (l, sol) => (lineaConAlerta(l, sol) ? "pendiente_coord" : sol?.sinAlmacen ? "por_cotizar" : "revision_almacen");
 
 /** Cantidad que todavía hay que comprar de una línea (lo que no despachó almacén ni se aprobó ya en cotización). */
 export const pendienteDeCompra = (l) => {
@@ -283,7 +289,7 @@ export const puedeCancelar = (sol) => {
   if (!sol) return false;
   if (sol.estado === "borrador") return true;
   if (sol.estado !== "enviada") return false;
-  return (sol.lineas || []).every(l => ["pendiente_coord", "revision_almacen", "rechazada"].includes(l.estado));
+  return (sol.lineas || []).every(l => ["pendiente_coord", "revision_almacen", "rechazada"].includes(l.estado) || (sol.sinAlmacen && l.estado === "por_cotizar" && !(l.quoteIds || []).length));
 };
 
 // Transiciones de línea. Devuelve { ok, linea, error }. Acá NO se escribe
@@ -306,7 +312,7 @@ export const aplicarAccionLinea = (l, accion, payload = {}) => {
   const cant = num(l.cantidad);
   switch (accion) {
     case "aprobar_coord":
-      return { ok: true, linea: { ...l, estado: "revision_almacen", aprobadaCoord: true } };
+      return { ok: true, linea: { ...l, estado: payload.sinAlmacen ? "por_cotizar" : "revision_almacen", aprobadaCoord: true } };
     case "rechazar": {
       const motivo = String(payload.motivo || "").trim();
       if (motivo.length < 3) return { ok: false, error: "El motivo del rechazo es obligatorio." };
