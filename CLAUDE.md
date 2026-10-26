@@ -1879,7 +1879,14 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   también ve "+ Nueva solicitud" en Solicitudes (proyecto PLANTEL ya
   elegido). Sus solicitudes llevan `sinAlmacen: true`: no pasan por la
   revisión de almacén (sin alerta → `por_cotizar` directo; con alerta, al
-  aprobarla el Coordinador → `por_cotizar`). **Proyecto SIN receta** (el
+  aprobarla el Coordinador → `por_cotizar`; desde el 26-oct en la noche lo
+  "Sin receta" de Óscar va DIRECTO a Compras y el Coordinador aprueba en la
+  cotización — solo urgente o fuera-de-receta pasan antes). **COTIZACIÓN
+  ADJUNTA** (pedido de Óscar): en "Comprar material" cualquiera puede
+  adjuntar la(s) cotización(es) que ya consiguió (`sol.cotizacionesAdjuntas`
+  [refs cp-file-*]); en Compras sale "Trae cotización" y el form de Ana
+  muestra "Ya viene con cotización" con Ver / "Usar y leer" (la pone como
+  `pdfFile` y corre el lector). **Proyecto SIN receta** (el
   plantel): los ítems se piden libres, SIN justificación obligatoria
   (`linea.sinReceta`, alerta "Sin receta"), todos pasan por el Coordinador
   (aprueba o rechaza) y siguen el proceso normal de compra.

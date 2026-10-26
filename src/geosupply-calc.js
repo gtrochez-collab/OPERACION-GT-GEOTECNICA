@@ -260,7 +260,15 @@ export const lineaConAlerta = (l, sol) => alertasDeLinea(l, sol).length > 0;
 // `sol.sinAlmacen` (26-oct-2026): lo pide el propio Almacén (Óscar, para el
 // plantel y el taller) — no tiene sentido que se revise a sí mismo: sin
 // alerta va directo a cotizar, y con alerta, al aprobarla.
-export const estadoInicialLinea = (l, sol) => esPedidoPlantel(sol) ? "plantel_pendiente" : (lineaConAlerta(l, sol) ? "pendiente_coord" : sol?.sinAlmacen ? "por_cotizar" : "revision_almacen");
+// 26-oct-2026 (Gerson): lo que Óscar pide para el plantel (sin receta) va
+// DIRECTO a Compras; el Coordinador aprueba después, en la cotización. Si
+// trae otra alerta (urgente, fuera de presupuesto de una receta) sí pasa antes.
+export const estadoInicialLinea = (l, sol) => {
+  if (esPedidoPlantel(sol)) return "plantel_pendiente";
+  const al = alertasDeLinea(l, sol);
+  if (sol?.sinAlmacen && al.every(a => a === "sin_receta")) return "por_cotizar";
+  return al.length ? "pendiente_coord" : "revision_almacen";
+};
 
 /** Cantidad que todavía hay que comprar de una línea (lo que no despachó almacén ni se aprobó ya en cotización). */
 export const pendienteDeCompra = (l) => {

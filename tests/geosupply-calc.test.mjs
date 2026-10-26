@@ -250,7 +250,9 @@ test("Lo pide Almacén (sinAlmacen): sin alerta va directo a cotizar; con alerta
   assert.equal(estadoInicialLinea({ cantidad: 2 }, sol), "por_cotizar");
   const libre = { cantidad: 1, fueraPresupuesto: true, sinReceta: true };
   assert.deepEqual(alertasDeLinea(libre, sol), ["sin_receta"]);
-  assert.equal(estadoInicialLinea(libre, sol), "pendiente_coord");
+  assert.equal(estadoInicialLinea(libre, sol), "por_cotizar");          // directo a Compras
+  assert.equal(estadoInicialLinea(libre, { sinAlmacen: true, urgente: true }), "pendiente_coord");
+  assert.equal(estadoInicialLinea(libre, {}), "pendiente_coord");      // un residente sí pasa por el Coordinador
   assert.equal(aplicarAccionLinea({ ...libre, estado: "pendiente_coord" }, "aprobar_coord", { sinAlmacen: true }).linea.estado, "por_cotizar");
   assert.equal(aplicarAccionLinea({ ...libre, estado: "pendiente_coord" }, "aprobar_coord").linea.estado, "revision_almacen");
   assert.equal(puedeCancelar({ estado: "enviada", sinAlmacen: true, lineas: [{ estado: "por_cotizar", quoteIds: [] }] }), true);

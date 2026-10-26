@@ -153,7 +153,8 @@ function PasosLinea({ paso, compact }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // FORM DE SOLICITUD (residente) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
-function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, userKey, onGuardar, onClose, isMobile, proyectoInicial = "" }) {
+function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, userKey, onGuardar, onClose, isMobile, proyectoInicial = "", subirPdf, verArchivo }) {
+  const [subiendoCot, setSubiendoCot] = useState(false);
   const [f, setF] = useState(() => solicitud ? { ...solicitud, lineas: (solicitud.lineas || []).map(l => ({ ...l })) } : { projectCode: proyectoInicial, fechaRequeridaObra: "", urgente: false, justificacionUrgencia: "", notas: "", lineas: [] });
   const [q, setQ] = useState("");
   const [sol, setSol] = useState("");
@@ -321,6 +322,23 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
       </div>}
     </div>
 
+    {/* COTIZACIONES QUE YA TRAE (26-oct-2026, pedido de Óscar): si quien pide
+        ya consiguió la cotización, la adjunta acá y Compras la usa de una. */}
+    {!esPlantel && subirPdf && <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 12px", borderRadius: 14, border: "1px dashed rgba(44,42,40,.18)" }}>
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL }}>¿Ya tenés cotización?</div>
+        <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Adjuntala (PDF o foto) y Compras la usa directo. Opcional.</div>
+      </div>
+      {(f.cotizacionesAdjuntas || []).map(r => <span key={r.fileId} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999, background: "rgba(44,42,40,.06)", fontSize: 12 }}>
+        <button type="button" onClick={() => verArchivo && verArchivo(r)} style={{ background: "none", border: "none", padding: 0, color: CHARCOAL, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name || "Cotización"}</button>
+        <button type="button" title="Quitar" onClick={() => u("cotizacionesAdjuntas", (f.cotizacionesAdjuntas || []).filter(x => x.fileId !== r.fileId))} style={{ background: "none", border: "none", padding: 0, color: "var(--text-3)", cursor: "pointer" }}>✕</button>
+      </span>)}
+      <label style={{ display: "inline-flex", alignItems: "center", padding: "8px 14px", borderRadius: 999, background: "#fff", border: "1px solid rgba(44,42,40,.14)", color: CHARCOAL, fontSize: 12.5, fontWeight: 800, cursor: subiendoCot ? "wait" : "pointer" }}>
+        {subiendoCot ? "Subiendo…" : (f.cotizacionesAdjuntas || []).length ? "+ Otra" : "Adjuntar cotización"}
+        <input type="file" accept="application/pdf,image/*" style={{ display: "none" }} disabled={subiendoCot} onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setSubiendoCot(true); try { const ref = await subirPdf(file); if (ref) setF(p => ({ ...p, cotizacionesAdjuntas: [...(p.cotizacionesAdjuntas || []), ref] })); } finally { setSubiendoCot(false); } }} />
+      </label>
+    </div>}
+
     {/* Urgente + notas */}
     <div style={{ display: "grid", gridTemplateColumns: isMobile || esPlantel ? "1fr" : "1fr 1fr", gap: 12 }}>
       {!esPlantel && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -345,7 +363,7 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
 // FORM DE COTIZACIÓN (Compras) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
 // `candidatas`: líneas por cotizar del proyecto [{sol, l, pendiente}].
-function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, providers, partidaDe, tasa, cfg, onGuardar, onEnviar, onClose, subirPdf, verArchivo, bajarArchivo, memoria = [], isMobile }) {
+function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, providers, partidaDe, tasa, cfg, onGuardar, onEnviar, onClose, subirPdf, verArchivo, bajarArchivo, memoria = [], isMobile, quien = (x) => x }) {
   const [f, setF] = useState(() => cotizacion
     ? { ...cotizacion, lineas: (cotizacion.lineas || []).map(l => ({ ...l })) }
     : { projectCode, provider: "", providerId: "", numeroProveedor: "", condicionPago: "contado", incluyeISV: true, totalDeclarado: "", pdfFile: null, notas: "", lineas: [] });
@@ -411,6 +429,17 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
     try { ref = await subirPdf(file); if (ref) u("pdfFile", ref); } finally { setSubiendo(false); }
     if (ref && esPdfF(file)) { try { await leer(await aDataUrl(file)); } catch (e) { alert("No pude leer el archivo: " + (e?.message || e)); } }
   };
+  // Cotizaciones que adjuntó quien pidió (26-oct-2026): "Usar esta" la pone
+  // como el PDF de esta cotización y, si es PDF, la lee de una.
+  const traidas = (() => { const vistos = new Set(); const out = []; candidatas.forEach(c => (c.sol?.cotizacionesAdjuntas || []).forEach(r => { if (r?.fileId && !vistos.has(r.fileId)) { vistos.add(r.fileId); out.push({ ref: r, sol: c.sol }); } })); return out; })();
+  const usarTraida = async (ref) => {
+    u("pdfFile", ref);
+    if (!esPdfF(ref) || !bajarArchivo) return;
+    setLeyendo(true);
+    let full = null;
+    try { full = await bajarArchivo(ref); } finally { setLeyendo(false); }
+    if (full?.dataUrl) await leer(full.dataUrl);
+  };
   const leerAdjunta = async () => {
     setLeyendo(true);
     let full = null;
@@ -438,6 +467,14 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
   };
   const CTRL = { padding: "8px 10px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 10, fontSize: 13, outline: "none", background: "#F4F4F2", fontFamily: "inherit", boxSizing: "border-box" };
   return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    {traidas.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px", borderRadius: 14, background: C_AZUL.bg }}>
+      <div style={{ fontSize: 12.5, fontWeight: 800, color: C_AZUL.color }}>Ya viene con cotización</div>
+      {traidas.map(({ ref, sol }) => <div key={ref.fileId} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5 }}>
+        <span style={{ flex: 1, minWidth: 160, color: "var(--text-2)" }}><b style={{ color: CHARCOAL }}>{ref.name || "Cotización"}</b> · la adjuntó {quien(sol.residente)} ({sol.folio})</span>
+        <Btn small variant="ghost" onClick={() => verArchivo(ref)}>Ver</Btn>
+        <Btn small disabled={leyendo} onClick={() => usarTraida(ref)}>{f.pdfFile?.fileId === ref.fileId ? "En uso" : esPdfF(ref) ? "Usar y leer" : "Usar esta"}</Btn>
+      </div>)}
+    </div>}
     <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>Proyecto <b>{nombreProy(f.projectCode)}</b> · una cotización = un proveedor. Los precios van <b>con ISV</b>, tal cual cuadran con el total.</div>
     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: `1px dashed ${ORANGE}`, background: "rgba(232,118,45,.05)", borderRadius: 14, padding: "10px 12px" }}>
       <div style={{ flex: 1, minWidth: 220, fontSize: 12.5, color: "var(--text-2)" }}><b style={{ color: CHARCOAL }}>Leer la cotización</b> · subí el PDF y lleno los precios, el total, el N° y el proveedor. Vos solo revisás.</div>
@@ -760,12 +797,12 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     if (f.id) {
       rec = await actualizarSolicitud(f.id, (s) => {
         if (s.estado !== "borrador") { alert("Esta solicitud ya fue enviada: no se puede editar."); return null; }
-        const base = { ...s, tipo: f.tipo || "compra", projectCode: f.projectCode, fechaRequeridaObra: f.fechaRequeridaObra, urgente: !!f.urgente, justificacionUrgencia: f.justificacionUrgencia || "", notas: f.notas || "", lineas: f.lineas, audit: [...(s.audit || []), auditEntry("editada", "Borrador editado")] };
+        const base = { ...s, tipo: f.tipo || "compra", projectCode: f.projectCode, fechaRequeridaObra: f.fechaRequeridaObra, urgente: !!f.urgente, justificacionUrgencia: f.justificacionUrgencia || "", notas: f.notas || "", cotizacionesAdjuntas: f.tipo === "plantel" ? [] : (f.cotizacionesAdjuntas || []), lineas: f.lineas, audit: [...(s.audit || []), auditEntry("editada", "Borrador editado")] };
         return enviar ? prepararEnvio(base) : base;
       });
     } else {
       rec = await crearEn(K.sol, setSolicitudes, (arr) => {
-        const base = { id: uid(), folio: siguienteFolio(arr, "SUP", new Date(ahoraISO).getFullYear()), projectCode: f.projectCode, residente: userKey, tipo: f.tipo || "compra", ...(rol === "almacen" ? { sinAlmacen: true } : {}), fechaRequeridaObra: f.fechaRequeridaObra, urgente: !!f.urgente, justificacionUrgencia: f.justificacionUrgencia || "", notas: f.notas || "", estado: "borrador", lineas: f.lineas, createdAt: ahoraISO, audit: [auditEntry("creada", "Borrador creado")] };
+        const base = { id: uid(), folio: siguienteFolio(arr, "SUP", new Date(ahoraISO).getFullYear()), projectCode: f.projectCode, residente: userKey, tipo: f.tipo || "compra", ...(rol === "almacen" ? { sinAlmacen: true } : {}), fechaRequeridaObra: f.fechaRequeridaObra, urgente: !!f.urgente, justificacionUrgencia: f.justificacionUrgencia || "", notas: f.notas || "", cotizacionesAdjuntas: f.tipo === "plantel" ? [] : (f.cotizacionesAdjuntas || []), estado: "borrador", lineas: f.lineas, createdAt: ahoraISO, audit: [auditEntry("creada", "Borrador creado")] };
         return enviar ? prepararEnvio(base) : base;
       });
     }
@@ -1029,6 +1066,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           <span style={{ fontSize: 11, color: "var(--text-3)" }}>pidió {quien(s.residente)} · requerido <b>{fmtDiaCorto(s.fechaRequeridaObra)}</b>{s.corte && !esPedidoPlantel(s) ? ` · ${etiquetaCorte(s.corte).titulo}` : ""}</span>
           {al.map(a => <Chip key={a} c={a === "urgente" ? C_ROJO : C_AMARILLO}>{ALERTAS[a]}{a === "excede_saldo" && sd ? ` · saldo ${fmtCant(sd.saldo)}` : ""}</Chip>)}
           {ef?.sinRevisionAlmacen && <Chip c={C_AMARILLO}>Sin revisión de almacén</Chip>}
+          {(s.cotizacionesAdjuntas || []).length > 0 && <Chip c={C_AZUL}>Trae cotización</Chip>}
           {l.plantel && num(l.enviadoPlantel) > 0 && <Chip c={C_VERDE}>Enviado {fmtCant(l.enviadoPlantel)} de {fmtCant(l.cantidad)}</Chip>}
           {(l.fueraPresupuesto || l.plantel) && l.justificacion && <span style={{ fontSize: 11, color: "var(--text-2)", fontStyle: "italic" }}>"{l.justificacion}"</span>}
           {s.urgente && s.justificacionUrgencia && al.includes("urgente") && <span style={{ fontSize: 11, color: "var(--text-2)", fontStyle: "italic" }}>"{s.justificacionUrgencia}"</span>}
@@ -1372,6 +1410,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       </div>
       {s.urgente && s.justificacionUrgencia && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_ROJO.bg, color: C_ROJO.color, fontSize: 12.5 }}><b>Urgente:</b> {s.justificacionUrgencia}</div>}
       {s.notas && <div style={{ fontSize: 12.5, color: "var(--text-2)" }}><b>Notas:</b> {s.notas}</div>}
+      {(s.cotizacionesAdjuntas || []).length > 0 && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5, color: "var(--text-2)" }}><b>Cotización que trajo:</b>{s.cotizacionesAdjuntas.map(r => <Btn key={r.fileId} small variant="info" onClick={() => verArchivo(r)}>{(r.name || "Ver").slice(0, 28)}</Btn>)}</div>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div className="gt-label" style={{ color: "var(--text-3)" }}>Dónde va cada ítem</div>
@@ -1618,7 +1657,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const m = modal;
     switch (m.t) {
       case "solicitud": return <Modal title={m.s ? `Editar ${m.s.folio}` : "Nueva solicitud de material"} onClose={() => setModal(null)} wide fondoCierra={false}>
-        <SolicitudFormImpl proyectoInicial={rol === "almacen" && proyectos.some(p => p.short === "PLANTEL") ? "PLANTEL" : ""} solicitud={m.s} proyectos={misProyectos} presDe={presDe} saldoDe={saldoDe} cfg={cfg} ahora={ahora} userKey={userKey} onGuardar={guardarSolicitud} onClose={() => setModal(null)} isMobile={isMobile} />
+        <SolicitudFormImpl subirPdf={subirPdf} verArchivo={verArchivo} proyectoInicial={rol === "almacen" && proyectos.some(p => p.short === "PLANTEL") ? "PLANTEL" : ""} solicitud={m.s} proyectos={misProyectos} presDe={presDe} saldoDe={saldoDe} cfg={cfg} ahora={ahora} userKey={userKey} onGuardar={guardarSolicitud} onClose={() => setModal(null)} isMobile={isMobile} />
       </Modal>;
       case "detalle": return <Modal title={solicitudes.find(x => x.id === m.id)?.folio || "Solicitud"} onClose={() => setModal(null)} wide>{renderDetalle(m.id)}</Modal>;
       case "rechazar-linea": return <Modal title={`Rechazar: ${m.l.descripcion}`} onClose={() => setModal(null)}>
@@ -1633,7 +1672,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         const candidatas = candidatasDe(projectCode, m.q?.id);
         return <Modal title={m.q ? `${m.q.folio} — ${m.q.provider}` : `Nueva cotización — ${nombreProy(projectCode)}`} onClose={() => setModal(null)} wide fondoCierra={false}>
           <CotizacionFormImpl cotizacion={m.q} projectCode={projectCode} nombreProy={nombreProy} candidatas={candidatas} providers={providers} partidaDe={(pid) => partidaDe(projectCode, pid)} tasa={tasa} cfg={cfg} isMobile={isMobile}
-            onGuardar={(f, ev) => guardarCotizacion(f, ev, false)} onEnviar={async (f, ev) => { await materializarSinRevision(f.lineas); await guardarCotizacion(f, ev, true); }} onClose={() => setModal(null)} subirPdf={subirPdf} verArchivo={verArchivo} bajarArchivo={(ref) => store.getCloud(fileKey(ref.fileId))} memoria={memoriaDeCompras(purchasesVista)} />
+            onGuardar={(f, ev) => guardarCotizacion(f, ev, false)} onEnviar={async (f, ev) => { await materializarSinRevision(f.lineas); await guardarCotizacion(f, ev, true); }} onClose={() => setModal(null)} subirPdf={subirPdf} verArchivo={verArchivo} bajarArchivo={(ref) => store.getCloud(fileKey(ref.fileId))} memoria={memoriaDeCompras(purchasesVista)} quien={quien} />
         </Modal>;
       }
       case "sim-shop": return <Modal title="GeoShopping simulado" onClose={() => setModal(null)} wide>{renderSimShop()}</Modal>;
