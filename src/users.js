@@ -34,6 +34,11 @@ export const USERS = [
   // e Ing. César Iglesias como visualizador de todo (gerencia = solo lectura).
   { username: "raul.flores",   password: "GeoCore-i2Ro4f",  role: "admin",                label: "Dr. Raúl Flores" },
   { username: "cesar.iglesias", password: "GeoCore-K6pdC8", role: "gerencia",             label: "Ing. César Iglesias" },
+  // 26-oct-2026, pedido de Gerson: Dr. Edy Montalván SOLO VISUALIZADOR de
+  // GeoSupply, GeoShopping, GeoMachinery, GeoInventory y GeoCost (gerencia =
+  // solo lectura en todos). SIN GeoTeam (`sinModulos`) y sin GeoLogistics
+  // (gerencia no lo tiene).
+  { username: "edy.montalvan",  password: "GeoCore-gfiBPy", role: "gerencia",             label: "Dr. Edy Montalván", sinModulos: ["rrhh"] },
   // 23-oct-2026: la tablet de la pared cubre ADMINISTRACIÓN y PLANTEL (ahí
   // marcan oficinas, taller y almacén). La ubicación de cada marcaje la decide
   // la PERSONA (cuadrilla o departamento) — ver geoclock-calc.js.

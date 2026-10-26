@@ -410,7 +410,9 @@ export default function App() {
   // `oculto` (14-oct-2026): GeoSafety, GeoDrill Vault y Mis Tareas no salen en
   // el panel por ahora. Mis Tareas sigue abriéndose desde la tarjeta TO-DOS de
   // la bienvenida (onAbrirTareas), que no pasa por esta lista.
-  const permitidos = MODULES.filter((m) => m.roles.includes(user.role));
+  // `sinModulos` (users.js): módulos que un usuario NO ve aunque su rol sí.
+  const sinModulos = USERS.find((x) => x.username === user.username)?.sinModulos || [];
+  const permitidos = MODULES.filter((m) => m.roles.includes(user.role) && !sinModulos.includes(m.id));
   const availableModules = permitidos.some((m) => !m.oculto) ? permitidos.filter((m) => !m.oculto) : permitidos;
 
   // ── Bienvenida del día (todos menos la tablet kiosco de marcaje) ──
