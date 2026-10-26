@@ -46,3 +46,15 @@ test("la varilla llega a GeoCost y a la descripción de GeoShopping por lances",
   assert.equal(m.descripcion, "1,000 lances × Varilla #5 (5/8\") de 9 m · 13.97 Ton");
   assert.equal(descripcionDeCotizacion([{ cantidad: 13.968, unidad: "Ton", descripcion: "x", varilla: { n: 5, largo: 9, lances: 1000 } }]), "1,000 lances × Varilla #5 (5/8\") de 9 m · 13.97 Ton");
 });
+
+test("P.U. real por partida: solo ítems con cantidad en la unidad de la partida", async () => {
+  const { precioUnitarioReal } = await import("../src/geocost-calc.js");
+  const r = precioUnitarioReal([
+    { estado: "ejecutado", cantidadPartida: 40, montoUSD: 220 },
+    { estado: "comprometido", cantidadPartida: 10, montoUSD: 50 },
+    { estado: "ejecutado", cantidadPartida: 0, montoUSD: 999 },   // sustituto / sin cantidad
+  ]);
+  assert.equal(r.cantidadComprada, 50);
+  assert.equal(r.puRealUSD, 5.4);
+  assert.equal(precioUnitarioReal([]).puRealUSD, null);
+});

@@ -458,6 +458,9 @@ export const movimientosCompras = ({ purchases, projectCode, tasa, fuente = "com
         : [num(l.cantidad) > 0 ? `${num(l.cantidad).toLocaleString("es-HN")}${l.sustituto?.unidad ? " " + l.sustituto.unidad : l.manual && l.unidad ? " " + l.unidad : ""} ×` : null, l.sustituto?.nombre || l.nombre].filter(Boolean).join(" ") || p.description || "",
       detalle: [p.provider, arr.length > 1 ? `ítem ${i + 1} de ${arr.length}` : null, l.sustituto ? `sustituto de: ${l.nombre}${l.sustituto.motivo ? ` (${l.sustituto.motivo})` : ""}` : null, mq?.nombre].filter(Boolean).join(" · "),
       sustituto: !!l.sustituto,
+      // Cantidad en la UNIDAD DE LA PARTIDA (para el P.U. real): un sustituto
+      // o una línea manual traen otra unidad y no se cuentan.
+      cantidadPartida: !l.sustituto && !l.manual && num(l.cantidad) > 0 ? num(l.cantidad) : 0,
       partidaId: l.partidaId,
       estado,
       montoHNL: l.montoHNL,
@@ -608,6 +611,18 @@ const restarMeses = (yyyyMm, n) => {
 // partidaId → partidaMO(pres) si existe; si no → sinClasificar. Los totales
 // del proyecto INCLUYEN lo sin clasificar (se gastó igual).
 // `hoy` (opcional, YYYY-MM-DD) ancla la ventana de porMes — para tests.
+// P.U. REAL de una partida (26-oct-2026, Gerson: "cuánto nos está saliendo
+// por unidad cada ítem, en dólares"): lo gastado (comprometido + ejecutado)
+// en los ítems que traen cantidad en la unidad de la partida ÷ esa cantidad.
+// Los movimientos sin cantidad (compras viejas de texto libre, MO,
+// movilizaciones) no entran: no se sabe cuántas unidades fueron.
+export const precioUnitarioReal = (movs) => {
+  const conCant = (movs || []).filter(m => m && m.estado && num(m.cantidadPartida) > 0);
+  const cantidadComprada = round2(conCant.reduce((s, m) => s + num(m.cantidadPartida), 0));
+  const usd = conCant.reduce((s, m) => s + num(m.montoUSD), 0);
+  return { cantidadComprada, puRealUSD: cantidadComprada > 0 ? round2(usd / cantidadComprada) : null };
+};
+
 export const resumenPresupuesto = (pres, movs, hoy) => {
   const partidasBase = pres?.partidas || [];
   const idx = new Map(partidasBase.map(p => [p.id, p]));
@@ -641,7 +656,7 @@ export const resumenPresupuesto = (pres, movs, hoy) => {
   });
   const partidas = partidasBase.map(p => {
     const pm = porPartida.get(p.id) || [];
-    return { ...p, montoUSD: montoPartida(p), ...conPct(montoPartida(p), sumar(pm)), movs: pm };
+    return { ...p, montoUSD: montoPartida(p), ...conPct(montoPartida(p), sumar(pm)), movs: pm, ...precioUnitarioReal(pm) };
   });
   const categorias = ordenCategorias(partidasBase).map(cat => {
     const ps = partidas.filter(p => (p.categoria || "Otros") === cat);

@@ -1024,12 +1024,23 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
             // "95 Lance · P.U. $ 5.03" — cantidad Y unidad juntas, como las lee el PM.
             const cantUni = [num(p.cantidad) > 0 ? num(p.cantidad).toLocaleString("es-HN") : null, p.unidad].filter(Boolean).join(" ");
             const sub = [cantUni, num(p.pu) > 0 ? `P.U. ${fmtUSD(num(p.pu))}` : null].filter(Boolean).join(" · ");
+            // P.U. REAL (26-oct-2026): lo que nos está saliendo cada unidad.
+            // Verde si va igual o abajo del P.U. del PM, rojo si va arriba (+3 %).
+            const puReal = (pp, sep) => {
+              if (pp.puRealUSD == null) return null;
+              const pu0 = num(pp.pu), dif = pu0 > 0 ? (pp.puRealUSD - pu0) / pu0 : 0;
+              const c = pu0 > 0 && dif > 0.03 ? "#B42318" : pu0 > 0 ? "#067647" : "var(--text-2)";
+              return <span title={`Promedio de ${num(pp.cantidadComprada).toLocaleString("es-HN")} ${pp.unidad || "unidades"} compradas${pu0 > 0 ? ` · ${dif >= 0 ? "+" : ""}${Math.round(dif * 100)} % contra el presupuesto` : ""}`}>
+                {sep ? " · " : ""}<b style={{ color: c, fontWeight: 700 }}>Real {fmtUSD(pp.puRealUSD)}{pp.unidad ? ` / ${pp.unidad}` : ""}</b>
+                {pu0 > 0 && Math.abs(dif) >= 0.005 && <span style={{ color: c }}> ({dif > 0 ? "+" : ""}{Math.round(dif * 100)} %)</span>}
+              </span>;
+            };
             return <div key={p.id}>
               <div className="cc-fila" role="button" tabIndex={0} aria-expanded={abierta} onClick={toggle} onKeyDown={onKeyActivar(toggle)}
                 style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1.4fr) minmax(160px, 1fr) auto", gap: isMobile ? 8 : 18, alignItems: "center", padding: "10px 10px" }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{p.nombre}</div>
-                  {sub && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 2 }}>{sub}</div>}
+                  {(sub || p.puRealUSD != null) && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 2 }}>{sub}{puReal(p, !!sub)}</div>}
                 </div>
                 <div>{barraDoble({ presupuestoUSD: p.montoUSD ?? montoPartida(p), ejecutadoUSD: p.ejecutadoUSD, comprometidoUSD: p.comprometidoUSD }, { alto: 8, delay: ci * 60 + pi * 40 })}</div>
                 <div style={{ textAlign: isMobile ? "left" : "right", minWidth: isMobile ? 0 : 200 }}>

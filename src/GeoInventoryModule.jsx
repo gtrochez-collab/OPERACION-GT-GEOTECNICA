@@ -468,13 +468,16 @@ function UbicacionFormImpl({ ubicacion, usuarios, onSave, onClose, ocupado }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // FICHA de un artículo (modal) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
-function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms: permsBase, puedeEn = () => true, onAccion, onEditar, onEliminar, onEtiqueta, verFoto, ocupado, isMobile, movs }) {
+function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms: permsBase, puedeEn = () => true, onAccion, onEditar, onEliminar, onEtiqueta, verFoto, ocupado, isMobile, movs, accionInicial = "" }) {
   const [accion, setAccion] = useState(null);   // entrada | salida | mover | ajustar | asignar | maquina
   const [f, setF] = useState({});
   const [qr, setQr] = useState(null);
   const [verQr, setVerQr] = useState(false);
   useEffect(() => { let vivo = true; qrDataUrl(urlDeFicha(item.codigo), 180).then(d => { if (vivo) setQr(d); }).catch(() => {}); return () => { vivo = false; }; }, [item.codigo]);
-  useEffect(() => { setAccion(null); setF({}); }, [item.id, item.updatedAt]);
+  // Se limpia la acción abierta cuando el artículo CAMBIA (no en el montaje:
+  // así "Dar salida" puede abrir la ficha con la salida ya desplegada).
+  const claveRef = useRef(`${item.id}|${item.updatedAt}`);
+  useEffect(() => { const k = `${item.id}|${item.updatedAt}`; if (k === claveRef.current) return; claveRef.current = k; setAccion(null); setF({}); }, [item.id, item.updatedAt]);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const cat = categoriaDe(item.categoria);
   const estados = estadosDe(item);
@@ -496,6 +499,9 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms: permsBa
   const maquina = maquinas.find(m => m.id === item.maquinaId);
   const abrir = (a) => { setAccion(accion === a ? null : a); setF({ de: ubicPrincipal, a: "", cantidad: "", nuevo: "", motivo: "", en: ubicPrincipal }); };
   const ejecutar = async (m) => { const ok = await onAccion(item, m); if (ok) { setAccion(null); setF({}); } };
+  // Desde "Dar salida" (26-oct-2026) la ficha abre con la salida ya desplegada.
+  const inicialRef = useRef(accionInicial);
+  useEffect(() => { const a = inicialRef.current; if (a) { inicialRef.current = ""; setAccion(a); setF({ de: ubicPrincipal, a: "", cantidad: "", nuevo: "", motivo: "", en: ubicPrincipal }); } }, []);
   const cambiarEstado = (k) => {
     if (k === item.estado) return;
     if (k === "en_operacion") { setAccion("maquina"); setF({ maquinaId: item.maquinaId || "" }); return; }
@@ -700,6 +706,35 @@ function QRImpl({ codigo, titulo, subtitulo, onImprimir, extraBoton, onClose }) 
 // ═══════════════════════════════════════════════════════════════════════════
 // ESCÁNER con la cámara (modal) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
+// "Dar salida" (26-oct-2026, Gerson): igual de a la mano que Agregar. Se
+// escanea el QR o se busca el artículo; al tocarlo abre su ficha con la
+// salida ya desplegada. Solo ofrece lo que esa persona puede sacar.
+function SalidaPickerImpl({ items, ubicaciones, puedeEn, onElegir, onEscanear, isMobile }) {
+  const [q, setQ] = useState("");
+  const conSalida = (it) => it.tipo === "cantidad" ? ubicacionesConStock(it).some(x => puedeEn(x.id)) : puedeEn(it.ubicacionId) && (it.tipo !== "caja" || Number(it.caja?.cantidad) > 0);
+  const t = q.trim().toLowerCase();
+  const lista = items.filter(it => !it.eliminado && conSalida(it) && (!t || `${it.codigo} ${it.nombre} ${it.marca || ""} ${it.serie || ""}`.toLowerCase().includes(t)))
+    .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es", { numeric: true })).slice(0, 60);
+  const donde = (it) => it.tipo === "cantidad" ? ubicacionesConStock(it).filter(x => puedeEn(x.id)).map(x => `${nombreUbicacion(ubicaciones, x.id)} · ${fmtN(x.cantidad)} ${it.unidad || ""}`).join(" | ") : [nombreUbicacion(ubicaciones, it.ubicacionId), it.tipo === "caja" ? `${fmtN(it.caja?.cantidad)} ${String(it.caja?.contenido || "").toLowerCase()}s` : ""].filter(Boolean).join(" · ");
+  return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <button type="button" onClick={onEscanear} style={{ flex: isMobile ? "1 1 100%" : "0 0 auto", minHeight: 48, padding: "0 18px", borderRadius: 14, border: "none", background: "#1D5FAF", color: "#fff", font: "800 14px/1 var(--sans)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}><Ico d={ICO.escanear} size={19} sw={2} /> Escanear QR</button>
+      <input value={q} onChange={e => setQ(e.target.value)} autoFocus={!isMobile} placeholder="…o buscá por nombre o código" onKeyDown={e => { if (e.key === "Enter" && lista.length === 1) onElegir(lista[0]); }} style={{ ...CTRL, flex: "1 1 220px", minHeight: 48 }} />
+    </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "55vh", overflowY: "auto" }}>
+      {lista.map(it => <button key={it.id} type="button" onClick={() => onElegir(it)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 10px", borderRadius: 14, border: "1px solid rgba(44,42,40,.08)", background: "rgba(255,255,255,.7)", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+        <Foto foto={it.foto} size={44} radius={10} categoria={it.categoria} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.tipo === "caja" ? `Caja · ${it.nombre}` : it.nombre}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><span style={{ fontFamily: "var(--mono)", fontWeight: 800 }}>{it.codigo}</span> · {donde(it)}</div>
+        </div>
+        <span style={{ color: ORANGE_DARK, fontWeight: 800, fontSize: 13, flexShrink: 0 }}>Salida ›</span>
+      </button>)}
+      {!lista.length && <div style={{ fontSize: 13, color: "var(--text-3)", padding: "10px 4px" }}>{t ? "No encontré nada con existencias que puedas sacar." : "No hay artículos con existencias en tus ubicaciones."}</div>}
+    </div>
+  </div>;
+}
+
 function EscanerImpl({ onCodigo, onClose }) {
   const videoRef = useRef(null);
   const [error, setError] = useState("");
@@ -1168,7 +1203,9 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   const renderInicio = () => {
     if (ruta.ubic) return renderUbicacionVista();
     const mias = ubicaciones.filter(u2 => u2.responsable && u2.responsable === userKey);
-    const noMia = (u2) => !mias.includes(u2) || !!qUbic;   // las tuyas van arriba, no se repiten
+    // 26-oct-2026 (Gerson): las tuyas van arriba Y también en su grupo, así el
+    // Vault sale en "Almacén y bodegas" aunque seas su responsable.
+    const noMia = () => true;
     const fijas = ubicaciones.filter(u2 => ["almacen", "vault", "taller"].includes(u2.tipo) && noMia(u2));
     const oficinas = ubicaciones.filter(u2 => u2.tipo === "oficina" && noMia(u2));
     const proys = ubicaciones.filter(u2 => u2.tipo === "proyecto" && noMia(u2));
@@ -1180,6 +1217,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "stretch" }}>
         <button type="button" onClick={() => setModal({ t: "escanear" })} style={{ flex: isMobile ? "1 1 0" : "0 0 auto", minHeight: 50, padding: "0 20px", borderRadius: 16, border: "none", background: "#1D5FAF", color: "#fff", font: "800 14.5px/1 var(--sans)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, boxShadow: "0 10px 22px rgba(29,95,175,.25)" }}><Ico d={ICO.escanear} size={21} sw={2} /> Escanear QR</button>
         {perms.cargar && <button type="button" onClick={() => setSec("agregar")} style={{ flex: isMobile ? "1 1 0" : "0 0 auto", minHeight: 50, padding: "0 20px", borderRadius: 16, border: "none", background: ORANGE_DARK, color: "#fff", font: "800 14.5px/1 var(--sans)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, boxShadow: "0 10px 22px rgba(199,95,31,.25)" }}><Ico d={ICO.agregar} size={21} sw={2} /> Agregar</button>}
+        {perms.cargar && <button type="button" onClick={() => setModal({ t: "salida" })} style={{ flex: isMobile ? "1 1 0" : "0 0 auto", minHeight: 50, padding: "0 20px", borderRadius: 16, border: "none", background: CHARCOAL, color: "#fff", font: "800 14.5px/1 var(--sans)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9, boxShadow: "0 10px 22px rgba(44,42,40,.22)" }}><Ico d={ICO.movimientos} size={21} sw={2} /> Dar salida</button>}
         <input value={qUbic} onChange={e => setQUbic(e.target.value)} enterKeyHint="go" onKeyDown={e => { if (e.key !== "Enter") return; const c = codigoDeTexto(qUbic); if (c) { setQUbic(""); abrirCodigo(c); } }} placeholder="Filtrar ubicaciones o escribir un código…" style={{ flex: isMobile ? "1 1 100%" : "1 1 220px", minHeight: 50, padding: "0 16px", borderRadius: 16, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.75)", fontSize: 14, outline: "none", fontFamily: "inherit" }} />
       </div>
       <div className="gt-vidrio" style={{ padding: "8px 14px", display: "flex", gap: isMobile ? 10 : 20, flexWrap: "wrap", alignItems: "center" }}>
@@ -1423,11 +1461,12 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   const renderModal = () => {
     if (!modal) return null;
     const m = modal;
-    if (m.t === "ficha") { const it = items.find(i => i.id === m.id); if (!it) return null; return <Modal title={it.codigo} onClose={() => setModal(null)} wide><FichaImpl item={it} ubicaciones={ubicaciones} emps={emps} maquinas={maquinas} estantes={estantes} perms={perms} puedeEn={puedeEn} ocupado={ocupado} isMobile={isMobile} movs={movs} verFoto={verFoto} onAccion={accionSobre} onEditar={(it2) => setModal({ t: "editar", id: it2.id })} onEliminar={eliminarArticulo} onEtiqueta={(it2) => etiquetas([it2], it2.codigo)} /></Modal>; }
+    if (m.t === "ficha") { const it = items.find(i => i.id === m.id); if (!it) return null; return <Modal title={it.codigo} onClose={() => setModal(null)} wide><FichaImpl item={it} ubicaciones={ubicaciones} emps={emps} maquinas={maquinas} estantes={estantes} perms={perms} puedeEn={puedeEn} ocupado={ocupado} isMobile={isMobile} movs={movs} verFoto={verFoto} accionInicial={m.accion || ""} onAccion={accionSobre} onEditar={(it2) => setModal({ t: "editar", id: it2.id })} onEliminar={eliminarArticulo} onEtiqueta={(it2) => etiquetas([it2], it2.codigo)} /></Modal>; }
     if (m.t === "editar") { const it = items.find(i => i.id === m.id); if (!it) return null; return <Modal title={`Editar ${it.codigo}`} onClose={() => setModal({ t: "ficha", id: it.id })}><EditarFormImpl item={it} ocupado={ocupado} isMobile={isMobile} onSave={(f) => editarArticulo(it, f)} onClose={() => setModal({ t: "ficha", id: it.id })} /></Modal>; }
     if (m.t === "ubicacion") return <Modal title={m.u ? `${m.u.nombre}` : "Nueva oficina"} onClose={() => setModal(null)}><UbicacionFormImpl ubicacion={m.u} usuarios={usuarios} ocupado={ocupado} onSave={(f) => guardarUbicacion(m.u, f)} onClose={() => setModal(null)} /></Modal>;
     if (m.t === "importar") return <Modal title="Importar desde Excel" onClose={() => setModal(null)} wide><ImportarFormImpl ubicaciones={ubicacionesMias} ubicFija={ubicFija} emps={emps} ocupado={ocupado} onImportar={importar} onClose={() => setModal(null)} /></Modal>;
-    if (m.t === "escanear") return <Modal title="Escanear" onClose={() => setModal(null)}><EscanerImpl onCodigo={(c) => { setModal(null); abrirCodigo(c); }} onClose={() => setModal(null)} /></Modal>;
+    if (m.t === "salida") return <Modal title="Dar salida" onClose={() => setModal(null)} wide><SalidaPickerImpl items={items} ubicaciones={ubicaciones} puedeEn={puedeEn} isMobile={isMobile} onEscanear={() => setModal({ t: "escanear", salida: true })} onElegir={(it) => setModal({ t: "ficha", id: it.id, accion: it.tipo === "individual" ? "mover" : "salida" })} /></Modal>;
+    if (m.t === "escanear") return <Modal title="Escanear" onClose={() => setModal(null)}><EscanerImpl onCodigo={(c) => { if (m.salida) { const it = items.find(i => !i.eliminado && String(i.codigo).toUpperCase() === String(c).toUpperCase()); if (it) return setModal({ t: "ficha", id: it.id, accion: it.tipo === "individual" ? "mover" : "salida" }); } setModal(null); abrirCodigo(c); }} onClose={() => setModal(null)} /></Modal>;
     if (m.t === "estante") return <Modal title={m.e ? `Editar ${m.e.nombre}` : "Nuevo estante / rack"} onClose={() => setModal(null)}><EstanteFormImpl estante={m.e} ubicacionNombre={nombreUbicacion(ubicaciones, m.ubicacionId)} ocupado={ocupado} onSave={(f) => guardarEstante(m.e, m.ubicacionId, f)} onClose={() => setModal(null)} /></Modal>;
     if (m.t === "qr") { const est = m.estanteId ? estantes.find(x => x.id === m.estanteId) : null; return <Modal title="Código QR" onClose={() => setModal(null)}><QRImpl codigo={m.codigo} titulo={m.titulo} subtitulo={m.subtitulo} onClose={() => setModal(null)}
       onImprimir={perms.imprimir ? async () => { try { await generarEtiquetas(m.grande ? { grandes: [m.grande] } : { chicas: [m.chica] }, { titulo: m.codigo }); } catch (err) { alert("No pude generar el PDF: " + (err?.message || err)); } } : null}
