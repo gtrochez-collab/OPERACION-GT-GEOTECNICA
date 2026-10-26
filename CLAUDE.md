@@ -1883,6 +1883,21 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   plantel): los ítems se piden libres, SIN justificación obligatoria
   (`linea.sinReceta`, alerta "Sin receta"), todos pasan por el Coordinador
   (aprueba o rechaza) y siguen el proceso normal de compra.
+  **PEDIR AL PLANTEL / TALLER (26-oct-2026)**: caso Ing. Yurien (Cataleya):
+  placas de anclaje y varillas roscadas que se producen en soldadura/torno y
+  Almacén va enviando según se necesita — NO es compra. Al crear la solicitud
+  se elige "Comprar material" | "Pedir al plantel / taller" (`sol.tipo`
+  "compra" | "plantel"; `esPedidoPlantel`). Plantel: ítems libres
+  (`linea.plantel`), sin receta, sin corte ni urgente, sin alertas → nacen en
+  `plantel_pendiente` y le llegan DIRECTO a Óscar (decisión de Gerson: sin
+  aprobación) en el bloque "Pedidos al plantel / taller" de la pestaña
+  Almacén: Enviar todo · Una parte (`plantel_enviar`, acumula
+  `enviadoPlantel` + `enviosPlantel[]`, completo → `plantel_enviado`) · No hay
+  (`plantel_no_hay`: rechazada con nota, `noHayPlantel`; el ingeniero decide
+  si lo pide como compra). El ingeniero ve barra "Enviado X de Y" con cada
+  envío. Fuera de Dashboard, "fuera de corte" y "faltan para el viernes".
+  La SUP-2026-0001 de la Ing. Yurien (5 ítems mal pedidos como compra) se
+  borró el 26-oct a pedido de Gerson (respaldo en el scratchpad de la sesión).
   **VARILLA POR PESO (12-oct-2026, caso acero de Villa San Miguel)**: el PM
   manda el acero como UNA partida en **Ton** ("Acero de construcción, varios
   diámetros", 46.22 Ton a $1,050) pero se compra en LANCES. Decisión de

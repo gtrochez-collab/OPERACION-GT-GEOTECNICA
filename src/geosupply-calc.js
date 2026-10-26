@@ -213,8 +213,19 @@ export const ESTADOS_LINEA = {
   cotizada:           { label: "Cotizada — en revisión",    corto: "Cotizada",     tono: "naranja", paso: 4 },
   comprada:           { label: "Aprobada — en compra",      corto: "En compra",    tono: "verde",   paso: 5 },
   rechazada:          { label: "Rechazada",                 corto: "Rechazada",    tono: "rojo",    paso: 0 },
+  // PEDIDO AL PLANTEL / TALLER (26-oct-2026): insumos que ya hay o se
+  // producen acá (placas de anclaje, varillas roscadas…). No es compra.
+  plantel_pendiente:  { label: "Pedido al plantel",         corto: "Plantel",      tono: "azul",    paso: 2 },
+  plantel_enviado:    { label: "Enviado desde el plantel",  corto: "Enviado",      tono: "verde",   paso: 6 },
 };
-export const LINEA_TERMINAL = ["despachada_almacen", "comprada", "rechazada"];
+export const LINEA_TERMINAL = ["despachada_almacen", "comprada", "rechazada", "plantel_enviado"];
+
+/** Una solicitud "Pedir al plantel / taller": va directo a Almacén (Óscar), sin
+ * receta, sin Coordinador y sin compra. Si no lo hay, se le devuelve al
+ * ingeniero (que lo pide como compra si hace falta). */
+export const esPedidoPlantel = (sol) => sol?.tipo === "plantel";
+/** Lo que falta enviar de una línea del plantel. */
+export const pendientePlantel = (l) => round2(Math.max(0, num(l?.cantidad) - num(l?.enviadoPlantel)));
 
 export const ESTADOS_COTIZACION = {
   borrador:  { label: "Borrador",            tono: "gris" },
@@ -235,6 +246,7 @@ export const ALERTAS = {
 /** Qué alertas trae una línea (las que la mandan al Coordinador). */
 export const alertasDeLinea = (l, sol) => {
   const a = [];
+  if (esPedidoPlantel(sol)) return a;
   // Proyecto SIN receta (26-oct-2026, el plantel): todo se pide libre y lo
   // aprueba el Coordinador, sin justificar "por qué no está en la receta".
   if (l?.fueraPresupuesto) a.push(l.sinReceta ? "sin_receta" : "fuera_presupuesto");
@@ -248,7 +260,7 @@ export const lineaConAlerta = (l, sol) => alertasDeLinea(l, sol).length > 0;
 // `sol.sinAlmacen` (26-oct-2026): lo pide el propio Almacén (Óscar, para el
 // plantel y el taller) — no tiene sentido que se revise a sí mismo: sin
 // alerta va directo a cotizar, y con alerta, al aprobarla.
-export const estadoInicialLinea = (l, sol) => (lineaConAlerta(l, sol) ? "pendiente_coord" : sol?.sinAlmacen ? "por_cotizar" : "revision_almacen");
+export const estadoInicialLinea = (l, sol) => esPedidoPlantel(sol) ? "plantel_pendiente" : (lineaConAlerta(l, sol) ? "pendiente_coord" : sol?.sinAlmacen ? "por_cotizar" : "revision_almacen");
 
 /** Cantidad que todavía hay que comprar de una línea (lo que no despachó almacén ni se aprobó ya en cotización). */
 export const pendienteDeCompra = (l) => {
@@ -279,8 +291,8 @@ export const estadoCabecera = (sol) => {
   const ls = sol.lineas || [];
   if (!ls.length) return "enviada";
   if (ls.every(l => LINEA_TERMINAL.includes(l.estado))) return "completada";
-  const iniciales = ["pendiente_coord", "revision_almacen"];
-  if (ls.some(l => !iniciales.includes(l.estado))) return "en_proceso";
+  const iniciales = ["pendiente_coord", "revision_almacen", "plantel_pendiente"];
+  if (ls.some(l => !iniciales.includes(l.estado) || num(l.enviadoPlantel) > 0)) return "en_proceso";
   return "enviada";
 };
 
@@ -289,14 +301,16 @@ export const puedeCancelar = (sol) => {
   if (!sol) return false;
   if (sol.estado === "borrador") return true;
   if (sol.estado !== "enviada") return false;
-  return (sol.lineas || []).every(l => ["pendiente_coord", "revision_almacen", "rechazada"].includes(l.estado) || (sol.sinAlmacen && l.estado === "por_cotizar" && !(l.quoteIds || []).length));
+  return (sol.lineas || []).every(l => ["pendiente_coord", "revision_almacen", "rechazada"].includes(l.estado) || (l.estado === "plantel_pendiente" && !(num(l.enviadoPlantel) > 0)) || (sol.sinAlmacen && l.estado === "por_cotizar" && !(l.quoteIds || []).length));
 };
 
 // Transiciones de línea. Devuelve { ok, linea, error }. Acá NO se escribe
 // bitácora: el módulo agrega la entrada de audit con quién y cuándo.
 const DESDE = {
   aprobar_coord:   ["pendiente_coord"],
-  rechazar:        ["pendiente_coord", "revision_almacen", "por_cotizar", "cotizada"],
+  rechazar:        ["pendiente_coord", "revision_almacen", "por_cotizar", "cotizada", "plantel_pendiente"],
+  plantel_enviar:  ["plantel_pendiente"],
+  plantel_no_hay:  ["plantel_pendiente"],
   almacen_hay:     ["revision_almacen"],
   almacen_parcial: ["revision_almacen"],
   almacen_no_hay:  ["revision_almacen"],
@@ -317,6 +331,19 @@ export const aplicarAccionLinea = (l, accion, payload = {}) => {
       const motivo = String(payload.motivo || "").trim();
       if (motivo.length < 3) return { ok: false, error: "El motivo del rechazo es obligatorio." };
       return { ok: true, linea: { ...l, estado: "rechazada", motivoRechazo: motivo } };
+    }
+    case "plantel_enviar": {
+      // Se va enviando por partes, según se produce en soldadura y torno.
+      const q = num(payload.cantidad), pend = pendientePlantel(l);
+      if (!(q > 0) || q > pend + 0.0001) return { ok: false, error: `Lo enviado debe ser mayor que 0 y no más de lo que falta (${pend}).` };
+      const enviado = round2(num(l.enviadoPlantel) + q);
+      const envios = [...(l.enviosPlantel || []), { cantidad: q, at: payload.at || "", por: payload.por || "", nota: String(payload.nota || "").trim() }];
+      return { ok: true, linea: { ...l, enviadoPlantel: enviado, enviosPlantel: envios, estado: enviado >= num(l.cantidad) - 0.0001 ? "plantel_enviado" : "plantel_pendiente" } };
+    }
+    case "plantel_no_hay": {
+      const motivo = String(payload.motivo || "").trim();
+      if (motivo.length < 3) return { ok: false, error: "Escribí por qué no se puede (el ingeniero lo va a ver)." };
+      return { ok: true, linea: { ...l, estado: "rechazada", noHayPlantel: true, motivoRechazo: motivo } };
     }
     case "almacen_hay":
       return { ok: true, linea: { ...l, estado: "despachada_almacen", despachadoAlmacen: cant, aCotizar: 0 } };
@@ -573,7 +600,7 @@ export const siguienteCodigoCompra = (lista, anio = new Date().getFullYear(), pr
 
 /** ¿La solicitud quedó FUERA del corte? = su viernes 12:00 pasó y aún tiene líneas sin resolver. */
 export const fueraDeCorte = (sol, cfg, ahora = new Date()) => {
-  if (!sol?.corte || !solicitudActiva(sol)) return false;
+  if (!sol?.corte || !solicitudActiva(sol) || esPedidoPlantel(sol)) return false;
   const h = hitoDeCorte(sol.corte, "aprobacionHasta", cfg);
   if (!estadoHito(h, ahora).pasado) return false;
   return (sol.lineas || []).some(l => !LINEA_TERMINAL.includes(l.estado));
@@ -603,7 +630,8 @@ export const metricasDashboard = ({ solicitudes = [], cotizaciones = [], purchas
     if (filtros.hasta && (!d || d > filtros.hasta)) return false;
     return true;
   };
-  const sols = solicitudes.filter(s => s.estado !== "borrador" && enRango(s));
+  // Los pedidos al plantel no son compras: no entran a las métricas del proceso.
+  const sols = solicitudes.filter(s => s.estado !== "borrador" && !esPedidoPlantel(s) && enRango(s));
   const idsSol = new Set(sols.map(s => s.id));
   const cots = cotizaciones.filter(q => idsSol.has(q.requestId));
   const porEstado = {};
@@ -678,7 +706,7 @@ export const contarPendientes = ({ solicitudes = [], cotizaciones = [], rol, use
   const lineas = activas.flatMap(s => (s.lineas || []).map(l => ({ l, s, ef: estadoEfectivoLinea(l, s, cfg, ahora) })));
   const n = {
     alertas: lineas.filter(x => x.ef.estado === "pendiente_coord").length,
-    almacen: lineas.filter(x => x.ef.estado === "revision_almacen").length,
+    almacen: lineas.filter(x => x.ef.estado === "revision_almacen" || x.ef.estado === "plantel_pendiente").length,
     porCotizar: lineas.filter(x => x.ef.estado === "por_cotizar").length,
     cotizacionesPorAprobar: cotizaciones.filter(q => q.estado === "enviada").length,
     devueltas: cotizaciones.filter(q => q.estado === "devuelta").length,

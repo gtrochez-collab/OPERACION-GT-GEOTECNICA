@@ -255,3 +255,21 @@ test("Lo pide Almacén (sinAlmacen): sin alerta va directo a cotizar; con alerta
   assert.equal(aplicarAccionLinea({ ...libre, estado: "pendiente_coord" }, "aprobar_coord").linea.estado, "revision_almacen");
   assert.equal(puedeCancelar({ estado: "enviada", sinAlmacen: true, lineas: [{ estado: "por_cotizar", quoteIds: [] }] }), true);
 });
+
+test("Pedido al plantel: directo a Almacén, se envía por partes y 'No hay' vuelve al ingeniero", async () => {
+  const m = await import("../src/geosupply-calc.js");
+  const sol = { tipo: "plantel", urgente: true };
+  const l0 = { id: "a", cantidad: 30, plantel: true };
+  assert.deepEqual(m.alertasDeLinea(l0, sol), []);
+  assert.equal(m.estadoInicialLinea(l0, sol), "plantel_pendiente");
+  let r = m.aplicarAccionLinea({ ...l0, estado: "plantel_pendiente" }, "plantel_enviar", { cantidad: 10 });
+  assert.equal(r.linea.estado, "plantel_pendiente"); assert.equal(m.pendientePlantel(r.linea), 20);
+  assert.equal(m.estadoCabecera({ estado: "enviada", lineas: [r.linea] }), "en_proceso");
+  assert.equal(m.aplicarAccionLinea(r.linea, "plantel_enviar", { cantidad: 25 }).ok, false);
+  r = m.aplicarAccionLinea(r.linea, "plantel_enviar", { cantidad: 20 });
+  assert.equal(r.linea.estado, "plantel_enviado"); assert.equal(r.linea.enviosPlantel.length, 2);
+  assert.equal(m.estadoCabecera({ estado: "enviada", lineas: [r.linea] }), "completada");
+  const nh = m.aplicarAccionLinea({ ...l0, estado: "plantel_pendiente" }, "plantel_no_hay", { motivo: "No hay placa de 12 mm" });
+  assert.equal(nh.linea.estado, "rechazada"); assert.equal(nh.linea.noHayPlantel, true);
+  assert.equal(m.puedeCancelar({ estado: "enviada", tipo: "plantel", lineas: [{ ...l0, estado: "plantel_pendiente" }] }), true);
+});

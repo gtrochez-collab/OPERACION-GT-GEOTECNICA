@@ -43,7 +43,7 @@ import {
   DIAS_SEMANA, estadoEfectivoLinea, solicitudActiva, ESTADOS_LINEA, ESTADOS_SOLICITUD, ESTADOS_COTIZACION, estadoCabecera,
   estadoInicialLinea, alertasDeLinea, ALERTAS, puedeCancelar, aplicarAccionLinea, pendienteDeCompra, saldoDePartida, partidasPedibles,
   puPresupuestoUSD, evaluarCotizacion, siguienteFolio, siguienteCodigoCompra, borradorDesdeCotizacion, fueraDeCorte, metricasDashboard,
-  LINEA_TERMINAL, ymdSumar, partesHN, enviadaEnCorte, round2,
+  LINEA_TERMINAL, esPedidoPlantel, pendientePlantel, ymdSumar, partesHN, enviadaEnCorte, round2,
 } from "./geosupply-calc.js";
 
 const ORANGE = "#E8762D";
@@ -160,8 +160,11 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
   const [fuera, setFuera] = useState(null);     // { descripcion, unidad, cantidad, justificacion }
   const [saving, setSaving] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
-  const pres = presDe(f.projectCode);
+  // "Pedir al plantel / taller" (26-oct-2026): no es compra, no usa receta.
+  const esPlantel = f.tipo === "plantel";
+  const pres = esPlantel ? null : presDe(f.projectCode);
   const sinReceta = !!f.projectCode && !pres;
+  const libre = sinReceta || esPlantel;
   const pedibles = partidasPedibles(pres);
   const soluciones = [...new Set(pedibles.map(p => String(p.solucion || "").trim()).filter(Boolean))];
   const norm = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -216,12 +219,24 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
     } finally { setSaving(false); }
   };
   const CTRL = { padding: "8px 10px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 10, fontSize: 13, outline: "none", background: "#F4F4F2", fontFamily: "inherit", boxSizing: "border-box" };
+  const cambiarTipo = (t) => { if (t === (f.tipo || "compra")) return; if (f.lineas.length && !confirm("Cambiar el tipo quita lo que ya agregaste. ¿Seguir?")) return; setF(p => ({ ...p, tipo: t, lineas: [], urgente: false, justificacionUrgencia: "" })); setFuera(null); };
+  const editable = !solicitud || solicitud.estado === "borrador";
   return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    {editable && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, padding: 4, borderRadius: 14, background: "rgba(44,42,40,.06)" }}>
+      {[["compra", "Comprar material", "Pasa por el proceso de compra"], ["plantel", "Pedir al plantel / taller", "Lo que ya hay o se produce acá: placas, varillas roscadas…"]].map(([k, t, d]) => {
+        const on = (f.tipo || "compra") === k;
+        return <button key={k} type="button" onClick={() => cambiarTipo(k)} aria-pressed={on} style={{ padding: "10px 12px", borderRadius: 11, border: "none", background: on ? "#fff" : "transparent", boxShadow: on ? "0 2px 8px rgba(44,42,40,.12)" : "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: on ? CHARCOAL : "var(--text-2)" }}>{t}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 2 }}>{d}</div>
+        </button>;
+      })}
+    </div>}
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr", gap: 12 }}>
-      <Select label="Proyecto *" options={[{ group: "Con receta en GeoCost", options: proyectos.filter(p => presDe(p.short)).map(p => ({ value: p.short, label: p.name || p.short })) }, { group: "Sin receta", options: proyectos.filter(p => !presDe(p.short)).map(p => ({ value: p.short, label: p.name || p.short })) }].filter(g => g.options.length)} value={f.projectCode} onChange={e => { u("projectCode", e.target.value); u("lineas", f.lineas.filter(l => l.fueraPresupuesto)); setSol(""); }} emptyLabel="Elegí el proyecto" disabled={!!solicitud && solicitud.estado !== "borrador"} />
+      <Select label={esPlantel ? "Para qué proyecto *" : "Proyecto *"} options={[{ group: "Con receta en GeoCost", options: proyectos.filter(p => presDe(p.short)).map(p => ({ value: p.short, label: p.name || p.short })) }, { group: "Sin receta", options: proyectos.filter(p => !presDe(p.short)).map(p => ({ value: p.short, label: p.name || p.short })) }].filter(g => g.options.length)} value={f.projectCode} onChange={e => { u("projectCode", e.target.value); u("lineas", f.lineas.filter(l => l.fueraPresupuesto || l.plantel)); setSol(""); }} emptyLabel="Elegí el proyecto" disabled={!!solicitud && solicitud.estado !== "borrador"} />
       <Input label="Lo necesito en obra el *" type="date" value={f.fechaRequeridaObra || ""} min={hoyISO()} onChange={e => u("fechaRequeridaObra", e.target.value)} />
     </div>
-    {f.projectCode && !pres && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12.5 }}>Este proyecto no tiene receta: pedí lo que haga falta y lo aprueba el Coordinador.</div>}
+    {esPlantel && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AZUL.bg, color: C_AZUL.color, fontSize: 12.5 }}>Le llega directo a Almacén (Óscar), que te lo va enviando según se produzca. Si no lo hay, te lo devuelve con una nota.</div>}
+    {!esPlantel && f.projectCode && !pres && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12.5 }}>Este proyecto no tiene receta: pedí lo que haga falta y lo aprueba el Coordinador.</div>}
 
     {/* Buscador de la receta */}
     {pres && <div className="gt-vidrio" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -254,7 +269,7 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div className="gt-label" style={{ color: "var(--text-3)" }}>Lo que pedís · {f.lineas.length} {f.lineas.length === 1 ? "ítem" : "ítems"}</div>
-        {!fuera && <button type="button" onClick={() => setFuera({ descripcion: "", unidad: "", cantidad: "", justificacion: "" })} style={{ background: "none", border: "none", color: "var(--naranja-texto-chico)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{sinReceta ? "+ Agregar ítem" : "+ Agregar ítem fuera de presupuesto"}</button>}
+        {!fuera && <button type="button" onClick={() => setFuera({ descripcion: "", unidad: "", cantidad: "", justificacion: "" })} style={{ background: "none", border: "none", color: "var(--naranja-texto-chico)", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{libre ? "+ Agregar ítem" : "+ Agregar ítem fuera de presupuesto"}</button>}
       </div>
       {f.lineas.length === 0 && !fuera && <div style={{ padding: "18px", textAlign: "center", color: "var(--text-3)", fontSize: 13, border: "1px dashed rgba(44,42,40,.18)", borderRadius: 14 }}>Todavía no agregaste nada.</div>}
       {f.lineas.map(l => {
@@ -289,17 +304,17 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
         </div>;
       })}
       {fuera && <div style={{ padding: 12, borderRadius: 14, background: C_AMARILLO.bg, border: `1px solid rgba(138,90,0,.2)`, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr 1fr", gap: 8 }}>
-        <div style={{ gridColumn: "1/-1", fontSize: 12, color: C_AMARILLO.color, fontWeight: 700 }}>{sinReceta ? "Qué necesitás" : "Ítem fuera de presupuesto — lo revisa el Coordinador antes de seguir"}</div>
-        <input value={fuera.descripcion} onChange={e => setFuera({ ...fuera, descripcion: e.target.value })} placeholder="Qué es (ej. Cinta métrica 50 m) *" style={{ ...CTRL, background: "#fff" }} />
+        <div style={{ gridColumn: "1/-1", fontSize: 12, color: C_AMARILLO.color, fontWeight: 700 }}>{libre ? "Qué necesitás" : "Ítem fuera de presupuesto — lo revisa el Coordinador antes de seguir"}</div>
+        <input value={fuera.descripcion} onChange={e => setFuera({ ...fuera, descripcion: e.target.value })} placeholder={esPlantel ? "Qué es (ej. Placa 0.20×0.20 m × 12 mm + tuerca y arandela) *" : "Qué es (ej. Cinta métrica 50 m) *"} style={{ ...CTRL, background: "#fff" }} />
         <input list="sp-unidades" value={fuera.unidad} onChange={e => setFuera({ ...fuera, unidad: e.target.value })} placeholder="Unidad" style={{ ...CTRL, background: "#fff" }} />
         <datalist id="sp-unidades">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist>
         <input type="number" min="0" step="any" value={fuera.cantidad} onChange={e => setFuera({ ...fuera, cantidad: e.target.value })} placeholder="Cantidad *" style={{ ...CTRL, background: "#fff" }} />
-        <input value={fuera.justificacion} onChange={e => setFuera({ ...fuera, justificacion: e.target.value })} placeholder={sinReceta ? "Para qué es (opcional: ej. mantenimiento de la soldadora)" : "Por qué hace falta y no está en la receta *"} style={{ ...CTRL, background: "#fff", gridColumn: "1/-1" }} />
+        <input value={fuera.justificacion} onChange={e => setFuera({ ...fuera, justificacion: e.target.value })} placeholder={libre ? "Para qué es (opcional: ej. mantenimiento de la soldadora)" : "Por qué hace falta y no está en la receta *"} style={{ ...CTRL, background: "#fff", gridColumn: "1/-1" }} />
         <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <Btn small variant="ghost" onClick={() => setFuera(null)}>Cancelar</Btn>
           <Btn small onClick={() => {
-            if (!fuera.descripcion.trim() || !(num(fuera.cantidad) > 0) || (!sinReceta && fuera.justificacion.trim().length < 5)) return alert(sinReceta ? "Completá qué es y la cantidad." : "Completá qué es, la cantidad y la justificación.");
-            u("lineas", [...f.lineas, { id: uid(), partidaId: null, descripcion: fuera.descripcion.trim(), unidad: fuera.unidad.trim(), categoria: "", cantidad: fuera.cantidad, fueraPresupuesto: true, justificacion: fuera.justificacion.trim() }]);
+            if (!fuera.descripcion.trim() || !(num(fuera.cantidad) > 0) || (!libre && fuera.justificacion.trim().length < 5)) return alert(libre ? "Completá qué es y la cantidad." : "Completá qué es, la cantidad y la justificación.");
+            u("lineas", [...f.lineas, { id: uid(), partidaId: null, descripcion: fuera.descripcion.trim(), unidad: fuera.unidad.trim(), categoria: "", cantidad: fuera.cantidad, ...(esPlantel ? { plantel: true, fueraPresupuesto: false } : { fueraPresupuesto: true }), justificacion: fuera.justificacion.trim() }]);
             setFuera(null);
           }}>Agregar</Btn>
         </div>
@@ -307,21 +322,21 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
     </div>
 
     {/* Urgente + notas */}
-    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <div style={{ display: "grid", gridTemplateColumns: isMobile || esPlantel ? "1fr" : "1fr 1fr", gap: 12 }}>
+      {!esPlantel && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: CHARCOAL, cursor: "pointer" }}>
           <input type="checkbox" checked={!!f.urgente} onChange={e => u("urgente", e.target.checked)} /> Es urgente (se salta el corte)
         </label>
         {f.urgente && <input value={f.justificacionUrgencia || ""} onChange={e => u("justificacionUrgencia", e.target.value)} placeholder="Por qué no puede esperar al corte *" style={{ ...CTRL, width: "100%", background: C_ROJO.bg, border: `1px solid ${C_ROJO.borde}` }} />}
         <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Entra al <b>{etq.titulo}</b> · llega a obra <b>{fmtDiaCorto(lleg.desde)} – {fmtDiaCorto(lleg.hasta)}</b>.</div>
-      </div>
+      </div>}
       <Textarea label="Notas (opcional)" value={f.notas || ""} onChange={e => u("notas", e.target.value)} placeholder="Dónde se recibe, con quién, horarios…" style={{ minHeight: 56 }} />
     </div>
 
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
       <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Btn>
       <Btn variant="dark" onClick={() => guardar(false)} disabled={saving}>Guardar borrador</Btn>
-      <Btn onClick={() => guardar(true)} disabled={saving}>{saving ? "Enviando…" : "Enviar solicitud"}</Btn>
+      <Btn onClick={() => guardar(true)} disabled={saving}>{saving ? "Enviando…" : esPlantel ? "Enviar al plantel" : "Enviar solicitud"}</Btn>
     </div>
   </div>;
 }
@@ -739,21 +754,22 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const prepararEnvio = (s) => {
       const corte = corteDe(ahoraISO, cfg, { urgente: !!s.urgente });
       const lineas = (s.lineas || []).map(l => ({ ...l, estado: estadoInicialLinea(l, s), despachadoAlmacen: 0, aCotizar: num(l.cantidad), cantidadComprada: 0, quoteIds: [] }));
-      return { ...s, lineas, estado: "enviada", fechaEnvio: ahoraISO, corte, audit: [...(s.audit || []), auditEntry("enviada", `Enviada al ${etiquetaCorte(corte).titulo}${s.urgente ? " · URGENTE" : ""}`)] };
+      return { ...s, lineas, estado: "enviada", fechaEnvio: ahoraISO, corte, audit: [...(s.audit || []), auditEntry("enviada", esPedidoPlantel(s) ? "Pedido enviado al plantel / taller" : `Enviada al ${etiquetaCorte(corte).titulo}${s.urgente ? " · URGENTE" : ""}`)] };
     };
     let rec;
     if (f.id) {
       rec = await actualizarSolicitud(f.id, (s) => {
         if (s.estado !== "borrador") { alert("Esta solicitud ya fue enviada: no se puede editar."); return null; }
-        const base = { ...s, projectCode: f.projectCode, fechaRequeridaObra: f.fechaRequeridaObra, urgente: !!f.urgente, justificacionUrgencia: f.justificacionUrgencia || "", notas: f.notas || "", lineas: f.lineas, audit: [...(s.audit || []), auditEntry("editada", "Borrador editado")] };
+        const base = { ...s, tipo: f.tipo || "compra", projectCode: f.projectCode, fechaRequeridaObra: f.fechaRequeridaObra, urgente: !!f.urgente, justificacionUrgencia: f.justificacionUrgencia || "", notas: f.notas || "", lineas: f.lineas, audit: [...(s.audit || []), auditEntry("editada", "Borrador editado")] };
         return enviar ? prepararEnvio(base) : base;
       });
     } else {
       rec = await crearEn(K.sol, setSolicitudes, (arr) => {
-        const base = { id: uid(), folio: siguienteFolio(arr, "SUP", new Date(ahoraISO).getFullYear()), projectCode: f.projectCode, residente: userKey, ...(rol === "almacen" ? { sinAlmacen: true } : {}), fechaRequeridaObra: f.fechaRequeridaObra, urgente: !!f.urgente, justificacionUrgencia: f.justificacionUrgencia || "", notas: f.notas || "", estado: "borrador", lineas: f.lineas, createdAt: ahoraISO, audit: [auditEntry("creada", "Borrador creado")] };
+        const base = { id: uid(), folio: siguienteFolio(arr, "SUP", new Date(ahoraISO).getFullYear()), projectCode: f.projectCode, residente: userKey, tipo: f.tipo || "compra", ...(rol === "almacen" ? { sinAlmacen: true } : {}), fechaRequeridaObra: f.fechaRequeridaObra, urgente: !!f.urgente, justificacionUrgencia: f.justificacionUrgencia || "", notas: f.notas || "", estado: "borrador", lineas: f.lineas, createdAt: ahoraISO, audit: [auditEntry("creada", "Borrador creado")] };
         return enviar ? prepararEnvio(base) : base;
       });
     }
+    if (rec && enviar && esPedidoPlantel(rec)) { setModal(null); alert(`✓ ${rec.folio} enviada al plantel. Óscar te lo va enviando.`); return; }
     if (rec) { setModal(null); if (enviar) alert(`✓ ${rec.folio} enviada al ${etiquetaCorte(rec.corte).titulo}.\nLlegada estimada a obra: ${fmtDiaCorto(llegadaEstimada(rec.corte, cfg).desde)} – ${fmtDiaCorto(llegadaEstimada(rec.corte, cfg).hasta)}.`); }
   };
   // ── SIMULACIÓN: borrar UNA solicitud simulada (13-oct-2026, Gerson:
@@ -949,6 +965,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const [solVista, setSolVista] = useState("abiertas");
   const [cotVista, setCotVista] = useState("enviada");
   const [parcial, setParcial] = useState(null);      // { solId, lineaId, valor }
+  const [envioPl, setEnvioPl] = useState(null);      // { lineaId, valor, nota } — envío del plantel
   const [dashProy, setDashProy] = useState("");
   const [dashCorte, setDashCorte] = useState("todos");
 
@@ -980,7 +997,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     delCorte: activas.filter(s => s.corte && s.corte.anio === corte.anio && s.corte.semana === corte.semana).length,
     fueraCorte: activas.filter(s => fueraDeCorte(s, cfg, ahora)).length,
   };
-  const faltanViernes = lineasEf.filter(x => !LINEA_TERMINAL.includes(x.ef.estado)).length;
+  const faltanViernes = lineasEf.filter(x => !esPedidoPlantel(x.s) && !LINEA_TERMINAL.includes(x.ef.estado)).length;
   const purchaseDeLinea = (l) => purchasesVista.find(p => p.origenSupply && (l.quoteIds || []).concat(cotizaciones.filter(q => q.estado === "aprobada" && q.lineas?.some(x => x.requestLineId === l.id)).map(q => q.id)).includes(p.origenSupply.quoteId)) || null;
   const despachoEntregadoDe = (purchase) => !!purchase && despachos.some(d => d.sourcePurchaseId === purchase.id && d.estado !== "cancelado" && (d.estado === "entregado" || d.estado === "cerrado"));
   // El proceso se COMPLETA con la ficha de recibido firmada (la sube Logística
@@ -1009,10 +1026,11 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           <span style={{ fontSize: 13, color: "var(--text-2)" }}>· <b>{fmtCant(ef?.estado === "por_cotizar" ? pendienteDeCompra(l.estado === "revision_almacen" ? { ...l, aCotizar: l.cantidad } : l) : l.cantidad)}</b> {l.unidad}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-          <span style={{ fontSize: 11, color: "var(--text-3)" }}>pidió {quien(s.residente)} · requerido <b>{fmtDiaCorto(s.fechaRequeridaObra)}</b>{s.corte ? ` · ${etiquetaCorte(s.corte).titulo}` : ""}</span>
+          <span style={{ fontSize: 11, color: "var(--text-3)" }}>pidió {quien(s.residente)} · requerido <b>{fmtDiaCorto(s.fechaRequeridaObra)}</b>{s.corte && !esPedidoPlantel(s) ? ` · ${etiquetaCorte(s.corte).titulo}` : ""}</span>
           {al.map(a => <Chip key={a} c={a === "urgente" ? C_ROJO : C_AMARILLO}>{ALERTAS[a]}{a === "excede_saldo" && sd ? ` · saldo ${fmtCant(sd.saldo)}` : ""}</Chip>)}
           {ef?.sinRevisionAlmacen && <Chip c={C_AMARILLO}>Sin revisión de almacén</Chip>}
-          {l.fueraPresupuesto && l.justificacion && <span style={{ fontSize: 11, color: "var(--text-2)", fontStyle: "italic" }}>"{l.justificacion}"</span>}
+          {l.plantel && num(l.enviadoPlantel) > 0 && <Chip c={C_VERDE}>Enviado {fmtCant(l.enviadoPlantel)} de {fmtCant(l.cantidad)}</Chip>}
+          {(l.fueraPresupuesto || l.plantel) && l.justificacion && <span style={{ fontSize: 11, color: "var(--text-2)", fontStyle: "italic" }}>"{l.justificacion}"</span>}
           {s.urgente && s.justificacionUrgencia && al.includes("urgente") && <span style={{ fontSize: 11, color: "var(--text-2)", fontStyle: "italic" }}>"{s.justificacionUrgencia}"</span>}
         </div>
         {extra}
@@ -1124,16 +1142,56 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       const hs = items.filter(x => x.s.corte).map(x => { const h = hitoDeCorte(x.s.corte, "almacenHasta", cfg); return { ...h, ...estadoHito(h, ahora) }; }).filter(h => !h.pasado).sort((a, b) => a.faltaMin - b.faltaMin);
       return hs[0] || hitos[1];
     })();
+    // PEDIDOS AL PLANTEL / TALLER (26-oct-2026): no tienen plazo de corte; se
+    // van enviando por partes según se producen. "No hay" se le devuelve al
+    // ingeniero con la nota (él decide si lo pide como compra).
+    const itemsPl = lineasEf.filter(x => x.ef.estado === "plantel_pendiente");
+    const gruposPl = porProyecto(itemsPl);
+    const enviarPl = async (x, cant, nota) => {
+      const ok = await accionLinea(x.s.id, x.l.id, "plantel_enviar", { cantidad: num(cant), nota, at: new Date().toISOString(), por: userName }, `Plantel envía ${fmtCant(cant)} ${x.l.unidad} de ${x.l.descripcion}${nota ? ` — ${nota}` : ""}`);
+      if (ok) setEnvioPl(null);
+    };
+    const noHayPl = async (x) => {
+      const motivo = prompt(`¿Por qué no se puede enviar "${x.l.descripcion}"? El ingeniero lo va a ver.`, "No lo tenemos en el plantel; pedilo como compra.");
+      if (motivo == null) return;
+      await accionLinea(x.s.id, x.l.id, "plantel_no_hay", { motivo }, `Plantel: no hay ${x.l.descripcion} — ${motivo}`);
+    };
+    const bloquePlantel = itemsPl.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="gt-label" style={{ color: "var(--text-3)", paddingLeft: 4 }}>Pedidos al plantel / taller</div>
+      {gruposPl.map(g => <Grupo key={"pl-" + g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("plantel", g.k)} onToggle={() => toggleGrupo("plantel", g.k)}>
+        {g.items.map(x => {
+          const falta = pendientePlantel(x.l);
+          const abierto = envioPl && envioPl.lineaId === x.l.id;
+          return filaLinea({ ...x, derecha: puede ? (abierto
+            ? <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <input autoFocus type="number" min="0" step="any" value={envioPl.valor} onChange={e => setEnvioPl({ ...envioPl, valor: e.target.value })} placeholder={`de ${fmtCant(falta)}`} style={{ width: 90, padding: "7px 10px", border: "1px solid rgba(44,42,40,.15)", borderRadius: 10, fontSize: 13, fontFamily: "inherit", textAlign: "right" }} />
+              <span style={{ fontSize: 12, color: "var(--text-2)" }}>{x.l.unidad}</span>
+              <input value={envioPl.nota} onChange={e => setEnvioPl({ ...envioPl, nota: e.target.value })} placeholder="Nota (opcional)" style={{ width: 150, padding: "7px 10px", border: "1px solid rgba(44,42,40,.15)", borderRadius: 10, fontSize: 13, fontFamily: "inherit" }} />
+              <Btn small disabled={ocupado || !(num(envioPl.valor) > 0)} onClick={() => enviarPl(x, envioPl.valor, envioPl.nota)}>Enviar</Btn>
+              <Btn small variant="ghost" onClick={() => setEnvioPl(null)}>✕</Btn>
+            </div>
+            : <>
+              {num(x.l.enviadoPlantel) > 0 && <span style={{ fontSize: 12, color: "var(--text-2)" }}>falta <b>{fmtCant(falta)}</b></span>}
+              <Btn small variant="success" disabled={ocupado} onClick={() => { if (confirm(`¿Enviar ${fmtCant(falta)} ${x.l.unidad} de ${x.l.descripcion}? Queda completo.`)) enviarPl(x, falta, ""); }}>Enviar todo</Btn>
+              <Btn small variant="info" disabled={ocupado} onClick={() => setEnvioPl({ lineaId: x.l.id, valor: "", nota: "" })}>Una parte</Btn>
+              <Btn small variant="ghost" disabled={ocupado} onClick={() => noHayPl(x)}>No hay</Btn>
+            </>) : <Chip c={C_AZUL}>En el plantel</Chip> });
+        })}
+      </Grupo>)}
+    </div>;
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div className="gt-vidrio" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+        {stat(itemsPl.length, "pedidos al plantel", { c: itemsPl.length ? ORANGE_DARK : undefined })}
         {stat(items.length, "ítems por revisar", { c: items.length ? ORANGE_DARK : undefined })}
-        {stat(grupos.length, "proyectos")}
+        {stat(new Set([...grupos, ...gruposPl].map(g => g.k)).size, "proyectos")}
         <div style={{ padding: isMobile ? "4px 10px" : "4px 18px", marginLeft: isMobile ? 0 : "auto" }}>
           <div style={{ font: "800 15px/1.1 var(--display)", color: hAlm.pasado ? "var(--text-3)" : ORANGE_DARK }}>{hAlm.pasado ? "Plazo cerrado" : fmtFalta(hAlm.faltaMin)}</div>
           <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 5, fontSize: 9 }}>revisión hasta {DIAS_CORTOS_[cfg.cortes.almacenHasta.dia]} {fmtHora(hAlm.hora)}</div>
         </div>
       </div>
-      {items.length === 0 ? <Vacio>Nada por revisar en almacén.</Vacio> : <>
+      {bloquePlantel}
+      {itemsPl.length > 0 && items.length > 0 && <div className="gt-label" style={{ color: "var(--text-3)", paddingLeft: 4 }}>Revisión de solicitudes de compra</div>}
+      {items.length === 0 ? (itemsPl.length ? null : <Vacio>Nada por revisar en almacén.</Vacio>) : <>
         {barraGrupos("almacen", grupos)}
         {grupos.map(g => <Grupo key={g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("almacen", g.k)} onToggle={() => toggleGrupo("almacen", g.k)}
           derecha={puede && <Btn small variant="ghost" disabled={ocupado} onClick={async () => { if (!confirm(`¿Marcar "No hay" en los ${g.items.length} ítems de ${nombreProy(g.k)}? Pasan a Compras.`)) return; const porSol = {}; g.items.forEach(x => { (porSol[x.s.id] = porSol[x.s.id] || []).push(x.l.id); }); for (const [sid, ids] of Object.entries(porSol)) await accionLineas(sid, ids, "almacen_no_hay", {}, "Almacén: no hay (masivo del proyecto)"); }}>No hay nada de esto</Btn>}>
@@ -1269,15 +1327,16 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           const est = estadoCabecera(s);
           const ls = s.lineas || [];
           const fc = fueraDeCorte(s, cfg, ahora);
-          const lleg = s.corte ? llegadaEstimada(s.corte, cfg) : null;
+          const lleg = s.corte && !esPedidoPlantel(s) ? llegadaEstimada(s.corte, cfg) : null;
           return <div key={s.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => setModal({ t: "detalle", id: s.id })} style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", cursor: "pointer" }}>
             <div style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700, color: CHARCOAL }}>{s.folio}</div>
             {chipEstado(ESTADOS_SOLICITUD, est)}
+            {esPedidoPlantel(s) && <Chip c={C_AZUL}>Al plantel</Chip>}
             {s.urgente && <Chip c={C_ROJO}>Urgente</Chip>}
             {fc && <Chip c={C_ROJO}>Fuera de corte</Chip>}
             <div style={{ flex: 1, minWidth: 160 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{nombreProy(s.projectCode)}</div>
-              <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{ls.length} {ls.length === 1 ? "ítem" : "ítems"}{ls.some(l => l.estado === "rechazada") ? ` · ${ls.filter(l => l.estado === "rechazada").length} rechazado(s)` : ""} · pidió {quien(s.residente)} · {s.corte ? etiquetaCorte(s.corte).titulo : "borrador"}</div>
+              <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{ls.length} {ls.length === 1 ? "ítem" : "ítems"}{ls.some(l => l.estado === "rechazada") ? ` · ${ls.filter(l => l.estado === "rechazada").length} rechazado(s)` : ""} · pidió {quien(s.residente)} · {esPedidoPlantel(s) ? (s.estado === "borrador" ? "borrador" : "pedido al plantel / taller") : s.corte ? etiquetaCorte(s.corte).titulo : "borrador"}</div>
             </div>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, color: CHARCOAL }}>{s.fechaRequeridaObra ? fmtDiaCorto(s.fechaRequeridaObra) : "—"}</div>
@@ -1300,15 +1359,16 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     if (!s) return <div style={{ color: "var(--text-3)" }}>La solicitud ya no está.</div>;
     const est = estadoCabecera(s);
     const esMia = s.residente === userKey;
-    const lleg = s.corte ? llegadaEstimada(s.corte, cfg) : null;
+    const plantel = esPedidoPlantel(s);
+    const lleg = s.corte && !plantel ? llegadaEstimada(s.corte, cfg) : null;
     const cots = cotizaciones.filter(q => q.requestId === s.id);
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        {chipEstado(ESTADOS_SOLICITUD, est)}{s.urgente && <Chip c={C_ROJO}>Urgente</Chip>}{fueraDeCorte(s, cfg, ahora) && <Chip c={C_ROJO}>Fuera de corte</Chip>}
-        <span style={{ fontSize: 13, color: "var(--text-2)" }}><b>{nombreProy(s.projectCode)}</b> · pidió {quien(s.residente)} · {s.corte ? etiquetaCorte(s.corte).titulo : "sin enviar"}</span>
+        {chipEstado(ESTADOS_SOLICITUD, est)}{esPedidoPlantel(s) && <Chip c={C_AZUL}>Pedido al plantel / taller</Chip>}{s.urgente && <Chip c={C_ROJO}>Urgente</Chip>}{fueraDeCorte(s, cfg, ahora) && <Chip c={C_ROJO}>Fuera de corte</Chip>}
+        <span style={{ fontSize: 13, color: "var(--text-2)" }}><b>{nombreProy(s.projectCode)}</b> · pidió {quien(s.residente)}{plantel ? "" : ` · ${s.corte ? etiquetaCorte(s.corte).titulo : "sin enviar"}`}</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 10 }}>
-        {[["Requerido en obra", s.fechaRequeridaObra ? fmtDiaLargo(s.fechaRequeridaObra) : "—"], ["Enviada", s.fechaEnvio ? fmtDT(s.fechaEnvio) : "—"], ["Llegada estimada", lleg ? `${fmtDiaCorto(lleg.desde)} – ${fmtDiaCorto(lleg.hasta)}` : "—"], ["Ítems", `${(s.lineas || []).length}`]].map(([l, v]) => <div key={l} style={{ padding: "10px 12px", borderRadius: 12, background: "rgba(44,42,40,.04)" }}><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>{l}</div><div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, marginTop: 4 }}>{v}</div></div>)}
+        {[["Requerido en obra", s.fechaRequeridaObra ? fmtDiaLargo(s.fechaRequeridaObra) : "—"], ["Enviada", s.fechaEnvio ? fmtDT(s.fechaEnvio) : "—"], plantel ? ["Enviado", `${fmtCant((s.lineas || []).filter(l => l.estado !== "rechazada").reduce((a, l) => a + num(l.enviadoPlantel), 0))} de ${fmtCant((s.lineas || []).filter(l => l.estado !== "rechazada").reduce((a, l) => a + num(l.cantidad), 0))}`] : ["Llegada estimada", lleg ? `${fmtDiaCorto(lleg.desde)} – ${fmtDiaCorto(lleg.hasta)}` : "—"], ["Ítems", `${(s.lineas || []).length}`]].map(([l, v]) => <div key={l} style={{ padding: "10px 12px", borderRadius: 12, background: "rgba(44,42,40,.04)" }}><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>{l}</div><div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, marginTop: 4 }}>{v}</div></div>)}
       </div>
       {s.urgente && s.justificacionUrgencia && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_ROJO.bg, color: C_ROJO.color, fontSize: 12.5 }}><b>Urgente:</b> {s.justificacionUrgencia}</div>}
       {s.notas && <div style={{ fontSize: 12.5, color: "var(--text-2)" }}><b>Notas:</b> {s.notas}</div>}
@@ -1339,7 +1399,11 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
               {pu && !esResidente && <span style={{ fontFamily: "var(--mono)", fontSize: 11.5, fontWeight: 700, color: "var(--text-3)" }}>{pu.codigo}</span>}
             </div>
             {l.estado === "rechazada"
-              ? <div style={{ fontSize: 12.5, color: C_ROJO.color }}><b>Rechazado:</b> {l.motivoRechazo || "sin motivo"}</div>
+              ? <div style={{ fontSize: 12.5, color: C_ROJO.color }}><b>{l.noHayPlantel ? "No lo hay en el plantel:" : "Rechazado:"}</b> {l.motivoRechazo || "sin motivo"}</div>
+              : l.plantel ? <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ height: 8, borderRadius: 99, background: "rgba(44,42,40,.08)", overflow: "hidden" }}><div style={{ width: `${Math.min(100, num(l.enviadoPlantel) / Math.max(num(l.cantidad), 0.0001) * 100)}%`, height: "100%", background: C_VERDE.color, borderRadius: 99 }} /></div>
+                <div style={{ fontSize: 12, color: "var(--text-2)" }}>Enviado <b>{fmtCant(l.enviadoPlantel || 0)}</b> de {fmtCant(l.cantidad)} {l.unidad}{(l.enviosPlantel || []).length ? " · " + l.enviosPlantel.map(e => `${fmtCant(e.cantidad)} el ${e.at ? fmtDT(e.at) : "—"}${e.nota ? ` (${e.nota})` : ""}`).join(" · ") : ""}</div>
+              </div>
               : <PasosLinea paso={paso} compact={isMobile} />}
           </div>;
         })}
