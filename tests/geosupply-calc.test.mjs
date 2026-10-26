@@ -275,3 +275,11 @@ test("Pedido al plantel: directo a Almacén, se envía por partes y 'No hay' vue
   assert.equal(nh.linea.estado, "rechazada"); assert.equal(nh.linea.noHayPlantel, true);
   assert.equal(m.puedeCancelar({ estado: "enviada", tipo: "plantel", lineas: [{ ...l0, estado: "plantel_pendiente" }] }), true);
 });
+
+test("Numeración de cortes: el del 27-oct-2026 es el Corte 1", async () => {
+  const { etiquetaCorte } = await import("../src/geosupply-calc.js");
+  assert.equal(etiquetaCorte({ anio: 2026, semana: 44 }).titulo, "Corte 1");
+  assert.equal(etiquetaCorte({ anio: 2026, semana: 45 }).titulo, "Corte 2");
+  assert.equal(etiquetaCorte({ anio: 2027, semana: 1 }).titulo, "Corte 11");   // 2026 tiene 53 semanas ISO
+  assert.equal(etiquetaCorte({ anio: 2026, semana: 44 }).id, "C44-2026");
+});

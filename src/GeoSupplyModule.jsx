@@ -1540,7 +1540,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {pillBtn("Todos los cortes", dashCorte === "todos", () => setDashCorte("todos"))}
         {pillBtn(etq.titulo, dashCorte === "actual", () => setDashCorte("actual"))}
-        {cortes.filter(c => c !== etq.id).slice(0, 6).map(c => pillBtn(c.replace(/^C0?(\d+)-(\d+)$/, "Corte $1 · $2"), dashCorte === c, () => setDashCorte(c), { key: c }))}
+        {cortes.filter(c => c !== etq.id).slice(0, 6).map(c => pillBtn((() => { const m = /^C0?(\d+)-(\d+)$/.exec(c); return m ? etiquetaCorte({ semana: +m[1], anio: +m[2] }).titulo : c; })(), dashCorte === c, () => setDashCorte(c), { key: c }))}
         <select value={dashProy} onChange={e => setDashProy(e.target.value)} style={{ marginLeft: "auto", padding: "8px 12px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 999, fontSize: 13, background: "rgba(255,255,255,.7)", fontFamily: "inherit" }}>
           <option value="">Todos los proyectos</option>{[...new Set(solicitudes.map(s => s.projectCode))].map(p => <option key={p} value={p}>{nombreProy(p)}</option>)}
         </select>

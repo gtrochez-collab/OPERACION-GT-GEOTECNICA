@@ -116,6 +116,16 @@ export const fmtDiaLargo = (ymd) => {
 
 // ── Corte semanal ──────────────────────────────────────────────────────────
 /** La etiqueta con la que se nombra un corte: "Corte 40 · 2026 — lun 28 sep – vie 2 oct". */
+// NUMERACIÓN PROPIA (26-oct-2026, Gerson): el primer corte real es el del
+// martes 27-oct-2026 (semana ISO 44) y se llama "Corte 1"; de ahí corren
+// seguidos (Corte 2, 3…), sin reiniciar por año. Lo anterior (pruebas y
+// simulaciones) conserva el nombre por semana ISO. El `id` no cambia.
+export const LUNES_PRIMER_CORTE = "2026-10-26";
+export const numeroCorte = (corte) => {
+  if (!corte?.anio || !corte?.semana) return null;
+  const dias = Math.round((Date.parse(lunesDeSemanaISO(corte.anio, corte.semana) + "T00:00:00Z") - Date.parse(LUNES_PRIMER_CORTE + "T00:00:00Z")) / 86400000);
+  return dias >= 0 ? Math.floor(dias / 7) + 1 : null;
+};
 export const etiquetaCorte = (corte) => {
   if (!corte || !corte.anio || !corte.semana) return { id: "", titulo: "Sin corte", sub: "", lunes: "", viernes: "", domingo: "" };
   const lunes = lunesDeSemanaISO(corte.anio, corte.semana);
@@ -123,7 +133,7 @@ export const etiquetaCorte = (corte) => {
   const domingo = ymdSumar(lunes, 6);
   return {
     id: `C${String(corte.semana).padStart(2, "0")}-${corte.anio}`,
-    titulo: `Corte ${corte.semana} · ${corte.anio}`,
+    titulo: numeroCorte(corte) ? `Corte ${numeroCorte(corte)}` : `Corte ${corte.semana} · ${corte.anio}`,
     sub: `${fmtDiaCorto(lunes)} – ${fmtDiaCorto(viernes)}`,
     lunes, viernes, domingo,
   };

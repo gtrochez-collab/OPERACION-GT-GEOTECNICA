@@ -1890,6 +1890,11 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   plantel): los ítems se piden libres, SIN justificación obligatoria
   (`linea.sinReceta`, alerta "Sin receta"), todos pasan por el Coordinador
   (aprueba o rechaza) y siguen el proceso normal de compra.
+  **Numeración de cortes (26-oct-2026, Gerson)**: el primer corte REAL (cierre
+  mar 27-oct-2026 12:00, semana ISO 44) es el **"Corte 1"** y siguen seguidos
+  sin reiniciar por año (`LUNES_PRIMER_CORTE`, `numeroCorte`); lo anterior
+  conserva "Corte NN · AAAA". El `id` (C44-2026) no cambió. (Reemplaza el
+  nombre "Corte 40 · 2026" de la Fase 0.)
   **PEDIR AL PLANTEL / TALLER (26-oct-2026)**: caso Ing. Yurien (Cataleya):
   placas de anclaje y varillas roscadas que se producen en soldadura/torno y
   Almacén va enviando según se necesita — NO es compra. Al crear la solicitud
