@@ -408,7 +408,9 @@ export const saldoDePartida = ({ partida, purchases = [], solicitudes = [], excl
   let comprada = 0;
   (purchases || []).forEach(p => {
     if (!compraConsumeReceta(p)) return;
-    (p.lineas || []).forEach(l => { if (l && l.partidaId === partida.id) comprada += num(l.cantidad); });
+    // Un SUSTITUTO (cemento cargado a "Concreto premezclado") o una línea a
+    // mano trae su cantidad en OTRA unidad: no resta de la receta.
+    (p.lineas || []).forEach(l => { if (l && l.partidaId === partida.id && !l.sustituto && !l.manual) comprada += num(l.cantidad); });
   });
   let enSolicitudes = 0;
   (solicitudes || []).forEach(s => {

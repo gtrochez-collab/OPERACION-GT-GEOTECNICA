@@ -283,3 +283,11 @@ test("Numeración de cortes: el del 27-oct-2026 es el Corte 1", async () => {
   assert.equal(etiquetaCorte({ anio: 2027, semana: 1 }).titulo, "Corte 11");   // 2026 tiene 53 semanas ISO
   assert.equal(etiquetaCorte({ anio: 2026, semana: 44 }).id, "C44-2026");
 });
+
+test("saldoDePartida no cuenta sustitutos (otra unidad)", () => {
+  const partida = { id: "pc", cantidad: 322, unidad: "m3" };
+  const purchases = [{ status: "pagado", lineas: [{ partidaId: "pc", cantidad: 480, sustituto: { nombre: "Cemento", unidad: "Bolsa" } }, { partidaId: "pc", cantidad: 20 }] }];
+  const s = saldoDePartida({ partida, purchases });
+  assert.equal(s.comprada, 20);
+  assert.equal(s.saldo, 302);
+});
