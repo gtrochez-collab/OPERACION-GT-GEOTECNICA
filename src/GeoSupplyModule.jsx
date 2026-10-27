@@ -615,7 +615,9 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   // keys PROPIAS (sp-sim-*): nada llega a GeoShopping, GeoCost ni a nadie. Los
   // borradores que generaría van a `sp-sim-purchases` con código SIM-.
   const rolReal = rolSupply(userRole);
-  const puedeSimular = rolReal === "coordinador";
+  // 27-oct-2026: la simulación se APAGÓ (arranca el uso real). El código queda
+  // por si se quiere volver a enseñar; para prenderla: rolReal === "coordinador".
+  const puedeSimular = false;
   const [sim, setSimRaw] = useState(() => { try { return puedeSimular && sessionStorage.getItem("gt-supply-sim") === "1"; } catch { return false; } });
   const [simRol, setSimRol] = useState("residente");
   const setSim = (v) => { setSimRaw(v); try { v ? sessionStorage.setItem("gt-supply-sim", "1") : sessionStorage.removeItem("gt-supply-sim"); } catch {} };

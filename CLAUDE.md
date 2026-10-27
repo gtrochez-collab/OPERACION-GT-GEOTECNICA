@@ -1854,7 +1854,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   agrupados "Con receta en GeoCost" / "Sin receta". GeoTeam → Accesos ya no
   pide proyectos (el campo `proyectos` de gt-usuarios queda ignorado). Esto
   reemplaza la regla del spec "residente sin el proyecto asignado = acceso
-  denegado" — decisión de Gerson, no re-litigar. (b) **SIMULACIÓN** (solo el
+  denegado" — decisión de Gerson, no re-litigar. (b) **SIMULACIÓN** (⚠ APAGADA el 27-oct-2026 al arrancar el uso real: `puedeSimular = false`; el código y las keys sp-sim-* quedan) (solo el
   Coordinador, botón "Simular el proceso" en Hoy): barra ámbar con "Ver como
   Residente · Almacén · Compras · Coordinador · Finanzas" (`simRol`, cambia el
   `rol` efectivo y salta a la primera pestaña de ese rol), keys PROPIAS
