@@ -27,7 +27,7 @@
 // Keys propias: sp-solicitudes, sp-cotizaciones, sp-config. Los PDFs van en
 // `cp-file-<id>` (el MISMO prefijo de GeoShopping) para que el borrador los
 // abra con su FileSlot y el paquete de cierre los adjunte sin más.
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
@@ -153,7 +153,7 @@ function PasosLinea({ paso, compact }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // FORM DE SOLICITUD (residente) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
-function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, userKey, onGuardar, onClose, isMobile, proyectoInicial = "", subirPdf, verArchivo }) {
+function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, catalogo = [], cfg, ahora, userKey, onGuardar, onClose, isMobile, proyectoInicial = "", subirPdf, verArchivo }) {
   const [subiendoCot, setSubiendoCot] = useState(false);
   const [f, setF] = useState(() => solicitud ? { ...solicitud, lineas: (solicitud.lineas || []).map(l => ({ ...l })) } : { projectCode: proyectoInicial, fechaRequeridaObra: "", urgente: false, justificacionUrgencia: "", notas: "", lineas: [] });
   const [q, setQ] = useState("");
@@ -278,6 +278,43 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
                     <div style={{ color: "var(--text-3)", fontSize: 10.5 }}>quedan de {fmtCant(s.presupuestada)} en la receta</div>
                   </>}
                 </div>
+              </div>;
+            })}
+          </div>)}
+        </div>
+      </div>;
+    })()}
+
+    {/* Proyecto SIN receta: catálogo con lo de las otras recetas. */}
+    {!esPlantel && sinReceta && catalogo.length > 0 && (() => {
+      const filtrados = catalogo.filter(c => q.trim().length < 2 || norm(`${c.nombre} ${c.categoria}`).includes(norm(q)));
+      const grupos = [];
+      filtrados.forEach(c => { let g = grupos.find(x => x.k === c.categoria); if (!g) grupos.push(g = { k: c.categoria, items: [] }); g.items.push(c); });
+      const enPedido = (c) => f.lineas.filter(l => !l.partidaId && norm(l.descripcion) === norm(c.nombre) && norm(l.unidad) === norm(c.unidad));
+      const agregarCat = (c) => { if (enPedido(c).length) return; u("lineas", [...f.lineas, { id: uid(), partidaId: null, descripcion: c.nombre, unidad: c.unidad, categoria: c.categoria, cantidad: "", fueraPresupuesto: true, justificacion: "", deCatalogo: true }]); };
+      return <div className="gt-vidrio" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div>
+          <div className="gt-label" style={{ color: "var(--text-3)" }}>Materiales de otras recetas · {catalogo.length}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3 }}>Tocá lo que se parezca a lo que necesitás. Si no está, agregalo abajo con "+ Agregar ítem".</div>
+        </div>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filtrar (ej. tubo, cemento, varilla)…" style={{ ...CTRL, width: "100%", padding: "10px 14px", fontSize: 13.5, borderRadius: 12 }} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: isMobile ? 340 : 380, overflowY: "auto", paddingRight: 2 }}>
+          {grupos.length === 0 && <div style={{ fontSize: 12.5, color: "var(--text-3)", padding: "6px 2px" }}>Nada parecido a "{q}". Agregalo abajo con "+ Agregar ítem".</div>}
+          {grupos.map(g => <div key={g.k} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div style={{ position: "sticky", top: 0, zIndex: 1, display: "flex", justifyContent: "space-between", padding: "4px 4px 6px", background: "linear-gradient(#FBFBFA 75%, rgba(251,251,250,0))", fontSize: 11, fontWeight: 800, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--text-2)" }}>
+              <span>{g.k}</span><span style={{ color: "var(--text-3)", fontWeight: 600 }}>{g.items.length}</span>
+            </div>
+            {g.items.map(c => {
+              const ya = enPedido(c);
+              return <div key={c.k} role="button" tabIndex={0} onClick={() => agregarCat(c)} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); agregarCat(c); } }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 12, cursor: ya.length ? "default" : "pointer", background: ya.length ? C_VERDE.bg : "transparent", border: `1px solid ${ya.length ? "rgba(5,150,105,.18)" : "transparent"}` }}
+                onMouseEnter={e => { if (!ya.length) e.currentTarget.style.background = "rgba(44,42,40,.04)"; }} onMouseLeave={e => { if (!ya.length) e.currentTarget.style.background = "transparent"; }}>
+                <span aria-hidden style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 999, display: "grid", placeItems: "center", fontSize: 13, fontWeight: 800, background: ya.length ? "#059669" : "rgba(44,42,40,.07)", color: ya.length ? "#fff" : "var(--text-2)" }}>{ya.length ? "✓" : "+"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, lineHeight: 1.3 }}>{c.nombre}</div>
+                  <div style={{ fontSize: 11, color: ya.length ? C_VERDE.color : "var(--text-3)", fontWeight: ya.length ? 700 : 500, marginTop: 1 }}>{ya.length ? "En tu pedido · poné la cantidad abajo" : `en ${c.proyectos.slice(0, 2).join(", ")}${c.proyectos.length > 2 ? ` y ${c.proyectos.length - 2} más` : ""}`}</div>
+                </div>
+                {c.unidad && <span style={{ fontSize: 11.5, color: "var(--text-2)", fontWeight: 700, flexShrink: 0 }}>{c.unidad}</span>}
               </div>;
             })}
           </div>)}
@@ -734,6 +771,21 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const proyectoDe = (short) => proyectos.find(p => p.short === short) || null;
   const nombreProy = (short) => proyectoDe(short)?.name || short || "—";
   const presDe = (short) => presupuestos.find(p => p.projectCode === short && p.estado !== "cerrado") || null;
+  // CATÁLOGO para proyectos SIN receta (27-oct-2026): los materiales de TODAS
+  // las recetas cargadas, sin repetir (nombre + unidad), con en qué proyectos
+  // aparecen. El ingeniero ve algo parecido y lo agrega con un toque.
+  const catalogo = useMemo(() => {
+    const nrm = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+    const m = new Map();
+    presupuestos.filter(p => p && p.estado !== "cerrado").forEach(pr => partidasPedibles(pr).forEach(pa => {
+      const k = `${nrm(pa.nombre)}|${nrm(pa.unidad)}`;
+      if (!nrm(pa.nombre)) return;
+      const x = m.get(k) || { k, nombre: String(pa.nombre).trim(), unidad: pa.unidad || "", categoria: pa.categoria || "Otros", proyectos: [] };
+      if (!x.proyectos.includes(pr.projectCode)) x.proyectos.push(pr.projectCode);
+      m.set(k, x);
+    }));
+    return [...m.values()].sort((a, b) => a.categoria.localeCompare(b.categoria, "es") || a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base", numeric: true }));
+  }, [presupuestos]);
   const partidaDe = (short, partidaId) => (presDe(short)?.partidas || []).find(p => p.id === partidaId) || null;
   // En simulación, los borradores simulados también consumen saldo.
   const purchasesVista = sim ? [...purchases, ...simPurchases] : purchases;
@@ -1760,7 +1812,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const m = modal;
     switch (m.t) {
       case "solicitud": return <Modal title={m.s ? `Editar ${m.s.folio}` : "Nueva solicitud de material"} onClose={() => setModal(null)} wide fondoCierra={false}>
-        <SolicitudFormImpl subirPdf={subirPdf} verArchivo={verArchivo} proyectoInicial={rol === "almacen" && proyectos.some(p => p.short === "PLANTEL") ? "PLANTEL" : ""} solicitud={m.s} proyectos={misProyectos} presDe={presDe} saldoDe={saldoDe} cfg={cfg} ahora={ahora} userKey={userKey} onGuardar={guardarSolicitud} onClose={() => setModal(null)} isMobile={isMobile} />
+        <SolicitudFormImpl subirPdf={subirPdf} verArchivo={verArchivo} proyectoInicial={rol === "almacen" && proyectos.some(p => p.short === "PLANTEL") ? "PLANTEL" : ""} solicitud={m.s} proyectos={misProyectos} presDe={presDe} saldoDe={saldoDe} catalogo={catalogo} cfg={cfg} ahora={ahora} userKey={userKey} onGuardar={guardarSolicitud} onClose={() => setModal(null)} isMobile={isMobile} />
       </Modal>;
       case "detalle": return <Modal title={solicitudes.find(x => x.id === m.id)?.folio || "Solicitud"} onClose={() => setModal(null)} wide>{renderDetalle(m.id)}</Modal>;
       case "rechazar-linea": return <Modal title={`Rechazar: ${m.l.descripcion}`} onClose={() => setModal(null)}>

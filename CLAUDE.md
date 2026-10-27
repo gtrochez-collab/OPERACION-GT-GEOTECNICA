@@ -1927,6 +1927,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   categoría (y solución si tiene varias), con lo que queda de cada ítem; un
   toque lo agrega (check verde + "En tu pedido · N"). El buscador solo
   filtra. La lista scrollea dentro de su caja (420 px).
+  **Proyecto SIN receta → catálogo (27-oct-2026)**: `catalogo` (useMemo en
+  el módulo) = los ítems pedibles de TODAS las recetas activas sin repetir
+  (nombre + unidad) con en qué proyectos aparecen; en el form sale "Materiales
+  de otras recetas" agrupado por categoría, un toque lo agrega como ítem libre
+  (`deCatalogo: true`, nombre y unidad puestos) y sigue el camino de siempre
+  (lo aprueba el Coordinador).
   **PEDIR AL PLANTEL / TALLER (26-oct-2026)**: caso Ing. Yurien (Cataleya):
   placas de anclaje y varillas roscadas que se producen en soldadura/torno y
   Almacén va enviando según se necesita — NO es compra. Al crear la solicitud
