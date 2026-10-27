@@ -1938,7 +1938,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   por solicitud (`porSolicitud`): folio, quién la pidió, fecha requerida,
   corte, N ítems, sus NOTAS y "Ver solicitud"; los ítems van debajo sin
   repetir folio/quién (`filaLinea({enSolicitud})` muestra solución ·
-  categoría). Aplica a la revisión de compras y a los pedidos al plantel.
+  categoría). Aplica a la revisión de compras, a los pedidos al plantel, a
+  Compras y a Alertas. **Almacén fuera de plazo (27-oct, Gerson)**: lo que se
+  pasó del martes 15:00 sin revisión sigue en la pestaña Almacén (chip "Sin
+  revisión de almacén") y en Compras trae "¿Hay en almacén?" Hay / Parcial /
+  No hay (`botonesAlmacen`, Óscar y el Coordinador) mientras la línea guardada
+  siga en `revision_almacen` (nadie la cotizó todavía).
   **PEDIR AL PLANTEL / TALLER (26-oct-2026)**: caso Ing. Yurien (Cataleya):
   placas de anclaje y varillas roscadas que se producen en soldadura/torno y
   Almacén va enviando según se necesita — NO es compra. Al crear la solicitud

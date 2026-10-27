@@ -1332,7 +1332,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       {items.length === 0 ? <Vacio>Ningún ítem espera tu decisión.</Vacio> : <>
         {barraGrupos("alertas", grupos)}
         {grupos.map(g => <Grupo key={g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · lo más urgente para ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("alertas", g.k)} onToggle={() => toggleGrupo("alertas", g.k)} alerta={g.items.some(x => x.s.urgente)}>
-          {g.items.map(x => filaLinea({ ...x, derecha: <>
+          {porSolicitud(g.items, x => filaLinea({ ...x, derecha: <>
             <Btn small variant="success" disabled={ocupado} onClick={() => accionLinea(x.s.id, x.l.id, "aprobar_coord", { sinAlmacen: !!x.s.sinAlmacen }, `${x.l.descripcion}: aprobado → ${x.s.sinAlmacen ? "compras" : "almacén"}`)}>Aprobar</Btn>
             <Btn small variant="danger" disabled={ocupado} onClick={() => setModal({ t: "rechazar-linea", s: x.s, l: x.l })}>Rechazar</Btn>
             <button onClick={() => setModal({ t: "detalle", id: x.s.id })} style={{ background: "none", border: "none", color: "var(--text-3)", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Ver solicitud</button>
@@ -1343,9 +1343,28 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   };
 
   // ═══════════════════════════ ALMACÉN (Óscar) ═══════════════════════════
+  // Hay / Parcial / No hay de Almacén (lo usan la pestaña Almacén y, para lo
+  // que se pasó del plazo, Compras). `x.l` tiene que ser la línea GUARDADA.
+  const botonesAlmacen = (x) => {
+    const enParcial = parcial && parcial.lineaId === x.l.id;
+    if (enParcial) return <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <input autoFocus type="number" min="0" step="any" value={parcial.valor} onChange={e => setParcial({ ...parcial, valor: e.target.value })} placeholder={`de ${fmtCant(x.l.cantidad)}`} style={{ width: 100, padding: "7px 10px", border: "1px solid rgba(44,42,40,.15)", borderRadius: 10, fontSize: 13, fontFamily: "inherit", textAlign: "right" }} />
+      <span style={{ fontSize: 12, color: "var(--text-2)" }}>{x.l.unidad} despachados</span>
+      <Btn small disabled={ocupado} onClick={async () => { const ok = await accionLinea(x.s.id, x.l.id, "almacen_parcial", { despachado: num(parcial.valor) }, `Almacén despacha ${parcial.valor} ${x.l.unidad} de ${x.l.descripcion}; el resto a Compras`); if (ok) setParcial(null); }}>Listo</Btn>
+      <Btn small variant="ghost" onClick={() => setParcial(null)}>✕</Btn>
+    </div>;
+    return <>
+      <Btn small variant="success" disabled={ocupado} onClick={() => accionLinea(x.s.id, x.l.id, "almacen_hay", {}, `Almacén despacha completo: ${x.l.descripcion}`)}>Hay</Btn>
+      <Btn small variant="info" disabled={ocupado} onClick={() => setParcial({ solId: x.s.id, lineaId: x.l.id, valor: "" })}>Parcial</Btn>
+      <Btn small variant="ghost" disabled={ocupado} onClick={() => accionLinea(x.s.id, x.l.id, "almacen_no_hay", {}, `Almacén: no hay ${x.l.descripcion} → Compras`)}>No hay</Btn>
+    </>;
+  };
   const renderAlmacen = () => {
     const puede = rol === "almacen" || esCoordinador;
-    const items = lineasEf.filter(x => x.ef.estado === "revision_almacen");
+    // 27-oct-2026 (Gerson): lo que se PASÓ del plazo sin revisión sigue acá
+    // (además de en Compras) mientras nadie lo cotice: si Óscar todavía lo
+    // tiene en bodega, lo despacha. Lleva el chip "Sin revisión de almacén".
+    const items = lineasEf.filter(x => x.ef.estado === "revision_almacen" || (x.ef.sinRevisionAlmacen && x.l.estado === "revision_almacen"));
     const grupos = porProyecto(items);
     // La cuenta regresiva es la del corte MÁS PRÓXIMO entre lo pendiente (una
     // solicitud enviada el viernes es del corte siguiente: su plazo es el otro
@@ -1407,23 +1426,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         {barraGrupos("almacen", grupos)}
         {grupos.map(g => <Grupo key={g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("almacen", g.k)} onToggle={() => toggleGrupo("almacen", g.k)}
           derecha={puede && <Btn small variant="ghost" disabled={ocupado} onClick={async () => { if (!confirm(`¿Marcar "No hay" en los ${g.items.length} ítems de ${nombreProy(g.k)}? Pasan a Compras.`)) return; const porSol = {}; g.items.forEach(x => { (porSol[x.s.id] = porSol[x.s.id] || []).push(x.l.id); }); for (const [sid, ids] of Object.entries(porSol)) await accionLineas(sid, ids, "almacen_no_hay", {}, "Almacén: no hay (masivo del proyecto)"); }}>No hay nada de esto</Btn>}>
-          {porSolicitud(g.items, x => {
-            const enParcial = parcial && parcial.lineaId === x.l.id;
-            return filaLinea({ ...x, derecha: puede ? <>
-              {enParcial
-                ? <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <input autoFocus type="number" min="0" step="any" value={parcial.valor} onChange={e => setParcial({ ...parcial, valor: e.target.value })} placeholder={`de ${fmtCant(x.l.cantidad)}`} style={{ width: 100, padding: "7px 10px", border: "1px solid rgba(44,42,40,.15)", borderRadius: 10, fontSize: 13, fontFamily: "inherit", textAlign: "right" }} />
-                  <span style={{ fontSize: 12, color: "var(--text-2)" }}>{x.l.unidad} despachados</span>
-                  <Btn small disabled={ocupado} onClick={async () => { const ok = await accionLinea(x.s.id, x.l.id, "almacen_parcial", { despachado: num(parcial.valor) }, `Almacén despacha ${parcial.valor} ${x.l.unidad} de ${x.l.descripcion}; el resto a Compras`); if (ok) setParcial(null); }}>Listo</Btn>
-                  <Btn small variant="ghost" onClick={() => setParcial(null)}>✕</Btn>
-                </div>
-                : <>
-                  <Btn small variant="success" disabled={ocupado} onClick={() => accionLinea(x.s.id, x.l.id, "almacen_hay", {}, `Almacén despacha completo: ${x.l.descripcion}`)}>Hay</Btn>
-                  <Btn small variant="info" disabled={ocupado} onClick={() => setParcial({ solId: x.s.id, lineaId: x.l.id, valor: "" })}>Parcial</Btn>
-                  <Btn small variant="ghost" disabled={ocupado} onClick={() => accionLinea(x.s.id, x.l.id, "almacen_no_hay", {}, `Almacén: no hay ${x.l.descripcion} → Compras`)}>No hay</Btn>
-                </>}
-            </> : <Chip c={C_AZUL}>En revisión</Chip> });
-          })}
+          {porSolicitud(g.items, x => filaLinea({ ...x, derecha: puede ? botonesAlmacen(x) : <Chip c={C_AZUL}>En revisión</Chip> }))}
         </Grupo>)}
       </>}
     </div>;
@@ -1432,7 +1435,8 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   // ═══════════════════════════ COMPRAS (Ana) ═══════════════════════════
   const renderCompras = () => {
     const puede = rol === "compras" || esCoordinador;
-    const items = lineasEf.filter(x => x.ef.estado === "por_cotizar").map(x => ({ ...x, l: x.ef.sinRevisionAlmacen && x.l.estado === "revision_almacen" ? { ...x.l, estado: "por_cotizar", aCotizar: num(x.l.cantidad), despachadoAlmacen: 0 } : x.l })).filter(x => pendienteDeCompra(x.l) > 0);
+    const items = lineasEf.filter(x => x.ef.estado === "por_cotizar").map(x => ({ ...x, lGuardada: x.l, l: x.ef.sinRevisionAlmacen && x.l.estado === "revision_almacen" ? { ...x.l, estado: "por_cotizar", aCotizar: num(x.l.cantidad), despachadoAlmacen: 0 } : x.l })).filter(x => pendienteDeCompra(x.l) > 0);
+    const puedeAlm = rol === "almacen" || esCoordinador;
     const grupos = porProyecto(items);
     const devueltas = cotizaciones.filter(q => q.estado === "devuelta");
     const borr = cotizaciones.filter(q => q.estado === "borrador");
@@ -1455,7 +1459,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         {barraGrupos("compras", grupos)}
         {grupos.map(g => <Grupo key={g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("compras", g.k)} onToggle={() => toggleGrupo("compras", g.k)}
           derecha={puede && <Btn small onClick={() => setModal({ t: "cotizacion", projectCode: g.k })}>Cotizar ({g.items.length})</Btn>}>
-          {g.items.map(x => filaLinea({ ...x, derecha: (x.l.quoteIds || []).length ? <Chip c={C_NARANJA}>Ya en {x.l.quoteIds.length} cotización(es)</Chip> : null }))}
+          {porSolicitud(g.items, x => filaLinea({ ...x, derecha: (x.l.quoteIds || []).length ? <Chip c={C_NARANJA}>Ya en {x.l.quoteIds.length} cotización(es)</Chip> : (puedeAlm && x.lGuardada?.estado === "revision_almacen") ? <><span style={{ fontSize: 11.5, color: "var(--text-3)" }}>¿Hay en almacén?</span>{botonesAlmacen({ ...x, l: x.lGuardada })}</> : null }))}
         </Grupo>)}
       </>}
     </div>;
