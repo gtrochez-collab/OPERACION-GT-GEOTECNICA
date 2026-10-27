@@ -1921,6 +1921,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   sp-cotizaciones en SKIP_LOCAL_PREFIXES. Pendiente (BAJO): archivos
   cp-file-* huérfanos al cancelar un form con cotización adjunta; archivar
   solicitudes viejas cuando sp-solicitudes pase ~1 MB.
+  **RECETA DESPLEGADA al pedir (27-oct-2026, pedido de los ingenieros: "que
+  salga la receta completa, así no se nos olvida nada")**: en
+  `SolicitudFormImpl` ya no hay que buscar: TODA la receta sale agrupada por
+  categoría (y solución si tiene varias), con lo que queda de cada ítem; un
+  toque lo agrega (check verde + "En tu pedido · N"). El buscador solo
+  filtra. La lista scrollea dentro de su caja (420 px).
   **PEDIR AL PLANTEL / TALLER (26-oct-2026)**: caso Ing. Yurien (Cataleya):
   placas de anclaje y varillas roscadas que se producen en soldadura/torno y
   Almacén va enviando según se necesita — NO es compra. Al crear la solicitud

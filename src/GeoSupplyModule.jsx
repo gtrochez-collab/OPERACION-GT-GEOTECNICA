@@ -169,14 +169,12 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
   const pedibles = partidasPedibles(pres);
   const soluciones = [...new Set(pedibles.map(p => String(p.solucion || "").trim()).filter(Boolean))];
   const norm = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-  const encontrados = q.trim().length < 2 ? [] : pedibles.filter(p => (!sol || String(p.solucion || "").trim() === sol) && norm(`${p.nombre} ${p.categoria} ${p.solucion || ""}`).includes(norm(q))).slice(0, 12);
   // La varilla (partida en Ton) se puede agregar varias veces: una línea por diámetro.
   const yaEsta = (id) => f.lineas.some(l => l.partidaId === id) && !esPartidaVarillaPorPeso(pedibles.find(p => p.id === id));
   const agregar = (p) => {
     if (yaEsta(p.id)) return;
     const vr = esPartidaVarillaPorPeso(p) ? { varilla: { n: "", largo: 9, lances: "" } } : {};
     u("lineas", [...f.lineas, { id: uid(), partidaId: p.id, descripcion: p.nombre, unidad: p.unidad || "", categoria: p.categoria || "", solucion: p.solucion || "", cantidad: "", fueraPresupuesto: false, ...vr }]);
-    setQ("");
   };
   // Varilla: diámetro + largo + lances → cantidad en la unidad de la partida.
   const uVarilla = (id, k, v) => u("lineas", f.lineas.map(l => {
@@ -239,32 +237,53 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, cfg, ahora, 
     {esPlantel && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AZUL.bg, color: C_AZUL.color, fontSize: 12.5 }}>Le llega directo a Almacén (Óscar), que te lo va enviando según se produzca. Si no lo hay, te lo devuelve con una nota.</div>}
     {!esPlantel && f.projectCode && !pres && <div style={{ padding: "10px 14px", borderRadius: 12, background: "rgba(44,42,40,.05)", color: "var(--text-2)", fontSize: 12.5 }}>Este proyecto no tiene receta: pedí lo que haga falta y lo aprueba el Coordinador.</div>}
 
-    {/* Buscador de la receta */}
-    {pres && <div className="gt-vidrio" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-      <div className="gt-label" style={{ color: "var(--text-3)" }}>Ítems de la receta</div>
-      {soluciones.length > 1 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{pillBtn("Todas", !sol, () => setSol(""), { c: CHARCOAL })}{soluciones.map(s => pillBtn(s, sol === s, () => setSol(s), { c: CHARCOAL }))}</div>}
-      <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscá el material (ej. tubo, cemento, varilla)…" style={{ ...CTRL, width: "100%", padding: "11px 14px", fontSize: 14, borderRadius: 12 }} autoFocus={!solicitud} />
-      {q.trim().length >= 2 && <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
-        {encontrados.length === 0 && <div style={{ fontSize: 12.5, color: "var(--text-3)", padding: "6px 2px" }}>Nada en la receta con "{q}". Si de verdad hace falta, agregalo <b>fuera de presupuesto</b> abajo.</div>}
-        {encontrados.map(p => {
-          const s = saldoDe(f.projectCode, p.id, f.id);
-          const ya = yaEsta(p.id);
-          return <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 12, background: "rgba(255,255,255,.7)", border: "1px solid rgba(44,42,40,.07)", flexWrap: "wrap" }}>
-            <div style={{ flex: 1, minWidth: 180 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL }}>{p.nombre}</div>
-              <div style={{ fontSize: 11, color: "var(--text-3)" }}>{[p.solucion, p.categoria].filter(Boolean).join(" · ")}</div>
+    {/* LA RECETA DESPLEGADA (27-oct-2026, pedido de los ingenieros: "que
+        salga la receta completa al pedir, así no se nos olvida nada"). Toda la
+        receta agrupada por categoría (y solución, si tiene varias); el
+        buscador solo FILTRA. Cada ítem con su saldo y un toque para agregar. */}
+    {pres && (() => {
+      const filtrados = pedibles.filter(p => (!sol || String(p.solucion || "").trim() === sol) && (q.trim().length < 2 || norm(`${p.nombre} ${p.categoria} ${p.solucion || ""}`).includes(norm(q))));
+      const grupos = [];
+      filtrados.forEach(p => { const k = [soluciones.length > 1 && !sol ? String(p.solucion || "").trim() : "", p.categoria || "Otros"].filter(Boolean).join(" · "); let g = grupos.find(x => x.k === k); if (!g) grupos.push(g = { k, items: [] }); g.items.push(p); });
+      const nAgregados = pedibles.filter(p => f.lineas.some(l => l.partidaId === p.id)).length;
+      return <div className="gt-vidrio" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div className="gt-label" style={{ color: "var(--text-3)" }}>La receta del proyecto · {pedibles.length} ítems</div>
+          {nAgregados > 0 && <span style={{ fontSize: 11.5, fontWeight: 800, color: C_VERDE.color }}>{nAgregados} agregado{nAgregados === 1 ? "" : "s"}</span>}
+        </div>
+        {soluciones.length > 1 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{pillBtn("Todas", !sol, () => setSol(""), { c: CHARCOAL })}{soluciones.map(s => pillBtn(s, sol === s, () => setSol(s), { c: CHARCOAL }))}</div>}
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filtrar la receta (ej. tubo, cemento, varilla)…" style={{ ...CTRL, width: "100%", padding: "10px 14px", fontSize: 13.5, borderRadius: 12 }} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: isMobile ? 380 : 420, overflowY: "auto", paddingRight: 2 }}>
+          {grupos.length === 0 && <div style={{ fontSize: 12.5, color: "var(--text-3)", padding: "6px 2px" }}>Nada en la receta con "{q}". Si de verdad hace falta, agregalo <b>fuera de presupuesto</b> abajo.</div>}
+          {grupos.map(g => <div key={g.k} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div style={{ position: "sticky", top: 0, zIndex: 1, display: "flex", justifyContent: "space-between", padding: "4px 4px 6px", background: "linear-gradient(#FBFBFA 75%, rgba(251,251,250,0))", fontSize: 11, fontWeight: 800, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--text-2)" }}>
+              <span>{g.k}</span><span style={{ color: "var(--text-3)", fontWeight: 600 }}>{g.items.length}</span>
             </div>
-            <div style={{ fontSize: 11.5, color: "var(--text-2)", textAlign: "right", lineHeight: 1.5 }}>
-              {s?.sinCantidad ? <span style={{ color: C_AMARILLO.color }}>Sin cantidad en la receta</span> : <>
-                <div>Receta <b>{fmtCant(s.presupuestada)}</b> {p.unidad} · pedido <b>{fmtCant(s.comprada + s.enSolicitudes)}</b></div>
-                <div style={{ color: s.saldo > 0 ? C_VERDE.color : C_ROJO.color, fontWeight: 800 }}>Saldo {fmtCant(s.saldo)} {p.unidad}</div>
-              </>}
-            </div>
-            <Btn small variant={ya ? "ghost" : "primary"} disabled={ya} onClick={() => agregar(p)}>{ya ? "Agregado" : "+ Agregar"}</Btn>
-          </div>;
-        })}
-      </div>}
-    </div>}
+            {g.items.map(p => {
+              const s = saldoDe(f.projectCode, p.id, f.id);
+              const ya = yaEsta(p.id);
+              const enLista = f.lineas.filter(l => l.partidaId === p.id);
+              const agotado = s && !s.sinCantidad && s.saldo <= 0;
+              return <div key={p.id} role="button" tabIndex={0} onClick={() => !ya && agregar(p)} onKeyDown={e => { if ((e.key === "Enter" || e.key === " ") && !ya) { e.preventDefault(); agregar(p); } }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 12, cursor: ya ? "default" : "pointer", background: enLista.length ? C_VERDE.bg : "transparent", border: `1px solid ${enLista.length ? "rgba(5,150,105,.18)" : "transparent"}`, transition: "background .15s" }}
+                onMouseEnter={e => { if (!enLista.length) e.currentTarget.style.background = "rgba(44,42,40,.04)"; }} onMouseLeave={e => { if (!enLista.length) e.currentTarget.style.background = "transparent"; }}>
+                <span aria-hidden style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 999, display: "grid", placeItems: "center", fontSize: 13, fontWeight: 800, background: enLista.length ? "#059669" : "rgba(44,42,40,.07)", color: enLista.length ? "#fff" : "var(--text-2)" }}>{enLista.length ? "✓" : "+"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, lineHeight: 1.3 }}>{p.nombre}</div>
+                  {enLista.length > 0 && <div style={{ fontSize: 11, color: C_VERDE.color, fontWeight: 700, marginTop: 1 }}>En tu pedido{enLista.some(l => num(l.cantidad) > 0) ? ` · ${enLista.map(l => `${fmtCant(num(l.cantidad))} ${l.unidad || ""}`).join(" + ")}` : " · poné la cantidad abajo"}</div>}
+                </div>
+                <div style={{ fontSize: 11.5, textAlign: "right", lineHeight: 1.35, flexShrink: 0 }}>
+                  {s?.sinCantidad ? <span style={{ color: "var(--text-3)" }}>sin cantidad</span> : <>
+                    <div style={{ color: agotado ? C_ROJO.color : CHARCOAL, fontWeight: 800 }}>{fmtCant(s.saldo)} {p.unidad}</div>
+                    <div style={{ color: "var(--text-3)", fontSize: 10.5 }}>quedan de {fmtCant(s.presupuestada)} en la receta</div>
+                  </>}
+                </div>
+              </div>;
+            })}
+          </div>)}
+        </div>
+      </div>;
+    })()}
 
     {/* Líneas agregadas */}
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
