@@ -1933,6 +1933,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   de otras recetas" agrupado por categoría, un toque lo agrega como ítem libre
   (`deCatalogo: true`, nombre y unidad puestos) y sigue el camino de siempre
   (lo aprueba el Coordinador).
+  **Almacén agrupado POR SOLICITUD (27-oct-2026, Óscar: "no me deja ver qué
+  pidió cada uno, solo así por encima")**: dentro de cada proyecto, una cajita
+  por solicitud (`porSolicitud`): folio, quién la pidió, fecha requerida,
+  corte, N ítems, sus NOTAS y "Ver solicitud"; los ítems van debajo sin
+  repetir folio/quién (`filaLinea({enSolicitud})` muestra solución ·
+  categoría). Aplica a la revisión de compras y a los pedidos al plantel.
   **PEDIR AL PLANTEL / TALLER (26-oct-2026)**: caso Ing. Yurien (Cataleya):
   placas de anclaje y varillas roscadas que se producen en soldadura/torno y
   Almacén va enviando según se necesita — NO es compra. Al crear la solicitud

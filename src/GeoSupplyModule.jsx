@@ -1206,18 +1206,19 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     <div style={{ font: "800 22px/1 var(--display)", color: c || CHARCOAL, letterSpacing: "-.02em" }}>{v}</div>
     <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 5, fontSize: 9 }}>{l}</div>
   </button>;
-  const filaLinea = ({ s, l, ef, derecha, extra }) => {
+  const filaLinea = ({ s, l, ef, derecha, extra, enSolicitud }) => {
     const al = alertasDeLinea(l, s);
     const sd = l.partidaId ? saldoDe(s.projectCode, l.partidaId, s.id) : null;
     return <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: "rgba(255,255,255,.75)", border: "1px solid rgba(44,42,40,.07)", flexWrap: "wrap" }}>
       <div style={{ flex: 1, minWidth: 200 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: "var(--mono)", fontSize: 11, fontWeight: 700, color: "var(--text-3)" }}>{s.folio}</span>
+          {!enSolicitud && <span style={{ fontFamily: "var(--mono)", fontSize: 11, fontWeight: 700, color: "var(--text-3)" }}>{s.folio}</span>}
           <span style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{l.descripcion}</span>
           <span style={{ fontSize: 13, color: "var(--text-2)" }}>· <b>{fmtCant(ef?.estado === "por_cotizar" ? pendienteDeCompra(l.estado === "revision_almacen" ? { ...l, aCotizar: l.cantidad } : l) : l.cantidad)}</b> {l.unidad}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-          <span style={{ fontSize: 11, color: "var(--text-3)" }}>pidió {quien(s.residente)} · requerido <b>{fmtDiaCorto(s.fechaRequeridaObra)}</b>{s.corte && !esPedidoPlantel(s) ? ` · ${etiquetaCorte(s.corte).titulo}` : ""}</span>
+          {!enSolicitud && <span style={{ fontSize: 11, color: "var(--text-3)" }}>pidió {quien(s.residente)} · requerido <b>{fmtDiaCorto(s.fechaRequeridaObra)}</b>{s.corte && !esPedidoPlantel(s) ? ` · ${etiquetaCorte(s.corte).titulo}` : ""}</span>}
+          {l.solucion && enSolicitud && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{l.solucion}{l.categoria ? ` · ${l.categoria}` : ""}</span>}
           {al.map(a => <Chip key={a} c={a === "urgente" ? C_ROJO : C_AMARILLO}>{ALERTAS[a]}{a === "excede_saldo" && sd ? ` · saldo ${fmtCant(sd.saldo)}` : ""}</Chip>)}
           {ef?.sinRevisionAlmacen && <Chip c={C_AMARILLO}>Sin revisión de almacén</Chip>}
           {(s.cotizacionesAdjuntas || []).length > 0 && <Chip c={C_AZUL}>Trae cotización</Chip>}
@@ -1235,6 +1236,25 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const m = {};
     items.forEach(x => { (m[x.s.projectCode] = m[x.s.projectCode] || []).push(x); });
     return Object.entries(m).map(([k, v]) => ({ k, items: v.sort((a, b) => String(a.s.fechaRequeridaObra).localeCompare(String(b.s.fechaRequeridaObra))), minFecha: v.map(x => x.s.fechaRequeridaObra).sort()[0] })).sort((a, b) => String(a.minFecha).localeCompare(String(b.minFecha)));
+  };
+  // Dentro de un proyecto, una cajita POR SOLICITUD (27-oct-2026, Óscar: "no
+  // me deja ver qué pidió cada uno, solo así por encima"): folio, quién la
+  // pidió, para cuándo, el corte, sus NOTAS y "Ver solicitud"; debajo sus
+  // ítems sin repetir esos datos.
+  const porSolicitud = (items, fila) => {
+    const m = new Map();
+    items.forEach(x => { if (!m.has(x.s.id)) m.set(x.s.id, { s: x.s, items: [] }); m.get(x.s.id).items.push(x); });
+    return [...m.values()].map(({ s, items: xs }) => <div key={s.id} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 10, borderRadius: 16, background: "rgba(44,42,40,.035)", border: "1px solid rgba(44,42,40,.06)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "2px 4px" }}>
+        <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 800, color: CHARCOAL }}>{s.folio}</span>
+        <span style={{ fontSize: 12.5, color: "var(--text-2)", flex: 1, minWidth: 180 }}>pidió <b>{quien(s.residente)}</b> · requerido <b>{fmtDiaCorto(s.fechaRequeridaObra)}</b>{s.corte && !esPedidoPlantel(s) ? ` · ${etiquetaCorte(s.corte).titulo}` : ""} · {xs.length} {xs.length === 1 ? "ítem" : "ítems"}</span>
+        {s.urgente && <Chip c={C_ROJO}>Urgente</Chip>}
+        {(s.cotizacionesAdjuntas || []).length > 0 && <Chip c={C_AZUL}>Trae cotización</Chip>}
+        <Btn small variant="ghost" onClick={() => setModal({ t: "detalle", id: s.id })}>Ver solicitud</Btn>
+      </div>
+      {s.notas && <div style={{ fontSize: 12.5, color: "var(--text-2)", padding: "0 4px" }}><b>Notas:</b> {s.notas}</div>}
+      {xs.map(x => fila({ ...x, enSolicitud: true }))}
+    </div>);
   };
   const barraGrupos = (vista, grupos) => grupos.length > 1 && <div style={{ display: "flex", justifyContent: "flex-end" }}>{pillBtn(grupos.every(g => estaAbierto(vista, g.k)) ? "Compactar todo" : "Expandir todo", false, () => { const todos = grupos.every(g => estaAbierto(vista, g.k)); setAbiertos(prev => { const next = { ...prev }; grupos.forEach(g => { next[`${vista}:${g.k}`] = !todos; }); try { localStorage.setItem(`gt-supply-abiertos-${userKey}`, JSON.stringify(next)); } catch {} return next; }); })}</div>;
 
@@ -1351,7 +1371,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const bloquePlantel = itemsPl.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="gt-label" style={{ color: "var(--text-3)", paddingLeft: 4 }}>Pedidos al plantel / taller</div>
       {gruposPl.map(g => <Grupo key={"pl-" + g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("plantel", g.k)} onToggle={() => toggleGrupo("plantel", g.k)}>
-        {g.items.map(x => {
+        {porSolicitud(g.items, x => {
           const falta = pendientePlantel(x.l);
           const abierto = envioPl && envioPl.lineaId === x.l.id;
           return filaLinea({ ...x, derecha: puede ? (abierto
@@ -1387,7 +1407,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         {barraGrupos("almacen", grupos)}
         {grupos.map(g => <Grupo key={g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("almacen", g.k)} onToggle={() => toggleGrupo("almacen", g.k)}
           derecha={puede && <Btn small variant="ghost" disabled={ocupado} onClick={async () => { if (!confirm(`¿Marcar "No hay" en los ${g.items.length} ítems de ${nombreProy(g.k)}? Pasan a Compras.`)) return; const porSol = {}; g.items.forEach(x => { (porSol[x.s.id] = porSol[x.s.id] || []).push(x.l.id); }); for (const [sid, ids] of Object.entries(porSol)) await accionLineas(sid, ids, "almacen_no_hay", {}, "Almacén: no hay (masivo del proyecto)"); }}>No hay nada de esto</Btn>}>
-          {g.items.map(x => {
+          {porSolicitud(g.items, x => {
             const enParcial = parcial && parcial.lineaId === x.l.id;
             return filaLinea({ ...x, derecha: puede ? <>
               {enParcial
