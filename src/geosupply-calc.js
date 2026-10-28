@@ -600,6 +600,8 @@ export const borradorDesdeCotizacion = ({ cotizacion, evaluacion, solicitud, pro
       folioCotizacion: cotizacion.folio || "",
       residente: solicitud?.residente || "",
       urgente: !!solicitud?.urgente,
+      justificacionUrgencia: solicitud?.urgente ? (solicitud.justificacionUrgencia || "") : "",
+      fechaRequeridaObra: solicitud?.fechaRequeridaObra || "",
       corte: solicitud?.corte || null,
       aprobadoPor: aprobadoPor || "",
       aprobadoAt: ahoraISO,

@@ -1973,6 +1973,14 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (se mudó a **Hoy** como "Dónde están las solicitudes", con pills por corte,
   `renderEstadoCorte` / `hoyCorte`), "Semáforo de precio" e "Ítems fuera de
   corte" (el número sigue en la tira).
+  **Borrador para Finanzas: fecha en obra (28-oct-2026, Gerson: "¿cómo va a
+  ver Christian qué día se necesita en proyecto?")**: `origenSupply` lleva
+  ahora `fechaRequeridaObra` y `justificacionUrgencia`; el form del borrador
+  muestra "Se necesita en obra el …" + "Urgente · aprobada por …" + el por qué,
+  y debajo de la fecha de pago "viene puesta 2 días antes"; la fila trae el
+  chip azul "En obra …". MAT-2026-0601 se completó en la nube. Fix de paso:
+  `fmt` de PurchasesModule formatea las fechas PURAS en UTC (el chip decía
+  "Pago 31 oct" para el 1 nov).
   **GEOLITO EL TÉCNICO (28-oct-2026)**: `src/geolito.jsx`, solo en GeoSupply,
   circulito abajo a la derecha que abre un chat de preguntas frecuentes SIN IA
   ni servicio externo (respuestas escritas, con días/horas de la

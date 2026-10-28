@@ -321,7 +321,9 @@ export const restoreFiles = async (lightPurchases) => {
     return restored;
   });
 };
-const fmt = d => d ? new Date(d).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+// Una fecha PURA ("2026-11-01") es medianoche UTC: sin timeZone UTC salía un
+// día antes en Honduras (28-oct-2026: el borrador decía "Pago 31 oct" y la fecha era 1 nov).
+const fmt = d => d ? new Date(d).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric", ...(/^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? { timeZone: "UTC" } : {}) }) : "—";
 const fmtDT = d => d ? new Date(d).toLocaleString("es-HN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtL = n => (n != null && n !== "") ? `L ${Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2 })}` : "L 0.00";
 const fmtMB = b => b ? (b / 1024 / 1024).toFixed(2) + " MB" : "—";
@@ -1980,6 +1982,12 @@ function BorradorSupplyFormImpl({ purchase, puedeEnviar, userName, setModal, upd
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
       <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>Lo que viene de la cotización</div>
+        {/* 28-oct-2026, Gerson: "¿cómo va a ver Christian qué día se necesita en proyecto?" — para que gestione que el pago salga antes. */}
+        {(o.fechaRequeridaObra || o.urgente) && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "8px 12px", borderRadius: 10, background: o.urgente ? C_ROJO.bg : C_AZUL.bg }}>
+          {o.fechaRequeridaObra && <span style={{ fontSize: 13, color: CHARCOAL }}>Se necesita en obra el <b>{fmt(o.fechaRequeridaObra)}</b></span>}
+          {o.urgente && <span style={{ padding: "3px 9px", borderRadius: 999, background: "#fff", color: C_ROJO.color, fontSize: 11.5, fontWeight: 800 }}>Urgente · aprobada por {o.aprobadoPor || "el Coordinador"}</span>}
+        </div>}
+        {o.urgente && o.justificacionUrgencia && <div style={{ fontSize: 12.5, color: "#475569" }}><span style={{ color: "#64748b" }}>Por qué es urgente</span> {o.justificacionUrgencia}</div>}
         <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>Proyecto</span> <b>{projLabel(purchase.projectCode)}</b></div>
         <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>Proveedor</span> <b>{purchase.provider}</b>{purchase.providerRTN ? ` · RTN ${purchase.providerRTN}` : ""}</div>
         <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>N° cotización</span> <b>{purchase.quoteNumber || "—"}</b> {purchase.quoteFile && <button type="button" onClick={() => verArchivo(purchase.quoteFile)} style={{ background: "none", border: "none", color: "#2563EB", fontWeight: 700, cursor: "pointer", fontSize: 12.5 }}>Ver PDF</button>}</div>
@@ -1999,7 +2007,10 @@ function BorradorSupplyFormImpl({ purchase, puedeEnviar, userName, setModal, upd
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{pill("Contado", f.condicionPago !== "credito", () => { u("condicionPago", "contado"); if (f.destinoPago === "cxp") u("destinoPago", "normal"); })}{pill("Crédito", f.condicionPago === "credito", () => { u("condicionPago", "credito"); u("destinoPago", "cxp"); })}</div>
         {f.condicionPago === "credito" && <div style={{ display: "flex", gap: 6 }}>{pill("Un solo pago", f.tipoCredito !== "plan", () => u("tipoCredito", "unico"), CHARCOAL)}{pill("Plan de pagos", f.tipoCredito === "plan", () => u("tipoCredito", "plan"), CHARCOAL)}</div>}
       </div>
-      <Input label="Fecha en que se requiere el pago" type="date" value={f.fechaPagoRequerida} onChange={e => u("fechaPagoRequerida", e.target.value)} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <Input label="Fecha en que se requiere el pago" type="date" value={f.fechaPagoRequerida} onChange={e => u("fechaPagoRequerida", e.target.value)} />
+        {o.fechaRequeridaObra && <div style={{ fontSize: 11.5, color: "#64748b" }}>Viene puesta 2 días antes de que se necesite en obra ({fmt(o.fechaRequeridaObra)}). Cambiala si hace falta.</div>}
+      </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Va a</label>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{[["normal", "Normal"], ["prioridad", "Prioridades"], ["cxp", "Cuentas por pagar"]].map(([k, l]) => pill(l, f.destinoPago === k, () => u("destinoPago", k)))}</div>
@@ -8350,7 +8361,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
                   {chip((p.condicionPago || "contado") === "credito" ? `Crédito · ${p.tipoCredito === "plan" ? "plan de pagos" : "un solo pago"}` : "Contado")}
                   {chip(`Va a: ${DEST[p.destinoPago] || "Normal"}`, p.destinoPago === "prioridad" ? C_ULTRA : p.destinoPago === "cxp" ? C_AZUL : C_GRIS)}
-                  {chip(p.fechaPagoRequerida ? `Pago ${fmt(p.fechaPagoRequerida)}` : "Sin fecha de pago", p.fechaPagoRequerida ? C_GRIS : C_AMARILLO)}
+                  {o.fechaRequeridaObra && chip(`En obra ${fmt(o.fechaRequeridaObra)}`, C_AZUL)}{chip(p.fechaPagoRequerida ? `Pago ${fmt(p.fechaPagoRequerida)}` : "Sin fecha de pago", p.fechaPagoRequerida ? C_GRIS : C_AMARILLO)}
                   {chip(p.cierreResponsable ? `Cierra ${p.cierreResponsable}` : "Cierre sin asignar", p.cierreResponsable ? C_GRIS : C_AMARILLO)}
                   {o.urgente && chip("Urgente", C_ROJO)}
                   {avisos.map(a => chip(a, C_AMARILLO))}
