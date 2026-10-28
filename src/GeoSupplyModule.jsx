@@ -1773,7 +1773,34 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         </>)}
         {card("Por proyecto", m.porProyecto.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Sin solicitudes.</div> : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{m.porProyecto.map(x => <div key={x.k}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4 }}><span style={{ fontWeight: 700 }}>{nombreProy(x.k)}</span><span style={{ color: "var(--text-2)" }}>{x.total} · {x.urgentes ? `${x.urgentes} urg. · ` : ""}en corte {pct(x.pctEnCorte)}</span></div>{barra(x.total, maxProy)}</div>)}</div>)}
         {card("Tiempo promedio por etapa", <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{etapas.map(([l, v]) => <div key={l}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4 }}><span>{l}</span><b>{fmtDias(v)}</b></div>{barra(v || 0, maxT, CHARCOAL)}</div>)}</div>)}
-        {card("Por residente", m.porResidente.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Sin solicitudes.</div> : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{m.porResidente.map(x => <div key={x.k} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 12.5, flexWrap: "wrap" }}><span style={{ fontWeight: 700 }}>{quien(x.k)}</span><span style={{ display: "flex", gap: 6 }}><Chip c={C_GRIS}>{x.total} sol.</Chip><Chip c={x.pctEnCorte != null && x.pctEnCorte < 0.8 ? C_ROJO : C_VERDE}>en corte {pct(x.pctEnCorte)}</Chip><Chip c={x.urgentes ? C_ROJO : C_GRIS}>urgentes {pct(x.pctUrgentes)}</Chip>{x.rechazadas > 0 && <Chip c={C_AMARILLO}>{x.rechazadas} rechazados</Chip>}{x.ajustadas > 0 && <Chip c={C_AMARILLO} title="Enviadas fuera de hora que el Coordinador pasó a un corte anterior">{x.ajustadas} perdonada{x.ajustadas === 1 ? "" : "s"}</Chip>}</span></div>)}</div>)}
+        {card("Cumplimiento por residente", m.porResidente.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Sin solicitudes.</div> : (() => {
+          // 28-oct-2026, Gerson: "que diga qué es cada una, para que lo entienda todo el que entre".
+          const cols = "minmax(150px,1.6fr) repeat(5, minmax(84px,1fr))";
+          const encab = [["Enviadas", "solicitudes"], ["A tiempo", "antes del cierre del martes"], ["Fuera de hora", "después del cierre"], ["Urgentes", "se saltaron el corte"], ["Rechazados", "ítems que no se aprobaron"]];
+          const num2 = (v, sub, c) => <div style={{ textAlign: "center" }}><div style={{ fontSize: 14, fontWeight: 800, color: c || CHARCOAL }}>{v}</div>{sub && <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 2 }}>{sub}</div>}</div>;
+          return <><div style={{ overflowX: "auto" }}><div style={{ minWidth: 640, display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "grid", gridTemplateColumns: cols, gap: 8, padding: "0 4px 8px", borderBottom: "1px solid rgba(44,42,40,.08)" }}>
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: "var(--text-2)", alignSelf: "end" }}>Residente</div>
+              {encab.map(([t, sub]) => <div key={t} style={{ textAlign: "center" }}><div style={{ fontSize: 11.5, fontWeight: 800, color: "var(--text-2)" }}>{t}</div><div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 2, lineHeight: 1.25 }}>{sub}</div></div>)}
+            </div>
+            {m.porResidente.map(x => {
+              const tarde = x.conCorte - x.enCorte;
+              const bien = x.pctEnCorte == null || x.pctEnCorte >= 0.8;
+              return <div key={x.k} style={{ display: "grid", gridTemplateColumns: cols, gap: 8, alignItems: "center", padding: "10px 4px", borderBottom: "1px solid rgba(44,42,40,.05)" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL }}>{quien(x.k)}</div>
+                {num2(x.total)}
+                <div style={{ textAlign: "center" }}><Chip c={bien ? C_VERDE : C_ROJO}>{pct(x.pctEnCorte)}</Chip><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{x.enCorte} de {x.conCorte}</div></div>
+                {num2(tarde, x.ajustadas > 0 ? `${x.ajustadas} perdonada${x.ajustadas === 1 ? "" : "s"}` : null, tarde ? C_ROJO.color : undefined)}
+                {num2(x.urgentes, x.urgentes ? pct(x.pctUrgentes) : null, x.urgentes ? C_ROJO.color : undefined)}
+                {num2(x.rechazadas, null, x.rechazadas ? C_AMARILLO.color : undefined)}
+              </div>;
+            })}
+          </div></div>
+            <div style={{ fontSize: 11.5, color: "var(--text-3)", lineHeight: 1.5 }}>
+              <b>A tiempo</b>: de las solicitudes enviadas, cuántas llegaron antes del cierre de su corte (verde desde 80 %). <b>Fuera de hora</b>: se enviaron tarde; las <b>perdonadas</b> son las que el Coordinador igual metió al corte. <b>Urgentes</b>: las marcadas urgentes, que se saltan el corte. <b>Rechazados</b>: ítems que el Coordinador no aprobó.
+            </div>
+          </>;
+        })(), { gridColumn: "1 / -1" })}
         {card("Ítems fuera de corte", m.fueraDeCorte.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Ninguno: todo lo del corte se resolvió a tiempo.</div> : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{m.fueraDeCorte.slice(0, 12).map(({ sol: s2, linea: l }) => <div key={l.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, cursor: "pointer" }} onClick={() => setModal({ t: "detalle", id: s2.id })}><span><b>{s2.folio}</b> · {l.descripcion} · {nombreProy(s2.projectCode)}</span>{chipEstado(ESTADOS_LINEA, l.estado)}</div>)}{m.fueraDeCorte.length > 12 && <div style={{ fontSize: 12, color: "var(--text-3)" }}>+{m.fueraDeCorte.length - 12} más</div>}</div>)}
       </div>
     </div>;

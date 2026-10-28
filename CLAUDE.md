@@ -1962,6 +1962,10 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   hora). SUP-0008/0009/0010/0012 se pasaron del Corte 2 al Corte 1 en la nube
   (todo el primer corte = Corte 1). Solicitudes ganó el filtro por corte
   (`solCorte`) y va ANTES de Cotizaciones en el menú del Coordinador.
+  **Cumplimiento por residente (28-oct-2026, Gerson: "que diga qué es cada
+  una")**: la tarjeta del Dashboard es una tabla a todo lo ancho con columnas
+  rotuladas (Enviadas · A tiempo "4 de 7" + % · Fuera de hora + perdonadas ·
+  Urgentes · Rechazados) y una leyenda de una línea abajo.
   **GEOLITO EL TÉCNICO (28-oct-2026)**: `src/geolito.jsx`, solo en GeoSupply,
   circulito abajo a la derecha que abre un chat de preguntas frecuentes SIN IA
   ni servicio externo (respuestas escritas, con días/horas de la
