@@ -1954,6 +1954,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   de cotización, solo el Coordinador: envía y aprueba de una
   (`guardarCotizacion` ahora devuelve la cotización → `aprobarCotizacion`) —
   para las que ya traen cotización.
+  **Corte 1 + perdonar (28-oct-2026, Gerson)**: el Coordinador puede pasar
+  una solicitud a otro corte desde su detalle ("Pasar al Corte N",
+  `cambiarCorte`) → `corteAjustado {de, por, at, motivo}` + audit
+  `corte_ajustado`; chip ámbar "Enviada tarde · ajustada" y en el Dashboard
+  "Por residente" cuenta "N perdonadas" (y `enviadaEnCorte` las marca fuera de
+  hora). SUP-0008/0009/0010/0012 se pasaron del Corte 2 al Corte 1 en la nube
+  (todo el primer corte = Corte 1). Solicitudes ganó el filtro por corte
+  (`solCorte`) y va ANTES de Cotizaciones en el menú del Coordinador.
+  **GEOLITO EL TÉCNICO (28-oct-2026)**: `src/geolito.jsx`, solo en GeoSupply,
+  circulito abajo a la derecha que abre un chat de preguntas frecuentes SIN IA
+  ni servicio externo (respuestas escritas, con días/horas de la
+  Configuración). Preguntas: "¿Cómo funciona el proceso?" y "¿Qué pasa si
+  envío una solicitud fuera de tiempo y la necesito?". Imagen
+  `public/brand/geolito.png` (si falta, sale un dibujo SVG de respaldo).
   **PEDIR AL PLANTEL / TALLER (26-oct-2026)**: caso Ing. Yurien (Cataleya):
   placas de anclaje y varillas roscadas que se producen en soldadura/torno y
   Almacén va enviando según se necesita — NO es compra. Al crear la solicitud

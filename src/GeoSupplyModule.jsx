@@ -36,6 +36,7 @@ import { hoyISO } from "./fechas.js";
 import { num, UNIDADES, TASA_DEFAULT, movimientosCompras, VARILLAS, LARGOS_VARILLA, esPartidaVarillaPorPeso, cantidadDeVarilla, pesoLanceKg, nombreVarilla, kgPorUnidad } from "./geocost-calc.js";
 import { Input, Select, Textarea, Btn, Chip, Modal, C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, fmtL, fmtUSD, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
+import Geolito from "./geolito.jsx";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { leerPdf, parsearCotizacion, lineasSupplyDesdeLectura, lineaSupplyDe, memoriaDeCompras } from "./leer-cotizacion.js";
 import {
@@ -43,7 +44,7 @@ import {
   DIAS_SEMANA, estadoEfectivoLinea, solicitudActiva, ESTADOS_LINEA, ESTADOS_SOLICITUD, ESTADOS_COTIZACION, estadoCabecera,
   estadoInicialLinea, alertasDeLinea, ALERTAS, puedeCancelar, aplicarAccionLinea, pendienteDeCompra, saldoDePartida, partidasPedibles,
   puPresupuestoUSD, evaluarCotizacion, siguienteFolio, siguienteCodigoCompra, borradorDesdeCotizacion, fueraDeCorte, metricasDashboard,
-  LINEA_TERMINAL, esPedidoPlantel, pendientePlantel, ymdSumar, partesHN, enviadaEnCorte, round2,
+  LINEA_TERMINAL, esPedidoPlantel, pendientePlantel, ymdSumar, partesHN, enviadaEnCorte, round2, corteAnterior, corteSiguiente,
 } from "./geosupply-calc.js";
 
 const ORANGE = "#E8762D";
@@ -872,6 +873,14 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     finally { setOcupado(false); }
   };
   const actualizarSolicitud = (id, fn) => actualizarEn(K.sol, setSolicitudes, id, fn);
+  // El Coordinador "perdona" una solicitud enviada tarde (o la corre de corte).
+  // `corteAjustado.de` guarda el corte que le tocaba por la HORA de envío: el
+  // Dashboard sigue contándola como fuera de hora para el residente.
+  const cambiarCorte = async (s, corte) => {
+    const motivo = window.prompt(`Pasar ${s.folio} al ${etiquetaCorte(corte).titulo}.\n¿Por qué? (opcional)`, "");
+    if (motivo === null) return;
+    await actualizarSolicitud(s.id, (x) => ({ ...x, corte, corteAjustado: { de: x.corteAjustado?.de || x.corte, por: userName, at: new Date().toISOString(), motivo: motivo.trim() }, audit: [...(x.audit || []), auditEntry("corte_ajustado", `Pasada del ${etiquetaCorte(x.corte).titulo} al ${etiquetaCorte(corte).titulo}${motivo.trim() ? ` — ${motivo.trim()}` : ""}`)] }));
+  };
   const actualizarCotizacion = (id, fn) => actualizarEn(K.cot, setCotizaciones, id, fn);
 
   // Acción sobre UNA línea (Coordinador, Almacén, Compras). La transición la
@@ -1160,6 +1169,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const estaAbierto = (vista, k, defecto = true) => abiertos[`${vista}:${k}`] ?? defecto;
   const [solQ, setSolQ] = useState("");
   const [solProy, setSolProy] = useState("");
+  const [solCorte, setSolCorte] = useState("");
   const [solVista, setSolVista] = useState("abiertas");
   const [cotVista, setCotVista] = useState("enviada");
   const [parcial, setParcial] = useState(null);      // { solId, lineaId, valor }
@@ -1168,7 +1178,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const [dashCorte, setDashCorte] = useState("todos");
 
   const NAV = {
-    coordinador: [{ id: "hoy", label: "Hoy" }, { id: "alertas", label: "Alertas" }, { id: "cotizaciones", label: "Cotizaciones" }, { id: "solicitudes", label: "Solicitudes" }, { id: "almacen", label: "Almacén" }, { id: "compras", label: "Compras" }, { id: "dashboard", label: "Dashboard" }, { id: "config", label: "Configuración" }],
+    coordinador: [{ id: "hoy", label: "Hoy" }, { id: "alertas", label: "Alertas" }, { id: "solicitudes", label: "Solicitudes" }, { id: "cotizaciones", label: "Cotizaciones" }, { id: "almacen", label: "Almacén" }, { id: "compras", label: "Compras" }, { id: "dashboard", label: "Dashboard" }, { id: "config", label: "Configuración" }],
     residente:   [{ id: "solicitudes", label: "Mis solicitudes" }],
     almacen:     [{ id: "almacen", label: "Almacén" }, { id: "solicitudes", label: "Solicitudes" }],
     compras:     [{ id: "compras", label: "Por cotizar" }, { id: "cotizaciones", label: "Cotizaciones" }, { id: "solicitudes", label: "Solicitudes" }],
@@ -1519,9 +1529,13 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const visibles = base
       .filter(s => solVista === "todas" ? true : solVista === "abiertas" ? !terminada(s) : terminada(s))
       .filter(s => !solProy || s.projectCode === solProy)
+      .filter(s => !solCorte || (s.corte && !esPedidoPlantel(s) && etiquetaCorte(s.corte).id === solCorte))
       .filter(s => !solQ || `${s.folio} ${nombreProy(s.projectCode)} ${quien(s.residente)} ${(s.lineas || []).map(l => l.descripcion).join(" ")}`.toLowerCase().includes(solQ.toLowerCase()))
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
     const proyectosConSol = [...new Set(base.map(s => s.projectCode))];
+    // Filtro por corte (28-oct-2026, Gerson): los cortes que tienen solicitudes, el más nuevo primero.
+    const cortesConSol = [...new Map(base.filter(s => s.corte && !esPedidoPlantel(s)).map(s => [etiquetaCorte(s.corte).id, s.corte])).entries()]
+      .sort((a, b) => (b[1].anio - a[1].anio) || (b[1].semana - a[1].semana));
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {(esResidente || rol === "almacen") && <div className="gt-vidrio" style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
         <div>
@@ -1542,7 +1556,10 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         {!esResidente && proyectosConSol.length > 1 && <select value={solProy} onChange={e => setSolProy(e.target.value)} style={{ padding: "8px 12px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 999, fontSize: 13, background: "rgba(255,255,255,.7)", fontFamily: "inherit" }}>
           <option value="">Todos los proyectos</option>{proyectosConSol.map(p => <option key={p} value={p}>{nombreProy(p)}</option>)}
         </select>}
-        {(solQ || solProy) && <Btn small variant="ghost" onClick={() => { setSolQ(""); setSolProy(""); }}>Limpiar</Btn>}
+        {cortesConSol.length > 0 && <select value={solCorte} onChange={e => setSolCorte(e.target.value)} style={{ padding: "8px 12px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 999, fontSize: 13, background: "rgba(255,255,255,.7)", fontFamily: "inherit" }}>
+          <option value="">Todos los cortes</option>{cortesConSol.map(([id, c]) => <option key={id} value={id}>{etiquetaCorte(c).titulo} · {etiquetaCorte(c).sub}</option>)}
+        </select>}
+        {(solQ || solProy || solCorte) && <Btn small variant="ghost" onClick={() => { setSolQ(""); setSolProy(""); setSolCorte(""); }}>Limpiar</Btn>}
       </div>
       {visibles.length === 0
         ? <Vacio>{base.length === 0 ? (esResidente ? "Todavía no tenés solicitudes." : "Todavía no hay solicitudes de material.") : "Nada coincide con el filtro."}</Vacio>
@@ -1557,6 +1574,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
             {esPedidoPlantel(s) && <Chip c={C_AZUL}>Al plantel</Chip>}
             {s.urgente && <Chip c={C_ROJO}>Urgente</Chip>}
             {fc && <Chip c={C_ROJO}>Fuera de corte</Chip>}
+            {s.corteAjustado && <Chip c={C_AMARILLO} title={`Se envió fuera de hora; ${s.corteAjustado.por} la pasó al ${etiquetaCorte(s.corte).titulo}`}>Enviada tarde · ajustada</Chip>}
             <div style={{ flex: 1, minWidth: 160 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{nombreProy(s.projectCode)}</div>
               <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{ls.length} {ls.length === 1 ? "ítem" : "ítems"}{ls.some(l => l.estado === "rechazada") ? ` · ${ls.filter(l => l.estado === "rechazada").length} rechazado(s)` : ""} · pidió {quien(s.residente)} · {esPedidoPlantel(s) ? (s.estado === "borrador" ? "borrador" : "pedido al plantel / taller") : s.corte ? etiquetaCorte(s.corte).titulo : "borrador"}</div>
@@ -1587,7 +1605,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const cots = cotizaciones.filter(q => q.requestId === s.id || (q.lineas || []).some(l => l.requestId === s.id));
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        {chipEstado(ESTADOS_SOLICITUD, est)}{esPedidoPlantel(s) && <Chip c={C_AZUL}>Pedido al plantel / taller</Chip>}{s.urgente && <Chip c={C_ROJO}>Urgente</Chip>}{fueraDeCorte(s, cfg, ahora) && <Chip c={C_ROJO}>Fuera de corte</Chip>}
+        {chipEstado(ESTADOS_SOLICITUD, est)}{esPedidoPlantel(s) && <Chip c={C_AZUL}>Pedido al plantel / taller</Chip>}{s.urgente && <Chip c={C_ROJO}>Urgente</Chip>}{fueraDeCorte(s, cfg, ahora) && <Chip c={C_ROJO}>Fuera de corte</Chip>}{s.corteAjustado && <Chip c={C_AMARILLO}>Enviada tarde · ajustada</Chip>}
         <span style={{ fontSize: 13, color: "var(--text-2)" }}><b>{nombreProy(s.projectCode)}</b> · pidió {quien(s.residente)}{plantel ? "" : ` · ${s.corte ? etiquetaCorte(s.corte).titulo : "sin enviar"}`}</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 10 }}>
@@ -1595,6 +1613,11 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       </div>
       {s.urgente && s.justificacionUrgencia && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_ROJO.bg, color: C_ROJO.color, fontSize: 12.5 }}><b>Urgente:</b> {s.justificacionUrgencia}</div>}
       {s.notas && <div style={{ fontSize: 12.5, color: "var(--text-2)" }}><b>Notas:</b> {s.notas}</div>}
+      {s.corteAjustado && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12.5 }}>Se envió fuera de hora (le tocaba el <b>{etiquetaCorte(s.corteAjustado.de).titulo}</b>). <b>{s.corteAjustado.por}</b> la pasó al <b>{etiquetaCorte(s.corte).titulo}</b>{s.corteAjustado.motivo ? ` — ${s.corteAjustado.motivo}` : ""}.</div>}
+      {esCoordinador && !sim && s.corte && !plantel && s.estado !== "borrador" && s.estado !== "cancelada" && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5, color: "var(--text-2)" }}>
+        <b>Corte:</b> {etiquetaCorte(s.corte).titulo}
+        {[corteAnterior(s.corte), corteSiguiente(s.corte)].map(c => <Btn key={etiquetaCorte(c).id} small variant="ghost" disabled={ocupado} onClick={() => cambiarCorte(s, c)}>Pasar al {etiquetaCorte(c).titulo}</Btn>)}
+      </div>}
       {(s.cotizacionesAdjuntas || []).length > 0 && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5, color: "var(--text-2)" }}><b>Cotización que trajo:</b>{s.cotizacionesAdjuntas.map(r => <Btn key={r.fileId} small variant="info" onClick={() => verArchivo(r)}>{(r.name || "Ver").slice(0, 28)}</Btn>)}</div>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1750,7 +1773,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         </>)}
         {card("Por proyecto", m.porProyecto.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Sin solicitudes.</div> : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{m.porProyecto.map(x => <div key={x.k}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4 }}><span style={{ fontWeight: 700 }}>{nombreProy(x.k)}</span><span style={{ color: "var(--text-2)" }}>{x.total} · {x.urgentes ? `${x.urgentes} urg. · ` : ""}en corte {pct(x.pctEnCorte)}</span></div>{barra(x.total, maxProy)}</div>)}</div>)}
         {card("Tiempo promedio por etapa", <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{etapas.map(([l, v]) => <div key={l}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4 }}><span>{l}</span><b>{fmtDias(v)}</b></div>{barra(v || 0, maxT, CHARCOAL)}</div>)}</div>)}
-        {card("Por residente", m.porResidente.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Sin solicitudes.</div> : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{m.porResidente.map(x => <div key={x.k} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 12.5, flexWrap: "wrap" }}><span style={{ fontWeight: 700 }}>{quien(x.k)}</span><span style={{ display: "flex", gap: 6 }}><Chip c={C_GRIS}>{x.total} sol.</Chip><Chip c={x.pctEnCorte != null && x.pctEnCorte < 0.8 ? C_ROJO : C_VERDE}>en corte {pct(x.pctEnCorte)}</Chip><Chip c={x.urgentes ? C_ROJO : C_GRIS}>urgentes {pct(x.pctUrgentes)}</Chip>{x.rechazadas > 0 && <Chip c={C_AMARILLO}>{x.rechazadas} rechazados</Chip>}</span></div>)}</div>)}
+        {card("Por residente", m.porResidente.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Sin solicitudes.</div> : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{m.porResidente.map(x => <div key={x.k} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 12.5, flexWrap: "wrap" }}><span style={{ fontWeight: 700 }}>{quien(x.k)}</span><span style={{ display: "flex", gap: 6 }}><Chip c={C_GRIS}>{x.total} sol.</Chip><Chip c={x.pctEnCorte != null && x.pctEnCorte < 0.8 ? C_ROJO : C_VERDE}>en corte {pct(x.pctEnCorte)}</Chip><Chip c={x.urgentes ? C_ROJO : C_GRIS}>urgentes {pct(x.pctUrgentes)}</Chip>{x.rechazadas > 0 && <Chip c={C_AMARILLO}>{x.rechazadas} rechazados</Chip>}{x.ajustadas > 0 && <Chip c={C_AMARILLO} title="Enviadas fuera de hora que el Coordinador pasó a un corte anterior">{x.ajustadas} perdonada{x.ajustadas === 1 ? "" : "s"}</Chip>}</span></div>)}</div>)}
         {card("Ítems fuera de corte", m.fueraDeCorte.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Ninguno: todo lo del corte se resolvió a tiempo.</div> : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{m.fueraDeCorte.slice(0, 12).map(({ sol: s2, linea: l }) => <div key={l.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, cursor: "pointer" }} onClick={() => setModal({ t: "detalle", id: s2.id })}><span><b>{s2.folio}</b> · {l.descripcion} · {nombreProy(s2.projectCode)}</span>{chipEstado(ESTADOS_LINEA, l.estado)}</div>)}{m.fueraDeCorte.length > 12 && <div style={{ fontSize: 12, color: "var(--text-3)" }}>+{m.fueraDeCorte.length - 12} más</div>}</div>)}
       </div>
     </div>;
@@ -1983,6 +2006,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         {secOk === "hoy" ? renderHoy() : secOk === "alertas" ? renderAlertas() : secOk === "almacen" ? renderAlmacen() : secOk === "compras" ? renderCompras() : secOk === "cotizaciones" ? renderCotizaciones() : secOk === "dashboard" ? renderDashboard() : secOk === "config" ? renderConfig() : renderSolicitudes()}
       </div>
     </div>
+    <Geolito cfg={cfg} nombre={userName} />
     {renderModal()}
     {visor && <VisorArchivo archivo={visor} onClose={() => setVisor(null)} />}
   </div>;

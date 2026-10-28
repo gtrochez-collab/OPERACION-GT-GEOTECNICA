@@ -660,7 +660,8 @@ export const metricasDashboard = ({ solicitudes = [], cotizaciones = [], purchas
     const m = {};
     sols.forEach(s => {
       const k = key(s) || "—";
-      m[k] = m[k] || { total: 0, urgentes: 0, enCorte: 0, conCorte: 0, lineas: 0, rechazadas: 0 };
+      m[k] = m[k] || { total: 0, urgentes: 0, enCorte: 0, conCorte: 0, lineas: 0, rechazadas: 0, ajustadas: 0 };
+      if (s.corteAjustado) m[k].ajustadas++;
       m[k].total++; if (s.urgente) m[k].urgentes++;
       const ec = enviadaEnCorte(s, c); if (ec != null) { m[k].conCorte++; if (ec) m[k].enCorte++; }
       (s.lineas || []).forEach(l => { m[k].lineas++; if (l.estado === "rechazada") m[k].rechazadas++; });
