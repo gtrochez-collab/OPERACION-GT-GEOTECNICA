@@ -1966,6 +1966,13 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   una")**: la tarjeta del Dashboard es una tabla a todo lo ancho con columnas
   rotuladas (Enviadas · A tiempo "4 de 7" + % · Fuera de hora + perdonadas ·
   Urgentes · Rechazados) y una leyenda de una línea abajo.
+  **Dashboard más compacto (28-oct-2026, Gerson)**: quedan filtro de corte,
+  tira global, **Por proyecto** (barras VERTICALES: a tiempo carbón · fuera de
+  hora naranja · al plantel gris; tocar una barra filtra el proyecto), Tiempo
+  promedio por etapa y Cumplimiento por residente. Se retiraron "Por estado"
+  (se mudó a **Hoy** como "Dónde están las solicitudes", con pills por corte,
+  `renderEstadoCorte` / `hoyCorte`), "Semáforo de precio" e "Ítems fuera de
+  corte" (el número sigue en la tira).
   **GEOLITO EL TÉCNICO (28-oct-2026)**: `src/geolito.jsx`, solo en GeoSupply,
   circulito abajo a la derecha que abre un chat de preguntas frecuentes SIN IA
   ni servicio externo (respuestas escritas, con días/horas de la

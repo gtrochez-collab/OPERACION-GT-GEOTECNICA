@@ -1170,6 +1170,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const [solQ, setSolQ] = useState("");
   const [solProy, setSolProy] = useState("");
   const [solCorte, setSolCorte] = useState("");
+  const [hoyCorte, setHoyCorte] = useState("");
   const [solVista, setSolVista] = useState("abiertas");
   const [cotVista, setCotVista] = useState("enviada");
   const [parcial, setParcial] = useState(null);      // { solId, lineaId, valor }
@@ -1331,6 +1332,32 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           </div>
           <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 4 }}>Llegada estimada a obra: <b>{fmtDiaCorto(llegada.desde)} – {fmtDiaCorto(llegada.hasta)}</b></div>
         </div>
+      </div>
+      {renderEstadoCorte()}
+    </div>;
+  };
+  // Dónde están paradas las solicitudes de un corte (28-oct-2026, Gerson: se
+  // mudó del Dashboard a Hoy). Cuenta por estado de la solicitud.
+  const renderEstadoCorte = () => {
+    const delCorte = solicitudes.filter(s => s.corte && !esPedidoPlantel(s) && s.estado !== "borrador");
+    const cortesH = [...new Map(delCorte.map(s => [etiquetaCorte(s.corte).id, s.corte])).entries()].sort((a, b) => (b[1].anio - a[1].anio) || (b[1].semana - a[1].semana));
+    if (!cortesH.length) return null;
+    const elegido = cortesH.some(([id]) => id === hoyCorte) ? hoyCorte : (cortesH.find(([id]) => id === etq.id) || cortesH[0])[0];
+    const sols = delCorte.filter(s => etiquetaCorte(s.corte).id === elegido);
+    const cuenta = {}; sols.forEach(s => { const e = estadoCabecera(s); cuenta[e] = (cuenta[e] || 0) + 1; });
+    const est = Object.entries(ESTADOS_SOLICITUD).filter(([k]) => k !== "borrador");
+    const colorDe = { enviada: C_AZUL.color, en_proceso: ORANGE, completada: C_VERDE.color, cancelada: "rgba(44,42,40,.25)" };
+    return <div className="gt-vidrio" style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div className="gt-label" style={{ color: "var(--text-3)", marginRight: "auto" }}>Dónde están las solicitudes · {sols.length}</div>
+        {cortesH.map(([id, c]) => pillBtn(etiquetaCorte(c).titulo, elegido === id, () => setHoyCorte(id), { key: id }))}
+      </div>
+      <div style={{ display: "flex", height: 12, borderRadius: 999, overflow: "hidden", background: "rgba(44,42,40,.08)", gap: 2 }}>
+        {est.map(([k]) => cuenta[k] ? <div key={k} style={{ width: `${(cuenta[k] / sols.length) * 100}%`, background: colorDe[k] }} /> : null)}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {est.map(([k, e]) => <Chip key={k} c={TONO[e.tono]}>{e.label} · {cuenta[k] || 0}</Chip>)}
+        <button onClick={() => { setSolCorte(elegido); setSec("solicitudes"); }} style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--naranja-tinta)", fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>Ver las solicitudes →</button>
       </div>
     </div>;
   };
@@ -1763,15 +1790,32 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         {stat(m.fueraDeCorte.length, "ítems fuera de corte", { c: m.fueraDeCorte.length ? C_ROJO.color : undefined })}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap: 14 }}>
-        {card("Por estado", <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{Object.entries(ESTADOS_SOLICITUD).filter(([k]) => k !== "borrador").map(([k, e]) => <Chip key={k} c={TONO[e.tono]}>{e.label} · {m.porEstado[k] || 0}</Chip>)}</div>)}
-        {card("Semáforo de precio (ítems aprobados)", m.semaforo.total === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Todavía no hay cotizaciones aprobadas.</div> : <>
-          <div style={{ display: "flex", height: 12, borderRadius: 999, overflow: "hidden", background: "rgba(44,42,40,.08)" }}>
-            {[["verde", C_VERDE.color], ["amarillo", C_AMARILLO.color], ["rojo", C_ROJO.color]].map(([k, c]) => <div key={k} style={{ width: `${(m.semaforo[k] / m.semaforo.total) * 100}%`, background: c }} />)}
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Chip c={C_VERDE}>Verde {pct(m.semaforo.pctVerde)}</Chip><Chip c={C_AMARILLO}>Amarillo {pct(m.semaforo.pctAmarillo)}</Chip><Chip c={C_ROJO}>Rojo {pct(m.semaforo.pctRojo)}</Chip></div>
-          {m.variacionPorProyecto.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{m.variacionPorProyecto.map(v => <div key={v.k} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}><span>{nombreProy(v.k)}</span><b style={{ color: v.promedio > cfg.semaforo.amarillo ? C_ROJO.color : v.promedio > cfg.semaforo.verde ? C_AMARILLO.color : C_VERDE.color }}>{fmtPct(v.promedio)} promedio · {v.n} ítems</b></div>)}</div>}
-        </>)}
-        {card("Por proyecto", m.porProyecto.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Sin solicitudes.</div> : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{m.porProyecto.map(x => <div key={x.k}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4 }}><span style={{ fontWeight: 700 }}>{nombreProy(x.k)}</span><span style={{ color: "var(--text-2)" }}>{x.total} · {x.urgentes ? `${x.urgentes} urg. · ` : ""}en corte {pct(x.pctEnCorte)}</span></div>{barra(x.total, maxProy)}</div>)}</div>)}
+        {card("Por proyecto", m.porProyecto.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Sin solicitudes.</div> : (() => {
+          // Barras verticales (28-oct-2026, Gerson: "que se mire más profesional"):
+          // cada barra = solicitudes del proyecto, partida en a tiempo / fuera de hora / sin corte (al plantel).
+          const H = 170;
+          return <>
+            <div style={{ overflowX: "auto" }}><div style={{ display: "flex", alignItems: "flex-end", gap: 14, minWidth: m.porProyecto.length * 92, height: H + 96, padding: "0 4px" }}>
+              {m.porProyecto.map(x => {
+                const tarde = x.conCorte - x.enCorte, sinCorte = Math.max(0, x.total - x.conCorte);
+                const alto = (v) => (v / maxProy) * H;
+                const seg = (v, c) => v > 0 && <div style={{ height: alto(v), background: c }} />;
+                return <div key={x.k} role="button" title={`${nombreProy(x.k)}: ${x.total} solicitudes · ${x.enCorte} a tiempo · ${tarde} fuera de hora${sinCorte ? ` · ${sinCorte} al plantel` : ""}`} onClick={() => setDashProy(dashProy === x.k ? "" : x.k)} style={{ flex: 1, minWidth: 78, display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer" }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL, marginBottom: 4 }}>{x.total}</div>
+                  <div style={{ width: "62%", maxWidth: 54, display: "flex", flexDirection: "column-reverse", gap: 2, borderRadius: "7px 7px 4px 4px", overflow: "hidden" }}>
+                    {seg(x.enCorte, CHARCOAL)}{seg(tarde, ORANGE)}{seg(sinCorte, "rgba(44,42,40,.18)")}
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 700, color: CHARCOAL, textAlign: "center", lineHeight: 1.25, height: 30, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{nombreProy(x.k)}</div>
+                  <div style={{ fontSize: 10.5, color: x.pctEnCorte != null && x.pctEnCorte < 0.8 ? C_ROJO.color : "var(--text-3)", marginTop: 2 }}>a tiempo {pct(x.pctEnCorte)}</div>
+                </div>;
+              })}
+            </div></div>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11.5, color: "var(--text-2)" }}>
+              {[["A tiempo", CHARCOAL], ["Fuera de hora", ORANGE], ["Al plantel / sin corte", "rgba(44,42,40,.18)"]].map(([l, c]) => <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: c }} />{l}</span>)}
+              <span style={{ color: "var(--text-3)" }}>· tocá una barra para filtrar ese proyecto</span>
+            </div>
+          </>;
+        })())}
         {card("Tiempo promedio por etapa", <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{etapas.map(([l, v]) => <div key={l}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4 }}><span>{l}</span><b>{fmtDias(v)}</b></div>{barra(v || 0, maxT, CHARCOAL)}</div>)}</div>)}
         {card("Cumplimiento por residente", m.porResidente.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Sin solicitudes.</div> : (() => {
           // 28-oct-2026, Gerson: "que diga qué es cada una, para que lo entienda todo el que entre".
@@ -1801,7 +1845,6 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
             </div>
           </>;
         })(), { gridColumn: "1 / -1" })}
-        {card("Ítems fuera de corte", m.fueraDeCorte.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Ninguno: todo lo del corte se resolvió a tiempo.</div> : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{m.fueraDeCorte.slice(0, 12).map(({ sol: s2, linea: l }) => <div key={l.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, cursor: "pointer" }} onClick={() => setModal({ t: "detalle", id: s2.id })}><span><b>{s2.folio}</b> · {l.descripcion} · {nombreProy(s2.projectCode)}</span>{chipEstado(ESTADOS_LINEA, l.estado)}</div>)}{m.fueraDeCorte.length > 12 && <div style={{ fontSize: 12, color: "var(--text-3)" }}>+{m.fueraDeCorte.length - 12} más</div>}</div>)}
       </div>
     </div>;
   };
