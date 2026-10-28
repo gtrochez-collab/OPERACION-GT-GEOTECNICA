@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
-import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
+import { PROJECTS as CANONICAL_PROJECTS, admiteSolicitudes } from "./projects.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { USERS } from "./users.js";
 // GeoCost (9-sep-2026): partida del presupuesto y sobregiro en la solicitud.
@@ -986,7 +986,7 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
       <select value={projectCode} onChange={e => { const v = e.target.value; setProjectCode(v); if (v !== purchase.projectCode) { setPartidaId(""); setLineas([]); } else { setPartidaId(purchase.partidaId || ""); setLineas(lineasIniciales(purchase)); } }}
         style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }}>
         <option value="">—</option>
-        {(allProjects || []).map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}</option>)}
+        {(allProjects || []).filter(p => admiteSolicitudes(p.short) || p.short === purchase.projectCode).map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}</option>)}
       </select>
     </div>
 
@@ -1584,7 +1584,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           setF(p => p.projectCode === v ? p : ({ ...p, projectCode: v, partidaId: "", lineas: [] }));
         }}>
           <option value="">—</option>
-          {allProjects.map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}{p.isCustom ? " (nuevo)" : ""}{p.code ? "" : " · sin codigo"}</option>)}
+          {allProjects.filter(p => admiteSolicitudes(p.short) || p.short === purchase?.projectCode).map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}{p.isCustom ? " (nuevo)" : ""}{p.code ? "" : " · sin codigo"}</option>)}
         </select>
       </div>
       {/* GeoCost (9-sep-2026): partida del presupuesto — SOLO si el proyecto

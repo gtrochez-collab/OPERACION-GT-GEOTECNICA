@@ -119,6 +119,13 @@ export const PROJECTS = [
   },
 ];
 
+// Proyectos que ya NO reciben solicitudes nuevas (28-oct-2026, Gerson: "son
+// tres que son lo mismo"). Todo lo del plantel y el taller se pide a
+// PLAN-TALLER. Las compras viejas con estos proyectos se quedan como están:
+// esto solo los saca de los selectores de proyecto al pedir.
+export const PROYECTOS_SIN_SOLICITUDES = new Set(["PLANTEL", "PLANTEL-OFICINA"]);
+export const admiteSolicitudes = (short) => !PROYECTOS_SIN_SOLICITUDES.has(String(short || "").trim());
+
 // ── HELPERS ──
 
 // Buscar proyecto por short, id, o cualquier alias previo.

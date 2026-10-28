@@ -1944,6 +1944,16 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   revisión de almacén") y en Compras trae "¿Hay en almacén?" Hay / Parcial /
   No hay (`botonesAlmacen`, Óscar y el Coordinador) mientras la línea guardada
   siga en `revision_almacen` (nadie la cotizó todavía).
+  **Un solo proyecto para el plantel (28-oct-2026, Gerson)**: PLANTEL
+  ("Instalaciones Plantel") y PLANTEL-OFICINA ya NO reciben solicitudes:
+  `PROYECTOS_SIN_SOLICITUDES` / `admiteSolicitudes` en projects.js los saca del
+  selector de GeoSupply y del form de GeoShopping/GeoMachinery (salvo que la
+  solicitud que se edita ya los tenga); todo se pide a **PLAN-TALLER** (el
+  default de Óscar). Las compras viejas quedan como estaban. SUP-2026-0009 se
+  movió a PLAN-TALLER en la nube. **"Aprobar y mandar a Finanzas"** en el form
+  de cotización, solo el Coordinador: envía y aprueba de una
+  (`guardarCotizacion` ahora devuelve la cotización → `aprobarCotizacion`) —
+  para las que ya traen cotización.
   **PEDIR AL PLANTEL / TALLER (26-oct-2026)**: caso Ing. Yurien (Cataleya):
   placas de anclaje y varillas roscadas que se producen en soldadura/torno y
   Almacén va enviando según se necesita — NO es compra. Al crear la solicitud

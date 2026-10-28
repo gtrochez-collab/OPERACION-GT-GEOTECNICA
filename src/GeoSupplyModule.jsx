@@ -30,7 +30,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
-import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
+import { PROJECTS as CANONICAL_PROJECTS, admiteSolicitudes } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 import { hoyISO } from "./fechas.js";
 import { num, UNIDADES, TASA_DEFAULT, movimientosCompras, VARILLAS, LARGOS_VARILLA, esPartidaVarillaPorPeso, cantidadDeVarilla, pesoLanceKg, nombreVarilla, kgPorUnidad } from "./geocost-calc.js";
@@ -419,7 +419,7 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, catalogo = [
 // FORM DE COTIZACIÓN (Compras) — a nivel de módulo
 // ═══════════════════════════════════════════════════════════════════════════
 // `candidatas`: líneas por cotizar del proyecto [{sol, l, pendiente}].
-function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, providers, partidaDe, tasa, cfg, onGuardar, onEnviar, onClose, subirPdf, verArchivo, bajarArchivo, memoria = [], isMobile, quien = (x) => x }) {
+function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, providers, partidaDe, tasa, cfg, onGuardar, onEnviar, onEnviarYAprobar = null, onClose, subirPdf, verArchivo, bajarArchivo, memoria = [], isMobile, quien = (x) => x }) {
   const [f, setF] = useState(() => cotizacion
     ? { ...cotizacion, lineas: (cotizacion.lineas || []).map(l => ({ ...l })) }
     : { projectCode, provider: "", providerId: "", numeroProveedor: "", condicionPago: "contado", incluyeISV: true, totalDeclarado: "", pdfFile: null, notas: "", lineas: [] });
@@ -514,11 +514,14 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
   const ev = evaluarCotizacion({ cotizacion: f, tasa, cfg, partidaDe, lineaSolicitudDe });
   const porLinea = (lid) => ev.lineas.find(x => x.requestLineId === lid);
   const sumaChip = ev.total > 0 && ev.lineas.length ? (ev.cuadra ? <Chip c={C_VERDE}>Cuadra con el total</Chip> : <Chip c={C_ROJO}>Diferencia {fmtL(ev.diferencia)}</Chip>) : null;
+  // enviar: false = borrador · true = a aprobación · "aprobar" = el
+  // Coordinador la arma y la aprueba de una (28-oct-2026, Gerson: "como ya
+  // trae cotización, solo debería dejarme a mí aprobarla para que se vaya a pago").
   const guardar = async (enviar) => {
     if (enviar && !ev.ok) return alert(ev.errores.join("\n"));
     if (!enviar && !String(f.provider || "").trim()) return alert("Elegí el proveedor.");
     setSaving(true);
-    try { await (enviar ? onEnviar : onGuardar)({ ...f, totalDeclarado: num(f.totalDeclarado), lineas: f.lineas.map(l => ({ ...l, cantidad: num(l.cantidad), puLps: num(l.puLps), ...(l.lances !== undefined ? { lances: num(l.lances), puLance: num(l.puLance) } : {}) })) }, ev); }
+    try { await (enviar === "aprobar" ? onEnviarYAprobar : enviar ? onEnviar : onGuardar)({ ...f, totalDeclarado: num(f.totalDeclarado), lineas: f.lineas.map(l => ({ ...l, cantidad: num(l.cantidad), puLps: num(l.puLps), ...(l.lances !== undefined ? { lances: num(l.lances), puLance: num(l.puLance) } : {}) })) }, ev); }
     finally { setSaving(false); }
   };
   const CTRL = { padding: "8px 10px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 10, fontSize: 13, outline: "none", background: "#F4F4F2", fontFamily: "inherit", boxSizing: "border-box" };
@@ -659,6 +662,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
       <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Btn>
       <Btn variant="dark" onClick={() => guardar(false)} disabled={saving}>Guardar borrador</Btn>
       <Btn onClick={() => guardar(true)} disabled={saving || !f.lineas.length} title={ev.ok ? "" : ev.errores[0]}>{saving ? "Enviando…" : "Enviar a aprobación"}</Btn>
+      {onEnviarYAprobar && <Btn variant="success" onClick={() => guardar("aprobar")} disabled={saving || !f.lineas.length} title={ev.ok ? "Se aprueba y cae como borrador en GeoShopping para Finanzas" : ev.errores[0]}>{saving ? "Aprobando…" : "Aprobar y mandar a Finanzas"}</Btn>}
     </div>
   </div>;
 }
@@ -1017,9 +1021,12 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       if (fallo) {
         await actualizarCotizacion(rec.id, (q) => ({ ...q, estado: "borrador", enviadaAt: null, audit: [...(q.audit || []), auditEntry("editada", "Volvió a borrador: no se pudieron marcar los ítems de la solicitud")] }));
         alert(`${rec.folio} quedó como BORRADOR: no se pudieron marcar los ítems en la solicitud. Abrila y volvé a enviarla.`);
+        setModal(null);
+        return null;
       }
     }
     setModal(null);
+    return rec;
   };
   // Líneas por cotizar de un proyecto: [{sol, l, pendiente}] (incluye las sin revisión de almacén ya vencidas).
   const candidatasDe = (projectCode, cotizacionId) => solicitudes.filter(s => solicitudActiva(s) && s.projectCode === projectCode).flatMap(s => (s.lineas || []).map(l => {
@@ -1836,7 +1843,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const m = modal;
     switch (m.t) {
       case "solicitud": return <Modal title={m.s ? `Editar ${m.s.folio}` : "Nueva solicitud de material"} onClose={() => setModal(null)} wide fondoCierra={false}>
-        <SolicitudFormImpl subirPdf={subirPdf} verArchivo={verArchivo} proyectoInicial={rol === "almacen" && proyectos.some(p => p.short === "PLANTEL") ? "PLANTEL" : ""} solicitud={m.s} proyectos={misProyectos} presDe={presDe} saldoDe={saldoDe} catalogo={catalogo} cfg={cfg} ahora={ahora} userKey={userKey} onGuardar={guardarSolicitud} onClose={() => setModal(null)} isMobile={isMobile} />
+        <SolicitudFormImpl subirPdf={subirPdf} verArchivo={verArchivo} proyectoInicial={rol === "almacen" && proyectos.some(p => p.short === "PLAN-TALLER") ? "PLAN-TALLER" : ""} solicitud={m.s} proyectos={misProyectos.filter(p => admiteSolicitudes(p.short) || p.short === m.s?.projectCode)} presDe={presDe} saldoDe={saldoDe} catalogo={catalogo} cfg={cfg} ahora={ahora} userKey={userKey} onGuardar={guardarSolicitud} onClose={() => setModal(null)} isMobile={isMobile} />
       </Modal>;
       case "detalle": return <Modal title={solicitudes.find(x => x.id === m.id)?.folio || "Solicitud"} onClose={() => setModal(null)} wide>{renderDetalle(m.id)}</Modal>;
       case "rechazar-linea": return <Modal title={`Rechazar: ${m.l.descripcion}`} onClose={() => setModal(null)}>
@@ -1851,7 +1858,8 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         const candidatas = candidatasDe(projectCode, m.q?.id);
         return <Modal title={m.q ? `${m.q.folio} — ${m.q.provider}` : `Nueva cotización — ${nombreProy(projectCode)}`} onClose={() => setModal(null)} wide fondoCierra={false}>
           <CotizacionFormImpl cotizacion={m.q} projectCode={projectCode} nombreProy={nombreProy} candidatas={candidatas} providers={providers} partidaDe={(pid) => partidaDe(projectCode, pid)} tasa={tasa} cfg={cfg} isMobile={isMobile}
-            onGuardar={(f, ev) => guardarCotizacion(f, ev, false)} onEnviar={async (f, ev) => { await materializarSinRevision(f.lineas); await guardarCotizacion(f, ev, true); }} onClose={() => setModal(null)} subirPdf={subirPdf} verArchivo={verArchivo} bajarArchivo={(ref) => store.getCloud(fileKey(ref.fileId))} memoria={memoriaDeCompras(purchasesVista)} quien={quien} />
+            onGuardar={(f, ev) => guardarCotizacion(f, ev, false)} onEnviar={async (f, ev) => { await materializarSinRevision(f.lineas); await guardarCotizacion(f, ev, true); }}
+            onEnviarYAprobar={esCoordinador && !sim ? async (f, ev) => { await materializarSinRevision(f.lineas); const rec = await guardarCotizacion(f, ev, true); if (!rec) return; const pu = await aprobarCotizacion(rec); if (pu) alert(`✓ ${rec.folio} aprobada.\nQuedó como ${pu.codigo} en GeoShopping → Solicitudes → Borradores, para que Finanzas la mande a Tesorería.`); } : null} onClose={() => setModal(null)} subirPdf={subirPdf} verArchivo={verArchivo} bajarArchivo={(ref) => store.getCloud(fileKey(ref.fileId))} memoria={memoriaDeCompras(purchasesVista)} quien={quien} />
         </Modal>;
       }
       case "sim-shop": return <Modal title="GeoShopping simulado" onClose={() => setModal(null)} wide>{renderSimShop()}</Modal>;
