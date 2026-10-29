@@ -30,21 +30,23 @@ export const colorPaleta = (i) => PALETA_REPORTE[i % PALETA_REPORTE.length];
 // tajadas, puntos de leyenda) y `tinta` (texto sobre el pastel). Sin rojos ni
 // rosados: el rojo es del NSP y de lo vencido.
 export const PASTEL_PROYECTOS = [
-  // Orden pensado para la hoja de asistencia: los primeros tonos no se
-  // parecen a los de las celdas (ámbar = incapacidad, azul = vacaciones,
-  // naranja = feriado/domingo trabajado); esos parecidos van al final.
-  { bg: "#DFF3E8", base: "#8BCDAA", tinta: "#2A6A49" }, // menta
-  { bg: "#ECE6F8", base: "#B3A2DE", tinta: "#554283" }, // lavanda
-  { bg: "#DBF2F2", base: "#83CCCB", tinta: "#1E6463" }, // aqua
-  { bg: "#E8EFDD", base: "#AFC68A", tinta: "#4B602E" }, // salvia
-  { bg: "#E5E5F7", base: "#9EA0DB", tinta: "#3D3F7C" }, // índigo suave
-  { bg: "#E6E9EF", base: "#A7B1C3", tinta: "#424C5E" }, // pizarra
-  { bg: "#E2F0F7", base: "#7FB6D3", tinta: "#235873" }, // hielo
-  { bg: "#EEEFD6", base: "#C0C079", tinta: "#5A5A1C" }, // musgo
-  { bg: "#E0EDFB", base: "#8DB6E6", tinta: "#2B5786" }, // cielo
-  { bg: "#FDEBDD", base: "#F2AE7C", tinta: "#94461A" }, // durazno
-  { bg: "#F3E7DB", base: "#CFAD8A", tinta: "#6A4A2A" }, // caramelo
-  { bg: "#F7F0D2", base: "#DFCA74", tinta: "#6A5714" }, // limón
+  // 29-oct-2026 (2ª pasada, Gerson: "que por ningún motivo se parezca un
+  // color con otro"): un TONO distinto por proyecto (cielo, verde, violeta,
+  // turquesa, lima, magenta, café, gris, durazno, amarillo, índigo, oliva),
+  // pastel pero con cuerpo. Los que se parecen a las celdas de asistencia
+  // (naranja = feriado/domingo, ámbar = incapacidad) van al final.
+  { bg: "#D4E6FF", base: "#5E9EEB", tinta: "#1F4F8C" }, // cielo
+  { bg: "#CFF0D9", base: "#4DBE77", tinta: "#1F6B3C" }, // verde
+  { bg: "#E4D8FF", base: "#9A7AEE", tinta: "#4F3592" }, // violeta
+  { bg: "#C9EFEC", base: "#34B5AB", tinta: "#13625C" }, // turquesa
+  { bg: "#E5F4C0", base: "#94C42F", tinta: "#4C6B0F" }, // lima
+  { bg: "#F6D6F0", base: "#CF6FBE", tinta: "#7C2A6C" }, // magenta
+  { bg: "#EBDAC6", base: "#A97B52", tinta: "#5C3D20" }, // café
+  { bg: "#DDE2E8", base: "#7E8DA0", tinta: "#38424F" }, // gris
+  { bg: "#FFDCC2", base: "#F2924A", tinta: "#8A3F0E" }, // durazno
+  { bg: "#FFF0B8", base: "#E9BF2C", tinta: "#6E5600" }, // amarillo
+  { bg: "#D6DBFA", base: "#5A6BD8", tinta: "#28348A" }, // índigo
+  { bg: "#EAE8C4", base: "#AEA83E", tinta: "#5A5612" }, // oliva
 ];
 export const pastelProyecto = (i) => PASTEL_PROYECTOS[((i % PASTEL_PROYECTOS.length) + PASTEL_PROYECTOS.length) % PASTEL_PROYECTOS.length];
 /** {short: pastel} en el orden en que vienen, sin repetir mientras alcancen los tonos. */
@@ -68,6 +70,8 @@ body{font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI'
 .rp-marca{display:flex;align-items:center;gap:9px;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:${RP.texto3}}
 .rp-marca img{width:22px;height:22px;border-radius:6px}
 .rp-empresa{height:30px;object-fit:contain}
+.rp-empresa.subterra{height:62px}
+.np .pista{align-self:center;font:600 11px 'Plus Jakarta Sans',sans-serif;color:${RP.texto2};background:#fff;border:1px solid ${RP.linea};border-radius:999px;padding:8px 12px}
 .rp-titulo{font-size:27px;font-weight:800;letter-spacing:-.025em;line-height:1.1}
 .rp-sub{font-size:12.5px;color:${RP.texto2};margin-top:6px}
 .rp-acento{width:44px;height:3px;border-radius:3px;background:${RP.naranja};margin:16px 0 22px}
@@ -142,8 +146,8 @@ export const reporteHTML = ({ titulo, subtitulo = "", empresa = null, cuerpo = "
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 <style>@page{size:${horizontal ? "11in 8.5in" : "8.5in 11in"};margin:14mm 13mm}${REPORTE_CSS}</style></head><body>
-<div class="np"><button class="g" onclick="window.close()">Cerrar</button><button onclick="window.print()">Guardar PDF</button></div>
-<div class="rp-top"><div class="rp-marca"><img src="${base}brand/geocore/geocore-180.png" alt="">GeoCore · Grupo Geotecnica</div><img class="rp-empresa" src="${logoEmp}" alt=""></div>
+<div class="np"><span class="pista">En Destino elegí «Guardar como PDF» (no «Microsoft Print to PDF»)</span><button class="g" onclick="window.close()">Cerrar</button><button onclick="window.print()">Guardar PDF</button></div>
+<div class="rp-top"><div class="rp-marca"><img src="${base}brand/geocore/geocore-180.png" alt="">GeoCore · Grupo Geotecnica</div><img class="rp-empresa ${empresa === "subterra" ? "subterra" : ""}" src="${logoEmp}" alt=""></div>
 <div class="rp-titulo">${escHTML(titulo)}</div>${subtitulo ? `<div class="rp-sub">${escHTML(subtitulo)}</div>` : ""}<div class="rp-acento"></div>
 ${cuerpo}
 <div class="rp-pie"><span>GeoCore · Grupo Geotecnica</span><span>Generado el ${escHTML(fechaGenerado())}</span></div>
@@ -223,7 +227,7 @@ export const pdfCabecera = async (doc, { titulo, subtitulo = "", empresa = null,
   doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...T.texto3);
   doc.text(latin1("GEOCORE · GRUPO GEOTECNICA"), margen + (marca ? 8 : 0), y + 3.2, { charSpace: 0.4 });
   const logo = await cargarImagen(LOGO_EMPRESA[empresa] || LOGO_EMPRESA.geotecnica);
-  if (logo) { const h = 9, w = Math.min(42, h * logo.w / logo.h); doc.addImage(logo.dataUrl, "PNG", W - margen - w, y - 2.5, w, h); }
+  if (logo) { const h = empresa === "subterra" ? 16 : 9, w = Math.min(42, h * logo.w / logo.h); doc.addImage(logo.dataUrl, "PNG", W - margen - w, y - 3.5, w, h); }
   let yy = y + 16;
   doc.setFont("helvetica", "bold"); doc.setFontSize(19); doc.setTextColor(...T.carbon);
   doc.text(latin1(titulo), margen, yy);

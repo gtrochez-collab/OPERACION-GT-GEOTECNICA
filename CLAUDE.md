@@ -2338,10 +2338,15 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   sección que cabe en una hoja pasa entera a la siguiente; una más larga que
   una hoja sí se parte, repitiendo el thead). La hoja se pide con MEDIDAS (`@page{size: 11in 8.5in}`), NO con
   "letter landscape": con esa palabra Chrome en Windows guardaba el PDF
-  vertical con el contenido girado y al abrirlo salía de lado. `PASTEL_PROYECTOS` (12 tonos,
+  vertical con el contenido girado y al abrirlo salía de lado. `PASTEL_PROYECTOS` (2ª pasada del mismo día: 12 TONOS DISTINTOS —cielo,
+  verde, violeta, turquesa, lima, magenta, café, gris, durazno, amarillo,
+  índigo, oliva— porque los primeros se parecían entre sí; antes: 12 tonos,
   cada uno `{bg, base, tinta}`, sin rojos ni rosados; los primeros no se
   parecen a las celdas ámbar/azul/naranja de asistencia), `pastelesDe(shorts)`
-  (un tono por proyecto en el orden del reporte), `rSeccionProyecto(pc, …)`
+  (un tono por proyecto en el orden del reporte), logo de Subterra más grande (62 px en HTML, 16 mm
+  en jsPDF: es redondo y a 30 px no se leía), la barra del reporte avisa
+  "En Destino elegí «Guardar como PDF» (no «Microsoft Print to PDF»)" (ese
+  driver de Windows imprime en hoja vertical y gira el contenido), `rSeccionProyecto(pc, …)`
   (cabecera tintada) y `rProyecto(pc, texto)` (pastilla). Usados en Asistencia
   (secciones, resumen, celdas "1*" y leyenda; columnas de día de ancho fijo
   para que todas las tablas queden alineadas), Horas extras (+ tabla "Por
