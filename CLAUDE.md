@@ -2336,7 +2336,9 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   un proyecto a la mitad; todos los reportes así"): `reporteHTML` es apaisado
   por DEFAULT; `.rp-sec`, tablas-caja y KPIs llevan `break-inside: avoid` (una
   sección que cabe en una hoja pasa entera a la siguiente; una más larga que
-  una hoja sí se parte, repitiendo el thead). `PASTEL_PROYECTOS` (12 tonos,
+  una hoja sí se parte, repitiendo el thead). La hoja se pide con MEDIDAS (`@page{size: 11in 8.5in}`), NO con
+  "letter landscape": con esa palabra Chrome en Windows guardaba el PDF
+  vertical con el contenido girado y al abrirlo salía de lado. `PASTEL_PROYECTOS` (12 tonos,
   cada uno `{bg, base, tinta}`, sin rojos ni rosados; los primeros no se
   parecen a las celdas ámbar/azul/naranja de asistencia), `pastelesDe(shorts)`
   (un tono por proyecto en el orden del reporte), `rSeccionProyecto(pc, …)`

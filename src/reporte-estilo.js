@@ -128,7 +128,11 @@ tr,.rp-kpi,.rp-kpis,.rp-caja,.rp-grid2,.rp-ley{page-break-inside:avoid;break-ins
  * @param subtitulo  "Octubre 2026 · Subterra"
  * @param empresa    "geotecnica" | "subterra" | null (null = Grupo Geotecnica)
  * @param cuerpo     HTML (usar las piezas r*)
- * @param horizontal hoja apaisada — DEFAULT desde el 29-oct-2026 (Gerson:
+ * @param horizontal hoja apaisada — DEFAULT desde el 29-oct-2026. La hoja se
+ *                   pide con MEDIDAS (11in 8.5in), no con "letter landscape":
+ *                   con la palabra "landscape", Chrome en Windows guardaba un
+ *                   PDF vertical con el contenido girado y al abrirlo salía de
+ *                   lado. (Gerson:
  *                   "los reportes tienen que ser horizontales"; ningún
  *                   proyecto se parte entre páginas: `.rp-sec` no se corta)
  */
@@ -137,7 +141,7 @@ export const reporteHTML = ({ titulo, subtitulo = "", empresa = null, cuerpo = "
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>${escHTML(titulo)}${subtitulo ? " — " + escHTML(subtitulo) : ""} · GeoCore</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
-<style>@page{size:${horizontal ? "letter landscape" : "letter"};margin:14mm 13mm}${REPORTE_CSS}</style></head><body>
+<style>@page{size:${horizontal ? "11in 8.5in" : "8.5in 11in"};margin:14mm 13mm}${REPORTE_CSS}</style></head><body>
 <div class="np"><button class="g" onclick="window.close()">Cerrar</button><button onclick="window.print()">Guardar PDF</button></div>
 <div class="rp-top"><div class="rp-marca"><img src="${base}brand/geocore/geocore-180.png" alt="">GeoCore · Grupo Geotecnica</div><img class="rp-empresa" src="${logoEmp}" alt=""></div>
 <div class="rp-titulo">${escHTML(titulo)}</div>${subtitulo ? `<div class="rp-sub">${escHTML(subtitulo)}</div>` : ""}<div class="rp-acento"></div>
