@@ -2,8 +2,8 @@
 // GeoCost — PDFs (9-sep-2026): Ficha de proyecto + Reporte de costos.
 // jsPDF se carga bajo demanda con safeDynamicImport (maneja el "stale chunk"
 // tras un deploy). Helvetica NO soporta emojis ni nada fuera de Latin-1: TODO
-// el texto pasa por latin1() antes de tocar el documento. A4 vertical,
-// márgenes 16 mm, salto de página cuando y pasa de 270 mm.
+// el texto pasa por latin1() antes de tocar el documento. A4 horizontal,
+// márgenes 16 mm, salto de página cuando y pasa de 183 mm.
 // Sin React, sin store: recibe los datos ya calculados (pres, resumen de
 // resumenPresupuesto, movs de movimientosDeProyecto) y solo dibuja.
 // No importa geocost-calc a propósito (ningún test importa este archivo).
@@ -21,8 +21,10 @@ const LINEA = T_.linea, LINEA_FUERTE = T_.lineaFuerte, BLANCO = T_.blanco;
 const ROJO_FONDO = [251, 234, 232];
 
 // ── Página ──
-const PW = 210, PH = 297, M = 16, CW = PW - 2 * M; // 178 mm útiles
-const Y_MAX = 270;                                  // pasado esto → addPage
+// Hoja HORIZONTAL desde el 29-oct-2026 (Gerson: "todos los reportes
+// horizontales"). Todo se dibuja relativo a CW, así que solo cambia la hoja.
+const PW = 297, PH = 210, M = 16, CW = PW - 2 * M; // 265 mm útiles
+const Y_MAX = PH - 27;                              // pasado esto → addPage
 
 // Espejo mínimo de geocost-calc (si cambia allá, cambiar acá).
 const CATEGORIAS = ["Generales", "Materiales", "Personal", "Equipos", "Servicios subcontratados", "Otros"];
@@ -196,7 +198,7 @@ const parrafo = (ctx, texto, x, w, { fs = 9.5, color = CARBON, bold = false } = 
 // de documento y el nombre se dibuja abajo, en varias líneas (`nombreAbajo`).
 const prepararDoc = async (cab) => {
   const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const ctx = { doc, P: pluma(doc), cab, y: 0, nombreAbajo: false };
   doc.setFont("helvetica", "bold"); doc.setFontSize(19);
   ctx.nombreAbajo = ctx.P.ancho(cab.titulo) > CW;
@@ -465,7 +467,11 @@ const tablaPartidas = (ctx, R) => {
   cabecera();
 
   R.categorias.forEach(cat => {
-    salto(16);
+    // Una categoría que cabe en una hoja no se parte (29-oct-2026): si no
+    // cabe en lo que queda, arranca entera en la siguiente.
+    P.f(7.5);
+    const altoCat = 7.5 + 8.5 + cat.partidas.reduce((s, p) => s + Math.max(6.6, P.lineas(p.nombre || "-", cols[0].w - 2.4).slice(0, 3).length * 3.4 + 3.2), 0);
+    salto(altoCat <= Y_MAX - 40 ? altoCat : 16);
     P.f(9, "bold"); P.tc(CARBON); P.t(cat.categoria, M + 1.2, ctx.y + 5.4);
     ctx.y += 7.5;
     cat.partidas.forEach(p => {

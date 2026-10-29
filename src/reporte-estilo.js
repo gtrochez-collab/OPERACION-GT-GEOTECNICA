@@ -24,6 +24,32 @@ export const RP = {
 export const PALETA_REPORTE = ["#2C2A28", "#E8762D", "#8A847D", "#F2A36B", "#5B5650", "#C9C4BD", "#B5571C", "#A8A29B"];
 export const colorPaleta = (i) => PALETA_REPORTE[i % PALETA_REPORTE.length];
 
+// COLOR POR PROYECTO (29-oct-2026, Gerson: "cada proyecto es un color, solo que
+// sean colores pasteles, bonitos"). Cada proyecto de un reporte recibe un tono
+// pastel con tres pesos: `bg` (fondos de cabecera y filas), `base` (barras,
+// tajadas, puntos de leyenda) y `tinta` (texto sobre el pastel). Sin rojos ni
+// rosados: el rojo es del NSP y de lo vencido.
+export const PASTEL_PROYECTOS = [
+  // Orden pensado para la hoja de asistencia: los primeros tonos no se
+  // parecen a los de las celdas (ámbar = incapacidad, azul = vacaciones,
+  // naranja = feriado/domingo trabajado); esos parecidos van al final.
+  { bg: "#DFF3E8", base: "#8BCDAA", tinta: "#2A6A49" }, // menta
+  { bg: "#ECE6F8", base: "#B3A2DE", tinta: "#554283" }, // lavanda
+  { bg: "#DBF2F2", base: "#83CCCB", tinta: "#1E6463" }, // aqua
+  { bg: "#E8EFDD", base: "#AFC68A", tinta: "#4B602E" }, // salvia
+  { bg: "#E5E5F7", base: "#9EA0DB", tinta: "#3D3F7C" }, // índigo suave
+  { bg: "#E6E9EF", base: "#A7B1C3", tinta: "#424C5E" }, // pizarra
+  { bg: "#E2F0F7", base: "#7FB6D3", tinta: "#235873" }, // hielo
+  { bg: "#EEEFD6", base: "#C0C079", tinta: "#5A5A1C" }, // musgo
+  { bg: "#E0EDFB", base: "#8DB6E6", tinta: "#2B5786" }, // cielo
+  { bg: "#FDEBDD", base: "#F2AE7C", tinta: "#94461A" }, // durazno
+  { bg: "#F3E7DB", base: "#CFAD8A", tinta: "#6A4A2A" }, // caramelo
+  { bg: "#F7F0D2", base: "#DFCA74", tinta: "#6A5714" }, // limón
+];
+export const pastelProyecto = (i) => PASTEL_PROYECTOS[((i % PASTEL_PROYECTOS.length) + PASTEL_PROYECTOS.length) % PASTEL_PROYECTOS.length];
+/** {short: pastel} en el orden en que vienen, sin repetir mientras alcancen los tonos. */
+export const pastelesDe = (shorts) => { const m = {}; let i = 0; (shorts || []).forEach(s => { if (s != null && !m[s]) m[s] = pastelProyecto(i++); }); return m; };
+
 export const escHTML = (t) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 export const fmtLps = (n) => "L " + (Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const fmtNum = (n, d = 0) => (Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -81,8 +107,18 @@ table.rp-t{width:100%;border-collapse:collapse}
 .np button{font:700 12px 'Plus Jakarta Sans',sans-serif;padding:9px 16px;border-radius:999px;border:none;cursor:pointer;background:${RP.carbon};color:#fff}
 .np button.g{background:${RP.fondo};color:${RP.carbon}}
 thead{display:table-header-group}
-tr,.rp-kpi,.rp-caja{page-break-inside:avoid}
-.rp-salto{page-break-before:always}
+tr,.rp-kpi,.rp-kpis,.rp-caja,.rp-grid2,.rp-ley{page-break-inside:avoid;break-inside:avoid}
+.rp-sec{page-break-inside:avoid;break-inside:avoid}
+.rp-sec-t,.rp-titulo,.rp-sub{page-break-after:avoid;break-after:avoid}
+.rp-salto{page-break-before:always;break-before:page}
+.rp-sec.proy{border-radius:14px;overflow:hidden;border:1px solid var(--pc-bg);padding:0 0 4px}
+.rp-sec.proy .rp-sec-t{background:var(--pc-bg);border-bottom:none;padding:9px 14px;margin-bottom:4px}
+.rp-sec.proy .rp-sec-t h2{color:var(--pc-tinta);display:flex;align-items:center;gap:8px}
+.rp-sec.proy .rp-sec-t h2:before{content:"";width:9px;height:9px;border-radius:3px;background:var(--pc-base);flex-shrink:0}
+.rp-sec.proy .rp-sec-t .x{color:var(--pc-tinta)}
+.rp-sec.proy > :not(.rp-sec-t){margin-left:8px;margin-right:8px}
+.rp-sec.proy .rp-t tr.total td{border-top-color:var(--pc-base)}
+.rp-pp{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:9px;font-weight:700;white-space:nowrap}
 @media print{.np{display:none}body{padding:0}}
 `;
 
@@ -92,9 +128,11 @@ tr,.rp-kpi,.rp-caja{page-break-inside:avoid}
  * @param subtitulo  "Octubre 2026 · Subterra"
  * @param empresa    "geotecnica" | "subterra" | null (null = Grupo Geotecnica)
  * @param cuerpo     HTML (usar las piezas r*)
- * @param horizontal hoja apaisada
+ * @param horizontal hoja apaisada — DEFAULT desde el 29-oct-2026 (Gerson:
+ *                   "los reportes tienen que ser horizontales"; ningún
+ *                   proyecto se parte entre páginas: `.rp-sec` no se corta)
  */
-export const reporteHTML = ({ titulo, subtitulo = "", empresa = null, cuerpo = "", horizontal = false, base = import.meta.env.BASE_URL }) => {
+export const reporteHTML = ({ titulo, subtitulo = "", empresa = null, cuerpo = "", horizontal = true, base = import.meta.env.BASE_URL }) => {
   const logoEmp = `${base}${LOGO_EMPRESA[empresa] || LOGO_EMPRESA.geotecnica}`;
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>${escHTML(titulo)}${subtitulo ? " — " + escHTML(subtitulo) : ""} · GeoCore</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -123,6 +161,10 @@ export const abrirReporte = (w, html, { imprimir = true } = {}) => {
 /** items: [{label, valor, sub?, tono?: "naranja"|"verde"|"rojo"}] */
 export const rKpis = (items) => `<div class="rp-kpis">${items.filter(Boolean).map(k => `<div class="rp-kpi"><div class="l">${escHTML(k.label)}</div><div class="v ${k.mono === false ? "" : "mono"}" style="${k.tono ? `color:${RP[k.tono] || k.tono}` : ""}">${k.valorHTML ?? escHTML(k.valor)}</div>${k.sub ? `<div class="s">${escHTML(k.sub)}</div>` : ""}</div>`).join("")}</div>`;
 export const rSeccion = (titulo, html, extra = "") => `<div class="rp-sec"><div class="rp-sec-t"><h2>${escHTML(titulo)}</h2>${extra ? `<span class="x">${extra}</span>` : ""}</div>${html}</div>`;
+/** Sección de UN proyecto con su pastel (cabecera tintada). `pc` = pastelProyecto(i). */
+export const rSeccionProyecto = (pc, titulo, html, extra = "") => `<div class="rp-sec proy" style="--pc-bg:${pc.bg};--pc-base:${pc.base};--pc-tinta:${pc.tinta}"><div class="rp-sec-t"><h2>${escHTML(titulo)}</h2>${extra ? `<span class="x">${extra}</span>` : ""}</div>${html}</div>`;
+/** Pastilla con el pastel del proyecto (para tablas de resumen y leyendas). */
+export const rProyecto = (pc, texto) => `<span class="rp-pp" style="background:${pc.bg};color:${pc.tinta}"><span style="width:7px;height:7px;border-radius:2px;background:${pc.base}"></span>${escHTML(texto)}</span>`;
 export const rChip = (texto, tono = "") => `<span class="rp-chip ${tono}">${escHTML(texto)}</span>`;
 /**
  * Tabla. columnas: [{t, num?, ancho?}] · filas: [[celdas HTML]] · total: [celdas] (opcional)

@@ -32,7 +32,7 @@ import { esFeriadoQuincena } from "./holidays.js";
 import { HORARIOS, horarioDe, TOLERANCIA_MIN, gcMarkKey, minTardeDe } from "./HRModule.jsx";
 import { GT_CSS } from "./gt-ui.js";
 import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion } from "./geoclock-calc.js";
-import { reporteHTML, abrirReporte, rKpis, rSeccion, rTabla, rChip, RP, escHTML, fmtNum, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
+import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, RP, escHTML, fmtNum, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 
 // Rediseño GeoCore (23-oct-2026): vidrio, paleta carbón/naranja/gris, sin
 // emojis. La tablet toma una FOTO automática al registrar (anti "marcar por
@@ -1217,6 +1217,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             { label: "Llegadas tarde", valor: fmtNum(totTardes), tono: totTardes ? "naranja" : undefined },
             { label: "Proyectos", valor: fmtNum(Object.keys(grupos).length) },
           ]);
+          const pcGc = pastelesDe(Object.keys(grupos).sort());
           Object.keys(grupos).sort().forEach(proy => {
             const rs = grupos[proy];
             const sub = rs.reduce((s, r) => s + (r.netas || 0), 0);
@@ -1234,7 +1235,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
                 r.netas != null ? `<b>${fmtHoras(r.netas)}</b>` : `<span style="color:${RP.texto3}">${escHTML(r.estado || "—")}</span>`,
               ];
             });
-            cuerpo += rSeccion(proy, rTabla({
+            cuerpo += rSeccionProyecto(pcGc[proy], proy, rTabla({
               columnas: [{ t: "Fecha", ancho: "86px" }, { t: "Colaborador" }, { t: "Entrada" }, { t: "Salida", ancho: "70px" }, { t: "Comentario" }, { t: "Brutas", num: true, ancho: "64px" }, { t: "Almuerzo", num: true, ancho: "64px" }, { t: "Laboradas", num: true, ancho: "72px" }],
               filas,
               total: ["", `${rs.length} registro(s)`, "", "", "", "", "", fmtHoras(sub)],

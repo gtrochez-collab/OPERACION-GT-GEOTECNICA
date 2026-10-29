@@ -8,7 +8,7 @@ import { hoyISO } from "./fechas.js";
 // GT_CSS (vidrio): desde el 15-oct-2026 lo monta TODO GeoTeam (rediseño de
 // encabezado, Dashboard, KPI's y Empleados).
 import { GT_CSS } from "./gt-ui.js";
-import { reporteHTML, abrirReporte, rKpis, rSeccion, rTabla, rChip, rBarra, rDona, colorPaleta, RP, escHTML, fmtLps, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
+import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, rProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, escHTML, fmtLps, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES, USUARIOS_DE_BAJA } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
 // Planilla (16-oct-2026): lógica pura + PDF/Excel.
@@ -427,6 +427,45 @@ const Btn = ({ children, onClick, variant = "primary", small, style: sx, disable
 };
 const Input = ({ label, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<input style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, outline: "none", background: "#F8FAFC" }} {...p} /></div>;
 const Select = ({ label, options, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} {...p}><option value="">—</option>{options.map(o => <option key={typeof o === "string" ? o : o.value} value={typeof o === "string" ? o : o.value}>{typeof o === "string" ? o : o.label}</option>)}</select></div>;
+// Buscador de colaborador (29-oct-2026): reemplaza el <select> nativo en los
+// forms anchos (Baja, Bonificación). En Chrome de Windows el menú nativo de un
+// select de ~1,800 px salía en blanco y con los nombres cortados a la
+// izquierda. Este no depende del menú del sistema: escribís y tocás.
+const BuscadorEmpleado = ({ label, empleados, value, onChange }) => {
+  const [q, setQ] = useState("");
+  const [abierto, setAbierto] = useState(!value);
+  const sel = empleados.find(e => e.id === value);
+  const norm = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const nq = norm(q).trim();
+  const lista = empleados
+    .filter(e => !nq || nq.split(/\s+/).every(w => norm(`${e.fullName} ${e.position} ${e.dni} ${e.code || ""}`).includes(w)))
+    .sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "es"));
+  const lbl = { fontSize: 12, fontWeight: 600, color: "#475569" };
+  if (sel && !abierto) return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    {label && <label style={lbl}>{label}</label>}
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", border: "1px solid #CBD5E1", borderRadius: 10, background: "#F8FAFC" }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: "#2C2A28" }}>{sel.fullName}</div>
+        <div style={{ fontSize: 12, color: "#64748b" }}>{sel.position || "Sin cargo"}{sel.dni ? ` · ${sel.dni}` : ""}</div>
+      </div>
+      <button type="button" onClick={() => { setAbierto(true); setQ(""); }} style={{ border: "1px solid #DBD4C8", background: "#fff", borderRadius: 999, padding: "6px 14px", fontSize: 12.5, fontWeight: 600, color: "#5C5853", cursor: "pointer" }}>Cambiar</button>
+    </div>
+  </div>;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    {label && <label style={lbl}>{label}</label>}
+    <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={`Buscá por nombre, cargo o DNI · ${empleados.length} colaboradores`}
+      onKeyDown={e => { if (e.key === "Enter" && lista.length === 1) { e.preventDefault(); onChange(lista[0].id); setAbierto(false); } }}
+      style={{ padding: "9px 12px", border: "1px solid #CBD5E1", borderRadius: 10, fontSize: 14, background: "#fff", outline: "none" }} />
+    <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid #E2E8F0", borderRadius: 10, background: "#fff" }}>
+      {lista.length === 0 && <div style={{ padding: 14, fontSize: 13, color: "#94A3B8" }}>Nadie coincide con “{q}”.</div>}
+      {lista.map(e => <button type="button" key={e.id} onClick={() => { onChange(e.id); setAbierto(false); }}
+        style={{ display: "flex", width: "100%", alignItems: "baseline", gap: 10, padding: "9px 14px", border: "none", borderBottom: "1px solid #F1F5F9", background: e.id === value ? "rgba(232,118,45,.08)" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit" }}>
+        <span style={{ fontWeight: 600, fontSize: 14, color: "#2C2A28" }}>{e.fullName}</span>
+        <span style={{ fontSize: 12, color: "#64748b" }}>{e.position || ""}</span>
+      </button>)}
+    </div>
+  </div>;
+};
 const Modal = ({ title, onClose, children, wide }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onClose}><div style={{ background: "#fff", borderRadius: 16, padding: 28, width: wide ? "95vw" : 520, maxWidth: "98vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,.2)" }} onClick={e => e.stopPropagation()}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}><h3 style={{ margin: 0, fontSize: 18 }}>{title}</h3><button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94A3B8" }}>✕</button></div>{children}</div></div>;
 const Table = ({ columns, data, actions }) => <div style={{ overflowX: "auto", borderRadius: 12, border: "1px solid #E2E8F0" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#F1F5F9" }}>{columns.map(c => <th key={c.key} style={{ padding: "10px 14px", textAlign: "left", color: "#475569", fontWeight: 600, borderBottom: "2px solid #E2E8F0", whiteSpace: "nowrap" }}>{c.label}</th>)}{actions && <th style={{ padding: "10px 14px", textAlign: "right", borderBottom: "2px solid #E2E8F0" }}>Acciones</th>}</tr></thead><tbody>{data.length === 0 && <tr><td colSpan={columns.length + (actions ? 1 : 0)} style={{ padding: 30, textAlign: "center", color: "#94A3B8" }}>Sin registros</td></tr>}{data.map((r, i) => <tr key={r.id || i} style={{ borderBottom: "1px solid #F1F5F9" }}>{columns.map(c => <td key={c.key} style={{ padding: "10px 14px", color: "#334155" }}>{c.render ? c.render(r) : r[c.key]}</td>)}{actions && <td style={{ padding: "10px 14px", textAlign: "right" }}>{actions(r)}</td>}</tr>)}</tbody></table></div>;
 const StatCard = ({ label, value, icon, color = "#0F4C75" }) => <div style={{ background: "#fff", borderRadius: 14, padding: "18px 22px", border: "1px solid #E2E8F0", flex: 1, minWidth: 150 }}><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ background: color + "15", color, width: 40, height: 40, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>{icon}</div><div><div style={{ fontSize: 20, fontWeight: 700 }}>{value}</div><div style={{ fontSize: 12, color: "#64748b" }}>{label}</div></div></div></div>;
@@ -2537,11 +2576,13 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         ${resumenSection("Incapacidades", PAL_CELDA.inc.fg, rInc, "Sin incapacidades esta quincena.")}
         ${resumenSection("Vacaciones", PAL_CELDA.vac.fg, rVac, "Sin vacaciones esta quincena.")}`;
 
-      // ── Color por PROYECTO solo para las celdas "1*" (días trabajados en
-      // OTRO proyecto). Paleta de la casa (carbón/naranja/grises): nada de
-      // rojos, que se leerían como NSP. Cubre proyectos que solo aparecen
-      // vía override.
+      // ── Color PASTEL por proyecto (29-oct-2026, Gerson: "cada proyecto es un
+      // color, pasteles bonitos"): tiñe la cabecera de cada proyecto, su
+      // pastilla en el resumen y las celdas "1*" (días trabajados en OTRO
+      // proyecto). Sin rojos ni rosados, que se leerían como NSP. Cubre
+      // proyectos que solo aparecen vía override.
       const projColor = {};
+      let pcDe = {};
       {
         const shorts = [];
         projGroups.forEach((p) => { if (!shorts.includes(p.short)) shorts.push(p.short); });
@@ -2550,7 +2591,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           const s = o ? resolveShortHR(o) : null;
           if (s && !shorts.includes(s)) shorts.push(s);
         }));
-        shorts.forEach((s, i) => { projColor[s] = colorPaleta(i); });
+        pcDe = pastelesDe(shorts);
+        shorts.forEach((s) => { projColor[s] = pcDe[s].base; });
       }
 
       const dayHeaderHtml = days
@@ -2561,7 +2603,6 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         .join("");
 
       const celda = (bg, fg, txt, extra = "") => `<td class="d" style="background:${bg};color:${fg};${extra}">${txt}</td>`;
-      let firstSection = true;
       const projTablesHtml = projGroups
         .map((proj) => {
           const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
@@ -2575,7 +2616,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
                   if (dayLockReason(e, d)) return celda(PAL_CELDA.bloq.bg, PAL_CELDA.bloq.fg, "—");
                   const v = getVal(e.id, d.day);
                   const ovr = getProj(e.id, d.day);
-                  const oc = ovr ? projColor[resolveShortHR(ovr)] : null;
+                  const opc = ovr ? pcDe[resolveShortHR(ovr)] : null;
+                  const oc = opc ? opc.base : null;
                   const st2 = ovr ? "*" : "";
                   let p = null, txt = "·";
                   if (v === "TF") { p = PAL_CELDA.extra; txt = "TF" + st2; }
@@ -2590,7 +2632,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
                   // Trabajó ese día en OTRO proyecto: tinte suave del color de
                   // ese proyecto + rayita abajo, para leerlo de un vistazo.
                   let extra = "";
-                  if (oc && v && v !== "0") { bg = `${oc}1F`; fg = RP.carbon; extra = `box-shadow:inset 0 -2px 0 ${oc};`; }
+                  if (oc && v && v !== "0") { bg = opc.bg; fg = opc.tinta; extra = `box-shadow:inset 0 -2px 0 ${oc};`; }
                   const arr = arrivalTimes[`${e.id}-${d.day}`];
                   const arrivalHtml = arr ? `<div class="mono" style="font-size:5.5px;color:${RP.naranjaTexto};line-height:1;margin-top:1px">${arr}</div>` : "";
                   return celda(bg, fg, txt + arrivalHtml, extra);
@@ -2608,12 +2650,10 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
               </tr>`;
             })
             .join("");
-          // Cortes de pagina: nunca partir un proyecto entre paginas. Los
-          // proyectos grandes (6+ personas) arrancan en pagina propia; el
-          // primero se queda con el resumen en la pagina 1.
-          const breakBefore = !firstSection && pEmps.length >= 6 ? "page-break-before:always;" : "";
-          firstSection = false;
-          return `<div style="page-break-inside:avoid;break-inside:avoid;${breakBefore}">${rSeccion(`${proj.short} · ${proj.name}`,
+          // Cortes de pagina: nunca partir un proyecto entre paginas — la
+          // seccion (.rp-sec) no se corta: si no cabe, pasa entera a la
+          // siguiente hoja.
+          return `<div>${rSeccionProyecto(pcDe[proj.short], `${proj.short} · ${proj.name}`,
             `<table class="asis"><thead><tr>
                 <th class="n">Colaborador</th>${dayHeaderHtml}
                 <th class="t">Días</th><th class="t">Dom</th><th class="t">Fer</th><th class="t">NSP</th><th class="t">INC</th>
@@ -2629,27 +2669,28 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const resumenProyHtml = rTabla({
         columnas: [{ t: "Proyecto" }, { t: "Personas", num: true, ancho: "80px" }, { t: "NSP", num: true, ancho: "70px" }, { t: "INC", num: true, ancho: "70px" }],
         filas: conGente.map((s) => [
-          `<b>${escHTML(s.proj.short)}</b> <span class="suave">· ${escHTML(s.proj.name)}</span>`,
+          `${rProyecto(pcDe[s.proj.short], s.proj.short)} <span class="suave">${escHTML(s.proj.name)}</span>`,
           s.pEmps.length,
           s.nsp > 0 ? `<b style="color:${PAL_CELDA.nsp.fg}">${s.nsp}</b>` : `<span style="color:${RP.texto3}">0</span>`,
           s.inc > 0 ? `<b style="color:${PAL_CELDA.inc.fg}">${s.inc}</b>` : `<span style="color:${RP.texto3}">0</span>`,
         ]),
       });
       const chipCelda = (p, cod, txt) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;white-space:nowrap"><span class="mono" style="background:${p ? p.bg : "#fff"};color:${p ? p.fg : RP.carbon};border:${p ? "none" : `1px solid ${RP.linea}`};border-radius:4px;padding:0 5px;font-weight:700">${cod}</span>${txt}</span>`;
-      const leyendaHtml = `<div class="rp-nota" style="line-height:2">
+      const leyendaHtml = `<div style="break-inside:avoid;page-break-inside:avoid"><div class="rp-nota" style="line-height:2">
           ${chipCelda(null, "1", "Presente")}${chipCelda(PAL_CELDA.descanso, "1", "domingo/feriado = descanso pagado")}${chipCelda(PAL_CELDA.nsp, "0", "NSP")}${chipCelda(PAL_CELDA.inc, "I", "Incapacidad")}${chipCelda(PAL_CELDA.vac, "V", "Vacaciones")}${chipCelda(PAL_CELDA.extra, "TF", "Feriado trabajado (×3)")}${chipCelda(PAL_CELDA.extra, "DT", "Domingo trabajado (×2)")}${chipCelda(PAL_CELDA.extra, "DT2", "Domingo triple (×3)")}${chipCelda(PAL_CELDA.bloq, "—", "bloqueado por alta/baja")}
         </div>
-        <div class="rp-nota" style="line-height:2"><b>*</b> = ese día trabajó en otro proyecto (tinte y rayita con el color de ese proyecto):
-          ${Object.entries(projColor).map(([s, c]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;white-space:nowrap"><span style="width:9px;height:9px;border-radius:3px;background:${c}"></span>${escHTML(s)}</span>`).join("")}
-        </div>`;
+        <div class="rp-nota" style="line-height:2.2"><b>*</b> = ese día trabajó en otro proyecto (celda con el color de ese proyecto):
+          ${Object.keys(projColor).map((s) => rProyecto(pcDe[s], s)).join(" ")}
+        </div></div>`;
 
       const cuerpo = `<style>
-          table.asis{width:100%;border-collapse:collapse;font-size:9px}
+          table.asis{width:100%;border-collapse:collapse;font-size:9px;table-layout:fixed}
+          .asis th.n{width:205px}.asis th.t{width:40px}
           .asis th{font-size:7.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${RP.texto3};padding:4px 2px;border-bottom:1px solid ${RP.lineaFuerte};text-align:center}
           .asis th.n{text-align:left;padding-left:6px}
           .asis td{border-bottom:1px solid ${RP.linea};padding:3px 2px}
           .asis td.d{text-align:center;font-weight:700;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-size:8.5px;border-left:1px solid #fff}
-          .asis td.n{padding:4px 6px;font-size:9.5px;white-space:nowrap}
+          .asis td.n{padding:4px 6px;font-size:9.5px}
           .asis td.t,.asis th.t{text-align:center;font-weight:700;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;padding:3px 5px}
         </style>`
         + rKpis([
@@ -3092,11 +3133,22 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         ]),
         total: [escHTML(etiquetaSub), "", "", "", "", "", fH(hrs), fL(tot)],
       });
+      // Cada proyecto con su pastel (29-oct-2026): el mismo tono en el
+      // resumen de arriba y en su sección del detalle.
+      const pcHe = pastelesDe(proyOrden.map(([pr]) => pr));
       const projSection = ([pr, P]) => {
         const rows = Object.values(P.emps).sort((a, b) => b.total - a.total);
         const fn = projFullName(pr);
-        return rSeccion(`${pr}${fn ? ` · ${fn}` : ""}`, tablaHe(rows, `Subtotal ${pr}`, P.hrs, P.costo), `<span class="mono">${fH(P.hrs)} hrs · ${fL(P.costo)}</span>`);
+        return rSeccionProyecto(pcHe[pr], `${pr}${fn ? ` · ${fn}` : ""}`, tablaHe(rows, `Subtotal ${pr}`, P.hrs, P.costo), `<span class="mono">${fH(P.hrs)} hrs · ${fL(P.costo)}</span>`);
       };
+      const resumenProyHe = proyOrden.length > 1 ? rSeccion("Por proyecto", rTabla({
+        columnas: [{ t: "Proyecto" }, { t: "Colaboradores", num: true, ancho: "100px" }, { t: "Horas", num: true, ancho: "80px" }, { t: "Total", num: true, ancho: "120px" }, { t: "", ancho: "200px" }],
+        filas: proyOrden.map(([pr, P]) => [
+          `${rProyecto(pcHe[pr], pr)} <span class="suave">${escHTML(projFullName(pr))}</span>`,
+          Object.keys(P.emps).length, fH(P.hrs), `<b>${fL(P.costo)}</b>`,
+          rBarra([{ valor: P.costo, color: pcHe[pr].base }], proyOrden[0][1].costo),
+        ]),
+      })) : "";
 
       // ── RESUMEN GENERAL POR COLABORADOR (para planilla) ──
       // Una fila por persona sumando TODOS sus proyectos (ej: Henry Polanco
@@ -3126,8 +3178,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         { label: "Colaboradores", valor: nColab },
         { label: "Proyectos", valor: proyOrden.length },
       ])
-        + `<div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${RP.texto3};margin-bottom:10px">Resumen general por colaborador · para planilla</div>`
-        + bloques.map(bloqueSection).join("")
+        + resumenProyHe
+        // El rótulo viaja pegado al primer bloque: si no, quedaba solo al pie
+        // de la página 1 y su tabla arrancaba en la 2.
+        + `<div style="break-inside:avoid;page-break-inside:avoid"><div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${RP.texto3};margin-bottom:10px">Resumen general por colaborador · para planilla</div>${bloques.length ? bloqueSection(bloques[0]) : ""}</div>`
+        + bloques.slice(1).map(bloqueSection).join("")
         + rTabla({ columnas: [{ t: "" }, { t: "", num: true }], filas: [], total: [`Total general · ${sheet.quincena} ${sheet.periodo}`, `${fH(granH)} hrs · ${fL(granL)}`] })
         + `<div class="rp-salto"></div>`
         + `<div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${RP.texto3};margin-bottom:10px">Detalle por proyecto · para costos por proyecto</div>`
@@ -3624,7 +3679,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       if (!w) { alert("Permite popups para imprimir"); return; }
       const fL = fmtLps;
       const he = (n, txt) => n > 0 ? `<span style="color:${RP.naranjaTexto}">${txt}</span>` : `<span style="color:${RP.texto3}">—</span>`;
-      const projBlocks = rows.map(r => `<div style="page-break-inside:avoid">${rSeccion(`${r.short}${r.code ? ` · ${r.code}` : ""}`,
+      const pcMO = pastelesDe(rows.map(r => r.short));
+      const projBlocks = rows.map(r => `<div>${rSeccionProyecto(pcMO[r.short], `${r.short}${r.code ? ` · ${r.code}` : ""}`,
         rTabla({
           columnas: [{ t: "Empleado" }, { t: "Cargo" }, { t: "Costo diario", num: true }, { t: "Días pag.", num: true }, { t: "Costo días", num: true }, { t: "HE hrs", num: true }, { t: "Costo HE", num: true }, { t: "Total", num: true }],
           filas: r.emps.map(x => [
@@ -3722,8 +3778,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const top = rowsG.slice(0, 8);
       const otros = rowsG.slice(8);
       const otrosTot = otros.reduce((s, r) => s + r.total, 0);
+      const pcG = pastelesDe(rowsG.map(r => r.short));
       const segs = [
-        ...top.map((r, i) => ({ label: r.short, valor: r.total, valorTxt: fL(r.total), color: colorPaleta(i) })),
+        ...top.map((r) => ({ label: r.short, valor: r.total, valorTxt: fL(r.total), color: pcG[r.short].base })),
         ...(otros.length ? [{ label: `Otros (${otros.length})`, valor: otrosTot, valorTxt: fL(otrosTot), color: RP.lineaFuerte }] : []),
       ];
 
@@ -3752,7 +3809,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
 
       // ── Tablas por proyecto con chip de empresa por empleado ──
       const he = (n, txt) => n > 0 ? `<span style="color:${RP.naranjaTexto}">${txt}</span>` : `<span style="color:${RP.texto3}">—</span>`;
-      const projBlocks = rowsG.map(r => rSeccion(`${r.short}${r.code ? ` · ${r.code}` : ""}`,
+      const projBlocks = rowsG.map(r => rSeccionProyecto(pcG[r.short], `${r.short}${r.code ? ` · ${r.code}` : ""}`,
         rTabla({
           columnas: [{ t: "Empleado" }, { t: "Cargo" }, { t: "Costo diario", num: true }, { t: "Días pag.", num: true }, { t: "Costo días", num: true }, { t: "HE hrs", num: true }, { t: "Costo HE", num: true }, { t: "Total", num: true }],
           filas: r.emps.map(x => [
@@ -5565,7 +5622,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const grupo = emp ? getGrupo(emp.company, emp.contractType) : "—";
     return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
       <div style={{ gridColumn: "1/-1" }}>
-        <Select label="Empleado a dar de baja" options={ae.map(e => ({ value: e.id, label: `${e.fullName} — ${e.position}` }))} value={f.employeeId} onChange={e => u("employeeId", e.target.value)} />
+        <BuscadorEmpleado label="Empleado a dar de baja" empleados={ae.filter(e => e.status !== "inactive")} value={f.employeeId} onChange={id => u("employeeId", id)} />
       </div>
       {emp && <div style={{ gridColumn: "1/-1", background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, fontSize: 13 }}>
         <div><span style={{ color: "#64748b" }}>DNI:</span> <b>{emp.dni}</b></div>
@@ -6440,7 +6497,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         <strong>Política Geotecnica:</strong> los bonos son <b>mensuales</b>. Se paga <b>la mitad cada quincena</b> mientras esté activo. Si dejás vacía la fecha de fin, el bono es <b>indefinido</b> hasta que lo bajes.
       </div>
       <div style={{ gridColumn: "1/-1" }}>
-        <Select label="Empleado" options={ce.map(e => ({ value: e.id, label: `${e.fullName} — ${e.position}` }))} value={f.employeeId} onChange={e => u("employeeId", e.target.value)} />
+        <BuscadorEmpleado label="Empleado" empleados={ce} value={f.employeeId} onChange={id => u("employeeId", id)} />
       </div>
       <div style={{ gridColumn: "1/-1" }}>
         <Input label="Descripción del bono" value={f.description} onChange={e => u("description", e.target.value)} placeholder="ej: Bono por productividad, Bono antigüedad, Bono mes de mayo..." />

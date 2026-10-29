@@ -2331,6 +2331,25 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   constancia (calcada del Word), las etiquetas QR, GeoSafety/GeoDrill Vault
   (ocultos) y la plantilla CSV de importar de GeoInventory. Todo reporte
   nuevo usa este módulo.
+  **29-oct-2026 — HORIZONTAL, sin cortes y un PASTEL por proyecto** (Gerson:
+  "cada proyecto es un color, pasteles bonitos; horizontales; que no se corte
+  un proyecto a la mitad; todos los reportes así"): `reporteHTML` es apaisado
+  por DEFAULT; `.rp-sec`, tablas-caja y KPIs llevan `break-inside: avoid` (una
+  sección que cabe en una hoja pasa entera a la siguiente; una más larga que
+  una hoja sí se parte, repitiendo el thead). `PASTEL_PROYECTOS` (12 tonos,
+  cada uno `{bg, base, tinta}`, sin rojos ni rosados; los primeros no se
+  parecen a las celdas ámbar/azul/naranja de asistencia), `pastelesDe(shorts)`
+  (un tono por proyecto en el orden del reporte), `rSeccionProyecto(pc, …)`
+  (cabecera tintada) y `rProyecto(pc, texto)` (pastilla). Usados en Asistencia
+  (secciones, resumen, celdas "1*" y leyenda; columnas de día de ancho fijo
+  para que todas las tablas queden alineadas), Horas extras (+ tabla "Por
+  proyecto" con barras), Costo MO, Costo ejecutivo MO (dona), Registros de
+  GeoClock y los ejecutivos de materiales y maquinaria (dona + secciones).
+  jsPDF: GeoCost Ficha/Reporte pasaron a A4 HORIZONTAL (todo es relativo a
+  CW) y una categoría de partidas no se parte si cabe en una hoja; la
+  Planilla (ya apaisada) no parte un grupo Permanentes/Temporales/Honorarios
+  si cabe en una hoja. Se queda vertical a propósito: el Paquete de cierre
+  (portada + facturas escaneadas), la constancia y las etiquetas.
 - **Constancias desde GeoTeam (26-oct-2026)**: el "+ Generar" de Solicitudes
   → Constancias abría el `ConForm` VIEJO (texto para copiar). Ahora abre
   `GenerarConstanciaImpl` (rrhh-hub.jsx): colaborador, tipo (de trabajo solo
@@ -2497,6 +2516,13 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   Felipe 22-sep, Julia 26-sep, Luis Fernando 28-sep…) se tipearon con la regla
   "primer día fuera": con la regla nueva se les paga un día más. Gerson decidió
   NO corregirlas (1-oct-2026: "será de ahora en adelante") — no re-litigar.
+  **Buscador de colaborador (29-oct-2026)**: en Registrar BAJA el `<select>`
+  nativo salía en blanco con los nombres cortados en Chrome de Windows (un
+  select de ~1,800 px de ancho dentro del modal `wide`). `BuscadorEmpleado`
+  (a nivel de módulo en HRModule): escribís nombre/cargo/DNI, tocás, y queda
+  la tarjeta con "Cambiar"; Enter con una sola coincidencia la elige. En Baja
+  solo ofrece a los que NO están `inactive`. También en el form de
+  Bonificación (el otro select a todo lo ancho).
   `EditMovForm` SINCRONIZA `emp.endDate` y la tabla de BAJAS marca con ⚠️ las
   filas cuya ficha quedó desfasada. Solo bloquea con status `inactive`: los
   temporales ACTIVOS traen un endDate de contrato que queda viejo al renovar.

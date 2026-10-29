@@ -18,7 +18,7 @@ import { leerPdf, parsearCotizacion, ajusteAlTotal, lineasPresupuestoDesdeLectur
 // GeoSupply (2-oct-2026): los borradores que nacen de una cotización aprobada
 // llevan `origenSupply`; acá solo se rotula su corte.
 import { etiquetaCorte } from "./geosupply-calc.js";
-import { reporteHTML, abrirReporte, rKpis, rSeccion, rTabla, rChip, rBarra, rDona, colorPaleta, RP, PDF_TEMA, pdfCabecera, pdfPie, latin1, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
+import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, PDF_TEMA, pdfCabecera, pdfPie, latin1, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 // Abonos (17-oct-2026): pagos parciales con su comprobante; la solicitud se
 // cierra solo cuando la suma de abonos cubre el total. Lógica pura y probada.
 import { abonosVigentes, todosLosAbonos, tieneAbonos, totalAbonado, saldoDe, esAbonoParcial, porPagarDe, validarAbono, estadoTrasAbonos, cierreServicioAlPagar, unirAbonos, nubeTraeAbonosNuevos } from "./abonos.js";
@@ -5244,8 +5244,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     // Estilo único de reportes (26-oct-2026): src/reporte-estilo.js
     const top = rowsProy.slice(0, 7), otros = rowsProy.slice(7);
     const totOtros = otros.reduce((sm, r) => sm + r.total, 0);
+    const pcP = pastelesDe(rowsProy.map(r => r.short));
     const segs = [
-      ...top.map((r, i) => ({ label: r.short, valor: r.total, valorTxt: fL(r.total), color: colorPaleta(i) })),
+      ...top.map((r) => ({ label: r.short, valor: r.total, valorTxt: fL(r.total), color: pcP[r.short].base })),
       ...(otros.length ? [{ label: `Otros (${otros.length})`, valor: totOtros, valorTxt: fL(totOtros), color: RP.lineaFuerte }] : []),
     ];
     const maxMaq = Math.max(...rowsMaq.map(r => r.total), 1);
@@ -5263,7 +5264,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         filas.push({ clase: "sub", celdas: [esc(mq2.nombre), `<span class="suave">${mq2.items.length} pago${mq2.items.length !== 1 ? "s" : ""}</span>`, "", fL(mq2.total)] });
         mq2.items.forEach(x => filas.push([`${chipCo(x.company === "subterra" ? "subterra" : "geotecnica")} <b>${esc(x.provider || "—")}</b>`, detalleDe(x), `<span class="suave">${fechaPago(x)}</span>`, fL(x.amount)]));
       });
-      return rSeccion(r.short,
+      return rSeccionProyecto(pcP[r.short], r.short,
         rTabla({
           columnas: [{ t: "Proveedor", ancho: "26%" }, { t: "Qué se pagó" }, { t: "Pagada", num: true, ancho: "70px" }, { t: "Monto", num: true, ancho: "110px" }],
           filas,
@@ -5958,8 +5959,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     if (!w) return alert("Permití pop-ups para generar el PDF.");
     // Estilo único de reportes (26-oct-2026): src/reporte-estilo.js
     const top = rowsG.slice(0, 7), otros = rowsG.slice(7);
+    const pcP = pastelesDe(rowsG.map(r => r.short));
     const segs = [
-      ...top.map((r, i) => ({ label: r.short, valor: r.total, valorTxt: fL(r.total), color: colorPaleta(i) })),
+      ...top.map((r) => ({ label: r.short, valor: r.total, valorTxt: fL(r.total), color: pcP[r.short].base })),
       ...(otros.length ? [{ label: `Otros (${otros.length})`, valor: otros.reduce((sm, r) => sm + r.total, 0), valorTxt: fL(otros.reduce((sm, r) => sm + r.total, 0)), color: "#DDDBD7" }] : []),
     ];
     const empresasConGasto = ["geotecnica", "subterra"].filter(c2 => porEmp[c2].total > 0);
@@ -5973,7 +5975,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const chipCo = (c2) => rChip(TAG[c2] || "?", c2 === "subterra" ? "naranja" : "");
     const fechaPago = (x) => x.paidAt ? new Date(x.paidAt).toLocaleDateString("es-HN", { day: "2-digit", month: "short", timeZone: "UTC" }) : "—";
     const detalleDe = (x) => esc(x.description || "—") + (x.detalleMateriales && String(x.detalleMateriales).trim() !== String(x.description || "").trim() ? `<div class="rp-nota" style="white-space:pre-wrap">${esc(x.detalleMateriales)}</div>` : "");
-    const bloques = rowsG.map(r => rSeccion(`${r.short}${r.name ? " · " + r.name : ""}`,
+    const bloques = rowsG.map(r => rSeccionProyecto(pcP[r.short], `${r.short}${r.name ? " · " + r.name : ""}`,
       rTabla({
         columnas: [{ t: "Proveedor", ancho: "26%" }, { t: "Qué se compró" }, { t: "Pagada", num: true, ancho: "70px" }, { t: "Monto", num: true, ancho: "110px" }],
         filas: r.items.map(x => [`${chipCo(x.company === "subterra" ? "subterra" : "geotecnica")} <b>${esc(x.provider || "—")}</b>`, detalleDe(x), `<span class="suave">${fechaPago(x)}</span>`, fL(x.amount)]),

@@ -142,7 +142,11 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     const rows = lines.filter(l => l.ct === ct);
     if (!rows.length) return;
     const g = res.porGrupo[ct];
-    asegurar(24);
+    // Un grupo que cabe entero en una hoja no se parte (29-oct-2026, Gerson:
+    // "que no se corte a la mitad"): si no cabe en lo que queda, arranca en la
+    // siguiente. Uno más largo que una hoja sí se parte, repitiendo encabezados.
+    const altoGrupo = 7 + 6.5 + 8 + rows.reduce((s, l) => s + 7 + ((l.nota || (l.extras || []).length) ? 3.3 : 0), 0);
+    asegurar(altoGrupo <= Y_MAX - 40 ? altoGrupo : 24);
     P.f(9.5, "bold"); P.tc(CARBON); P.t(label, M, ctx.y + 4);
     const wLabel = P.ancho(label);
     P.f(7.5); P.tc(GRIS); P.t(`${rows.length} ${rows.length === 1 ? "persona" : "personas"}`, M + wLabel + 3, ctx.y + 4);
