@@ -11,7 +11,7 @@
 // reportes (reporte-estilo.js). Números, columnas y hojas NO cambiaron.
 // ═══════════════════════════════════════════════════════════════════════════
 import { safeDynamicImport } from "./lazyLoad.js";
-import { PDF_TEMA, RP, pdfCabecera, pdfPie, pdfKpi } from "./reporte-estilo.js";
+import { PDF_TEMA, RP, pdfCabecera, pdfPie, pdfKpi, cargarImagen, LOGO_EMPRESA } from "./reporte-estilo.js";
 import { totalesLinea, resumenPlanilla, nombreQuincena, rangoQuincena, etiquetaCorta, mesLargo, GRUPOS_CT, METODOS_PAGO, notaAutomatica, diasMostrados } from "./planilla-calc.js";
 
 const CARBON = PDF_TEMA.carbon, GRIS = PDF_TEMA.texto2, GRIS_FAINT = PDF_TEMA.texto3, FONDO = PDF_TEMA.fondo;
@@ -258,58 +258,119 @@ export const exportarPlanillaPDF = async (args) => {
 };
 
 // ── Excel ──────────────────────────────────────────────────────────────────
-// Estilo único de reportes: título grande, subtítulo gris, encabezados en gris
-// pequeño con línea abajo, filas con línea fina, subtotales en gris claro,
-// totales en negrita con línea carbón arriba, Helvetica Neue / Menlo y sin
-// cuadrícula. Las celdas, fórmulas, columnas y hojas son las mismas de siempre.
+// 30-oct-2026 (Gerson: "viene toda blanca, fea; usemos los logos, naranja,
+// bonita"): cabecera con el LOGO de la empresa y franja naranja, tiles de
+// "Colaboradores" y "Total a pagar", bandas Datos · Ingresos · Deducciones ·
+// A pagar sobre el encabezado carbón, filas alternadas, el neto resaltado en
+// naranja clarito y el total en carbón con el neto en naranja. Letra Calibri
+// (Helvetica Neue y Menlo no existen en Windows y Excel las cambiaba por
+// Arial / Courier). Las celdas, fórmulas, columnas y hojas son las mismas.
 const FMT_L = '"L" #,##0.00;[Red]-"L" #,##0.00;"-"';
 const ARGB = (h) => "FF" + h.replace("#", "").toUpperCase();
-const FUENTE = "Helvetica Neue", MONO = "Menlo";
-/** Arma el libro (sin descargar) — reutilizable desde Node para revisarlo. */
-export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines, meta = {}, ExcelJS, parte = "salarios" }) => {
+const FUENTE = "Calibri";
+/**
+ * Arma el libro (sin descargar) — reutilizable desde Node para revisarlo.
+ * logo = {dataUrl, w, h} de la empresa (opcional: sin él la cabecera sale igual, sin imagen).
+ */
+export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines, meta = {}, ExcelJS, parte = "salarios", logo = null }) => {
   const wb = new ExcelJS.Workbook();
   wb.creator = "GeoCore · Grupo Geotecnica"; wb.created = new Date();
+  wb.calcProperties = { fullCalcOnLoad: true };
   const res = resumenPlanilla(lines);
   const ley = quincena === "2Q";
   const CARB = ARGB(RP.carbon), GR = ARGB(RP.texto2), GR3 = ARGB(RP.texto3), ROJ = ARGB(RP.rojo);
+  const NAR = ARGB(RP.naranja), NAR_T = ARGB(RP.naranjaTexto), TINTE_X = ARGB(RP.tinte), BLANCO = "FFFFFFFF";
+  const FONDO_X = ARGB(RP.fondo), CEBRA = "FFFBFAF8", TINTE_SUAVE = "FFFEF7F1";
   const fill = (c) => ({ type: "pattern", pattern: "solid", fgColor: { argb: c } });
-  const FONDO_X = ARGB(RP.fondo);
   const hair = { style: "hair", color: { argb: ARGB(RP.lineaFuerte) } };
   const fina = { style: "thin", color: { argb: ARGB(RP.lineaFuerte) } };
-  const fuerte = { style: "medium", color: { argb: CARB } };
-  const ft = (o = {}) => ({ name: FUENTE, size: 10, color: { argb: CARB }, ...o });
-  const fm = (o = {}) => ({ name: MONO, size: 10, color: { argb: CARB }, ...o });
+  const naranjaGruesa = { style: "medium", color: { argb: NAR } };
+  const ft = (o = {}) => ({ name: FUENTE, size: 10.5, color: { argb: CARB }, ...o });
+  const fm = ft;
   const pagoTxt = Object.fromEntries(METODOS_PAGO);
-  const cabeceraHoja = (hoja, rango, [tit, sub, periodoTxt, estado]) => {
-    hoja.mergeCells(`A1:${rango}1`); hoja.getCell("A1").value = tit; hoja.getCell("A1").font = ft({ size: 16, bold: true }); hoja.getRow(1).height = 24;
-    hoja.mergeCells(`A2:${rango}2`); hoja.getCell("A2").value = sub; hoja.getCell("A2").font = ft({ size: 11, color: { argb: GR } });
-    hoja.mergeCells(`A3:${rango}3`); hoja.getCell("A3").value = periodoTxt; hoja.getCell("A3").font = ft({ size: 11, bold: true });
-    hoja.mergeCells(`A4:${rango}4`); hoja.getCell("A4").value = estado; hoja.getCell("A4").font = ft({ size: 9, color: { argb: GR3 } });
+  const imgId = logo?.dataUrl ? wb.addImage({ base64: logo.dataUrl.slice(logo.dataUrl.indexOf(",") + 1), extension: "png" }) : null;
+
+  // Cabecera: logo (columnas A–B) · empresa grande · qué planilla en naranja ·
+  // periodo · estado; franja naranja abajo de punta a punta (fila 4).
+  const cabeceraHoja = (hoja, { desde, hasta, ultima }, [tit, sub, periodoTxt, estado]) => {
+    [[1, 30], [2, 19], [3, 18], [4, 17]].forEach(([r, h]) => { hoja.getRow(r).height = h; });
+    const lineas = [[tit, ft({ size: 18, bold: true })], [sub, ft({ size: 12, bold: true, color: { argb: NAR_T } })], [periodoTxt, ft({ size: 10.5, color: { argb: CARB } })], [estado, ft({ size: 9, color: { argb: GR3 } })]];
+    lineas.forEach(([v, f], i) => {
+      hoja.mergeCells(`${desde}${i + 1}:${hasta}${i + 1}`);
+      const c = hoja.getCell(`${desde}${i + 1}`); c.value = v; c.font = f; c.alignment = { vertical: "middle" };
+    });
+    for (let col = 1; col <= ultima; col++) hoja.getCell(4, col).border = { bottom: naranjaGruesa };
+    if (imgId != null) {
+      const alto = empresaKey(empresa) === "subterra" ? 82 : 58;
+      const ancho = Math.min(230, alto * (logo.w || 1) / (logo.h || 1));
+      hoja.addImage(imgId, { tl: { col: 0.25, row: 0.25 }, ext: { width: ancho, height: alto }, editAs: "oneCell" });
+    }
   };
-  const filaEncabezado = (row, alturas = 28) => {
+  // Tile arriba a la derecha: rótulo chico (fila 1) y cifra grande (filas 2–3).
+  const tile = (hoja, c1, c2, rotulo, valor, { naranja = false, fmt = null } = {}) => {
+    hoja.mergeCells(`${c1}1:${c2}1`); hoja.mergeCells(`${c1}2:${c2}3`);
+    const a = hoja.getCell(`${c1}1`), b = hoja.getCell(`${c1}2`);
+    a.value = rotulo.toUpperCase(); b.value = valor;
+    a.font = ft({ size: 8.5, bold: true, color: { argb: naranja ? BLANCO : GR3 } });
+    b.font = ft({ size: 17, bold: true, color: { argb: naranja ? BLANCO : CARB } });
+    a.alignment = { horizontal: "center", vertical: "bottom" }; b.alignment = { horizontal: "center", vertical: "middle" };
+    if (fmt) b.numFmt = fmt;
+    [a, b].forEach(c => { c.fill = fill(naranja ? NAR : FONDO_X); });
+  };
+  const filaEncabezado = (row, alturas = 30) => {
     row.eachCell(c => {
       c.value = String(c.value ?? "").toUpperCase();
-      c.font = ft({ size: 8.5, bold: true, color: { argb: GR3 } });
-      c.alignment = { vertical: "bottom", horizontal: "center", wrapText: true };
-      c.border = { bottom: fina };
+      c.font = ft({ size: 8.5, bold: true, color: { argb: BLANCO } });
+      c.fill = fill(CARB);
+      c.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+      c.border = { right: { style: "thin", color: { argb: "FF45423F" } } };
     });
     row.height = alturas;
   };
+  // Título de grupo (Permanentes · Temporales · Honorarios): tinte naranja con filo a la izquierda.
+  const tituloGrupo = (hoja, r, texto, ultima) => {
+    hoja.mergeCells(r, 1, r, ultima);
+    const sc = hoja.getCell(r, 1); sc.value = texto;
+    sc.font = ft({ size: 11.5, bold: true, color: { argb: NAR_T } });
+    sc.fill = fill(TINTE_X); sc.alignment = { vertical: "middle", indent: 1 };
+    sc.border = { left: { style: "thick", color: { argb: NAR } }, bottom: naranjaGruesa };
+    hoja.getRow(r).height = 24;
+  };
+  const pintarFila = (row, i, ultima) => {
+    for (let c = 1; c <= ultima; c++) { const cell = row.getCell(c); cell.border = { bottom: hair }; if (i % 2 === 1) cell.fill = fill(CEBRA); }
+    row.height = 19;
+  };
+  const filaTotal = (row, ultima, colNeto, alto = 24) => {
+    for (let c = 1; c <= ultima; c++) {
+      const cell = row.getCell(c);
+      cell.fill = fill(c === colNeto ? NAR : CARB);
+      cell.font = ft({ bold: true, size: 11, color: { argb: BLANCO } });
+      cell.alignment = { vertical: "middle", horizontal: c >= 3 ? undefined : "left" };
+    }
+    row.height = alto;
+  };
   const firmas = (hoja, r, salto = 4) => [["Elaborado por", meta.elaboradoPor || ""], ["Revisado por", ""], ["Autorizado por", ""]].forEach(([lab, nom], i) => {
-    const c = 2 + i * salto; hoja.getCell(r, c).value = "_______________________________"; hoja.getCell(r, c).font = ft({ color: { argb: GR3 } }); hoja.getCell(r + 1, c).value = lab; hoja.getCell(r + 1, c).font = ft({ size: 9, bold: true }); if (nom) { hoja.getCell(r + 2, c).value = nom; hoja.getCell(r + 2, c).font = ft({ size: 9, color: { argb: GR } }); }
+    const c = 2 + i * salto;
+    hoja.getCell(r, c).border = { bottom: { style: "thin", color: { argb: CARB } } };
+    hoja.getCell(r + 1, c).value = lab; hoja.getCell(r + 1, c).font = ft({ size: 9.5, bold: true });
+    if (nom) { hoja.getCell(r + 2, c).value = nom; hoja.getCell(r + 2, c).font = ft({ size: 9, color: { argb: GR } }); }
   });
+  const estadoTxt = (extra = "") => `${meta.estado === "publicada" ? "Publicada" : "Borrador"} · generada el ${fechaLarga()}${meta.generadaPor ? ` por ${meta.generadaPor}` : ""}${extra} · GeoCore`;
 
   // ── PLANILLA DE HORAS EXTRAS (archivo propio) ──
   if (parte === "he") {
     const conHe = lines.filter(l => l.he && l.he.monto > 0);
     const wh = wb.addWorksheet("Horas extras", { views: [{ state: "frozen", ySplit: 6, showGridLines: false }], pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
-    wh.columns = [["N°", 5], ["Colaborador", 34], ["Cargo", 24], ["Hora base", 12], ["4 a 7 pm (×1.25)", 14], ["7 a 10 pm (×1.5)", 14], ["10 pm a 12 (×1.75)", 15], ["Domingo (×2)", 13], ["Total horas", 11], ["Monto a pagar", 15], ["Método de pago", 15]].map(([header, width]) => ({ header, width }));
+    wh.columns = [["N°", 5], ["Colaborador", 34], ["Cargo", 24], ["Hora base", 12], ["4 a 7 pm (×1.25)", 14], ["7 a 10 pm (×1.5)", 14], ["10 pm a 12 (×1.75)", 15], ["Domingo (×2)", 13], ["Total horas", 12], ["Monto a pagar", 16], ["Método de pago", 16]].map(([header, width]) => ({ header, width }));
     wh.spliceRows(1, 1);
-    cabeceraHoja(wh, "H", [
+    const UH = 11;
+    cabeceraHoja(wh, { desde: "C", hasta: "G", ultima: UH }, [
       empresa, "Planilla de horas extras",
       `Se pagan con la ${nombreQuincena(periodo, quincena).toLowerCase()}${meta.heDe ? ` · trabajadas en ${nombreQuincena(meta.heDe.periodo, meta.heDe.quincena).toLowerCase()} (${rangoQuincena(meta.heDe.periodo, meta.heDe.quincena)})` : ""}`,
-      `${meta.estado === "publicada" ? "Publicada" : "Borrador"} · generada el ${fechaLarga()}${meta.generadaPor ? ` por ${meta.generadaPor}` : ""}`,
+      estadoTxt(),
     ]);
+    tile(wh, "H", "I", "Colaboradores", conHe.length);
+    tile(wh, "J", "K", "Total a pagar", res.he, { naranja: true, fmt: FMT_L });
     wh.getRow(6).values = wh.columns.map(c => c.header);
     filaEncabezado(wh.getRow(6));
     let hr = 7; const h0 = hr;
@@ -317,46 +378,63 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
       const b = l.he.bandas || {};
       const row = wh.getRow(hr);
       row.values = [i + 1, l.name, l.pos || "", l.he.horaBase, b.b1?.hrs || 0, b.b2?.hrs || 0, b.b3?.hrs || 0, b.dom?.hrs || 0, l.he.hrs, l.he.monto, pagoTxt[l.metodoPago] || "Transferencia"];
-      row.font = ft(); row.getCell(2).font = ft({ bold: true }); row.getCell(1).font = ft({ color: { argb: GR3 } }); row.getCell(3).font = ft({ color: { argb: GR } });
-      [4, 10].forEach(c => { row.getCell(c).numFmt = FMT_L; row.getCell(c).font = fm(); }); [5, 6, 7, 8, 9].forEach(c => { row.getCell(c).numFmt = "0.0;;\"-\""; row.getCell(c).font = fm(); });
-      row.getCell(10).font = fm({ bold: true });
-      row.eachCell({ includeEmpty: true }, c => { c.border = { bottom: hair }; });
+      pintarFila(row, i, UH);
+      row.font = ft(); row.alignment = { vertical: "middle" };
+      row.getCell(2).font = ft({ bold: true }); row.getCell(1).font = ft({ color: { argb: GR3 } }); row.getCell(3).font = ft({ color: { argb: GR } });
+      [4, 10].forEach(c => { row.getCell(c).numFmt = FMT_L; }); [5, 6, 7, 8, 9].forEach(c => { row.getCell(c).numFmt = "0.0;;\"-\""; row.getCell(c).alignment = { horizontal: "center", vertical: "middle" }; });
+      row.getCell(10).font = ft({ bold: true }); row.getCell(10).fill = fill(TINTE_X);
       hr++;
     });
     const ht = wh.getRow(hr); ht.values = ["", "TOTAL A PAGAR"];
-    [5, 6, 7, 8, 9, 10].forEach(c => { const col = wh.getColumn(c).letter; ht.getCell(c).value = { formula: `SUM(${col}${h0}:${col}${Math.max(h0, hr - 1)})` }; ht.getCell(c).numFmt = c === 10 ? FMT_L : "0.0;;\"-\""; });
-    ht.eachCell({ includeEmpty: true }, (c, n) => { c.font = n >= 4 ? fm({ bold: true, size: 10.5 }) : ft({ bold: true, size: 10.5 }); c.border = { top: fuerte }; }); ht.height = 22;
+    [5, 6, 7, 8, 9, 10].forEach(c => { const col = wh.getColumn(c).letter; ht.getCell(c).value = { formula: `SUM(${col}${h0}:${col}${Math.max(h0, hr - 1)})`, result: Math.round(conHe.reduce((a, l) => a + (c === 10 ? l.he.monto : c === 9 ? l.he.hrs : (l.he.bandas?.[["b1", "b2", "b3", "dom"][c - 5]]?.hrs || 0)), 0) * 100) / 100 }; ht.getCell(c).numFmt = c === 10 ? FMT_L : "0.0;;\"-\""; });
+    filaTotal(ht, UH, 10);
     hr += 3;
-    METODOS_PAGO.filter(([k]) => res.hePorMetodo[k]?.n).forEach(([k, lab]) => { const row = wh.getRow(hr); row.getCell(2).value = `${lab} (${res.hePorMetodo[k].n})`; row.getCell(3).value = res.hePorMetodo[k].monto; row.getCell(3).numFmt = FMT_L; row.getCell(2).font = ft(); row.getCell(3).font = fm(); hr++; });
-    firmas(wh, hr + 3, 3);
+    const mt = wh.getCell(hr, 2); mt.value = "POR MÉTODO DE PAGO"; mt.font = ft({ size: 8.5, bold: true, color: { argb: GR3 } }); wh.getCell(hr, 2).border = wh.getCell(hr, 3).border = { bottom: fina }; hr++;
+    METODOS_PAGO.filter(([k]) => res.hePorMetodo[k]?.n).forEach(([k, lab]) => { const row = wh.getRow(hr); row.getCell(2).value = `${lab} (${res.hePorMetodo[k].n})`; row.getCell(3).value = res.hePorMetodo[k].monto; row.getCell(3).numFmt = FMT_L; row.getCell(2).font = ft(); row.getCell(3).font = ft({ bold: true }); [2, 3].forEach(c => { row.getCell(c).border = { bottom: hair }; }); hr++; });
+    firmas(wh, hr + 4, 3);
     return wb;
   }
 
-  const ws = wb.addWorksheet("Planilla", { views: [{ state: "frozen", ySplit: 7, showGridLines: false }], pageSetup: { orientation: "landscape", paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+  const ws = wb.addWorksheet("Planilla", { views: [{ state: "frozen", ySplit: 6, xSplit: 2, showGridLines: false }], pageSetup: { orientation: "landscape", paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   const cols = [
     ["N°", 5], ["Colaborador", 34], ["Cargo", 26], ["Tipo", 12], ["Proyecto", 22], ["Días", 7], ["NSP", 6],
-    ["Salario mensual", 15], ["Salario diario", 13], ["Ordinario", 14], ["Bonificación", 13], ["Feriados / domingos", 15], ["Otros ingresos", 14], ["Total ingresos", 14],
-    ["NSP (L)", 11], ["Llegadas tarde (L)", 12], ["Incapacidad (L)", 12], ["ISR", 12], ["IHSS", 11], ["RAP", 11], ["Cooperativa", 12], ["Otras deducciones", 14], ["Total deducciones", 15], ["Neto a pagar", 16], ["Método de pago", 14], ["Notas", 48],
+    ["Salario mensual", 15], ["Salario diario", 13], ["Ordinario", 14], ["Bonificación", 13], ["Feriados / domingos", 15], ["Otros ingresos", 14], ["Total ingresos", 15],
+    ["NSP (L)", 11], ["Llegadas tarde (L)", 12], ["Incapacidad (L)", 12], ["ISR", 12], ["IHSS", 11], ["RAP", 11], ["Cooperativa", 12], ["Otras deducciones", 14], ["Total deducciones", 15], ["Neto a pagar", 17], ["Método de pago", 15], ["Notas", 48],
   ];
+  const ULT = cols.length;
   ws.columns = cols.map(([header, width]) => ({ header, width }));
   ws.spliceRows(1, 1); // sin la fila de header automática: la armamos a mano en la fila 6
-  cabeceraHoja(ws, "J", [
+  cabeceraHoja(ws, { desde: "C", hasta: "Q", ultima: ULT }, [
     empresa, "Planilla de sueldos y salarios",
     `${nombreQuincena(periodo, quincena)} · ${rangoQuincena(periodo, quincena)}`,
-    `${meta.estado === "publicada" ? "Publicada" : "Borrador"} · generada el ${fechaLarga()}${meta.generadaPor ? ` por ${meta.generadaPor}` : ""} · las horas extras van en su propia planilla`,
+    estadoTxt(" · las horas extras van en su propia planilla"),
   ]);
+  tile(ws, "U", "V", "Colaboradores", res.personas);
+  tile(ws, "W", "X", "Total a pagar", res.neto, { naranja: true, fmt: FMT_L });
+  // Bandas sobre el encabezado (fila 5).
+  [[1, 7, "Colaborador", null, GR3], [8, 14, "Ingresos", TINTE_X, NAR_T], [15, 23, "Deducciones", FONDO_X, GR], [24, 26, "A pagar", NAR, BLANCO]].forEach(([a, b, t, bg, tc]) => {
+    ws.mergeCells(5, a, 5, b);
+    const c = ws.getCell(5, a); c.value = t.toUpperCase();
+    c.font = ft({ size: 9, bold: true, color: { argb: tc } }); c.alignment = { horizontal: "center", vertical: "middle" };
+    if (bg) c.fill = fill(bg);
+  });
+  ws.getRow(5).height = 20;
   ws.getRow(6).values = cols.map(c => c[0]);
-  filaEncabezado(ws.getRow(6), 30);
+  filaEncabezado(ws.getRow(6), 32);
+  ws.getCell(6, 24).fill = fill(NAR);
   const MONEY = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
   const NUMS = [6, 7];
   const tipoTxt = { permanent: "Permanente", temporary: "Temporal", honorarios: "Honorarios" };
   let r = 7;
   const subtotRows = [];
+  // Resultado ya calculado de cada fórmula: Excel recalcula al abrir, pero los
+  // visores (Quick Look, WhatsApp, el celular) muestran solo lo guardado.
+  const valorDe = (cell) => { const v = cell.value; return typeof v === "number" ? v : Number(v?.result) || 0; };
+  const sumaCol = (c, a, b) => { let t = 0; for (let i = a; i <= b; i++) t += valorDe(ws.getCell(i, c)); return Math.round(t * 100) / 100; };
   GRUPOS_CT.forEach(([ct, label]) => {
     const rows = lines.filter(l => l.ct === ct);
     if (!rows.length) return;
-    ws.mergeCells(r, 1, r, cols.length);
-    const sc = ws.getCell(r, 1); sc.value = `${label}  ·  ${rows.length} ${rows.length === 1 ? "persona" : "personas"}`; sc.font = ft({ size: 11.5, bold: true }); ws.getRow(r).height = 24; sc.alignment = { vertical: "bottom" }; sc.border = { bottom: fina };
+    tituloGrupo(ws, r, `${label}  ·  ${rows.length} ${rows.length === 1 ? "persona" : "personas"}`, ULT);
     r++;
     const r0 = r;
     rows.forEach((l, i) => {
@@ -364,63 +442,89 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
       const nota = [notaAutomatica(l), l.nota].filter(Boolean).join(" · ");
       const row = ws.getRow(r);
       row.values = [i + 1, l.name, l.pos || "", tipoTxt[l.ct] || l.ct, l.proj || "", Number(diasMostrados(l)) || 0, l.diasNSP || 0,
-        l.sb, l.sd, t.ordinario, l.bq || 0, (l.bonoFeriado || 0) + (l.bonoDomingo || 0), t.extrasIng, { formula: `J${r}+K${r}+L${r}+M${r}` },
-        l.descuentoNSP || 0, l.descuentoHoras || 0, l.descuentoIncap || 0, l.isr || 0, l.ihss || 0, l.rap || 0, l.coop || 0, t.extrasDed, { formula: `SUM(O${r}:V${r})` }, { formula: `J${r}+N${r}-W${r}` }, pagoTxt[l.metodoPago] || "Transferencia", nota];
+        l.sb, l.sd, t.ordinario, l.bq || 0, (l.bonoFeriado || 0) + (l.bonoDomingo || 0), t.extrasIng, { formula: `J${r}+K${r}+L${r}+M${r}`, result: Math.round((t.ordinario + (l.bq || 0) + (l.bonoFeriado || 0) + (l.bonoDomingo || 0) + t.extrasIng) * 100) / 100 },
+        l.descuentoNSP || 0, l.descuentoHoras || 0, l.descuentoIncap || 0, l.isr || 0, l.ihss || 0, l.rap || 0, l.coop || 0, t.extrasDed, { formula: `SUM(O${r}:V${r})`, result: t.deducciones }, { formula: `J${r}+N${r}-W${r}`, result: t.neto }, pagoTxt[l.metodoPago] || "Transferencia", nota];
+      pintarFila(row, i, ULT);
       row.font = ft();
       row.alignment = { vertical: "middle" };
-      row.getCell(1).font = ft({ color: { argb: GR3 } });
+      row.getCell(1).font = ft({ color: { argb: GR3 } }); row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
       row.getCell(2).font = ft({ bold: true });
       [3, 5, 26].forEach(c => { row.getCell(c).font = ft({ color: { argb: GR } }); });
-      NUMS.forEach(c => { row.getCell(c).font = fm(); });
-      MONEY.forEach(c => { row.getCell(c).numFmt = FMT_L; row.getCell(c).font = fm(); });
-      row.getCell(23).font = fm({ color: { argb: ROJ } });
-      row.getCell(24).font = fm({ bold: true });
-      row.eachCell({ includeEmpty: true }, c => { c.border = { bottom: hair }; });
+      NUMS.forEach(c => { row.getCell(c).alignment = { horizontal: "center", vertical: "middle" }; });
+      MONEY.forEach(c => { row.getCell(c).numFmt = FMT_L; });
+      row.getCell(14).font = ft({ bold: true });
+      row.getCell(23).font = ft({ bold: true, color: { argb: ROJ } });
+      row.getCell(24).font = ft({ bold: true, size: 11 }); row.getCell(24).fill = fill(TINTE_X);
+      if (l.diasNSP) row.getCell(7).font = ft({ bold: true, color: { argb: ROJ } });
       r++;
     });
-    const st = ws.getRow(r); st.values = ["", "Subtotal", "", "", "", { formula: `SUM(F${r0}:F${r - 1})` }, { formula: `SUM(G${r0}:G${r - 1})` }];
-    MONEY.forEach(c => { const col = ws.getColumn(c).letter; st.getCell(c).value = { formula: `SUM(${col}${r0}:${col}${r - 1})` }; st.getCell(c).numFmt = FMT_L; });
-    st.eachCell({ includeEmpty: true }, (c, n) => { c.fill = fill(FONDO_X); c.font = n >= 6 && n <= 24 ? fm({ bold: true }) : ft({ bold: true }); });
-    st.height = 18;
+    const st = ws.getRow(r); st.values = ["", "Subtotal"];
+    [...NUMS, ...MONEY].forEach(c => { const col = ws.getColumn(c).letter; st.getCell(c).value = { formula: `SUM(${col}${r0}:${col}${r - 1})`, result: sumaCol(c, r0, r - 1) }; if (MONEY.includes(c)) st.getCell(c).numFmt = FMT_L; });
+    for (let c = 1; c <= ULT; c++) { const cell = st.getCell(c); cell.fill = fill(c === 24 ? TINTE_X : FONDO_X); cell.font = ft({ bold: true }); cell.border = { top: fina, bottom: fina }; }
+    [6, 7].forEach(c => { st.getCell(c).alignment = { horizontal: "center" }; });
+    st.height = 21;
     subtotRows.push(r);
     r += 2;
   });
   // Total general
   const tg = ws.getRow(r); tg.values = ["", "TOTAL A PAGAR"];
-  MONEY.forEach(c => { const col = ws.getColumn(c).letter; tg.getCell(c).value = { formula: subtotRows.map(x => `${col}${x}`).join("+") }; tg.getCell(c).numFmt = FMT_L; });
-  tg.eachCell({ includeEmpty: true }, (c, n) => { c.font = n >= 8 && n <= 24 ? fm({ bold: true, size: 10.5 }) : ft({ bold: true, size: 10.5 }); c.border = { top: fuerte }; });
-  tg.height = 22;
+  MONEY.forEach(c => { const col = ws.getColumn(c).letter; tg.getCell(c).value = { formula: subtotRows.map(x => `${col}${x}`).join("+") || "0", result: Math.round(subtotRows.reduce((a, x) => a + valorDe(ws.getCell(x, c)), 0) * 100) / 100 }; tg.getCell(c).numFmt = FMT_L; });
+  filaTotal(tg, ULT, 24, 26);
   r += 3;
-  // Cierre: salarios / HE / total y por método
-  const cierre = [["Total a pagar", res.neto], [], ...METODOS_PAGO.filter(([k]) => res.porMetodo[k]?.n).map(([k, lab]) => [`${lab} (${res.porMetodo[k].n})`, res.porMetodo[k].neto])];
-  cierre.forEach(([a, b]) => { if (a) { const row = ws.getRow(r); row.getCell(2).value = a; row.getCell(3).value = b; row.getCell(3).numFmt = FMT_L; row.getCell(2).font = ft({ bold: a === "Total a pagar" }); row.getCell(3).font = fm({ bold: true }); if (a === "Total a pagar") { row.getCell(2).border = { top: fuerte }; row.getCell(3).border = { top: fuerte }; } } r++; });
-  firmas(ws, r + 2);
+  // Cierre por método de pago
+  const ct0 = ws.getCell(r, 2); ct0.value = "CIERRE POR MÉTODO DE PAGO"; ct0.font = ft({ size: 8.5, bold: true, color: { argb: GR3 } }); [2, 3].forEach(c => { ws.getCell(r, c).border = { bottom: fina }; }); r++;
+  METODOS_PAGO.filter(([k]) => res.porMetodo[k]?.n).forEach(([k, lab]) => {
+    const row = ws.getRow(r); row.getCell(2).value = `${lab} (${res.porMetodo[k].n})`; row.getCell(3).value = res.porMetodo[k].neto; row.getCell(3).numFmt = FMT_L;
+    row.getCell(2).font = ft(); row.getCell(3).font = ft({ bold: true }); [2, 3].forEach(c => { row.getCell(c).border = { bottom: hair }; }); r++;
+  });
+  const tp = ws.getRow(r); tp.getCell(2).value = "Total a pagar"; tp.getCell(3).value = res.neto; tp.getCell(3).numFmt = FMT_L;
+  [2, 3].forEach(c => { tp.getCell(c).fill = fill(NAR); tp.getCell(c).font = ft({ bold: true, size: 11.5, color: { argb: BLANCO } }); }); tp.height = 22;
+  firmas(ws, r + 5);
   if (!ley) [18, 19, 20].forEach(c => { ws.getColumn(c).hidden = true; });
 
   // Hoja resumen por proyecto
   const wr = wb.addWorksheet("Resumen", { views: [{ showGridLines: false }] });
-  wr.columns = [["Concepto", 36], ["Personas", 10], ["Monto", 16]].map(([header, width]) => ({ header, width }));
+  wr.columns = [["", 3], ["", 18], ["Concepto", 40], ["Personas", 11], ["Monto", 18]].map(([header, width]) => ({ header, width }));
   wr.spliceRows(1, 1);
-  wr.getCell("A1").value = `${empresa} · ${nombreQuincena(periodo, quincena)}`; wr.getCell("A1").font = ft({ size: 14, bold: true }); wr.getRow(1).height = 22;
-  let rr2 = 3;
-  const seccion = (tit, filas) => {
-    [1, 2, 3].forEach(c => { wr.getCell(rr2, c).border = { bottom: fina }; });
-    wr.getCell(rr2, 1).value = tit.toUpperCase(); wr.getCell(rr2, 1).font = ft({ size: 8.5, bold: true, color: { argb: GR3 } }); rr2++;
-    filas.forEach(([a, n, m]) => { wr.getCell(rr2, 1).value = a; wr.getCell(rr2, 2).value = n; wr.getCell(rr2, 3).value = m; wr.getCell(rr2, 3).numFmt = FMT_L; wr.getCell(rr2, 1).font = ft(); wr.getCell(rr2, 2).font = fm(); wr.getCell(rr2, 3).font = fm(); [1, 2, 3].forEach(c => { wr.getCell(rr2, c).border = { bottom: hair }; }); rr2++; });
+  cabeceraHoja(wr, { desde: "C", hasta: "E", ultima: 5 }, [empresa, "Resumen de la planilla", `${nombreQuincena(periodo, quincena)} · ${rangoQuincena(periodo, quincena)}`, estadoTxt()]);
+  let rr2 = 7;
+  const seccion = (tit, filas, destacar = false) => {
+    wr.mergeCells(rr2, 3, rr2, 5);
+    const h = wr.getCell(rr2, 3); h.value = tit.toUpperCase(); h.font = ft({ size: 9, bold: true, color: { argb: NAR_T } }); h.fill = fill(TINTE_X); h.alignment = { indent: 1, vertical: "middle" };
+    h.border = { left: { style: "thick", color: { argb: NAR } } }; wr.getRow(rr2).height = 21; rr2++;
+    filas.forEach(([a, n, m], i) => {
+      wr.getCell(rr2, 3).value = a; wr.getCell(rr2, 4).value = n; wr.getCell(rr2, 5).value = m; wr.getCell(rr2, 5).numFmt = FMT_L;
+      [3, 4, 5].forEach(c => { const cell = wr.getCell(rr2, c); cell.font = ft({ bold: destacar || c === 5 }); cell.border = { bottom: hair }; if (destacar) { cell.fill = fill(NAR); cell.font = ft({ bold: true, color: { argb: BLANCO }, size: 11.5 }); } else if (i % 2 === 1) cell.fill = fill(CEBRA); });
+      wr.getCell(rr2, 4).alignment = { horizontal: "center" };
+      wr.getRow(rr2).height = destacar ? 24 : 19;
+      rr2++;
+    });
     rr2++;
   };
   seccion("Por tipo de contrato", GRUPOS_CT.filter(([k]) => res.porGrupo[k]?.n).map(([k, lab]) => [lab, res.porGrupo[k].n, res.porGrupo[k].neto]));
   seccion("Por método de pago", METODOS_PAGO.filter(([k]) => res.porMetodo[k]?.n).map(([k, lab]) => [lab, res.porMetodo[k].n, res.porMetodo[k].neto]));
   seccion("Por proyecto (neto repartido por días trabajados)", Object.entries(res.porProyecto).sort((a, b) => b[1] - a[1]).map(([p, m]) => [p, "", m]));
-  seccion("Total", [["Total salarios", res.personas, res.neto]]);
+  seccion("Total", [["Total salarios", res.personas, res.neto]], true);
 
   return wb;
 };
 
+// El PNG original del logo pesa medio mega: se reduce a 240 px de alto.
+const achicarLogo = async (logo, alto = 240) => {
+  if (!logo?.dataUrl || !(logo.h > alto) || typeof document === "undefined") return logo;
+  try {
+    const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = logo.dataUrl; });
+    const w = Math.round(alto * logo.w / logo.h);
+    const cv = document.createElement("canvas"); cv.width = w; cv.height = alto;
+    cv.getContext("2d").drawImage(im, 0, 0, w, alto);
+    return { dataUrl: cv.toDataURL("image/png"), w, h: alto };
+  } catch { return logo; }
+};
 export const exportarPlanillaExcel = async (args) => {
   const mod = await safeDynamicImport(() => import("exceljs/dist/exceljs.min.js"), "excel");
   const ExcelJS = mod.default || mod;
-  const wb = await construirPlanillaExcel({ ...args, ExcelJS });
+  const logo = await achicarLogo(await cargarImagen(LOGO_EMPRESA[empresaKey(args.empresa)]).catch(() => null));
+  const wb = await construirPlanillaExcel({ ...args, ExcelJS, logo });
   const { empresa, periodo, quincena } = args;
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });

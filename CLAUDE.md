@@ -1051,6 +1051,16 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   modales pn/pd. PDF: tiles, tabla por tipo (ISR/IHSS/RAP solo en 2Q),
   totales por grupo, cierre por tipo / método / Salarios+HE=Total, firmas y
   hoja de Horas extras por banda; revisado como imagen con la réplica Node.
+  **Excel con marca (30-oct-2026, Gerson: "viene toda blanca, fea; logos,
+  naranja, bonita")**: logo de la empresa arriba a la izquierda (`logo` →
+  `wb.addImage`, reducido a 240 px con `achicarLogo`; `LOGO_EMPRESA` se
+  exporta de reporte-estilo), franja naranja bajo la cabecera, tiles
+  Colaboradores / Total a pagar (naranja), bandas Colaborador · Ingresos ·
+  Deducciones · A pagar sobre el encabezado carbón, títulos de grupo con
+  tinte y filo naranja, filas alternadas, neto en naranja clarito, total en
+  carbón con el neto naranja; Calibri (Helvetica Neue/Menlo no existen en
+  Windows). Toda fórmula guarda su `result` (los visores de celular no
+  calculan) + `fullCalcOnLoad`. Misma estética en Horas extras y Resumen.
   Excel: hoja Planilla (encabezado carbón, formato "L" #,##0.00, subtotales
   y total con SUM, columnas ISR/IHSS/RAP ocultas en 1Q, congelado), Horas
   extras y Resumen. ⚠ Diferencias ficha vs Excel de Carolina detectadas el

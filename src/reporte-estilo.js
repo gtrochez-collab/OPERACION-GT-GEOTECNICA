@@ -57,7 +57,7 @@ export const fmtLps = (n) => "L " + (Number(n) || 0).toLocaleString("es-HN", { m
 export const fmtNum = (n, d = 0) => (Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: d, maximumFractionDigits: d });
 export const fechaGenerado = () => new Date().toLocaleString("es-HN", { timeZone: "America/Tegucigalpa", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" });
 
-const LOGO_EMPRESA = { geotecnica: "brand/logo-color.png", subterra: "brand/subterra.png" };
+export const LOGO_EMPRESA = { geotecnica: "brand/logo-color.png", subterra: "brand/subterra.png" };
 
 // ── 1) REPORTES HTML ────────────────────────────────────────────────────────
 export const REPORTE_CSS = `
