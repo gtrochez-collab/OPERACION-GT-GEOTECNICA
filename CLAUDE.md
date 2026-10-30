@@ -1061,6 +1061,17 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   carbón con el neto naranja; Calibri (Helvetica Neue/Menlo no existen en
   Windows). Toda fórmula guarda su `result` (los visores de celular no
   calculan) + `fullCalcOnLoad`. Misma estética en Horas extras y Resumen.
+  **2ª pasada (mismo día)**: ⚠ el neto del Excel era `J+N−W` y "Total
+  ingresos" (N) YA incluye el ordinario → lo contaba DOS veces (Daniel
+  13,119 en vez de 6,261.95; el PDF y la pantalla estaban bien). La hoja se
+  arma ahora con la lista `COLS` (sección, ancho, valor, formato) y las
+  fórmulas usan sus letras: neto = Total ingresos − Total deducciones.
+  Gerson: "ingresos de un color, deducciones de otro, pastel; a detalle; no
+  uses negro" → secciones Colaborador (gris) · Asistencia de la quincena
+  (azul: días pagados, no se presentó, llegadas tarde, horas tarde,
+  incapacidad, al 34 %, vacaciones, feriados y domingos trabajados) ·
+  Ingresos (verde) · Deducciones (rosa) · A pagar (naranja); encabezados y
+  total en pastel, SIN carbón de fondo.
   Excel: hoja Planilla (encabezado carbón, formato "L" #,##0.00, subtotales
   y total con SUM, columnas ISR/IHSS/RAP ocultas en 1Q, congelado), Horas
   extras y Resumen. ⚠ Diferencias ficha vs Excel de Carolina detectadas el

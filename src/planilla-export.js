@@ -320,10 +320,10 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   const filaEncabezado = (row, alturas = 30) => {
     row.eachCell(c => {
       c.value = String(c.value ?? "").toUpperCase();
-      c.font = ft({ size: 8.5, bold: true, color: { argb: BLANCO } });
-      c.fill = fill(CARB);
+      c.font = ft({ size: 8.5, bold: true, color: { argb: NAR_T } });
+      c.fill = fill("FFFBD9BF");
       c.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
-      c.border = { right: { style: "thin", color: { argb: "FF45423F" } } };
+      c.border = { right: { style: "thin", color: { argb: BLANCO } } };
     });
     row.height = alturas;
   };
@@ -343,8 +343,9 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   const filaTotal = (row, ultima, colNeto, alto = 24) => {
     for (let c = 1; c <= ultima; c++) {
       const cell = row.getCell(c);
-      cell.fill = fill(c === colNeto ? NAR : CARB);
-      cell.font = ft({ bold: true, size: 11, color: { argb: BLANCO } });
+      cell.fill = fill(c === colNeto ? NAR : "FFFBD9BF");
+      cell.font = ft({ bold: true, size: 11, color: { argb: c === colNeto ? BLANCO : NAR_T } });
+      cell.border = { top: { style: "medium", color: { argb: NAR } } };
       cell.alignment = { vertical: "middle", horizontal: c >= 3 ? undefined : "left" };
     }
     row.height = alto;
@@ -395,42 +396,96 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     return wb;
   }
 
-  const ws = wb.addWorksheet("Planilla", { views: [{ state: "frozen", ySplit: 6, xSplit: 2, showGridLines: false }], pageSetup: { orientation: "landscape", paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
-  const cols = [
-    ["N°", 5], ["Colaborador", 34], ["Cargo", 26], ["Tipo", 12], ["Proyecto", 22], ["Días", 7], ["NSP", 6],
-    ["Salario mensual", 15], ["Salario diario", 13], ["Ordinario", 14], ["Bonificación", 13], ["Feriados / domingos", 15], ["Otros ingresos", 14], ["Total ingresos", 15],
-    ["NSP (L)", 11], ["Llegadas tarde (L)", 12], ["Incapacidad (L)", 12], ["ISR", 12], ["IHSS", 11], ["RAP", 11], ["Cooperativa", 12], ["Otras deducciones", 14], ["Total deducciones", 15], ["Neto a pagar", 17], ["Método de pago", 15], ["Notas", 48],
+  // ── Hoja Planilla: columnas por SECCIÓN, cada una con su pastel (30-oct-2026,
+  // Gerson: "ingresos de un color, deducciones de otro, pastel bonitas; que
+  // salga cuántos días no se presentó, cuántas horas tarde… a detalle; y no
+  // uses negro"). Las fórmulas se arman con las letras de esta lista, así
+  // agregar o mover una columna no rompe ninguna suma.
+  const SEC = {
+    col: { t: "Colaborador", head: "FFEEECE8", cell: null, alt: CEBRA, tinta: "FF5B5650" },
+    asis: { t: "Asistencia de la quincena", head: "FFDCE8F8", cell: "FFF5F8FD", alt: "FFEBF1FA", tinta: "FF1F4F8C" },
+    ing: { t: "Ingresos", head: "FFD5EFDD", cell: "FFF3FAF5", alt: "FFE7F4EB", tinta: "FF1F6B3C" },
+    ded: { t: "Deducciones", head: "FFF9DEDB", cell: "FFFDF5F4", alt: "FFFAEAE8", tinta: "FF9A2A1E" },
+    pagar: { t: "A pagar", head: "FFFBD9BF", cell: "FFFDF2E9", alt: "FFFBE8D9", tinta: NAR_T },
+  };
+  const tipoTxt = { permanent: "Permanente", temporary: "Temporal", honorarios: "Honorarios" };
+  const n0 = (x) => Number(x) || 0;
+  // fmt: L = lempiras · d = días/veces · h = horas · t = texto
+  const COLS = [
+    { k: "n", h: "N°", w: 5, sec: "col", v: (l, t, i) => i + 1 },
+    { k: "nombre", h: "Colaborador", w: 34, sec: "col", v: (l) => l.name },
+    { k: "cargo", h: "Cargo", w: 26, sec: "col", v: (l) => l.pos || "" },
+    { k: "tipo", h: "Tipo", w: 12, sec: "col", v: (l) => tipoTxt[l.ct] || l.ct },
+    { k: "proy", h: "Proyecto", w: 22, sec: "col", v: (l) => l.proj || "" },
+    { k: "sb", h: "Salario mensual", w: 14, sec: "col", fmt: "L", v: (l) => n0(l.sb) },
+    { k: "sd", h: "Salario diario", w: 12, sec: "col", fmt: "L", v: (l) => n0(l.sd) },
+    { k: "dias", h: "Días pagados", w: 9, sec: "asis", fmt: "d2", v: (l) => Number(diasMostrados(l)) || 0 },
+    { k: "nsp", h: "No se presentó (días)", w: 11, sec: "asis", fmt: "d", rojo: true, v: (l) => n0(l.diasNSP) },
+    { k: "tardes", h: "Llegadas tarde (veces)", w: 11, sec: "asis", fmt: "d", v: (l) => n0(l.tardes) },
+    { k: "htarde", h: "Horas tarde", w: 9, sec: "asis", fmt: "h", v: (l) => n0(l.horasTarde) },
+    { k: "inc", h: "Incapacidad (días)", w: 11, sec: "asis", fmt: "d", v: (l) => n0(l.diasIncap) },
+    { k: "inc34", h: "Incap. al 34 % (días)", w: 11, sec: "asis", fmt: "d", v: (l) => n0(l.diasIncapIhss) },
+    { k: "vac", h: "Vacaciones (días)", w: 10, sec: "asis", fmt: "d", v: (l) => n0(l.diasVac) },
+    { k: "fer", h: "Feriados trabajados", w: 10, sec: "asis", fmt: "d", v: (l) => n0(l.ferTrab) },
+    { k: "dom", h: "Domingos trabajados", w: 10, sec: "asis", fmt: "d", v: (l) => n0(l.domTrab) + n0(l.domTrabTriple) },
+    { k: "ord", h: "Ordinario", w: 14, sec: "ing", fmt: "L", ingreso: true, v: (l, t) => t.ordinario },
+    { k: "bq", h: "Bonificación", w: 13, sec: "ing", fmt: "L", ingreso: true, v: (l) => n0(l.bq) },
+    { k: "ferL", h: "Feriados / domingos", w: 13, sec: "ing", fmt: "L", ingreso: true, v: (l) => n0(l.bonoFeriado) + n0(l.bonoDomingo) },
+    { k: "oi", h: "Otros ingresos", w: 13, sec: "ing", fmt: "L", ingreso: true, v: (l, t) => t.extrasIng },
+    { k: "ting", h: "Total ingresos", w: 15, sec: "ing", fmt: "L", total: "ingreso", negrita: true },
+    { k: "nspL", h: "No se presentó (L)", w: 12, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.descuentoNSP) },
+    { k: "tardeL", h: "Llegadas tarde (L)", w: 12, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.descuentoHoras) },
+    { k: "incL", h: "Incapacidad (L)", w: 12, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.descuentoIncap) },
+    { k: "isr", h: "ISR", w: 11, sec: "ded", fmt: "L", deduccion: true, ley: true, v: (l) => n0(l.isr) },
+    { k: "ihss", h: "IHSS", w: 11, sec: "ded", fmt: "L", deduccion: true, ley: true, v: (l) => n0(l.ihss) },
+    { k: "rap", h: "RAP", w: 11, sec: "ded", fmt: "L", deduccion: true, ley: true, v: (l) => n0(l.rap) },
+    { k: "coop", h: "Cooperativa", w: 12, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.coop) },
+    { k: "od", h: "Otras deducciones", w: 13, sec: "ded", fmt: "L", deduccion: true, v: (l, t) => t.extrasDed },
+    { k: "tded", h: "Total deducciones", w: 15, sec: "ded", fmt: "L", total: "deduccion", negrita: true },
+    { k: "neto", h: "Neto a pagar", w: 17, sec: "pagar", fmt: "L", total: "neto", negrita: true },
+    { k: "metodo", h: "Método de pago", w: 15, sec: "pagar", v: (l) => pagoTxt[l.metodoPago] || "Transferencia" },
+    { k: "nota", h: "Notas", w: 48, sec: "pagar", v: (l) => [notaAutomatica(l), l.nota].filter(Boolean).join(" · ") },
   ];
-  const ULT = cols.length;
-  ws.columns = cols.map(([header, width]) => ({ header, width }));
-  ws.spliceRows(1, 1); // sin la fila de header automática: la armamos a mano en la fila 6
-  cabeceraHoja(ws, { desde: "C", hasta: "Q", ultima: ULT }, [
+  COLS.forEach((c, i) => { c.i = i + 1; c.L = ""; let n = i + 1; while (n > 0) { const m = (n - 1) % 26; c.L = String.fromCharCode(65 + m) + c.L; n = Math.floor((n - 1) / 26); } });
+  const C = Object.fromEntries(COLS.map(c => [c.k, c]));
+  const ULT = COLS.length;
+  const FMT = { L: FMT_L, d: '0;-0;"-"', d2: 'General;-General;"-"', h: '0.0;-0.0;"-"' };
+  const ws = wb.addWorksheet("Planilla", { views: [{ state: "frozen", ySplit: 6, xSplit: 2, showGridLines: false }], pageSetup: { orientation: "landscape", paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+  ws.columns = COLS.map(c => ({ width: c.w }));
+  cabeceraHoja(ws, { desde: "C", hasta: C.dias.L, ultima: ULT }, [
     empresa, "Planilla de sueldos y salarios",
     `${nombreQuincena(periodo, quincena)} · ${rangoQuincena(periodo, quincena)}`,
     estadoTxt(" · las horas extras van en su propia planilla"),
   ]);
-  tile(ws, "U", "V", "Colaboradores", res.personas);
-  tile(ws, "W", "X", "Total a pagar", res.neto, { naranja: true, fmt: FMT_L });
-  // Bandas sobre el encabezado (fila 5).
-  [[1, 7, "Colaborador", null, GR3], [8, 14, "Ingresos", TINTE_X, NAR_T], [15, 23, "Deducciones", FONDO_X, GR], [24, 26, "A pagar", NAR, BLANCO]].forEach(([a, b, t, bg, tc]) => {
-    ws.mergeCells(5, a, 5, b);
-    const c = ws.getCell(5, a); c.value = t.toUpperCase();
-    c.font = ft({ size: 9, bold: true, color: { argb: tc } }); c.alignment = { horizontal: "center", vertical: "middle" };
-    if (bg) c.fill = fill(bg);
+  tile(ws, C.coop.L, C.od.L, "Colaboradores", res.personas);
+  tile(ws, C.tded.L, C.neto.L, "Total a pagar", res.neto, { naranja: true, fmt: FMT_L });
+  // Fila 5: bandas por sección · fila 6: encabezados en el pastel de su sección.
+  const blancoFino = { style: "thin", color: { argb: BLANCO } };
+  Object.entries(SEC).forEach(([k, s]) => {
+    const cs = COLS.filter(c => c.sec === k);
+    ws.mergeCells(5, cs[0].i, 5, cs[cs.length - 1].i);
+    const c = ws.getCell(5, cs[0].i); c.value = s.t.toUpperCase();
+    c.font = ft({ size: 9.5, bold: true, color: { argb: s.tinta } }); c.alignment = { horizontal: "center", vertical: "middle" };
+    c.fill = fill(k === "pagar" ? NAR : s.head); if (k === "pagar") c.font = ft({ size: 9.5, bold: true, color: { argb: BLANCO } });
+    c.border = { left: blancoFino, right: blancoFino };
   });
-  ws.getRow(5).height = 20;
-  ws.getRow(6).values = cols.map(c => c[0]);
-  filaEncabezado(ws.getRow(6), 32);
-  ws.getCell(6, 24).fill = fill(NAR);
-  const MONEY = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
-  const NUMS = [6, 7];
-  const tipoTxt = { permanent: "Permanente", temporary: "Temporal", honorarios: "Honorarios" };
-  let r = 7;
-  const subtotRows = [];
-  // Resultado ya calculado de cada fórmula: Excel recalcula al abrir, pero los
-  // visores (Quick Look, WhatsApp, el celular) muestran solo lo guardado.
+  ws.getRow(5).height = 21;
+  COLS.forEach(c => {
+    const s = SEC[c.sec], cell = ws.getCell(6, c.i);
+    cell.value = c.h.toUpperCase();
+    cell.font = ft({ size: 8.5, bold: true, color: { argb: c.k === "neto" ? BLANCO : s.tinta } });
+    cell.fill = fill(c.k === "neto" ? NAR : s.head);
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.border = { right: blancoFino, left: blancoFino, bottom: { style: "thin", color: { argb: c.k === "neto" ? NAR : "FFFFFFFF" } } };
+  });
+  ws.getRow(6).height = 36;
   const valorDe = (cell) => { const v = cell.value; return typeof v === "number" ? v : Number(v?.result) || 0; };
   const sumaCol = (c, a, b) => { let t = 0; for (let i = a; i <= b; i++) t += valorDe(ws.getCell(i, c)); return Math.round(t * 100) / 100; };
+  const r2x = (n) => Math.round(n * 100) / 100;
+  const ING = COLS.filter(c => c.ingreso), DED = COLS.filter(c => c.deduccion);
+  const SUMABLES = COLS.filter(c => c.fmt && c.k !== "sd");
+  let r = 7;
+  const subtotRows = [];
   GRUPOS_CT.forEach(([ct, label]) => {
     const rows = lines.filter(l => l.ct === ct);
     if (!rows.length) return;
@@ -439,37 +494,54 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     const r0 = r;
     rows.forEach((l, i) => {
       const t = totalesLinea(l);
-      const nota = [notaAutomatica(l), l.nota].filter(Boolean).join(" · ");
       const row = ws.getRow(r);
-      row.values = [i + 1, l.name, l.pos || "", tipoTxt[l.ct] || l.ct, l.proj || "", Number(diasMostrados(l)) || 0, l.diasNSP || 0,
-        l.sb, l.sd, t.ordinario, l.bq || 0, (l.bonoFeriado || 0) + (l.bonoDomingo || 0), t.extrasIng, { formula: `J${r}+K${r}+L${r}+M${r}`, result: Math.round((t.ordinario + (l.bq || 0) + (l.bonoFeriado || 0) + (l.bonoDomingo || 0) + t.extrasIng) * 100) / 100 },
-        l.descuentoNSP || 0, l.descuentoHoras || 0, l.descuentoIncap || 0, l.isr || 0, l.ihss || 0, l.rap || 0, l.coop || 0, t.extrasDed, { formula: `SUM(O${r}:V${r})`, result: t.deducciones }, { formula: `N${r}-W${r}`, result: t.neto }, pagoTxt[l.metodoPago] || "Transferencia", nota];
-      pintarFila(row, i, ULT);
-      row.font = ft();
-      row.alignment = { vertical: "middle" };
-      row.getCell(1).font = ft({ color: { argb: GR3 } }); row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
-      row.getCell(2).font = ft({ bold: true });
-      [3, 5, 26].forEach(c => { row.getCell(c).font = ft({ color: { argb: GR } }); });
-      NUMS.forEach(c => { row.getCell(c).alignment = { horizontal: "center", vertical: "middle" }; });
-      MONEY.forEach(c => { row.getCell(c).numFmt = FMT_L; });
-      row.getCell(14).font = ft({ bold: true });
-      row.getCell(23).font = ft({ bold: true, color: { argb: ROJ } });
-      row.getCell(24).font = ft({ bold: true, size: 11 }); row.getCell(24).fill = fill(TINTE_X);
-      if (l.diasNSP) row.getCell(7).font = ft({ bold: true, color: { argb: ROJ } });
+      COLS.forEach(c => {
+        const cell = row.getCell(c.i);
+        if (c.total === "ingreso") cell.value = { formula: ING.map(x => `${x.L}${r}`).join("+"), result: r2x(ING.reduce((a, x) => a + x.v(l, t, i), 0)) };
+        else if (c.total === "deduccion") cell.value = { formula: `SUM(${DED[0].L}${r}:${DED[DED.length - 1].L}${r})`, result: r2x(DED.reduce((a, x) => a + x.v(l, t, i), 0)) };
+        else if (c.total === "neto") cell.value = { formula: `${C.ting.L}${r}-${C.tded.L}${r}`, result: t.neto };
+        else cell.value = c.v(l, t, i);
+        const s = SEC[c.sec];
+        const bg = c.k === "neto" ? (i % 2 ? "FFFBE3CF" : TINTE_X) : (i % 2 ? s.alt : s.cell);
+        if (bg) cell.fill = fill(bg);
+        if (c.fmt) { cell.numFmt = FMT[c.fmt]; cell.alignment = { vertical: "middle", horizontal: c.fmt === "L" ? "right" : "center" }; }
+        else cell.alignment = { vertical: "middle" };
+        const v = valorDe(cell);
+        cell.font = ft({
+          bold: !!c.negrita || c.k === "nombre" || (c.rojo && v > 0),
+          size: c.k === "neto" ? 11 : 10.5,
+          color: { argb: c.k === "n" ? GR3 : (c.rojo && v > 0) ? ROJ : c.total === "deduccion" ? SEC.ded.tinta : ["cargo", "proy", "nota"].includes(c.k) ? GR : CARB },
+        });
+        cell.border = { bottom: hair };
+      });
+      row.height = 19;
       r++;
     });
-    const st = ws.getRow(r); st.values = ["", "Subtotal"];
-    [...NUMS, ...MONEY].forEach(c => { const col = ws.getColumn(c).letter; st.getCell(c).value = { formula: `SUM(${col}${r0}:${col}${r - 1})`, result: sumaCol(c, r0, r - 1) }; if (MONEY.includes(c)) st.getCell(c).numFmt = FMT_L; });
-    for (let c = 1; c <= ULT; c++) { const cell = st.getCell(c); cell.fill = fill(c === 24 ? TINTE_X : FONDO_X); cell.font = ft({ bold: true }); cell.border = { top: fina, bottom: fina }; }
-    [6, 7].forEach(c => { st.getCell(c).alignment = { horizontal: "center" }; });
+    const st = ws.getRow(r);
+    COLS.forEach(c => {
+      const cell = st.getCell(c.i), s = SEC[c.sec];
+      if (c.k === "nombre") cell.value = "Subtotal";
+      else if (SUMABLES.includes(c)) { cell.value = { formula: `SUM(${c.L}${r0}:${c.L}${r - 1})`, result: sumaCol(c.i, r0, r - 1) }; cell.numFmt = FMT[c.fmt]; cell.alignment = { horizontal: c.fmt === "L" ? "right" : "center" }; }
+      cell.fill = fill(c.k === "neto" ? "FFFBD9BF" : (s.head));
+      cell.font = ft({ bold: true, color: { argb: c.k === "neto" ? NAR_T : s.tinta } });
+      cell.border = { top: { style: "thin", color: { argb: BLANCO } }, bottom: { style: "thin", color: { argb: BLANCO } } };
+    });
     st.height = 21;
     subtotRows.push(r);
     r += 2;
   });
-  // Total general
-  const tg = ws.getRow(r); tg.values = ["", "TOTAL A PAGAR"];
-  MONEY.forEach(c => { const col = ws.getColumn(c).letter; tg.getCell(c).value = { formula: subtotRows.map(x => `${col}${x}`).join("+") || "0", result: Math.round(subtotRows.reduce((a, x) => a + valorDe(ws.getCell(x, c)), 0) * 100) / 100 }; tg.getCell(c).numFmt = FMT_L; });
-  filaTotal(tg, ULT, 24, 26);
+  // Total general: pastel naranja de punta a punta y el neto en naranja (sin negro).
+  const tg = ws.getRow(r);
+  COLS.forEach(c => {
+    const cell = tg.getCell(c.i);
+    if (c.k === "nombre") cell.value = "TOTAL A PAGAR";
+    else if (SUMABLES.includes(c)) { cell.value = { formula: subtotRows.map(x => `${c.L}${x}`).join("+") || "0", result: r2x(subtotRows.reduce((a, x) => a + valorDe(ws.getCell(x, c.i)), 0)) }; cell.numFmt = FMT[c.fmt]; cell.alignment = { horizontal: c.fmt === "L" ? "right" : "center", vertical: "middle" }; }
+    cell.fill = fill(c.k === "neto" ? NAR : "FFFBD9BF");
+    cell.font = ft({ bold: true, size: 11, color: { argb: c.k === "neto" ? BLANCO : NAR_T } });
+    cell.border = { top: { style: "medium", color: { argb: NAR } } };
+    if (!cell.alignment) cell.alignment = { vertical: "middle" };
+  });
+  tg.height = 26;
   r += 3;
   // Cierre por método de pago
   const ct0 = ws.getCell(r, 2); ct0.value = "CIERRE POR MÉTODO DE PAGO"; ct0.font = ft({ size: 8.5, bold: true, color: { argb: GR3 } }); [2, 3].forEach(c => { ws.getCell(r, c).border = { bottom: fina }; }); r++;
@@ -480,7 +552,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   const tp = ws.getRow(r); tp.getCell(2).value = "Total a pagar"; tp.getCell(3).value = res.neto; tp.getCell(3).numFmt = FMT_L;
   [2, 3].forEach(c => { tp.getCell(c).fill = fill(NAR); tp.getCell(c).font = ft({ bold: true, size: 11.5, color: { argb: BLANCO } }); }); tp.height = 22;
   firmas(ws, r + 5);
-  if (!ley) [18, 19, 20].forEach(c => { ws.getColumn(c).hidden = true; });
+  if (!ley) COLS.filter(c => c.ley).forEach(c => { ws.getColumn(c.i).hidden = true; });
 
   // Hoja resumen por proyecto
   const wr = wb.addWorksheet("Resumen", { views: [{ showGridLines: false }] });
