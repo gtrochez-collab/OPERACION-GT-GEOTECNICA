@@ -222,6 +222,7 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
           {l.leido && <div style={{ fontSize: 11, paddingLeft: 2, color: sinItem || (l.leido.score > 0 && l.leido.score < 0.5) ? C_AMARILLO.color : "#64748b", fontWeight: sinItem ? 700 : 500 }}>
             {sinItem ? "No lo encontré en el presupuesto — elegí de qué ítem sale (categoría arriba) o quitalo: " : "En la cotización: "}
             <span style={{ color: "#0f172a", fontWeight: 600 }}>{num(l.leido.cantidad).toLocaleString("es-HN")} {l.leido.unidad} × {l.leido.nombre}</span> · {fL(l.leido.monto)}
+            {!sinItem && l.leido.convertido && <> · <b style={{ color: "#0f172a" }}>= {num(l.leido.convertido.cantidad).toLocaleString("es-HN")} {l.leido.convertido.unidad}</b> (cada uno trae {num(l.leido.convertido.factor).toLocaleString("es-HN")})</>}
             {!sinItem && l.leido.recordado && " · así se cargó en una compra anterior"}
             {!sinItem && !l.leido.recordado && l.leido.score > 0 && l.leido.score < 0.5 && " · revisá que sea el mismo"}
           </div>}

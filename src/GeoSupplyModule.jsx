@@ -610,6 +610,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
           </div>
           {inc && fl?.leido && <div style={{ fontSize: 11, color: fl.leido.score != null && fl.leido.score < 0.5 ? C_AMARILLO.color : "var(--text-3)", marginTop: -3, paddingLeft: 26 }}>
             En la cotización: <b>{fmtCant(fl.leido.cantidad)} {fl.leido.unidad} × {fl.leido.nombre}</b> · {fmtL(fl.leido.monto)} sin ISV{fl.leido.score != null && fl.leido.score < 0.5 ? " · revisá que sea lo mismo" : ""}
+            {fl.leido.convertido && <> · <b style={{ color: CHARCOAL }}>= {fmtCant(fl.leido.convertido.cantidad)} {c.l.unidad}</b> (cada uno trae {fmtCant(fl.leido.convertido.factor)} {fl.leido.convertido.unidad})</>}
           </div>}
           {inc && fl && c.l.varilla && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "110px 1fr 140px 1fr", gap: 8, alignItems: "center" }}>
             <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>Lances</div><input type="number" min="0" step="1" value={fl.lances ?? ""} onChange={ev2 => uVar(c, "lances", ev2.target.value)} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
@@ -628,6 +629,9 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
             <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.5 }}>
               <div>Subtotal <b>{fmtL(e?.subtotal)}</b></div>
               {e && e.semaforo !== "sin_base" && <div style={{ color: SEM[e.semaforo].c.color, fontWeight: 700 }}>{fmtPct(e.variacionPct)} vs presupuesto ({fmtUSD(e.puUSD)} vs {fmtUSD(e.puPresupuestoUSD)})</div>}
+              {/* Caso FANASA (30-oct-2026): 8 rollos cargados como 8 yardas daban +5,318 %.
+                  Un precio varias veces el del presupuesto casi siempre es otra presentación. */}
+              {e && e.semaforo === "rojo" && num(e.variacionPct) >= 2 && <div style={{ color: C_AMARILLO.color, fontWeight: 600, fontSize: 11 }}>¿Viene por rollo, caja o paquete? La cantidad tiene que ir en {c.l.unidad}.</div>}
             </div>
             {e?.semaforo === "rojo" && <input value={fl.justificacion || ""} onChange={ev2 => uL(c.l.id, "justificacion", ev2.target.value)} placeholder="Está en rojo: justificá la variación de precio *" style={{ ...CTRL, gridColumn: "1/-1", background: C_ROJO.bg, border: `1px solid ${C_ROJO.borde}` }} />}
           </div>}
@@ -1741,7 +1745,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
               <td style={{ padding: "10px", borderRadius: "12px 0 0 12px", verticalAlign: "top" }}><div style={{ fontWeight: 800, color: CHARCOAL }}>{ls?.descripcion || l.descripcion}</div><div style={{ color: "var(--text-3)", fontSize: 11.5 }}>{ls ? `${fmtCant(ls.cantidad)} ${ls.unidad} pedidos · ${fmtCant(l.pendiente ?? 0)} por comprar` : ""}{ls?.fueraPresupuesto ? (ls.sinReceta ? " · sin receta" : " · fuera de presupuesto") : ""}</div></td>
               <td style={{ padding: "10px", verticalAlign: "top" }}><div style={{ fontWeight: 800, color: CHARCOAL }}>{fmtCant(l.cantidad)} {l.unidad} × {fmtL(l.puLps)}{l.parcial ? <Chip c={C_AMARILLO} style={{ marginLeft: 6 }}>Parcial</Chip> : null}</div><div style={{ color: "var(--text-3)", fontSize: 11.5 }}>subtotal {fmtL(l.subtotal)} · {fmtUSD(l.puUSD)} / {l.unidad}</div>{l.justificacion && <div style={{ fontSize: 11.5, color: C_ROJO.color, fontStyle: "italic" }}>"{l.justificacion}"</div>}</td>
               <td style={{ padding: "10px", verticalAlign: "top" }}>{pa ? <><div style={{ fontWeight: 700, color: CHARCOAL }}>{fmtUSD(l.puPresupuestoUSD)} / {pa.unidad || l.unidad} <span style={{ color: "var(--text-3)", fontWeight: 500 }}>(≈ {fmtL(l.puPresupuestoUSD * tasa)})</span></div><div style={{ color: "var(--text-3)", fontSize: 11.5 }}>{pa.nombre}{sd && !sd.sinCantidad ? ` · saldo ${fmtCant(sd.saldo)} ${pa.unidad}` : ""}</div></> : <span style={{ color: "var(--text-3)" }}>Sin partida</span>}</td>
-              <td style={{ padding: "10px", borderRadius: "0 12px 12px 0", verticalAlign: "top", textAlign: "right" }}>{chipSem(l.semaforo)}<div style={{ fontSize: 11.5, color: SEM[l.semaforo]?.c.color, fontWeight: 700, marginTop: 4 }}>{fmtPct(l.variacionPct)}</div></td>
+              <td style={{ padding: "10px", borderRadius: "0 12px 12px 0", verticalAlign: "top", textAlign: "right" }}>{chipSem(l.semaforo)}<div style={{ fontSize: 11.5, color: SEM[l.semaforo]?.c.color, fontWeight: 700, marginTop: 4 }}>{fmtPct(l.variacionPct)}</div>{l.semaforo === "rojo" && num(l.variacionPct) >= 2 && <div style={{ fontSize: 10.5, color: C_AMARILLO.color, fontWeight: 600, marginTop: 3, maxWidth: 150, marginLeft: "auto" }}>¿Otra presentación? (rollo, caja…) Revisá la cantidad</div>}</td>
             </tr>;
           })}</tbody>
         </table>

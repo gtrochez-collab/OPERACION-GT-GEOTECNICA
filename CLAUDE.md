@@ -860,6 +860,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   comprables de la receta; con varias SOLUciones elige la que reconoce más; a
   igualdad gana la partida CON plata —la de $0 es material del cliente—; la
   varilla de una partida en Ton va a "Acero…" con #/largo/lances).
+  **PRESENTACIÓN — rollos/cajas (30-oct-2026, caso FANASA)**: "POLIDUCTO DE
+  3/4" X 100 YDS" son ROLLOS de 100 yardas; Ana cargó 8 Yarda a L 395 y el
+  semáforo dio +5,318 % (era 800 Yarda a L 3.95, −46 %). `presentacionEn`
+  reconoce "X 100 YDS / X 6 M / x 100 lbs / X 100 PIES" (no "4 X 8 PIES", que
+  es medida) → `item.presentacion {n, unidad}`; `cantidadEnUnidad` convierte
+  SOLO si lo pedido (o la partida) viene en esa unidad: `lineaSupplyDe` y
+  `lineasPresupuestoDesdeLectura` multiplican la cantidad y el P.U. sale
+  dividido; `leido.convertido` se muestra ("= 800 Yarda, cada uno trae 100").
+  El "100" ya no se pierde del nombre. UNIDAD_DE suma Yarda y Pie. Red de
+  seguridad: un rojo de +200 % o más avisa "¿Viene por rollo, caja o
+  paquete?" en el form de Ana y en la aprobación. CTZ-2026-0018 / MAT-2026-0618
+  / SUP-2026-0007 se corrigieron en la nube (800 Yarda, monto intacto) y la
+  CTZ-2026-0020 (la MISMA cot. 55 reenviada por las "792 pendientes") quedó
+  rechazada por duplicada.
   **MEMORIA ("que aprenda")**: `memoriaDeCompras(purchases)` + `recordar`:
   cada línea de cp-purchases guarda ahora `cot` (ADITIVO: cómo lo escribió el
   proveedor; lo escriben `lineasParaGuardar` y `borradorDesdeCotizacion`), y

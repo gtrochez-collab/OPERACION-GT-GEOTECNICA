@@ -170,3 +170,30 @@ test("GeoShopping: los renglones se buscan en la receta del presupuesto", () => 
   assert.equal(res2.solucion, "Pantalla de pilotes");
   assert.deepEqual(res2.lineas.map(l => l.partidaId), ["p1", "p2"]);
 });
+
+// PRESENTACIÓN (30-oct-2026, FANASA): "POLIDUCTO DE 3/4" X 100 YDS" son rollos
+// de 100 yardas — 8 rollos pedidos en Yarda son 800 yardas a L 3.95 (con ISV).
+test("FANASA: rollos de 100 yardas se convierten a la unidad de lo pedido", async () => {
+  const { lineaSupplyDe, lineasPresupuestoDesdeLectura, ajusteAlTotal, presentacionEn } = await import("../src/leer-cotizacion.js");
+  const r = parsearCotizacion([
+    ["Cantidad", "Codigo", "Código Artículo/Descripción", "Precio", "Monto Total"],
+    ["8.00", "19072", "POLIDUCTO DE 3/4\" X 100 YDS", "L", "343.48", "L", "L2,747.83"],
+    ["Sub Total: L", "2,747.83"], ["ISV 15%: L", "412.17"], ["Total a Pagar: L", "3,160.00"],
+  ]);
+  assert.equal(r.items[0].nombre, "POLIDUCTO DE 3/4\" X 100 YDS");   // el 100 ya no se pierde
+  assert.equal(r.items[0].cantidad, 8);
+  assert.deepEqual(r.items[0].presentacion, { n: 100, unidad: "Yarda", texto: "X 100 YDS" });
+  const aj = ajusteAlTotal(r);
+  const l = lineaSupplyDe(r.items[0], { sol: { id: "s" }, l: { id: "l", unidad: "Yarda", descripcion: "Poliducto negro de 3/4\"" }, pendiente: 800 }, aj.factor);
+  assert.equal(l.cantidad, 800); assert.equal(l.puLps, 3.95); assert.equal(l.parcial, false);
+  // Pedido en Rollo: no se convierte
+  const l2 = lineaSupplyDe(r.items[0], { sol: { id: "s" }, l: { id: "l", unidad: "Rollo", descripcion: "x" }, pendiente: 8 }, aj.factor);
+  assert.equal(l2.cantidad, 8);
+  // GeoShopping: partida en Yarda
+  const pres = { partidas: [{ id: "p1", categoria: "Materiales", nombre: "Poliducto negro de 3/4\"", unidad: "Yarda", cantidad: 1000, pu: 0.27, modulo: "compras" }] };
+  const res = lineasPresupuestoDesdeLectura(r, pres);
+  assert.equal(res.lineas[0].partidaId, "p1"); assert.equal(res.lineas[0].cantidad, "800");
+  // Medidas que NO son presentación
+  assert.equal(presentacionEn("LAMINA 4 X 8 PIES"), null);
+  assert.equal(presentacionEn("FLEJE 3/4 X 100 PIES").n, 100);
+});

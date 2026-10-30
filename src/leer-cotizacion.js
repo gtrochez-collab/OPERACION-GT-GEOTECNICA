@@ -61,6 +61,8 @@ const UNIDAD_DE = [
   [/^(dia|dias|día|días)$/i, "Día"],
   [/^(viaje|viajes)$/i, "Viaje"],
   [/^(tubo|tubos)$/i, "Tubo"],
+  [/^(yd|yds|yarda|yardas)$/i, "Yarda"],
+  [/^(pie|pies|ft)$/i, "Pie"],
 ];
 export const unidadDe = (tok) => { const t = sinAcentos(String(tok || "").trim().replace(/[.,]$/, "")); const m = UNIDAD_DE.find(([re]) => re.test(t)); return m ? m[1] : null; };
 // Pistas dentro de la descripción: "CK-4/CUB", "ACEITE 15W40 GAL"
@@ -71,6 +73,41 @@ const unidadEnDescripcion = (desc) => {
   if (/(^|[\s/\-])(LT|LTS|LITROS?)\b/.test(d)) return "Litro";
   if (/\bTAMBOR|BARRIL|TONEL\b/.test(d)) return "Tambor";
   return null;
+};
+// PRESENTACIÓN (30-oct-2026, caso FANASA): "POLIDUCTO DE 3/4" X 100 YDS" se
+// vende por ROLLO de 100 yardas — la cantidad (8) son rollos, no yardas. Se
+// reconoce "X 100 YDS" / "X100 YDS" / "X 100YDS" (no "4 X 8 PIES", eso es medida; "3/4 X 100" sí)
+// y se marca para convertir cuando lo pedido viene en esa unidad.
+const RE_PRESENTACION = /(?<!(?:^|[^/\d])\d+(?:\.\d+)?\s*)\bX\s*(\d+(?:[.,]\d+)?)\s*(YDS?|YARDAS?|MTS?|METROS?|M|PIES|FT|LBS?|LIBRAS?|KGS?)\b\.?/i;
+/** "X 100 YDS" dentro del texto → {n: 100, unidad: "Yarda", texto: "X 100 YDS"} */
+export const presentacionEn = (texto) => {
+  const m = RE_PRESENTACION.exec(String(texto || ""));
+  if (!m) return null;
+  const n = aNumero(m[1]), unidad = unidadDe(m[2]);
+  return n > 1 && unidad ? { n, unidad, texto: m[0].trim() } : null;
+};
+/** ¿Dos unidades son la misma? ("YDS" = "Yarda", "mts" = "m") */
+export const mismaUnidad = (a, b) => { const x = unidadDe(a) || String(a || "").trim().toLowerCase(), y = unidadDe(b) || String(b || "").trim().toLowerCase(); return !!x && x === y; };
+/** Cuántas unidades de lo PEDIDO trae un renglón leído: 8 rollos "X 100 YDS" pedidos en Yarda → {cantidad: 800, factor: 100}. */
+export const cantidadEnUnidad = (item, unidadPedida) => {
+  const pr = item?.presentacion;
+  if (pr && unidadPedida && mismaUnidad(pr.unidad, unidadPedida) && !mismaUnidad(item.unidad, unidadPedida)) return { cantidad: r2(item.cantidad * pr.n), factor: pr.n, presentacion: pr };
+  return { cantidad: item?.cantidad, factor: 1, presentacion: null };
+};
+// Tokens de la presentación ("X", "100", "YDS"): van al nombre pero NO son la
+// cantidad ni la unidad del renglón.
+const tokensPresentacion = (toks) => {
+  const out = new Set();
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (!/^x/i.test(t) || (i > 0 && aNumero(toks[i - 1]) != null)) continue;
+    const span = [i]; let j = i;
+    let txt = t;
+    while (j + 1 < toks.length && j - i < 2 && !RE_PRESENTACION.test(txt)) { j++; span.push(j); txt += " " + toks[j]; }
+    const m = RE_PRESENTACION.exec(txt);
+    if (m && m.index === 0) span.forEach(k => out.add(k));
+  }
+  return out;
 };
 // Columnas de inventario que no son parte del nombre
 const RUIDO = /^(disponible|nacional|importado|agotado|existencia|stock|en|tienda|bodega|si|no|%|\*+)$/i;
@@ -152,14 +189,17 @@ export const parsearCotizacion = (filasIn, { providers = [], nuestros = ["geo st
       if (antes.length > 1 && /^\d{1,3}\.?$/.test(antes[0])) antes = antes.slice(1);
       // Unidad: palabra pegada a la cantidad (después o antes)
       const despues = toks.slice(item.iq + 1, item.ip).map(x => x.t);
+      const presA = tokensPresentacion(antes), presD = tokensPresentacion(despues);
       let unidad = null;
-      for (const tk of despues) { if (esMoneda(tk)) continue; const u = unidadDe(tk); if (u) { unidad = u; break; } }
-      if (!unidad && antes.length && !esMoneda(antes[antes.length - 1])) { const u = unidadDe(antes[antes.length - 1]); if (u) { unidad = u; antes = antes.slice(0, -1); } }
-      // Si después de la cantidad viene texto que no es unidad ni moneda, es descripción (formato "1 | Varilla… | 396.00")
-      const extra = despues.filter(tk => !unidadDe(tk) && !esMoneda(tk) && aNumero(tk) == null);
+      for (const [k, tk] of despues.entries()) { if (esMoneda(tk) || presD.has(k)) continue; const u = unidadDe(tk); if (u) { unidad = u; break; } }
+      if (!unidad && antes.length && !esMoneda(antes[antes.length - 1]) && !presA.has(antes.length - 1)) { const u = unidadDe(antes[antes.length - 1]); if (u) { unidad = u; antes = antes.slice(0, -1); } }
+      // Si después de la cantidad viene texto que no es unidad ni moneda, es descripción (formato "1 | Varilla… | 396.00");
+      // la presentación ("X 100 YDS") va completa, con su número.
+      const extra = despues.filter((tk, k) => presD.has(k) || (!unidadDe(tk) && !esMoneda(tk) && aNumero(tk) == null));
       let nombre = [...antes, ...extra].filter(tk => !esMoneda(tk) && !RUIDO.test(tk)).join(" ").replace(/\s*\|\s*/g, " ").replace(/\s+/g, " ").trim();
       if (!unidad) unidad = unidadEnDescripcion(nombre) || "Unidad";
-      ultimo = { cantidad: item.q, unidad, nombre, precio: r2(item.p * 10000) / 10000, monto: r2(item.t), ...(item.desc ? { descuento: item.desc } : {}), ...(item.isvEnLinea ? { isvEnLinea: true } : {}), _x: toks[0]?.x ?? 0, _y: f.y, _cont: 0 };
+      const presentacion = presentacionEn(nombre);
+      ultimo = { cantidad: item.q, unidad, nombre, ...(presentacion ? { presentacion } : {}), precio: r2(item.p * 10000) / 10000, monto: r2(item.t), ...(item.desc ? { descuento: item.desc } : {}), ...(item.isvEnLinea ? { isvEnLinea: true } : {}), _x: toks[0]?.x ?? 0, _y: f.y, _cont: 0 };
       items.push(ultimo);
       enTotales = false;
       continue;
@@ -217,7 +257,7 @@ export const parsearCotizacion = (filasIn, { providers = [], nuestros = ["geo st
   }
   const suma = r2(items.reduce((a, it) => a + it.monto, 0));
   return {
-    items: items.map(({ _x, _y, _cont, ...it }) => it),
+    items: items.map(({ _x, _y, _cont, ...it }) => { const pr = it.presentacion || presentacionEn(it.nombre); return pr ? { ...it, presentacion: pr } : it; }),
     suma, subtotal, isv, descuento, total, numero, rtn: rtns[0] || "",
     proveedor, proveedorPorRTN: porRTN,
     // ¿la suma de los ítems cuadra con lo que dice la cotización?
@@ -398,7 +438,8 @@ export const ajusteAlTotal = (r) => {
 export const lineaSupplyDe = (item, c, factor = 1.15, score = null) => {
   const { sol, l, pendiente } = c;
   const montoIsv = item.monto * factor;
-  const leido = { nombre: item.nombre, cantidad: item.cantidad, unidad: item.unidad, monto: item.monto, score };
+  const conv = l.varilla ? { factor: 1 } : cantidadEnUnidad(item, l.unidad);
+  const leido = { nombre: item.nombre, cantidad: item.cantidad, unidad: item.unidad, monto: item.monto, score, ...(conv.factor > 1 ? { convertido: { factor: conv.factor, unidad: conv.presentacion.unidad, cantidad: conv.cantidad } } : {}) };
   const base = { requestLineId: l.id, requestId: sol.id, justificacion: "", descripcion: l.descripcion, unidad: l.unidad, leido };
   if (l.varilla) {
     const kgL = pesoLanceKg(l.varilla.n, l.varilla.largo), kgU = kgPorUnidad(item.unidad);
@@ -407,7 +448,7 @@ export const lineaSupplyDe = (item, c, factor = 1.15, score = null) => {
     const puLance = lances > 0 ? r4(montoIsv / lances) : "";
     return { ...base, cantidad, parcial: cantidad < pendiente - 0.0001, lances, puLance, puLps: cantidad > 0 && puLance ? (puLance * lances) / cantidad : "" };
   }
-  const cantidad = item.cantidad;
+  const cantidad = conv.cantidad;
   return { ...base, cantidad, parcial: cantidad < pendiente - 0.0001, puLps: cantidad > 0 ? r4(montoIsv / cantidad) : "" };
 };
 
@@ -492,6 +533,8 @@ export const lineasPresupuestoDesdeLectura = (r, pres, { modulo = "compras", nue
       const largo = vt.largo || 9;
       return { ...ln, varN: vt.n ? String(vt.n) : "", varLargo: String(largo), varLances: String(it.cantidad), cantidad: vt.n ? String(cantidadDeVarilla({ n: vt.n, largo, lances: it.cantidad }, p.unidad)) : "" };
     }
+    const conv = cantidadEnUnidad(it, p.unidad);
+    if (conv.factor > 1) return { ...ln, cantidad: String(conv.cantidad), leido: { ...ln.leido, convertido: { factor: conv.factor, unidad: conv.presentacion.unidad, cantidad: conv.cantidad } } };
     return { ...ln, cantidad: String(it.cantidad) };
   });
   return { lineas, solucion: sols.length > 1 ? solucion : "", nEmparejadas: mejor.parejas.length, sinPareja: mejor.sinPareja, ajuste: ajusteAlTotal(r) };
