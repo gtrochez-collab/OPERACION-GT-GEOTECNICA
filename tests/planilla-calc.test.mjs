@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   diasDeQuincena, quincenaAnterior, quincenaSiguiente, nombreQuincena, rangoQuincena,
   calcRAP, deduccionesLey, asistenciaDe, horasExtrasDe, armarLinea, totalesLinea,
-  lineaParaGuardar, resumenPlanilla, entraEnPlanilla, IHSS_CUOTA, notaAutomatica,
+  lineaParaGuardar, resumenPlanilla, entraEnPlanilla, IHSS_CUOTA, notaAutomatica, rachaIncapAlCierre,
 } from "../src/planilla-calc.js";
 
 const emp = (over = {}) => ({ id: "e1", fullName: "Edgar Joel Izcano Paz", company: "geotecnica", contractType: "permanent", salary: 30000, bonificacion: 5000, status: "active", startDate: "2025-01-01", ...over });
@@ -145,4 +145,41 @@ test("líneas viejas (v2) siguen sumando igual", () => {
   const t = totalesLinea(v2);
   assert.equal(t.ordinario, 15000);
   assert.equal(t.neto, 14200 + 2500 - 595.16 - 100);
+});
+
+// ── Incapacidad: 3 días la empresa, desde el 4º el 34 % (30-oct-2026) ─────
+test("incapacidad que viene de la quincena anterior: toda la 2Q al 34 % (caso Uriel)", () => {
+  const emp = { id: "u", fullName: "Uriel", company: "subterra", contractType: "permanent", salary: 14455.6, bonificacion: 0, status: "active", startDate: "2020-01-01" };
+  const grid = {};
+  for (let d = 16; d <= 31; d++) grid[`u-${d}`] = "INC";
+  grid["u-18"] = "1"; // domingo que la hoja pone sola, en medio de la incapacidad
+  const prev = {};
+  for (let d = 1; d <= 15; d++) prev[`u-${d}`] = "INC";
+  const incPrevias = rachaIncapAlCierre(emp, "2026-10", "1Q", { grid: prev });
+  assert.equal(incPrevias, 15);
+  const a = asistenciaDe(emp, "2026-10", "2Q", { grid, incPrevias });
+  assert.equal(a.incIhss, 16);
+  const l = armarLinea({ emp, periodo: "2026-10", quincena: "2Q", asistencia: a });
+  assert.equal(l.descuentoIncap, Math.round(16 * 0.66 * 14455.6 / 30 * 100) / 100);
+  const t = totalesLinea(l);
+  assert.equal(t.ordinario, 7227.8);
+  assert.ok(Math.abs(t.neto - (7227.8 - l.descuentoIncap - 595.16)) < 0.01);
+});
+
+test("incapacidad nueva: los primeros 3 días los paga completos la empresa", () => {
+  const emp = { id: "x", contractType: "temporary", salary: 9000, status: "active" };
+  const grid = { "x-2": "INC", "x-3": "INC", "x-4": "INC", "x-5": "INC", "x-6": "INC", "x-7": "1", "x-8": "INC" };
+  const a = asistenciaDe(emp, "2026-11", "1Q", { grid });
+  // 2-6 nov (lun-vie) = 5 días → 2 al 34 %; el 7 (sáb "1") corta la racha; el 8 es domingo
+  assert.equal(a.inc, 6);
+  assert.equal(a.incIhss, 2);
+  assert.equal(armarLinea({ emp, periodo: "2026-11", quincena: "1Q", asistencia: a }).descuentoIncap, Math.round(2 * 0.66 * 300 * 100) / 100);
+});
+
+test("un domingo en descanso al arrancar la quincena no cuenta como incapacidad si no viene de antes", () => {
+  const emp = { id: "y", contractType: "permanent", salary: 9000, status: "active" };
+  // 16-ago-2026 es domingo; la incapacidad arranca el lunes 17
+  const grid = { "y-16": "1", "y-17": "INC", "y-18": "INC", "y-19": "INC", "y-20": "INC" };
+  const a = asistenciaDe(emp, "2026-08", "2Q", { grid });
+  assert.equal(a.incIhss, 1);
 });

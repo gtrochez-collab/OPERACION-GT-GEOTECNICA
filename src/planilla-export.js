@@ -38,7 +38,7 @@ const columnas = (ley) => [
   { k: "bq", t: "Bonif.", w: 17, al: "right", v: (l) => L(l.bq) },
   { k: "fd", t: "Fer. / Dom.", w: 17, al: "right", v: (l) => L((l.bonoFeriado || 0) + (l.bonoDomingo || 0)) },
   { k: "oi", t: "Otros ing.", w: 17, al: "right", v: (l, i, t) => L(t.extrasIng) },
-  { k: "asis", t: "NSP / tarde", w: 17, al: "right", v: (l, i, t) => t.dedAsist ? `-${nf(t.dedAsist)}` : "-", color: ROJO },
+  { k: "asis", t: "NSP/tarde/inc.", w: 17, al: "right", v: (l, i, t) => t.dedAsist ? `-${nf(t.dedAsist)}` : "-", color: ROJO },
   ...(ley ? [
     { k: "isr", t: "ISR", w: 17, al: "right", v: (l) => L(l.isr) },
     { k: "ihss", t: "IHSS", w: 16, al: "right", v: (l) => L(l.ihss) },
@@ -336,7 +336,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   const cols = [
     ["N°", 5], ["Colaborador", 34], ["Cargo", 26], ["Tipo", 12], ["Proyecto", 22], ["Días", 7], ["NSP", 6],
     ["Salario mensual", 15], ["Salario diario", 13], ["Ordinario", 14], ["Bonificación", 13], ["Feriados / domingos", 15], ["Otros ingresos", 14], ["Total ingresos", 14],
-    ["NSP (L)", 11], ["Llegadas tarde (L)", 12], ["ISR", 12], ["IHSS", 11], ["RAP", 11], ["Cooperativa", 12], ["Otras deducciones", 14], ["Total deducciones", 15], ["Neto a pagar", 16], ["Método de pago", 14], ["Notas", 48],
+    ["NSP (L)", 11], ["Llegadas tarde (L)", 12], ["Incapacidad (L)", 12], ["ISR", 12], ["IHSS", 11], ["RAP", 11], ["Cooperativa", 12], ["Otras deducciones", 14], ["Total deducciones", 15], ["Neto a pagar", 16], ["Método de pago", 14], ["Notas", 48],
   ];
   ws.columns = cols.map(([header, width]) => ({ header, width }));
   ws.spliceRows(1, 1); // sin la fila de header automática: la armamos a mano en la fila 6
@@ -347,7 +347,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   ]);
   ws.getRow(6).values = cols.map(c => c[0]);
   filaEncabezado(ws.getRow(6), 30);
-  const MONEY = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
+  const MONEY = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
   const NUMS = [6, 7];
   const tipoTxt = { permanent: "Permanente", temporary: "Temporal", honorarios: "Honorarios" };
   let r = 7;
@@ -365,22 +365,22 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
       const row = ws.getRow(r);
       row.values = [i + 1, l.name, l.pos || "", tipoTxt[l.ct] || l.ct, l.proj || "", Number(diasMostrados(l)) || 0, l.diasNSP || 0,
         l.sb, l.sd, t.ordinario, l.bq || 0, (l.bonoFeriado || 0) + (l.bonoDomingo || 0), t.extrasIng, { formula: `J${r}+K${r}+L${r}+M${r}` },
-        l.descuentoNSP || 0, l.descuentoHoras || 0, l.isr || 0, l.ihss || 0, l.rap || 0, l.coop || 0, t.extrasDed, { formula: `SUM(O${r}:U${r})` }, { formula: `J${r}+N${r}-V${r}` }, pagoTxt[l.metodoPago] || "Transferencia", nota];
+        l.descuentoNSP || 0, l.descuentoHoras || 0, l.descuentoIncap || 0, l.isr || 0, l.ihss || 0, l.rap || 0, l.coop || 0, t.extrasDed, { formula: `SUM(O${r}:V${r})` }, { formula: `J${r}+N${r}-W${r}` }, pagoTxt[l.metodoPago] || "Transferencia", nota];
       row.font = ft();
       row.alignment = { vertical: "middle" };
       row.getCell(1).font = ft({ color: { argb: GR3 } });
       row.getCell(2).font = ft({ bold: true });
-      [3, 5, 25].forEach(c => { row.getCell(c).font = ft({ color: { argb: GR } }); });
+      [3, 5, 26].forEach(c => { row.getCell(c).font = ft({ color: { argb: GR } }); });
       NUMS.forEach(c => { row.getCell(c).font = fm(); });
       MONEY.forEach(c => { row.getCell(c).numFmt = FMT_L; row.getCell(c).font = fm(); });
-      row.getCell(22).font = fm({ color: { argb: ROJ } });
-      row.getCell(23).font = fm({ bold: true });
+      row.getCell(23).font = fm({ color: { argb: ROJ } });
+      row.getCell(24).font = fm({ bold: true });
       row.eachCell({ includeEmpty: true }, c => { c.border = { bottom: hair }; });
       r++;
     });
     const st = ws.getRow(r); st.values = ["", "Subtotal", "", "", "", { formula: `SUM(F${r0}:F${r - 1})` }, { formula: `SUM(G${r0}:G${r - 1})` }];
     MONEY.forEach(c => { const col = ws.getColumn(c).letter; st.getCell(c).value = { formula: `SUM(${col}${r0}:${col}${r - 1})` }; st.getCell(c).numFmt = FMT_L; });
-    st.eachCell({ includeEmpty: true }, (c, n) => { c.fill = fill(FONDO_X); c.font = n >= 6 && n <= 23 ? fm({ bold: true }) : ft({ bold: true }); });
+    st.eachCell({ includeEmpty: true }, (c, n) => { c.fill = fill(FONDO_X); c.font = n >= 6 && n <= 24 ? fm({ bold: true }) : ft({ bold: true }); });
     st.height = 18;
     subtotRows.push(r);
     r += 2;
@@ -388,14 +388,14 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   // Total general
   const tg = ws.getRow(r); tg.values = ["", "TOTAL A PAGAR"];
   MONEY.forEach(c => { const col = ws.getColumn(c).letter; tg.getCell(c).value = { formula: subtotRows.map(x => `${col}${x}`).join("+") }; tg.getCell(c).numFmt = FMT_L; });
-  tg.eachCell({ includeEmpty: true }, (c, n) => { c.font = n >= 8 && n <= 23 ? fm({ bold: true, size: 10.5 }) : ft({ bold: true, size: 10.5 }); c.border = { top: fuerte }; });
+  tg.eachCell({ includeEmpty: true }, (c, n) => { c.font = n >= 8 && n <= 24 ? fm({ bold: true, size: 10.5 }) : ft({ bold: true, size: 10.5 }); c.border = { top: fuerte }; });
   tg.height = 22;
   r += 3;
   // Cierre: salarios / HE / total y por método
   const cierre = [["Total a pagar", res.neto], [], ...METODOS_PAGO.filter(([k]) => res.porMetodo[k]?.n).map(([k, lab]) => [`${lab} (${res.porMetodo[k].n})`, res.porMetodo[k].neto])];
   cierre.forEach(([a, b]) => { if (a) { const row = ws.getRow(r); row.getCell(2).value = a; row.getCell(3).value = b; row.getCell(3).numFmt = FMT_L; row.getCell(2).font = ft({ bold: a === "Total a pagar" }); row.getCell(3).font = fm({ bold: true }); if (a === "Total a pagar") { row.getCell(2).border = { top: fuerte }; row.getCell(3).border = { top: fuerte }; } } r++; });
   firmas(ws, r + 2);
-  if (!ley) [17, 18, 19].forEach(c => { ws.getColumn(c).hidden = true; });
+  if (!ley) [18, 19, 20].forEach(c => { ws.getColumn(c).hidden = true; });
 
   // Hoja resumen por proyecto
   const wr = wb.addWorksheet("Resumen", { views: [{ showGridLines: false }] });

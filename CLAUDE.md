@@ -1016,6 +1016,16 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   del mes anterior. Al 20-oct no existía hoja de HE de la 1Q oct (Gerson ya
   tenía un borrador de 2Q oct guardado SIN HE): cuando la carguen, "↻ Releer
   asistencia" la trae.
+  **INCAPACIDAD (30-oct-2026, Gerson — caso Uriel)**: los primeros 3 días
+  SEGUIDOS de una incapacidad los paga la empresa completos; desde el 4º paga
+  el IHSS y la empresa solo reconoce el 34 % → deducción `descuentoIncap` =
+  días × 66 % × diario (`INC_DIAS_EMPRESA`, `INC_PCT_EMPRESA`; solo salario,
+  la bonificación no se toca). La racha cuenta días calendario: un domingo o
+  feriado en "1" EN MEDIO de la incapacidad sigue en ella, y la racha viene
+  de la quincena anterior (`rachaIncapAlCierre` → `ctx.incPrevias`). Línea:
+  `diasIncapIhss`; fila "Incapacidad · N días al 34 %" en el editor, columna
+  "Incapacidad (L)" en el Excel y dentro de "NSP/tarde/inc." en el PDF. ⚠
+  Costos MO (calcCostoMO) sigue contando INC = día completo.
   Cada línea admite **extras** `[{id, tipo ingreso|deduccion, concepto,
   monto}]` (lo que ella escribía en OTROS INGRESOS/OTRAS DEDUCCIONES con
   nota), `metodoPago` transferencia|cheque|ach (se recuerda en la ficha; el

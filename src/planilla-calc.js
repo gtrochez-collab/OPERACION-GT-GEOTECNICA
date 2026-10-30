@@ -28,6 +28,12 @@ export const IHSS_CUOTA = 595.16;          // cuota fija del empleado (2026)
 export const RAP_TECHO = 11903.13;         // techo exento; arriba de eso 1.5 %
 export const RAP_PCT = 0.015;
 export const ISR_HONORARIOS = 0.125;
+// Incapacidad (30-oct-2026, Gerson): los primeros 3 días de cada incapacidad
+// los paga la empresa completos; desde el 4º el IHSS paga el subsidio y la
+// empresa solo reconoce el 34 % del salario diario. La racha cuenta días
+// SEGUIDOS y puede venir de la quincena anterior (`ctx.incPrevias`).
+export const INC_DIAS_EMPRESA = 3;
+export const INC_PCT_EMPRESA = 0.34;
 export const PLANILLA_VERSION = 3;
 export const METODOS_PAGO = [["transferencia", "Transferencia"], ["cheque", "Cheque"], ["ach", "ACH"]];
 export const GRUPOS_CT = [["permanent", "Permanentes"], ["temporary", "Temporales"], ["honorarios", "Honorarios"]];
@@ -87,6 +93,45 @@ export const deduccionesLey = (emp, quincena) => {
   return out;
 };
 
+// ── Incapacidad: qué días de la quincena caen dentro de una ────────────────
+// Un INC siempre. Un domingo o feriado en "1" (el descanso que la hoja pone
+// sola) también, si queda EN MEDIO de la incapacidad: el día anterior está en
+// ella y el siguiente día hábil vuelve a ser INC (la incapacidad corre por
+// días calendario). Si la quincena termina antes, no se presume.
+const diasEnIncapacidad = (emp, q, grid, esFeriado, arrastra = false) => {
+  const val = q.dias.map(({ day }) => grid[`${emp.id}-${day}`] || "");
+  const descanso = q.dias.map(({ day, isSun }, i) => (isSun || esFeriado(day)) && (val[i] === "1" || val[i] === ""));
+  const out = val.map(v => v === "INC");
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] || !descanso[i]) continue;
+    let j = i + 1;
+    while (j < out.length && descanso[j]) j++;
+    out[i] = j < out.length && val[j] === "INC" && (i === 0 ? arrastra : out[i - 1]);
+  }
+  return out;
+};
+
+/**
+ * Cuántos días seguidos de incapacidad trae el colaborador al CIERRE de una
+ * quincena (se pasa como `incPrevias` a la siguiente). ctx: { grid, esFeriado }.
+ */
+export const rachaIncapAlCierre = (emp, periodo, quincena, ctx = {}) => {
+  const q = diasDeQuincena(periodo, quincena);
+  if (!q || !ctx.grid) return 0;
+  const en = diasEnIncapacidad(emp, q, ctx.grid, ctx.esFeriado || (() => false));
+  // El último día de la quincena en descanso no se presume (no hay "siguiente"
+  // en esta hoja): cuenta si el anterior es incapacidad.
+  const val = q.dias.map(({ day }) => ctx.grid[`${emp.id}-${day}`] || "");
+  let n = 0;
+  for (let i = en.length - 1; i >= 0; i--) {
+    const { day, isSun } = q.dias[i];
+    const desc = (isSun || (ctx.esFeriado || (() => false))(day)) && (val[i] === "1" || val[i] === "");
+    if (en[i] || (desc && n === 0 && i > 0 && en[i - 1])) n++;
+    else break;
+  }
+  return n;
+};
+
 // ── Asistencia → números de la quincena ────────────────────────────────────
 /**
  * Recorre la hoja de asistencia del colaborador en la quincena.
@@ -99,16 +144,19 @@ export const asistenciaDe = (emp, periodo, quincena, ctx = {}) => {
   const esFeriado = ctx.esFeriado || (() => false);
   const fueraPorBaja = ctx.fueraPorBaja || ((e, f) => e.status === "inactive" && !!e.endDate && f > e.endDate);
   const horaLimite = ctx.horaLimite || (() => 7.25);
-  const out = { totalDays: q ? q.total : 0, diasEfectivos: 0, diasFueraRango: 0, presentes: 0, presentesEfectivo: 0, nsp: 0, inc: 0, vac: 0, dt: 0, dt2: 0, tf: 0, tardes: 0, horasTarde: 0, descuentoHorasFraccion: 0, projDays: {}, conDatos: false };
+  const out = { totalDays: q ? q.total : 0, diasEfectivos: 0, diasFueraRango: 0, presentes: 0, presentesEfectivo: 0, nsp: 0, inc: 0, incIhss: 0, vac: 0, dt: 0, dt2: 0, tf: 0, tardes: 0, horasTarde: 0, descuentoHorasFraccion: 0, projDays: {}, conDatos: false };
   if (!q) return out;
-  q.dias.forEach(({ day, fecha, isSun }) => {
-    if (emp.startDate && fecha < emp.startDate) { out.diasFueraRango++; return; }
-    if (fueraPorBaja(emp, fecha)) { out.diasFueraRango++; return; }
+  const enIncap = diasEnIncapacidad(emp, q, grid, esFeriado, num(ctx.incPrevias) > 0);
+  let racha = num(ctx.incPrevias);
+  q.dias.forEach(({ day, fecha, isSun }, i) => {
+    if (emp.startDate && fecha < emp.startDate) { out.diasFueraRango++; racha = 0; return; }
+    if (fueraPorBaja(emp, fecha)) { out.diasFueraRango++; racha = 0; return; }
     out.diasEfectivos++;
     const k = `${emp.id}-${day}`;
     const v = grid[k] || "";
     if (v) out.conDatos = true;
     const feriado = esFeriado(day);
+    if (enIncap[i]) { racha++; if (racha > INC_DIAS_EMPRESA) out.incIhss++; } else racha = 0;
     if (v === "1" || v === "TF" || v === "DT" || v === "DT2" || v === "INC" || v === "V") {
       out.presentes++;
       if (v === "TF") out.tf++;
@@ -202,6 +250,7 @@ export const armarLinea = ({ emp, periodo, quincena, asistencia, he = null, bono
   ordinario = r2(ordinario);
   const descuentoNSP = r2(a.nsp * sdx);
   const descuentoHoras = r2(a.descuentoHorasFraccion * sdx);
+  const descuentoIncap = r2((a.incIhss || 0) * (1 - INC_PCT_EMPRESA) * sdx);
   const bonoDomingo = r2((a.dt + a.dt2 * 2) * sdx);
   const bonoFeriado = r2(a.tf * 2 * sdx);
   const bq = r2(mensual ? bn : bn / 2);
@@ -218,9 +267,9 @@ export const armarLinea = ({ emp, periodo, quincena, asistencia, he = null, bono
     sb, bn, sd,
     totalDays: a.totalDays, diasEfectivos: a.diasEfectivos, diasFueraRango: a.diasFueraRango,
     diasPresente: a.presentes, diasPresenteEfectivo: a.presentesEfectivo,
-    diasNSP: a.nsp, diasIncap: a.inc, diasVac: a.vac, domTrab: a.dt, domTrabTriple: a.dt2, ferTrab: a.tf,
+    diasNSP: a.nsp, diasIncap: a.inc, diasIncapIhss: a.incIhss || 0, diasVac: a.vac, domTrab: a.dt, domTrabTriple: a.dt2, ferTrab: a.tf,
     tardes: a.tardes, horasTarde: a.horasTarde, sinAsistencia: !a.conDatos,
-    ordinario, descuentoNSP, descuentoHoras,
+    ordinario, descuentoNSP, descuentoHoras, descuentoIncap,
     bq, bonoDomingo, bonoFeriado,
     he,
     extras: [],
@@ -237,7 +286,7 @@ export const totalesLinea = (l) => {
   const extras = Array.isArray(l.extras) ? l.extras : [];
   const extrasIng = r2(extras.filter(x => x.tipo === "ingreso").reduce((s, x) => s + num(x.monto), 0));
   const extrasDed = r2(extras.filter(x => x.tipo === "deduccion").reduce((s, x) => s + num(x.monto), 0));
-  const ordinario = v3 ? num(l.ordinario) : num(l.so) + num(l.descuentoNSP) + num(l.descuentoHoras);
+  const ordinario = v3 ? num(l.ordinario) : num(l.so) + num(l.descuentoNSP) + num(l.descuentoHoras) + num(l.descuentoIncap);
   const heMonto = num(l.he?.monto);
   const o1 = v3 ? extrasIng : num(l.o1) + num(l.o2);
   const otros = v3 ? extrasDed : num(l.otros) + num(l.aus) + num(l.amdc);
@@ -246,7 +295,7 @@ export const totalesLinea = (l) => {
   // planilla de salarios NO las incluye; `heMonto` se reporta aparte.
   const ingresos = r2(num(l.bq) + num(l.bonoDomingo) + num(l.bonoFeriado) + o1);
   const dedLey = r2(num(l.isr) + num(l.ihss) + num(l.rap) + num(l.coop));
-  const dedAsist = r2(num(l.descuentoNSP) + num(l.descuentoHoras));
+  const dedAsist = r2(num(l.descuentoNSP) + num(l.descuentoHoras) + num(l.descuentoIncap));
   const deducciones = r2(dedLey + otros + dedAsist);
   const neto = r2(ordinario + ingresos - deducciones);
   return { ordinario, extrasIng: o1, extrasDed: otros, heMonto, ingresos, dedLey, dedAsist, deducciones, neto, bruto: r2(ordinario + ingresos), salarioSinHe: neto, totalConHe: r2(neto + heMonto) };
@@ -255,7 +304,7 @@ export const totalesLinea = (l) => {
 /** Línea lista para guardar: suma los campos "clásicos" (o1, otros, so, tDed, tOtros, neto) para lo que aún los lee. */
 export const lineaParaGuardar = (l) => {
   const t = totalesLinea(l);
-  return { ...l, o1: t.extrasIng, o2: 0, otros: t.extrasDed, so: r2(t.ordinario - num(l.descuentoNSP) - num(l.descuentoHoras)), tOtros: t.ingresos, tDed: r2(t.dedLey + t.extrasDed), neto: t.neto, payrollVersion: PLANILLA_VERSION };
+  return { ...l, o1: t.extrasIng, o2: 0, otros: t.extrasDed, so: r2(t.ordinario - t.dedAsist), tOtros: t.ingresos, tDed: r2(t.dedLey + t.extrasDed), neto: t.neto, payrollVersion: PLANILLA_VERSION };
 };
 
 /** Resumen de toda la planilla. */
@@ -298,6 +347,7 @@ export const notaAutomatica = (l) => {
   if (l.domTrab) p.push(`Domingo trabajado ×${l.domTrab}`);
   if (l.domTrabTriple) p.push(`Domingo triple ×${l.domTrabTriple}`);
   if (l.diasNSP) p.push(`NSP ×${l.diasNSP}`);
+  if (l.diasIncapIhss) p.push(`Incapacidad ×${l.diasIncap} (${l.diasIncapIhss} al 34 %, IHSS)`);
   if (l.tardes) p.push(`Llegadas tarde ×${l.tardes}`);
   (l.extras || []).forEach(x => p.push(`${x.tipo === "ingreso" ? "+" : "−"} ${x.concepto || "Extra"}`));
   return p.join(" · ");
