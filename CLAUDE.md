@@ -15,7 +15,7 @@ cache localStorage. Deploy automático a GitHub Pages al hacer push a `main`.
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
-- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs`, `tests/planilla-calc.test.mjs`, `tests/abonos.test.mjs`, `tests/rrhh-solicitudes.test.mjs` y `tests/geoclock-calc.test.mjs`.
+- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs`, `tests/planilla-calc.test.mjs`, `tests/abonos.test.mjs`, `tests/rrhh-solicitudes.test.mjs`, `tests/geoclock-calc.test.mjs` y `tests/reporte-estilo.test.mjs`.
 - Deploy: `git push origin main` dispara `.github/workflows/deploy.yml` → gh-pages.
   URL: https://gtrochez-collab.github.io/OPERACION-GT-GEOTECNICA/
 - Verificar deploy: `gh run list` + grep del texto nuevo en el bundle publicado.
@@ -2369,7 +2369,19 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   jsPDF: GeoCost Ficha/Reporte pasaron a A4 HORIZONTAL (todo es relativo a
   CW) y una categoría de partidas no se parte si cabe en una hoja; la
   Planilla (ya apaisada) no parte un grupo Permanentes/Temporales/Honorarios
-  si cabe en una hoja. Se queda vertical a propósito: el Paquete de cierre
+  si cabe en una hoja.
+  **30-oct-2026 — el PDF se BAJA DIRECTO, sin el diálogo de imprimir**
+  (Gerson: "cada reporte que bajo viene así", de lado): con una impresora o
+  "Microsoft Print to PDF" en vertical, Windows metía la hoja horizontal girada
+  dentro de una vertical, y ni el @page con medidas ni el aviso alcanzaban.
+  `abrirReporte` ahora llama `descargarReportePDF(w)`: html2canvas (ya venía
+  con jsPDF) dibuja la página al ancho exacto del área imprimible y jsPDF arma
+  el PDF carta en la orientación correcta (`body[data-hoja]` h|v). Los cortes
+  los decide `cortesDePagina` (PURA, `tests/reporte-estilo.test.mjs`): entre
+  filas o bloques, una sección que cabe pasa entera a la hoja siguiente, y una
+  tabla que sigue en otra hoja REPITE su encabezado. Número "n / N" al pie. El
+  PDF es imagen (JPEG ×2.4, ~0.3 MB por hoja). "Imprimir" queda como botón
+  aparte; si html2canvas falla, ofrece el diálogo de imprimir. Se queda vertical a propósito: el Paquete de cierre
   (portada + facturas escaneadas), la constancia y las etiquetas.
 - **Constancias desde GeoTeam (26-oct-2026)**: el "+ Generar" de Solicitudes
   → Constancias abría el `ConForm` VIEJO (texto para copiar). Ahora abre

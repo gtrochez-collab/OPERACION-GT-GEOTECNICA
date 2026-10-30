@@ -71,7 +71,6 @@ body{font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI'
 .rp-marca img{width:22px;height:22px;border-radius:6px}
 .rp-empresa{height:30px;object-fit:contain}
 .rp-empresa.subterra{height:62px}
-.np .pista{align-self:center;font:600 11px 'Plus Jakarta Sans',sans-serif;color:${RP.texto2};background:#fff;border:1px solid ${RP.linea};border-radius:999px;padding:8px 12px}
 .rp-titulo{font-size:27px;font-weight:800;letter-spacing:-.025em;line-height:1.1}
 .rp-sub{font-size:12.5px;color:${RP.texto2};margin-top:6px}
 .rp-acento{width:44px;height:3px;border-radius:3px;background:${RP.naranja};margin:16px 0 22px}
@@ -145,8 +144,8 @@ export const reporteHTML = ({ titulo, subtitulo = "", empresa = null, cuerpo = "
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>${escHTML(titulo)}${subtitulo ? " — " + escHTML(subtitulo) : ""} · GeoCore</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
-<style>@page{size:${horizontal ? "11in 8.5in" : "8.5in 11in"};margin:14mm 13mm}${REPORTE_CSS}</style></head><body>
-<div class="np"><span class="pista">En Destino elegí «Guardar como PDF» (no «Microsoft Print to PDF»)</span><button class="g" onclick="window.close()">Cerrar</button><button onclick="window.print()">Guardar PDF</button></div>
+<style>@page{size:${horizontal ? "11in 8.5in" : "8.5in 11in"};margin:14mm 13mm}${REPORTE_CSS}</style></head><body data-hoja="${horizontal ? "h" : "v"}">
+<div class="np"><button class="g" onclick="window.close()">Cerrar</button><button class="g" onclick="window.print()">Imprimir</button><button id="rp-descargar" onclick="window.__descargarPDF ? window.__descargarPDF() : window.print()">Descargar PDF</button></div>
 <div class="rp-top"><div class="rp-marca"><img src="${base}brand/geocore/geocore-180.png" alt="">GeoCore · Grupo Geotecnica</div><img class="rp-empresa ${empresa === "subterra" ? "subterra" : ""}" src="${logoEmp}" alt=""></div>
 <div class="rp-titulo">${escHTML(titulo)}</div>${subtitulo ? `<div class="rp-sub">${escHTML(subtitulo)}</div>` : ""}<div class="rp-acento"></div>
 ${cuerpo}
@@ -154,15 +153,127 @@ ${cuerpo}
 </body></html>`;
 };
 
-/** Escribe el reporte en una pestaña YA abierta (window.open síncrono en el click) y abre el diálogo de imprimir. */
+/**
+ * Escribe el reporte en una pestaña YA abierta (window.open síncrono en el
+ * click) y BAJA EL PDF solo.
+ *
+ * 30-oct-2026 (Gerson: "cada reporte que bajo viene así", de lado): el PDF ya
+ * NO sale del diálogo de imprimir. Con una impresora o "Microsoft Print to PDF"
+ * en vertical, Windows metía la hoja horizontal girada dentro de una vertical,
+ * y ni el @page con medidas ni el aviso lo evitaban. Ahora `descargarReportePDF`
+ * dibuja la página con html2canvas y arma el PDF con jsPDF en la hoja correcta:
+ * sale derecho en cualquier computadora. "Imprimir" queda como botón aparte.
+ */
 export const abrirReporte = (w, html, { imprimir = true } = {}) => {
   if (!w) { alert("Permití las ventanas emergentes para generar el reporte."); return false; }
   w.document.open(); w.document.write(html); w.document.close();
+  w.__descargarPDF = () => descargarReportePDF(w);
   if (imprimir) {
-    const lanzar = () => setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 350);
+    const lanzar = () => setTimeout(() => { try { w.__descargarPDF(); } catch {} }, 350);
     try { (w.document.fonts?.ready || Promise.resolve()).then(() => { if (w.document.readyState === "complete") lanzar(); else w.addEventListener("load", lanzar, { once: true }); }); } catch { lanzar(); }
   }
   return true;
+};
+
+const MM_HOJA = { h: { w: 279.4, h: 215.9 }, v: { w: 215.9, h: 279.4 } };
+const MARGEN_MM = { x: 13, y: 14 };
+const nombreArchivo = (t) => (String(t || "Reporte").replace(/\s*·\s*GeoCore\s*$/, "").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim() || "Reporte") + ".pdf";
+
+/**
+ * Dónde cortar cada hoja: en el borde de una sección, de una fila de tabla o de
+ * un bloque, nunca a media fila. Una sección o bloque que cabe en una hoja pasa
+ * ENTERO a la siguiente (la misma regla que `break-inside: avoid` al imprimir);
+ * uno más largo que una hoja se corta entre filas.
+ */
+export const cortesDePagina = ({ alto, altoHoja, candidatos, bloques = [], saltos = [], tablas = [] }) => {
+  const cand = [...new Set(candidatos.map(Math.round))].filter(y => y > 0 && y < alto).sort((a, b) => a - b);
+  const enteros = bloques.filter(b => b.fin - b.ini <= altoHoja);
+  const forzados = [...new Set(saltos.map(Math.round))].filter(y => y > 0 && y < alto).sort((a, b) => a - b);
+  const paginas = [];
+  let ini = 0;
+  while (ini < alto - 1) {
+    // Si la hoja arranca a media tabla, lleva arriba el encabezado de esa tabla.
+    const tabla = tablas.find(t => ini > t.ini + 1 && ini < t.fin - 1) || null;
+    const util = altoHoja - (tabla ? tabla.cab : 0);
+    const tope = ini + util;
+    const salto = forzados.find(y => y > ini + 1);
+    if (salto != null && salto <= tope) { paginas.push({ ini, fin: salto, tabla }); ini = salto; continue; }
+    if (tope >= alto) { paginas.push({ ini, fin: alto, tabla }); break; }
+    const posibles = cand.filter(y => y > ini + 1 && y <= tope);
+    const limpio = [...posibles].reverse().find(y => !enteros.some(b => y > b.ini + 1 && y < b.fin - 1));
+    const corte = limpio ?? posibles[posibles.length - 1] ?? tope;
+    paginas.push({ ini, fin: corte, tabla }); ini = corte;
+  }
+  return paginas;
+};
+
+/** Arma y baja el PDF del reporte abierto en `w` (sin el diálogo de imprimir). */
+export const descargarReportePDF = async (w) => {
+  const d = w.document, body = d.body;
+  if (w.__generandoPDF) return;
+  w.__generandoPDF = true;
+  const boton = d.getElementById("rp-descargar");
+  const textoBoton = boton?.textContent;
+  if (boton) { boton.textContent = "Generando PDF…"; boton.disabled = true; }
+  const hoja = MM_HOJA[body.dataset.hoja === "v" ? "v" : "h"];
+  const anchoMm = hoja.w - 2 * MARGEN_MM.x, altoMm = hoja.h - 2 * MARGEN_MM.y;
+  const anchoPx = Math.round(anchoMm / 25.4 * 96);
+  const pxPorMm = anchoPx / anchoMm;
+  const estiloPrevio = body.getAttribute("style") || "";
+  try {
+    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+      safeDynamicImport(() => import("html2canvas"), "html2canvas"),
+      safeDynamicImport(() => import("jspdf"), "jspdf"),
+    ]);
+    try { await d.fonts?.ready; } catch {}
+    await Promise.all([...d.images].map(im => im.complete ? null : new Promise(r => { im.onload = im.onerror = r; })));
+    // La página toma el ancho EXACTO del área imprimible (sin padding ni botones).
+    body.setAttribute("style", `${estiloPrevio};width:${anchoPx}px;padding:0;margin:0`);
+    const np = d.querySelector(".np"); if (np) np.style.display = "none";
+    w.scrollTo(0, 0);
+    await new Promise(r => w.requestAnimationFrame(() => w.requestAnimationFrame(r)));
+    const base = body.getBoundingClientRect().top;
+    const y = (el) => el.getBoundingClientRect().top - base;
+    const yFin = (el) => el.getBoundingClientRect().bottom - base;
+    const alto = Math.ceil(body.scrollHeight);
+    const candidatos = [], bloques = [], saltos = [];
+    [...body.children].forEach(el => { if (el.classList.contains("np")) return; candidatos.push(y(el), yFin(el)); });
+    body.querySelectorAll(".rp-sec, .rp-kpis, .rp-caja, .rp-grid2, .rp-firmas, .rp-ley, tr").forEach(el => {
+      candidatos.push(y(el), yFin(el));
+      if (!el.matches("tr")) bloques.push({ ini: y(el), fin: yFin(el) });
+    });
+    body.querySelectorAll(".rp-sec-t").forEach(el => bloques.push({ ini: y(el), fin: yFin(el.nextElementSibling || el) }));
+    body.querySelectorAll(".rp-salto").forEach(el => saltos.push(y(el)));
+    const tablas = [...body.querySelectorAll("table")].map(t => { const th = t.tHead; return th ? { ini: yFin(th), fin: yFin(t), cab: Math.ceil(th.getBoundingClientRect().height), y: y(th) } : null; }).filter(Boolean);
+    const paginas = cortesDePagina({ alto, altoHoja: Math.floor(altoMm * pxPorMm), candidatos, bloques, saltos, tablas });
+    const opciones = { scale: 2.4, backgroundColor: "#ffffff", useCORS: true, logging: false, x: 0, width: anchoPx, windowWidth: anchoPx, scrollX: 0, scrollY: 0, ignoreElements: (el) => el.classList?.contains("np") };
+    const cabeceras = new Map();
+    const pdf = new jsPDF({ orientation: body.dataset.hoja === "v" ? "portrait" : "landscape", unit: "mm", format: "letter" });
+    for (let i = 0; i < paginas.length; i++) {
+      const { ini, fin, tabla } = paginas[i];
+      if (boton) boton.textContent = `Generando PDF… ${i + 1}/${paginas.length}`;
+      if (i > 0) pdf.addPage();
+      let yMm = MARGEN_MM.y;
+      if (tabla) {
+        if (!cabeceras.has(tabla)) cabeceras.set(tabla, (await html2canvas(body, { ...opciones, y: tabla.y, height: tabla.cab })).toDataURL("image/jpeg", 0.92));
+        pdf.addImage(cabeceras.get(tabla), "JPEG", MARGEN_MM.x, yMm, anchoMm, tabla.cab / pxPorMm, undefined, "FAST");
+        yMm += tabla.cab / pxPorMm;
+      }
+      const canvas = await html2canvas(body, { ...opciones, y: ini, height: fin - ini });
+      pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", MARGEN_MM.x, yMm, anchoMm, (fin - ini) / pxPorMm, undefined, "FAST");
+      pdf.setFont("helvetica", "normal"); pdf.setFontSize(7.5); pdf.setTextColor(154, 148, 141);
+      pdf.text(`${i + 1} / ${paginas.length}`, hoja.w - MARGEN_MM.x, hoja.h - 6, { align: "right" });
+    }
+    pdf.save(nombreArchivo(d.title));
+  } catch (e) {
+    console.error(e);
+    if (w.confirm("No pude generar el PDF directo. ¿Abrir el diálogo de imprimir para guardarlo de ahí?")) w.print();
+  } finally {
+    body.setAttribute("style", estiloPrevio);
+    const np = d.querySelector(".np"); if (np) np.style.display = "";
+    if (boton) { boton.textContent = textoBoton; boton.disabled = false; }
+    w.__generandoPDF = false;
+  }
 };
 
 // Piezas (devuelven strings HTML)
