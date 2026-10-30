@@ -443,7 +443,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
       const row = ws.getRow(r);
       row.values = [i + 1, l.name, l.pos || "", tipoTxt[l.ct] || l.ct, l.proj || "", Number(diasMostrados(l)) || 0, l.diasNSP || 0,
         l.sb, l.sd, t.ordinario, l.bq || 0, (l.bonoFeriado || 0) + (l.bonoDomingo || 0), t.extrasIng, { formula: `J${r}+K${r}+L${r}+M${r}`, result: Math.round((t.ordinario + (l.bq || 0) + (l.bonoFeriado || 0) + (l.bonoDomingo || 0) + t.extrasIng) * 100) / 100 },
-        l.descuentoNSP || 0, l.descuentoHoras || 0, l.descuentoIncap || 0, l.isr || 0, l.ihss || 0, l.rap || 0, l.coop || 0, t.extrasDed, { formula: `SUM(O${r}:V${r})`, result: t.deducciones }, { formula: `J${r}+N${r}-W${r}`, result: t.neto }, pagoTxt[l.metodoPago] || "Transferencia", nota];
+        l.descuentoNSP || 0, l.descuentoHoras || 0, l.descuentoIncap || 0, l.isr || 0, l.ihss || 0, l.rap || 0, l.coop || 0, t.extrasDed, { formula: `SUM(O${r}:V${r})`, result: t.deducciones }, { formula: `N${r}-W${r}`, result: t.neto }, pagoTxt[l.metodoPago] || "Transferencia", nota];
       pintarFila(row, i, ULT);
       row.font = ft();
       row.alignment = { vertical: "middle" };
