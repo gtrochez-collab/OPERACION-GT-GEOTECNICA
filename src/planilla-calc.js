@@ -216,13 +216,41 @@ export const horasExtrasDe = (heSheet, empId, horaBase) => {
   return { periodo: heSheet.periodo, quincena: heSheet.quincena, hrs: r2(hrs), monto: r2(monto), horaBase: r2(hb), bandas };
 };
 
+/** Grupos de la planilla para tablas y hojas: permanentes, temporales y los
+ *  honorarios partidos en QUINCENAL y MENSUAL (así los separa la Lic. Carolina). */
+export const gruposPlanilla = (lines) => [
+  { k: "permanent", label: "Permanentes", f: (l) => l.ct === "permanent" },
+  { k: "temporary", label: "Temporales", f: (l) => l.ct === "temporary" },
+  { k: "hon_q", label: "Honorarios · pago quincenal", hon: true, f: (l) => l.ct === "honorarios" && l.honorariosPago !== "mensual" },
+  { k: "hon_m", label: "Honorarios · pago mensual", hon: true, f: (l) => l.ct === "honorarios" && l.honorariosPago === "mensual" },
+].map(g => ({ ...g, rows: (lines || []).filter(g.f) })).filter(g => g.rows.length);
+
+/** Suma la asistencia de las dos quincenas (honorarios mensuales: el mes completo). */
+export const sumarAsistencias = (a, b) => {
+  const out = { ...b, projDays: { ...(a.projDays || {}) } };
+  ["totalDays", "diasEfectivos", "diasFueraRango", "presentes", "presentesEfectivo", "nsp", "inc", "incIhss", "vac", "dt", "dt2", "tf", "tardes", "horasTarde", "descuentoHorasFraccion"]
+    .forEach(k => { out[k] = r2(num(a[k]) + num(b[k])); });
+  Object.entries(b.projDays || {}).forEach(([p, d]) => { out.projDays[p] = (out.projDays[p] || 0) + d; });
+  out.conDatos = !!(a.conDatos || b.conDatos);
+  out.mesCompleto = true;
+  return out;
+};
+
 // ── Línea de planilla ──────────────────────────────────────────────────────
 /** ¿Entra este colaborador en la planilla de la quincena? */
+export const esHonorarioMensual = (emp) => emp?.contractType === "honorarios" && emp?.honorariosPago === "mensual";
+/** Quincena en que se les paga a los honorarios MENSUALES (30-oct-2026, Gerson:
+ *  "se les paga mensual; tiene que recopilar los días de la primera quincena
+ *  también") = la 2Q, con el mes completo. */
+export const quincenaHonorarioMensual = (emp) => emp?.honorariosQuincena || "2Q";
 export const entraEnPlanilla = (emp, periodo, quincena) => {
-  const q = diasDeQuincena(periodo, quincena);
+  let q = diasDeQuincena(periodo, quincena);
   if (!q) return false;
-  if (emp.contractType === "honorarios" && emp.honorariosPago === "mensual") {
-    if ((emp.honorariosQuincena || "1Q") !== quincena) return false;
+  if (esHonorarioMensual(emp)) {
+    if (quincenaHonorarioMensual(emp) !== quincena) return false;
+    // El pago mensual mira el MES entero: quien salió el 11 igual cobra sus 11 días.
+    const q1 = diasDeQuincena(periodo, "1Q"), q2 = diasDeQuincena(periodo, "2Q");
+    q = { ...q, inicio: q1.inicio, fin: q2.fin };
   }
   if (!emp.startDate) return emp.status === "active";
   if (emp.startDate > q.fin) return false;
@@ -246,7 +274,9 @@ export const armarLinea = ({ emp, periodo, quincena, asistencia, he = null, bono
   const completa = a.diasFueraRango === 0;
   // Ordinario: mensual/2 en quincena completa; honorarios mensuales el mes.
   let ordinario = mensual ? sb : sb / 2;
-  if (!completa && !mensual) ordinario = Math.min(sb / 2, sdx * a.diasEfectivos);
+  // Entró o salió a mitad: diario × días en rango, con tope (la quincena o, si
+  // cobra mensual, el mes — Gustavo salió el 11-oct: cobra 11 días).
+  if (!completa) ordinario = Math.min(mensual ? sb : sb / 2, sdx * a.diasEfectivos);
   ordinario = r2(ordinario);
   const descuentoNSP = r2(a.nsp * sdx);
   const descuentoHoras = r2(a.descuentoHorasFraccion * sdx);
@@ -259,7 +289,7 @@ export const armarLinea = ({ emp, periodo, quincena, asistencia, he = null, bono
   if (esHon && (emp.honorariosPago || "quincenal") === "quincenal" && !emp.sinIsr) isr = r2((ordinario + bq) * ISR_HONORARIOS);
   return {
     id: `${emp.id}-${periodo}-${quincena}`,
-    eid: emp.id, name: emp.fullName, pos: emp.position || "", dni: emp.dni || "",
+    eid: emp.id, name: emp.fullName, pos: emp.position || "", dni: emp.dni || "", fc: emp.startDate || "",
     ct: emp.contractType, company: emp.company, grupo: grupoDe(emp.company, emp.contractType),
     proj: asistencia.baseProj || "", projDays: a.projDays,
     metodoPago: emp.metodoPago || recordado.metodoPago || "transferencia",

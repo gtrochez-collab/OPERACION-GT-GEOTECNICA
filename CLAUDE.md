@@ -1026,6 +1026,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   `diasIncapIhss`; fila "Incapacidad · N días al 34 %" en el editor, columna
   "Incapacidad (L)" en el Excel y dentro de "NSP/tarde/inc." en el PDF. ⚠
   Costos MO (calcCostoMO) sigue contando INC = día completo.
+  **HONORARIOS MENSUALES (30-oct-2026, Gerson)**: Gustavo, Arturo, Mauro,
+  Melissa y Oscar Alvarado cobran MENSUAL (`honorariosPago: "mensual"`,
+  puesto en sus fichas ese día). Se pagan en la **2Q con el MES completo**
+  (`quincenaHonorarioMensual` default "2Q"; antes era 1Q): `entraEnPlanilla`
+  mira el mes (quien salió el 11 cobra sus 11 días), HRModule junta la
+  asistencia de las dos quincenas (`sumarAsistencias`) y `armarLinea`
+  prorratea diario × días si entró/salió a mitad, con tope el mensual. El
+  ISR del mensual lo pone Gerson A MANO (el quincenal sigue con 12.5 %
+  automático, editable). `gruposPlanilla(lines)`: Permanentes · Temporales ·
+  Honorarios quincenal · Honorarios mensual (PDF: una tabla por grupo).
+  Excel: los honorarios van en su PROPIA hoja "Honorarios" (como la de la
+  Lic. Carolina: DNI, fecha de contratación, honorarios mensuales, del
+  período, feriados/domingos, ISR…) armada con la misma `armarHoja`; la hoja
+  Planilla cierra con salarios + honorarios = total a pagar y por método.
   Cada línea admite **extras** `[{id, tipo ingreso|deduccion, concepto,
   monto}]` (lo que ella escribía en OTROS INGRESOS/OTRAS DEDUCCIONES con
   nota), `metodoPago` transferencia|cheque|ach (se recuerda en la ficha; el

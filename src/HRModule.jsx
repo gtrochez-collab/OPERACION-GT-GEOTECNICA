@@ -12,7 +12,7 @@ import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, rProyecto
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES, USUARIOS_DE_BAJA } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
 // Planilla (16-oct-2026): lógica pura + PDF/Excel.
-import { diasDeQuincena, quincenaAnterior as quincenaAnteriorPl, quincenaSiguiente, nombreQuincena, rangoQuincena, etiquetaCorta, asistenciaDe, rachaIncapAlCierre, horasExtrasDe, armarLinea, totalesLinea, lineaParaGuardar, resumenPlanilla, entraEnPlanilla, diasMostrados, lineasConHe, GRUPOS_CT, METODOS_PAGO } from "./planilla-calc.js";
+import { diasDeQuincena, quincenaAnterior as quincenaAnteriorPl, quincenaSiguiente, nombreQuincena, rangoQuincena, etiquetaCorta, asistenciaDe, rachaIncapAlCierre, sumarAsistencias, esHonorarioMensual, horasExtrasDe, armarLinea, totalesLinea, lineaParaGuardar, resumenPlanilla, entraEnPlanilla, diasMostrados, lineasConHe, GRUPOS_CT, METODOS_PAGO } from "./planilla-calc.js";
 import { exportarPlanillaPDF, exportarPlanillaExcel } from "./planilla-export.js";
 // Hub de RRHH (20-oct-2026): portal "Mi RRHH" de cada colaborador + bandeja de
 // solicitudes (vacaciones, permisos, constancias, reportes) para RRHH.
@@ -4454,7 +4454,14 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const lines = ce.filter(e => entraEnPlanilla(e, periodo, quincena)).map(emp => {
       const baseProj = resolveShortHR(cuad?.assignments?.[emp.id] || emp.project || "") || "";
       const incPrevias = rachaIncapAlCierre(emp, prev.periodo, prev.quincena, { grid: attPrev?.grid, esFeriado: (d) => esFeriadoQuincena(prev.periodo, d) });
-      const asistencia = asistenciaDe(emp, periodo, quincena, { grid: attSheet?.grid, arrivalTimes: attSheet?.arrivalTimes, projOverrides: ovr, baseProj, esFeriado: (d) => esFeriadoQuincena(periodo, d), fueraPorBaja, horaLimite: horaLimiteH, incPrevias });
+      let asistencia = asistenciaDe(emp, periodo, quincena, { grid: attSheet?.grid, arrivalTimes: attSheet?.arrivalTimes, projOverrides: ovr, baseProj, esFeriado: (d) => esFeriadoQuincena(periodo, d), fueraPorBaja, horaLimite: horaLimiteH, incPrevias });
+      // Honorarios MENSUALES: se pagan en la 2Q con el MES completo (también los días de la 1Q).
+      if (esHonorarioMensual(emp) && quincena === "2Q") {
+        const att1 = ca.find(a => a.periodo === periodo && a.quincena === "1Q") || null;
+        const ovr1 = Object.fromEntries(Object.entries(att1?.projOverrides || {}).map(([k, v]) => [k, resolveShortHR(v)]));
+        const a1 = asistenciaDe(emp, periodo, "1Q", { grid: att1?.grid, arrivalTimes: att1?.arrivalTimes, projOverrides: ovr1, baseProj, esFeriado: (d) => esFeriadoQuincena(periodo, d), fueraPorBaja, horaLimite: horaLimiteH });
+        asistencia = sumarAsistencias(a1, asistencia);
+      }
       asistencia.baseProj = baseProj;
       const he = horasExtrasDe(heSheet, emp.id, heHoraBase(emp));
       return armarLinea({ emp, periodo, quincena, asistencia, he, bonosExtra: monthlyBonusFor(emp.id, q.inicio, q.fin) });
@@ -4768,7 +4775,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
               {l.descuentoHoras > 0 && dato(`Llegadas tarde denegadas · ${l.horasTarde} h`, `−${fmtL(l.descuentoHoras)}`, { color: "#B03024" })}
               {l.descuentoIncap > 0 && dato(`Incapacidad · ${l.diasIncapIhss} ${l.diasIncapIhss === 1 ? "día" : "días"} al 34 % (paga el IHSS)`, `−${fmtL(l.descuentoIncap)}`, { color: "#B03024" })}
               {l.ct === "honorarios"
-                ? datoInput("ISR 12.5 %", l.isr, v => upLinea(l.id, x => ({ ...x, isr: v })), { sub: l.honorariosPago === "mensual" ? "mensual: no se retiene" : "sobre lo que cobra" })
+                ? datoInput(l.honorariosPago === "mensual" ? "ISR" : "ISR 12.5 %", l.isr, v => upLinea(l.id, x => ({ ...x, isr: v })), { sub: l.honorariosPago === "mensual" ? "mes completo · ponelo a mano" : "sobre lo que cobra · editable" })
                 : ley
                   ? <>
                     {datoInput("ISR", l.isr, v => upLinea(l.id, x => ({ ...x, isr: v })), { sub: "lo manda el contador · se recuerda" })}

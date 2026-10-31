@@ -12,7 +12,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { safeDynamicImport } from "./lazyLoad.js";
 import { PDF_TEMA, RP, pdfCabecera, pdfPie, pdfKpi, cargarImagen, LOGO_EMPRESA } from "./reporte-estilo.js";
-import { totalesLinea, resumenPlanilla, nombreQuincena, rangoQuincena, etiquetaCorta, mesLargo, GRUPOS_CT, METODOS_PAGO, notaAutomatica, diasMostrados } from "./planilla-calc.js";
+import { totalesLinea, resumenPlanilla, nombreQuincena, rangoQuincena, etiquetaCorta, mesLargo, GRUPOS_CT, METODOS_PAGO, notaAutomatica, diasMostrados, gruposPlanilla } from "./planilla-calc.js";
 
 const CARBON = PDF_TEMA.carbon, GRIS = PDF_TEMA.texto2, GRIS_FAINT = PDF_TEMA.texto3, FONDO = PDF_TEMA.fondo;
 const TINTE = PDF_TEMA.tinte, NARANJA_TEXTO = PDF_TEMA.naranjaTexto, LINEA = PDF_TEMA.linea, LINEA_FUERTE = PDF_TEMA.lineaFuerte, ROJO = PDF_TEMA.rojo;
@@ -25,6 +25,8 @@ const nf = (n, d = 2) => (Number(n) || 0).toLocaleString("en-US", { minimumFract
 const L = (n) => (Number(n) || 0) === 0 ? "-" : `${n < 0 ? "-" : ""}${nf(Math.abs(n))}`;
 const Lsiempre = (n) => `L ${nf(n)}`;
 const fechaLarga = (d = new Date()) => `${d.getDate()} de ${mesLargo(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`).split(" ")[0]} de ${d.getFullYear()}`;
+const MES3 = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const fechaCorta = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split("-"); return m ? `${d} ${MES3[Number(m) - 1]} ${y}` : String(iso || ""); };
 const slug = (s) => latin1(s).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9.-]+/g, "_").replace(/^_+|_+$/g, "");
 const nombreArchivo = (ext, empresa, periodo, quincena, parte = "salarios") => `${parte === "he" ? "Planilla_Horas_Extras" : "Planilla"}_${slug(empresa)}_${quincena}_${periodo}.${ext}`;
 
@@ -138,10 +140,8 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     P.dc(LINEA_FUERTE); doc.setLineWidth(0.25); doc.line(M, ctx.y + 6.5, PW - M, ctx.y + 6.5);
     ctx.y += 6.5;
   };
-  GRUPOS_CT.forEach(([ct, label]) => {
-    const rows = lines.filter(l => l.ct === ct);
-    if (!rows.length) return;
-    const g = res.porGrupo[ct];
+  gruposPlanilla(lines).forEach(({ label, rows }) => {
+    const g = { neto: Math.round(rows.reduce((a, l) => a + totalesLinea(l).neto, 0) * 100) / 100 };
     // Un grupo que cabe entero en una hoja no se parte (29-oct-2026, Gerson:
     // "que no se corte a la mitad"): si no cabe en lo que queda, arranca en la
     // siguiente. Uno más largo que una hoja sí se parte, repitiendo encabezados.
@@ -446,19 +446,28 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     { k: "metodo", h: "Método de pago", w: 15, sec: "pagar", v: (l) => pagoTxt[l.metodoPago] || "Transferencia" },
     { k: "nota", h: "Notas", w: 48, sec: "pagar", v: (l) => [notaAutomatica(l), l.nota].filter(Boolean).join(" · ") },
   ];
-  COLS.forEach((c, i) => { c.i = i + 1; c.L = ""; let n = i + 1; while (n > 0) { const m = (n - 1) % 26; c.L = String.fromCharCode(65 + m) + c.L; n = Math.floor((n - 1) / 26); } });
+  // Una hoja = columnas + grupos. "Planilla" lleva permanentes y temporales;
+  // "Honorarios" va en su PROPIA hoja (así la arma la Lic. Carolina), con los
+  // de pago quincenal y los de pago mensual por separado.
+  const grupos = gruposPlanilla(lines);
+  const linesSal = lines.filter(l => l.ct !== "honorarios"), linesHon = lines.filter(l => l.ct === "honorarios");
+  const netoDe = (ls) => Math.round(ls.reduce((a, l) => a + totalesLinea(l).neto, 0) * 100) / 100;
+  const armarHoja = (nombreHoja, subtitulo, colsBase, gruposHoja, { cierre = false, ocultarLey = false } = {}) => {
+  const COLS = colsBase.map(c => ({ ...c }));
+  const linesHoja = gruposHoja.flatMap(g => g.rows);
+    COLS.forEach((c, i) => { c.i = i + 1; c.L = ""; let n = i + 1; while (n > 0) { const m = (n - 1) % 26; c.L = String.fromCharCode(65 + m) + c.L; n = Math.floor((n - 1) / 26); } });
   const C = Object.fromEntries(COLS.map(c => [c.k, c]));
   const ULT = COLS.length;
   const FMT = { L: FMT_L, d: '0;-0;"-"', d2: 'General;-General;"-"', h: '0.0;-0.0;"-"' };
-  const ws = wb.addWorksheet("Planilla", { views: [{ state: "frozen", ySplit: 6, xSplit: 2, showGridLines: false }], pageSetup: { orientation: "landscape", paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+  const ws = wb.addWorksheet(nombreHoja, { views: [{ state: "frozen", ySplit: 6, xSplit: 2, showGridLines: false }], pageSetup: { orientation: "landscape", paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   ws.columns = COLS.map(c => ({ width: c.w }));
   cabeceraHoja(ws, { desde: "C", hasta: C.dias.L, ultima: ULT }, [
-    empresa, "Planilla de sueldos y salarios",
+    empresa, subtitulo,
     `${nombreQuincena(periodo, quincena)} · ${rangoQuincena(periodo, quincena)}`,
-    estadoTxt(" · las horas extras van en su propia planilla"),
+    estadoTxt(cierre ? " · las horas extras van en su propia planilla" : ""),
   ]);
-  tile(ws, C.coop.L, C.od.L, "Colaboradores", res.personas);
-  tile(ws, C.tded.L, C.neto.L, "Total a pagar", res.neto, { naranja: true, fmt: FMT_L });
+  tile(ws, C.coop.L, C.od.L, "Colaboradores", linesHoja.length);
+  tile(ws, C.tded.L, C.neto.L, cierre ? "Total a pagar" : "Total honorarios", netoDe(linesHoja), { naranja: true, fmt: FMT_L });
   // Fila 5: bandas por sección · fila 6: encabezados en el pastel de su sección.
   const blancoFino = { style: "thin", color: { argb: BLANCO } };
   Object.entries(SEC).forEach(([k, s]) => {
@@ -486,9 +495,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   const SUMABLES = COLS.filter(c => c.fmt && c.k !== "sd");
   let r = 7;
   const subtotRows = [];
-  GRUPOS_CT.forEach(([ct, label]) => {
-    const rows = lines.filter(l => l.ct === ct);
-    if (!rows.length) return;
+  gruposHoja.forEach(({ label, rows }) => {
     tituloGrupo(ws, r, `${label}  ·  ${rows.length} ${rows.length === 1 ? "persona" : "personas"}`, ULT);
     r++;
     const r0 = r;
@@ -534,7 +541,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   const tg = ws.getRow(r);
   COLS.forEach(c => {
     const cell = tg.getCell(c.i);
-    if (c.k === "nombre") cell.value = "TOTAL A PAGAR";
+    if (c.k === "nombre") cell.value = cierre ? "TOTAL PLANILLA" : "TOTAL HONORARIOS";
     else if (SUMABLES.includes(c)) { cell.value = { formula: subtotRows.map(x => `${c.L}${x}`).join("+") || "0", result: r2x(subtotRows.reduce((a, x) => a + valorDe(ws.getCell(x, c.i)), 0)) }; cell.numFmt = FMT[c.fmt]; cell.alignment = { horizontal: c.fmt === "L" ? "right" : "center", vertical: "middle" }; }
     cell.fill = fill(c.k === "neto" ? NAR : "FFFBD9BF");
     cell.font = ft({ bold: true, size: 11, color: { argb: c.k === "neto" ? BLANCO : NAR_T } });
@@ -543,16 +550,37 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   });
   tg.height = 26;
   r += 3;
-  // Cierre por método de pago
-  const ct0 = ws.getCell(r, 2); ct0.value = "CIERRE POR MÉTODO DE PAGO"; ct0.font = ft({ size: 8.5, bold: true, color: { argb: GR3 } }); [2, 3].forEach(c => { ws.getCell(r, c).border = { bottom: fina }; }); r++;
-  METODOS_PAGO.filter(([k]) => res.porMetodo[k]?.n).forEach(([k, lab]) => {
-    const row = ws.getRow(r); row.getCell(2).value = `${lab} (${res.porMetodo[k].n})`; row.getCell(3).value = res.porMetodo[k].neto; row.getCell(3).numFmt = FMT_L;
-    row.getCell(2).font = ft(); row.getCell(3).font = ft({ bold: true }); [2, 3].forEach(c => { row.getCell(c).border = { bottom: hair }; }); r++;
-  });
-  const tp = ws.getRow(r); tp.getCell(2).value = "Total a pagar"; tp.getCell(3).value = res.neto; tp.getCell(3).numFmt = FMT_L;
-  [2, 3].forEach(c => { tp.getCell(c).fill = fill(NAR); tp.getCell(c).font = ft({ bold: true, size: 11.5, color: { argb: BLANCO } }); }); tp.height = 22;
+  // Cierre: salarios + honorarios (hoja aparte) = total a pagar, y por método.
+  if (cierre) {
+    const ct0 = ws.getCell(r, 2); ct0.value = "CIERRE DE LA QUINCENA"; ct0.font = ft({ size: 8.5, bold: true, color: { argb: GR3 } }); [2, 3].forEach(c => { ws.getCell(r, c).border = { bottom: fina }; }); r++;
+    const filaC = (a, b, neg = false) => { const row = ws.getRow(r); row.getCell(2).value = a; row.getCell(3).value = b; row.getCell(3).numFmt = FMT_L; row.getCell(2).font = ft(); row.getCell(3).font = ft({ bold: true }); [2, 3].forEach(c => { row.getCell(c).border = { bottom: hair }; }); r++; };
+    filaC(`Planilla de salarios (${linesSal.length})`, netoDe(linesSal));
+    if (linesHon.length) filaC(`Honorarios (${linesHon.length}) · ver hoja Honorarios`, netoDe(linesHon));
+    r++;
+    METODOS_PAGO.filter(([k]) => res.porMetodo[k]?.n).forEach(([k, lab]) => filaC(`${lab} (${res.porMetodo[k].n})`, res.porMetodo[k].neto));
+    const tp = ws.getRow(r); tp.getCell(2).value = "Total a pagar"; tp.getCell(3).value = res.neto; tp.getCell(3).numFmt = FMT_L;
+    [2, 3].forEach(c => { tp.getCell(c).fill = fill(NAR); tp.getCell(c).font = ft({ bold: true, size: 11.5, color: { argb: BLANCO } }); }); tp.height = 22;
+  }
   firmas(ws, r + 5);
-  if (!ley) COLS.filter(c => c.ley).forEach(c => { ws.getColumn(c.i).hidden = true; });
+  if (ocultarLey) COLS.filter(c => c.ley).forEach(c => { ws.getColumn(c.i).hidden = true; });
+  return ws;
+  };
+  const porK = Object.fromEntries(COLS.map(c => [c.k, c]));
+  const colsSal = COLS;
+  const colsHon = [
+    "n", "nombre",
+    { k: "dni", h: "DNI", w: 17, sec: "col", v: (l) => l.dni || "" },
+    { k: "fc", h: "Fecha de contratación", w: 13, sec: "col", v: (l) => l.fc ? fechaCorta(l.fc) : "" },
+    "cargo", "proy",
+    { ...porK.sb, h: "Honorarios mensuales" },
+    "dias", "nsp", "tardes", "htarde", "vac", "fer", "dom",
+    { ...porK.ord, h: "Honorarios del período" },
+    "bq", "ferL", "oi", "ting", "nspL", "tardeL",
+    { ...porK.isr, ley: false },
+    "coop", "od", "tded", "neto", "metodo", "nota",
+  ].map(x => typeof x === "string" ? porK[x] : x);
+  armarHoja("Planilla", "Planilla de sueldos y salarios", colsSal, grupos.filter(g => !g.hon), { cierre: true, ocultarLey: !ley });
+  if (linesHon.length) armarHoja("Honorarios", "Planilla de honorarios profesionales", colsHon, grupos.filter(g => g.hon));
 
   // Hoja resumen por proyecto
   const wr = wb.addWorksheet("Resumen", { views: [{ showGridLines: false }] });

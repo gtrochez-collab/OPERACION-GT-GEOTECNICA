@@ -107,9 +107,10 @@ test("honorarios: quincenal con 12.5 % de ISR; mensual cobra el mes en su quince
   assert.equal(lq.ordinario, 11750); assert.equal(lq.isr, 1468.75); assert.equal(lq.ihss, 0);
   assert.equal(totalesLinea(lq).neto, 11750 - 1468.75);
   const m = emp({ id: "h2", contractType: "honorarios", salary: 66650, bonificacion: 0, honorariosPago: "mensual" });
-  assert.equal(entraEnPlanilla(m, "2026-10", "1Q"), true);
-  assert.equal(entraEnPlanilla(m, "2026-10", "2Q"), false);
-  const lm = armarLinea({ emp: m, periodo: "2026-10", quincena: "1Q", asistencia: asistenciaDe(m, "2026-10", "1Q", {}) });
+  // 30-oct-2026: el mensual cobra en la 2Q (el mes completo), no en la 1Q.
+  assert.equal(entraEnPlanilla(m, "2026-10", "1Q"), false);
+  assert.equal(entraEnPlanilla(m, "2026-10", "2Q"), true);
+  const lm = armarLinea({ emp: m, periodo: "2026-10", quincena: "2Q", asistencia: asistenciaDe(m, "2026-10", "2Q", {}) });
   assert.equal(lm.ordinario, 66650); assert.equal(lm.isr, 0);
 });
 
@@ -182,4 +183,23 @@ test("un domingo en descanso al arrancar la quincena no cuenta como incapacidad 
   const grid = { "y-16": "1", "y-17": "INC", "y-18": "INC", "y-19": "INC", "y-20": "INC" };
   const a = asistenciaDe(emp, "2026-08", "2Q", { grid });
   assert.equal(a.incIhss, 1);
+});
+
+// ── Honorarios MENSUALES (30-oct-2026): se pagan en la 2Q con el mes completo ─
+test("honorario mensual: entra solo en la 2Q, cobra el mes; si salió a mitad, sus días", async () => {
+  const { esHonorarioMensual, sumarAsistencias, gruposPlanilla } = await import("../src/planilla-calc.js");
+  const mauro = { id: "m", fullName: "Mauro", contractType: "honorarios", honorariosPago: "mensual", salary: 54000, status: "active", startDate: "2026-08-01" };
+  const gustavo = { id: "g", fullName: "Gustavo", contractType: "honorarios", honorariosPago: "mensual", salary: 66650, status: "inactive", startDate: "2026-05-16", endDate: "2026-10-11" };
+  assert.ok(esHonorarioMensual(mauro));
+  assert.equal(entraEnPlanilla(mauro, "2026-10", "1Q"), false);
+  assert.equal(entraEnPlanilla(mauro, "2026-10", "2Q"), true);
+  assert.equal(entraEnPlanilla(gustavo, "2026-10", "2Q"), true, "salió el 11: igual cobra sus días en la 2Q");
+  const mes = (e) => sumarAsistencias(asistenciaDe(e, "2026-10", "1Q", {}), asistenciaDe(e, "2026-10", "2Q", {}));
+  const lm = armarLinea({ emp: mauro, periodo: "2026-10", quincena: "2Q", asistencia: mes(mauro) });
+  assert.equal(lm.ordinario, 54000);
+  assert.equal(lm.isr, 0, "el ISR del mensual lo pone Gerson a mano");
+  const lg = armarLinea({ emp: gustavo, periodo: "2026-10", quincena: "2Q", asistencia: mes(gustavo) });
+  assert.equal(lg.ordinario, Math.round(66650 / 30 * 11 * 100) / 100);
+  const allan = armarLinea({ emp: { id: "a", contractType: "honorarios", salary: 23500, status: "active" }, periodo: "2026-10", quincena: "2Q", asistencia: asistenciaDe({ id: "a" }, "2026-10", "2Q", {}) });
+  assert.deepEqual(gruposPlanilla([lm, lg, allan]).map(g => [g.k, g.rows.length]), [["hon_q", 1], ["hon_m", 2]]);
 });
