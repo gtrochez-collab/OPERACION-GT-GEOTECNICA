@@ -4564,7 +4564,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const d = payDraft; if (!d) return;
     setPayBusy(true);
     try {
-      const args = { empresa: cc.name, periodo: d.periodo, quincena: d.quincena, lines: d.lines, meta: { estado: d.estado, generadaPor: d.updatedBy || d.createdBy || userName, elaboradoPor: userName, heDe: d.heDe }, parte: payParte };
+      // La baja se lee de la ficha al descargar: así sale resaltada aunque la
+      // planilla se haya generado antes de que existiera el campo en la línea.
+      const empPorId = Object.fromEntries(ce.map(e => [e.id, e]));
+      const conBaja = d.lines.map(l => { const e = empPorId[l.eid]; return l.baja || !e ? l : { ...l, baja: e.status === "inactive" && e.endDate ? e.endDate : "" }; });
+      const args = { empresa: cc.name, periodo: d.periodo, quincena: d.quincena, lines: conBaja, meta: { estado: d.estado, generadaPor: d.updatedBy || d.createdBy || userName, elaboradoPor: userName, heDe: d.heDe }, parte: payParte };
       if (tipo === "pdf") await exportarPlanillaPDF(args); else await exportarPlanillaExcel(args);
     } catch (e) { alert(`No se pudo generar el ${tipo === "pdf" ? "PDF" : "Excel"}: ${e?.message || e}`); }
     finally { setPayBusy(false); }
