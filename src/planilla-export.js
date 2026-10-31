@@ -81,7 +81,13 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
   const ley = quincena === "2Q";
   const ctx = { y: 0 };
   const titulo = esHe ? "Planilla de horas extras" : "Planilla de sueldos y salarios";
-  const sub = `${nombreQuincena(periodo, quincena)} · ${rangoQuincena(periodo, quincena)}`;
+  // Horas extras (31-oct-2026, Gerson): el reporte se titula con la quincena
+  // TRABAJADA (heDe) y aclara en qué quincena se PAGAN — quincena vencida.
+  const qTrab = esHe && meta.heDe ? meta.heDe : { periodo, quincena };
+  const pagadasCon = `pagadas con la ${nombreQuincena(periodo, quincena).replace(" · ", " de ").toLowerCase()}`;
+  const sub = esHe && meta.heDe
+    ? `Trabajadas ${rangoQuincena(qTrab.periodo, qTrab.quincena)} · ${pagadasCon}`
+    : `${nombreQuincena(periodo, quincena)} · ${rangoQuincena(periodo, quincena)}`;
 
   const estadoTxt = `${meta.estado === "publicada" ? "Publicada" : "Borrador"}${meta.generadaPor ? ` · generada por ${meta.generadaPor}` : ""}`;
   // Páginas 2+: cabecera compacta (marca a la izquierda, empresa y planilla a la derecha).
@@ -107,9 +113,10 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     const logo = await cargarImagen(LOGO_EMPRESA[ek] || LOGO_EMPRESA.geotecnica);
     if (logo) { const h = ek === "subterra" ? 44 : 24, w = Math.min(110, h * logo.w / logo.h); doc.addImage(logo.dataUrl, "PNG", PW - M - 4 - w, M + 2, w, h); }
     let y = M + 62;
-    P.f(11, "bold"); P.tc(NARANJA_TEXTO); doc.text(latin1(`${esHe ? "HORAS EXTRAS" : "PLANILLA"} · ${nombreQuincena(periodo, quincena).split(" · ")[0].toUpperCase()}`), M + 4, y - 14, { charSpace: 0.8 });
+    P.f(11, "bold"); P.tc(NARANJA_TEXTO); doc.text(latin1(`${esHe ? "HORAS EXTRAS" : "PLANILLA"} · ${esHe && meta.heDe ? "TRABAJADAS EN LA " : ""}${nombreQuincena(qTrab.periodo, qTrab.quincena).split(" · ")[0].toUpperCase()}`), M + 4, y - 14, { charSpace: 0.8 });
     P.f(34, "bold"); P.tc(CARBON); P.t(titulo, M + 4, y);
-    y += 11; P.f(15); P.tc(GRIS); P.t(`${empresa}  ·  ${mesLargo(periodo).replace(/^\w/, c => c.toUpperCase())}  ·  ${rangoQuincena(periodo, quincena)}`, M + 4, y);
+    y += 11; P.f(15); P.tc(GRIS); P.t(`${empresa}  ·  ${mesLargo(qTrab.periodo).replace(/^\w/, c => c.toUpperCase())}  ·  ${rangoQuincena(qTrab.periodo, qTrab.quincena)}`, M + 4, y);
+    if (esHe && meta.heDe) { y += 7; P.f(12, "bold"); P.tc(NARANJA_TEXTO); P.t(pagadasCon.replace(/^\w/, c => c.toUpperCase()), M + 4, y); }
     y += 7; P.f(10); P.tc(GRIS_FAINT); P.t(`${meta.estado === "publicada" ? "Publicada" : "Borrador"}${meta.generadaPor ? ` · generada por ${meta.generadaPor}` : ""} · ${fechaLarga()}`, M + 4, y);
     y += 6; P.fc(PDF_TEMA.naranja); rr(M + 4, y, 22, 1.4, 0.7);
     // Cajitas grandes
@@ -457,8 +464,8 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     wh.spliceRows(1, 1);
     const UH = 11;
     cabeceraHoja(wh, { desde: "C", hasta: "G", ultima: UH }, [
-      empresa, "Planilla de horas extras",
-      `Se pagan con la ${nombreQuincena(periodo, quincena).toLowerCase()}${meta.heDe ? ` · trabajadas en ${nombreQuincena(meta.heDe.periodo, meta.heDe.quincena).toLowerCase()} (${rangoQuincena(meta.heDe.periodo, meta.heDe.quincena)})` : ""}`,
+      empresa, meta.heDe ? `Horas extras trabajadas en la ${nombreQuincena(meta.heDe.periodo, meta.heDe.quincena).replace(" · ", " de ").toLowerCase()}` : "Planilla de horas extras",
+      meta.heDe ? `Trabajadas ${rangoQuincena(meta.heDe.periodo, meta.heDe.quincena)} · pagadas con la ${nombreQuincena(periodo, quincena).replace(" · ", " de ").toLowerCase()}` : `Se pagan con la ${nombreQuincena(periodo, quincena).toLowerCase()}`,
       estadoTxt(),
     ]);
     tile(wh, "H", "I", "Colaboradores", conHe.length);
