@@ -36,22 +36,31 @@ const columnas = (ley) => [
   { k: "nombre", t: "Colaborador", w: 56, al: "left" },
   { k: "dias", t: "Días", w: 12, al: "center", v: (l) => diasMostrados(l) },
   { k: "sb", t: "Sal. mensual", w: 20, al: "right", v: (l) => L(l.sb) },
-  { k: "ord", t: "Ordinario", w: 20, al: "right", v: (l, i, t) => L(t.ordinario) },
-  { k: "bq", t: "Bonif.", w: 17, al: "right", v: (l) => L(l.bq) },
-  { k: "fd", t: "Fer. / Dom.", w: 17, al: "right", v: (l) => L((l.bonoFeriado || 0) + (l.bonoDomingo || 0)) },
-  { k: "oi", t: "Otros ing.", w: 17, al: "right", v: (l, i, t) => L(t.extrasIng) },
-  { k: "asis", t: "NSP/tarde/inc.", w: 17, al: "right", v: (l, i, t) => t.dedAsist ? `-${nf(t.dedAsist)}` : "-", color: ROJO },
+  { k: "ord", sec: "ing", t: "Ordinario", w: 20, al: "right", v: (l, i, t) => L(t.ordinario) },
+  { k: "bq", sec: "ing", t: "Bonif.", w: 17, al: "right", v: (l) => L(l.bq) },
+  { k: "fd", sec: "ing", t: "Fer. / Dom.", w: 17, al: "right", v: (l) => L((l.bonoFeriado || 0) + (l.bonoDomingo || 0)) },
+  { k: "oi", sec: "ing", t: "Otros ing.", w: 17, al: "right", v: (l, i, t) => L(t.extrasIng) },
+  { k: "asis", sec: "ded", t: "Asistencia", w: 17, al: "right", v: (l, i, t) => t.dedAsist ? `-${nf(t.dedAsist)}` : "-", color: ROJO },
   ...(ley ? [
-    { k: "isr", t: "ISR", w: 17, al: "right", v: (l) => L(l.isr) },
-    { k: "ihss", t: "IHSS", w: 16, al: "right", v: (l) => L(l.ihss) },
-    { k: "rap", t: "RAP", w: 16, al: "right", v: (l) => L(l.rap) },
+    { k: "isr", sec: "ded", t: "ISR", w: 17, al: "right", v: (l) => L(l.isr) },
+    { k: "ihss", sec: "ded", t: "IHSS", w: 16, al: "right", v: (l) => L(l.ihss) },
+    { k: "rap", sec: "ded", t: "RAP", w: 16, al: "right", v: (l) => L(l.rap) },
   ] : []),
-  { k: "coop", t: "Coop.", w: 16, al: "right", v: (l) => L(l.coop) },
-  { k: "od", t: "Otras ded.", w: 17, al: "right", v: (l, i, t) => L(t.extrasDed) },
-  { k: "td", t: "Total ded.", w: 19, al: "right", v: (l, i, t) => L(t.deducciones), color: ROJO },
-  { k: "neto", t: "Neto", w: 23, al: "right", v: (l, i, t) => Lsiempre(t.neto), bold: true },
+  { k: "coop", sec: "ded", t: "Coop.", w: 16, al: "right", v: (l) => L(l.coop) },
+  { k: "od", sec: "ded", t: "Otras ded.", w: 17, al: "right", v: (l, i, t) => L(t.extrasDed) },
+  { k: "td", sec: "ded", t: "Total ded.", w: 19, al: "right", v: (l, i, t) => L(t.deducciones), color: ROJO },
+  { k: "neto", sec: "neto", t: "Neto", w: 23, al: "right", v: (l, i, t) => Lsiempre(t.neto), bold: true },
   { k: "pago", t: "Pago", w: 15, al: "center", v: (l) => ({ transferencia: "Transf.", cheque: "Cheque", ach: "ACH" }[l.metodoPago || "transferencia"]) },
 ];
+
+// Pastel por sección (30-oct-2026, Gerson: "colorcitos pasteles en ingresos y
+// deducciones, el neto en otro color, que no sea tan blanco"): los mismos tonos
+// del Excel — ingresos verde menta, deducciones rosa, neto naranja.
+const SEC_PDF = {
+  ing: { t: "Ingresos", head: [213, 239, 221], cell: [243, 250, 245], tinta: [31, 107, 60] },
+  ded: { t: "Deducciones", head: [249, 222, 219], cell: [253, 245, 244], tinta: [154, 42, 30] },
+  neto: { t: "A pagar", head: [251, 217, 191], cell: [253, 238, 225], tinta: [169, 78, 22] },
+};
 
 /** Construye el jsPDF (sin guardar) — así se puede revisar en Node/replicar. */
 export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, meta = {}, jsPDF, parte = "salarios" }) => {
@@ -135,8 +144,23 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     const tx = al === "right" ? x + w - 1.5 : al === "center" ? x + w / 2 : x + 1.5;
     P.t(recortar(texto, w - 3), tx, y, { align: al === "left" ? undefined : al });
   };
+  // Pinta el fondo de cada columna con sección (encabezado, fila o totales).
+  const pintarSecciones = (y, h, tono) => cols.forEach((c, ci) => {
+    const sc = SEC_PDF[c.sec]; if (!sc) return;
+    P.fc(sc[tono]); doc.rect(xs[ci].x, y, xs[ci].w, h, "F");
+  });
   const filaEncabezado = () => {
-    cols.forEach((c, ci) => celda(ci, c.t.toUpperCase(), ctx.y + 4.4, { al: c.al, bold: true, color: GRIS_FAINT, fs: 5.8 }));
+    // Banda con el nombre de cada sección arriba de los encabezados.
+    Object.entries(SEC_PDF).forEach(([k, sc]) => {
+      const ids = cols.map((c, ci) => c.sec === k ? ci : -1).filter(i => i >= 0);
+      if (!ids.length) return;
+      const x0 = xs[ids[0]].x, x1 = xs[ids[ids.length - 1]].x + xs[ids[ids.length - 1]].w;
+      P.fc(sc.head); doc.rect(x0, ctx.y, x1 - x0, 4.2, "F");
+      P.f(5.6, "bold"); P.tc(sc.tinta); P.t(sc.t.toUpperCase(), (x0 + x1) / 2, ctx.y + 3, { align: "center" });
+    });
+    ctx.y += 4.6;
+    pintarSecciones(ctx.y, 6.5, "head");
+    cols.forEach((c, ci) => celda(ci, c.t.toUpperCase(), ctx.y + 4.4, { al: c.al, bold: true, color: SEC_PDF[c.sec]?.tinta || GRIS_FAINT, fs: 5.8 }));
     P.dc(LINEA_FUERTE); doc.setLineWidth(0.25); doc.line(M, ctx.y + 6.5, PW - M, ctx.y + 6.5);
     ctx.y += 6.5;
   };
@@ -145,7 +169,7 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     // Un grupo que cabe entero en una hoja no se parte (29-oct-2026, Gerson:
     // "que no se corte a la mitad"): si no cabe en lo que queda, arranca en la
     // siguiente. Uno más largo que una hoja sí se parte, repitiendo encabezados.
-    const altoGrupo = 7 + 6.5 + 8 + rows.reduce((s, l) => s + 7 + ((l.nota || (l.extras || []).length) ? 3.3 : 0), 0);
+    const altoGrupo = 7 + 4.6 + 6.5 + 8 + rows.reduce((s, l) => s + 7 + ((l.nota || (l.extras || []).length) ? 3.3 : 0), 0);
     asegurar(altoGrupo <= Y_MAX - 40 ? altoGrupo : 24);
     P.f(9.5, "bold"); P.tc(CARBON); P.t(label, M, ctx.y + 4);
     const wLabel = P.ancho(label);
@@ -159,6 +183,7 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
       const h = 7 + (nota ? 3.3 : 0);
       // La última fila viaja junto con la de totales (nunca un "Totales" solo arriba de una página).
       if (asegurar(h + (i === rows.length - 1 ? 8 : 0))) filaEncabezado();
+      pintarSecciones(ctx.y, h, "cell");
       const yt = ctx.y + 4.6;
       cols.forEach((c, ci) => {
         if (c.k === "nombre") {
@@ -183,6 +208,7 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
       isr: L(sum(l => l.isr)), ihss: L(sum(l => l.ihss)), rap: L(sum(l => l.rap)), coop: L(sum(l => l.coop)), od: L(sum((l, t) => t.extrasDed)),
       td: L(sum((l, t) => t.deducciones)), neto: Lsiempre(g.neto), pago: "",
     };
+    pintarSecciones(ctx.y + 0.4, 7, "head");
     cols.forEach((c, ci) => celda(ci, tot[c.k] ?? "", ctx.y + 4.7, { al: c.al, bold: true, color: c.k === "asis" || c.k === "td" ? ROJO : CARBON, fs: 7 }));
     ctx.y += 7 + 8;
   });
