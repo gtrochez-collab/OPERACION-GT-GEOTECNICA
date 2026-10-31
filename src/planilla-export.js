@@ -11,7 +11,7 @@
 // reportes (reporte-estilo.js). Números, columnas y hojas NO cambiaron.
 // ═══════════════════════════════════════════════════════════════════════════
 import { safeDynamicImport } from "./lazyLoad.js";
-import { PDF_TEMA, RP, pdfCabecera, pdfPie, pdfKpi, cargarImagen, LOGO_EMPRESA } from "./reporte-estilo.js";
+import { PDF_TEMA, RP, pdfPie, pdfKpi, cargarImagen, LOGO_EMPRESA } from "./reporte-estilo.js";
 import { totalesLinea, resumenPlanilla, nombreQuincena, rangoQuincena, etiquetaCorta, mesLargo, GRUPOS_CT, METODOS_PAGO, notaAutomatica, diasMostrados, gruposPlanilla } from "./planilla-calc.js";
 
 const CARBON = PDF_TEMA.carbon, GRIS = PDF_TEMA.texto2, GRIS_FAINT = PDF_TEMA.texto3, FONDO = PDF_TEMA.fondo;
@@ -92,34 +92,75 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
   const nuevaPagina = () => { doc.addPage(); encabezado(); };
   const asegurar = (h) => { if (ctx.y + h > Y_MAX) { nuevaPagina(); return true; } return false; };
 
-  // ── Página 1: cabecera de la casa + tiles de resumen ──
-  ctx.y = await pdfCabecera(doc, { titulo, subtitulo: `${empresa} · ${sub} · ${estadoTxt}`, empresa: empresaKey(empresa), margen: M, y: M + 2 });
+  // ── Página 1: PORTADA (30-oct-2026, Gerson: "que la primera página sea una
+  // portada bonita, aprovechando la hoja: logo de la empresa más grande, las
+  // cajitas más grandes"). Las tablas arrancan en la página 2.
   const conHe = lines.filter(l => l.he && l.he.monto > 0);
-  const tiles = esHe ? [
-    ["Colaboradores", String(conHe.length)],
-    ["Horas", nf(res.heHrs, 1)],
-    ["Trabajadas en", meta.heDe ? etiquetaCorta(meta.heDe.periodo, meta.heDe.quincena) : "-"],
-    ["Total a pagar", Lsiempre(res.he), "naranjaTexto"],
-  ] : [
-    ["Colaboradores", String(res.personas)],
-    ["Salarios ordinarios", Lsiempre(res.ordinario)],
-    ["Ingresos", Lsiempre(res.ingresos)],
-    ["Deducciones", Lsiempre(res.deducciones), "rojo"],
-    ["Total a pagar", Lsiempre(res.neto), "naranjaTexto"],
-  ];
-  const tw = (CW - (tiles.length - 1) * 4) / tiles.length;
-  tiles.forEach(([lab, val, tono], i) => pdfKpi(doc, M + i * (tw + 4), ctx.y, tw, 17, lab, val, { tono }));
-  ctx.y += 17 + 7;
-  P.f(7.5); P.tc(GRIS);
-  const linea2 = [];
-  if (esHe) linea2.push(meta.heDe ? `Horas trabajadas en ${nombreQuincena(meta.heDe.periodo, meta.heDe.quincena).toLowerCase()} (${rangoQuincena(meta.heDe.periodo, meta.heDe.quincena)}), pagadas con la quincena vencida` : "Sin hoja de horas extras de la quincena anterior");
-  else {
-    linea2.push(ley ? "Segunda quincena: aplican IHSS, RAP e ISR" : "Primera quincena: sin deducciones de ley (van en la 2Q)");
-    if (res.nsp) linea2.push(`${res.nsp} NSP`);
-    if (res.he) linea2.push(`Las horas extras (${Lsiempre(res.he)}) van en su propia planilla`);
+  {
+    const ek = empresaKey(empresa);
+    const marca = await cargarImagen("brand/geocore/geocore-180.png");
+    if (marca) doc.addImage(marca.dataUrl, "PNG", M + 4, M + 4, 9, 9);
+    P.f(8.5, "bold"); P.tc(GRIS_FAINT); doc.text(latin1("GEOCORE · GRUPO GEOTECNICA"), M + 16, M + 10, { charSpace: 0.6 });
+    const logo = await cargarImagen(LOGO_EMPRESA[ek] || LOGO_EMPRESA.geotecnica);
+    if (logo) { const h = ek === "subterra" ? 44 : 24, w = Math.min(110, h * logo.w / logo.h); doc.addImage(logo.dataUrl, "PNG", PW - M - 4 - w, M + 2, w, h); }
+    let y = M + 62;
+    P.f(11, "bold"); P.tc(NARANJA_TEXTO); doc.text(latin1(`${esHe ? "HORAS EXTRAS" : "PLANILLA"} · ${nombreQuincena(periodo, quincena).split(" · ")[0].toUpperCase()}`), M + 4, y - 14, { charSpace: 0.8 });
+    P.f(34, "bold"); P.tc(CARBON); P.t(titulo, M + 4, y);
+    y += 11; P.f(15); P.tc(GRIS); P.t(`${empresa}  ·  ${mesLargo(periodo).replace(/^\w/, c => c.toUpperCase())}  ·  ${rangoQuincena(periodo, quincena)}`, M + 4, y);
+    y += 7; P.f(10); P.tc(GRIS_FAINT); P.t(`${meta.estado === "publicada" ? "Publicada" : "Borrador"}${meta.generadaPor ? ` · generada por ${meta.generadaPor}` : ""} · ${fechaLarga()}`, M + 4, y);
+    y += 6; P.fc(PDF_TEMA.naranja); rr(M + 4, y, 22, 1.4, 0.7);
+    // Cajitas grandes
+    y += 12;
+    const tiles = esHe ? [
+      ["Colaboradores", String(conHe.length)],
+      ["Horas extras", nf(res.heHrs, 1)],
+      ["Trabajadas en", meta.heDe ? etiquetaCorta(meta.heDe.periodo, meta.heDe.quincena) : "-"],
+      ["Total a pagar", Lsiempre(res.he), true],
+    ] : [
+      ["Colaboradores", String(res.personas)],
+      ["Salarios ordinarios", Lsiempre(res.ordinario)],
+      ["Ingresos", Lsiempre(res.ingresos)],
+      ["Deducciones", Lsiempre(res.deducciones), false, ROJO],
+      ["Total a pagar", Lsiempre(res.neto), true],
+    ];
+    const gap = 6, tw = (CW - 8 - (tiles.length - 1) * gap) / tiles.length, th = 36;
+    tiles.forEach(([lab, val, dest, col], i) => {
+      const x = M + 4 + i * (tw + gap);
+      P.fc(dest ? TINTE : FONDO); rr(x, y, tw, th, 4);
+      P.f(8.5, "bold"); P.tc(dest ? NARANJA_TEXTO : GRIS_FAINT); doc.text(latin1(lab.toUpperCase()), x + 7, y + 10, { charSpace: 0.5 });
+      P.f(val.length > 13 ? 20 : 24, "bold"); P.tc(dest ? NARANJA_TEXTO : (col || CARBON)); P.t(val, x + 7, y + th - 9);
+    });
+    y += th + 10;
+    // Resumen en tres cajas: por tipo de contrato · por método de pago · total
+    const bw3 = (CW - 8 - 2 * gap) / 3;
+    const cajaP = (x, tit, filas, dest) => {
+      const h = 14 + filas.length * 8;
+      P.fc(dest ? TINTE : FONDO); rr(x, y, bw3, h, 4);
+      P.f(8, "bold"); P.tc(dest ? NARANJA_TEXTO : GRIS_FAINT); doc.text(latin1(tit.toUpperCase()), x + 7, y + 9, { charSpace: 0.5 });
+      filas.forEach(([a1, b1, big], i) => {
+        const yy = y + 17 + i * 8;
+        P.f(big ? 11 : 10, big ? "bold" : "normal"); P.tc(CARBON); P.t(a1, x + 7, yy);
+        P.f(big ? 12 : 10, "bold"); P.tc(big && dest ? NARANJA_TEXTO : CARBON); P.t(b1, x + bw3 - 7, yy, { align: "right" });
+      });
+      return h;
+    };
+    const grupos = gruposPlanilla(esHe ? conHe : lines);
+    const sumaG = (rows) => rows.reduce((a2, l) => a2 + (esHe ? l.he.monto : totalesLinea(l).neto), 0);
+    const porMet = METODOS_PAGO.filter(([k]) => (esHe ? res.hePorMetodo : res.porMetodo)[k]?.n).map(([k, lab]) => { const g = (esHe ? res.hePorMetodo : res.porMetodo)[k]; return [`${lab} (${g.n})`, Lsiempre(esHe ? g.monto : g.neto)]; });
+    cajaP(M + 4, "Por tipo de contrato", grupos.map(g => [`${g.label} (${g.rows.length})`, Lsiempre(sumaG(g.rows))]));
+    cajaP(M + 4 + bw3 + gap, "Por método de pago", porMet.length ? porMet : [["-", "-"]]);
+    cajaP(M + 4 + 2 * (bw3 + gap), "Total a pagar", [["Colaboradores", String(esHe ? conHe.length : res.personas)], [esHe ? "Total horas extras" : "Total salarios", Lsiempre(esHe ? res.he : res.neto), true]], true);
+    // Nota al pie de la portada
+    const linea2 = [];
+    if (esHe) linea2.push(meta.heDe ? `Horas trabajadas en la ${nombreQuincena(meta.heDe.periodo, meta.heDe.quincena).toLowerCase()} (${rangoQuincena(meta.heDe.periodo, meta.heDe.quincena)}), pagadas con la quincena vencida` : "Sin hoja de horas extras de la quincena anterior");
+    else {
+      linea2.push(ley ? "Segunda quincena: aplican IHSS, RAP e ISR" : "Primera quincena: sin deducciones de ley (van en la 2Q)");
+      if (res.nsp) linea2.push(`${res.nsp} días de NSP`);
+      if (res.he) linea2.push(`Las horas extras (${Lsiempre(res.he)}) van en su propia planilla`);
+    }
+    P.f(9); P.tc(GRIS); P.t(linea2.join("   ·   "), M + 4, Y_MAX - 4);
+    nuevaPagina();
   }
-  P.t(linea2.join("   ·   "), M, ctx.y);
-  ctx.y += 6;
 
   // ── Tablas por grupo (planilla de salarios) ──
   const cols = columnas(ley);
@@ -213,14 +254,6 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     ctx.y += 7 + 8;
   });
 
-  // ── Cierre ──
-  asegurar(46);
-  const hs = [
-    caja(M, "Por tipo de contrato", GRUPOS_CT.filter(([k]) => res.porGrupo[k]?.n).map(([k, lab]) => [`${lab} (${res.porGrupo[k].n})`, Lsiempre(res.porGrupo[k].neto)])),
-    caja(M + bw + 4, "Por método de pago", METODOS_PAGO.filter(([k]) => res.porMetodo[k]?.n).map(([k, lab]) => [`${lab} (${res.porMetodo[k].n})`, Lsiempre(res.porMetodo[k].neto)])),
-    caja(M + 2 * (bw + 4), "Total a pagar", [["Colaboradores", String(res.personas)], ["Total salarios", Lsiempre(res.neto), true]], true),
-  ];
-  ctx.y += Math.max(...hs) + 12;
   }
 
   // ── Hoja de horas extras ──
@@ -284,11 +317,6 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
       ctx.y += 8 + 10;
     }
     if (!conHe.length) { P.f(9); P.tc(GRIS); P.t("No hay horas extras para pagar en esta quincena.", M, ctx.y); ctx.y += 8; }
-    asegurar(40);
-    const hm = METODOS_PAGO.filter(([k]) => res.hePorMetodo[k]?.n).map(([k, lab]) => [`${lab} (${res.hePorMetodo[k].n})`, Lsiempre(res.hePorMetodo[k].monto)]);
-    const h1 = caja(M, "Por método de pago", hm.length ? hm : [["-", "-"]]);
-    const h2 = caja(M + 2 * (bw + 4), "Total a pagar", [["Colaboradores", String(conHe.length)], ["Total horas extras", Lsiempre(res.he), true]], true);
-    ctx.y += Math.max(h1, h2) + 12;
   }
 
   // ── Firmas ──
