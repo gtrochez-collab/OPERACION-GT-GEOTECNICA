@@ -290,6 +290,8 @@ export const armarLinea = ({ emp, periodo, quincena, asistencia, he = null, bono
   return {
     id: `${emp.id}-${periodo}-${quincena}`,
     eid: emp.id, name: emp.fullName, pos: emp.position || "", dni: emp.dni || "", fc: emp.startDate || "",
+    // Baja: su último día en la empresa (los reportes la resaltan).
+    baja: emp.status === "inactive" && emp.endDate ? emp.endDate : "",
     ct: emp.contractType, company: emp.company, grupo: grupoDe(emp.company, emp.contractType),
     proj: asistencia.baseProj || "", projDays: a.projDays,
     metodoPago: emp.metodoPago || recordado.metodoPago || "transferencia",
@@ -373,6 +375,7 @@ export const resumenPlanilla = (lines) => {
 /** Concepto automático de la nota (lo que Carolina escribía en "NOTAS"). */
 export const notaAutomatica = (l) => {
   const p = [];
+  if (l.baja) p.push(`Baja · último día ${l.baja.slice(8, 10)}/${l.baja.slice(5, 7)}`);
   if (l.ferTrab) p.push(`Feriado trabajado ×${l.ferTrab}`);
   if (l.domTrab) p.push(`Domingo trabajado ×${l.domTrab}`);
   if (l.domTrabTriple) p.push(`Domingo triple ×${l.domTrabTriple}`);

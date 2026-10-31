@@ -56,6 +56,9 @@ const columnas = (ley) => [
 // Pastel por sección (30-oct-2026, Gerson: "colorcitos pasteles en ingresos y
 // deducciones, el neto en otro color, que no sea tan blanco"): los mismos tonos
 // del Excel — ingresos verde menta, deducciones rosa, neto naranja.
+// Bajas (30-oct-2026, Gerson: "que las bajas tengan un highlight en los
+// reportes"): fila en ámbar clarito con un filo y "BAJA · último día …".
+const BAJA_FONDO = [255, 241, 204], BAJA_TINTA = [146, 94, 0];
 const SEC_PDF = {
   ing: { t: "Ingresos", head: [213, 239, 221], cell: [243, 250, 245], tinta: [31, 107, 60] },
   ded: { t: "Deducciones", head: [249, 222, 219], cell: [253, 245, 244], tinta: [154, 42, 30] },
@@ -224,13 +227,15 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
       const h = 7 + (nota ? 3.3 : 0);
       // La última fila viaja junto con la de totales (nunca un "Totales" solo arriba de una página).
       if (asegurar(h + (i === rows.length - 1 ? 8 : 0))) filaEncabezado();
-      pintarSecciones(ctx.y, h, "cell");
+      if (l.baja) { P.fc(BAJA_FONDO); doc.rect(M, ctx.y, CW, h, "F"); P.fc(BAJA_TINTA); doc.rect(M, ctx.y, 0.9, h, "F"); }
+      else pintarSecciones(ctx.y, h, "cell");
       const yt = ctx.y + 4.6;
       cols.forEach((c, ci) => {
         if (c.k === "nombre") {
           celda(ci, l.name, yt - 1.2, { al: "left", bold: true, fs: 7 });
           const { x, w } = xs[ci];
-          P.f(5.6); P.tc(GRIS_FAINT); P.t(recortar(l.pos || "", w - 3), x + 1.5, yt + 1.6);
+          if (l.baja) { P.f(5.6, "bold"); P.tc(BAJA_TINTA); P.t(recortar(`BAJA · último día ${fechaCorta(l.baja)}`, w - 3), x + 1.5, yt + 1.6); }
+          else { P.f(5.6); P.tc(GRIS_FAINT); P.t(recortar(l.pos || "", w - 3), x + 1.5, yt + 1.6); }
           return;
         }
         celda(ci, c.v(l, i, t), yt, { al: c.al, bold: !!c.bold, color: c.color });
@@ -289,10 +294,11 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
       hcab();
       rows.forEach((l, i) => {
         if (asegurar(7)) hcab();
-        fondoFila(ctx.y, 7, i % 2 ? tono.cell : [255, 255, 255]);
+        fondoFila(ctx.y, 7, l.baja ? BAJA_FONDO : i % 2 ? tono.cell : [255, 255, 255]);
+        if (l.baja) { P.fc(BAJA_TINTA); doc.rect(M, ctx.y, 0.9, 7, "F"); }
         const b = l.he.bandas || {};
         const y = ctx.y + 4.7;
-        hcel(0, String(i + 1), y); hcel(1, l.name, y, { bold: true }); hcel(2, Lsiempre(l.he.horaBase), y);
+        hcel(0, String(i + 1), y); hcel(1, l.baja ? `${l.name}  ·  BAJA ${fechaCorta(l.baja)}` : l.name, y, { bold: true, color: l.baja ? BAJA_TINTA : CARBON }); hcel(2, Lsiempre(l.he.horaBase), y);
         ["b1", "b2", "b3", "dom"].forEach((kk, j) => { const h = b[kk]?.hrs || 0; hcel(3 + j, h ? nf(h, 1) : "-", y); gs[kk] += h; });
         hcel(7, nf(l.he.hrs, 1), y, { bold: true }); hcel(8, Lsiempre(l.he.monto), y, { bold: true }); hcel(9, { transferencia: "Transf.", cheque: "Cheque", ach: "ACH" }[l.metodoPago || "transferencia"], y);
         gs.hrs += l.he.hrs; gs.monto += l.he.monto;
@@ -463,12 +469,13 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     conHe.forEach((l, i) => {
       const b = l.he.bandas || {};
       const row = wh.getRow(hr);
-      row.values = [i + 1, l.name, l.pos || "", l.he.horaBase, b.b1?.hrs || 0, b.b2?.hrs || 0, b.b3?.hrs || 0, b.dom?.hrs || 0, l.he.hrs, l.he.monto, pagoTxt[l.metodoPago] || "Transferencia"];
+      row.values = [i + 1, l.baja ? `${l.name}  ·  BAJA ${fechaCorta(l.baja)}` : l.name, l.pos || "", l.he.horaBase, b.b1?.hrs || 0, b.b2?.hrs || 0, b.b3?.hrs || 0, b.dom?.hrs || 0, l.he.hrs, l.he.monto, pagoTxt[l.metodoPago] || "Transferencia"];
       pintarFila(row, i, UH);
       row.font = ft(); row.alignment = { vertical: "middle" };
       row.getCell(2).font = ft({ bold: true }); row.getCell(1).font = ft({ color: { argb: GR3 } }); row.getCell(3).font = ft({ color: { argb: GR } });
       [4, 10].forEach(c => { row.getCell(c).numFmt = FMT_L; }); [5, 6, 7, 8, 9].forEach(c => { row.getCell(c).numFmt = "0.0;;\"-\""; row.getCell(c).alignment = { horizontal: "center", vertical: "middle" }; });
       row.getCell(10).font = ft({ bold: true }); row.getCell(10).fill = fill(TINTE_X);
+      if (l.baja) { for (let c = 1; c <= UH; c++) row.getCell(c).fill = fill("FFFFF1CC"); row.getCell(2).font = ft({ bold: true, color: { argb: "FF925E00" } }); }
       hr++;
     });
     const ht = wh.getRow(hr); ht.values = ["", "TOTAL A PAGAR"];
@@ -594,7 +601,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
         else if (c.total === "neto") cell.value = { formula: `${C.ting.L}${r}-${C.tded.L}${r}`, result: t.neto };
         else cell.value = c.v(l, t, i);
         const s = SEC[c.sec];
-        const bg = c.k === "neto" ? (i % 2 ? "FFFBE3CF" : TINTE_X) : (i % 2 ? s.alt : s.cell);
+        const bg = l.baja ? (c.k === "neto" ? "FFFBE3CF" : "FFFFF1CC") : c.k === "neto" ? (i % 2 ? "FFFBE3CF" : TINTE_X) : (i % 2 ? s.alt : s.cell);
         if (bg) cell.fill = fill(bg);
         if (c.fmt) { cell.numFmt = FMT[c.fmt]; cell.alignment = { vertical: "middle", horizontal: c.fmt === "L" ? "right" : "center" }; }
         else cell.alignment = { vertical: "middle" };
@@ -605,6 +612,8 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
           color: { argb: c.k === "n" ? GR3 : (c.rojo && v > 0) ? ROJ : c.total === "deduccion" ? SEC.ded.tinta : ["cargo", "proy", "nota"].includes(c.k) ? GR : CARB },
         });
         cell.border = { bottom: hair };
+        if (l.baja && c.k === "nombre") { cell.value = `${l.name}  ·  BAJA ${fechaCorta(l.baja)}`; cell.font = ft({ bold: true, color: { argb: "FF925E00" } }); }
+        if (l.baja && c.k === "n") cell.border = { bottom: hair, left: { style: "thick", color: { argb: "FFE0A800" } } };
       });
       row.height = 19;
       r++;
