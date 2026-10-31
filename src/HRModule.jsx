@@ -1949,6 +1949,10 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         if (fueraPorBaja(e, dStr)) return;
         const k = `${e.id}-${dd}`;
         if (initial[k]) return;
+        // Celda VACIADA a propósito y guardada (queda "" en la hoja): RRHH
+        // decidió que ese día no cuenta (ej. cortar el reporte al 30 aunque
+        // el 31 ya marcaron). No se vuelve a sembrar.
+        if (Object.prototype.hasOwnProperty.call(sheet?.grid || {}, k)) return;
         initial[k] = "1";
       });
       return initial;
