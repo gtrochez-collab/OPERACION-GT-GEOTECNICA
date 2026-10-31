@@ -234,24 +234,55 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     const hx = []; let a2 = M; hc.forEach(c => { hx.push({ x: a2, w: c.w * he }); a2 += c.w * he; });
     const hcel = (ci, texto, y, o = {}) => { const { x, w } = hx[ci]; P.f(o.fs || 7.2, o.bold ? "bold" : "normal"); P.tc(o.color || CARBON); const al = hc[ci].al; P.t(recortar(texto, w - 3), al === "right" ? x + w - 1.5 : al === "center" ? x + w / 2 : x + 1.5, y, { align: al === "left" ? undefined : al }); };
     const hcab = () => { hc.forEach((c, ci) => hcel(ci, c.t.toUpperCase(), ctx.y + 4.4, { bold: true, color: GRIS_FAINT, fs: 6 })); P.dc(LINEA_FUERTE); doc.setLineWidth(0.25); doc.line(M, ctx.y + 6.5, PW - M, ctx.y + 6.5); ctx.y += 6.5; };
-    hcab();
+    // Separada por tipo de contrato, cada grupo con su pastel (30-oct-2026,
+    // Gerson: "debe venir separado permanente y temporal, con un colorcito").
+    const TONO_HE = {
+      permanent: { head: [212, 230, 255], cell: [241, 247, 255], tinta: [31, 79, 140] },
+      temporary: { head: [228, 216, 255], cell: [247, 243, 255], tinta: [79, 53, 146] },
+      hon: { head: [253, 224, 200], cell: [254, 245, 237], tinta: [169, 78, 22] },
+    };
+    const fondoFila = (y, h, color) => { P.fc(color); doc.rect(M, y, CW, h, "F"); };
     const hsum = { b1: 0, b2: 0, b3: 0, dom: 0, hrs: 0, monto: 0 };
-    conHe.forEach((l, i) => {
-      if (asegurar(7)) hcab();
-      const b = l.he.bandas || {};
-      const y = ctx.y + 4.7;
-      hcel(0, String(i + 1), y); hcel(1, l.name, y, { bold: true }); hcel(2, Lsiempre(l.he.horaBase), y);
-      ["b1", "b2", "b3", "dom"].forEach((k, j) => { const h = b[k]?.hrs || 0; hcel(3 + j, h ? nf(h, 1) : "-", y); hsum[k] += h; });
-      hcel(7, nf(l.he.hrs, 1), y, { bold: true }); hcel(8, Lsiempre(l.he.monto), y, { bold: true }); hcel(9, { transferencia: "Transf.", cheque: "Cheque", ach: "ACH" }[l.metodoPago || "transferencia"], y);
-      hsum.hrs += l.he.hrs; hsum.monto += l.he.monto;
-      P.dc(LINEA); doc.setLineWidth(0.15); doc.line(M, ctx.y + 7, PW - M, ctx.y + 7);
-      ctx.y += 7;
+    gruposPlanilla(conHe).forEach(({ k, label, rows }) => {
+      const tono = TONO_HE[k] || TONO_HE.hon;
+      const gs = { b1: 0, b2: 0, b3: 0, dom: 0, hrs: 0, monto: 0 };
+      const alto = 8 + 6.5 + rows.length * 7 + 8;
+      asegurar(alto <= Y_MAX - 40 ? alto : 24);
+      fondoFila(ctx.y, 7, tono.head);
+      P.f(8.5, "bold"); P.tc(tono.tinta); P.t(`${label}  ·  ${rows.length} ${rows.length === 1 ? "persona" : "personas"}`, M + 3, ctx.y + 4.8);
+      const subt = rows.reduce((a, l) => a + l.he.monto, 0);
+      P.t(`Subtotal ${Lsiempre(subt)}`, PW - M - 3, ctx.y + 4.8, { align: "right" });
+      ctx.y += 8;
+      hcab();
+      rows.forEach((l, i) => {
+        if (asegurar(7)) hcab();
+        fondoFila(ctx.y, 7, i % 2 ? tono.cell : [255, 255, 255]);
+        const b = l.he.bandas || {};
+        const y = ctx.y + 4.7;
+        hcel(0, String(i + 1), y); hcel(1, l.name, y, { bold: true }); hcel(2, Lsiempre(l.he.horaBase), y);
+        ["b1", "b2", "b3", "dom"].forEach((kk, j) => { const h = b[kk]?.hrs || 0; hcel(3 + j, h ? nf(h, 1) : "-", y); gs[kk] += h; });
+        hcel(7, nf(l.he.hrs, 1), y, { bold: true }); hcel(8, Lsiempre(l.he.monto), y, { bold: true }); hcel(9, { transferencia: "Transf.", cheque: "Cheque", ach: "ACH" }[l.metodoPago || "transferencia"], y);
+        gs.hrs += l.he.hrs; gs.monto += l.he.monto;
+        P.dc(LINEA); doc.setLineWidth(0.15); doc.line(M, ctx.y + 7, PW - M, ctx.y + 7);
+        ctx.y += 7;
+      });
+      fondoFila(ctx.y, 7, tono.head);
+      const yt = ctx.y + 4.7;
+      hcel(1, `Total ${label.toLowerCase()}`, yt, { bold: true, color: tono.tinta });
+      ["b1", "b2", "b3", "dom"].forEach((kk, j) => hcel(3 + j, gs[kk] ? nf(gs[kk], 1) : "-", yt, { bold: true, color: tono.tinta }));
+      hcel(7, nf(gs.hrs, 1), yt, { bold: true, color: tono.tinta }); hcel(8, Lsiempre(gs.monto), yt, { bold: true, color: tono.tinta });
+      Object.keys(hsum).forEach(kk => { hsum[kk] += gs[kk]; });
+      ctx.y += 7 + 6;
     });
-    P.dc(CARBON); doc.setLineWidth(0.4); doc.line(M, ctx.y + 0.2, PW - M, ctx.y + 0.2);
-    hcel(1, "Totales", ctx.y + 4.7, { bold: true });
-    ["b1", "b2", "b3", "dom"].forEach((k, j) => hcel(3 + j, hsum[k] ? nf(hsum[k], 1) : "-", ctx.y + 4.7, { bold: true }));
-    hcel(7, nf(hsum.hrs, 1), ctx.y + 4.7, { bold: true }); hcel(8, Lsiempre(hsum.monto), ctx.y + 4.7, { bold: true });
-    ctx.y += 7 + 10;
+    if (conHe.length) {
+      asegurar(9);
+      fondoFila(ctx.y, 8, [251, 217, 191]);
+      const yt = ctx.y + 5.3;
+      hcel(1, "TOTAL HORAS EXTRAS", yt, { bold: true, color: NARANJA_TEXTO, fs: 7.6 });
+      ["b1", "b2", "b3", "dom"].forEach((kk, j) => hcel(3 + j, hsum[kk] ? nf(hsum[kk], 1) : "-", yt, { bold: true, color: NARANJA_TEXTO }));
+      hcel(7, nf(hsum.hrs, 1), yt, { bold: true, color: NARANJA_TEXTO }); hcel(8, Lsiempre(hsum.monto), yt, { bold: true, color: NARANJA_TEXTO, fs: 7.6 });
+      ctx.y += 8 + 10;
+    }
     if (!conHe.length) { P.f(9); P.tc(GRIS); P.t("No hay horas extras para pagar en esta quincena.", M, ctx.y); ctx.y += 8; }
     asegurar(40);
     const hm = METODOS_PAGO.filter(([k]) => res.hePorMetodo[k]?.n).map(([k, lab]) => [`${lab} (${res.hePorMetodo[k].n})`, Lsiempre(res.hePorMetodo[k].monto)]);
