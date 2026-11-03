@@ -2388,6 +2388,18 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   el iPhone hacía zoom al tocar el login y la app quedaba corrida). Todo
   módulo o pantalla nueva tiene que verse bien a 390 px de ancho; la
   computadora NO cambia.
+  **2ª pasada (3-nov-2026, "que parezca una app que fuéramos a vender;
+  ordenada, que quepa sin tanto scroll")**: Inicio = `PanelMovil` con la barra
+  ☰, saludo compacto, aviso "Instalá GeoCore" (Safari, se cierra) y módulos en
+  LISTA AGRUPADA iOS (`.gm-grupo`/`.gm-item`); en el celular NO hay bienvenida
+  animada. El ☰ de cualquier módulo trae "Otros módulos" (`AppMovilContext`
+  que pone App). Login de app (marca al centro, campos agrupados). Carga =
+  `PantallaCarga` (esqueleto). Patrón de pantalla compacta: `TiraMovil`
+  (cifras en una fila deslizable), píldoras de vista, buscador + botón
+  "Filtros" que abre `HojaMovil`, y lista/tarjetas. Aplicado a Solicitudes
+  (GeoShopping/GeoMachinery), Mi RRHH, Flota y Rutas (GeoLogistics) y las
+  tiras de GeoSupply (`.gm-tira`). Al abrir un módulo entra deslizando
+  (`gmPush`).
 - **ESTILO ÚNICO DE REPORTES (26-oct-2026, Gerson: "todo reporte que
   exportemos, PDF o Excel, en estilo Apple")**: `src/reporte-estilo.js` es la
   ÚNICA fuente — reportes HTML para "Guardar PDF" (`reporteHTML` +
