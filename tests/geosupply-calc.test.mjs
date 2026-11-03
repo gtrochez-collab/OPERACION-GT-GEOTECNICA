@@ -291,3 +291,23 @@ test("saldoDePartida no cuenta sustitutos (otra unidad)", () => {
   assert.equal(s.comprada, 20);
   assert.equal(s.saldo, 302);
 });
+
+test("postergarLinea: pasa un ítem pendiente al corte siguiente sin tocar la solicitud", async () => {
+  const { postergarLinea, corteDeLinea, corteSiguiente, estadoEfectivoLinea } = await import("../src/geosupply-calc.js");
+  const sol = { corte: { anio: 2026, semana: 44 }, lineas: [] };
+  const c2 = corteSiguiente(sol.corte);
+  const l = { id: "a", estado: "por_cotizar" };
+  const n = postergarLinea(l, sol, c2, { por: "Gerson", motivo: "no la ocupan" });
+  assert.equal(n.corte.semana, 45);
+  assert.equal(n.postergada.de.semana, 44);
+  assert.equal(corteDeLinea(n, sol).semana, 45);
+  assert.equal(corteDeLinea(l, sol).semana, 44);
+  // comprada o ya en ese corte → null
+  assert.equal(postergarLinea({ estado: "comprada" }, sol, c2), null);
+  assert.equal(postergarLinea(n, sol, c2), null);
+  // pasarla otra vez conserva el corte original en `de`
+  assert.equal(postergarLinea(n, sol, corteSiguiente(c2)).postergada.de.semana, 44);
+  // revisión de almacén: el plazo se cuenta con el corte del ítem
+  const rev = { estado: "revision_almacen", corte: { anio: 2026, semana: 45 } };
+  assert.equal(estadoEfectivoLinea(rev, sol, null, new Date("2026-10-30T12:00:00-06:00")).estado, "revision_almacen");
+});

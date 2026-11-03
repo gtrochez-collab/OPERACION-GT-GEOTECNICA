@@ -293,10 +293,26 @@ export const pendienteDeCompra = (l) => {
  * TRATA como "por cotizar · sin revisión de almacén" (no hay servidor que la
  * mueva; el estado se escribe cuando Compras actúa).
  */
+// ── Ítems pasados a otro corte (3-nov-2026, Gerson) ──
+// Lo que le quedó a Compras sin cotizar y la obra ya no ocupa de momento se
+// corre al corte siguiente ÍTEM POR ÍTEM: lo ya comprado de la misma
+// solicitud se queda en su corte y el cumplimiento del residente (que sí
+// envió a tiempo) no cambia. `linea.corte` manda sobre el de la solicitud.
+export const corteDeLinea = (l, sol) => l?.corte || sol?.corte || null;
+export const LINEA_POSTERGABLE = ["por_cotizar", "revision_almacen"];
+/** Pasa la línea a `corte` (debe seguir pendiente de compra). Devuelve la línea nueva o null. */
+export const postergarLinea = (l, sol, corte, { por = "", at = "", motivo = "" } = {}) => {
+  if (!l || !corte || !LINEA_POSTERGABLE.includes(l.estado)) return null;
+  const de = corteDeLinea(l, sol);
+  if (de && de.anio === corte.anio && de.semana === corte.semana) return null;
+  return { ...l, corte: { anio: corte.anio, semana: corte.semana }, postergada: { de: l.postergada?.de || de, por, at, motivo } };
+};
+
 export const estadoEfectivoLinea = (l, sol, cfg, ahora = new Date()) => {
   if (!l) return { estado: "", sinRevisionAlmacen: false };
-  if (l.estado === "revision_almacen" && sol?.corte) {
-    const h = hitoDeCorte(sol.corte, "almacenHasta", cfg);
+  const corteL = corteDeLinea(l, sol);
+  if (l.estado === "revision_almacen" && corteL) {
+    const h = hitoDeCorte(corteL, "almacenHasta", cfg);
     if (estadoHito(h, ahora).pasado) return { estado: "por_cotizar", sinRevisionAlmacen: true };
   }
   return { estado: l.estado, sinRevisionAlmacen: !!l.sinRevisionAlmacen };

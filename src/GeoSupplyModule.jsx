@@ -44,7 +44,7 @@ import {
   DIAS_SEMANA, estadoEfectivoLinea, solicitudActiva, ESTADOS_LINEA, ESTADOS_SOLICITUD, ESTADOS_COTIZACION, estadoCabecera,
   estadoInicialLinea, alertasDeLinea, ALERTAS, puedeCancelar, aplicarAccionLinea, pendienteDeCompra, saldoDePartida, partidasPedibles,
   puPresupuestoUSD, evaluarCotizacion, siguienteFolio, siguienteCodigoCompra, borradorDesdeCotizacion, fueraDeCorte, metricasDashboard,
-  LINEA_TERMINAL, esPedidoPlantel, pendientePlantel, ymdSumar, partesHN, enviadaEnCorte, round2, corteAnterior, corteSiguiente,
+  LINEA_TERMINAL, esPedidoPlantel, pendientePlantel, ymdSumar, partesHN, enviadaEnCorte, round2, corteAnterior, corteSiguiente, corteDeLinea, postergarLinea,
 } from "./geosupply-calc.js";
 
 const ORANGE = "#E8762D";
@@ -886,6 +886,29 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     await actualizarSolicitud(s.id, (x) => ({ ...x, corte, corteAjustado: { de: x.corteAjustado?.de || x.corte, por: userName, at: new Date().toISOString(), motivo: motivo.trim() }, audit: [...(x.audit || []), auditEntry("corte_ajustado", `Pasada del ${etiquetaCorte(x.corte).titulo} al ${etiquetaCorte(corte).titulo}${motivo.trim() ? ` — ${motivo.trim()}` : ""}`)] }));
   };
   const actualizarCotizacion = (id, fn) => actualizarEn(K.cot, setCotizaciones, id, fn);
+  // Pasa ÍTEMS pendientes de cotizar a otro corte (3-nov-2026, Gerson: "lo
+  // que le quedó a Ana y los ingenieros ya no ocupan de momento"). Una
+  // escritura por solicitud, sobre el registro FRESCO de la nube.
+  const postergarItems = async (xs, corte) => {
+    if (!xs.length) return;
+    const motivo = window.prompt(`Pasar ${xs.length} ${xs.length === 1 ? "ítem" : "ítems"} al ${etiquetaCorte(corte).titulo}.\n¿Por qué? (opcional)`, "");
+    if (motivo === null) return;
+    const porSol = new Map();
+    xs.forEach(x => { if (!porSol.has(x.s.id)) porSol.set(x.s.id, new Set()); porSol.get(x.s.id).add(x.l.id); });
+    const at = new Date().toISOString();
+    let ok = 0, movidos = 0;
+    for (const [solId, ids] of porSol) {
+      let n = 0;
+      const rec = await actualizarSolicitud(solId, (sol) => {
+        n = 0;
+        const lineas = (sol.lineas || []).map(l => { if (!ids.has(l.id)) return l; const nl = postergarLinea(l, sol, corte, { por: userName, at, motivo: motivo.trim() }); if (nl) n++; return nl || l; });
+        if (!n) return sol;
+        return { ...sol, lineas, audit: [...(sol.audit || []), auditEntry("items_postergados", `${n} ${n === 1 ? "ítem pasado" : "ítems pasados"} al ${etiquetaCorte(corte).titulo}${motivo.trim() ? ` — ${motivo.trim()}` : ""}`)] };
+      });
+      if (rec) { ok++; movidos += n; }
+    }
+    if (ok < porSol.size) alert(`Se movieron ${movidos} ítems; ${porSol.size - ok} solicitud(es) no se pudieron guardar. Revisá la conexión y volvé a intentar.`);
+  };
 
   // Acción sobre UNA línea (Coordinador, Almacén, Compras). La transición la
   // valida geosupply-calc; acá solo se aplica al registro fresco y se audita.
@@ -1174,6 +1197,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const [solQ, setSolQ] = useState("");
   const [solProy, setSolProy] = useState("");
   const [solCorte, setSolCorte] = useState("");
+  const [compCorte, setCompCorte] = useState("");
   const [hoyCorte, setHoyCorte] = useState("");
   const [solVista, setSolVista] = useState("abiertas");
   const [cotVista, setCotVista] = useState("enviada");
@@ -1243,6 +1267,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           {l.solucion && enSolicitud && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{l.solucion}{l.categoria ? ` · ${l.categoria}` : ""}</span>}
           {al.map(a => <Chip key={a} c={a === "urgente" ? C_ROJO : C_AMARILLO}>{ALERTAS[a]}{a === "excede_saldo" && sd ? ` · saldo ${fmtCant(sd.saldo)}` : ""}</Chip>)}
           {ef?.sinRevisionAlmacen && <Chip c={C_AMARILLO}>Sin revisión de almacén</Chip>}
+          {l.postergada && <Chip c={C_GRIS} title={`${l.postergada.por || "El Coordinador"} lo pasó${l.postergada.motivo ? ` — ${l.postergada.motivo}` : ""}`}>Pasado al {etiquetaCorte(corteDeLinea(l, s)).titulo}{l.postergada.de ? ` · era del ${etiquetaCorte(l.postergada.de).titulo}` : ""}</Chip>}
           {(s.cotizacionesAdjuntas || []).length > 0 && <Chip c={C_AZUL}>Trae cotización</Chip>}
           {l.plantel && num(l.enviadoPlantel) > 0 && <Chip c={C_VERDE}>Enviado {fmtCant(l.enviadoPlantel)} de {fmtCant(l.cantidad)}</Chip>}
           {(l.fueraPresupuesto || l.plantel) && l.justificacion && <span style={{ fontSize: 11, color: "var(--text-2)", fontStyle: "italic" }}>"{l.justificacion}"</span>}
@@ -1485,7 +1510,15 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const puede = rol === "compras" || esCoordinador;
     const items = lineasEf.filter(x => x.ef.estado === "por_cotizar").map(x => ({ ...x, lGuardada: x.l, l: x.ef.sinRevisionAlmacen && x.l.estado === "revision_almacen" ? { ...x.l, estado: "por_cotizar", aCotizar: num(x.l.cantidad), despachadoAlmacen: 0 } : x.l })).filter(x => pendienteDeCompra(x.l) > 0);
     const puedeAlm = rol === "almacen" || esCoordinador;
-    const grupos = porProyecto(items);
+    // Filtro por corte del ÍTEM (un ítem pasado al siguiente corte cae ahí).
+    const idCorte = (x) => { const c = corteDeLinea(x.l, x.s); return c ? etiquetaCorte(c).id : ""; };
+    const cortesItems = [...new Map(items.filter(idCorte).map(x => [idCorte(x), corteDeLinea(x.l, x.s)])).entries()].sort((a, b) => (a[1].anio - b[1].anio) || (a[1].semana - b[1].semana));
+    const filtro = cortesItems.some(([k]) => k === compCorte) ? compCorte : "";
+    const itemsTodos = items;
+    const visibles = filtro ? items.filter(x => idCorte(x) === filtro) : items;
+    const corteFiltro = filtro ? cortesItems.find(([k]) => k === filtro)[1] : null;
+    const puedePasar = esCoordinador;
+    const grupos = porProyecto(visibles);
     const devueltas = cotizaciones.filter(q => q.estado === "devuelta");
     const borr = cotizaciones.filter(q => q.estado === "borrador");
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1503,11 +1536,20 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           {puede && <Btn small onClick={() => setModal({ t: "cotizacion", q })}>Corregir</Btn>}
         </div>)}
       </div>}
-      {items.length === 0 ? <Vacio>Nada por cotizar.</Vacio> : <>
+      {cortesItems.length > 0 && <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {pillBtn("Todos los cortes", !filtro, () => setCompCorte(""), { n: itemsTodos.length })}
+        {cortesItems.map(([k, c]) => pillBtn(etiquetaCorte(c).titulo, filtro === k, () => setCompCorte(k), { n: itemsTodos.filter(x => idCorte(x) === k).length }))}
+        {puedePasar && corteFiltro && <div style={{ marginLeft: "auto" }}><Btn small variant="ghost" disabled={ocupado} onClick={() => postergarItems(visibles.filter(x => !esPedidoPlantel(x.s) && !(x.l.quoteIds || []).length), corteSiguiente(corteFiltro))}>Pasar los {visibles.filter(x => !esPedidoPlantel(x.s) && !(x.l.quoteIds || []).length).length} al {etiquetaCorte(corteSiguiente(corteFiltro)).titulo}</Btn></div>}
+      </div>}
+      {visibles.length === 0 ? <Vacio>Nada por cotizar.</Vacio> : <>
         {barraGrupos("compras", grupos)}
         {grupos.map(g => <Grupo key={g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("compras", g.k)} onToggle={() => toggleGrupo("compras", g.k)}
           derecha={puede && <Btn small onClick={() => setModal({ t: "cotizacion", projectCode: g.k })}>Cotizar ({g.items.length})</Btn>}>
-          {porSolicitud(g.items, x => filaLinea({ ...x, derecha: (x.l.quoteIds || []).length ? <Chip c={C_NARANJA}>Ya en {x.l.quoteIds.length} cotización(es)</Chip> : (puedeAlm && x.lGuardada?.estado === "revision_almacen") ? <><span style={{ fontSize: 11.5, color: "var(--text-3)" }}>¿Hay en almacén?</span>{botonesAlmacen({ ...x, l: x.lGuardada })}</> : null }))}
+          {porSolicitud(g.items, x => {
+            const sigC = corteDeLinea(x.l, x.s) ? corteSiguiente(corteDeLinea(x.l, x.s)) : null;
+            const pasar = puedePasar && sigC && !esPedidoPlantel(x.s) && !(x.l.quoteIds || []).length && <Btn small variant="ghost" disabled={ocupado} title="La obra no lo ocupa de momento: lo corre al siguiente corte" onClick={() => postergarItems([x], sigC)}>Pasar al {etiquetaCorte(sigC).titulo}</Btn>;
+            return filaLinea({ ...x, derecha: (x.l.quoteIds || []).length ? <Chip c={C_NARANJA}>Ya en {x.l.quoteIds.length} cotización(es)</Chip> : (puedeAlm && x.lGuardada?.estado === "revision_almacen") ? <><span style={{ fontSize: 11.5, color: "var(--text-3)" }}>¿Hay en almacén?</span>{botonesAlmacen({ ...x, l: x.lGuardada })}{pasar}</> : pasar || null });
+          })}
         </Grupo>)}
       </>}
     </div>;
