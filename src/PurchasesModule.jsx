@@ -369,8 +369,11 @@ const Select = ({ label, options, emptyLabel = "—", style: sx, ...p }) => {
   return <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>{label && <label style={LABEL_CP}>{label}</label>}<select style={{ ...CTRL_CP, ...sx }} {...p}><option value="">{emptyLabel}</option>{(options || []).map((o, i) => o && typeof o === "object" && o.group ? <optgroup key={o.group + i} label={o.group}>{(o.options || []).map(opt)}</optgroup> : opt(o))}</select></div>;
 };
 
-const Modal = ({ title, onClose, children, wide, size }) => <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,.38)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 12 }} onClick={onClose}>
-  <div style={{ background: "#fff", borderRadius: 22, padding: "24px 26px", width: size === "xl" ? "96vw" : wide ? "min(1180px, 90vw)" : 640, maxWidth: "98vw", maxHeight: "94vh", overflowY: "auto", boxShadow: "0 24px 70px rgba(44,42,40,.28)", color: "#2C2A28" }} onClick={e => e.stopPropagation()}>
+// En el celular (< 768 px) la ventana sube como HOJA desde abajo y usa todo
+// el ancho (3-nov-2026, rediseño móvil).
+const esTel = () => typeof window !== "undefined" && window.innerWidth < 768;
+const Modal = ({ title, onClose, children, wide, size }) => <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,.38)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", alignItems: esTel() ? "flex-end" : "center", justifyContent: "center", zIndex: 1000, padding: esTel() ? 0 : 12 }} onClick={onClose}>
+  <div style={{ background: "#fff", borderRadius: esTel() ? "22px 22px 0 0" : 22, padding: esTel() ? "18px 16px calc(20px + env(safe-area-inset-bottom))" : "24px 26px", width: esTel() ? "100vw" : size === "xl" ? "96vw" : wide ? "min(1180px, 90vw)" : 640, maxWidth: esTel() ? "100vw" : "98vw", maxHeight: esTel() ? "94dvh" : "94vh", overflowY: "auto", boxShadow: "0 24px 70px rgba(44,42,40,.28)", color: "#2C2A28", boxSizing: "border-box" }} onClick={e => e.stopPropagation()}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 12 }}>
       <h3 style={{ margin: 0, font: "800 19px/1.2 var(--display, inherit)", letterSpacing: "-.01em" }}>{title}</h3>
       <button onClick={onClose} aria-label="Cerrar" style={{ background: "rgba(44,42,40,.05)", border: "none", width: 34, height: 34, borderRadius: "50%", fontSize: 16, cursor: "pointer", color: "#6E6862", flexShrink: 0 }}>✕</button>
@@ -8238,6 +8241,40 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
       {/* BORRADORES de GeoSupply (2-oct-2026): agrupados por proyecto y corte */}
       {filter.ver === "borradores" ? renderBorradoresSupply(dataSorted) : <>
+      {/* CELULAR (3-nov-2026): una TARJETA por solicitud en vez de la tabla
+          de 12 columnas (en el teléfono había que deslizar de lado). Mismos
+          datos, mismos chips; tocarla abre el detalle. */}
+      {isMobile ? <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {dataSorted.length === 0 && <div className="gt-vidrio" style={{ padding: 28, textAlign: "center", color: "#94A3B8", fontSize: 14 }}>{cp.length === 0 ? "Aún no hay solicitudes registradas para esta empresa." : "No hay resultados con los filtros aplicados."}</div>}
+        {dataSorted.map(p => {
+          const venc = estaVencida(p); const diasV = diasEsperandoPago(p);
+          const chip = (txt, c, title) => <span title={title} style={{ padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 800, color: c.color, background: c.bg, whiteSpace: "nowrap" }}>{txt}</span>;
+          return <div key={p.id} role="button" tabIndex={0} onClick={() => setModal({ t: "detail", d: p })}
+            style={{ background: venc ? C_ROJO.bg : "#fff", borderRadius: 18, padding: "13px 14px", boxShadow: "0 1px 2px rgba(44,42,40,.05), 0 6px 18px rgba(44,42,40,.06)", border: venc ? `1px solid ${C_ROJO.borde}` : "1px solid rgba(44,42,40,.05)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
+              <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 800, fontSize: 12, color: "#6E6862" }}>{p.codigo || "Sin código"}</span>
+              <span style={{ fontWeight: 800, fontSize: 16, color: CHARCOAL, whiteSpace: "nowrap" }}>{fmtL(p.amount)}</span>
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: CHARCOAL, lineHeight: 1.25 }}>{p.provider || "Sin proveedor"}</div>
+            <div style={{ fontSize: 12.5, color: "#6E6862" }}>{p.projectCode}</div>
+            {p.description && <div style={{ fontSize: 13, color: "#5C5853", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", whiteSpace: "pre-line" }}>{p.description}</div>}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 2 }}>
+              <StatusBadge status={p.status} />
+              {venc && chip(`Vencida · ${diasV} d`, C_ROJO, `Lleva ${diasV} días sin pago`)}
+              <TreasuryBadge status={p.treasuryStatus} />
+              {esAbonoParcial(p) && chip(`Abonada · falta ${fmtL(saldoDe(p))}`, C_AMARILLO)}
+              {p.tipoCompra === "servicio" && chip("Servicio", C_AZUL)}
+              {p.origenSupply && chip("GeoSupply", C_NARANJA_CHIP)}
+              <DeliveryBadge status={p.deliveryStatus === "pendiente_entrega" && despachos.some(d => d.sourcePurchaseId === p.id && d.estado !== "cancelado" && (d.estado === "entregado" || d.estado === "cerrado")) ? "pendiente_ficha" : p.deliveryStatus} />
+            </div>
+            <div style={{ fontSize: 11.5, color: "#8A847D", display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <span>Cargada {fmt(p.createdAt)}</span>
+              {p.paymentDate && <span>Pagada {fmt(p.paymentDate)}</span>}
+              {p.opsResponsible && <span>{p.opsResponsible}</span>}
+            </div>
+          </div>;
+        })}
+      </div> : <>
       {/* Tabla */}
       <div className="gt-vidrio" style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -8299,6 +8336,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           </tbody>
         </table>
       </div>
+      </>}
       </>}
     </div>;
   };

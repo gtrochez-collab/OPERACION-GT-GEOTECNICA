@@ -102,8 +102,10 @@ export const Chip = ({ children, c = C_GRIS, style: sx, title }) => <span title=
 // `fondoCierra`: si es false, el click en el fondo NO cierra — solo la ✕ / Cancelar.
 // Los forms largos (PresupuestoForm, MovilizacionForm) lo apagan: un click fuera
 // del panel tiraba las 14 partidas tipeadas sin confirm (revisión adversarial 9-sep).
-export const Modal = ({ title, onClose, children, wide, size, fondoCierra = true }) => <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,.38)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 12 }} onClick={fondoCierra ? onClose : undefined}>
-  <div style={{ background: "#fff", borderRadius: 22, padding: "24px 26px", width: size === "xl" ? "96vw" : wide ? "min(980px, 94vw)" : 600, maxWidth: "98vw", maxHeight: "94vh", overflowY: "auto", boxShadow: "0 24px 70px rgba(44,42,40,.28)", color: CHARCOAL }} onClick={e => e.stopPropagation()}>
+// En el celular la ventana sube como HOJA desde abajo, a todo el ancho.
+const esTel = () => typeof window !== "undefined" && window.innerWidth < 768;
+export const Modal = ({ title, onClose, children, wide, size, fondoCierra = true }) => <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,.38)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", alignItems: esTel() ? "flex-end" : "center", justifyContent: "center", zIndex: 1000, padding: esTel() ? 0 : 12 }} onClick={fondoCierra ? onClose : undefined}>
+  <div style={{ background: "#fff", borderRadius: esTel() ? "22px 22px 0 0" : 22, padding: esTel() ? "18px 16px calc(20px + env(safe-area-inset-bottom))" : "24px 26px", width: esTel() ? "100vw" : size === "xl" ? "96vw" : wide ? "min(980px, 94vw)" : 600, maxWidth: esTel() ? "100vw" : "98vw", maxHeight: esTel() ? "94dvh" : "94vh", boxSizing: "border-box", overflowY: "auto", boxShadow: "0 24px 70px rgba(44,42,40,.28)", color: CHARCOAL }} onClick={e => e.stopPropagation()}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 12 }}>
       <h3 style={{ margin: 0, font: "800 19px/1.2 var(--display)", letterSpacing: "-.01em" }}>{title}</h3>
       <button onClick={onClose} aria-label="Cerrar" style={{ background: "rgba(44,42,40,.05)", border: "none", width: 34, height: 34, borderRadius: "50%", fontSize: 16, cursor: "pointer", color: "#6E6862" }}>✕</button>
