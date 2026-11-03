@@ -98,8 +98,11 @@ const UBICACIONES_TABLET = [...new Set(USERS.flatMap(u => ubicacionesDeTablet(u)
 const tabletDe = (label) => USERS.find(u => u.label === label) || null;
 // ¿El proyecto asignado (short) pertenece a una sede con tablet?
 const proyectoConTablet = (short) => {
-  const p = sinAcentos(short);
+  let p = sinAcentos(short);
   if (!p || p === "SIN PROYECTO") return false;
+  // Desde el 28-oct-2026 el plantel se llama PLAN-TALLER: marca en la tablet
+  // del PLANTEL (sin esto, Oscar Paz y el taller nunca salían como ausentes).
+  if (p.startsWith("PLAN-TALLER")) p += " PLANTEL";
   return UBICACIONES_TABLET.some(u => p.includes(sinAcentos(u)));
 };
 // Ubicación de la tablet del usuario logueado (por su label en users.js).
@@ -525,8 +528,11 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       // listos para el ➕ de marcaje manual, o para confirmar el NSP en la
       // hoja de GeoTeam. Si nadie marcó ese día (tablet apagada), no se
       // inventa nada.
+      // HOY también salen (3-nov-2026, Gerson: "quiero ver a todos los que
+      // no marcaron") como "Sin marcar": el día sigue abierto, así que no es
+      // todavía un "No se presentó".
       const cerradoDia = fecha < hoyF;
-      if (cerradoDia && delDia.some(mk => mk && mk.tipo === "entrada")) {
+      if (fecha <= hoyF && delDia.some(mk => mk && mk.tipo === "entrada")) {
         const marcaron = new Set(delDia.map(mk => mk.empId));
         emps.forEach(e => {
           if (e.status !== "active" || marcaron.has(e.id)) return;
@@ -534,7 +540,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
           if (regPersona && e.id !== regPersona) return;
           const proy = proyectoDe(e, fecha);
           if (!proyectoConTablet(proy)) return;
-          rowsAll.push({ fecha, emp: e, proy, ent: null, sal: null, brutas: null, almuerzo: 0, netas: null, estado: "—", cerrado: true, ausente: true });
+          rowsAll.push({ fecha, emp: e, proy, ent: null, sal: null, brutas: null, almuerzo: 0, netas: null, estado: "—", cerrado: cerradoDia, ausente: true });
         });
       }
     });
@@ -542,12 +548,13 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
     // cambiar el rango el select quedaba "huérfano" en blanco).
     const proyOpciones = [...new Set([...rowsAll.map(r => r.proy), ...(regProy ? [regProy] : [])])].sort();
     const rows = (regProy ? rowsAll.filter(r => r.proy === regProy) : rowsAll)
-      .sort((a, b) => a.fecha.localeCompare(b.fecha) || String(a.emp.fullName).localeCompare(String(b.emp.fullName)));
+      .sort((a, b) => a.fecha.localeCompare(b.fecha) || (a.ausente ? 1 : 0) - (b.ausente ? 1 : 0) || String(a.emp.fullName).localeCompare(String(b.emp.fullName)));
     const grupos = {};
     rows.forEach(r => { (grupos[r.proy] = grupos[r.proy] || []).push(r); });
     const totNetas = rows.reduce((s, r) => s + (r.netas || 0), 0);
     const totTardes = rows.filter(r => r.ent && r.ent.tarde).length;
-    return { rows, grupos, proyOpciones, totNetas, totTardes, truncado };
+    const totAusentes = rows.filter(r => r.ausente).length;
+    return { rows, grupos, proyOpciones, totNetas, totTardes, totAusentes, truncado };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [regMarks, regDesde, regHasta, regPersona, regProy, emps, cuads, now.fecha]);
 
@@ -1160,7 +1167,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         };
         // El cálculo (filas, grupos, totales) vive en regData (useMemo arriba)
         // para no recomputarse con cada tick del reloj.
-        const { rows, grupos, proyOpciones, totNetas, totTardes, truncado } = regData;
+        const { rows, grupos, proyOpciones, totNetas, totTardes, totAusentes, truncado } = regData;
         const personasOpc = activos.slice().sort((a, b) => String(a.fullName).localeCompare(String(b.fullName)));
         const nombreCorto = (s) => { const p = String(s || "").split(/\s+/); return p.length > 2 ? `${p[0]} ${p[1]} ${p[2][0]}.` : s; };
         const chip = (txt, on, onClick) => (
@@ -1193,9 +1200,9 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
               ],
               filas: rows.map(r => ({
                 fecha: r.fecha, dia: fmtDiaCorto(r.fecha), colab: r.emp.fullName, empresa: (COMPANIES[r.emp.company] || {}).name || r.emp.company, proy: r.proy,
-                ent: r.ent ? r.ent.hora : (r.cerrado ? "NO MARCO" : ""), minTarde: r.ent && r.ent.tarde ? Number(minTardeMk(r.ent)) || 0 : null,
+                ent: r.ent ? r.ent.hora : (r.cerrado ? "NO MARCO" : r.ausente ? "SIN MARCAR" : ""), minTarde: r.ent && r.ent.tarde ? Number(minTardeMk(r.ent)) || 0 : null,
                 estTarde: r.ent && r.ent.tarde ? estadoTardanza(r.ent) : "",
-                sal: r.sal ? r.sal.hora : (r.cerrado ? "NO MARCO" : ""), coment: (r.sal && r.sal.comentario) || "",
+                sal: r.sal ? r.sal.hora : (r.cerrado ? "NO MARCO" : r.ausente ? "SIN MARCAR" : ""), coment: (r.sal && r.sal.comentario) || "",
                 manual: [r.ent && r.ent.manual ? `ENTRADA manual por ${r.ent.editadoPor}: ${r.ent.justificacion || ""}` : "", r.sal && r.sal.manual ? `SALIDA manual por ${r.sal.editadoPor}: ${r.sal.justificacion || ""}` : ""].filter(Boolean).join(" | "),
                 brutas: r.brutas != null ? Math.round(r.brutas * 100) / 100 : null, almuerzo: r.brutas != null ? Math.round(r.almuerzo * 100) / 100 : null,
                 netas: r.netas != null ? Math.round(r.netas * 100) / 100 : null,
@@ -1212,7 +1219,8 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
           if (!w) return alert("Permití las ventanas emergentes para imprimir.");
           const noMarco = rChip("No marcó", "rojo");
           let cuerpo = rKpis([
-            { label: "Registros", valor: fmtNum(rows.length) },
+            { label: "Registros", valor: fmtNum(rows.length - totAusentes) },
+            { label: "No marcaron", valor: fmtNum(totAusentes), tono: totAusentes ? "rojo" : undefined },
             { label: "Horas laboradas", valor: fmtHoras(totNetas) },
             { label: "Llegadas tarde", valor: fmtNum(totTardes), tono: totTardes ? "naranja" : undefined },
             { label: "Proyectos", valor: fmtNum(Object.keys(grupos).length) },
@@ -1227,7 +1235,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
               return [
                 `<span class="mono">${escHTML(fmtDiaCorto(r.fecha))} ${r.fecha.slice(0, 4)}</span>`,
                 `<b>${escHTML(r.emp.fullName)}</b>`,
-                r.ent ? `<span class="mono">${escHTML(r.ent.hora)}</span>${r.ent.manual ? ` <span style="color:${RP.texto3}">manual</span>` : ""}${tarde}` : (r.cerrado ? noMarco : "—"),
+                r.ent ? `<span class="mono">${escHTML(r.ent.hora)}</span>${r.ent.manual ? ` <span style="color:${RP.texto3}">manual</span>` : ""}${tarde}` : (r.cerrado ? noMarco : r.ausente ? rChip("Sin marcar", "naranja") : "—"),
                 r.sal ? `<span class="mono">${escHTML(r.sal.hora)}</span>${r.sal.manual ? ` <span style="color:${RP.texto3}">manual</span>` : ""}` : (r.cerrado ? noMarco : "—"),
                 justifs ? `<span style="font-size:9.5px;color:${RP.texto2}">${escHTML(justifs)}</span>` : "",
                 r.brutas != null ? fmtHoras(r.brutas) : "—",
@@ -1255,6 +1263,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         const estadoDe = (r) => {
           if (r.netas != null) return chipR("Completo", GREEN, "#DCF3E4");
           if (r.estado === "en curso") return chipR("En jornada", STONE, "rgba(44,42,40,.06)");
+          if (r.ausente && !r.cerrado) return chipR("Sin marcar", AMBER, "rgba(232,118,45,.14)", "Hoy todavía no ha marcado entrada");
           if (r.ausente) return chipR("No se presentó", RED, "rgba(192,57,43,.08)");
           if (r.ent && !r.sal && r.cerrado) return chipR("Sin salida", AMBER, "rgba(232,118,45,.14)");
           if (!r.ent && r.sal) return chipR("Sin entrada", AMBER, "rgba(232,118,45,.14)");
@@ -1288,7 +1297,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
             {btnR("PDF", imprimirPDF)}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
-            {[["Registros", rows.length, CHARCOAL], ["Horas laboradas", fmtHoras(totNetas), CHARCOAL], ["Llegadas tarde", totTardes, totTardes ? AMBER : CHARCOAL], ["Proyectos", Object.keys(grupos).length, CHARCOAL]].map(([l, v, c]) => (
+            {[["Registros", rows.length - totAusentes, CHARCOAL], ["No marcaron", totAusentes, totAusentes ? RED : CHARCOAL], ["Horas laboradas", fmtHoras(totNetas), CHARCOAL], ["Llegadas tarde", totTardes, totTardes ? AMBER : CHARCOAL], ["Proyectos", Object.keys(grupos).length, CHARCOAL]].map(([l, v, c]) => (
               <div key={l} className="gt-vidrio" style={{ padding: "12px 16px" }}>
                 <div style={{ font: "800 24px/1 var(--display)", color: c, letterSpacing: "-.02em" }}>{v}</div>
                 <div style={{ fontSize: 11.5, color: STONE, marginTop: 5 }}>{l}</div>
@@ -1320,11 +1329,11 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
                     <span style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nombreCorto(r.emp.fullName)}</span>
                   </span>
                   <span style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    {r.ent ? hora(r.ent, st ? st.hora : GREEN) : r.cerrado ? falta(r, "entrada") : <span style={{ color: "#C9C3BA" }}>—</span>}
+                    {r.ent ? hora(r.ent, st ? st.hora : GREEN) : r.cerrado || r.ausente ? falta(r, "entrada") : <span style={{ color: "#C9C3BA" }}>—</span>}
                     {st && chipR(`+${minTardeMk(r.ent)} min`, st.fg, st.bg, `Tarde · ${st.txt}`)}
                   </span>
                   <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-                    <span>{r.sal ? hora(r.sal, "#1D5FAF") : r.cerrado ? falta(r, "salida") : <span style={{ color: "#C9C3BA" }}>—</span>}</span>
+                    <span>{r.sal ? hora(r.sal, "#1D5FAF") : r.cerrado || r.ausente ? falta(r, "salida") : <span style={{ color: "#C9C3BA" }}>—</span>}</span>
                     {r.sal && r.sal.comentario && <span title={r.sal.comentario} style={{ fontSize: 11, color: STONE, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.sal.comentario}</span>}
                   </span>
                   <span title={r.brutas != null ? `${fmtHoras(r.brutas)} brutas${r.almuerzo ? " − 1 h de almuerzo" : ""}` : ""} style={{ textAlign: "right", fontFamily: "var(--mono)", fontSize: 13, fontWeight: 700, color: r.netas != null ? CHARCOAL : "#C9C3BA" }}>{r.netas != null ? fmtHoras(r.netas) : "—"}</span>

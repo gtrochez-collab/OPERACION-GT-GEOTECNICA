@@ -2065,7 +2065,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     // SUGIERE: el 0 lo confirma RRHH con el botón, se aplica al BORRADOR y
     // nada se persiste hasta tocar "Guardar asistencia". Días sin ningún
     // marcaje (tablet apagada / antes de GeoClock) no generan sugerencias.
-    const esProjClock = (short) => /PLANTEL|ADMINISTRA/i.test(String(short || ""));
+    const esProjClock = (short) => /PLANTEL|PLAN-TALLER|ADMINISTRA/i.test(String(short || ""));
     const nspSugeridos = (() => {
       const marks = (gcMarks[`${sheet.periodo}|${sheet.quincena}`]) || [];
       if (!marks.length) return [];
