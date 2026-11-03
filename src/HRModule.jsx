@@ -8,7 +8,7 @@ import { hoyISO } from "./fechas.js";
 // GT_CSS (vidrio): desde el 15-oct-2026 lo monta TODO GeoTeam (rediseño de
 // encabezado, Dashboard, KPI's y Empleados).
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga } from "./movil.jsx";
 import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, rProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, escHTML, fmtLps, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES, USUARIOS_DE_BAJA } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
@@ -1527,7 +1527,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     let r2; const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setGrafAnim(1)); });
     return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
   }, [sec, loaded, co]);
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoTeam…</div>;
+  if (!loaded) return <PantallaCarga titulo={"GeoTeam"} />;
 
   // ── FORMS ──
   const EmpForm = ({ emp, onSave }) => {

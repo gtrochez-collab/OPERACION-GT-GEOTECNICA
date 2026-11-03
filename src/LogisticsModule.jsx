@@ -25,7 +25,7 @@ import { generateFichaPDF, restoreFiles } from "./PurchasesModule.jsx";
 // DESPUÉS del await y el navegador bloqueaba el popup.
 import { VisorArchivo } from "./visor-archivo.jsx";
 import { hoyISO } from "./fechas.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga, TiraMovil, HojaMovil } from "./movil.jsx";
 
 // ── Hook responsive ──
 function useIsMobile(breakpoint = 768) {
@@ -817,6 +817,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
 
   const isMobile = useIsMobile();
   const [menuMovil, setMenuMovil] = useState(false);
+  const [filtrosMovil, setFiltrosMovil] = useState(false);
   const [vehicles, setVehicles] = useState([]);
   const [maintenances, setMaintenances] = useState([]);
   // ── GUARDIA ANTI-PISADA DEL AUTO-REFRESH (20-ago-2026) ──────────────────
@@ -1416,10 +1417,57 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     { id: "motoristas", label: "Motoristas", icon: "👤", soon: true },
   ];
 
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT.body, color: BRAND.graphite }}>Cargando Logistica...</div>;
+  if (!loaded) return <PantallaCarga titulo={"GeoLogistics"} />;
 
   // ── RENDER FLOTA ──
-  const renderFlota = () => <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+  // CELULAR (3-nov-2026): cifras en una fila, buscador + hoja de filtros y
+  // una lista de vehículos (antes: 6 cajas con emojis, 4 filtros a lo ancho
+  // y una tabla de 11 columnas).
+  const renderFlotaMovil = () => {
+    const activos = (filter.estado ? 1 : 0) + (filter.projectCode ? 1 : 0) + (filter.type ? 1 : 0);
+    const selM = { width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", padding: "0 12px", fontFamily: "inherit", color: BRAND.charcoal };
+    return <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <TiraMovil items={[
+        { v: stats.total, l: "vehículos" },
+        { v: stats.operativos, l: "operativos", c: "#177243" },
+        { v: stats.asignados, l: "en proyecto" },
+        stats.mantenimiento > 0 && { v: stats.mantenimiento, l: "mantenimiento", c: "#8A5A00" },
+        stats.reparacion > 0 && { v: stats.reparacion, l: "reparación", c: "#C75F1F" },
+        stats.fueraServicio > 0 && { v: stats.fueraServicio, l: "fuera de servicio", c: "#B03024" },
+      ]} />
+      <div style={{ display: "flex", gap: 8 }}>
+        <input value={filter.q} onChange={e => setFilter(f => ({ ...f, q: e.target.value }))} placeholder="Placa, marca o motorista" style={{ flex: 1, minWidth: 0, height: 42, padding: "0 14px", border: "none", borderRadius: 12, background: "#EDECEA", fontFamily: "inherit", color: BRAND.charcoal, outline: "none" }} />
+        <button type="button" onClick={() => setFiltrosMovil(true)} style={{ flexShrink: 0, height: 42, padding: "0 14px", borderRadius: 12, border: "none", background: activos ? "rgba(232,118,45,.14)" : "#EDECEA", color: activos ? "#A94E16" : BRAND.charcoal, font: "700 14px/1 var(--sans, inherit)", cursor: "pointer" }}>Filtros{activos ? ` · ${activos}` : ""}</button>
+      </div>
+      <HojaMovil abierta={filtrosMovil} onClose={() => setFiltrosMovil(false)} titulo="Filtros">
+        <div className="gm-encab" style={{ marginTop: 4 }}>Estado</div>
+        <select value={filter.estado} onChange={e => setFilter(f => ({ ...f, estado: e.target.value }))} style={selM}><option value="">Todos</option>{ESTADOS_VEHICULO.map(o => <option key={o.value || o} value={o.value || o}>{o.label || o}</option>)}</select>
+        <div className="gm-encab">Proyecto</div>
+        <select value={filter.projectCode} onChange={e => setFilter(f => ({ ...f, projectCode: e.target.value }))} style={selM}><option value="">Todos</option>{allProjects.map(p => <option key={p.short} value={p.short}>{p.short}</option>)}</select>
+        <div className="gm-encab">Tipo</div>
+        <select value={filter.type} onChange={e => setFilter(f => ({ ...f, type: e.target.value }))} style={selM}><option value="">Todos</option>{TIPOS_VEHICULO.map(o => <option key={o.value || o} value={o.value || o}>{o.label || o}</option>)}</select>
+        {activos > 0 && <button type="button" onClick={() => setFilter(f => ({ ...f, estado: "", projectCode: "", type: "" }))} style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", color: "#B03024", font: "700 15px/1 var(--sans, inherit)" }}>Limpiar filtros</button>}
+      </HojaMovil>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 13, color: "#8A847D" }}>{filtered.length} vehículos{stats.pendientes > 0 ? ` · ${stats.pendientes} con reparaciones pendientes` : ""}</span>
+        {canEdit && <button type="button" onClick={() => setModal({ t: "new" })} style={{ border: "none", background: "transparent", color: "#C75F1F", font: "700 14.5px/1 var(--sans, inherit)", cursor: "pointer" }}>+ Nuevo</button>}
+      </div>
+      {filtered.length === 0 ? <div className="gm-grupo" style={{ padding: 18, fontSize: 13.5, color: "#8A847D", textAlign: "center" }}>{vehicles.length === 0 ? "Aún no hay vehículos registrados." : "No hay vehículos con esos filtros."}</div>
+        : <div className="gm-grupo">{filtered.slice().sort((a, b) => (a.plate || "").localeCompare(b.plate || "")).map(v => {
+          const ec = estadoCfg(v.estado);
+          const tienePend = v.pendientesReparacion && v.pendientesReparacion.trim().length > 0;
+          return <button key={v.id} type="button" className="gm-item" onClick={() => setModal({ t: "detail", d: v })} style={{ alignItems: "flex-start", paddingTop: 11, paddingBottom: 11 }}>
+            <span style={{ width: 34, height: 34, borderRadius: 10, background: ec.bgSoft || "rgba(44,42,40,.06)", color: ec.color, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, font: "800 10px/1 var(--sans, inherit)" }}>{String(v.type || "").slice(0, 3).toUpperCase()}</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}><span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 14.5, color: BRAND.charcoal }}>{v.plate}</span><span style={{ fontSize: 13, color: "#5C5853", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{v.brand} {v.model}</span></span>
+              <span style={{ display: "block", fontSize: 12.5, color: "#8A847D", marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{[v.projectCode, v.motorista].filter(Boolean).join(" · ") || "Sin asignar"}{tienePend ? " · reparación pendiente" : ""}</span>
+            </span>
+            <span style={{ flexShrink: 0, padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 800, color: ec.color, background: ec.bgSoft || "rgba(44,42,40,.06)", whiteSpace: "nowrap" }}>{String(ec.label || "").replace(/^[^A-Za-zÁÉÍÓÚáéíóúÑñ]+/, "")}</span>
+          </button>;
+        })}</div>}
+    </div>;
+  };
+  const renderFlota = () => isMobile ? renderFlotaMovil() : <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
     {/* Stats */}
     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
       <StatCard icon="🚛" label="Total" value={stats.total} color={BRAND.charcoal} />
@@ -1825,7 +1873,44 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       {canEdit && <th style={th}>Acciones</th>}
     </tr></thead>;
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+    let cabeceraRutasMovil = null;
+    // CELULAR (3-nov-2026): cifras en una fila, pestañas como píldoras y los
+    // filtros en una hoja (antes llenaban la pantalla antes del primer despacho).
+    if (isMobile) {
+      const activos = (despFilter.projectCode ? 1 : 0) + (despFilter.tipo ? 1 : 0) + (despFilter.vehicleId ? 1 : 0);
+      const selM = { width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", padding: "0 12px", fontFamily: "inherit", color: BRAND.charcoal };
+      const seg = (txt, on, onClick) => <button key={txt} type="button" onClick={onClick} style={{ flex: "0 0 auto", padding: "8px 13px", borderRadius: 999, border: "none", background: on ? "#2C2A28" : "#fff", color: on ? "#fff" : "#2C2A28", font: `${on ? 700 : 600} 13.5px/1 var(--sans, Inter, sans-serif)`, boxShadow: on ? "none" : "0 1px 2px rgba(44,42,40,.06)", cursor: "pointer", whiteSpace: "nowrap" }}>{txt}</button>;
+      cabeceraRutasMovil = <>
+        <TiraMovil items={[
+          { v: totalPorHacer, l: "por hacer", c: totalPorHacer > 0 ? "#C75F1F" : undefined },
+          { v: totalProgramados, l: "programados" },
+          { v: totalEnRuta, l: "en ruta" },
+          { v: entregadosHoy, l: "entregados hoy", c: "#177243" },
+        ]} />
+        <div className="gm-scroll-x">
+          {seg(`Por hacer · ${enPorHacer.length}`, despSubSec === "por_hacer", () => setDespSubSec("por_hacer"))}
+          {seg(`En ruta · ${enProgramados.length}`, despSubSec === "programados", () => setDespSubSec("programados"))}
+          {seg(`Historial · ${enHistorial.length}`, despSubSec === "historial", () => setDespSubSec("historial"))}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={despFilter.q} onChange={e => setDespFilter(f => ({ ...f, q: e.target.value }))} placeholder="Buscar despacho" style={{ flex: 1, minWidth: 0, height: 42, padding: "0 14px", border: "none", borderRadius: 12, background: "#EDECEA", fontFamily: "inherit", color: BRAND.charcoal, outline: "none" }} />
+          <button type="button" onClick={() => setFiltrosMovil(true)} style={{ flexShrink: 0, height: 42, padding: "0 14px", borderRadius: 12, border: "none", background: activos ? "rgba(232,118,45,.14)" : "#EDECEA", color: activos ? "#A94E16" : BRAND.charcoal, font: "700 14px/1 var(--sans, Inter, sans-serif)", cursor: "pointer" }}>Filtros{activos ? ` · ${activos}` : ""}</button>
+        </div>
+        {canEdit && <button type="button" onClick={() => setModal({ t: "desp-new" })} style={{ height: 44, borderRadius: 12, border: "none", background: "#E8762D", color: "#fff", font: "800 15px/1 var(--sans, Inter, sans-serif)", cursor: "pointer" }}>+ Nuevo movimiento</button>}
+        <HojaMovil abierta={filtrosMovil} onClose={() => setFiltrosMovil(false)} titulo="Filtros">
+          <div className="gm-encab" style={{ marginTop: 4 }}>Proyecto</div>
+          <select value={despFilter.projectCode} onChange={e => setDespFilter(f => ({ ...f, projectCode: e.target.value }))} style={selM}><option value="">Todos</option>{allProjects.map(p => <option key={p.short} value={p.short}>{p.short}</option>)}</select>
+          <div className="gm-encab">Tipo</div>
+          <select value={despFilter.tipo} onChange={e => setDespFilter(f => ({ ...f, tipo: e.target.value }))} style={selM}><option value="">Todos</option>{TIPOS_DESPACHO.map(o => <option key={o.value || o} value={o.value || o}>{String(o.label || o).replace(/^[^A-Za-zÁÉÍÓÚáéíóúÑñ]+/, "")}</option>)}</select>
+          <div className="gm-encab">Vehículo</div>
+          <select value={despFilter.vehicleId} onChange={e => setDespFilter(f => ({ ...f, vehicleId: e.target.value }))} style={selM}><option value="">Todos</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.plate}</option>)}</select>
+          {activos > 0 && <button type="button" onClick={() => setDespFilter(f => ({ ...f, projectCode: "", tipo: "", vehicleId: "" }))} style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", color: "#B03024", font: "700 15px/1 var(--sans, Inter, sans-serif)" }}>Limpiar filtros</button>}
+        </HojaMovil>
+      </>;
+    }
+    return <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 18 }}>
+      {cabeceraRutasMovil}
+      {!isMobile && <>
       {/* Stats */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <StatCard icon="📌" label="Por hacer" value={totalPorHacer} color={totalPorHacer > 0 ? BRAND.orange : BRAND.stone} />
@@ -1870,6 +1955,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         <Select label="Vehiculo" options={vehicles.map(v => ({ value: v.id, label: v.plate }))} value={despFilter.vehicleId} onChange={e => setDespFilter(s => ({ ...s, vehicleId: e.target.value }))} emptyLabel="Todos" />
         {(despFilter.q || despFilter.projectCode || despFilter.tipo || despFilter.vehicleId) && <Btn small variant="ghost" onClick={() => setDespFilter({ projectCode: "", tipo: "", vehicleId: "", q: "" })}>Limpiar</Btn>}
       </div>
+      </>}
 
       {/* KANBAN por proyecto — Por hacer */}
       {despSubSec === "por_hacer" && (() => {

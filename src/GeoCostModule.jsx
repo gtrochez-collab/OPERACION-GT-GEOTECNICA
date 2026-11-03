@@ -18,7 +18,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga } from "./movil.jsx";
 import {
   ORANGE, ORANGE_DARK, CHARCOAL, C_GRIS, C_VERDE, C_AMARILLO, C_NARANJA,
   useIsMobile, prefiereMenosMovimiento,
@@ -1285,7 +1285,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     </div>
   </div>;
   // Mismo fondo del sistema: no parpadea entre el panel y el módulo
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoCost…</div>;
+  if (!loaded) return <PantallaCarga titulo={"GeoCost"} />;
 
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 

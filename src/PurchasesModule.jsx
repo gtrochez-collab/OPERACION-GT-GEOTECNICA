@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga, TiraMovil, HojaMovil } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, admiteSolicitudes } from "./projects.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { USERS } from "./users.js";
@@ -2779,6 +2779,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   };
   const isMobile = useIsMobile();
   const [menuMovil, setMenuMovil] = useState(false);
+  const [filtrosMovil, setFiltrosMovil] = useState(false);
   // Default section depende del rol:
   // - Ana (asistente_compras) → "ana" (Por coordinar)
   // - Jorge (recepcion) → "providers" (su tarea principal en Compras: mantener
@@ -4462,7 +4463,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
   // Pantalla de carga con el MISMO fondo del sistema (antes era beige y
   // "parpadeaba" entre el panel y el módulo, rompiendo la entrada smooth).
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando {CFG.nombre}…</div>;
+  if (!loaded) return <PantallaCarga titulo={CFG.nombre} />;
 
   // PurchaseFormImpl y PaymentFormImpl viven a nivel de modulo (final del archivo).
   // NO definir aqui — la identidad del componente cambiaria en cada render del padre
@@ -8124,10 +8125,18 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
     const providers = [...new Set(cp.map(p => p.provider).filter(Boolean))].sort();
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    return <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 16 }}>
+      {/* CELULAR: el resumen en UNA fila deslizable (3-nov-2026). */}
+      {isMobile && <TiraMovil items={[
+        { v: stats.validado, l: "por pagar", c: "var(--naranja-tinta)" },
+        { v: fmtL(stats.montoPendiente), l: "monto por pagar", c: "var(--naranja-tinta)" },
+        cp.some(estaVencida) && { v: cp.filter(estaVencida).length, l: "vencidas", c: C_ROJO.color },
+        { v: fmtL(stats.montoPagadoMes), l: "pagado este mes" },
+        { v: stats.total, l: "solicitudes" },
+      ]} />}
       {/* RESUMEN (rediseño 31-ago): un solo cuadrito — "tanta tarjeta es
           repetitivo, cansa la vista". Sin emojis. */}
-      <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
+      {!isMobile && <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
         {[
           { v: stats.total, l: "solicitudes" },
           { v: stats.validado, l: "pendientes de pago", c: "var(--naranja-tinta)" },
@@ -8145,10 +8154,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             {!isMobile && i < arr.length - 1 && <div style={{ width: 1, alignSelf: "stretch", background: "var(--hairline)", margin: "0 18px 0 auto" }} />}
           </div>
         ))}
-      </div>
+      </div>}
 
       {/* Carolina destacado si es tesoreria */}
-      {isTesoreria && stats.validado > 0 && <div className="gt-vidrio" style={{ borderLeft: "3px solid #E8762D", padding: "13px 18px", color: "var(--text)", fontSize: 14, fontWeight: 500 }}>
+      {!isMobile && isTesoreria && stats.validado > 0 && <div className="gt-vidrio" style={{ borderLeft: "3px solid #E8762D", padding: "13px 18px", color: "var(--text)", fontSize: 14, fontWeight: 500 }}>
         Hola Lic. Carolina — tenés <b style={{ color: "var(--naranja-tinta)" }}>{stats.validado} solicitud{stats.validado === 1 ? "" : "es"}</b> pendiente{stats.validado === 1 ? "" : "s"} de pago por <b>{fmtL(stats.montoPendiente)}</b>.
       </div>}
 
@@ -8178,6 +8187,47 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           if (v === "borradores") setListOrden("solicitud_desc");
         };
         const sep = !isMobile && <div aria-hidden style={{ width: 1, height: 22, background: "var(--hairline)", margin: "0 6px" }} />;
+        // CELULAR (3-nov-2026): arriba solo QUÉ ver + buscador; orden, mes y
+        // proyecto van en la hoja "Filtros" (antes la barra llenaba media pantalla).
+        if (isMobile) {
+          const activos = (filter.mes ? 1 : 0) + (filter.project ? 1 : 0);
+          const seg = (txt, on, onClick) => <button key={txt} type="button" onClick={onClick} style={{ flex: "0 0 auto", padding: "8px 13px", borderRadius: 999, border: "none", background: on ? "#2C2A28" : "#fff", color: on ? "#fff" : "#2C2A28", font: `${on ? 700 : 600} 13.5px/1 var(--sans)`, boxShadow: on ? "none" : "0 1px 2px rgba(44,42,40,.06)", cursor: "pointer", whiteSpace: "nowrap" }}>{txt}</button>;
+          const opcion = (txt, on, onClick) => <button key={txt} type="button" className="gm-item" onClick={onClick} style={{ minHeight: 46 }}><span style={{ flex: 1, fontSize: 15 }}>{txt}</span>{on && <span style={{ color: "#C75F1F", fontWeight: 800 }}>✓</span>}</button>;
+          const ordenes = [
+            ...(filter.ver !== "pagadas" ? [["solicitud_asc", "La que más espera"], ["solicitud_desc", "La más nueva"]] : []),
+            ...(filter.ver !== "pendientes" ? [["pago_desc", "Pago más reciente"], ["pago_asc", "Pago más antiguo"]] : []),
+            ...(filter.ver === "todas" ? [["estado", "Pendientes primero"]] : []),
+          ];
+          return <>
+            <div className="gm-scroll-x">
+              {seg(`Por pagar · ${nPend}`, filter.ver === "pendientes", () => setVer("pendientes"))}
+              {seg(`Pagadas · ${nPag}`, filter.ver === "pagadas", () => setVer("pagadas"))}
+              {seg("Todas", filter.ver === "todas", () => setVer("todas"))}
+              {!esMaq && seg(`Borradores · ${nBorr}`, filter.ver === "borradores", () => setVer("borradores"))}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input value={filter.provider} onChange={e => setFilter(f2 => ({ ...f2, provider: e.target.value }))} placeholder="Buscar proveedor" list="providers-list"
+                style={{ flex: 1, minWidth: 0, height: 42, padding: "0 14px", border: "none", borderRadius: 12, background: "#EDECEA", fontFamily: "inherit", color: "#2C2A28", outline: "none" }} />
+              <datalist id="providers-list">{providers.map(pv => <option key={pv} value={pv} />)}</datalist>
+              <button type="button" onClick={() => setFiltrosMovil(true)} style={{ flexShrink: 0, height: 42, padding: "0 14px", borderRadius: 12, border: "none", background: activos ? "rgba(232,118,45,.14)" : "#EDECEA", color: activos ? "#A94E16" : "#2C2A28", font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Filtros{activos ? ` · ${activos}` : ""}</button>
+            </div>
+            <HojaMovil abierta={filtrosMovil} onClose={() => setFiltrosMovil(false)} titulo="Filtros">
+              <div className="gm-encab" style={{ marginTop: 4 }}>Orden</div>
+              <div className="gm-grupo">{ordenes.map(([k, t]) => opcion(t, listOrden === k, () => setListOrden(k)))}</div>
+              <div className="gm-encab">Mes {filter.ver === "pagadas" ? "de pago" : "de la solicitud"}</div>
+              <select value={filter.mes} onChange={e => setFilter(f2 => ({ ...f2, mes: e.target.value }))} style={{ width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", padding: "0 12px", fontFamily: "inherit", color: "#2C2A28" }}>
+                <option value="">Todos los meses</option>
+                {mesesOpts.map(m => <option key={m} value={m}>{mesLbl(m)}</option>)}
+              </select>
+              <div className="gm-encab">Proyecto</div>
+              <select value={filter.project} onChange={e => setFilter(f2 => ({ ...f2, project: e.target.value }))} style={{ width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", padding: "0 12px", fontFamily: "inherit", color: "#2C2A28" }}>
+                <option value="">Todos los proyectos</option>
+                {allProjects.map(p2 => <option key={p2.short} value={p2.short}>{p2.short}</option>)}
+              </select>
+              {(filter.mes || filter.project || filter.provider) && <button type="button" onClick={() => { setFilter(f2 => ({ ...f2, project: "", provider: "", mes: "" })); }} style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", color: "#B03024", font: "700 15px/1 var(--sans)", cursor: "pointer" }}>Limpiar filtros</button>}
+            </HojaMovil>
+          </>;
+        }
         // Dos filas compactas: [VER · ORDEN] arriba, [MES · proyecto · proveedor]
         // abajo (3-sep: "la info llega a la mitad del cuadrito, hagámoslo más
         // chiqui").
@@ -8230,9 +8280,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         </div>;
       })()}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ color: "#64748b", fontSize: 13 }}>{filtered.length} de {cp.length} solicitudes</span>
+          <span style={{ color: "#64748b", fontSize: 13 }}>{isMobile ? `${filtered.length} solicitudes` : `${filtered.length} de ${cp.length} solicitudes`}</span>
         </span>
         {isAdmin && cp.some(p => p && !p.codigo) && <Btn variant="ghost" onClick={asignarCodigosFaltantes} title="Numera las solicitudes viejas que todavía no tienen código">Asignar códigos faltantes ({purchases.filter(p => p && !p.codigo).length})</Btn>}
         {canCreate && <Btn variant="primary" onClick={() => setModal({ t: "new" })}>+ Nueva solicitud</Btn>}

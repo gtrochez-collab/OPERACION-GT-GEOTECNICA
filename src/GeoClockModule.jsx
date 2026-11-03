@@ -31,7 +31,7 @@ import Logo from "./Logo.jsx";
 import { esFeriadoQuincena } from "./holidays.js";
 import { HORARIOS, horarioDe, TOLERANCIA_MIN, gcMarkKey, minTardeDe } from "./HRModule.jsx";
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, MenuMovil, PantallaCarga } from "./movil.jsx";
 import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion } from "./geoclock-calc.js";
 import { vincularEmpleado, KEY_VINCULOS } from "./rrhh-solicitudes.js";
 import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, RP, escHTML, fmtNum, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
@@ -988,7 +988,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
     boxShadow: disabled ? "none" : "0 6px 18px rgba(44,42,40,0.18)", letterSpacing: 0.3, minHeight: 58,
   });
 
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "inherit", color: STONE, background: CREAM, fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoClock…</div>;
+  if (!loaded) return <PantallaCarga titulo={"GeoClock"} />;
 
   const ubicsTablet = ubicacionesDeTablet(tabletDe(userName));
   // Modo liviano en las tablets kiosk y en equipos flojos (el vidrio con

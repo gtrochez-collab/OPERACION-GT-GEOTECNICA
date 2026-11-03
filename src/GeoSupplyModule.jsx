@@ -30,7 +30,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, admiteSolicitudes } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 import { hoyISO } from "./fechas.js";
@@ -1316,7 +1316,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         <div style={{ flex: 1, minWidth: 220, fontSize: 13, color: "var(--text-2)" }}><b style={{ color: CHARCOAL }}>Simulación</b> · probá el proceso completo viendo como cada rol. No toca nada real.</div>
         <Btn small variant="dark" onClick={() => { setSimRol("residente"); setSec("solicitudes"); setSim(true); }}>Simular el proceso</Btn>
       </div>}
-      <div className="gt-vidrio" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap", gap: isMobile ? 6 : 0 }}>
+      <div className="gt-vidrio gm-tira" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap", gap: isMobile ? 6 : 0 }}>
         <div style={{ padding: isMobile ? "4px 10px" : "4px 18px", borderRight: isMobile ? "none" : "1px solid rgba(44,42,40,.08)" }}>
           <div style={{ font: "800 15px/1.1 var(--display)", color: CHARCOAL }}>{etq.titulo}</div>
           <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 5, fontSize: 9 }}>{etq.sub}</div>
@@ -1398,7 +1398,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const items = lineasEf.filter(x => x.ef.estado === "pendiente_coord");
     const grupos = porProyecto(items);
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div className="gt-vidrio" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+      <div className="gt-vidrio gm-tira" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
         {stat(items.length, "ítems por decidir", { c: items.length ? ORANGE_DARK : undefined })}
         {stat(items.filter(x => x.l.fueraPresupuesto).length, "fuera de presupuesto")}
         {stat(items.filter(x => x.l.excedeSaldo).length, "exceden el saldo")}
@@ -1486,7 +1486,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       </Grupo>)}
     </div>;
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div className="gt-vidrio" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+      <div className="gt-vidrio gm-tira" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
         {stat(itemsPl.length, "pedidos al plantel", { c: itemsPl.length ? ORANGE_DARK : undefined })}
         {stat(items.length, "ítems por revisar", { c: items.length ? ORANGE_DARK : undefined })}
         {stat(new Set([...grupos, ...gruposPl].map(g => g.k)).size, "proyectos")}
@@ -1524,7 +1524,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const devueltas = cotizaciones.filter(q => q.estado === "devuelta");
     const borr = cotizaciones.filter(q => q.estado === "borrador");
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div className="gt-vidrio" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+      <div className="gt-vidrio gm-tira" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
         {stat(items.length, "ítems por cotizar", { c: items.length ? ORANGE_DARK : undefined })}
         {stat(grupos.length, "proyectos")}
         {stat(devueltas.length, "devueltas por el Coord.", { c: devueltas.length ? C_AMARILLO.color : undefined, onClick: () => { setCotVista("devuelta"); setSec("cotizaciones"); } })}
@@ -1829,7 +1829,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           <option value="">Todos los proyectos</option>{[...new Set(solicitudes.map(s => s.projectCode))].map(p => <option key={p} value={p}>{nombreProy(p)}</option>)}
         </select>
       </div>
-      <div className="gt-vidrio" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+      <div className="gt-vidrio gm-tira" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
         {stat(m.total, "solicitudes")}
         {stat(pct(m.pctEnCorte), "enviadas dentro del corte", { c: m.pctEnCorte != null && m.pctEnCorte < 0.8 ? C_ROJO.color : undefined })}
         {stat(pct(m.pctUrgentes), "urgentes", { c: m.urgentes ? C_ROJO.color : undefined })}
@@ -2011,7 +2011,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
 
   // ═══════════════════════════ ROOT ═══════════════════════════
   if (!rol) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", color: "#6E6862", fontSize: 13 }}>Este usuario no tiene acceso a GeoSupply.</div>;
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoSupply…</div>;
+  if (!loaded) return <PantallaCarga titulo={"GeoSupply"} />;
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
   const secOk = nav.some(x => x.id === sec) ? sec : nav[0]?.id;
   // Ver como (simulación): al cambiar de rol se va a SU primera pestaña.

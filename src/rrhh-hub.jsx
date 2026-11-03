@@ -508,6 +508,44 @@ export function PortalRRHH({ user, yo, emps, vacs, lvs, cons = [], solicitudes, 
     {lista.length === 0 ? <div className="gt-vidrio" style={{ padding: 22, textAlign: "center", fontSize: 13, color: "#6E6862" }}>{vacio}</div>
       : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{lista.map(s => <FilaSolicitud key={s.id} s={s} emps={emps} fotoDe={fotoDe} hoy={hoy} onClick={() => onAbrir(s)} mostrarPersona={!yo || s.empId !== yo.id} />)}</div>}
   </div>;
+  // CELULAR (3-nov-2026): perfil en una fila y las opciones como lista
+  // agrupada de iOS (antes: 5 cajas grandes que obligaban a deslizar).
+  if (isMobile) {
+    const item = (ico, titulo, sub, onClick, b) => <button type="button" className="gm-item" onClick={onClick}>
+      <span style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(232,118,45,.12)", color: "#C75F1F", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ico} size={18} /></span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", font: "600 15.5px/1.2 var(--sans)", color: CHARCOAL }}>{titulo}</span>
+        <span style={{ display: "block", fontSize: 12.5, color: "#8A847D", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</span>
+      </span>
+      {b > 0 && <span style={{ minWidth: 22, height: 22, padding: "0 7px", borderRadius: 999, background: "#E8762D", color: "#fff", font: "800 12px/22px var(--sans)", textAlign: "center", boxSizing: "border-box" }}>{b}</span>}
+      <span aria-hidden style={{ color: "#C9C3BA", fontSize: 20, lineHeight: 1 }}>›</span>
+    </button>;
+    return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {yo ? <div className="gm-grupo" style={{ padding: 12, display: "flex", alignItems: "center", gap: 12 }}>
+        <Avatar nombre={yo.fullName} dataUrl={fotoDe?.(yo)} size={54} radius={16} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ font: "700 16px/1.2 var(--display)", color: CHARCOAL }}>{yo.fullName}</div>
+          <div style={{ fontSize: 12.5, color: "#8A847D", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{yo.position || "—"} · {yo.company === "subterra" ? "Subterra" : "Geotecnica"}</div>
+        </div>
+        {enTramite.length > 0 ? <Chip c={C_NARANJA}>{enTramite.length} en trámite</Chip> : <Chip c={C_GRIS}>Al día</Chip>}
+      </div> : perfil}
+      <div className="gm-encab">Mi RRHH</div>
+      <div className="gm-grupo">
+        {yo && item(ICO.asistencia, "Mi asistencia", "Entradas, salidas y horas", () => setVista("asistencia"))}
+        {item(ICO.vacaciones, "Vacaciones", yo ? `${tomadas?.diasAnio || 0} días tomados este año${proxima ? ` · próximas ${rangoCorto(proxima.startDate, proxima.endDate)}` : ""}` : "Pedir vacaciones", () => yo ? setVista("vacaciones") : onNueva("vacaciones"))}
+        {item(ICO.permiso, "Permisos", yo ? `${permisosAnio} este año` : "Por un día o varios", () => yo ? setVista("permisos") : onNueva("permiso"))}
+        {item(ICO.constancia, "Constancias", "De trabajo o laboral, en PDF", () => yo ? setVista("constancias") : onNueva("constancia"))}
+        {item(ICO.reporte, "Reportar un problema", "Pago, asistencia, equipo, seguridad…", () => onNueva("reporte"))}
+      </div>
+      <div className="gm-encab">En trámite · {enTramite.length}</div>
+      {enTramite.length === 0 ? <div className="gm-grupo" style={{ padding: "14px 16px", fontSize: 13, color: "#8A847D" }}>Nada pendiente.</div>
+        : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{enTramite.map(s2 => <FilaSolicitud key={s2.id} s={s2} emps={emps} fotoDe={fotoDe} hoy={hoy} onClick={() => onAbrir(s2)} mostrarPersona={!yo || s2.empId !== yo.id} />)}</div>}
+      {historial.length > 0 && <>
+        <div className="gm-encab">Historial · {historial.length}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{historial.slice(0, 20).map(s2 => <FilaSolicitud key={s2.id} s={s2} emps={emps} fotoDe={fotoDe} hoy={hoy} onClick={() => onAbrir(s2)} mostrarPersona={!yo || s2.empId !== yo.id} />)}</div>
+      </>}
+    </div>;
+  }
   return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(300px, 1.1fr) minmax(0, 2fr)", gap: 12, alignItems: "stretch" }}>
       {perfil}

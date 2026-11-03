@@ -21,7 +21,7 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 import { safeDynamicImport } from "./lazyLoad.js";
@@ -1478,7 +1478,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
 
   // ═══════════════════════════ ROOT ═══════════════════════════
   if (!perms.ver) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", color: "#6E6862", fontSize: 13 }}>Este usuario no tiene acceso a GeoInventory.</div>;
-  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoInventory…</div>;
+  if (!loaded) return <PantallaCarga titulo={"GeoInventory"} />;
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
   const secOk = nav.some(x => x.id === sec) ? sec : "inicio";
   return <div className="gt-root gt-entra-modulo" style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "var(--bg)", position: "relative", overflow: "hidden" }}>

@@ -17,8 +17,8 @@ import { ROLES_INVENTARIO } from "./geoinventory-calc.js";
 import { store, onSyncStateChange } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
 import { useIsMobile } from "./geocost-ui.jsx";
-import { MOVIL_CSS } from "./movil.jsx";
-import Logo, { GeoCoreSello } from "./Logo.jsx";
+import { MOVIL_CSS, AppMovilContext, BarraMovil, MenuMovil, esAppInstalada, iniciales as inicialesMovil } from "./movil.jsx";
+import Logo, { GeoCoreSello, GeoCoreMark } from "./Logo.jsx";
 import { BRAND, FONT } from "./theme.js";
 import { USERS, ROLE_LABEL, USUARIOS_DE_BAJA } from "./users.js";
 // GeoSupply (2-oct-2026): contador de pendientes por rol en la tarjeta del Panel.
@@ -382,16 +382,30 @@ export default function App() {
     volverA: origenModuloRef.current ? (MODULES.find(m => m.id === origenModuloRef.current)?.name || null) : null,
     onLogout: logout,
     onAbrirModulo: (id) => { if (MODULES.some(m => m.id === id && m.roles.includes(user.role))) { origenModuloRef.current = activeModule; setActiveModule(id); } } };
+  // `oculto` (14-oct-2026): GeoSafety, GeoDrill Vault y Mis Tareas no salen en
+  // el panel por ahora. Mis Tareas sigue abriéndose desde la tarjeta TO-DOS de
+  // la bienvenida (onAbrirTareas), que no pasa por esta lista.
+  // `sinModulos` (users.js): módulos que un usuario NO ve aunque su rol sí.
+  const sinModulos = USERS.find((x) => x.username === user.username)?.sinModulos || [];
+  // `marcaPropia` (users.js, 3-nov-2026): GeoClock aparece en SU panel para
+  // marcar desde el celular, aunque su rol no lo tenga y el módulo esté oculto.
+  const marcaPropia = !!USERS.find((x) => x.username === user.username)?.marcaPropia;
+  const permitidos = MODULES.filter((m) => (m.roles.includes(user.role) || (m.id === "geoclock" && marcaPropia)) && !sinModulos.includes(m.id));
+  const visibleEnPanel = (m) => !m.oculto || (m.id === "geoclock" && marcaPropia);
+  const availableModules = permitidos.some(visibleEnPanel) ? permitidos.filter(visibleEnPanel) : permitidos;
+  // Celular (3-nov-2026): el menú ☰ de cualquier módulo lista los demás
+  // módulos para saltar directo (AppMovilContext, movil.jsx).
+  const appMovil = { modulos: availableModules.map(m => ({ id: m.id, name: m.name, badge: badges[m.id] || 0, icono: <IconoModulo id={m.id} fallback={m.icon} size={17} /> })), actual: activeModule, abrir: (id) => { origenModuloRef.current = null; setActiveModule(id); } };
   // Wrapper con la animación de entrada. key=activeModule para que al cambiar
   // de módulo vuelva a entrar. El transform del keyframe dura 560 ms: los
   // position:fixed del módulo (brillos, modales) se referencian al wrapper
   // solo ese instante — el wrapper es pantalla completa, no se nota.
   const conEntrada = (modulo) => (
-    <>
+    <AppMovilContext.Provider value={appMovil}>
       {syncBanner}
       <style>{ENTRADA_CSS}</style>
       <div key={activeModule} className="gt-entra-modulo" style={{ minHeight: "100vh" }}>{modulo}</div>
-    </>
+    </AppMovilContext.Provider>
   );
   if (activeModule === "rrhh") return conEntrada(<HRModule {...moduleProps} />);
   if (activeModule === "compras-operaciones") return conEntrada(<PurchasesModule {...moduleProps} />);
@@ -409,20 +423,10 @@ export default function App() {
   if (activeModule === "geoinventory") return conEntrada(<GeoInventoryModule {...moduleProps} />);
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
 
-  // `oculto` (14-oct-2026): GeoSafety, GeoDrill Vault y Mis Tareas no salen en
-  // el panel por ahora. Mis Tareas sigue abriéndose desde la tarjeta TO-DOS de
-  // la bienvenida (onAbrirTareas), que no pasa por esta lista.
-  // `sinModulos` (users.js): módulos que un usuario NO ve aunque su rol sí.
-  const sinModulos = USERS.find((x) => x.username === user.username)?.sinModulos || [];
-  // `marcaPropia` (users.js, 3-nov-2026): GeoClock aparece en SU panel para
-  // marcar desde el celular, aunque su rol no lo tenga y el módulo esté oculto.
-  const marcaPropia = !!USERS.find((x) => x.username === user.username)?.marcaPropia;
-  const permitidos = MODULES.filter((m) => (m.roles.includes(user.role) || (m.id === "geoclock" && marcaPropia)) && !sinModulos.includes(m.id));
-  const visibleEnPanel = (m) => !m.oculto || (m.id === "geoclock" && marcaPropia);
-  const availableModules = permitidos.some(visibleEnPanel) ? permitidos.filter(visibleEnPanel) : permitidos;
 
   // ── Bienvenida del día (todos menos la tablet kiosco de marcaje) ──
-  if (!welcomeDone && user.role !== "marcaje") {
+  // En el celular no hay bienvenida animada: se entra directo al Inicio.
+  if (!welcomeDone && user.role !== "marcaje" && !(typeof window !== "undefined" && window.innerWidth < 768)) {
     return (
       <>
         <style>{UI_CSS}</style>
@@ -579,61 +583,59 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
   );
 }
 
-// ── PANEL EN EL CELULAR (3-nov-2026, Gerson: "como la Apple Store en el
-// celular") ── título grande, tus iniciales arriba a la derecha (abre la
-// cuenta) y los módulos en mosaicos de dos columnas. Sin el hero animado:
-// en el teléfono se entra directo.
-function PanelMovil({ user, availableModules, syncOk, onOpen, onLogout, onVolverBienvenida, saliendo, badges }) {
-  const [cuenta, setCuenta] = useState(false);
+// ── INICIO EN EL CELULAR (3-nov-2026, 2ª pasada — Gerson: "que parezca una
+// app que fuéramos a vender; ordenado, que quepa sin tanto scroll; me gusta
+// el menú de las tres barritas") ── la misma barra ☰ de los módulos; saludo
+// compacto, aviso para instalarla (Safari), "Pendientes" y los módulos en
+// lista agrupada estilo iOS (Ajustes): ícono, nombre, una línea, contador, ›.
+function PanelMovil({ user, availableModules, syncOk, onOpen, onLogout, saliendo, badges }) {
+  const [menu, setMenu] = useState(false);
+  const [sinAviso, setSinAviso] = useState(() => { try { return esAppInstalada() || localStorage.getItem("gt-aviso-instalar") === "1"; } catch { return true; } });
   useEffect(() => { window.scrollTo(0, 0); }, []);
-  const ini = (() => { const p = String(user.label || "").replace(/^(lic|ing|arq|dr|dra)\.?\s+/i, "").trim().split(/\s+/); return ((p[0] || "?")[0] + (p[1] ? p[1][0] : "")).toUpperCase(); })();
   const nombre = String(user.label || "").replace(/^(lic|ing|arq|dr|dra)\.?\s+/i, "").split(/\s+/)[0];
-  const fecha = new Intl.DateTimeFormat("es-HN", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Tegucigalpa" }).format(new Date());
+  const ahora = new Date();
+  const h = Number(new Intl.DateTimeFormat("es-HN", { hour: "numeric", hourCycle: "h23", timeZone: "America/Tegucigalpa" }).format(ahora));
+  const saludo = h < 12 ? "Buenos días" : h < 18 ? "Buenas tardes" : "Buenas noches";
+  const fecha = new Intl.DateTimeFormat("es-HN", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Tegucigalpa" }).format(ahora);
+  const pend = availableModules.filter(m => (badges[m.id] || 0) > 0);
+  const fila = (m, sub, b) => <button key={m.id} type="button" className="gm-item" onClick={() => onOpen(m.id)}>
+    <span style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(232,118,45,.12)", color: "#C75F1F", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IconoModulo id={m.id} fallback={m.icon} size={19} /></span>
+    <span style={{ flex: 1, minWidth: 0 }}>
+      <span style={{ display: "block", font: "600 15.5px/1.2 var(--sans)", color: "#2C2A28" }}>{m.name}</span>
+      <span style={{ display: "block", fontSize: 12.5, color: "#8A847D", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</span>
+    </span>
+    {b > 0 && <span style={{ minWidth: 22, height: 22, padding: "0 7px", borderRadius: 999, background: "#E8762D", color: "#fff", font: "800 12px/22px var(--sans)", textAlign: "center", boxSizing: "border-box" }}>{b}</span>}
+    <span aria-hidden style={{ color: "#C9C3BA", fontSize: 20, lineHeight: 1 }}>›</span>
+  </button>;
   return (
-    <div className="gt-ui" style={{ minHeight: "100dvh", position: "relative", overflow: "hidden", opacity: saliendo ? 0 : 1, transition: "opacity 260ms var(--curva)", pointerEvents: saliendo ? "none" : "auto" }}>
+    <div className="gt-ui" style={{ minHeight: "100dvh", background: "#F2F2F0", opacity: saliendo ? 0 : 1, transition: "opacity 200ms", pointerEvents: saliendo ? "none" : "auto" }}>
       <style>{UI_CSS}</style>
       <style>{MOVIL_CSS}</style>
-      <div className="gt-brillo gt-brillo-a" aria-hidden />
-      <div style={{ position: "relative", zIndex: 1, padding: "16px 18px 28px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <Logo size={30} />
-          <button type="button" onClick={() => setCuenta(true)} aria-label="Tu cuenta" style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: "#2C2A28", color: "#fff", font: "800 14px/1 var(--sans)", cursor: "pointer" }}>{ini}</button>
+      <BarraMovil titulo="GeoCore" iconoLibre icono={<GeoCoreMark size={26} />} usuario={user.label} onMenu={() => setMenu(true)} />
+      <MenuMovil abierto={menu} onClose={() => setMenu(false)} titulo="GeoCore" iconoLibre icono={<GeoCoreMark size={42} />} subtitulo="Grupo Geotecnica"
+        secciones={availableModules.map(m => ({ id: m.id, label: m.name, badge: badges[m.id] || 0 }))} onElegir={onOpen}
+        usuario={user.label} rol={ROLE_LABEL[user.role] || user.role} onLogout={onLogout} />
+      <div style={{ padding: "16px 14px calc(24px + env(safe-area-inset-bottom))", maxWidth: 560, margin: "0 auto" }}>
+        <div style={{ padding: "2px 4px 4px" }}>
+          <div style={{ fontSize: 13, color: "#8A847D" }}>{fecha.charAt(0).toUpperCase() + fecha.slice(1)}</div>
+          <div style={{ font: "800 26px/1.15 var(--display)", letterSpacing: "-.02em", color: "#2C2A28", marginTop: 2 }}>{saludo}, {nombre}</div>
         </div>
-        <div style={{ marginTop: 22 }}>
-          <div className="gt-label" style={{ color: "var(--text-3)", textTransform: "uppercase" }}>{fecha}</div>
-          <h1 style={{ font: "800 34px/1.05 var(--display)", letterSpacing: "-.03em", color: "var(--text)", margin: "8px 0 0" }}>Hola, <span style={{ color: "var(--marca-2)" }}>{nombre}</span></h1>
-        </div>
-        <div style={{ font: "800 21px/1.2 var(--display)", letterSpacing: "-.01em", color: "var(--text)", margin: "26px 2px 12px" }}>Tus módulos</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
-          {availableModules.map((m, i) => {
-            const b = badges[m.id] || 0;
-            return <button key={m.id} type="button" onClick={() => onOpen(m.id)} className="gt-sube"
-              style={{ position: "relative", textAlign: "left", border: "none", borderRadius: 22, background: "#fff", boxShadow: "0 1px 2px rgba(44,42,40,.05), 0 8px 22px rgba(44,42,40,.07)", padding: "16px 14px 14px", minHeight: 138, display: "flex", flexDirection: "column", gap: 10, cursor: "pointer", animationDelay: `${i * 45}ms`, fontFamily: "inherit", WebkitTapHighlightColor: "transparent" }}>
-              <span style={{ width: 46, height: 46, borderRadius: 14, background: "rgba(232,118,45,.11)", color: "var(--naranja-tinta)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><IconoModulo id={m.id} fallback={m.icon} /></span>
-              {b > 0 && <span style={{ position: "absolute", top: 12, right: 12, minWidth: 22, height: 22, padding: "0 6px", borderRadius: 999, background: "var(--marca-2)", color: "#fff", font: "800 11.5px/22px var(--sans)", textAlign: "center", boxSizing: "border-box" }}>{b}</span>}
-              <span style={{ font: "800 16.5px/1.15 var(--display)", color: "var(--text)", letterSpacing: "-.01em" }}>{m.name}</span>
-              <span style={{ font: "400 12.5px/1.35 var(--sans)", color: "var(--text-3)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{m.desc}</span>
-            </button>;
-          })}
-        </div>
-        <div style={{ marginTop: 26, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 12, color: "var(--text-3)" }}>
+        {!sinAviso && <div className="gm-grupo" style={{ marginTop: 14, padding: "12px 14px", display: "flex", gap: 12, alignItems: "center" }}>
+          <GeoCoreMark size={40} />
+          <div style={{ flex: 1, fontSize: 13, color: "#5C5853", lineHeight: 1.35 }}><b style={{ color: "#2C2A28" }}>Instalá GeoCore</b><br />Tocá Compartir <span aria-hidden>⬆︎</span> y “Agregar a inicio”: abre a pantalla completa.</div>
+          <button type="button" onClick={() => { setSinAviso(true); try { localStorage.setItem("gt-aviso-instalar", "1"); } catch {} }} aria-label="Cerrar aviso" style={{ border: "none", background: "transparent", color: "#A39C92", fontSize: 18, cursor: "pointer" }}>✕</button>
+        </div>}
+        {pend.length > 0 && <>
+          <div className="gm-encab">Pendientes</div>
+          <div className="gm-grupo">{pend.map(m => fila(m, `${badges[m.id]} por atender`, badges[m.id]))}</div>
+        </>}
+        <div className="gm-encab">Módulos</div>
+        <div className="gm-grupo">{availableModules.map(m => fila(m, m.desc, 0))}</div>
+        <div style={{ marginTop: 18, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontSize: 12, color: "#8A847D" }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: syncOk ? "#059669" : BRAND.red }} />
-          {syncOk ? "Sincronizado" : "Sin sincronizar"} · <GeoCoreSello size={16} fontSize={12} />
+          {syncOk ? "Sincronizado" : "Sin sincronizar"} · GeoCore
         </div>
       </div>
-      {cuenta && <>
-        <div className="gm-fondo" onClick={() => setCuenta(false)} aria-hidden />
-        <div role="dialog" aria-label="Tu cuenta" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 9001, background: "#F9F9F8", borderRadius: "24px 24px 0 0", padding: "10px 18px calc(18px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 40px rgba(44,42,40,.18)", animation: "gtSubeHoja .3s var(--curva) both" }}>
-          <style>{"@keyframes gtSubeHoja{from{transform:translateY(100%)}}"}</style>
-          <div style={{ width: 38, height: 5, borderRadius: 3, background: "rgba(44,42,40,.18)", margin: "0 auto 16px" }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-            <span style={{ width: 46, height: 46, borderRadius: "50%", background: "#2C2A28", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "800 16px/1 var(--sans)" }}>{ini}</span>
-            <div><div style={{ font: "700 16px/1.25 var(--display)", color: "var(--text)" }}>{user.label}</div><div style={{ fontSize: 13, color: "var(--text-3)" }}>{ROLE_LABEL[user.role] || user.role}</div></div>
-          </div>
-          {user.role !== "marcaje" && <button type="button" className="gm-fila" onClick={() => { setCuenta(false); onVolverBienvenida(); }}><span style={{ width: 22, textAlign: "center", color: "var(--text-3)" }}>←</span>Volver a la bienvenida</button>}
-          <button type="button" className="gm-fila" onClick={onLogout} style={{ color: "#B03024" }}><span style={{ width: 22, textAlign: "center" }}>⎋</span>Cerrar sesión</button>
-        </div>
-      </>}
     </div>
   );
 }
@@ -678,7 +680,7 @@ const IconoTuerca = () => (
 );
 // Icono por módulo (línea, 26px). Fallback: el emoji viejo de MODULES —
 // así un módulo nuevo sin icono dibujado no queda con la cajita vacía.
-function IconoModulo({ id, fallback }) {
+function IconoModulo({ id, fallback, size = 26 }) {
   const trazos = {
     rrhh: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>,
     "compras-operaciones": <><circle cx="8" cy="21" r="1" /><circle cx="19" cy="21" r="1" /><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" /></>,
@@ -693,7 +695,7 @@ function IconoModulo({ id, fallback }) {
     geosupply: <><path d="M12 3v8" /><path d="m8.5 6.5 3.5-3.5 3.5 3.5" /><path d="M3.3 9.8 12 13.8l8.7-4" /><path d="M4 9.8v7.4a1 1 0 0 0 .55.9L12 21.5l7.45-3.4a1 1 0 0 0 .55-.9V9.8" /><path d="M12 13.8v7.7" /></>,
   }[id];
   if (!trazos) return <span style={{ fontSize: 25 }} aria-hidden>{fallback}</span>;
-  return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{trazos}</svg>;
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{trazos}</svg>;
 }
 
 // ── Tarjeta de módulo (estética IST): vidrio, icono de LÍNEA monocromo —
@@ -1081,6 +1083,39 @@ function LoginScreen({ onLogin }) {
   };
 
   const verso = versiculoDeHoy();
+  const tel = typeof window !== "undefined" && window.innerWidth < 768;
+
+  // CELULAR (3-nov-2026): login de app — la marca GeoCore al centro, los dos
+  // campos agrupados como en iOS y el botón grande. Todo en una pantalla.
+  if (tel) return (
+    <div style={{ minHeight: "100dvh", position: "relative", overflow: "hidden", fontFamily: "var(--sans)", background: "#FFFFFF", display: "flex", flexDirection: "column" }}>
+      <style>{UI_CSS}</style>
+      <canvas ref={canvasRef} aria-hidden style={{ position: "absolute", inset: 0, zIndex: 0, opacity: .55 }} />
+      <form onSubmit={handleSubmit} style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "32px 22px calc(22px + env(safe-area-inset-bottom))", maxWidth: 420, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        <div className="gt-sube" style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", marginTop: "auto" }}>
+          <div style={{ borderRadius: 22, boxShadow: "0 14px 34px rgba(44,42,40,.28)" }}><GeoCoreMark size={84} /></div>
+          <div style={{ font: "800 30px/1.1 var(--display)", letterSpacing: "-.025em", color: "#2C2A28", marginTop: 18 }}>Geo<span style={{ color: "var(--marca-2)" }}>Core</span></div>
+          <div style={{ fontSize: 14, color: "#8A847D", marginTop: 6 }}>Sistema de operaciones · Grupo Geotecnica</div>
+        </div>
+        <div className="gt-sube" style={{ marginTop: 34, background: "#fff", borderRadius: 16, boxShadow: "0 0 0 1px rgba(44,42,40,.10), 0 8px 24px rgba(44,42,40,.08)", overflow: "hidden", animationDelay: "80ms" }}>
+          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Usuario" autoComplete="username" autoCapitalize="none" autoCorrect="off"
+            style={{ width: "100%", boxSizing: "border-box", border: "none", outline: "none", padding: "16px 16px", font: "500 16px/1.2 var(--sans)", color: "#2C2A28", background: "transparent", borderBottom: "1px solid rgba(44,42,40,.08)" }} />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Clave" autoComplete="current-password"
+            style={{ width: "100%", boxSizing: "border-box", border: "none", outline: "none", padding: "16px 16px", font: "500 16px/1.2 var(--sans)", color: "#2C2A28", background: "transparent" }} />
+        </div>
+        {error && <div style={{ marginTop: 12, color: "#B03024", fontSize: 13.5, fontWeight: 600, textAlign: "center" }}>{error}</div>}
+        <button type="submit" disabled={loading || !username || !password} className="gt-sube"
+          style={{ marginTop: 18, height: 54, borderRadius: 15, border: "none", background: (loading || !username || !password) ? "#D9D5CF" : "#E8762D", color: "#fff", font: "800 16.5px/1 var(--sans)", cursor: "pointer", boxShadow: (loading || !username || !password) ? "none" : "0 8px 22px rgba(232,118,45,.35)", animationDelay: "140ms", transition: "background .2s" }}>
+          {loading ? "Verificando…" : "Ingresar"}
+        </button>
+        <div style={{ marginTop: 16, textAlign: "center", fontSize: 12.5, color: "#8A847D" }}>¿Olvidaste tu clave? Contactá al administrador.</div>
+        <div style={{ marginTop: "auto", paddingTop: 30, textAlign: "center" }}>
+          <div style={{ font: "italic 400 12.5px/1.6 var(--sans)", color: "#8A847D" }}>“{verso.txt}”</div>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "#C75F1F", marginTop: 6 }}>{verso.ref}</div>
+        </div>
+      </form>
+    </div>
+  );
 
   return (
     <div style={{ minHeight: "100vh", position: "relative", overflow: "hidden", fontFamily: "var(--sans)", background: "#FFFFFF" }}>
