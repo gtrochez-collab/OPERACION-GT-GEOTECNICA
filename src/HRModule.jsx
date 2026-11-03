@@ -414,19 +414,26 @@ const SEED_GEO = [
 
 // ── UI ──
 const Badge = ({ children, color = "#64748b" }) => <span style={{ background: color + "18", color, padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>{children}</span>;
+// Controles con la estética GeoCore (3-nov-2026, Gerson: "las altas, bajas y
+// los formularios se quedaron con la interfaz vieja"): mismos tokens que
+// geocost-ui (pastilla, campo gris suave, etiqueta chica). "success" es el
+// botón de guardar → naranja, la acción principal del sistema.
+const CTRL_HR = { padding: "10px 12px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 12, fontSize: 14, outline: "none", background: "#F4F4F2", color: "#2C2A28", fontFamily: "inherit", width: "100%", boxSizing: "border-box" };
+const LABEL_HR = { fontSize: 11.5, fontWeight: 700, color: "#6E6862", letterSpacing: ".02em" };
 const Btn = ({ children, onClick, variant = "primary", small, style: sx, disabled }) => {
-  const b = { border: "none", borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer", fontWeight: 600, fontSize: small ? 12 : 14, padding: small ? "5px 12px" : "9px 20px", opacity: disabled ? 0.5 : 1, fontFamily: "inherit", letterSpacing: 0.2 };
+  const b = { border: "none", borderRadius: 999, cursor: disabled ? "not-allowed" : "pointer", fontWeight: 700, fontSize: small ? 12 : 13.5, padding: small ? "6px 13px" : "10px 20px", opacity: disabled ? 0.5 : 1, fontFamily: "inherit", letterSpacing: 0.1, whiteSpace: "nowrap" };
+  const naranja = { ...b, background: "#E8762D", color: "#fff", boxShadow: "0 4px 14px rgba(232,118,45,.28)" };
   const v = {
-    primary: { ...b, background: "#E8762D", color: "#fff", boxShadow: "0 2px 6px rgba(232,118,45,0.20)" },
-    success: { ...b, background: "#5A8A4F", color: "#fff" },
-    danger: { ...b, background: "#C0392B", color: "#fff" },
-    info: { ...b, background: "#2C5F5D", color: "#fff" },
-    ghost: { ...b, background: "transparent", color: "#5C5853", border: "1px solid #DBD4C8" },
+    primary: naranja,
+    success: naranja,
+    danger: { ...b, background: "rgba(192,57,43,.06)", color: "#B03024", border: "1px solid rgba(192,57,43,.25)" },
+    info: { ...b, background: "#2C2A28", color: "#fff" },
+    ghost: { ...b, background: "rgba(44,42,40,.05)", color: "#5C5853", border: "1px solid rgba(44,42,40,.10)" },
   };
   return <button style={{ ...(v[variant] || v.primary), ...sx }} onClick={onClick} disabled={disabled}>{children}</button>;
 };
-const Input = ({ label, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<input style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, outline: "none", background: "#F8FAFC" }} {...p} /></div>;
-const Select = ({ label, options, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} {...p}><option value="">—</option>{options.map(o => <option key={typeof o === "string" ? o : o.value} value={typeof o === "string" ? o : o.value}>{typeof o === "string" ? o : o.label}</option>)}</select></div>;
+const Input = ({ label, style: sx, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>{label && <label style={LABEL_HR}>{label}</label>}<input style={{ ...CTRL_HR, ...sx }} {...p} /></div>;
+const Select = ({ label, options, style: sx, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>{label && <label style={LABEL_HR}>{label}</label>}<select style={{ ...CTRL_HR, ...sx }} {...p}><option value="">—</option>{options.map(o => <option key={typeof o === "string" ? o : o.value} value={typeof o === "string" ? o : o.value}>{typeof o === "string" ? o : o.label}</option>)}</select></div>;
 // Buscador de colaborador (29-oct-2026): reemplaza el <select> nativo en los
 // forms anchos (Baja, Bonificación). En Chrome de Windows el menú nativo de un
 // select de ~1,800 px salía en blanco y con los nombres cortados a la
@@ -440,33 +447,33 @@ const BuscadorEmpleado = ({ label, empleados, value, onChange }) => {
   const lista = empleados
     .filter(e => !nq || nq.split(/\s+/).every(w => norm(`${e.fullName} ${e.position} ${e.dni} ${e.code || ""}`).includes(w)))
     .sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "es"));
-  const lbl = { fontSize: 12, fontWeight: 600, color: "#475569" };
+  const lbl = LABEL_HR;
   if (sel && !abierto) return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
     {label && <label style={lbl}>{label}</label>}
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", border: "1px solid #CBD5E1", borderRadius: 10, background: "#F8FAFC" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 14, background: "#F4F4F2" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: "#2C2A28" }}>{sel.fullName}</div>
         <div style={{ fontSize: 12, color: "#64748b" }}>{sel.position || "Sin cargo"}{sel.dni ? ` · ${sel.dni}` : ""}</div>
       </div>
-      <button type="button" onClick={() => { setAbierto(true); setQ(""); }} style={{ border: "1px solid #DBD4C8", background: "#fff", borderRadius: 999, padding: "6px 14px", fontSize: 12.5, fontWeight: 600, color: "#5C5853", cursor: "pointer" }}>Cambiar</button>
+      <button type="button" onClick={() => { setAbierto(true); setQ(""); }} style={{ border: "1px solid rgba(44,42,40,.10)", background: "#fff", borderRadius: 999, padding: "6px 14px", fontSize: 12.5, fontWeight: 700, color: "#5C5853", cursor: "pointer", fontFamily: "inherit" }}>Cambiar</button>
     </div>
   </div>;
   return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
     {label && <label style={lbl}>{label}</label>}
     <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={`Buscá por nombre, cargo o DNI · ${empleados.length} colaboradores`}
       onKeyDown={e => { if (e.key === "Enter" && lista.length === 1) { e.preventDefault(); onChange(lista[0].id); setAbierto(false); } }}
-      style={{ padding: "9px 12px", border: "1px solid #CBD5E1", borderRadius: 10, fontSize: 14, background: "#fff", outline: "none" }} />
-    <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid #E2E8F0", borderRadius: 10, background: "#fff" }}>
+      style={CTRL_HR} />
+    <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid rgba(44,42,40,.10)", borderRadius: 14, background: "#fff" }}>
       {lista.length === 0 && <div style={{ padding: 14, fontSize: 13, color: "#94A3B8" }}>Nadie coincide con “{q}”.</div>}
       {lista.map(e => <button type="button" key={e.id} onClick={() => { onChange(e.id); setAbierto(false); }}
-        style={{ display: "flex", width: "100%", alignItems: "baseline", gap: 10, padding: "9px 14px", border: "none", borderBottom: "1px solid #F1F5F9", background: e.id === value ? "rgba(232,118,45,.08)" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit" }}>
+        style={{ display: "flex", width: "100%", alignItems: "baseline", gap: 10, padding: "9px 14px", border: "none", borderBottom: "1px solid rgba(44,42,40,.06)", background: e.id === value ? "rgba(232,118,45,.08)" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit" }}>
         <span style={{ fontWeight: 600, fontSize: 14, color: "#2C2A28" }}>{e.fullName}</span>
         <span style={{ fontSize: 12, color: "#64748b" }}>{e.position || ""}</span>
       </button>)}
     </div>
   </div>;
 };
-const Modal = ({ title, onClose, children, wide }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onClose}><div style={{ background: "#fff", borderRadius: 16, padding: 28, width: wide ? "95vw" : 520, maxWidth: "98vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,.2)" }} onClick={e => e.stopPropagation()}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}><h3 style={{ margin: 0, fontSize: 18 }}>{title}</h3><button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94A3B8" }}>✕</button></div>{children}</div></div>;
+const Modal = ({ title, onClose, children, wide }) => <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,.38)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 12 }} onClick={onClose}><div style={{ background: "#fff", borderRadius: 22, padding: "24px 26px", width: wide ? "min(1080px, 94vw)" : 560, maxWidth: "98vw", maxHeight: "94vh", overflowY: "auto", boxShadow: "0 24px 70px rgba(44,42,40,.28)", color: "#2C2A28", fontFamily: "var(--sans, inherit)" }} onClick={e => e.stopPropagation()}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 12 }}><h3 style={{ margin: 0, font: "800 19px/1.2 var(--display, inherit)", letterSpacing: "-.01em" }}>{title}</h3><button onClick={onClose} aria-label="Cerrar" style={{ background: "rgba(44,42,40,.05)", border: "none", width: 34, height: 34, borderRadius: "50%", fontSize: 16, cursor: "pointer", color: "#6E6862", flexShrink: 0 }}>✕</button></div>{children}</div></div>;
 const Table = ({ columns, data, actions }) => <div style={{ overflowX: "auto", borderRadius: 12, border: "1px solid #E2E8F0" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#F1F5F9" }}>{columns.map(c => <th key={c.key} style={{ padding: "10px 14px", textAlign: "left", color: "#475569", fontWeight: 600, borderBottom: "2px solid #E2E8F0", whiteSpace: "nowrap" }}>{c.label}</th>)}{actions && <th style={{ padding: "10px 14px", textAlign: "right", borderBottom: "2px solid #E2E8F0" }}>Acciones</th>}</tr></thead><tbody>{data.length === 0 && <tr><td colSpan={columns.length + (actions ? 1 : 0)} style={{ padding: 30, textAlign: "center", color: "#94A3B8" }}>Sin registros</td></tr>}{data.map((r, i) => <tr key={r.id || i} style={{ borderBottom: "1px solid #F1F5F9" }}>{columns.map(c => <td key={c.key} style={{ padding: "10px 14px", color: "#334155" }}>{c.render ? c.render(r) : r[c.key]}</td>)}{actions && <td style={{ padding: "10px 14px", textAlign: "right" }}>{actions(r)}</td>}</tr>)}</tbody></table></div>;
 const StatCard = ({ label, value, icon, color = "#0F4C75" }) => <div style={{ background: "#fff", borderRadius: 14, padding: "18px 22px", border: "1px solid #E2E8F0", flex: 1, minWidth: 150 }}><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ background: color + "15", color, width: 40, height: 40, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>{icon}</div><div><div style={{ fontSize: 20, fontWeight: 700 }}>{value}</div><div style={{ fontSize: 12, color: "#64748b" }}>{label}</div></div></div></div>;
 const AlertCard = ({ label, value, icon, color }) => <div style={{ background: "#fff", borderRadius: 12, padding: "14px 18px", border: `1px solid ${color}30`, borderLeft: `4px solid ${color}` }}><div style={{ display: "flex", alignItems: "center", gap: 12 }}><div style={{ fontSize: 24 }}>{icon}</div><div><div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1.1 }}>{value}</div><div style={{ fontSize: 11, color: "#5C5853", marginTop: 2, fontWeight: 600 }}>{label}</div></div></div></div>;
@@ -5384,8 +5391,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
       <Select label="Empresa" options={[{ value: "subterra", label: "Subterra Honduras" }, { value: "geotecnica", label: "Geotecnica Soluciones" }]} value={f.company} onChange={e => u("company", e.target.value)} />
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Grupo (auto)</label>
-        <div style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, background: GRUPO_COLOR[grupo] + "15", color: GRUPO_COLOR[grupo], fontWeight: 700, fontSize: 14 }}>
+        <label style={LABEL_HR}>Grupo (auto)</label>
+        <div style={{ padding: "10px 12px", border: "1px solid rgba(44,42,40,.08)", borderRadius: 12, background: "#F7F6F4", color: "#2C2A28", fontWeight: 700, fontSize: 14 }}>
           {grupo} — {GRUPO_DESC[grupo] || "—"}
         </div>
       </div>
@@ -5399,23 +5406,23 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       {!esTemporal && <Input label="Fecha de ingreso" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />}
 
       {/* Bloque destacado de duracion para temporales (por obra determinada) */}
-      {esTemporal && <div style={{ gridColumn: "1/-1", background: "#FFFBEB", border: "2px solid #F59E0B", borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: "#92400E", letterSpacing: 0.3 }}>📅 DURACIÓN DEL CONTRATO POR OBRA</span>
-          <span style={{ fontSize: 11, color: "#B45309", fontStyle: "italic" }}>(obligatorio en contratos temporales)</span>
+      {esTemporal && <div style={{ gridColumn: "1/-1", background: "#F7F6F4", border: "1px solid rgba(44,42,40,.08)", borderRadius: 16, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: "#2C2A28" }}>Duración del contrato por obra</span>
+          <span style={{ fontSize: 12, color: "#8A847D" }}>obligatoria en temporales</span>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, alignItems: "end" }}>
           <Input label="Fecha desde *" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
           <Input label="Fecha hasta (vence) *" type="date" value={f.endDate} onChange={e => u("endDate", e.target.value)} />
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Duración calculada</label>
-            <div style={{ padding: "8px 12px", border: "1px solid #FCD34D", borderRadius: 8, background: "#fff", color: duracionDias > 0 ? "#92400E" : "#94A3B8", fontWeight: 700, fontSize: 13, minHeight: 38, display: "flex", alignItems: "center" }}>
-              {duracionStr || "— completa las fechas —"}
+            <label style={LABEL_HR}>Duración calculada</label>
+            <div style={{ padding: "10px 12px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 12, background: "#fff", color: duracionDias > 0 ? "#A94E16" : "#A39C92", fontWeight: 700, fontSize: 13, minHeight: 40, boxSizing: "border-box", display: "flex", alignItems: "center" }}>
+              {duracionStr || "Completá las fechas"}
             </div>
           </div>
         </div>
-        {fechasInvalidas && <div style={{ background: "#FEE2E2", color: "#991B1B", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}>
-          ⚠️ La fecha de fin no puede ser anterior a la fecha de inicio.
+        {fechasInvalidas && <div style={{ background: "rgba(192,57,43,.06)", color: "#B03024", borderRadius: 10, padding: "8px 12px", fontSize: 12.5, fontWeight: 600 }}>
+          La fecha de fin no puede ser anterior a la fecha de inicio.
         </div>}
       </div>}
 
@@ -5423,11 +5430,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       <Input label="Bonificacion (L)" type="number" value={f.bonificacion} onChange={e => u("bonificacion", e.target.value)} />
 
       {/* Recordatorio visible cuando el tipo de contrato es Honorarios (Grupo D) */}
-      {esHonorarios && <div style={{ gridColumn: "1/-1", background: "#F5F3FF", border: "2px solid #C4B5FD", borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: "#5B21B6", letterSpacing: 0.3 }}>📌 ATENCIÓN — HONORARIOS PROFESIONALES (GRUPO D)</span>
-        </div>
-        <div style={{ fontSize: 12, color: "#5B21B6", lineHeight: 1.6 }}>
+      {esHonorarios && <div style={{ gridColumn: "1/-1", background: "#F7F6F4", border: "1px solid rgba(44,42,40,.08)", borderRadius: 16, borderLeft: "3px solid #E8762D", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 800, color: "#2C2A28" }}>Honorarios profesionales (grupo D)</span>
+        <div style={{ fontSize: 12.5, color: "#5C5853", lineHeight: 1.6 }}>
           Registrá el <b>salario base</b> tal como se acordó con el profesional (sin descontar nada).
           La <b>retención del 12.5% por honorarios profesionales</b> se aplica automáticamente al generar la planilla
           (no afecta el monto que ves arriba). El neto a pagar al profesional sale ya con la retención descontada.
@@ -5440,16 +5445,16 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       </div>
 
       {/* Bloque "Caso excepcional" — solo para permanentes y honorarios (NO temporales) */}
-      {!esTemporal && <div style={{ gridColumn: "1/-1", background: "#DBEAFE", border: "2px solid #93C5FD", borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-        <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#1E3A8A", lineHeight: 1.4 }}>
-          <input type="checkbox" checked={f.excepcional} onChange={e => u("excepcional", e.target.checked)} style={{ marginTop: 3 }} />
+      {!esTemporal && <div style={{ gridColumn: "1/-1", background: "#F7F6F4", border: "1px solid rgba(44,42,40,.08)", borderRadius: 16, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#2C2A28", lineHeight: 1.4 }}>
+          <input type="checkbox" checked={f.excepcional} onChange={e => u("excepcional", e.target.checked)} style={{ marginTop: 2, accentColor: "#E8762D", width: 16, height: 16 }} />
           <span>Caso excepcional: el efecto en planilla es distinto a la fecha de ingreso</span>
         </label>
         {f.excepcional && <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingLeft: 24 }}>
           <div style={{ maxWidth: 280 }}>
             <Input label="Fecha de efecto en planilla *" type="date" value={f.payrollEffectiveDate} onChange={e => u("payrollEffectiveDate", e.target.value)} />
           </div>
-          <div style={{ background: "#fff", border: "1px solid #BFDBFE", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#1E3A8A", lineHeight: 1.6 }}>
+          <div style={{ background: "#fff", border: "1px solid rgba(44,42,40,.08)", borderRadius: 12, padding: "10px 12px", fontSize: 12.5, color: "#5C5853", lineHeight: 1.6 }}>
             El empleado conservará su fecha de ingreso original (<b>{f.startDate ? fmt(f.startDate) : "—"}</b>) para antigüedad y contrato.
             En el reporte de Movimientos aparecerá como alta en <b>{f.payrollEffectiveDate ? fmt(f.payrollEffectiveDate) : "—"}</b> con pago proporcional.
           </div>
@@ -5556,8 +5561,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Input label={esAlta ? "Fecha de efecto en planilla *" : "Último día del colaborador en la empresa *"} type="date" value={f.date} onChange={e => u("date", e.target.value)} />
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Quincena / periodo (auto)</label>
-          <div style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, background: "#fff", fontWeight: 700, fontSize: 13 }}>
+          <label style={LABEL_HR}>Quincena / periodo (auto)</label>
+          <div style={{ ...CTRL_HR, background: "#fff", fontWeight: 700, fontSize: 13 }}>
             {q ? `${q.quincena} ${q.periodo}` : "—"}
           </div>
         </div>
@@ -5582,9 +5587,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       )}
 
       <div>
-        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Notas</label>
+        <label style={LABEL_HR}>Notas</label>
         <textarea
-          style={{ width: "100%", padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, minHeight: 70, fontFamily: "inherit", outline: "none" }}
+          style={{ ...CTRL_HR, minHeight: 70, resize: "vertical" }}
           value={f.notas}
           onChange={e => u("notas", e.target.value)}
         />
@@ -5643,21 +5648,15 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       <div style={{ gridColumn: "1/-1" }}>
         <BuscadorEmpleado label="Empleado a dar de baja" empleados={ae.filter(e => e.status !== "inactive")} value={f.employeeId} onChange={id => u("employeeId", id)} />
       </div>
-      {emp && <div style={{ gridColumn: "1/-1", background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, fontSize: 13 }}>
-        <div><span style={{ color: "#64748b" }}>DNI:</span> <b>{emp.dni}</b></div>
-        <div><span style={{ color: "#64748b" }}>Cargo:</span> <b>{emp.position}</b></div>
-        <div><span style={{ color: "#64748b" }}>Empresa:</span> <b>{COMPANIES[emp.company].name}</b></div>
-        <div><span style={{ color: "#64748b" }}>Contrato:</span> <Badge color={emp.contractType === "temporary" ? "#D97706" : emp.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{emp.contractType === "temporary" ? "Temporal" : emp.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge></div>
-        <div><span style={{ color: "#64748b" }}>Salario:</span> <b>{fmtL(emp.salary)}</b></div>
-        <div><span style={{ color: "#64748b" }}>Grupo:</span> <Badge color={GRUPO_COLOR[grupo]}>{grupo} — {GRUPO_DESC[grupo]}</Badge></div>
-        {emp.startDate && <div><span style={{ color: "#64748b" }}>Ingreso:</span> <b>{fmt(emp.startDate)}</b></div>}
+      {emp && <div style={{ gridColumn: "1/-1", background: "#F7F6F4", border: "1px solid rgba(44,42,40,.08)", borderRadius: 16, padding: "14px 16px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, fontSize: 13, color: "#2C2A28" }}>
+        {[["DNI", emp.dni], ["Cargo", emp.position], ["Empresa", COMPANIES[emp.company].name], ["Contrato", emp.contractType === "temporary" ? "Temporal" : emp.contractType === "honorarios" ? "Honorarios" : "Permanente"], ["Salario", fmtL(emp.salary)], ["Grupo", `${grupo} — ${GRUPO_DESC[grupo]}`], ...(emp.startDate ? [["Ingreso", fmt(emp.startDate)]] : [])].map(([l, v]) => <div key={l} style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}><span style={LABEL_HR}>{l}</span><b style={{ fontWeight: 700 }}>{v || "—"}</b></div>)}
         {emp.contractType === "temporary" && emp.endDate && (() => {
           const hoy = new Date(); hoy.setHours(0,0,0,0);
           const fin = new Date(emp.endDate); fin.setHours(0,0,0,0);
           const dias = Math.ceil((fin - hoy) / 86400000);
-          const color = dias < 0 ? "#991B1B" : dias <= 7 ? "#DC2626" : dias <= 30 ? "#D97706" : "#059669";
-          return <div style={{ gridColumn: "1 / -1", background: color + "15", border: `1px solid ${color}40`, borderRadius: 8, padding: "8px 12px", marginTop: 4 }}>
-            <span style={{ color: "#64748b" }}>📅 Contrato vence:</span> <b style={{ color }}>{fmt(emp.endDate)}</b>
+          const color = dias < 0 ? "#B03024" : dias <= 30 ? "#A94E16" : "#177243";
+          return <div style={{ gridColumn: "1 / -1", background: "#fff", border: "1px solid rgba(44,42,40,.08)", borderRadius: 12, padding: "8px 12px" }}>
+            <span style={{ color: "#6E6862" }}>Contrato vence:</span> <b style={{ color }}>{fmt(emp.endDate)}</b>
             <span style={{ color, fontWeight: 600, marginLeft: 8, fontSize: 12 }}>{dias < 0 ? `(vencido hace ${Math.abs(dias)}d)` : dias === 0 ? "(vence hoy)" : `(${dias}d restantes)`}</span>
           </div>;
         })()}
@@ -5665,7 +5664,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       {f.employeeId && <EquipoAsignadoInv empId={f.employeeId} modo="aviso" />}
       <Input label="Último día del colaborador en la empresa" type="date" value={f.date} onChange={e => u("date", e.target.value)} />
       <Select label="Motivo de baja" options={MOTIVOS_BAJA} value={f.motivo} onChange={e => u("motivo", e.target.value)} />
-      {f.date && <div style={{ gridColumn: "1/-1", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#7F1D1D", lineHeight: 1.6 }}>
+      {f.date && <div style={{ gridColumn: "1/-1", background: "#F7F6F4", border: "1px solid rgba(44,42,40,.08)", borderLeft: "3px solid #E8762D", borderRadius: 14, padding: "10px 14px", fontSize: 12.5, color: "#5C5853", lineHeight: 1.6 }}>
         Es el <b>último día</b> que la persona estuvo en la empresa: <b>se le paga hasta el {fmt(f.date)}</b> (inclusive).
         Desde el <b>{fmt(diaSiguiente(f.date))}</b> en adelante su asistencia queda <b>en gris</b> (bloqueada) — domingos y feriados incluidos, así que no se le paga el descanso.
       </div>}
@@ -6779,8 +6778,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       setModal(null);
     }} wide><HorasExtrasGrid sheet={m.d} /></Modal>;
     case "he-new": return <Modal title="Nueva hoja de horas extras" onClose={() => setModal(null)}><HeNewForm /></Modal>;
-    case "mn": return <Modal title="Registrar ALTA de empleado" onClose={() => setModal(null)} wide><AltaForm /></Modal>;
-    case "mb": return <Modal title="Registrar BAJA de empleado" onClose={() => setModal(null)} wide><BajaForm /></Modal>;
+    case "mn": return <Modal title="Registrar alta" onClose={() => setModal(null)} wide><AltaForm /></Modal>;
+    case "mb": return <Modal title="Registrar baja" onClose={() => setModal(null)} wide><BajaForm /></Modal>;
     case "me": return <Modal title={`Editar movimiento — ${m.d.fullName}`} onClose={() => setModal(null)} wide><EditMovForm mov={m.d} onSave={updated => sM(movs.map(x => x.id === updated.id ? updated : x))} /></Modal>;
     // 26-oct-2026: el "+ Generar" arma la constancia CALCADA del Word (la misma
     // del hub de RRHH) con vista previa y PDF; el ConForm viejo de texto quedó sin uso.

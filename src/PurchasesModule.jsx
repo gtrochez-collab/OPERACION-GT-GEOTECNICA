@@ -339,35 +339,40 @@ const readFileAsDataUrl = file => new Promise((resolve, reject) => {
 // ── UI primitives ──
 const Badge = ({ children, color = "#64748b" }) => <span style={{ background: color + "18", color, padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>{children}</span>;
 
+// Controles con la estética GeoCore (3-nov-2026, Gerson: "la nueva solicitud se
+// quedó con la interfaz vieja"): pastillas, campos gris suave y etiqueta chica,
+// los mismos tokens que geocost-ui. Mismos nombres y variantes de siempre.
+const CTRL_CP = { padding: "10px 12px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 12, fontSize: 14, outline: "none", background: "#F4F4F2", color: "#2C2A28", fontFamily: "inherit", width: "100%", boxSizing: "border-box", minWidth: 0 };
+const LABEL_CP = { fontSize: 11.5, fontWeight: 700, color: "#6E6862", letterSpacing: ".02em" };
 const Btn = ({ children, onClick, variant = "primary", small, style: sx, disabled, type, title }) => {
-  const b = { border: "none", borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer", fontWeight: 600, fontSize: small ? 12 : 14, padding: small ? "5px 12px" : "9px 20px", opacity: disabled ? 0.5 : 1, fontFamily: "inherit", letterSpacing: 0.2 };
+  const b = { border: "none", borderRadius: 999, cursor: disabled ? "not-allowed" : "pointer", fontWeight: 700, fontSize: small ? 12 : 13.5, padding: small ? "6px 13px" : "10px 20px", opacity: disabled ? 0.5 : 1, fontFamily: "inherit", letterSpacing: 0.1 };
   const v = {
-    primary: { ...b, background: ORANGE, color: "#fff", boxShadow: "0 2px 6px rgba(232,118,45,0.20)" },
-    success: { ...b, background: "#5A8A4F", color: "#fff" },
-    info: { ...b, background: "#2C5F5D", color: "#fff" },
-    warn: { ...b, background: "#D4A017", color: "#fff" },
-    danger: { ...b, background: "#C0392B", color: "#fff" },
-    ghost: { ...b, background: "transparent", color: "#5C5853", border: "1px solid #DBD4C8" },
+    primary: { ...b, background: ORANGE, color: "#fff", boxShadow: "0 4px 14px rgba(232,118,45,.28)" },
+    success: { ...b, background: "#2F7A4B", color: "#fff" },
+    info: { ...b, background: "#2C2A28", color: "#fff" },
+    warn: { ...b, background: "#B7791F", color: "#fff" },
+    danger: { ...b, background: "rgba(192,57,43,.06)", color: "#B03024", border: "1px solid rgba(192,57,43,.25)" },
+    ghost: { ...b, background: "rgba(44,42,40,.05)", color: "#5C5853", border: "1px solid rgba(44,42,40,.10)" },
   };
   return <button type={type || "button"} title={title} style={{ ...(v[variant] || v.primary), ...sx }} onClick={onClick} disabled={disabled}>{children}</button>;
 };
 
-const Input = ({ label, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<input style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, outline: "none", background: "#F8FAFC" }} {...p} /></div>;
+const Input = ({ label, style: sx, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>{label && <label style={LABEL_CP}>{label}</label>}<input style={{ ...CTRL_CP, ...sx }} {...p} /></div>;
 
-const Textarea = ({ label, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<textarea style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, outline: "none", background: "#F8FAFC", fontFamily: "inherit", resize: "vertical", minHeight: 70 }} {...p} /></div>;
+const Textarea = ({ label, style: sx, ...p }) => <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>{label && <label style={LABEL_CP}>{label}</label>}<textarea style={{ ...CTRL_CP, resize: "vertical", minHeight: 70, ...sx }} {...p} /></div>;
 
 // Acepta strings, {value,label} y — desde GeoCost (9-sep-2026) — grupos
 // {group, options} que salen como <optgroup> (partidas por categoría).
-const Select = ({ label, options, emptyLabel = "—", ...p }) => {
+const Select = ({ label, options, emptyLabel = "—", style: sx, ...p }) => {
   const opt = o => <option key={typeof o === "string" ? o : o.value} value={typeof o === "string" ? o : o.value}>{typeof o === "string" ? o : o.label}</option>;
-  return <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{label}</label>}<select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC", width: "100%", minWidth: 0 }} {...p}><option value="">{emptyLabel}</option>{(options || []).map((o, i) => o && typeof o === "object" && o.group ? <optgroup key={o.group + i} label={o.group}>{(o.options || []).map(opt)}</optgroup> : opt(o))}</select></div>;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>{label && <label style={LABEL_CP}>{label}</label>}<select style={{ ...CTRL_CP, ...sx }} {...p}><option value="">{emptyLabel}</option>{(options || []).map((o, i) => o && typeof o === "object" && o.group ? <optgroup key={o.group + i} label={o.group}>{(o.options || []).map(opt)}</optgroup> : opt(o))}</select></div>;
 };
 
-const Modal = ({ title, onClose, children, wide, size }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onClose}>
-  <div style={{ background: "#fff", borderRadius: 16, padding: 28, width: size === "xl" ? "96vw" : wide ? "85vw" : 620, maxWidth: "98vw", maxHeight: "94vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,.25)" }} onClick={e => e.stopPropagation()}>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-      <h3 style={{ margin: 0, fontSize: 18 }}>{title}</h3>
-      <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94A3B8" }}>✕</button>
+const Modal = ({ title, onClose, children, wide, size }) => <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,.38)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 12 }} onClick={onClose}>
+  <div style={{ background: "#fff", borderRadius: 22, padding: "24px 26px", width: size === "xl" ? "96vw" : wide ? "min(1180px, 90vw)" : 640, maxWidth: "98vw", maxHeight: "94vh", overflowY: "auto", boxShadow: "0 24px 70px rgba(44,42,40,.28)", color: "#2C2A28" }} onClick={e => e.stopPropagation()}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 12 }}>
+      <h3 style={{ margin: 0, font: "800 19px/1.2 var(--display, inherit)", letterSpacing: "-.01em" }}>{title}</h3>
+      <button onClick={onClose} aria-label="Cerrar" style={{ background: "rgba(44,42,40,.05)", border: "none", width: 34, height: 34, borderRadius: "50%", fontSize: 16, cursor: "pointer", color: "#6E6862", flexShrink: 0 }}>✕</button>
     </div>
     {children}
   </div>
@@ -984,9 +989,9 @@ function CorreccionFormImpl({ purchase, setModal, allProjects, presupuestos, tas
     </div>
 
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Proyecto</label>
+      <label style={LABEL_CP}>Proyecto</label>
       <select value={projectCode} onChange={e => { const v = e.target.value; setProjectCode(v); if (v !== purchase.projectCode) { setPartidaId(""); setLineas([]); } else { setPartidaId(purchase.partidaId || ""); setLineas(lineasIniciales(purchase)); } }}
-        style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }}>
+        style={CTRL_CP}>
         <option value="">—</option>
         {(allProjects || []).filter(p => admiteSolicitudes(p.short) || p.short === purchase.projectCode).map(p => <option key={p.short} value={p.short}>{p.short} — {p.name}</option>)}
       </select>
@@ -1580,7 +1585,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           <span>Proyecto</span>
           <button type="button" onClick={() => setModal({ t: "new-project", returnTo: purchase ? { t: "edit", d: purchase } : { t: "new" } })} style={{ background: "none", border: "none", color: "#BE185D", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>+ Nuevo proyecto</button>
         </label>
-        <select style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC", width: "100%", minWidth: 0 }} value={f.projectCode} onChange={e => {
+        <select style={CTRL_CP} value={f.projectCode} onChange={e => {
           // Cambiar de proyecto suelta la partida (es de OTRO presupuesto).
           const v = e.target.value;
           setF(p => p.projectCode === v ? p : ({ ...p, projectCode: v, partidaId: "", lineas: [] }));
@@ -1604,7 +1609,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         </label>
         <input
           list="providers-datalist"
-          style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, outline: "none", background: "#F8FAFC" }}
+          style={CTRL_CP}
           value={f.provider}
           onChange={e => u("provider", e.target.value)}
           onBlur={e => {
@@ -1656,7 +1661,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           van directo a "Por cerrar contable". Default Material = lo de
           siempre: si alguien se olvida de marcarla, cae con Ana como antes. */}
       <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8 }}>
-        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{esMaqForm ? "Qué se está gestionando" : "Tipo de compra"}</label>
+        <label style={LABEL_CP}>{esMaqForm ? "Qué se está gestionando" : "Tipo de compra"}</label>
         {esMaqForm && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {CATEGORIAS_MAQ.map(o => {
             const activo = categoriaMaqDe(f) === o.k;
@@ -1683,7 +1688,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         </div>}
       </div>
       <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8 }}>
-        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Condición de pago</label>
+        <label style={LABEL_CP}>Condición de pago</label>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {[{ k: "contado", t: "Contado", d: "Se paga de una, entra a la cola normal de Tesorería" },
             { k: "credito", t: "Crédito", d: "El proveedor nos dio plazo — se calendariza en Cuentas por pagar" }].map(o => {
@@ -1722,7 +1727,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       <div style={{ gridColumn: "1/-1", display: "grid", gridTemplateColumns: "minmax(160px, 220px) minmax(0,1fr)", gap: 14, alignItems: "end" }}>
         <Input label="Fecha en que se requiere el pago (opcional)" type="date" value={f.fechaPagoRequerida || ""} onChange={e => u("fechaPagoRequerida", e.target.value)} />
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Va a</label>
+          <label style={LABEL_CP}>Va a</label>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {[{ k: "normal", t: "Normal", d: "Solo entra al Calendario de Pago con su fecha" },
               { k: "prioridad", t: "Prioridades", d: "Entra a la cola de Prioridades de la Lic. Carolina con esa fecha tope" },
@@ -1770,7 +1775,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             {/* 3) La cotización, línea por línea */}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>La cotización, línea por línea *</label>
+                <label style={LABEL_CP}>La cotización, línea por línea *</label>
                 <span style={{ fontSize: 11.5, color: "#64748b" }}>Montos en L {sumarIsv ? "SIN ISV (el 15 % se suma al total)" : "tal cual la cotización"}</span>
               </div>
               <datalist id="maq-unidades">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist>
@@ -1825,13 +1830,13 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         const nombre = String(f.provider || "").trim();
         const yaExiste = !!nombre && (providers || []).some(pv => String(pv.name || "").trim().toLowerCase() === nombre.toLowerCase());
         const esNuevo = !!nombre && !yaExiste;
-        return <div style={{ gridColumn: "1/-1", background: esNuevo ? "#F0FDF4" : "#F8FAFC", border: `1px solid ${esNuevo ? "#86EFAC" : "#E2E8F0"}`, borderRadius: 10, padding: 12 }}>
+        return <div style={{ gridColumn: "1/-1", background: "#F7F6F4", border: "1px solid rgba(44,42,40,.08)", borderLeft: esNuevo ? "3px solid #E8762D" : "1px solid rgba(44,42,40,.08)", borderRadius: 16, padding: "14px 16px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: esNuevo ? "#065F46" : "#475569", textTransform: "uppercase", letterSpacing: 0.5 }}>
-              {esNuevo ? "🆕 Proveedor nuevo — no está en la base" : "💳 Datos bancarios del proveedor (opcional)"}
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: "#2C2A28" }}>
+              {esNuevo ? "Proveedor nuevo · no está en la base" : <>Datos bancarios del proveedor <span style={{ fontWeight: 500, color: "#8A847D", fontSize: 12 }}>opcional</span></>}
             </div>
-            {esNuevo && <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 800, color: "#065F46", cursor: "pointer", background: "#fff", border: "1px solid #86EFAC", borderRadius: 8, padding: "5px 10px" }}>
-              <input type="checkbox" checked={!!f.provNuevo} onChange={e => u("provNuevo", e.target.checked)} style={{ width: 15, height: 15, cursor: "pointer", accentColor: "#059669" }} />
+            {esNuevo && <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, color: "#2C2A28", cursor: "pointer", background: "#fff", border: "1px solid rgba(44,42,40,.10)", borderRadius: 999, padding: "5px 12px" }}>
+              <input type="checkbox" checked={!!f.provNuevo} onChange={e => u("provNuevo", e.target.checked)} style={{ width: 15, height: 15, cursor: "pointer", accentColor: "#E8762D" }} />
               Guardar su ficha completa
             </label>}
           </div>
@@ -2003,7 +2008,7 @@ function BorradorSupplyFormImpl({ purchase, puedeEnviar, userName, setModal, upd
     <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
       <div style={{ gridColumn: "1/-1", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>Lo que confirma Finanzas</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Condición de pago</label>
+        <label style={LABEL_CP}>Condición de pago</label>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{pill("Contado", f.condicionPago !== "credito", () => { u("condicionPago", "contado"); if (f.destinoPago === "cxp") u("destinoPago", "normal"); })}{pill("Crédito", f.condicionPago === "credito", () => { u("condicionPago", "credito"); u("destinoPago", "cxp"); })}</div>
         {f.condicionPago === "credito" && <div style={{ display: "flex", gap: 6 }}>{pill("Un solo pago", f.tipoCredito !== "plan", () => u("tipoCredito", "unico"), CHARCOAL)}{pill("Plan de pagos", f.tipoCredito === "plan", () => u("tipoCredito", "plan"), CHARCOAL)}</div>}
       </div>
@@ -2012,7 +2017,7 @@ function BorradorSupplyFormImpl({ purchase, puedeEnviar, userName, setModal, upd
         {o.fechaRequeridaObra && <div style={{ fontSize: 11.5, color: "#64748b" }}>Viene puesta 2 días antes de que se necesite en obra ({fmt(o.fechaRequeridaObra)}). Cambiala si hace falta.</div>}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <label style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Va a</label>
+        <label style={LABEL_CP}>Va a</label>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{[["normal", "Normal"], ["prioridad", "Prioridades"], ["cxp", "Cuentas por pagar"]].map(([k, l]) => pill(l, f.destinoPago === k, () => u("destinoPago", k)))}</div>
       </div>
       <Select label="Responsable de cierre contable" options={[...new Set([...USERS.map(u2 => u2.label), ...(f.cierreResponsable ? [f.cierreResponsable] : [])])].sort()} value={f.cierreResponsable} onChange={e => u("cierreResponsable", e.target.value)} emptyLabel="Sin asignar" />
@@ -2353,7 +2358,7 @@ function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider, 
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {(f.phones || []).map((ph, i) => (
           <div key={i} style={{ display: "flex", gap: 8 }}>
-            <input style={{ flex: 1, padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 14, background: "#F8FAFC" }} value={ph} onChange={e => setPhone(i, e.target.value)} placeholder={`Telefono ${i + 1}`} />
+            <input style={{ ...CTRL_CP, flex: 1 }} value={ph} onChange={e => setPhone(i, e.target.value)} placeholder={`Telefono ${i + 1}`} />
             {(f.phones.length > 1) && <Btn small variant="danger" onClick={() => removePhone(i)}>×</Btn>}
           </div>
         ))}
