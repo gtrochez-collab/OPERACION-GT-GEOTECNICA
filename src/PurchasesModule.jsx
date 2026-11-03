@@ -1383,7 +1383,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         isvEnLinea: r.items.some(it => it.isvEnLinea), descuento: r.items.some(it => it.descuento) };
       if (lineasLibres) {
         if (lineasMValidas.length && !confirm(`Ya hay ${lineasMValidas.length} línea(s) escritas.\n\n¿Reemplazarlas con las ${r.items.length} que leí de la cotización?`)) return;
-        const ls = r.items.map(it => ({ id: uid(), cantidad: String(it.cantidad), unidad: it.unidad, nombre: it.nombre, monto: String(it.monto) }));
+        const ls = r.items.map(it => ({ id: uid(), cantidad: String(it.cantidad), unidad: it.unidad, nombre: it.nombre, monto: String(it.monto), pu: num(it.cantidad) > 0 ? String(Math.round(it.monto / num(it.cantidad) * 10000) / 10000) : "" }));
         const suma = r2(r.items.reduce((a, it) => a + it.monto, 0));
         setF(p => ({ ...comunesLectura(p, r, pv, fd), lineas: ls, sumarIsv: true, amount: String(r2(suma * 1.15)) }));
         const calc = r2(suma * 1.15);
@@ -1454,7 +1454,22 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         <div style={{ fontSize: 11.5, opacity: .85, marginTop: 2 }}>{maq ? "Revisá cada línea y corregí lo que haga falta antes de aprobar." : lectura.modo === "items" ? "Revisá que cada ítem sea el correcto: debajo de cada uno dice qué traía la cotización." : "Revisá el texto y el monto antes de aprobar."}</div>
       </div>;
     })());
-  const uLineaM = (id, k, v) => setLineasM(lineasM.map(l => l.id === id ? { ...l, [k]: v } : l));
+  // PRECIO UNITARIO (3-nov-2026, Gerson: "pongo 22 unidades, me pide el
+  // precio unitario y el sistema calcula el total"): cada línea lleva `pu`
+  // y su `monto` (total de la línea) = cantidad × P.U. Las líneas viejas sin
+  // `pu` lo derivan de monto ÷ cantidad para mostrarlo.
+  const puDe = (l) => (l.pu !== undefined && l.pu !== "") ? l.pu
+    : (num(l.cantidad) > 0 && num(l.monto) > 0 ? String(Math.round(num(l.monto) / num(l.cantidad) * 10000) / 10000) : "");
+  const uLineaM = (id, k, v) => setLineasM(lineasM.map(l => {
+    if (l.id !== id) return l;
+    const nx = { ...l, [k]: v };
+    if (k === "cantidad" || k === "pu") {
+      const pu = k === "pu" ? v : puDe(l);
+      nx.pu = pu;
+      nx.monto = num(nx.cantidad) > 0 && num(pu) > 0 ? String(r2(num(nx.cantidad) * num(pu))) : "";
+    }
+    return nx;
+  }));
   const errorLineasM = (aprobar) => {
     if (!lineasLibres) return null;
     // Las solicitudes VIEJAS de texto libre se pueden seguir aprobando sin
@@ -1464,7 +1479,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
     for (const l of lineasMValidas) {
       if (!String(l.nombre || "").trim()) return "Hay una línea sin descripción";
       if (!(num(l.cantidad) > 0)) return `"${String(l.nombre).trim()}": falta la cantidad`;
-      if (!(num(l.monto) > 0)) return `"${String(l.nombre).trim()}": falta el monto`;
+      if (!(num(l.monto) > 0)) return `"${String(l.nombre).trim()}": falta el precio unitario`;
     }
     return null;
   };
@@ -1508,7 +1523,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       const pt = pid ? (presConPartidas.partidas || []).find(x => x.id === pid) : null;
       const lineas = lineasMValidas.map(l => ({
         id: l.id || uid(), partidaId: pid || null, categoria: pt?.categoria || "", ...(pt?.solucion ? { solucion: pt.solucion } : {}),
-        nombre: String(l.nombre || "").trim(), unidad: String(l.unidad || "").trim(), cantidad: num(l.cantidad), monto: r2(num(l.monto)), manual: true,
+        nombre: String(l.nombre || "").trim(), unidad: String(l.unidad || "").trim(), cantidad: num(l.cantidad), pu: num(puDe(l)) || null, monto: r2(num(l.monto)), manual: true,
       }));
       const extra = String(extraForm || "").trim();
       const desc = [lineas.map(textoLineaManual).join("\n"), extra].filter(Boolean).join("\n");
@@ -1785,23 +1800,24 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
                 <label style={LABEL_CP}>{esMaqForm ? "La cotización, línea por línea *" : "Qué se está comprando, ítem por ítem *"}</label>
-                <span style={{ fontSize: 11.5, color: "#64748b" }}>Montos en L {sumarIsv ? "SIN ISV (el 15 % se suma al total)" : "tal cual la cotización"}</span>
+                <span style={{ fontSize: 11.5, color: "#64748b" }}>{sumarIsv ? "Precios unitarios SIN ISV (el 15 % se suma al total)" : "Precios unitarios tal cual la cotización"}</span>
               </div>
               <datalist id="maq-unidades">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist>
-              {lineasM.length > 0 && !esTel() && <div style={{ display: "grid", gridTemplateColumns: "76px 110px minmax(0,1fr) 120px 28px", gap: 6, fontSize: 10.5, fontWeight: 800, color: "#94A3B8", textTransform: "uppercase", letterSpacing: .4, padding: "0 2px" }}>
-                <span>Cant.</span><span>Unidad</span><span>Qué es</span><span style={{ textAlign: "right" }}>Monto L</span><span />
+              {lineasM.length > 0 && !esTel() && <div style={{ display: "grid", gridTemplateColumns: "76px 100px minmax(0,1fr) 110px 110px 28px", gap: 6, fontSize: 10.5, fontWeight: 800, color: "#94A3B8", textTransform: "uppercase", letterSpacing: .4, padding: "0 2px" }}>
+                <span>Cant.</span><span>Unidad</span><span>Qué es</span><span style={{ textAlign: "right" }}>P.U. L</span><span style={{ textAlign: "right" }}>Total L</span><span />
               </div>}
               {lineasM.map(l => <div key={l.id} style={esTel()
-                ? { display: "grid", gridTemplateColumns: "64px minmax(0,1fr) minmax(0,1.2fr) 28px", gridTemplateAreas: '"n n n n" "c u m x"', gap: 6, alignItems: "center", padding: 8, borderRadius: 12, background: "#fff", border: "1px solid rgba(44,42,40,.08)" }
-                : { display: "grid", gridTemplateColumns: "76px 110px minmax(0,1fr) 120px 28px", gap: 6, alignItems: "center" }}>
+                ? { display: "grid", gridTemplateColumns: "54px minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 24px", gridTemplateAreas: '"n n n n n" "c u p m x"', gap: 6, alignItems: "center", padding: 8, borderRadius: 12, background: "#fff", border: "1px solid rgba(44,42,40,.08)" }
+                : { display: "grid", gridTemplateColumns: "76px 100px minmax(0,1fr) 110px 110px 28px", gap: 6, alignItems: "center" }}>
                 <input type="number" min="0" step="any" value={l.cantidad ?? ""} onChange={e => uLineaM(l.id, "cantidad", e.target.value)} placeholder="1" style={{ gridArea: esTel() ? "c" : undefined, minWidth: 0, padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", textAlign: "right" }} />
                 <input list="maq-unidades" value={l.unidad || ""} onChange={e => uLineaM(l.id, "unidad", e.target.value)} placeholder="Unidad" style={{ gridArea: esTel() ? "u" : undefined, minWidth: 0, padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff" }} />
                 <input value={l.nombre || ""} onChange={e => uLineaM(l.id, "nombre", e.target.value)} placeholder={esMaqForm ? "Ej. Aceite hidráulico ISO 68" : "Ej. Sacos de cemento 42.5 kg"} style={{ gridArea: esTel() ? "n" : undefined, minWidth: 0, padding: "8px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", minWidth: 0 }} />
-                <input type="number" min="0" step="0.01" value={l.monto ?? ""} onChange={e => uLineaM(l.id, "monto", e.target.value)} placeholder="0.00" style={{ gridArea: esTel() ? "m" : undefined, minWidth: 0, padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", textAlign: "right", fontWeight: 700 }} />
+                <input type="number" min="0" step="any" value={puDe(l)} onChange={e => uLineaM(l.id, "pu", e.target.value)} placeholder="P.U." aria-label="Precio unitario" style={{ gridArea: esTel() ? "p" : undefined, minWidth: 0, padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", textAlign: "right" }} />
+                <span title="Cantidad × precio unitario" style={{ gridArea: esTel() ? "m" : undefined, minWidth: 0, padding: "8px 6px", fontSize: 13.5, fontWeight: 800, color: num(l.monto) > 0 ? "#2C2A28" : "#C9C3BA", textAlign: "right", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{num(l.monto) > 0 ? fmtL(l.monto) : "—"}</span>
                 <button type="button" title="Quitar línea" onClick={() => setLineasM(lineasM.filter(x => x.id !== l.id))} style={{ gridArea: esTel() ? "x" : undefined, minWidth: 0, background: "none", border: "none", color: "#94A3B8", fontSize: 16, cursor: "pointer" }}>✕</button>
               </div>)}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 2 }}>
-                <button type="button" onClick={() => setLineasM([...lineasM, { id: uid(), cantidad: "", unidad: "", nombre: "", monto: "" }])} style={{ background: "#fff", border: `1px dashed ${ORANGE}`, color: ORANGE_DARK, borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>+ Agregar línea</button>
+                <button type="button" onClick={() => setLineasM([...lineasM, { id: uid(), cantidad: "", unidad: "", nombre: "", pu: "", monto: "" }])} style={{ background: "#fff", border: `1px dashed ${ORANGE}`, color: ORANGE_DARK, borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>+ Agregar línea</button>
                 {lineasMValidas.length > 0 && <div style={{ fontSize: 12.5, color: "#475569", textAlign: "right" }}>
                   Subtotal <b style={{ color: "#0f172a" }}>{fmtL(sumaM)}</b>
                   {sumarIsv && <> · ISV 15 % <b style={{ color: "#0f172a" }}>{fmtL(r2(r2(sumaM * 1.15) - sumaM))}</b> · Total <b style={{ color: "#0f172a" }}>{fmtL(r2(sumaM * 1.15))}</b></>}

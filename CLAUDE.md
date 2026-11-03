@@ -819,6 +819,11 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   `description` un renglón por línea + detalle adicional. Las viejas de texto
   libre siguen aprobándose sin líneas (su texto cae en "Detalle adicional").
   En el celular cada línea va en 2 renglones (`gridTemplateAreas`).
+  **Precio unitario (3-nov-2026, Gerson)**: cada línea a mano (GeoShopping
+  sin receta y GeoMachinery) se llena con cantidad + **P.U.** y el total de
+  la línea se CALCULA (`monto` = cantidad × `pu`, campo aditivo `pu`); ya no
+  se escribe el monto. Las líneas viejas sin `pu` lo derivan (`puDe`: monto ÷
+  cantidad). El lector de PDF también llena el P.U.
   **Fix de paso**: el form de solicitud (ambos módulos) se salía del modal por
   la derecha con los nombres largos de proyecto — grid `minmax(0,1fr)` y
   selects `width:100%`.
