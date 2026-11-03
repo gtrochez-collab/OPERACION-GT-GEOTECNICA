@@ -809,6 +809,16 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   para ellas (lo pisaría con los de la receta). Corregir compra pagada en
   GeoMachinery = una partida; las líneas manuales se re-apuntan sin perder
   sus nombres. DetailView muestra el nombre escrito + la partida al lado.
+  **GeoShopping SIN receta = líneas a mano (3-nov-2026, Gerson: "en las
+  solicitudes directas no deja agregar ítem por ítem, lo pone en un solo
+  párrafo")**: `lineasLibres = !modoItems` en `PurchaseFormImpl` — las mismas
+  líneas de GeoMachinery (cantidad · unidad · qué es · monto, subtotal + ISV
+  15 % con su check, el monto total sigue a la suma, lector de PDF llena las
+  líneas) también en GeoShopping cuando el proyecto no tiene receta (ej.
+  PLAN-TALLER). Se guardan como `lineas [{…, manual:true, partidaId:null}]` y
+  `description` un renglón por línea + detalle adicional. Las viejas de texto
+  libre siguen aprobándose sin líneas (su texto cae en "Detalle adicional").
+  En el celular cada línea va en 2 renglones (`gridTemplateAreas`).
   **Fix de paso**: el form de solicitud (ambos módulos) se salía del modal por
   la derecha con los nombres largos de proyecto — grid `minmax(0,1fr)` y
   selects `width:100%`.

@@ -1317,13 +1317,18 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   // GeoMachinery NO usa los ítems de la receta: una partida + líneas a mano.
   const esMaqForm = prefijo === "MAQ";
   const modoItems = !esMaqForm && !!presConPartidas && !sinElegiblesCC;
+  // Líneas A MANO: GeoMachinery siempre, y GeoShopping cuando el proyecto NO
+  // tiene receta (3-nov-2026, Gerson: "en las solicitudes directas no deja
+  // agregar ítem por ítem, lo pone en un solo párrafo"). Antes era un
+  // textarea libre; ahora cantidad · unidad · qué es · monto, y el total suma.
+  const lineasLibres = !modoItems;
   const lineasForm = Array.isArray(f.lineas) ? f.lineas : lineasIniciales(f);
-  // ── Líneas MANUALES (GeoMachinery, 12-oct-2026) ──
-  const lineasM = esMaqForm ? (Array.isArray(f.lineas) ? f.lineas : []) : [];
+  // ── Líneas MANUALES (GeoMachinery, 12-oct-2026; GeoShopping sin receta, 3-nov) ──
+  const lineasM = lineasLibres ? (Array.isArray(f.lineas) ? f.lineas : []) : [];
   // ISV (12-oct-2026, Gerson: "a todas las compras automáticamente se les debe
   // sumar el 15%"): los montos de las líneas van SIN ISV y el total = suma ×
   // 1.15. Se puede desmarcar (exentas). Las solicitudes viejas no lo traen.
-  const factorIsv = (p) => esMaqForm && (p.sumarIsv ?? !purchase) ? 1.15 : 1;
+  const factorIsv = (p) => lineasLibres && (p.sumarIsv ?? !purchase) ? 1.15 : 1;
   const sumarIsv = factorIsv(f) > 1;
   const [leyendo, setLeyendo] = useState(false);
   const [lectura, setLectura] = useState(null);
@@ -1376,7 +1381,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       const pv = r.proveedor ? (providers || []).find(x => x.id === r.proveedor.id) || r.proveedor : null;
       const base = { n: r.items.length, numero: r.numero, proveedor: pv?.name || "", proveedorOtro: pv && String(f.provider || "").trim() && pv.name !== f.provider ? pv.name : "",
         isvEnLinea: r.items.some(it => it.isvEnLinea), descuento: r.items.some(it => it.descuento) };
-      if (esMaqForm) {
+      if (lineasLibres) {
         if (lineasMValidas.length && !confirm(`Ya hay ${lineasMValidas.length} línea(s) escritas.\n\n¿Reemplazarlas con las ${r.items.length} que leí de la cotización?`)) return;
         const ls = r.items.map(it => ({ id: uid(), cantidad: String(it.cantidad), unidad: it.unidad, nombre: it.nombre, monto: String(it.monto) }));
         const suma = r2(r.items.reduce((a, it) => a + it.monto, 0));
@@ -1407,7 +1412,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   // GeoMachinery, GeoShopping con receta y GeoShopping sin receta). Son JSX
   // en variables (no componentes) para no remontarse con cada tecla.
   const cajaLeer = <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: `1px dashed ${ORANGE}`, background: "rgba(232,118,45,.05)", borderRadius: 12, padding: "10px 12px" }}>
-    <div style={{ flex: 1, minWidth: 220, fontSize: 12.5, color: "#475569" }}><b style={{ color: "#0f172a" }}>Leer la cotización</b> · {esMaqForm ? "subí el PDF y lleno las líneas, el N° y el proveedor." : modoItems ? "subí el PDF y busco cada renglón en el presupuesto; también lleno el monto, el N° y el proveedor." : "subí el PDF y lleno qué se compra, el monto, el N° y el proveedor."} Vos solo revisás.</div>
+    <div style={{ flex: 1, minWidth: 220, fontSize: 12.5, color: "#475569" }}><b style={{ color: "#0f172a" }}>Leer la cotización</b> · {lineasLibres ? "subí el PDF y lleno las líneas, el N° y el proveedor." : modoItems ? "subí el PDF y busco cada renglón en el presupuesto; también lleno el monto, el N° y el proveedor." : "subí el PDF y lleno qué se compra, el monto, el N° y el proveedor."} Vos solo revisás.</div>
     <label style={{ display: "inline-flex", alignItems: "center", padding: "8px 14px", borderRadius: 999, background: ORANGE_DARK, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: leyendo ? "wait" : "pointer", opacity: leyendo ? .7 : 1 }}>
       {leyendo ? "Leyendo…" : "Subir PDF y leer"}
       <input type="file" accept="application/pdf,.pdf" style={{ display: "none" }} disabled={leyendo} onChange={async e => {
@@ -1451,7 +1456,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
     })());
   const uLineaM = (id, k, v) => setLineasM(lineasM.map(l => l.id === id ? { ...l, [k]: v } : l));
   const errorLineasM = (aprobar) => {
-    if (!esMaqForm) return null;
+    if (!lineasLibres) return null;
     // Las solicitudes VIEJAS de texto libre se pueden seguir aprobando sin
     // líneas (su texto quedó en "Detalle adicional"); las nuevas, no.
     const exigir = aprobar && (!purchase || (purchase.lineas || []).length > 0);
@@ -1498,7 +1503,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   // texto viejo NO debe viajar con la compra (#20). Sin partida elegible se
   // guarda "" para que GeoCost la muestre en "Por clasificar" (#5).
   const camposCC = () => {
-    if (esMaqForm) {
+    if (lineasLibres) {
       const pid = presConPartidas && !sinElegiblesCC ? (f.partidaId || "") : "";
       const pt = pid ? (presConPartidas.partidas || []).find(x => x.id === pid) : null;
       const lineas = lineasMValidas.map(l => ({
@@ -1512,7 +1517,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         sobregiroJustificacion: pid && sobregiroCC > 0 ? String(f.sobregiroJustificacion || "").trim() : "",
         description: desc || f.description || "",
         detalleExtra: extra,
-        categoriaMaq: categoriaMaqDe(f),
+        ...(esMaqForm ? { categoriaMaq: categoriaMaqDe(f) } : {}),
         sumarIsv,
       };
     }
@@ -1760,10 +1765,10 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           tabla, las cards, la ficha de entrega, los despachos y los
           reportes). `detalleMateriales` queda solo en las solicitudes viejas
           que ya lo tenían. */}
-      {esMaqForm
-        ? <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 12, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14 }}>
+      {lineasLibres
+        ? <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 12, background: "#F7F6F4", border: "1px solid rgba(44,42,40,.08)", borderRadius: 16, padding: 14 }}>
             {/* 1) La partida del presupuesto (una sola para toda la compra) */}
-            {presConPartidas && !sinElegiblesCC && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {esMaqForm && presConPartidas && !sinElegiblesCC && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <Select label="Partida del presupuesto *" options={opcionesSelectCC} value={f.partidaId || ""} onChange={e => u("partidaId", e.target.value)} emptyLabel="— Elegí la partida —" />
               {dispCC && <div style={{ fontSize: 12, color: "#64748b" }}>Disponible en la partida: <b style={{ color: dispCC.disponibleUSD < 0 ? C_ROJO.color : "#0f172a" }}>{fmtUSD(dispCC.disponibleUSD)}</b> · ≈ {fmtL(dispCC.disponibleUSD * tasaCC)}</div>}
               {sobregiroCC > 0 && <div style={{ background: "rgba(232,118,45,.10)", border: "1px solid rgba(232,118,45,.35)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1771,7 +1776,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
                 <Textarea label="Justificación del sobregiro *" value={f.sobregiroJustificacion || ""} onChange={e => u("sobregiroJustificacion", e.target.value)} placeholder="Por qué se aprueba igual" />
               </div>}
             </div>}
-            {presConPartidas && sinElegiblesCC && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>El presupuesto no tiene partida para máquinas — quedará por clasificar en GeoCost.</div>}
+            {presConPartidas && sinElegiblesCC && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>El presupuesto no tiene partida para {esMaqForm ? "máquinas" : "compras"}: quedará por clasificar en GeoCost.</div>}
             {f.projectCode && !presConPartidas && <div style={{ fontSize: 12, color: "#6E6862", fontStyle: "italic" }}>Este proyecto no tiene presupuesto en GeoCost: la compra no lleva partida.</div>}
             {/* 2) Leer la cotización en PDF → llena las líneas solo */}
             {cajaLeer}
@@ -1779,19 +1784,21 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             {/* 3) La cotización, línea por línea */}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-                <label style={LABEL_CP}>La cotización, línea por línea *</label>
+                <label style={LABEL_CP}>{esMaqForm ? "La cotización, línea por línea *" : "Qué se está comprando, ítem por ítem *"}</label>
                 <span style={{ fontSize: 11.5, color: "#64748b" }}>Montos en L {sumarIsv ? "SIN ISV (el 15 % se suma al total)" : "tal cual la cotización"}</span>
               </div>
               <datalist id="maq-unidades">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist>
-              {lineasM.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "76px 110px minmax(0,1fr) 120px 28px", gap: 6, fontSize: 10.5, fontWeight: 800, color: "#94A3B8", textTransform: "uppercase", letterSpacing: .4, padding: "0 2px" }}>
+              {lineasM.length > 0 && !esTel() && <div style={{ display: "grid", gridTemplateColumns: "76px 110px minmax(0,1fr) 120px 28px", gap: 6, fontSize: 10.5, fontWeight: 800, color: "#94A3B8", textTransform: "uppercase", letterSpacing: .4, padding: "0 2px" }}>
                 <span>Cant.</span><span>Unidad</span><span>Qué es</span><span style={{ textAlign: "right" }}>Monto L</span><span />
               </div>}
-              {lineasM.map(l => <div key={l.id} style={{ display: "grid", gridTemplateColumns: "76px 110px minmax(0,1fr) 120px 28px", gap: 6, alignItems: "center" }}>
-                <input type="number" min="0" step="any" value={l.cantidad ?? ""} onChange={e => uLineaM(l.id, "cantidad", e.target.value)} placeholder="1" style={{ padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", textAlign: "right" }} />
-                <input list="maq-unidades" value={l.unidad || ""} onChange={e => uLineaM(l.id, "unidad", e.target.value)} placeholder="Unidad" style={{ padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff" }} />
-                <input value={l.nombre || ""} onChange={e => uLineaM(l.id, "nombre", e.target.value)} placeholder="Ej. Aceite hidráulico ISO 68" style={{ padding: "8px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", minWidth: 0 }} />
-                <input type="number" min="0" step="0.01" value={l.monto ?? ""} onChange={e => uLineaM(l.id, "monto", e.target.value)} placeholder="0.00" style={{ padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", textAlign: "right", fontWeight: 700 }} />
-                <button type="button" title="Quitar línea" onClick={() => setLineasM(lineasM.filter(x => x.id !== l.id))} style={{ background: "none", border: "none", color: "#94A3B8", fontSize: 16, cursor: "pointer" }}>✕</button>
+              {lineasM.map(l => <div key={l.id} style={esTel()
+                ? { display: "grid", gridTemplateColumns: "64px minmax(0,1fr) minmax(0,1.2fr) 28px", gridTemplateAreas: '"n n n n" "c u m x"', gap: 6, alignItems: "center", padding: 8, borderRadius: 12, background: "#fff", border: "1px solid rgba(44,42,40,.08)" }
+                : { display: "grid", gridTemplateColumns: "76px 110px minmax(0,1fr) 120px 28px", gap: 6, alignItems: "center" }}>
+                <input type="number" min="0" step="any" value={l.cantidad ?? ""} onChange={e => uLineaM(l.id, "cantidad", e.target.value)} placeholder="1" style={{ gridArea: esTel() ? "c" : undefined, minWidth: 0, padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", textAlign: "right" }} />
+                <input list="maq-unidades" value={l.unidad || ""} onChange={e => uLineaM(l.id, "unidad", e.target.value)} placeholder="Unidad" style={{ gridArea: esTel() ? "u" : undefined, minWidth: 0, padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff" }} />
+                <input value={l.nombre || ""} onChange={e => uLineaM(l.id, "nombre", e.target.value)} placeholder={esMaqForm ? "Ej. Aceite hidráulico ISO 68" : "Ej. Sacos de cemento 42.5 kg"} style={{ gridArea: esTel() ? "n" : undefined, minWidth: 0, padding: "8px 10px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", minWidth: 0 }} />
+                <input type="number" min="0" step="0.01" value={l.monto ?? ""} onChange={e => uLineaM(l.id, "monto", e.target.value)} placeholder="0.00" style={{ gridArea: esTel() ? "m" : undefined, minWidth: 0, padding: "8px 8px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13.5, background: "#fff", textAlign: "right", fontWeight: 700 }} />
+                <button type="button" title="Quitar línea" onClick={() => setLineasM(lineasM.filter(x => x.id !== l.id))} style={{ gridArea: esTel() ? "x" : undefined, minWidth: 0, background: "none", border: "none", color: "#94A3B8", fontSize: 16, cursor: "pointer" }}>✕</button>
               </div>)}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 2 }}>
                 <button type="button" onClick={() => setLineasM([...lineasM, { id: uid(), cantidad: "", unidad: "", nombre: "", monto: "" }])} style={{ background: "#fff", border: `1px dashed ${ORANGE}`, color: ORANGE_DARK, borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>+ Agregar línea</button>
@@ -1805,7 +1812,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
                 <input type="checkbox" checked={sumarIsv} onChange={e => toggleIsv(e.target.checked)} /> Sumar ISV 15 % al total (desmarcá solo si la compra es exenta)
               </label>
             </div>
-            <Textarea label="Detalle adicional (opcional)" value={extraForm || ""} onChange={e => u("detalleExtra", e.target.value)} placeholder="Para qué máquina, horómetro, garantía, algo que la cotización diga distinto…" />
+            <Textarea label="Detalle adicional (opcional)" value={extraForm || ""} onChange={e => u("detalleExtra", e.target.value)} placeholder={esMaqForm ? "Para qué máquina, horómetro, garantía, algo que la cotización diga distinto…" : "Para qué es, marca, medida exacta, algo que la cotización diga distinto…"} />
           </div>
         : modoItems
         ? <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 10, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 12, padding: 14 }}>
@@ -1885,7 +1892,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       file={f.quoteFile}
       canUpload
       accent="#2563EB"
-      onUpload={fd => { u("quoteFile", fd); if (!esPdf(fd)) return; if (esMaqForm ? !lineasMValidas.length : modoItems ? !lineasForm.some(l => l.partidaId || num(l.monto) > 0) : !String(f.description || "").trim()) leerCotizacion(fd); }}
+      onUpload={fd => { u("quoteFile", fd); if (!esPdf(fd)) return; if (lineasLibres ? !lineasMValidas.length : modoItems ? !lineasForm.some(l => l.partidaId || num(l.monto) > 0) : !String(f.description || "").trim()) leerCotizacion(fd); }}
       onRemove={() => u("quoteFile", null)}
     />
 
@@ -1904,7 +1911,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         </div>}
         <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cancelar</Btn>
         <Btn variant="warn" disabled={saving} onClick={async () => {
-          if (!f.projectCode || !f.provider || (!modoItems && !esMaqForm && !f.description) || !f.amount) return alert(modoItems || esMaqForm ? "Complete proyecto, proveedor y monto" : "Complete proyecto, proveedor, descripcion y monto");
+          if (!f.projectCode || !f.provider || (lineasLibres && !esMaqForm && !lineasMValidas.length && !String(extraForm || "").trim()) || !f.amount) return alert(lineasLibres && !esMaqForm && !lineasMValidas.length ? "Complete proyecto, proveedor, monto y al menos una línea de lo que se compra" : "Complete proyecto, proveedor y monto");
           { const eCC = errorPartidaCC(false); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
           setSaving(true);
           try {
@@ -1921,7 +1928,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           }
         }}>{saving ? "..." : "💾 Guardar borrador"}</Btn>
         <Btn variant="success" disabled={saving} onClick={async () => {
-          if (!f.projectCode || !f.provider || (!modoItems && !esMaqForm && !f.description) || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert(modoItems || esMaqForm ? "Para aprobar: complete proyecto, proveedor, monto, N° cotizacion y responsable" : "Para aprobar: complete proyecto, proveedor, descripcion, monto, N° cotizacion y responsable");
+          if (!f.projectCode || !f.provider || (lineasLibres && !esMaqForm && !lineasMValidas.length && !String(extraForm || "").trim()) || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert(lineasLibres && !esMaqForm && !lineasMValidas.length ? "Para aprobar: complete proyecto, proveedor, monto, N° cotizacion, responsable y al menos una línea" : "Para aprobar: complete proyecto, proveedor, monto, N° cotizacion y responsable");
           { const eCC = errorPartidaCC(true); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
           // La fecha requerida es OPCIONAL (29-sep-2026, pedido de Gerson): sin
           // ella la solicitud no sale en el Calendario (salvo que vaya a
