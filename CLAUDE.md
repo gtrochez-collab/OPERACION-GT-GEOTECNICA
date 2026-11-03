@@ -2374,6 +2374,20 @@ escritor GeoClock), `gc-firma-<markId>` (firma JPEG), `gc-foto-<markId>`
 separado a propósito para que tablet y RRHH nunca compitan por una key.
 
 ## Convenciones críticas
+- **CELULAR = APP (3-nov-2026, Gerson: "que en el celular sea una app móvil,
+  como la Apple Store, no la página de la computadora achicada")**: con
+  pantalla < 768 px cada módulo cambia su encabezado + pestañas por
+  `src/movil.jsx`: `BarraMovil` (☰ · ícono + nombre · iniciales), `MenuMovil`
+  (cajón desde la izquierda con las secciones, un control extra como
+  Subterra/Geotecnica o la tasa, Volver al panel y Cerrar sesión) y
+  `TituloMovil` (título grande de la sección). El panel es `PanelMovil`
+  (App.jsx, mosaicos de 2 columnas, cuenta en hoja desde abajo). Las
+  ventanas (`Modal` de HR, Purchases y geocost-ui) suben como HOJA a todo el
+  ancho. Solicitudes de GeoShopping/GeoMachinery = tarjetas en el celular.
+  `index.html`: `maximum-scale=1` + campos a 16 px en el celular (con menos,
+  el iPhone hacía zoom al tocar el login y la app quedaba corrida). Todo
+  módulo o pantalla nueva tiene que verse bien a 390 px de ancho; la
+  computadora NO cambia.
 - **ESTILO ÚNICO DE REPORTES (26-oct-2026, Gerson: "todo reporte que
   exportemos, PDF o Excel, en estilo Apple")**: `src/reporte-estilo.js` es la
   ÚNICA fuente — reportes HTML para "Guardar PDF" (`reporteHTML` +
