@@ -8,7 +8,7 @@ import { hoyISO } from "./fechas.js";
 // GT_CSS (vidrio): desde el 15-oct-2026 lo monta TODO GeoTeam (rediseño de
 // encabezado, Dashboard, KPI's y Empleados).
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga } from "./movil.jsx";
 import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, rProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, escHTML, fmtLps, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES, USUARIOS_DE_BAJA } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
@@ -1004,7 +1004,6 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const [tardFecha, setTardFecha] = useState("");     // "" | "YYYY-MM-DD"
   const [modal, setModal] = useState(null);
   const isMobile = useIsMobile();
-  const [menuMovil, setMenuMovil] = useState(false);
 
   // Carga TODO desde la base de datos (nube + cache local). Reutilizable:
   // corre al montar el modulo y desde el boton "Actualizar" del tab
@@ -6819,13 +6818,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         encabezado y las pestañas de la computadora. */}
     {isMobile && <>
       <style>{MOVIL_CSS}</style>
-      <BarraMovil titulo="GeoTeam" icono={ICO_GEOTEAM} usuario={userName} onMenu={() => setMenuMovil(true)} badge={nav.reduce((a, n) => a + (n.badge || 0), 0)} />
-      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo="GeoTeam" icono={ICO_GEOTEAM}
-        subtitulo={esPortalSolo ? "Tu espacio de RRHH" : COMPANIES[co]?.name}
-        secciones={nav.length > 1 ? nav : []} activa={secVista} onElegir={setSec}
-        extra={!esPortalSolo && pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: v.name.split(" ")[0], on: co === k, onClick: () => setCo(k) })))}
-        usuario={userName} rol={isReadOnly ? "Solo lectura" : roleLabel}
-        onPanel={onBack} onLogout={onLogout} />
+      <BarraMovil titulo="GeoTeam" icono={ICO_GEOTEAM} usuario={userName} rol={isReadOnly ? "Solo lectura" : roleLabel} onLogout={onLogout} />
+      <BarraInferior tituloMas="GeoTeam" principales={["mi", "asistencia", "solicitudes"]} secciones={nav.length > 1 ? nav : []} activa={secVista} onElegir={setSec}
+        extra={!esPortalSolo && pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: v.name.split(" ")[0], on: co === k, onClick: () => setCo(k) })))} />
     </>}
     {!isMobile && <>
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: isMobile ? "wrap" : "nowrap" }}>
@@ -6857,7 +6852,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         {candado && <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "7px 14px", borderRadius: 999, background: "rgba(44,42,40,.06)", color: "#5C5853", font: "600 12px/1 var(--sans)", marginBottom: 14 }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#A39C92" }} />Solo lectura: podés ver todo, sin editar
         </div>}
-        {isMobile && nav.length > 1 && <TituloMovil>{(nav.find(n => n.id === secVista) || {}).label}</TituloMovil>}
+        {isMobile && nav.length > 1 && <TituloMovil derecha={!esPortalSolo && pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: v.name.split(" ")[0], on: co === k, onClick: () => setCo(k) })))}>{(nav.find(n => n.id === secVista) || {}).label}</TituloMovil>}
         <fieldset disabled={candado} style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
           {renderSec()}
         </fieldset>

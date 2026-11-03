@@ -37,6 +37,16 @@ export const MOVIL_CSS = `
 .gm-redondo:active{transform:scale(.94)}
 .gm-puntito{position:absolute;top:7px;right:calc(50% - 16px);min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:#E8762D;color:#fff;font:800 10px/16px var(--sans,Inter,sans-serif);text-align:center;box-sizing:border-box}
 @media (max-width:767px){.gm-con-barra>*{box-sizing:border-box !important;padding-bottom:var(--gm-inferior) !important}}
+/* Ventanita de módulos (3-nov-2026, Gerson: "en el circulito, que salgan
+   chiquitos los otros módulos"): sale arriba del botón redondo. */
+.gm-pop-fondo{position:fixed;inset:0;z-index:41}
+.gm-pop{position:fixed;right:14px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:42;width:min(292px,calc(100vw - 28px));padding:10px;border-radius:24px;background:rgba(249,249,248,.96);backdrop-filter:saturate(180%) blur(22px);-webkit-backdrop-filter:saturate(180%) blur(22px);box-shadow:0 1px 0 rgba(255,255,255,.9) inset,0 0 0 1px rgba(44,42,40,.07),0 18px 44px rgba(44,42,40,.22);display:grid;grid-template-columns:repeat(3,1fr);gap:4px;transform-origin:100% 100%;animation:gmPop .22s cubic-bezier(.32,.72,0,1) both}
+.gm-pop-item{display:flex;flex-direction:column;align-items:center;gap:7px;padding:10px 4px 8px;border:none;border-radius:16px;background:transparent;font:600 11px/1.1 var(--sans,Inter,sans-serif);color:#2C2A28;cursor:pointer;position:relative;-webkit-tap-highlight-color:transparent;min-width:0}
+.gm-pop-item>span:last-child{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gm-pop-item:active{background:rgba(44,42,40,.06)}
+.gm-pop-item>i{width:46px;height:46px;border-radius:15px;background:rgba(232,118,45,.12);color:#C75F1F;display:inline-flex;align-items:center;justify-content:center;font-style:normal}
+.gm-pop-item.inicio>i{background:#2C2A28;color:#fff}
+@keyframes gmPop{from{transform:scale(.55);opacity:0}}
 @keyframes gmFondo{from{opacity:0}}
 @keyframes gmPush{from{transform:translateX(28px);opacity:.0}}
 @keyframes gmBrillo{0%{background-position:-200px 0}100%{background-position:calc(200px + 100%) 0}}
@@ -51,7 +61,7 @@ export const MOVIL_CSS = `
 @media (max-width:767px){.gm-tira{flex-wrap:nowrap !important;overflow-x:auto;scrollbar-width:none;padding:8px 4px !important;gap:0 !important}.gm-tira::-webkit-scrollbar{display:none}.gm-tira>*{flex:0 0 auto !important;padding:4px 14px !important}.gm-tira>*+*{border-left:1px solid rgba(44,42,40,.08) !important}}
 @media (max-width:767px){.gt-entra-modulo{animation:gmPush .34s cubic-bezier(.32,.72,0,1) both !important}}
 @keyframes gmCajon{from{transform:translateX(-100%)}}
-@media (prefers-reduced-motion: reduce){.gm-fondo,.gm-cajon,.gt-entra-modulo,.gm-esq{animation:none !important}}
+@media (prefers-reduced-motion: reduce){.gm-fondo,.gm-cajon,.gt-entra-modulo,.gm-esq,.gm-pop{animation:none !important}}
 `;
 
 // Los módulos de la app (los pone App.jsx): el menú ☰ de cualquier módulo los
@@ -65,21 +75,41 @@ export const iniciales = (nombre) => {
 
 export const IcoMenu = () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M4 7h16M4 12h16M4 17h16" /></svg>;
 
-// Barra superior. `icono` es un nodo (svg) del módulo; `derecha` reemplaza
-// las iniciales si el módulo necesita otra cosa ahí.
-export const BarraMovil = ({ titulo, icono, iconoLibre = false, onMenu, usuario, derecha, badge = 0 }) => (
-  <div className="gm-barra">
-    <button type="button" className="gm-boton" onClick={onMenu} aria-label="Abrir menú" style={{ position: "relative" }}>
-      <IcoMenu />
-      {badge > 0 && <span style={{ position: "absolute", top: 6, right: 5, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 999, background: "#E8762D", color: "#fff", font: "800 10px/16px var(--sans, Inter, sans-serif)", boxSizing: "border-box" }}>{badge}</span>}
-    </button>
-    <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-      {icono && (iconoLibre ? icono : <span style={{ width: 28, height: 28, borderRadius: 9, background: "rgba(232,118,45,.12)", color: "#C75F1F", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{icono}</span>)}
-      <span style={{ font: "800 17px/1 var(--display, 'Plus Jakarta Sans', 'Manrope', sans-serif)", color: "#2C2A28", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{titulo}</span>
+// Hoja "Tu cuenta" (nombre, rol, Cerrar sesión). La abren las iniciales de la
+// barra superior y del Inicio.
+export const CuentaMovil = ({ abierta, onClose, usuario, rol, onLogout }) => {
+  if (!abierta) return null;
+  return createPortal(<>
+    <div className="gm-fondo" onClick={onClose} aria-hidden />
+    <div role="dialog" aria-label="Tu cuenta" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 9001, background: "#F9F9F8", borderRadius: "24px 24px 0 0", padding: "10px 18px calc(18px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 40px rgba(44,42,40,.18)", animation: "gmHoja .3s cubic-bezier(.32,.72,0,1) both" }}>
+      <style>{"@keyframes gmHoja{from{transform:translateY(100%)}}"}</style>
+      <div style={{ width: 38, height: 5, borderRadius: 3, background: "rgba(44,42,40,.18)", margin: "0 auto 16px" }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+        <span style={{ width: 46, height: 46, borderRadius: "50%", background: "#2C2A28", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "800 16px/1 var(--sans, Inter, sans-serif)" }}>{iniciales(usuario)}</span>
+        <div style={{ minWidth: 0 }}><div style={{ font: "700 16px/1.25 var(--display, 'Plus Jakarta Sans', sans-serif)", color: "#2C2A28" }}>{usuario}</div>{rol && <div style={{ fontSize: 13, color: "#6E6862" }}>{rol}</div>}</div>
+      </div>
+      {onLogout && <button type="button" className="gm-fila" onClick={() => { onClose(); onLogout(); }} style={{ color: "#B03024" }}><span style={{ width: 22, textAlign: "center" }}>⎋</span>Cerrar sesión</button>}
     </div>
-    {derecha !== undefined ? derecha : <span title={usuario} style={{ width: 34, height: 34, margin: 3, borderRadius: "50%", background: "#2C2A28", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "800 12.5px/1 var(--sans, Inter, sans-serif)", flexShrink: 0 }}>{iniciales(usuario)}</span>}
-  </div>
-);
+  </>, document.body);
+};
+
+// Barra superior de un módulo: [espacio] · ícono + nombre · iniciales (cuenta).
+// Ya NO lleva ☰ (3-nov-2026, Gerson: "estamos duplicando"): las secciones
+// van en la pastilla de abajo (BarraInferior).
+export const BarraMovil = ({ titulo, icono, iconoLibre = false, usuario, rol, onLogout, derecha, izquierda }) => {
+  const [cuenta, setCuenta] = useState(false);
+  return (
+    <div className="gm-barra">
+      <span style={{ width: 40, flexShrink: 0, display: "inline-flex", alignItems: "center" }}>{izquierda}</span>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        {icono && (iconoLibre ? icono : <span style={{ width: 28, height: 28, borderRadius: 9, background: "rgba(232,118,45,.12)", color: "#C75F1F", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{icono}</span>)}
+        <span style={{ font: "800 17px/1 var(--display, 'Plus Jakarta Sans', 'Manrope', sans-serif)", color: "#2C2A28", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{titulo}</span>
+      </div>
+      {derecha !== undefined ? derecha : <button type="button" onClick={onLogout ? () => setCuenta(true) : undefined} aria-label="Tu cuenta" title={usuario} style={{ width: 34, height: 34, margin: 3, borderRadius: "50%", border: "none", background: "#2C2A28", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "800 12.5px/1 var(--sans, Inter, sans-serif)", flexShrink: 0, cursor: onLogout ? "pointer" : "default", padding: 0 }}>{iniciales(usuario)}</button>}
+      <CuentaMovil abierta={cuenta} onClose={() => setCuenta(false)} usuario={usuario} rol={rol} onLogout={onLogout} />
+    </div>
+  );
+};
 
 // Cajón lateral. secciones: [{id, label, badge?}]
 export const MenuMovil = ({ abierto, onClose, titulo, icono, iconoLibre = false, subtitulo, secciones = [], activa, onElegir, extra, usuario, rol, onPanel, panelLabel = "Inicio", onLogout }) => {
@@ -134,9 +164,12 @@ export const MenuMovil = ({ abierto, onClose, titulo, icono, iconoLibre = false,
   </>, document.body);
 };
 
-export const TituloMovil = ({ children, sub }) => <div style={{ margin: "4px 2px 14px" }}>
-  <h1 className="gm-titulo" style={{ margin: 0 }}>{children}</h1>
-  {sub && <div style={{ fontSize: 13.5, color: "#6E6862", marginTop: 4 }}>{sub}</div>}
+export const TituloMovil = ({ children, sub, derecha }) => <div style={{ margin: "4px 2px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+  <div style={{ minWidth: 0 }}>
+    <h1 className="gm-titulo" style={{ margin: 0 }}>{children}</h1>
+    {sub && <div style={{ fontSize: 13.5, color: "#6E6862", marginTop: 4 }}>{sub}</div>}
+  </div>
+  {derecha && <div style={{ flexShrink: 0 }}>{derecha}</div>}
 </div>;
 
 // Pantalla de carga de un módulo. En el celular: la barra de la app ya puesta
@@ -147,7 +180,7 @@ export const PantallaCarga = ({ titulo, icono }) => {
   if (!tel) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando {titulo}…</div>;
   return <div style={{ minHeight: "100dvh", background: "#F9F9F8" }}>
     <style>{MOVIL_CSS}</style>
-    <BarraMovil titulo={titulo} icono={icono} onMenu={() => {}} derecha={<span style={{ width: 40 }} />} />
+    <BarraMovil titulo={titulo} icono={icono} derecha={<span style={{ width: 40 }} />} />
     <div style={{ padding: "14px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
       <div className="gm-esq" style={{ width: "46%", height: 28 }} />
       <div className="gm-scroll-x" style={{ margin: 0, padding: 0 }}>{[0, 1, 2].map(i => <div key={i} className="gm-esq" style={{ flex: "0 0 38%", height: 64 }} />)}</div>
@@ -186,35 +219,119 @@ export const HojaMovil = ({ abierta, onClose, titulo, children }) => {
 // Aviso para instalarla (Safari del iPhone, fuera de la app instalada).
 export const esAppInstalada = () => { try { return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true; } catch { return false; } };
 
+
+// Ícono de una sección por su nombre (las secciones de los módulos no traen
+// dibujo propio). Si no calza ninguno, la inicial en un circulito.
+const TRAZOS_SECCION = [
+  ["inicio|hoy", '<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/>'],
+  ["mi rrhh|mi marcaje|mis ", '<circle cx="12" cy="8" r="4"/><path d="M4 21c.8-4 4-6.5 8-6.5s7.2 2.5 8 6.5"/>'],
+  ["dashboard|kpi", '<path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/>'],
+  ["emplead|colaborador|equipo|máquinas|maquinas", '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2c2.4-.2 4.1 1.3 4.6 4"/>'],
+  ["asistencia|reloj|registros|horas", '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>'],
+  ["planilla|cuentas|costos|por pagar", '<rect x="3" y="6" width="18" height="12" rx="2.5"/><circle cx="12" cy="12" r="2.5"/><path d="M3 10h2M19 10h2M3 14h2M19 14h2"/>'],
+  ["prioridad", '<path d="M5 21V4"/><path d="M5 4h12l-2.5 4 2.5 4H5"/>'],
+  ["calendario", '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'],
+  ["supply|movimient|rutas|despach|coordinar", '<path d="M4 7h11"/><path d="m12 4 3 3-3 3"/><path d="M20 17H9"/><path d="m12 14-3 3 3 3"/>'],
+  ["proyecto", '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'],
+  ["proveedor", '<path d="M3 9 5 4h14l2 5"/><path d="M3 9h18v3a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0z"/><path d="M5 14v6h14v-6"/>'],
+  ["alerta", '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>'],
+  ["almac|inventario|compras|borrador", '<path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5v-9Z"/><path d="M3 7.5 12 12l9-4.5"/><path d="M12 12v9"/>'],
+  ["ubicaci", '<path d="M12 21s-6-5.3-6-10.5A6 6 0 0 1 18 10.5C18 15.7 12 21 12 21z"/><circle cx="12" cy="10.5" r="2.2"/>'],
+  ["buscar", '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/>'],
+  ["agregar", '<path d="M12 5v14M5 12h14"/>'],
+  ["herramienta|mantenimiento", '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'],
+  ["acceso", '<circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v3M15 12v2"/>'],
+  ["accounting|cerrad|configur", '<circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.2 2.3 2.3 4.7-4.8"/>'],
+  ["entrega|flota", '<path d="M3 7h11v9H3z"/><path d="M14 10h4l3 3v3h-7"/><circle cx="7" cy="17.5" r="1.6"/><circle cx="17" cy="17.5" r="1.6"/>'],
+  ["solicitud|cotizaci|contrato|constancia|document", '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/><path d="M9.5 13h5M9.5 17h5"/>'],
+];
+export const IconoSeccion = ({ label = "", size = 22 }) => {
+  const l = String(label).toLowerCase();
+  const hit = TRAZOS_SECCION.find(([k]) => k.split("|").some(w => l.includes(w)));
+  if (!hit) return <span style={{ width: size, height: size, borderRadius: "50%", border: "1.8px solid currentColor", display: "inline-flex", alignItems: "center", justifyContent: "center", font: `800 ${Math.round(size * .5)}px/1 var(--sans, Inter, sans-serif)` }}>{(String(label).trim()[0] || "·").toUpperCase()}</span>;
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden dangerouslySetInnerHTML={{ __html: hit[1] }} />;
+};
 const IcoCasa = () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 11.5 12 4l9 7.5" /><path d="M5.5 10v10h13V10" /><path d="M10 20v-6h4v6" /></svg>;
 const IcoCuadricula = () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="4" y="4" width="6.5" height="6.5" rx="2" /><rect x="13.5" y="4" width="6.5" height="6.5" rx="2" /><rect x="4" y="13.5" width="6.5" height="6.5" rx="2" /><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="2" /></svg>;
+const IcoMas = () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><circle cx="5" cy="12" r="1.3" fill="currentColor" /><circle cx="12" cy="12" r="1.3" fill="currentColor" /><circle cx="19" cy="12" r="1.3" fill="currentColor" /></svg>;
 
-// Barra inferior flotante. Pastilla: Inicio + los 3 primeros módulos del rol
-// (si el módulo abierto no está entre ellos, ocupa el último lugar, para que
-// siempre se vea dónde estás). Botón redondo: todos los módulos en el cajón.
-export const BarraInferior = () => {
+// Barra inferior flotante (como la Apple Store). Dos modos:
+//  · Inicio (sin `secciones`): pastilla = Inicio + los 3 primeros módulos.
+//  · Dentro de un módulo (`secciones`): pastilla = las secciones del módulo
+//    (hasta 4; con más, 3 + "Más" que abre la hoja con todas — la activa
+//    siempre se ve). `extra` va arriba en esa hoja.
+// El botón redondo muestra la VENTANITA con Inicio y los otros módulos.
+// `guardia(fn)` envuelve los cambios de módulo (GeoClock: pide la clave en
+// el kiosco).
+// `principales`: ids que van primero en la pastilla (lo que más se usa en el
+// celular); el resto se completa en el orden del módulo.
+export const BarraInferior = ({ secciones, activa, onElegir, extra, tituloMas = "Secciones", guardia, principales }) => {
   const app = useContext(AppMovilContext);
-  const [menu, setMenu] = useState(false);
+  const [pop, setPop] = useState(false);
+  const [mas, setMas] = useState(false);
+  const pasar = (fn) => guardia ? guardia(fn) : fn();
   const mods = app.modulos || [];
-  let pastilla = mods.slice(0, 3);
-  if (app.actual && !pastilla.some(m => m.id === app.actual)) { const act = mods.find(m => m.id === app.actual); if (act) pastilla = [...pastilla.slice(0, 2), act]; }
-  const pendientesFuera = mods.filter(m => !pastilla.some(p => p.id === m.id)).reduce((a, m) => a + (m.badge || 0), 0);
+  const modoSecciones = Array.isArray(secciones) && secciones.length > 1;
+  const badgeDe = (x) => x.badge > 0 && <span className="gm-puntito">{x.badge}</span>;
+  let tabs;
+  const enPastilla = new Set();
+  if (modoSecciones) {
+    const max = secciones.length <= 4 ? 4 : 3;
+    const orden = principales ? [...principales.map(id => secciones.find(x => x.id === id)).filter(Boolean), ...secciones.filter(x => !principales.includes(x.id))] : secciones;
+    let vis = orden.slice(0, max);
+    if (activa && !vis.some(x => x.id === activa)) { const a = secciones.find(x => x.id === activa); if (a) vis = [...vis.slice(0, max - 1), a]; }
+    const ocultas = secciones.filter(x => !vis.some(v => v.id === x.id));
+    const badgeOcultas = ocultas.reduce((t, x) => t + (x.badge || 0), 0);
+    tabs = <>
+      {vis.map(x => <button key={x.id} type="button" className="gm-tab" aria-current={x.id === activa ? "page" : undefined} onClick={() => onElegir?.(x.id)}>
+        {badgeDe(x)}<IconoSeccion label={x.label} /><span>{x.label}</span>
+      </button>)}
+      {ocultas.length > 0 && <button type="button" className="gm-tab" onClick={() => setMas(true)}>
+        {badgeOcultas > 0 && <span className="gm-puntito">{badgeOcultas}</span>}<IcoMas /><span>Más</span>
+      </button>}
+    </>;
+  } else {
+    let pastilla = mods.slice(0, 3);
+    if (app.actual && !pastilla.some(m => m.id === app.actual)) { const act = mods.find(m => m.id === app.actual); if (act) pastilla = [...pastilla.slice(0, 2), act]; }
+    pastilla.forEach(m => enPastilla.add(m.id));
+    tabs = <>
+      <button type="button" className="gm-tab" aria-current={!app.actual ? "page" : undefined} onClick={() => { if (app.actual) pasar(() => app.inicio?.()); }}><IcoCasa /><span>Inicio</span></button>
+      {pastilla.map(m => <button key={m.id} type="button" className="gm-tab" aria-current={m.id === app.actual ? "page" : undefined} onClick={() => { if (m.id !== app.actual) pasar(() => app.abrir?.(m.id)); }}>
+        {badgeDe(m)}<span style={{ display: "inline-flex", width: 22, height: 22, alignItems: "center", justifyContent: "center" }}>{m.icono}</span><span>{m.name}</span>
+      </button>)}
+    </>;
+  }
+  const otros = mods.filter(m => m.id !== app.actual);
+  // El puntito del botón redondo cuenta SOLO lo que no se ve en la pastilla.
+  const pendientesOtros = otros.filter(m => modoSecciones || !enPastilla.has(m.id)).reduce((t, m) => t + (m.badge || 0), 0);
   return <>
     <nav className="gm-inferior" aria-label="Navegación">
-      <div className="gm-pastilla">
-        <button type="button" className="gm-tab" aria-current={!app.actual ? "page" : undefined} onClick={() => app.inicio?.()}><IcoCasa /><span>Inicio</span></button>
-        {pastilla.map(m => <button key={m.id} type="button" className="gm-tab" aria-current={m.id === app.actual ? "page" : undefined} onClick={() => { if (m.id !== app.actual) app.abrir?.(m.id); }}>
-          {m.badge > 0 && <span className="gm-puntito">{m.badge}</span>}
-          <span style={{ display: "inline-flex", width: 22, height: 22, alignItems: "center", justifyContent: "center" }}>{m.icono}</span><span>{m.name}</span>
-        </button>)}
-      </div>
-      <button type="button" className="gm-redondo" aria-label="Todos los módulos" onClick={() => setMenu(true)}>
+      <div className="gm-pastilla">{tabs}</div>
+      <button type="button" className="gm-redondo" aria-label="Módulos" aria-expanded={pop} onClick={() => setPop(v => !v)}>
         <IcoCuadricula />
-        {pendientesFuera > 0 && <span className="gm-puntito" style={{ right: 10, top: 9 }}>{pendientesFuera}</span>}
+        {pendientesOtros > 0 && <span className="gm-puntito" style={{ right: 10, top: 9 }}>{pendientesOtros}</span>}
       </button>
     </nav>
-    <MenuMovil abierto={menu} onClose={() => setMenu(false)} titulo="GeoCore" iconoLibre icono={app.marca || null} subtitulo="Todos los módulos"
-      secciones={mods.map(m => ({ id: m.id, label: m.name, badge: m.badge || 0 }))} activa={app.actual} onElegir={(id) => { if (id !== app.actual) app.abrir?.(id); }}
-      usuario={app.usuario} rol={app.rol} onPanel={app.actual ? app.inicio : null} panelLabel="Inicio" onLogout={app.logout} />
+    {pop && createPortal(<>
+      <div className="gm-pop-fondo" onClick={() => setPop(false)} aria-hidden />
+      <div className="gm-pop" role="menu" aria-label="Módulos">
+        {app.actual && <button type="button" className="gm-pop-item inicio" role="menuitem" onClick={() => { setPop(false); pasar(() => app.inicio?.()); }}><i><IcoCasa /></i><span>Inicio</span></button>}
+        {otros.map(m => <button key={m.id} type="button" className="gm-pop-item" role="menuitem" onClick={() => { setPop(false); pasar(() => app.abrir?.(m.id)); }}>
+          {m.badge > 0 && <span className="gm-puntito" style={{ right: 14, top: 6 }}>{m.badge}</span>}
+          <i>{m.icono}</i><span>{m.name}</span>
+        </button>)}
+      </div>
+    </>, document.body)}
+    {modoSecciones && <HojaMovil abierta={mas} onClose={() => setMas(false)} titulo={tituloMas}>
+      {extra && <div style={{ marginBottom: 12 }}>{typeof extra === "function" ? extra(() => setMas(false)) : extra}</div>}
+      <div className="gm-grupo">
+        {secciones.map(x => <button key={x.id} type="button" className="gm-item" aria-current={x.id === activa ? "page" : undefined} onClick={() => { setMas(false); onElegir?.(x.id); }} style={{ minHeight: 50 }}>
+          <span style={{ width: 32, height: 32, borderRadius: 10, background: x.id === activa ? "rgba(232,118,45,.14)" : "rgba(44,42,40,.06)", color: x.id === activa ? "#C75F1F" : "#6E6862", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IconoSeccion label={x.label} size={18} /></span>
+          <span style={{ flex: 1, fontSize: 15.5, fontWeight: x.id === activa ? 800 : 600, color: x.id === activa ? "#A94E16" : "#2C2A28" }}>{x.label}</span>
+          {x.badge > 0 && <span style={{ minWidth: 22, height: 22, padding: "0 7px", borderRadius: 999, background: "#E8762D", color: "#fff", font: "800 12px/22px var(--sans, Inter, sans-serif)", textAlign: "center", boxSizing: "border-box" }}>{x.badge}</span>}
+          {x.id === activa && <span style={{ color: "#C75F1F", fontWeight: 800 }}>✓</span>}
+        </button>)}
+      </div>
+    </HojaMovil>}
   </>;
 };

@@ -21,7 +21,7 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 import { safeDynamicImport } from "./lazyLoad.js";
@@ -765,7 +765,6 @@ function EscanerImpl({ onCodigo, onClose }) {
 // ═══════════════════════════════════════════════════════════════════════════
 export default function GeoInventoryModule({ userRole, userName, userKey, onBack, onLogout }) {
   const isMobile = useIsMobile(760);
-  const [menuMovil, setMenuMovil] = useState(false);
   const perms = permisosDe(userRole);
   const [loaded, setLoaded] = useState(false);
   const [items, setItems] = useState([]);
@@ -1488,10 +1487,8 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). */}
     {isMobile && <>
       <style>{MOVIL_CSS}</style>
-      <BarraMovil titulo={"GeoInventory"} icono={<Ico d={ICO.materiales} size={18} />} usuario={userName} onMenu={() => setMenuMovil(true)} />
-      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo={"GeoInventory"} icono={<Ico d={ICO.materiales} size={18} />} subtitulo={"Inventario y ubicaciones"}
-        secciones={nav} activa={secOk} onElegir={(id) => { if (id === "inicio" && secOk === "inicio") setRuta({}); setSec(id); }} extra={null}
-        usuario={userName} rol={esSoloLectura ? "Solo lectura" : ROLE_LABEL[userRole] || userRole} onPanel={onBack} onLogout={onLogout} />
+      <BarraMovil titulo={"GeoInventory"} icono={<Ico d={ICO.materiales} size={18} />} usuario={userName} rol={esSoloLectura ? "Solo lectura" : ROLE_LABEL[userRole] || userRole} onLogout={onLogout} />
+      <BarraInferior tituloMas="GeoInventory" secciones={nav} activa={secOk} onElegir={(id) => { if (id === "inicio" && secOk === "inicio") setRuta({}); setSec(id); }} />
     </>}
     {!isMobile && <>
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>

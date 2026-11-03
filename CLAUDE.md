@@ -2414,6 +2414,19 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   GeoMachinery en el celular: cabecera en una fila (mes · Global · PDF), UNA
   fila por proyecto con barra apilada carbón+naranja y montos en corto
   (`shortL`), dona de 150 px, barras de mes más bajas.
+  **4ª pasada (3-nov-2026, Gerson: "estamos duplicando: dentro del módulo
+  no quiero el hamburger arriba; que el circulito muestre chiquitos los
+  otros módulos")**: dentro de un módulo la `BarraMovil` NO lleva ☰ (las
+  iniciales abren `CuentaMovil`: nombre, rol, Cerrar sesión) y cada módulo
+  renderiza su `<BarraInferior secciones activa onElegir principales extra
+  guardia>`: la pastilla trae las SECCIONES del módulo (≤4; con más, 3 +
+  "Más" → `HojaMovil` con todas, `extra` arriba; la activa siempre se ve;
+  `principales` = ids que van primero) y el botón redondo abre una
+  VENTANITA (`.gm-pop`) con Inicio + los otros módulos. Ícono de cada
+  sección por su nombre (`IconoSeccion`, `TRAZOS_SECCION`). GeoTeam muestra
+  Subterra/Geotecnica junto al título (`TituloMovil derecha`) y GeoCost la
+  tasa. GeoClock pasa `guardia={conClave}`. `MenuMovil` (cajón) queda sin
+  uso. App ya NO renderiza la barra en `conEntrada` (solo en `PanelMovil`).
 - **ESTILO ÚNICO DE REPORTES (26-oct-2026, Gerson: "todo reporte que
   exportemos, PDF o Excel, en estilo Apple")**: `src/reporte-estilo.js` es la
   ÚNICA fuente — reportes HTML para "Guardar PDF" (`reporteHTML` +

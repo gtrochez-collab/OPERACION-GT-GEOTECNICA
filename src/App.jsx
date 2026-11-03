@@ -17,7 +17,7 @@ import { ROLES_INVENTARIO } from "./geoinventory-calc.js";
 import { store, onSyncStateChange } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
 import { useIsMobile } from "./geocost-ui.jsx";
-import { MOVIL_CSS, AppMovilContext, BarraInferior, esAppInstalada } from "./movil.jsx";
+import { MOVIL_CSS, AppMovilContext, BarraInferior, CuentaMovil, esAppInstalada } from "./movil.jsx";
 import Logo, { GeoCoreSello, GeoCoreMark } from "./Logo.jsx";
 import { BRAND, FONT } from "./theme.js";
 import { USERS, ROLE_LABEL, USUARIOS_DE_BAJA } from "./users.js";
@@ -416,7 +416,6 @@ export default function App() {
       {syncBanner}
       <style>{ENTRADA_CSS}</style>
       <div key={activeModule} className={`gt-entra-modulo${conBarra ? " gm-con-barra" : ""}`} style={{ minHeight: "100vh" }}>{modulo}</div>
-      {conBarra && <><style>{MOVIL_CSS}</style><BarraInferior /></>}
     </AppMovilContext.Provider>
   );
   if (activeModule === "rrhh") return conEntrada(<HRModule {...moduleProps} />);
@@ -617,11 +616,11 @@ function PanelMovil({ user, availableModules, syncOk, onOpen, onLogout, saliendo
     <div className="gt-ui" style={{ minHeight: "100dvh", background: "#F2F2F0", opacity: saliendo ? 0 : 1, transition: "opacity 200ms", pointerEvents: saliendo ? "none" : "auto" }}>
       <style>{UI_CSS}</style>
       <style>{MOVIL_CSS}</style>
-      <div style={{ padding: "calc(18px + env(safe-area-inset-top)) 16px var(--gm-inferior)", maxWidth: 560, margin: "0 auto" }}>
+      <div style={{ padding: "calc(18px + env(safe-area-inset-top)) 16px var(--gm-inferior)", maxWidth: 560, margin: "0 auto", minHeight: "100dvh", boxSizing: "border-box", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 13, color: "#8A847D" }}>{fecha}</div>
-            <h1 style={{ font: "800 30px/1.1 var(--display)", letterSpacing: "-.03em", color: "#2C2A28", margin: "4px 0 0" }}>{saludo}, {nombre}</h1>
+            <h1 style={{ font: "800 27px/1.1 var(--display)", letterSpacing: "-.03em", color: "#2C2A28", margin: "4px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{saludo}, {nombre}</h1>
           </div>
           <button type="button" onClick={() => setCuenta(true)} aria-label="Tu cuenta" style={{ width: 42, height: 42, borderRadius: "50%", border: "none", background: "#2C2A28", color: "#fff", font: "800 14px/1 var(--sans)", cursor: "pointer", flexShrink: 0 }}>{ini}</button>
         </div>
@@ -654,30 +653,19 @@ function PanelMovil({ user, availableModules, syncOk, onOpen, onLogout, saliendo
               <span style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(232,118,45,.12)", color: "#C75F1F", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IconoModulo id={m.id} fallback={m.icon} size={19} /></span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ display: "block", font: "600 15.5px/1.2 var(--sans)", color: "#2C2A28" }}>{m.name}</span>
-                <span style={{ display: "block", fontSize: 12.5, color: "#8A847D", marginTop: 2 }}>{badges[m.id]} por atender</span>
+                <span style={{ display: "block", fontSize: 12.5, color: "#8A847D", marginTop: 2 }}>{m.id === "rrhh" ? `${badges[m.id]} ${badges[m.id] === 1 ? "solicitud de RRHH por decidir" : "solicitudes de RRHH por decidir"}` : m.id === "geosupply" ? `${badges[m.id]} por aprobar` : `${badges[m.id]} por atender`}</span>
               </span>
               <span style={{ minWidth: 22, height: 22, padding: "0 7px", borderRadius: 999, background: "#E8762D", color: "#fff", font: "800 12px/22px var(--sans)", textAlign: "center", boxSizing: "border-box" }}>{badges[m.id]}</span>
               <span aria-hidden style={{ color: "#C9C3BA", fontSize: 20, lineHeight: 1 }}>›</span>
             </button>)}</div>}
 
-        <div style={{ marginTop: 22, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontSize: 12, color: "#8A847D" }}>
+        <div style={{ marginTop: "auto", paddingTop: 22, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontSize: 12, color: "#8A847D" }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: syncOk ? "#059669" : BRAND.red }} />
           {syncOk ? "Sincronizado" : "Sin sincronizar"} · GeoCore
         </div>
       </div>
       <BarraInferior />
-      {cuenta && <>
-        <div className="gm-fondo" onClick={() => setCuenta(false)} aria-hidden />
-        <div role="dialog" aria-label="Tu cuenta" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 9001, background: "#F9F9F8", borderRadius: "24px 24px 0 0", padding: "10px 18px calc(18px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 40px rgba(44,42,40,.18)", animation: "gtSubeHoja .3s var(--curva) both" }}>
-          <style>{"@keyframes gtSubeHoja{from{transform:translateY(100%)}}"}</style>
-          <div style={{ width: 38, height: 5, borderRadius: 3, background: "rgba(44,42,40,.18)", margin: "0 auto 16px" }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-            <span style={{ width: 46, height: 46, borderRadius: "50%", background: "#2C2A28", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "800 16px/1 var(--sans)" }}>{ini}</span>
-            <div><div style={{ font: "700 16px/1.25 var(--display)", color: "var(--text)" }}>{user.label}</div><div style={{ fontSize: 13, color: "var(--text-3)" }}>{ROLE_LABEL[user.role] || user.role}</div></div>
-          </div>
-          <button type="button" className="gm-fila" onClick={onLogout} style={{ color: "#B03024" }}><span style={{ width: 22, textAlign: "center" }}>⎋</span>Cerrar sesión</button>
-        </div>
-      </>}
+      <CuentaMovil abierta={cuenta} onClose={() => setCuenta(false)} usuario={user.label} rol={ROLE_LABEL[user.role] || user.role} onLogout={onLogout} />
     </div>
   );
 }

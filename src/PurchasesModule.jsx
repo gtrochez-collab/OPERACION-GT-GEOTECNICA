@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga, TiraMovil, HojaMovil } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga, TiraMovil, HojaMovil } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, admiteSolicitudes } from "./projects.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { USERS } from "./users.js";
@@ -2778,7 +2778,6 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     } catch (e) { console.warn("[GeoCost] no se pudo calcular el disponible:", e?.message || e); return null; }
   };
   const isMobile = useIsMobile();
-  const [menuMovil, setMenuMovil] = useState(false);
   const [filtrosMovil, setFiltrosMovil] = useState(false);
   // Default section depende del rol:
   // - Ana (asistente_compras) → "ana" (Por coordinar)
@@ -8683,10 +8682,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       const ico = esMaq ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="8" cy="21" r="1" /><circle cx="19" cy="21" r="1" /><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" /></svg>;
       return <>
         <style>{MOVIL_CSS}</style>
-        <BarraMovil titulo={CFG.nombre} icono={ico} usuario={userName} onMenu={() => setMenuMovil(true)} />
-        <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo={CFG.nombre} icono={ico} subtitulo={esMaq ? "Repuestos y tesorería" : "Compras y tesorería"}
-          secciones={visibleNav} activa={["accounting", "conta", "cerradas"].includes(sec) ? "accounting" : sec} onElegir={setSec}
-          usuario={userName} rol={roleLabel} onPanel={onBack} onLogout={onLogout} />
+        <BarraMovil titulo={CFG.nombre} icono={ico} usuario={userName} rol={roleLabel} onLogout={onLogout} />
+        <BarraInferior tituloMas={CFG.nombre} principales={["list", "prioridades", "dashboard"]} secciones={visibleNav} activa={["accounting", "conta", "cerradas"].includes(sec) ? "accounting" : sec} onElegir={setSec} />
       </>;
     })()}
     {!isMobile && <>

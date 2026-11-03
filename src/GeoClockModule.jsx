@@ -31,7 +31,7 @@ import Logo from "./Logo.jsx";
 import { esFeriadoQuincena } from "./holidays.js";
 import { HORARIOS, horarioDe, TOLERANCIA_MIN, gcMarkKey, minTardeDe } from "./HRModule.jsx";
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, PantallaCarga } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, BarraInferior, PantallaCarga } from "./movil.jsx";
 import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion } from "./geoclock-calc.js";
 import { vincularEmpleado, KEY_VINCULOS } from "./rrhh-solicitudes.js";
 import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, RP, escHTML, fmtNum, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
@@ -311,7 +311,6 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
   const marcaPropia = !!yoUser?.marcaPropia;
   const soloMio = marcaPropia && !ROLES_RELOJ.includes(userRole);
   const [modoPropio, setModoPropio] = useState(soloMio);
-  const [menuMovil, setMenuMovil] = useState(false);
   const [vinculos, setVinculos] = useState({});
   const [view, setView] = useState("search"); // search | person | done
   const [sel, setSel] = useState(null);
@@ -1004,10 +1003,8 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
         la tablet kiosco salir sigue pidiendo la clave (conClave). */}
     {ancho < 768 && <>
       <style>{MOVIL_CSS}</style>
-      <BarraMovil titulo={soloMio ? "Mi marcaje" : "GeoClock"} icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>} usuario={userName} onMenu={() => setMenuMovil(true)} />
-      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo="GeoClock" icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>} subtitulo={ubicsTablet.length ? ubicsTablet.map(nombreUbicacion).join(" · ") : "Marcaje de asistencia"}
-        secciones={tabsReloj.length > 1 ? tabsReloj.map(([id, label]) => ({ id, label })) : []} activa={tabActiva} onElegir={irTab}
-        usuario={userName} onPanel={() => conClave(onBack)} panelLabel={volverA ? `Volver a ${volverA}` : "Volver al panel"} onLogout={() => conClave(onLogout)} />
+      <BarraMovil titulo={soloMio ? "Mi marcaje" : "GeoClock"} icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>} usuario={userName} rol={ubicsTablet.length ? ubicsTablet.map(nombreUbicacion).join(" · ") : "Marcaje de asistencia"} onLogout={() => conClave(onLogout)} />
+      <BarraInferior tituloMas="GeoClock" secciones={tabsReloj.length > 1 ? tabsReloj.map(([id, label]) => ({ id, label })) : []} activa={tabActiva} onElegir={irTab} guardia={conClave} />
     </>}
     {ancho >= 768 && <>
     {/* HEADER igual al de GeoTeam / GeoInventory (23-oct-2026): ← · logo ·

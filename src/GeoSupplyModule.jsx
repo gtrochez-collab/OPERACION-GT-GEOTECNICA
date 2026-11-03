@@ -30,7 +30,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, admiteSolicitudes } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 import { hoyISO } from "./fechas.js";
@@ -676,7 +676,6 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
 // ═══════════════════════════════════════════════════════════════════════════
 export default function GeoSupplyModule({ userRole, userName, userKey, userProyectos = [], onBack, onLogout }) {
   const isMobile = useIsMobile();
-  const [menuMovil, setMenuMovil] = useState(false);
   // ── SIMULACIÓN (12-oct-2026, pedido de Gerson) ──
   // El Coordinador puede correr el proceso completo "viendo como" cada rol, en
   // keys PROPIAS (sp-sim-*): nada llega a GeoShopping, GeoCost ni a nadie. Los
@@ -2099,10 +2098,8 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). */}
     {isMobile && <>
       <style>{MOVIL_CSS}</style>
-      <BarraMovil titulo={"GeoSupply"} icono={<IconoSupply />} usuario={userName} onMenu={() => setMenuMovil(true)} />
-      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo={"GeoSupply"} icono={<IconoSupply />} subtitulo={"Solicitudes de material"}
-        secciones={nav.map(x => ({ ...x, badge: badge[x.id] }))} activa={secOk} onElegir={setSec} extra={null}
-        usuario={userName} rol={sim ? `Simulando · ${ROL_LABEL[rol]}` : (ROL_LABEL[rol] || ROLE_LABEL[userRole] || userRole)} onPanel={onBack} onLogout={onLogout} />
+      <BarraMovil titulo={"GeoSupply"} icono={<IconoSupply />} usuario={userName} rol={sim ? `Simulando · ${ROL_LABEL[rol]}` : (ROL_LABEL[rol] || ROLE_LABEL[userRole] || userRole)} onLogout={onLogout} />
+      <BarraInferior tituloMas="GeoSupply" secciones={nav.map(x => ({ ...x, badge: badge[x.id] }))} activa={secOk} onElegir={setSec} />
     </>}
     {!isMobile && <>
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>

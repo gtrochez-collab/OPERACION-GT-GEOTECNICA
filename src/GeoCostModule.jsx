@@ -18,7 +18,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga } from "./movil.jsx";
 import {
   ORANGE, ORANGE_DARK, CHARCOAL, C_GRIS, C_VERDE, C_AMARILLO, C_NARANJA,
   useIsMobile, prefiereMenosMovimiento,
@@ -180,7 +180,6 @@ function CostoRealForm({ partida, onSave, onClose }) {
 
 export default function GeoCostModule({ userRole, userName, onBack, onLogout }) {
   const isMobile = useIsMobile();
-  const [menuMovil, setMenuMovil] = useState(false);
   const reduceMotion = prefiereMenosMovimiento();
 
   // ── Permisos (spec 6.7) ──
@@ -1306,10 +1305,8 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). */}
     {isMobile && <>
       <style>{MOVIL_CSS}</style>
-      <BarraMovil titulo={"GeoCost"} icono={<IconoGeoCost />} usuario={userName} onMenu={() => setMenuMovil(true)} />
-      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo={"GeoCost"} icono={<IconoGeoCost />} subtitulo={"Central de costos por proyecto"}
-        secciones={NAV} activa={sec} onElegir={(id) => { if (id === "proyectos" && sec === "proyectos") setProyActivo(null); setSec(id); }} extra={<button className="cc-tasa" onClick={() => { setMenuMovil(false); setModal({ t: "tasa" }); }} style={{ width: "100%" }}>Tasa de cambio · L {tasa.toFixed(2)} / $</button>}
-        usuario={userName} rol={roleLabel} onPanel={onBack} onLogout={onLogout} />
+      <BarraMovil titulo={"GeoCost"} icono={<IconoGeoCost />} usuario={userName} rol={roleLabel} onLogout={onLogout} />
+      <BarraInferior tituloMas="GeoCost" secciones={NAV} activa={sec} onElegir={(id) => { if (id === "proyectos" && sec === "proyectos") setProyActivo(null); setSec(id); }} />
     </>}
     {!isMobile && <>
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: isMobile ? "wrap" : "nowrap" }}>
@@ -1347,7 +1344,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     </>}
     {/* CONTENIDO */}
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
-      <div style={{ padding: isMobile ? "8px 14px 20px" : "12px 32px 28px" }}>{isMobile && <TituloMovil>{(NAV.find(n => n.id === sec) || {}).label}</TituloMovil>}{
+      <div style={{ padding: isMobile ? "8px 14px 20px" : "12px 32px 28px" }}>{isMobile && <TituloMovil derecha={<button className="cc-tasa" onClick={() => setModal({ t: "tasa" })} title={puedeTasa ? "Cambiar la tasa de cambio" : "Tasa de cambio vigente"}>L {tasa.toFixed(2)} / $</button>}>{(NAV.find(n => n.id === sec) || {}).label}</TituloMovil>}{
         sec === "dashboard" ? renderDashboard()
           : sec === "proyectos" ? renderProyectos()
           : renderMovilizaciones()

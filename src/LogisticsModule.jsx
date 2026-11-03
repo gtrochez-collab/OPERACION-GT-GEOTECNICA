@@ -25,7 +25,7 @@ import { generateFichaPDF, restoreFiles } from "./PurchasesModule.jsx";
 // DESPUÉS del await y el navegador bloqueaba el popup.
 import { VisorArchivo } from "./visor-archivo.jsx";
 import { hoyISO } from "./fechas.js";
-import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil, PantallaCarga, TiraMovil, HojaMovil } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga, TiraMovil, HojaMovil } from "./movil.jsx";
 
 // ── Hook responsive ──
 function useIsMobile(breakpoint = 768) {
@@ -816,7 +816,6 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const canEdit = isAdmin || isLogistica || isRecepcion;
 
   const isMobile = useIsMobile();
-  const [menuMovil, setMenuMovil] = useState(false);
   const [filtrosMovil, setFiltrosMovil] = useState(false);
   const [vehicles, setVehicles] = useState([]);
   const [maintenances, setMaintenances] = useState([]);
@@ -2793,10 +2792,8 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). */}
     {isMobile && <>
       <style>{MOVIL_CSS}</style>
-      <BarraMovil titulo="GeoLogistics" icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 7h11v9H3z" /><path d="M14 10h4l3 3v3h-7" /><circle cx="7" cy="17.5" r="1.6" /><circle cx="17" cy="17.5" r="1.6" /></svg>} usuario={userName} onMenu={() => setMenuMovil(true)} />
-      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo="GeoLogistics" icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 7h11v9H3z" /><path d="M14 10h4l3 3v3h-7" /><circle cx="7" cy="17.5" r="1.6" /><circle cx="17" cy="17.5" r="1.6" /></svg>} subtitulo="Flota y despachos"
-        secciones={nav.filter(n => !n.soon)} activa={sec} onElegir={setSec}
-        usuario={userName} rol={roleLabel} onPanel={onBack} onLogout={onLogout} />
+      <BarraMovil titulo="GeoLogistics" icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 7h11v9H3z" /><path d="M14 10h4l3 3v3h-7" /><circle cx="7" cy="17.5" r="1.6" /><circle cx="17" cy="17.5" r="1.6" /></svg>} usuario={userName} rol={roleLabel} onLogout={onLogout} />
+      <BarraInferior tituloMas="GeoLogistics" secciones={nav.filter(n => !n.soon)} activa={sec} onElegir={setSec} />
     </>}
     {!isMobile && <>
     {/* HERO — logo Geotecnica + titulo + ilustracion cartoon de camion */}
