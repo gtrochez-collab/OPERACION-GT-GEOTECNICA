@@ -5775,6 +5775,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             </div>
           </div>}
 
+          {/* CELULAR (3-nov-2026, Gerson: "los dashboards se ven abultados;
+              dejemos UN solo resumen"): la dona y las barras por mes solo en
+              la computadora. En el celular queda la tarjeta "Por proyecto". */}
+          {!isMobile && <>
           {/* 2 — GASTO POR PROYECTO (dona, en medio) */}
           <div className="gt-vidrio" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column" }}>
             {tituloCard(esGlobal ? "Gasto global por proyecto" : `Gasto del mes por proyecto — ${mesSelLabel}`)}
@@ -5850,6 +5854,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               })}
             </div>
           </div>
+          </>}
         </div>
         {/* GeoMachinery: GASTO POR MÁQUINA del mes (para el reporte mensual
             de costos de Gerson — portado del viejo módulo el 28-sep-2026).
