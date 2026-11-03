@@ -30,6 +30,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, admiteSolicitudes } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 import { hoyISO } from "./fechas.js";
@@ -675,6 +676,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
 // ═══════════════════════════════════════════════════════════════════════════
 export default function GeoSupplyModule({ userRole, userName, userKey, userProyectos = [], onBack, onLogout }) {
   const isMobile = useIsMobile();
+  const [menuMovil, setMenuMovil] = useState(false);
   // ── SIMULACIÓN (12-oct-2026, pedido de Gerson) ──
   // El Coordinador puede correr el proceso completo "viendo como" cada rol, en
   // keys PROPIAS (sp-sim-*): nada llega a GeoShopping, GeoCost ni a nadie. Los
@@ -2090,10 +2092,19 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
 
   const badge = { alertas: n.alertas, cotizaciones: esCoordinador ? n.cotizadas : rol === "compras" ? n.devueltas : 0, almacen: n.almacen, compras: n.porCotizar };
 
-  return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: "#F9F9F8", color: CHARCOAL }}>
+  return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh", height: "100dvh", fontFamily: "inherit", background: "#F9F9F8", color: CHARCOAL }}>
     <style>{GT_CSS}</style>
     <div className="gt-brillo gt-brillo-a" aria-hidden />
     <div className="gt-brillo gt-brillo-b" aria-hidden />
+    {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). */}
+    {isMobile && <>
+      <style>{MOVIL_CSS}</style>
+      <BarraMovil titulo={"GeoSupply"} icono={<IconoSupply />} usuario={userName} onMenu={() => setMenuMovil(true)} />
+      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo={"GeoSupply"} icono={<IconoSupply />} subtitulo={"Solicitudes de material"}
+        secciones={nav.map(x => ({ ...x, badge: badge[x.id] }))} activa={secOk} onElegir={setSec} extra={null}
+        usuario={userName} rol={sim ? `Simulando · ${ROL_LABEL[rol]}` : (ROL_LABEL[rol] || ROLE_LABEL[userRole] || userRole)} onPanel={onBack} onLogout={onLogout} />
+    </>}
+    {!isMobile && <>
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
         {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
@@ -2116,9 +2127,11 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           onMouseEnter={e => { if (!active) e.currentTarget.style.color = "var(--text)"; }} onMouseLeave={e => { if (!active) e.currentTarget.style.color = "var(--text-3)"; }}>{x.label}{b > 0 && <span style={{ minWidth: 18, height: 18, padding: "0 5px", borderRadius: 999, background: ORANGE, color: "#fff", fontSize: 10.5, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{b}</span>}</button>;
       })}
     </div>
+    </>}
     {barraSim}
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>
+        {isMobile && <TituloMovil>{(nav.find(x => x.id === secOk) || {}).label}</TituloMovil>}
         {secOk === "hoy" ? renderHoy() : secOk === "alertas" ? renderAlertas() : secOk === "almacen" ? renderAlmacen() : secOk === "compras" ? renderCompras() : secOk === "cotizaciones" ? renderCotizaciones() : secOk === "dashboard" ? renderDashboard() : secOk === "config" ? renderConfig() : renderSolicitudes()}
       </div>
     </div>

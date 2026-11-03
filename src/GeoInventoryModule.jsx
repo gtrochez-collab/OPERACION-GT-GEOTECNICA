@@ -21,6 +21,7 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 import { safeDynamicImport } from "./lazyLoad.js";
@@ -764,6 +765,7 @@ function EscanerImpl({ onCodigo, onClose }) {
 // ═══════════════════════════════════════════════════════════════════════════
 export default function GeoInventoryModule({ userRole, userName, userKey, onBack, onLogout }) {
   const isMobile = useIsMobile(760);
+  const [menuMovil, setMenuMovil] = useState(false);
   const perms = permisosDe(userRole);
   const [loaded, setLoaded] = useState(false);
   const [items, setItems] = useState([]);
@@ -1479,10 +1481,19 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", fontFamily: "inherit", color: "#6E6862", fontSize: 13, letterSpacing: ".04em" }}>Cargando GeoInventory…</div>;
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
   const secOk = nav.some(x => x.id === sec) ? sec : "inicio";
-  return <div className="gt-root gt-entra-modulo" style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "var(--bg)", position: "relative", overflow: "hidden" }}>
+  return <div className="gt-root gt-entra-modulo" style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "var(--bg)", position: "relative", overflow: "hidden" }}>
     <style>{GT_CSS}</style>
     <div className="gt-brillo gt-brillo-a" aria-hidden />
     <div className="gt-brillo gt-brillo-b" aria-hidden />
+    {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). */}
+    {isMobile && <>
+      <style>{MOVIL_CSS}</style>
+      <BarraMovil titulo={"GeoInventory"} icono={<Ico d={ICO.materiales} size={18} />} usuario={userName} onMenu={() => setMenuMovil(true)} />
+      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo={"GeoInventory"} icono={<Ico d={ICO.materiales} size={18} />} subtitulo={"Inventario y ubicaciones"}
+        secciones={nav} activa={secOk} onElegir={(id) => { if (id === "inicio" && secOk === "inicio") setRuta({}); setSec(id); }} extra={null}
+        usuario={userName} rol={esSoloLectura ? "Solo lectura" : ROLE_LABEL[userRole] || userRole} onPanel={onBack} onLogout={onLogout} />
+    </>}
+    {!isMobile && <>
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
         {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
@@ -1498,6 +1509,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     <div style={{ position: "relative", zIndex: 2, display: "flex", borderBottom: "1px solid rgba(44,42,40,.08)", overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0, paddingLeft: isMobile ? 4 : 20, scrollbarWidth: "none" }}>
       {nav.map(x => { const active = secOk === x.id; return <button key={x.id} onClick={() => { if (x.id === "inicio" && secOk === "inicio") setRuta({}); setSec(x.id); }} style={{ padding: isMobile ? "12px 13px" : "14px 18px", background: "transparent", border: "none", boxShadow: active ? `inset 0 -2px 0 ${ORANGE}` : "none", color: active ? "var(--naranja-tinta)" : "var(--text-3)", font: `${active ? 800 : 600} 13px/1 var(--sans)`, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{x.label}</button>; })}
     </div>
+    </>}
     <div id="inv-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "10px 12px 24px" : "14px 32px 28px" }}>
         {secOk === "inicio" ? renderInicio() : secOk === "agregar" ? renderAgregar() : secOk === "buscar" ? renderBuscar() : secOk === "ubicaciones" ? renderUbicaciones() : secOk === "herramientas" ? renderHerramientas() : renderMovimientos()}

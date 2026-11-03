@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, admiteSolicitudes } from "./projects.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { USERS } from "./users.js";
@@ -2774,6 +2775,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     } catch (e) { console.warn("[GeoCost] no se pudo calcular el disponible:", e?.message || e); return null; }
   };
   const isMobile = useIsMobile();
+  const [menuMovil, setMenuMovil] = useState(false);
   // Default section depende del rol:
   // - Ana (asistente_compras) → "ana" (Por coordinar)
   // - Jorge (recepcion) → "providers" (su tarea principal en Compras: mantener
@@ -8542,7 +8544,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     : userRole;
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
-  return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: "#F9F9F8", color: CHARCOAL }}>
+  return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh", height: "100dvh", fontFamily: "inherit", background: "#F9F9F8", color: CHARCOAL }}>
     {/* Sistema visual compartido (tokens + clases gt-*). ⚠ SIN `precedence`. */}
     <style>{GT_CSS}</style>
     {/* Manchas de brillo (fixed, z0): sin ellas el backdrop-filter del vidrio
@@ -8550,6 +8552,18 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     <div className="gt-brillo gt-brillo-a" aria-hidden />
     <div className="gt-brillo gt-brillo-b" aria-hidden />
 
+    {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). */}
+    {isMobile && (() => {
+      const ico = esMaq ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="8" cy="21" r="1" /><circle cx="19" cy="21" r="1" /><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" /></svg>;
+      return <>
+        <style>{MOVIL_CSS}</style>
+        <BarraMovil titulo={CFG.nombre} icono={ico} usuario={userName} onMenu={() => setMenuMovil(true)} />
+        <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo={CFG.nombre} icono={ico} subtitulo={esMaq ? "Repuestos y tesorería" : "Compras y tesorería"}
+          secciones={visibleNav} activa={["accounting", "conta", "cerradas"].includes(sec) ? "accounting" : sec} onElegir={setSec}
+          usuario={userName} rol={roleLabel} onPanel={onBack} onLogout={onLogout} />
+      </>;
+    })()}
+    {!isMobile && <>
     {/* HEADER (rediseño 31-ago, estilo IST): compacto — volver, logo y nombre
         del módulo a la izquierda; usuario y salida a la derecha. El hero con
         la ilustración del carrito se retiró ("estilo apple, sin saturar"). */}
@@ -8611,10 +8625,12 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       })}
     </div>
 
+    </>}
+
     {/* CONTENIDO — sin strip de título: la pestaña activa ya dice dónde estás
         (pedido 31-ago: "quitemos ese texto, es repetitivo") */}
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
-      <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{
+      <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>{isMobile && <TituloMovil>{(visibleNav.find(n => n.id === (["conta", "cerradas"].includes(sec) ? "accounting" : sec)) || {}).label}</TituloMovil>}{
         sec === "dashboard" ? renderDashboard()
           : sec === "prioridades" ? renderPrioridades()
           : sec === "cxp" ? renderCxp()

@@ -15,6 +15,7 @@
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
 
 const ORANGE = "#E8762D";
 const ORANGE_DARK = "#C75F1F";
@@ -73,6 +74,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 // ═══════════════════════════════════════════════════════════════════════════
 export default function TasksModule({ userRole, userName, userKey, onBack, onLogout }) {
   const isMobile = useIsMobile();
+  const [menuMovil, setMenuMovil] = useState(false);
   const key = `gt-todos-${userKey}`;
 
   const [tareas, _setTareasRaw] = useState(null);   // null = cargando
@@ -249,6 +251,15 @@ export default function TasksModule({ userRole, userName, userKey, onBack, onLog
     <div className="gt-brillo gt-brillo-b" aria-hidden />
 
     {/* HEADER — mismo patrón que el resto de los módulos */}
+    {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). */}
+    {isMobile && <>
+      <style>{MOVIL_CSS}</style>
+      <BarraMovil titulo={"Mis tareas"} icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" /></svg>} usuario={userName} onMenu={() => setMenuMovil(true)} />
+      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo={"Mis tareas"} icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" /></svg>} subtitulo={"Tus pendientes con fecha"}
+        secciones={[]} activa={""} onElegir={null} extra={null}
+        usuario={userName} rol={"Mis tareas"} onPanel={onBack} onLogout={onLogout} />
+    </>}
+    {!isMobile && <>
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
         {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
@@ -269,6 +280,7 @@ export default function TasksModule({ userRole, userName, userKey, onBack, onLog
       </div>
     </div>
 
+    </>}
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ maxWidth: 940, margin: "0 auto", padding: isMobile ? "16px 14px 40px" : "22px 32px 48px", display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
 

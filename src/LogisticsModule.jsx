@@ -25,6 +25,7 @@ import { generateFichaPDF, restoreFiles } from "./PurchasesModule.jsx";
 // DESPUÉS del await y el navegador bloqueaba el popup.
 import { VisorArchivo } from "./visor-archivo.jsx";
 import { hoyISO } from "./fechas.js";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
 
 // ── Hook responsive ──
 function useIsMobile(breakpoint = 768) {
@@ -815,6 +816,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const canEdit = isAdmin || isLogistica || isRecepcion;
 
   const isMobile = useIsMobile();
+  const [menuMovil, setMenuMovil] = useState(false);
   const [vehicles, setVehicles] = useState([]);
   const [maintenances, setMaintenances] = useState([]);
   // ── GUARDIA ANTI-PISADA DEL AUTO-REFRESH (20-ago-2026) ──────────────────
@@ -2701,7 +2703,16 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const roleLabel = isAdmin ? "Admin" : isLogistica ? "Logistica" : isRecepcion ? "Recepcion" : (userRole || "");
   const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
 
-  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: FONT.body, background: BRAND.beige, color: BRAND.charcoal }}>
+  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100dvh", height: "100dvh", fontFamily: FONT.body, background: isMobile ? "#F9F9F8" : BRAND.beige, color: BRAND.charcoal }}>
+    {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). */}
+    {isMobile && <>
+      <style>{MOVIL_CSS}</style>
+      <BarraMovil titulo="GeoLogistics" icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 7h11v9H3z" /><path d="M14 10h4l3 3v3h-7" /><circle cx="7" cy="17.5" r="1.6" /><circle cx="17" cy="17.5" r="1.6" /></svg>} usuario={userName} onMenu={() => setMenuMovil(true)} />
+      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo="GeoLogistics" icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 7h11v9H3z" /><path d="M14 10h4l3 3v3h-7" /><circle cx="7" cy="17.5" r="1.6" /><circle cx="17" cy="17.5" r="1.6" /></svg>} subtitulo="Flota y despachos"
+        secciones={nav.filter(n => !n.soon)} activa={sec} onElegir={setSec}
+        usuario={userName} rol={roleLabel} onPanel={onBack} onLogout={onLogout} />
+    </>}
+    {!isMobile && <>
     {/* HERO — logo Geotecnica + titulo + ilustracion cartoon de camion */}
     <div style={{
       position: "relative",
@@ -2813,9 +2824,11 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       })}
     </div>
 
+    </>}
     {/* CONTENIDO */}
-    <div style={{ flex: 1, overflow: "auto", background: BRAND.beige }}>
-      <div style={{ padding: isMobile ? "12px 16px" : "20px 32px" }}>
+    <div style={{ flex: 1, overflow: "auto", background: isMobile ? "#F9F9F8" : BRAND.beige }}>
+      <div style={{ padding: isMobile ? "12px 14px 24px" : "20px 32px" }}>
+        {isMobile && <TituloMovil>{(nav.find(n => n.id === sec) || {}).label}</TituloMovil>}
         {renderSec()}
       </div>
     </div>

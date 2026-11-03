@@ -18,6 +18,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
+import { MOVIL_CSS, BarraMovil, MenuMovil, TituloMovil } from "./movil.jsx";
 import {
   ORANGE, ORANGE_DARK, CHARCOAL, C_GRIS, C_VERDE, C_AMARILLO, C_NARANJA,
   useIsMobile, prefiereMenosMovimiento,
@@ -179,6 +180,7 @@ function CostoRealForm({ partida, onSave, onClose }) {
 
 export default function GeoCostModule({ userRole, userName, onBack, onLogout }) {
   const isMobile = useIsMobile();
+  const [menuMovil, setMenuMovil] = useState(false);
   const reduceMotion = prefiereMenosMovimiento();
 
   // ── Permisos (spec 6.7) ──
@@ -1290,7 +1292,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   // ═══════════════════════════════════════════════════════════════════════
   // LAYOUT (estructura del header/tabs de GeoShopping)
   // ═══════════════════════════════════════════════════════════════════════
-  return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", minHeight: "100vh", height: "100vh", fontFamily: "inherit", background: "#F9F9F8", color: CHARCOAL }}>
+  return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh", height: "100dvh", fontFamily: "inherit", background: "#F9F9F8", color: CHARCOAL }}>
     {/* Sistema visual compartido (tokens + clases gt-*). ⚠ SIN `precedence`. */}
     <style>{GT_CSS}</style>
     <style>{CC_CSS}</style>
@@ -1301,6 +1303,15 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     {/* HEADER compacto: volver, logo, icono del módulo · tasa, usuario, salir.
         En celular (375px) no cabía en una fila por el chip de tasa y la página
         entera paneaba: envuelve, el icono se oculta y el chip queda corto. */}
+    {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). */}
+    {isMobile && <>
+      <style>{MOVIL_CSS}</style>
+      <BarraMovil titulo={"GeoCost"} icono={<IconoGeoCost />} usuario={userName} onMenu={() => setMenuMovil(true)} />
+      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo={"GeoCost"} icono={<IconoGeoCost />} subtitulo={"Central de costos por proyecto"}
+        secciones={NAV} activa={sec} onElegir={(id) => { if (id === "proyectos" && sec === "proyectos") setProyActivo(null); setSec(id); }} extra={<button className="cc-tasa" onClick={() => { setMenuMovil(false); setModal({ t: "tasa" }); }} style={{ width: "100%" }}>Tasa de cambio · L {tasa.toFixed(2)} / $</button>}
+        usuario={userName} rol={roleLabel} onPanel={onBack} onLogout={onLogout} />
+    </>}
+    {!isMobile && <>
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: isMobile ? "wrap" : "nowrap" }}>
       <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
         {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
@@ -1333,9 +1344,10 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       })}
     </div>
 
+    </>}
     {/* CONTENIDO */}
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
-      <div style={{ padding: isMobile ? "8px 14px 20px" : "12px 32px 28px" }}>{
+      <div style={{ padding: isMobile ? "8px 14px 20px" : "12px 32px 28px" }}>{isMobile && <TituloMovil>{(NAV.find(n => n.id === sec) || {}).label}</TituloMovil>}{
         sec === "dashboard" ? renderDashboard()
           : sec === "proyectos" ? renderProyectos()
           : renderMovilizaciones()

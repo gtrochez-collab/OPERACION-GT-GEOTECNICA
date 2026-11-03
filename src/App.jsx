@@ -16,6 +16,8 @@ import { ROLES_INVENTARIO } from "./geoinventory-calc.js";
 // import ChatModule, { fetchUnreadSummary, playBeep } from "./ChatModule.jsx";
 import { store, onSyncStateChange } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
+import { useIsMobile } from "./geocost-ui.jsx";
+import { MOVIL_CSS } from "./movil.jsx";
 import Logo, { GeoCoreSello } from "./Logo.jsx";
 import { BRAND, FONT } from "./theme.js";
 import { USERS, ROLE_LABEL, USUARIOS_DE_BAJA } from "./users.js";
@@ -514,6 +516,8 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
     return () => clearTimeout(t);
   }, [fase]);
   const esHero = fase === "hero";
+  const movil = useIsMobile();
+  if (movil) return <PanelMovil user={user} availableModules={availableModules} syncOk={syncOk} onOpen={onOpen} onLogout={onLogout} onVolverBienvenida={onVolverBienvenida} saliendo={saliendo} badges={badges} />;
 
   return (
     <div className="gt-ui" style={{ display: "flex", flexDirection: "column", position: "relative", overflow: "hidden", height: esHero ? "100dvh" : undefined, minHeight: "100dvh", opacity: saliendo ? 0 : 1, pointerEvents: saliendo ? "none" : "auto", transition: "opacity 260ms var(--curva)" }}>
@@ -571,6 +575,65 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
           </div>
         </footer>
       )}
+    </div>
+  );
+}
+
+// ── PANEL EN EL CELULAR (3-nov-2026, Gerson: "como la Apple Store en el
+// celular") ── título grande, tus iniciales arriba a la derecha (abre la
+// cuenta) y los módulos en mosaicos de dos columnas. Sin el hero animado:
+// en el teléfono se entra directo.
+function PanelMovil({ user, availableModules, syncOk, onOpen, onLogout, onVolverBienvenida, saliendo, badges }) {
+  const [cuenta, setCuenta] = useState(false);
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+  const ini = (() => { const p = String(user.label || "").replace(/^(lic|ing|arq|dr|dra)\.?\s+/i, "").trim().split(/\s+/); return ((p[0] || "?")[0] + (p[1] ? p[1][0] : "")).toUpperCase(); })();
+  const nombre = String(user.label || "").replace(/^(lic|ing|arq|dr|dra)\.?\s+/i, "").split(/\s+/)[0];
+  const fecha = new Intl.DateTimeFormat("es-HN", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Tegucigalpa" }).format(new Date());
+  return (
+    <div className="gt-ui" style={{ minHeight: "100dvh", position: "relative", overflow: "hidden", opacity: saliendo ? 0 : 1, transition: "opacity 260ms var(--curva)", pointerEvents: saliendo ? "none" : "auto" }}>
+      <style>{UI_CSS}</style>
+      <style>{MOVIL_CSS}</style>
+      <div className="gt-brillo gt-brillo-a" aria-hidden />
+      <div style={{ position: "relative", zIndex: 1, padding: "16px 18px 28px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <Logo size={30} />
+          <button type="button" onClick={() => setCuenta(true)} aria-label="Tu cuenta" style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: "#2C2A28", color: "#fff", font: "800 14px/1 var(--sans)", cursor: "pointer" }}>{ini}</button>
+        </div>
+        <div style={{ marginTop: 22 }}>
+          <div className="gt-label" style={{ color: "var(--text-3)", textTransform: "uppercase" }}>{fecha}</div>
+          <h1 style={{ font: "800 34px/1.05 var(--display)", letterSpacing: "-.03em", color: "var(--text)", margin: "8px 0 0" }}>Hola, <span style={{ color: "var(--marca-2)" }}>{nombre}</span></h1>
+        </div>
+        <div style={{ font: "800 21px/1.2 var(--display)", letterSpacing: "-.01em", color: "var(--text)", margin: "26px 2px 12px" }}>Tus módulos</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+          {availableModules.map((m, i) => {
+            const b = badges[m.id] || 0;
+            return <button key={m.id} type="button" onClick={() => onOpen(m.id)} className="gt-sube"
+              style={{ position: "relative", textAlign: "left", border: "none", borderRadius: 22, background: "#fff", boxShadow: "0 1px 2px rgba(44,42,40,.05), 0 8px 22px rgba(44,42,40,.07)", padding: "16px 14px 14px", minHeight: 138, display: "flex", flexDirection: "column", gap: 10, cursor: "pointer", animationDelay: `${i * 45}ms`, fontFamily: "inherit", WebkitTapHighlightColor: "transparent" }}>
+              <span style={{ width: 46, height: 46, borderRadius: 14, background: "rgba(232,118,45,.11)", color: "var(--naranja-tinta)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><IconoModulo id={m.id} fallback={m.icon} /></span>
+              {b > 0 && <span style={{ position: "absolute", top: 12, right: 12, minWidth: 22, height: 22, padding: "0 6px", borderRadius: 999, background: "var(--marca-2)", color: "#fff", font: "800 11.5px/22px var(--sans)", textAlign: "center", boxSizing: "border-box" }}>{b}</span>}
+              <span style={{ font: "800 16.5px/1.15 var(--display)", color: "var(--text)", letterSpacing: "-.01em" }}>{m.name}</span>
+              <span style={{ font: "400 12.5px/1.35 var(--sans)", color: "var(--text-3)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{m.desc}</span>
+            </button>;
+          })}
+        </div>
+        <div style={{ marginTop: 26, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 12, color: "var(--text-3)" }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: syncOk ? "#059669" : BRAND.red }} />
+          {syncOk ? "Sincronizado" : "Sin sincronizar"} · <GeoCoreSello size={16} fontSize={12} />
+        </div>
+      </div>
+      {cuenta && <>
+        <div className="gm-fondo" onClick={() => setCuenta(false)} aria-hidden />
+        <div role="dialog" aria-label="Tu cuenta" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 9001, background: "#F9F9F8", borderRadius: "24px 24px 0 0", padding: "10px 18px calc(18px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 40px rgba(44,42,40,.18)", animation: "gtSubeHoja .3s var(--curva) both" }}>
+          <style>{"@keyframes gtSubeHoja{from{transform:translateY(100%)}}"}</style>
+          <div style={{ width: 38, height: 5, borderRadius: 3, background: "rgba(44,42,40,.18)", margin: "0 auto 16px" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+            <span style={{ width: 46, height: 46, borderRadius: "50%", background: "#2C2A28", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "800 16px/1 var(--sans)" }}>{ini}</span>
+            <div><div style={{ font: "700 16px/1.25 var(--display)", color: "var(--text)" }}>{user.label}</div><div style={{ fontSize: 13, color: "var(--text-3)" }}>{ROLE_LABEL[user.role] || user.role}</div></div>
+          </div>
+          {user.role !== "marcaje" && <button type="button" className="gm-fila" onClick={() => { setCuenta(false); onVolverBienvenida(); }}><span style={{ width: 22, textAlign: "center", color: "var(--text-3)" }}>←</span>Volver a la bienvenida</button>}
+          <button type="button" className="gm-fila" onClick={onLogout} style={{ color: "#B03024" }}><span style={{ width: 22, textAlign: "center" }}>⎋</span>Cerrar sesión</button>
+        </div>
+      </>}
     </div>
   );
 }

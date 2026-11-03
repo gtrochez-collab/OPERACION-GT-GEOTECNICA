@@ -31,6 +31,7 @@ import Logo from "./Logo.jsx";
 import { esFeriadoQuincena } from "./holidays.js";
 import { HORARIOS, horarioDe, TOLERANCIA_MIN, gcMarkKey, minTardeDe } from "./HRModule.jsx";
 import { GT_CSS } from "./gt-ui.js";
+import { MOVIL_CSS, BarraMovil, MenuMovil } from "./movil.jsx";
 import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion } from "./geoclock-calc.js";
 import { vincularEmpleado, KEY_VINCULOS } from "./rrhh-solicitudes.js";
 import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, RP, escHTML, fmtNum, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
@@ -310,6 +311,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
   const marcaPropia = !!yoUser?.marcaPropia;
   const soloMio = marcaPropia && !ROLES_RELOJ.includes(userRole);
   const [modoPropio, setModoPropio] = useState(soloMio);
+  const [menuMovil, setMenuMovil] = useState(false);
   const [vinculos, setVinculos] = useState({});
   const [view, setView] = useState("search"); // search | person | done
   const [sel, setSel] = useState(null);
@@ -971,6 +973,14 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
     try { localStorage.setItem(claveDispositivo, "1"); } catch { /* igual entra */ }
     entrar();
   };
+  const tabsReloj = [...(marcaPropia ? [["mi", "Mi marcaje"]] : []), ...(soloMio ? [] : [["search", "Reloj"], ["registros", "Registros"]])];
+  const tabActiva = view === "registros" ? "registros" : modoPropio ? "mi" : "search";
+  const irTab = (id) => {
+    if (id === tabActiva) return;
+    if (id === "registros") return conClave(() => setView("registros"));
+    if (id === "mi") return abrirMio();
+    setModoPropio(false); setView("search"); setSel(null); setSearch(""); setDoneInfo(null);
+  };
   const reloj = hora12(now.h, now.m, now.s);
   const btnBig = (bg, disabled) => ({
     padding: "16px 26px", borderRadius: 16, border: "none", cursor: disabled ? "not-allowed" : "pointer",
@@ -990,6 +1000,16 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
     <style>{GT_CSS}</style>
     <div className="gt-brillo gt-brillo-a" aria-hidden />
     <div className="gt-brillo gt-brillo-b" aria-hidden />
+    {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). En
+        la tablet kiosco salir sigue pidiendo la clave (conClave). */}
+    {ancho < 768 && <>
+      <style>{MOVIL_CSS}</style>
+      <BarraMovil titulo={soloMio ? "Mi marcaje" : "GeoClock"} icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>} usuario={userName} onMenu={() => setMenuMovil(true)} />
+      <MenuMovil abierto={menuMovil} onClose={() => setMenuMovil(false)} titulo="GeoClock" icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>} subtitulo={ubicsTablet.length ? ubicsTablet.map(nombreUbicacion).join(" · ") : "Marcaje de asistencia"}
+        secciones={tabsReloj.length > 1 ? tabsReloj.map(([id, label]) => ({ id, label })) : []} activa={tabActiva} onElegir={irTab}
+        usuario={userName} onPanel={() => conClave(onBack)} panelLabel={volverA ? `Volver a ${volverA}` : "Volver al panel"} onLogout={() => conClave(onLogout)} />
+    </>}
+    {ancho >= 768 && <>
     {/* HEADER igual al de GeoTeam / GeoInventory (23-oct-2026): ← · logo ·
         ícono · nombre | usuario · Cerrar sesión; debajo las pestañas. En la
         tablet kiosco salir pide la clave del encargado (conClave). */}
@@ -1009,18 +1029,13 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
       </div>
     </div>
     <div style={{ position: "relative", zIndex: 2, display: "flex", borderBottom: "1px solid rgba(44,42,40,.08)", flexShrink: 0, paddingLeft: ancho < 768 ? 4 : 20 }}>
-      {[...(marcaPropia ? [["mi", "Mi marcaje"]] : []), ...(soloMio ? [] : [["search", "Reloj"], ["registros", "Registros"]])].map(([id, label]) => {
-        const on = id === "registros" ? view === "registros" : id === "mi" ? (modoPropio && view !== "registros") : (!modoPropio && view !== "registros");
-        const ir = () => {
-          if (on) return;
-          if (id === "registros") return conClave(() => setView("registros"));
-          if (id === "mi") return abrirMio();
-          setModoPropio(false); setView("search"); setSel(null); setSearch(""); setDoneInfo(null);
-        };
-        return <button key={id} type="button" onClick={ir}
+      {tabsReloj.map(([id, label]) => {
+        const on = id === tabActiva;
+        return <button key={id} type="button" onClick={() => irTab(id)}
         style={{ padding: ancho < 768 ? "12px 13px" : "14px 18px", background: "transparent", border: "none", boxShadow: on ? `inset 0 -2px 0 ${ORANGE}` : "none", color: on ? "var(--naranja-tinta)" : "var(--text-3)", font: `${on ? 800 : 600} 13px/1 var(--sans)`, cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>; })}
     </div>
 
+    </>}
     <div style={{ position: "relative", zIndex: 1, flex: 1, maxWidth: view === "person" || view === "done" ? 900 : "none", width: "100%", margin: "0 auto", padding: ancho < 768 ? "12px 12px 32px" : "18px 24px 32px", boxSizing: "border-box" }}>
       {loadErr && <div className="gt-vidrio" style={{ padding: "12px 16px", fontSize: 13, color: RED, marginBottom: 14 }}>
         No se pudo cargar la lista de personal desde la nube. Revisá la conexión y tocá <b onClick={loadAll} style={{ cursor: "pointer", textDecoration: "underline" }}>reintentar</b>.
