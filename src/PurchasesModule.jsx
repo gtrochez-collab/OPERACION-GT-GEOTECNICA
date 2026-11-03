@@ -5662,8 +5662,14 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {/* Reporte PDF a la izquierda · selector de vista a la derecha */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        {/* CELULAR (3-nov-2026): una sola fila — mes · Global · PDF. */}
+        {isMobile ? <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input type="month" value={esGlobal ? "" : mesSel} onChange={e => e.target.value && setDashMonth(e.target.value)} aria-label="Mes"
+            style={{ flex: 1, minWidth: 0, height: 40, padding: "0 12px", border: "none", borderRadius: 12, background: esGlobal ? "#EDECEA" : "#fff", boxShadow: esGlobal ? "none" : "0 1px 2px rgba(44,42,40,.06)", fontFamily: "inherit", fontWeight: 700, color: esGlobal ? "#8A847D" : "#2C2A28" }} />
+          <button type="button" onClick={() => setDashMonth(esGlobal ? "" : "global")} style={{ height: 40, padding: "0 13px", borderRadius: 999, border: "none", background: esGlobal ? "#2C2A28" : "#EDECEA", color: esGlobal ? "#fff" : "#2C2A28", font: "700 13px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>Global</button>
+          {!esGlobal && (!esMaq || canSeeCostosMaq) && <button type="button" onClick={() => esMaq ? exportMaquinasEjecutivoPDF(mesSel) : exportComprasEjecutivoPDF(mesSel)} aria-label="Reporte ejecutivo PDF" style={{ height: 40, padding: "0 13px", borderRadius: 999, border: "none", background: "rgba(232,118,45,.14)", color: "#A94E16", font: "800 13px/1 var(--sans)", cursor: "pointer" }}>PDF</button>}
+        </div>
+        : <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div>
             {!esGlobal && (!esMaq || canSeeCostosMaq) && (
               <button onClick={() => esMaq ? exportMaquinasEjecutivoPDF(mesSel) : exportComprasEjecutivoPDF(mesSel)} title={`Reporte ejecutivo de materiales de ${mesSelLabel} (portada + detalle por proyecto)`}
@@ -5682,13 +5688,45 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             )}
             {pill("Global (todo)", esGlobal, () => setDashMonth("global"), "Histórico completo, sin filtro de mes")}
           </div>
-        </div>
+        </div>}
 
         {/* Las 3 tarjetas: barras · dona · tendencia por mes */}
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(3, minmax(0,1fr))", gap: 16, alignItems: "stretch" }}>
 
-          {/* 1 — POR PROYECTO (barras) */}
-          <div className="gt-vidrio" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          {/* 1 — POR PROYECTO (barras). CELULAR: una fila por proyecto con UNA
+              barra apilada (carbón pagado + naranja por pagar) y los montos en
+              corto — antes eran dos barras y dos renglones por proyecto y la
+              tarjeta medía dos pantallas. */}
+          {isMobile ? <div className="gt-vidrio" style={{ padding: "14px 16px", minWidth: 0 }}>
+            {tituloCard(esGlobal ? "Por proyecto · histórico" : `Por proyecto · ${mesSelLabel}`)}
+            <div style={{ display: "flex", gap: 18, marginBottom: 12 }}>
+              <div><div style={{ font: "800 19px/1.1 var(--display)", letterSpacing: "-.02em", color: CARBON }}>{fmtL(pagadoVista)}</div><div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>{esGlobal ? "pagado" : "pagado en el mes"}</div></div>
+              <div><div style={{ font: "800 19px/1.1 var(--display)", letterSpacing: "-.02em", color: "var(--naranja-tinta)" }}>{fmtL(montoPorPagar)}</div><div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>por pagar</div></div>
+            </div>
+            {proyRows.length === 0 && <div style={{ fontSize: 12.5, color: "var(--text-faint)", fontStyle: "italic" }}>Nada por pagar ni pagos en {mesSelLabel}.</div>}
+            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+              {proyRows.slice(0, 8).map((r, i) => {
+                const tot = r.pagadoMes + r.porPagar; const maxTot = Math.max(1, ...proyRows.map(x => x.pagadoMes + x.porPagar));
+                return <div key={r.key} style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ flex: 1, minWidth: 0, font: "600 12px/1.3 var(--sans)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name || r.key}</span>
+                    {r.pagadoMes > 0 && <span style={{ fontSize: 11.5, fontWeight: 800, color: CARBON, whiteSpace: "nowrap" }}>{shortL(r.pagadoMes)}</span>}
+                    {r.porPagar > 0 && <span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--naranja-tinta)", whiteSpace: "nowrap" }}>{shortL(r.porPagar)}</span>}
+                  </div>
+                  <div style={{ display: "flex", height: 6, borderRadius: 3, background: "rgba(44,42,40,.06)", overflow: "hidden", marginTop: 4, width: `${Math.max(4, (tot / maxTot) * 100)}%`, transition: "width 1100ms var(--curva)", transitionDelay: `${i * 60}ms` }}>
+                    <div style={{ width: tot ? `${(r.pagadoMes / tot) * 100}%` : 0, background: CARBON }} />
+                    <div style={{ flex: 1, background: ORANGE }} />
+                  </div>
+                </div>;
+              })}
+              {proyRows.length > 8 && <div style={{ fontSize: 11, color: "var(--text-faint)" }}>+ {proyRows.length - 8} proyectos más (el total incluye todo)</div>}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, borderTop: "1px solid var(--hairline)", marginTop: 12, paddingTop: 10 }}>
+              <span style={{ display: "flex", gap: 12 }}>{puntoLeyenda(CARBON, "Pagado")}{puntoLeyenda(ORANGE, "Por pagar")}</span>
+              <span style={{ display: "flex", gap: 10 }}><span style={{ fontSize: 11.5, fontWeight: 800, color: CARBON }}>{shortL(totPagadoMesProy)}</span><span style={{ fontSize: 11.5, fontWeight: 800, color: "var(--naranja-tinta)" }}>{shortL(totPorPagarProy)}</span></span>
+            </div>
+          </div>
+          : <div className="gt-vidrio" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column" }}>
             {tituloCard(esGlobal ? "Por proyecto — histórico" : `Por proyecto — ${mesSelLabel}`)}
             <div style={{ display: "flex", gap: 22, flexWrap: "wrap", marginBottom: 12 }}>
               <div>
@@ -5736,13 +5774,13 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
                 <span style={{ fontSize: 11, fontWeight: 800, color: "var(--naranja-tinta)" }}>{fmtL(totPorPagarProy)}</span>
               </span>
             </div>
-          </div>
+          </div>}
 
           {/* 2 — GASTO POR PROYECTO (dona, en medio) */}
           <div className="gt-vidrio" style={{ padding: 20, minWidth: 0, display: "flex", flexDirection: "column" }}>
             {tituloCard(esGlobal ? "Gasto global por proyecto" : `Gasto del mes por proyecto — ${mesSelLabel}`)}
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14 }}>
-              <svg viewBox="0 0 160 160" style={{ width: "min(62%, 210px)", height: "auto", flexShrink: 0 }}>
+              <svg viewBox="0 0 160 160" style={{ width: isMobile ? 150 : "min(62%, 210px)", height: "auto", flexShrink: 0 }}>
                 <g transform="translate(80,80)">
                   <circle r={donutR} fill="none" stroke="rgba(44,42,40,.06)" strokeWidth={donutR - donutInner} />
                   {donutTotal > 0 && donutArcs.map(seg => (
@@ -5793,7 +5831,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               )}
             </div>
             <div className="gt-label" style={{ color: "var(--text-3)", marginBottom: 16 }}>Total del semestre (global)</div>
-            <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: isMobile ? 8 : 12, minHeight: 170, paddingBottom: 4 }}>
+            <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: isMobile ? 8 : 12, minHeight: isMobile ? 120 : 170, paddingBottom: 4 }}>
               {gastoPorMes.map((g, i) => {
                 const activo = !esGlobal && g.mes === mesSel;
                 const hPct = Math.max(g.total > 0 ? 4 : 1.5, (g.total / maxMes) * 100);

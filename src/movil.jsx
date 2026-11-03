@@ -23,6 +23,20 @@ export const MOVIL_CSS = `
 .gm-fila:active{background:rgba(44,42,40,.06)}
 .gm-fila[aria-current="page"]{background:rgba(232,118,45,.12);color:#A94E16;font-weight:800}
 .gm-titulo{font:800 30px/1.1 var(--display,'Plus Jakarta Sans',sans-serif);letter-spacing:-.025em;color:#2C2A28;margin:6px 2px 14px}
+/* Barra INFERIOR flotante (3-nov-2026, como la Apple Store): pastilla con
+   Inicio + los módulos principales, y el botón redondo aparte abre el menú
+   con todos. El contenido deja --gm-inferior libre abajo. */
+:root{--gm-inferior:calc(84px + env(safe-area-inset-bottom))}
+.gm-inferior{position:fixed;left:0;right:0;bottom:calc(12px + env(safe-area-inset-bottom));z-index:40;display:flex;align-items:center;justify-content:center;gap:10px;padding:0 14px;pointer-events:none}
+.gm-pastilla{pointer-events:auto;flex:1;max-width:330px;height:62px;display:flex;align-items:stretch;padding:5px;border-radius:999px;background:rgba(249,249,248,.82);backdrop-filter:saturate(180%) blur(22px);-webkit-backdrop-filter:saturate(180%) blur(22px);box-shadow:0 1px 0 rgba(255,255,255,.9) inset,0 0 0 1px rgba(44,42,40,.07),0 12px 34px rgba(44,42,40,.16)}
+.gm-tab{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:none;background:transparent;border-radius:999px;color:#6E6862;font:600 10px/1 var(--sans,Inter,sans-serif);cursor:pointer;-webkit-tap-highlight-color:transparent;padding:0 2px;position:relative}
+.gm-tab>span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gm-tab[aria-current="page"]{background:rgba(44,42,40,.07);color:#C75F1F;font-weight:800}
+.gm-tab:active{transform:scale(.96)}
+.gm-redondo{pointer-events:auto;width:62px;height:62px;border-radius:50%;border:none;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;color:#2C2A28;background:rgba(249,249,248,.82);backdrop-filter:saturate(180%) blur(22px);-webkit-backdrop-filter:saturate(180%) blur(22px);box-shadow:0 1px 0 rgba(255,255,255,.9) inset,0 0 0 1px rgba(44,42,40,.07),0 12px 34px rgba(44,42,40,.16);cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative}
+.gm-redondo:active{transform:scale(.94)}
+.gm-puntito{position:absolute;top:7px;right:calc(50% - 16px);min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:#E8762D;color:#fff;font:800 10px/16px var(--sans,Inter,sans-serif);text-align:center;box-sizing:border-box}
+@media (max-width:767px){.gm-con-barra>*{box-sizing:border-box !important;padding-bottom:var(--gm-inferior) !important}}
 @keyframes gmFondo{from{opacity:0}}
 @keyframes gmPush{from{transform:translateX(28px);opacity:.0}}
 @keyframes gmBrillo{0%{background-position:-200px 0}100%{background-position:calc(200px + 100%) 0}}
@@ -42,7 +56,7 @@ export const MOVIL_CSS = `
 
 // Los módulos de la app (los pone App.jsx): el menú ☰ de cualquier módulo los
 // lista para saltar de uno a otro sin volver al Inicio.
-export const AppMovilContext = createContext({ modulos: [], actual: null, abrir: null });
+export const AppMovilContext = createContext({ modulos: [], actual: null, abrir: null, inicio: null, usuario: "", rol: "", logout: null });
 
 export const iniciales = (nombre) => {
   const p = String(nombre || "").replace(/^(lic|ing|arq|dr|dra)\.?\s+/i, "").trim().split(/\s+/).filter(Boolean);
@@ -96,7 +110,7 @@ export const MenuMovil = ({ abierto, onClose, titulo, icono, iconoLibre = false,
           <span style={{ flex: 1 }}>{s.label}</span>
           {s.badge > 0 && <span style={{ minWidth: 22, height: 22, padding: "0 7px", borderRadius: 999, background: "#E8762D", color: "#fff", font: "800 12px/22px var(--sans, Inter, sans-serif)", textAlign: "center", boxSizing: "border-box" }}>{s.badge}</span>}
         </button>)}
-        {app.abrir && (app.modulos || []).filter(m => m.id !== app.actual).length > 0 && <>
+        {app.abrir && !app.conBarra && (app.modulos || []).filter(m => m.id !== app.actual).length > 0 && <>
           <div className="gm-encab" style={{ margin: "16px 14px 6px" }}>Otros módulos</div>
           {app.modulos.filter(m => m.id !== app.actual).map(m => <button key={m.id} type="button" className="gm-fila" onClick={() => { onClose(); app.abrir(m.id); }} style={{ minHeight: 44, fontWeight: 600 }}>
             <span style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(44,42,40,.06)", color: "#6E6862", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{m.icono}</span>
@@ -171,3 +185,36 @@ export const HojaMovil = ({ abierta, onClose, titulo, children }) => {
 
 // Aviso para instalarla (Safari del iPhone, fuera de la app instalada).
 export const esAppInstalada = () => { try { return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true; } catch { return false; } };
+
+const IcoCasa = () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 11.5 12 4l9 7.5" /><path d="M5.5 10v10h13V10" /><path d="M10 20v-6h4v6" /></svg>;
+const IcoCuadricula = () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="4" y="4" width="6.5" height="6.5" rx="2" /><rect x="13.5" y="4" width="6.5" height="6.5" rx="2" /><rect x="4" y="13.5" width="6.5" height="6.5" rx="2" /><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="2" /></svg>;
+
+// Barra inferior flotante. Pastilla: Inicio + los 3 primeros módulos del rol
+// (si el módulo abierto no está entre ellos, ocupa el último lugar, para que
+// siempre se vea dónde estás). Botón redondo: todos los módulos en el cajón.
+export const BarraInferior = () => {
+  const app = useContext(AppMovilContext);
+  const [menu, setMenu] = useState(false);
+  const mods = app.modulos || [];
+  let pastilla = mods.slice(0, 3);
+  if (app.actual && !pastilla.some(m => m.id === app.actual)) { const act = mods.find(m => m.id === app.actual); if (act) pastilla = [...pastilla.slice(0, 2), act]; }
+  const pendientesFuera = mods.filter(m => !pastilla.some(p => p.id === m.id)).reduce((a, m) => a + (m.badge || 0), 0);
+  return <>
+    <nav className="gm-inferior" aria-label="Navegación">
+      <div className="gm-pastilla">
+        <button type="button" className="gm-tab" aria-current={!app.actual ? "page" : undefined} onClick={() => app.inicio?.()}><IcoCasa /><span>Inicio</span></button>
+        {pastilla.map(m => <button key={m.id} type="button" className="gm-tab" aria-current={m.id === app.actual ? "page" : undefined} onClick={() => { if (m.id !== app.actual) app.abrir?.(m.id); }}>
+          {m.badge > 0 && <span className="gm-puntito">{m.badge}</span>}
+          <span style={{ display: "inline-flex", width: 22, height: 22, alignItems: "center", justifyContent: "center" }}>{m.icono}</span><span>{m.name}</span>
+        </button>)}
+      </div>
+      <button type="button" className="gm-redondo" aria-label="Todos los módulos" onClick={() => setMenu(true)}>
+        <IcoCuadricula />
+        {pendientesFuera > 0 && <span className="gm-puntito" style={{ right: 10, top: 9 }}>{pendientesFuera}</span>}
+      </button>
+    </nav>
+    <MenuMovil abierto={menu} onClose={() => setMenu(false)} titulo="GeoCore" iconoLibre icono={app.marca || null} subtitulo="Todos los módulos"
+      secciones={mods.map(m => ({ id: m.id, label: m.name, badge: m.badge || 0 }))} activa={app.actual} onElegir={(id) => { if (id !== app.actual) app.abrir?.(id); }}
+      usuario={app.usuario} rol={app.rol} onPanel={app.actual ? app.inicio : null} panelLabel="Inicio" onLogout={app.logout} />
+  </>;
+};

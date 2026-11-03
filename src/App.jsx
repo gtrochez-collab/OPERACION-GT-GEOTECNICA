@@ -17,7 +17,7 @@ import { ROLES_INVENTARIO } from "./geoinventory-calc.js";
 import { store, onSyncStateChange } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
 import { useIsMobile } from "./geocost-ui.jsx";
-import { MOVIL_CSS, AppMovilContext, BarraMovil, MenuMovil, esAppInstalada, iniciales as inicialesMovil } from "./movil.jsx";
+import { MOVIL_CSS, AppMovilContext, BarraInferior, esAppInstalada } from "./movil.jsx";
 import Logo, { GeoCoreSello, GeoCoreMark } from "./Logo.jsx";
 import { BRAND, FONT } from "./theme.js";
 import { USERS, ROLE_LABEL, USUARIOS_DE_BAJA } from "./users.js";
@@ -243,6 +243,10 @@ export default function App() {
   const hashInventario = () => { try { return /[#&]inv=[A-Z]{3}-\d{3,}/i.test(window.location.hash); } catch { return false; } };
   const [activeModule, setActiveModule] = useState(() => hashInventario() ? "geoinventory" : null);
   const [syncState, setSyncState] = useState({ ok: true, error: null });
+  // Celular (< 768 px): barra inferior y sin bienvenida. Es un hook para que
+  // al girar/redimensionar se recalcule (con window.innerWidth suelto, la
+  // barra se quedaba pegada al pasar a escritorio).
+  const esTelefono = useIsMobile();
   // Bienvenida (31-ago-2026): se muestra UNA vez por sesión, tras el login.
   // Restaurar la sesión con la pestaña (F5) no la repite.
   const [welcomeDone, setWelcomeDone] = useState(() => {
@@ -395,7 +399,14 @@ export default function App() {
   const availableModules = permitidos.some(visibleEnPanel) ? permitidos.filter(visibleEnPanel) : permitidos;
   // Celular (3-nov-2026): el menú ☰ de cualquier módulo lista los demás
   // módulos para saltar directo (AppMovilContext, movil.jsx).
-  const appMovil = { modulos: availableModules.map(m => ({ id: m.id, name: m.name, badge: badges[m.id] || 0, icono: <IconoModulo id={m.id} fallback={m.icon} size={17} /> })), actual: activeModule, abrir: (id) => { origenModuloRef.current = null; setActiveModule(id); } };
+  const conBarra = esTelefono && user.role !== "marcaje";
+  const appMovil = {
+    modulos: availableModules.map(m => ({ id: m.id, name: m.name, badge: badges[m.id] || 0, icono: <IconoModulo id={m.id} fallback={m.icon} size={20} /> })),
+    actual: activeModule, conBarra, marca: <GeoCoreMark size={42} />,
+    abrir: (id) => { origenModuloRef.current = null; cancelarSalida(); setActiveModule(id); },
+    inicio: () => { origenModuloRef.current = null; cancelarSalida(); setActiveModule(null); },
+    usuario: user.label, rol: ROLE_LABEL[user.role] || user.role, logout,
+  };
   // Wrapper con la animación de entrada. key=activeModule para que al cambiar
   // de módulo vuelva a entrar. El transform del keyframe dura 560 ms: los
   // position:fixed del módulo (brillos, modales) se referencian al wrapper
@@ -404,7 +415,8 @@ export default function App() {
     <AppMovilContext.Provider value={appMovil}>
       {syncBanner}
       <style>{ENTRADA_CSS}</style>
-      <div key={activeModule} className="gt-entra-modulo" style={{ minHeight: "100vh" }}>{modulo}</div>
+      <div key={activeModule} className={`gt-entra-modulo${conBarra ? " gm-con-barra" : ""}`} style={{ minHeight: "100vh" }}>{modulo}</div>
+      {conBarra && <><style>{MOVIL_CSS}</style><BarraInferior /></>}
     </AppMovilContext.Provider>
   );
   if (activeModule === "rrhh") return conEntrada(<HRModule {...moduleProps} />);
@@ -426,7 +438,7 @@ export default function App() {
 
   // ── Bienvenida del día (todos menos la tablet kiosco de marcaje) ──
   // En el celular no hay bienvenida animada: se entra directo al Inicio.
-  if (!welcomeDone && user.role !== "marcaje" && !(typeof window !== "undefined" && window.innerWidth < 768)) {
+  if (!welcomeDone && user.role !== "marcaje" && !esTelefono) {
     return (
       <>
         <style>{UI_CSS}</style>
@@ -440,16 +452,18 @@ export default function App() {
   return (
     <>
       {syncBanner}
-      <PanelControl
-        user={user}
-        availableModules={availableModules}
-        syncOk={syncState.ok}
-        onOpen={abrirModulo}
-        saliendo={saliendo}
-        onLogout={logout}
-        onVolverBienvenida={volverBienvenida}
-        badges={badges}
-      />
+      <AppMovilContext.Provider value={appMovil}>
+        <PanelControl
+          user={user}
+          availableModules={availableModules}
+          syncOk={syncState.ok}
+          onOpen={abrirModulo}
+          saliendo={saliendo}
+          onLogout={logout}
+          onVolverBienvenida={volverBienvenida}
+          badges={badges}
+        />
+      </AppMovilContext.Provider>
     </>
   );
 }
@@ -521,7 +535,7 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
   }, [fase]);
   const esHero = fase === "hero";
   const movil = useIsMobile();
-  if (movil) return <PanelMovil user={user} availableModules={availableModules} syncOk={syncOk} onOpen={onOpen} onLogout={onLogout} onVolverBienvenida={onVolverBienvenida} saliendo={saliendo} badges={badges} />;
+  if (movil) return <PanelMovil user={user} availableModules={availableModules} syncOk={syncOk} onOpen={onOpen} onLogout={onLogout} saliendo={saliendo} badges={badges} />;
 
   return (
     <div className="gt-ui" style={{ display: "flex", flexDirection: "column", position: "relative", overflow: "hidden", height: esHero ? "100dvh" : undefined, minHeight: "100dvh", opacity: saliendo ? 0 : 1, pointerEvents: saliendo ? "none" : "auto", transition: "opacity 260ms var(--curva)" }}>
@@ -583,59 +597,87 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
   );
 }
 
-// ── INICIO EN EL CELULAR (3-nov-2026, 2ª pasada — Gerson: "que parezca una
-// app que fuéramos a vender; ordenado, que quepa sin tanto scroll; me gusta
-// el menú de las tres barritas") ── la misma barra ☰ de los módulos; saludo
-// compacto, aviso para instalarla (Safari), "Pendientes" y los módulos en
-// lista agrupada estilo iOS (Ajustes): ícono, nombre, una línea, contador, ›.
+// ── INICIO EN EL CELULAR (3-nov-2026, 3ª pasada — Gerson: "como la Apple
+// Store, con los menús abajo") ── sin barra arriba: título grande con tus
+// iniciales (cuenta), los módulos en MOSAICOS deslizables en fila (como los
+// productos de Apple), los pendientes como lista, y la barra flotante de
+// abajo (BarraInferior) que vive en toda la app.
 function PanelMovil({ user, availableModules, syncOk, onOpen, onLogout, saliendo, badges }) {
-  const [menu, setMenu] = useState(false);
+  const [cuenta, setCuenta] = useState(false);
   const [sinAviso, setSinAviso] = useState(() => { try { return esAppInstalada() || localStorage.getItem("gt-aviso-instalar") === "1"; } catch { return true; } });
   useEffect(() => { window.scrollTo(0, 0); }, []);
+  const ini = (() => { const p = String(user.label || "").replace(/^(lic|ing|arq|dr|dra)\.?\s+/i, "").trim().split(/\s+/); return ((p[0] || "?")[0] + (p[1] ? p[1][0] : "")).toUpperCase(); })();
   const nombre = String(user.label || "").replace(/^(lic|ing|arq|dr|dra)\.?\s+/i, "").split(/\s+/)[0];
   const ahora = new Date();
   const h = Number(new Intl.DateTimeFormat("es-HN", { hour: "numeric", hourCycle: "h23", timeZone: "America/Tegucigalpa" }).format(ahora));
   const saludo = h < 12 ? "Buenos días" : h < 18 ? "Buenas tardes" : "Buenas noches";
-  const fecha = new Intl.DateTimeFormat("es-HN", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Tegucigalpa" }).format(ahora);
+  const fecha = (() => { const f = new Intl.DateTimeFormat("es-HN", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Tegucigalpa" }).format(ahora); return f.charAt(0).toUpperCase() + f.slice(1); })();
   const pend = availableModules.filter(m => (badges[m.id] || 0) > 0);
-  const fila = (m, sub, b) => <button key={m.id} type="button" className="gm-item" onClick={() => onOpen(m.id)}>
-    <span style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(232,118,45,.12)", color: "#C75F1F", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IconoModulo id={m.id} fallback={m.icon} size={19} /></span>
-    <span style={{ flex: 1, minWidth: 0 }}>
-      <span style={{ display: "block", font: "600 15.5px/1.2 var(--sans)", color: "#2C2A28" }}>{m.name}</span>
-      <span style={{ display: "block", fontSize: 12.5, color: "#8A847D", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</span>
-    </span>
-    {b > 0 && <span style={{ minWidth: 22, height: 22, padding: "0 7px", borderRadius: 999, background: "#E8762D", color: "#fff", font: "800 12px/22px var(--sans)", textAlign: "center", boxSizing: "border-box" }}>{b}</span>}
-    <span aria-hidden style={{ color: "#C9C3BA", fontSize: 20, lineHeight: 1 }}>›</span>
-  </button>;
   return (
     <div className="gt-ui" style={{ minHeight: "100dvh", background: "#F2F2F0", opacity: saliendo ? 0 : 1, transition: "opacity 200ms", pointerEvents: saliendo ? "none" : "auto" }}>
       <style>{UI_CSS}</style>
       <style>{MOVIL_CSS}</style>
-      <BarraMovil titulo="GeoCore" iconoLibre icono={<GeoCoreMark size={26} />} usuario={user.label} onMenu={() => setMenu(true)} />
-      <MenuMovil abierto={menu} onClose={() => setMenu(false)} titulo="GeoCore" iconoLibre icono={<GeoCoreMark size={42} />} subtitulo="Grupo Geotecnica"
-        secciones={availableModules.map(m => ({ id: m.id, label: m.name, badge: badges[m.id] || 0 }))} onElegir={onOpen}
-        usuario={user.label} rol={ROLE_LABEL[user.role] || user.role} onLogout={onLogout} />
-      <div style={{ padding: "16px 14px calc(24px + env(safe-area-inset-bottom))", maxWidth: 560, margin: "0 auto" }}>
-        <div style={{ padding: "2px 4px 4px" }}>
-          <div style={{ fontSize: 13, color: "#8A847D" }}>{fecha.charAt(0).toUpperCase() + fecha.slice(1)}</div>
-          <div style={{ font: "800 26px/1.15 var(--display)", letterSpacing: "-.02em", color: "#2C2A28", marginTop: 2 }}>{saludo}, {nombre}</div>
+      <div style={{ padding: "calc(18px + env(safe-area-inset-top)) 16px var(--gm-inferior)", maxWidth: 560, margin: "0 auto" }}>
+        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, color: "#8A847D" }}>{fecha}</div>
+            <h1 style={{ font: "800 30px/1.1 var(--display)", letterSpacing: "-.03em", color: "#2C2A28", margin: "4px 0 0" }}>{saludo}, {nombre}</h1>
+          </div>
+          <button type="button" onClick={() => setCuenta(true)} aria-label="Tu cuenta" style={{ width: 42, height: 42, borderRadius: "50%", border: "none", background: "#2C2A28", color: "#fff", font: "800 14px/1 var(--sans)", cursor: "pointer", flexShrink: 0 }}>{ini}</button>
         </div>
-        {!sinAviso && <div className="gm-grupo" style={{ marginTop: 14, padding: "12px 14px", display: "flex", gap: 12, alignItems: "center" }}>
+
+        {/* Módulos: mosaicos en fila deslizable (como la Apple Store) */}
+        <div className="gm-scroll-x" style={{ margin: "20px -16px 0", padding: "0 16px 4px", gap: 10 }}>
+          {availableModules.map(m => {
+            const b = badges[m.id] || 0;
+            return <button key={m.id} type="button" onClick={() => onOpen(m.id)} style={{ position: "relative", flex: "0 0 auto", width: 118, height: 118, borderRadius: 22, border: "none", background: "#fff", boxShadow: "0 1px 2px rgba(44,42,40,.05), 0 6px 18px rgba(44,42,40,.06)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, cursor: "pointer", fontFamily: "inherit", WebkitTapHighlightColor: "transparent" }}>
+              <span style={{ width: 48, height: 48, borderRadius: 15, background: "rgba(232,118,45,.12)", color: "#C75F1F", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><IconoModulo id={m.id} fallback={m.icon} size={26} /></span>
+              <span style={{ font: "700 13px/1.15 var(--sans)", color: "#2C2A28", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 8px" }}>{m.name}</span>
+              {b > 0 && <span style={{ position: "absolute", top: 10, right: 10, minWidth: 20, height: 20, padding: "0 6px", borderRadius: 999, background: "#E8762D", color: "#fff", font: "800 11px/20px var(--sans)", textAlign: "center", boxSizing: "border-box" }}>{b}</span>}
+            </button>;
+          })}
+        </div>
+
+        {!sinAviso && <div className="gm-grupo" style={{ marginTop: 18, padding: "12px 14px", display: "flex", gap: 12, alignItems: "center" }}>
           <GeoCoreMark size={40} />
           <div style={{ flex: 1, fontSize: 13, color: "#5C5853", lineHeight: 1.35 }}><b style={{ color: "#2C2A28" }}>Instalá GeoCore</b><br />Tocá Compartir <span aria-hidden>⬆︎</span> y “Agregar a inicio”: abre a pantalla completa.</div>
           <button type="button" onClick={() => { setSinAviso(true); try { localStorage.setItem("gt-aviso-instalar", "1"); } catch {} }} aria-label="Cerrar aviso" style={{ border: "none", background: "transparent", color: "#A39C92", fontSize: 18, cursor: "pointer" }}>✕</button>
         </div>}
-        {pend.length > 0 && <>
-          <div className="gm-encab">Pendientes</div>
-          <div className="gm-grupo">{pend.map(m => fila(m, `${badges[m.id]} por atender`, badges[m.id]))}</div>
-        </>}
-        <div className="gm-encab">Módulos</div>
-        <div className="gm-grupo">{availableModules.map(m => fila(m, m.desc, 0))}</div>
-        <div style={{ marginTop: 18, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontSize: 12, color: "#8A847D" }}>
+
+        <div style={{ font: "800 21px/1.2 var(--display)", letterSpacing: "-.015em", color: "#2C2A28", margin: "26px 0 10px" }}>Pendientes</div>
+        {pend.length === 0
+          ? <div className="gm-grupo" style={{ padding: "16px", display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ width: 34, height: 34, borderRadius: "50%", background: "#DCF3E4", color: "#177243", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 800, flexShrink: 0 }}>✓</span>
+              <div style={{ fontSize: 14, color: "#2C2A28" }}><b>Todo al día.</b><div style={{ fontSize: 12.5, color: "#8A847D", marginTop: 2 }}>No tenés nada por atender.</div></div>
+            </div>
+          : <div className="gm-grupo">{pend.map(m => <button key={m.id} type="button" className="gm-item" onClick={() => onOpen(m.id)}>
+              <span style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(232,118,45,.12)", color: "#C75F1F", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IconoModulo id={m.id} fallback={m.icon} size={19} /></span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", font: "600 15.5px/1.2 var(--sans)", color: "#2C2A28" }}>{m.name}</span>
+                <span style={{ display: "block", fontSize: 12.5, color: "#8A847D", marginTop: 2 }}>{badges[m.id]} por atender</span>
+              </span>
+              <span style={{ minWidth: 22, height: 22, padding: "0 7px", borderRadius: 999, background: "#E8762D", color: "#fff", font: "800 12px/22px var(--sans)", textAlign: "center", boxSizing: "border-box" }}>{badges[m.id]}</span>
+              <span aria-hidden style={{ color: "#C9C3BA", fontSize: 20, lineHeight: 1 }}>›</span>
+            </button>)}</div>}
+
+        <div style={{ marginTop: 22, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontSize: 12, color: "#8A847D" }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: syncOk ? "#059669" : BRAND.red }} />
           {syncOk ? "Sincronizado" : "Sin sincronizar"} · GeoCore
         </div>
       </div>
+      <BarraInferior />
+      {cuenta && <>
+        <div className="gm-fondo" onClick={() => setCuenta(false)} aria-hidden />
+        <div role="dialog" aria-label="Tu cuenta" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 9001, background: "#F9F9F8", borderRadius: "24px 24px 0 0", padding: "10px 18px calc(18px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 40px rgba(44,42,40,.18)", animation: "gtSubeHoja .3s var(--curva) both" }}>
+          <style>{"@keyframes gtSubeHoja{from{transform:translateY(100%)}}"}</style>
+          <div style={{ width: 38, height: 5, borderRadius: 3, background: "rgba(44,42,40,.18)", margin: "0 auto 16px" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+            <span style={{ width: 46, height: 46, borderRadius: "50%", background: "#2C2A28", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "800 16px/1 var(--sans)" }}>{ini}</span>
+            <div><div style={{ font: "700 16px/1.25 var(--display)", color: "var(--text)" }}>{user.label}</div><div style={{ fontSize: 13, color: "var(--text-3)" }}>{ROLE_LABEL[user.role] || user.role}</div></div>
+          </div>
+          <button type="button" className="gm-fila" onClick={onLogout} style={{ color: "#B03024" }}><span style={{ width: 22, textAlign: "center" }}>⎋</span>Cerrar sesión</button>
+        </div>
+      </>}
     </div>
   );
 }

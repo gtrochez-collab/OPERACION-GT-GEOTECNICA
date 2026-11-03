@@ -2400,6 +2400,20 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   (GeoShopping/GeoMachinery), Mi RRHH, Flota y Rutas (GeoLogistics) y las
   tiras de GeoSupply (`.gm-tira`). Al abrir un módulo entra deslizando
   (`gmPush`).
+  **3ª pasada (3-nov-2026, Gerson: "me encanta; el panel no, el hamburger
+  queda mucho mejor; como la Apple Store con los menús abajo; los dashboards
+  se miran abultados")**: `BarraInferior` (movil.jsx) = pastilla flotante
+  Inicio + los 3 primeros módulos del rol (el abierto siempre se ve) + botón
+  redondo aparte que abre el cajón con TODOS los módulos; vive en toda la
+  app (`conBarra` en App.jsx, nunca para el kiosco `marcaje`; `.gm-con-barra`
+  deja `--gm-inferior` libre abajo en el root del módulo). El Inicio
+  (`PanelMovil`) es como "Products" de Apple: sin barra arriba, título grande
+  con las iniciales (cuenta), módulos en mosaicos deslizables en fila,
+  Pendientes como lista. `useIsMobile()` en App (no `window.innerWidth`
+  suelto: al redimensionar quedaba pegado). Dashboard de GeoShopping/
+  GeoMachinery en el celular: cabecera en una fila (mes · Global · PDF), UNA
+  fila por proyecto con barra apilada carbón+naranja y montos en corto
+  (`shortL`), dona de 150 px, barras de mes más bajas.
 - **ESTILO ÚNICO DE REPORTES (26-oct-2026, Gerson: "todo reporte que
   exportemos, PDF o Excel, en estilo Apple")**: `src/reporte-estilo.js` es la
   ÚNICA fuente — reportes HTML para "Guardar PDF" (`reporteHTML` +
