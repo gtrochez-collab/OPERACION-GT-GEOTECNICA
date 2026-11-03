@@ -5109,6 +5109,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const esSuperTardies = userRole === "admin" || userRole === "coordinador" || userRole === "tesoreria";
     const responsableDe = (mk) => {
       const por = String(mk.registradoPor || "");
+      // Marcó desde SU cuenta (Mi marcaje): nadie decide su propia tardanza.
+      if (mk.marcaPropia) return null;
       if (por === "Oscar Paz") return "Oscar Paz";
       if (por === "Ana Vasquez" || por === "Marcaje de Asistencia") return "Ana Vasquez";
       return null; // marcada por Gerson/otros → la deciden los supers

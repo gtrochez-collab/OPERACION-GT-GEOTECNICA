@@ -412,8 +412,12 @@ export default function App() {
   // la bienvenida (onAbrirTareas), que no pasa por esta lista.
   // `sinModulos` (users.js): módulos que un usuario NO ve aunque su rol sí.
   const sinModulos = USERS.find((x) => x.username === user.username)?.sinModulos || [];
-  const permitidos = MODULES.filter((m) => m.roles.includes(user.role) && !sinModulos.includes(m.id));
-  const availableModules = permitidos.some((m) => !m.oculto) ? permitidos.filter((m) => !m.oculto) : permitidos;
+  // `marcaPropia` (users.js, 3-nov-2026): GeoClock aparece en SU panel para
+  // marcar desde el celular, aunque su rol no lo tenga y el módulo esté oculto.
+  const marcaPropia = !!USERS.find((x) => x.username === user.username)?.marcaPropia;
+  const permitidos = MODULES.filter((m) => (m.roles.includes(user.role) || (m.id === "geoclock" && marcaPropia)) && !sinModulos.includes(m.id));
+  const visibleEnPanel = (m) => !m.oculto || (m.id === "geoclock" && marcaPropia);
+  const availableModules = permitidos.some(visibleEnPanel) ? permitidos.filter(visibleEnPanel) : permitidos;
 
   // ── Bienvenida del día (todos menos la tablet kiosco de marcaje) ──
   if (!welcomeDone && user.role !== "marcaje") {

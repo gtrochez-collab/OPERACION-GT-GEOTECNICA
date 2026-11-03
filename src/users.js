@@ -19,10 +19,13 @@ export const USERS = [
   // los asignados de esa sede que no marcaron. Para sumar la tablet de un
   // ingeniero en proyecto: crear su usuario con role "marcaje" y su
   // ubicacion = short del proyecto (ej. "PILOTES-EBENEZER").
-  { username: "oscarpaz",      password: "oscarpaz1234",   role: "logistica",          label: "Oscar Paz", ubicacion: "PLANTEL" },
+  // marcaPropia (3-nov-2026): marca SU PROPIA entrada/salida en GeoClock desde
+  // su celular ("Mi marcaje", con foto, firma y GPS). Fernando y Oscar empiezan
+  // la jornada antes de las 7 recibiendo llamadas, sin haber llegado al plantel.
+  { username: "oscarpaz",      password: "oscarpaz1234",   role: "logistica",          label: "Oscar Paz", ubicacion: "PLANTEL", marcaPropia: true },
   { username: "jorge",         password: "jorge1234",      role: "recepcion",          label: "Jorge Castellanos" },
   { username: "ana",           password: "ana1234",        role: "asistente_compras",  label: "Ana Vasquez" },
-  { username: "fernando",      password: "fernando1234",   role: "coordinador_maquinas", label: "Lic. Fernando Diaz" },
+  { username: "fernando",      password: "fernando1234",   role: "coordinador_maquinas", label: "Lic. Fernando Diaz", marcaPropia: true },
   { username: "almacen",       password: "almacen1234",    role: "almacenista",          label: "Encargado de Almacen" },
   { username: "jose",          password: "jose1234",       role: "almacen_visor",        label: "Jose (Asistente Almacen)" },
   // Arturo (compras_ops) salió de la empresa: se retiró su usuario el

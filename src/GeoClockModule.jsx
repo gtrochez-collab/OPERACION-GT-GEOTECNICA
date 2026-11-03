@@ -32,6 +32,7 @@ import { esFeriadoQuincena } from "./holidays.js";
 import { HORARIOS, horarioDe, TOLERANCIA_MIN, gcMarkKey, minTardeDe } from "./HRModule.jsx";
 import { GT_CSS } from "./gt-ui.js";
 import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion } from "./geoclock-calc.js";
+import { vincularEmpleado, KEY_VINCULOS } from "./rrhh-solicitudes.js";
 import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, RP, escHTML, fmtNum, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 
 // Rediseño GeoCore (23-oct-2026): vidrio, paleta carbón/naranja/gris, sin
@@ -281,13 +282,35 @@ const SignaturePad = ({ padRef, onInk }) => {
 };
 
 // ── Módulo ────────────────────────────────────────────────────────────
-export default function GeoClockModule({ userRole = "admin", userName, onBack, onLogout, volverA = null }) {
+// ── MI MARCAJE (3-nov-2026, Fernando y Oscar) ──
+// Quien lleva `marcaPropia` en users.js marca SU entrada/salida desde su
+// celular: misma pantalla de la persona (foto, firma, tardanza), pero solo
+// para él, con GPS como evidencia (best-effort: sin permiso igual marca).
+// Si su rol no es de GeoClock solo ve "Mi marcaje"; Oscar conserva además el
+// reloj del plantel y Registros. En una tablet compartida "Mi marcaje" pide su
+// clave la PRIMERA vez y el dispositivo queda recordado (localStorage).
+const ROLES_RELOJ = ["admin", "coordinador", "tesoreria", "asistente_compras", "logistica", "marcaje"];
+const pedirGPS = () => new Promise((res) => {
+  if (!navigator.geolocation) return res(null);
+  const t = setTimeout(() => res(null), 9000);
+  navigator.geolocation.getCurrentPosition(
+    (pos) => { clearTimeout(t); res({ lat: Math.round(pos.coords.latitude * 1e6) / 1e6, lng: Math.round(pos.coords.longitude * 1e6) / 1e6, precision: Math.round(pos.coords.accuracy || 0) }); },
+    () => { clearTimeout(t); res(null); },
+    { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+});
+
+export default function GeoClockModule({ userRole = "admin", userName, userKey, userEmpId, onBack, onLogout, volverA = null }) {
   const [emps, setEmps] = useState([]);
   const [cuads, setCuads] = useState([]);
   const [marks, setMarks] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [loadErr, setLoadErr] = useState(false);
   const [now, setNow] = useState(ahoraTegus());
+  const yoUser = USERS.find(u => u.username === userKey) || null;
+  const marcaPropia = !!yoUser?.marcaPropia;
+  const soloMio = marcaPropia && !ROLES_RELOJ.includes(userRole);
+  const [modoPropio, setModoPropio] = useState(soloMio);
+  const [vinculos, setVinculos] = useState({});
   const [view, setView] = useState("search"); // search | person | done
   const [sel, setSel] = useState(null);
   const [search, setSearch] = useState("");
@@ -355,6 +378,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       ]);
       if (Array.isArray(e)) setEmps(e);
       if (Array.isArray(cq)) setCuads(cq);
+      if (marcaPropia) { try { const v = await store.getCloud(KEY_VINCULOS); if (v && typeof v === "object") setVinculos(v); } catch { /* por nombre */ } }
       setMarks(Array.isArray(mk) ? mk : []);
       setLoadErr(!Array.isArray(e) || e.length === 0);
     } catch {
@@ -563,6 +587,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   const reset = () => {
     setView("search"); setSel(null); setSearch(""); setExplicacion("");
     setTieneFirma(false); setDoneInfo(null); setTipoAccion("entrada"); setComentSalida("");
+    if (soloMio) { if (yo) seleccionar(yo); } else setModoPropio(false);
   };
 
   // Los que no requieren marcaje (jefaturas) no salen en el reloj: no tienen
@@ -584,6 +609,12 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
   // Proyecto asignado en la cuadrilla de esta quincena (para la ubicación del marcaje).
   const asignacionDe = (emp) => { const c = cuads.find(x => x && x.company === emp.company && x.periodo === q.periodo && x.quincena === q.quincena); return (c?.assignments || {})[emp.id] || ""; };
   const ubicacionDe = (emp) => ubicacionDeMarcaje(tabletDe(userName), emp, asignacionDe(emp));
+  const yo = marcaPropia ? vincularEmpleado({ username: userKey, label: userName, empId: userEmpId }, emps, vinculos).emp : null;
+  // Solo "Mi marcaje" (Fernando): al cargar entra directo a su pantalla.
+  useEffect(() => {
+    if (soloMio && loaded && yo && !sel) seleccionar(yo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soloMio, loaded, yo?.id]);
 
   const selEmp = sel ? emps.find(e => e.id === sel.id) || sel : null;
   const horario = selEmp ? horarioDe(selEmp) : HORARIOS.plantel;
@@ -671,6 +702,8 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       if (!firmaOk) { alert("No se pudo guardar la firma en la nube. Revisá la señal y volvé a intentar — NO se registró nada."); return; }
       // 2b) Foto automática de la tablet (evidencia de que marcó la persona).
       const fotoData = camRef.current?.capturar?.() || null;
+      const propio = modoPropio && yo && selEmp.id === yo.id;
+      const gps = propio ? await pedirGPS() : null;
       if (fotoData) {
         const fotoOk = await store.set(`gc-foto-${id}`, { dataUrl: fotoData, empId: selEmp.id, fecha: t.fecha, tipo: tipoAccion, createdAt: nowIso });
         if (!fotoOk) { alert("No se pudo guardar la foto en la nube. Revisá la señal y volvé a intentar — NO se registró nada."); return; }
@@ -698,8 +731,10 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         sinFoto: !fotoData,
         registradoPor: userName || "GeoClock",
         // La ubicación la decide la PERSONA (cuadrilla o departamento), no
-        // la tablet: la de la pared cubre administración y plantel.
-        ubicacion: ubicacionDeMarcaje(tabletDe(userName), selEmp, asignacionDe(selEmp)),
+        // la tablet: la de la pared cubre administración y plantel. Desde su
+        // propia cuenta (Mi marcaje) queda "SU DISPOSITIVO" + el GPS.
+        ubicacion: propio ? "SU DISPOSITIVO" : ubicacionDeMarcaje(tabletDe(userName), selEmp, asignacionDe(selEmp)),
+        ...(propio ? { marcaPropia: true, gps: gps || null, sinGps: !gps } : {}),
         ts: nowIso,
         createdAt: nowIso,
       };
@@ -920,6 +955,22 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
     if (!okPass) return alert("Contraseña incorrecta.");
     accion();
   };
+  const claveDispositivo = `gt-clock-mio-${userKey || ""}`;
+  const abrirMio = () => {
+    if (!yo) { setModoPropio(true); setSel(null); setView("search"); return; }
+    const entrar = () => { setModoPropio(true); seleccionar(yo); };
+    let recordado = false;
+    try { recordado = localStorage.getItem(claveDispositivo) === "1"; } catch { /* sin storage */ }
+    if (!esKiosk || recordado) return entrar();
+    // Tablet compartida: la primera vez pide la clave y recuerda ESTE equipo
+    // (en el celular de Oscar se pide una sola vez; en la del plantel nadie
+    // la sabe, así que nadie marca "como Oscar desde su cuenta").
+    const pass = prompt(`Mi marcaje — escribí la contraseña de ${userName} (solo la primera vez en este equipo):`);
+    if (pass === null || pass === "") return;
+    if (!USERS.some(u => u.username === userKey && u.password === pass)) return alert("Contraseña incorrecta.");
+    try { localStorage.setItem(claveDispositivo, "1"); } catch { /* igual entra */ }
+    entrar();
+  };
   const reloj = hora12(now.h, now.m, now.s);
   const btnBig = (bg, disabled) => ({
     padding: "16px 26px", borderRadius: 16, border: "none", cursor: disabled ? "not-allowed" : "pointer",
@@ -958,7 +1009,15 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       </div>
     </div>
     <div style={{ position: "relative", zIndex: 2, display: "flex", borderBottom: "1px solid rgba(44,42,40,.08)", flexShrink: 0, paddingLeft: ancho < 768 ? 4 : 20 }}>
-      {[["search", "Reloj"], ["registros", "Registros"]].map(([id, label]) => { const on = (view === "registros") === (id === "registros"); return <button key={id} type="button" onClick={() => id === "registros" ? (view !== "registros" && conClave(() => setView("registros"))) : (view === "registros" && reset())}
+      {[...(marcaPropia ? [["mi", "Mi marcaje"]] : []), ...(soloMio ? [] : [["search", "Reloj"], ["registros", "Registros"]])].map(([id, label]) => {
+        const on = id === "registros" ? view === "registros" : id === "mi" ? (modoPropio && view !== "registros") : (!modoPropio && view !== "registros");
+        const ir = () => {
+          if (on) return;
+          if (id === "registros") return conClave(() => setView("registros"));
+          if (id === "mi") return abrirMio();
+          setModoPropio(false); setView("search"); setSel(null); setSearch(""); setDoneInfo(null);
+        };
+        return <button key={id} type="button" onClick={ir}
         style={{ padding: ancho < 768 ? "12px 13px" : "14px 18px", background: "transparent", border: "none", boxShadow: on ? `inset 0 -2px 0 ${ORANGE}` : "none", color: on ? "var(--naranja-tinta)" : "var(--text-3)", font: `${on ? 800 : 600} 13px/1 var(--sans)`, cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>; })}
     </div>
 
@@ -968,7 +1027,11 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
       </div>}
 
       {/* ── BÚSQUEDA ── */}
-      {view === "search" && (() => {
+      {view === "search" && modoPropio && !yo && <div className="gt-vidrio" style={{ padding: "22px 24px", maxWidth: 560, margin: "30px auto", fontSize: 14, color: CHARCOAL, lineHeight: 1.6 }}>
+        <div style={{ font: "800 18px/1.2 var(--display)", marginBottom: 6 }}>No encontré tu ficha</div>
+        No pude vincular tu usuario ({userName}) con un colaborador de GeoTeam. Avisale a RRHH para que lo vinculen en GeoTeam → Mi RRHH.
+      </div>}
+      {view === "search" && !modoPropio && (() => {
         const dos = ancho >= 1000;
         const nEnt = marksHoy.filter(mk => mk.tipo === "entrada").length, nSal = marksHoy.filter(mk => mk.tipo === "salida").length, nTarde = marksHoy.filter(mk => mk.tipo === "entrada" && mk.tarde).length;
         const lista = resultados.filter(e => (!filtroUbic || ubicacionDe(e) === filtroUbic) && (!letra || normaliza(e.fullName).startsWith(normaliza(letra))));
@@ -1056,13 +1119,13 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         const yaMarcoTodo = ent && sal;
         const puedeEntrada = !ent;
         const puedeSalida = !sal;
-        const ubic = ubicacionDe(selEmp);
+        const ubic = modoPropio && yo && selEmp.id === yo.id ? "" : ubicacionDe(selEmp);
         const limite = (() => { const t = entradaMin + TOLERANCIA_MIN; return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; })();
         const bloqueado = saving || !tieneFirma || (esTarde && !explicacion.trim());
         const segBtn = (label, on, enabled, onClick) => <button type="button" disabled={!enabled} onClick={onClick}
           style={{ flex: 1, minHeight: 56, padding: "12px 10px", borderRadius: 16, cursor: enabled ? "pointer" : "not-allowed", font: "800 16px/1.2 var(--display)", border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: on ? CHARCOAL : "rgba(255,255,255,.75)", color: on ? "#fff" : enabled ? CHARCOAL : "#B5AFA6" }}>{label}</button>;
         return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <button type="button" onClick={reset} style={{ alignSelf: "flex-start", minHeight: 38, padding: "8px 16px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "700 13px/1 var(--sans)", cursor: "pointer" }}>← No soy yo</button>
+          {!modoPropio && <button type="button" onClick={reset} style={{ alignSelf: "flex-start", minHeight: 38, padding: "8px 16px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: CHARCOAL, font: "700 13px/1 var(--sans)", cursor: "pointer" }}>← No soy yo</button>}
           <div className="gt-vidrio" style={{ padding: "18px 20px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             {fotos[selEmp.photo?.fileId]
               ? <img src={fotos[selEmp.photo.fileId]} alt="" style={{ width: 76, height: 76, borderRadius: 20, objectFit: "cover" }} />
@@ -1073,6 +1136,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                 <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(44,42,40,.06)", color: STONE, fontSize: 11.5, fontWeight: 700 }}>Horario {horario.entrada} – {horario.salida || "?"} · tolerancia hasta {limite}</span>
                 {ubic && <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(232,118,45,.14)", color: "#A94E16", fontSize: 11.5, fontWeight: 700 }}>Marcás en {nombreUbicacion(ubic)}</span>}
+                {!ubic && modoPropio && <span title="Se guarda tu ubicación GPS como evidencia (si el celular da permiso)" style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(232,118,45,.14)", color: "#A94E16", fontSize: 11.5, fontWeight: 700 }}>Desde tu celular · con ubicación</span>}
               </div>
             </div>
             <div style={{ textAlign: "right", fontSize: 12.5, display: "flex", flexDirection: "column", gap: 4 }}>
@@ -1255,7 +1319,7 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
         const varios = regDesde !== regHasta;
         const btnR = (label, onClick, lleno) => <button type="button" onClick={onClick} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: lleno ? "1px solid transparent" : "1px solid rgba(44,42,40,.14)", background: lleno ? ORANGE_DARK : "rgba(255,255,255,.75)", color: lleno ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>;
         const chipR = (txt, c, bg, title) => <span title={title} style={{ display: "inline-flex", alignItems: "center", padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700, color: c, background: bg, whiteSpace: "nowrap" }}>{txt}</span>;
-        const hora = (mk, color) => <span role="button" title="Ver foto, firma e historial" onClick={() => abrirDetalle(mk)} style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 13.5, color, cursor: "pointer" }}>{mk.hora}{mk.manual ? <span style={{ fontFamily: "var(--sans)", fontSize: 10, color: "#6E6862", marginLeft: 5 }}>manual</span> : (mk.historial || []).length ? <span style={{ fontFamily: "var(--sans)", fontSize: 10, color: "#6E6862", marginLeft: 5 }}>editada</span> : null}</span>;
+        const hora = (mk, color) => <span role="button" title="Ver foto, firma e historial" onClick={() => abrirDetalle(mk)} style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 13.5, color, cursor: "pointer" }}>{mk.hora}{mk.manual ? <span style={{ fontFamily: "var(--sans)", fontSize: 10, color: "#6E6862", marginLeft: 5 }}>manual</span> : mk.marcaPropia ? <span title="Marcó desde su celular (Mi marcaje)" style={{ fontFamily: "var(--sans)", fontSize: 10, color: "#6E6862", marginLeft: 5 }}>celular</span> : (mk.historial || []).length ? <span style={{ fontFamily: "var(--sans)", fontSize: 10, color: "#6E6862", marginLeft: 5 }}>editada</span> : null}</span>;
         // Un ausente (sin ningún marcaje) ya lo dice la columna Estado: en sus
         // celdas solo va el "+" para colocar la hora a mano. "No marcó" en rojo
         // queda para cuando falta UNA de las dos marcas.
@@ -1407,7 +1471,8 @@ export default function GeoClockModule({ userRole = "admin", userName, onBack, o
                   {mk.tipo === "entrada" && dato("Puntualidad", mk.tarde
                     ? <span style={{ color: st.hora }}>{minTardeMk(mk)} min tarde · {st.txt}</span>
                     : <span style={{ color: "#166534" }}>A tiempo ✓</span>)}
-                  {dato("Registrado en", mk.registradoPor || "—")}
+                  {dato("Registrado en", mk.marcaPropia ? `Su celular (${mk.registradoPor || "—"})` : (mk.registradoPor || "—"))}
+                  {mk.marcaPropia && dato("Ubicación GPS", mk.gps ? <a href={`https://www.google.com/maps?q=${mk.gps.lat},${mk.gps.lng}`} target="_blank" rel="noreferrer" style={{ color: ORANGE_DARK, fontWeight: 700 }}>Ver en el mapa{mk.gps.precision ? ` · ±${mk.gps.precision} m` : ""}</a> : "Sin permiso de ubicación")}
                 </div>
 
                 {mk.tarde && <div style={{ marginTop: 12, background: st.bg, border: `1px solid ${st.fg}33`, borderRadius: 12, padding: "10px 14px" }}>
