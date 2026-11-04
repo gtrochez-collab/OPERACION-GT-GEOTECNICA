@@ -1907,6 +1907,14 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   `treasuryStatus pendiente` + `validatedAt` + audit `approved` + `encolarPago`
   del flujo normal, en UNA escritura de `sP`. `canCreate` (admin/costos/
   compras_ops) envía; Carolina solo mira. `visorGlobal` para el PDF.
+  **"Fuera de presupuesto" en el borrador (4-nov-2026, Gerson: "Cataleya ni
+  tiene presupuesto; ¿bajo qué partida carga Villa San Miguel?")**:
+  `etiquetaFueraReceta(purchase, presupuestos)` en PurchasesModule — proyecto sin
+  receta en GeoCost → "sin receta en GeoCost" (gris); con receta → "fuera de la
+  receta · se carga a <partida principal de la solicitud>" o "· sin partida (Por
+  clasificar en GeoCost)". Las líneas sin `partidaId` cuentan en GeoCost con la
+  `partidaId` de la solicitud (`lineasValidas` las ignora → cae al fallback).
+  `borradorDesdeCotizacion` ahora copia `sinReceta` a la línea.
   **GeoCost**: `estadoCompraCosto` cuenta `borrador + origenSupply` como
   comprometido; al validarse sigue comprometido y al pagarse ejecutado — mismo
   registro, sin doble conteo (verificado 2-oct: $1,057.41 comprometido → tras

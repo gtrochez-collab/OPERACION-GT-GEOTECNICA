@@ -1976,13 +1976,26 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   </div>;
 }
 
+// Ítem "fuera de presupuesto" de GeoSupply (4-nov-2026, Gerson: "Cataleya ni
+// siquiera tiene presupuesto; y en Villa San Miguel ¿bajo qué partida está
+// cargado?"): sin receta en GeoCost no hay presupuesto del que estar fuera →
+// "sin receta"; con receta se dice a qué partida se carga la compra (GeoCost
+// la cuenta con la partida principal de la solicitud) o que cae en Por clasificar.
+const etiquetaFueraReceta = (purchase, presupuestos) => {
+  const pres = (presupuestos || []).find(x => x && x.projectCode === purchase?.projectCode && x.estado !== "cerrado");
+  if (!pres) return { txt: "sin receta en GeoCost", color: "#6E6862" };
+  const par = (pres.partidas || []).find(x => x.id === purchase?.partidaId);
+  if (par) return { txt: `fuera de la receta · se carga a ${par.nombre}`, color: C_AMARILLO.color };
+  return { txt: "fuera de la receta · sin partida (Por clasificar en GeoCost)", color: C_AMARILLO.color };
+};
+
 // ── BorradorSupplyFormImpl (2-oct-2026) — el borrador que viene de GeoSupply ──
 // Finanzas solo confirma 4 cosas: condición de pago, fecha requerida de pago,
 // "Va a" y quién cierra con conta. Todo lo demás (proveedor, monto, ítems con
 // partida, datos bancarios, cotización) ya viene de la cotización aprobada y
 // se muestra en solo lectura. "Enviar a Tesorería" = el mismo `validado` +
 // `encolarPago` del flujo normal. A NIVEL DE MÓDULO (no se remonta al tipear).
-function BorradorSupplyFormImpl({ purchase, puedeEnviar, userName, setModal, updatePurchase, addAudit, enviar, verArchivo }) {
+function BorradorSupplyFormImpl({ purchase, presupuestos = [], puedeEnviar, userName, setModal, updatePurchase, addAudit, enviar, verArchivo }) {
   const [f, setF] = useState({ condicionPago: purchase.condicionPago || "contado", tipoCredito: purchase.tipoCredito || "unico", fechaPagoRequerida: purchase.fechaPagoRequerida || "", destinoPago: purchase.destinoPago || ((purchase.condicionPago || "contado") === "credito" ? "cxp" : "normal"), cierreResponsable: purchase.cierreResponsable || "" });
   const [saving, setSaving] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -2028,7 +2041,7 @@ function BorradorSupplyFormImpl({ purchase, puedeEnviar, userName, setModal, upd
       </div>
       <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>Ítems ({(purchase.lineas || []).length})</div>
-        {(purchase.lineas || []).map((l, i) => <div key={l.id || i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}><span>{Number(l.cantidad).toLocaleString("es-HN")} {l.unidad} × {l.nombre}{l.fueraPresupuesto ? <span style={{ color: C_AMARILLO.color, fontWeight: 700 }}> · fuera de presupuesto</span> : ""}</span><b>{fmtL(l.monto)}</b></div>)}
+        {(purchase.lineas || []).map((l, i) => <div key={l.id || i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}><span>{Number(l.cantidad).toLocaleString("es-HN")} {l.unidad} × {l.nombre}{l.fueraPresupuesto ? (() => { const e = etiquetaFueraReceta(purchase, presupuestos); return <span style={{ color: e.color, fontWeight: 700 }}> · {e.txt}</span>; })() : ""}</span><b>{fmtL(l.monto)}</b></div>)}
         {!(purchase.lineas || []).length && <div style={{ fontSize: 12.5, color: "#64748b", whiteSpace: "pre-line" }}>{purchase.description}</div>}
       </div>
     </div>
@@ -8549,7 +8562,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
       case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
-      case "borrador-supply": return <Modal title={`${m.d.codigo} — ${m.d.provider}`} onClose={() => setModal(null)} wide><BorradorSupplyFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} puedeEnviar={canCreate} userName={userName} setModal={setModal} updatePurchase={updatePurchase} addAudit={addAudit} enviar={(p) => enviarBorradoresATesoreria([p])} verArchivo={async (ref) => { try { const full = await store.getCloud(fileKey(ref.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el archivo."); setVisorGlobal({ ...full, name: full.name || ref.name }); } catch (e) { alert("Error: " + (e?.message || e)); } }} /></Modal>;
+      case "borrador-supply": return <Modal title={`${m.d.codigo} — ${m.d.provider}`} onClose={() => setModal(null)} wide><BorradorSupplyFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} presupuestos={presupuestos} puedeEnviar={canCreate} userName={userName} setModal={setModal} updatePurchase={updatePurchase} addAudit={addAudit} enviar={(p) => enviarBorradoresATesoreria([p])} verArchivo={async (ref) => { try { const full = await store.getCloud(fileKey(ref.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el archivo."); setVisorGlobal({ ...full, name: full.name || ref.name }); } catch (e) { alert("Error: " + (e?.message || e)); } }} /></Modal>;
       case "corregir": return <Modal title={`Corregir proyecto / partida — ${m.d.codigo || m.d.provider}`} onClose={() => setModal(null)} wide><CorreccionFormImpl purchase={m.d} setModal={setModal} allProjects={allProjects} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} updatePurchase={updatePurchase} addAudit={addAudit} userName={userName} moduloPartida={CFG.moduloPartida} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "abono": return <Modal title={`${m.modo === "convertir" ? "Pasar a abonos" : "Registrar abono"} — ${m.d.codigo || m.d.provider}`} onClose={() => setModal({ t: "detail", d: m.d })} wide><AbonoFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} modo={m.modo} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} userName={userName} /></Modal>;
