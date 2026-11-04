@@ -970,6 +970,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const [contractSearch, setContractSearch] = useState("");
   const [ctFiltro, setCtFiltro] = useState(""); // vencidos | pronto | vigentes | sin
   const [ctAbiertos, setCtAbiertos] = useState({}); // {empId: true} filas desplegadas
+  const [movsQ, setMovsQ] = useState(""); // buscador de Altas y bajas
+  const [movsVista, setMovsVista] = useState(""); // "" | altas | bajas
+  const [costosAbiertos, setCostosAbiertos] = useState({}); // {short: true} proyectos desplegados en Costos
   // Filtros del tab Empleados — al nivel del padre para no perder foco en el
   // input de busqueda cuando el modulo re-renderiza.
   const [empSearch, setEmpSearch] = useState("");
@@ -1497,7 +1500,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     // Asistencia · Llegadas tardías · Horas extras · GeoClock = UNA pestaña
     // (hub, 23-oct-2026). Badge = llegadas tarde sin decidir de esta empresa.
     { id: "asistencia", icon: "⏱️", label: "Asistencia", badge: Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.tarde && !(gcTardies || []).some(t => t && t.markId === mk.id && (t.estado === "aprobada" || t.estado === "denegada"))).length },
-    { id: "movimientos", icon: "🔄", label: "Movimientos" },
+    { id: "movimientos", icon: "🔄", label: "Altas y bajas" },
     { id: "costos", icon: "💵", label: "Costos" },
     // Accesos al sistema (solo admin): usuarios de GeoSupply desde la ficha.
     ...(puedeAccesos ? [{ id: "accesos", icon: "🔑", label: "Accesos" }] : []),
@@ -3645,9 +3648,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const sheet = sheets.find(s => s.id === costosSheetId) || sheets[0] || null;
 
     if (!sheet) {
-      return <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: 24, textAlign: "center", color: "#92400E", fontSize: 14 }}>
+      return <div className="gt-vidrio" style={{ padding: 28, textAlign: "center", color: "#6E6862", fontSize: 14 }}>
         Todavía no hay asistencia registrada en {cc.name}.<br />
-        <span style={{ fontSize: 12 }}>Registrá la asistencia de la quincena (tab Asistencia) y acá vas a ver el costo de mano de obra por proyecto.</span>
+        <span style={{ fontSize: 12.5, color: "#8B847C" }}>Registrá la asistencia de la quincena y acá vas a ver el costo de mano de obra por proyecto.</span>
       </div>;
     }
 
@@ -3806,19 +3809,18 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         return `<div style="margin-bottom:12px">
           <div style="display:flex;justify-content:space-between;font-size:10.5px;margin-bottom:5px"><b>${esc(COMPANIES[c].name)}</b><span class="mono">${fL(d.total)}</span></div>
           ${rBarra([{ valor: d.total, color: COLOR_EMP[c] }], maxEmpTotal)}
-          <div class="rp-nota">${d.personas.size} persona${d.personas.size !== 1 ? "s" : ""} · ${pct.toFixed(1)} % del grupo · días ${fmtDias(d.dias)} (${fL(d.costoDias)}) · HE ${fmtDias(d.heHrs)} hrs (${fL(d.heCosto)})</div>
+          <div class="rp-nota">${d.personas.size} persona${d.personas.size !== 1 ? "s" : ""} · ${pct.toFixed(1)} % del grupo · HE ${fL(d.heCosto)}</div>
         </div>`;
       }).join("");
 
       // ── Gráfica 3: mezcla GEO/SUB por proyecto (barras apiladas, top 10) ──
-      const topMix = rowsG.slice(0, 10);
+      const topMix = rowsG.slice(0, 9);
       const maxProy = Math.max(...topMix.map(r => r.total), 1);
-      const barrasProy = topMix.map(r => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:10px">
-          <span style="width:118px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">${esc(r.short)}</span>
-          <div style="flex:1">${rBarra([{ valor: r.porCo.geotecnica, color: COLOR_EMP.geotecnica }, { valor: r.porCo.subterra, color: COLOR_EMP.subterra }], maxProy)}</div>
-          <span class="mono" style="width:96px;text-align:right;font-weight:700;flex-shrink:0">${fL(r.total)}</span>
+      const barrasProy = topMix.map(r => `<div style="margin-bottom:7px;font-size:10px">
+          <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.short)}</b><span class="mono" style="font-weight:700;flex-shrink:0">${fL(r.total)}</span></div>
+          ${rBarra([{ valor: r.porCo.geotecnica, color: COLOR_EMP.geotecnica }, { valor: r.porCo.subterra, color: COLOR_EMP.subterra }], maxProy)}
         </div>`).join("");
-      const leyEmp = `<div class="rp-nota" style="display:flex;gap:14px;margin:0 0 8px">${EMPRESAS.map(c => `<span><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:${COLOR_EMP[c]};vertical-align:-1px"></span> ${esc(COMPANIES[c].name)}</span>`).join("")}</div>`;
+      const leyEmp = `<div class="rp-nota" style="display:flex;gap:14px;margin:0 0 10px;white-space:nowrap">${EMPRESAS.map(c => `<span><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:${COLOR_EMP[c]};vertical-align:-1px"></span> ${esc(COMPANIES[c].name)}</span>`).join("")}</div>`;
       const chipCo = (c) => rChip(TAG[c], c === "subterra" ? "naranja" : "");
 
       // ── Tablas por proyecto con chip de empresa por empleado ──
@@ -3844,8 +3846,12 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           { label: "Geotecnica Soluciones", valor: fL(porEmp.geotecnica.total), sub: `${porEmp.geotecnica.personas.size} personas` },
           { label: "Subterra Honduras", valor: fL(porEmp.subterra.total), sub: `${porEmp.subterra.personas.size} personas` },
         ])
-        + `<div class="rp-grid2"><div class="rp-caja">${rSeccion("Distribución del costo por proyecto", rDona(segs, { tam: 150, centro: String(rowsG.length), centroSub: "proyectos" }))}</div>`
-        + `<div class="rp-caja">${rSeccion("Costo por empresa", barrasEmp)}${rSeccion("Mezcla de personal por proyecto", leyEmp + barrasProy)}</div></div>`
+        // PORTADA (4-nov-2026, Gerson: "que la primera sea como la portada,
+        // usando el espacio completo"): KPIs + 3 cajas a lo ancho en la hoja 1.
+        + `<div class="rp-grid2" style="grid-template-columns:1.15fr 1fr 1.15fr;margin-bottom:0">`
+        + `<div class="rp-caja">${rSeccion("Costo por proyecto", rDona(segs, { tam: 130, centro: String(rowsG.length), centroSub: "proyectos", vertical: true }))}</div>`
+        + `<div class="rp-caja">${rSeccion("Costo por empresa", barrasEmp)}${rSeccion("Días y horas extras", `<div class="rp-ley"><b>Días</b><span class="mono">${fmtDias(diasG)} d</span><span class="mono" style="min-width:90px;text-align:right;font-weight:700">${fL(costoDiasG)}</span></div><div class="rp-ley"><b>Horas extras</b><span class="mono">${fmtDias(heHrsG)} h</span><span class="mono" style="min-width:90px;text-align:right;font-weight:700;color:${RP.naranjaTexto}">${fL(heCostoG)}</span></div>${rBarra([{ valor: costoDiasG, color: RP.carbon }, { valor: heCostoG, color: RP.naranja }], totalG)}`)}</div>`
+        + `<div class="rp-caja">${rSeccion("Personal por proyecto", leyEmp + barrasProy)}</div></div>`
         + `<div class="rp-salto"></div>`
         + `<div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${RP.texto3};margin-bottom:4px">Detalle por proyecto · ${esc(mesTitulo)}</div>`
         + `<div class="rp-nota" style="margin:0 0 14px">Cada colaborador con su empresa: ${chipCo("geotecnica")} Geotecnica Soluciones · ${chipCo("subterra")} Subterra Honduras</div>`
@@ -3857,115 +3863,110 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       abrirReporte(w, reporteHTML({ titulo: "Costo de mano de obra", subtitulo: `Reporte ejecutivo mensual · ${mesTitulo} · ambas empresas`, cuerpo, horizontal: true }));
     };
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Header + selector de quincena + exportar */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: "#2C2A28" }}>💵 Costo de Mano de Obra</div>
-          <div style={{ fontSize: 12, color: "#8B847C", marginTop: 2 }}>Por proyecto, según la asistencia registrada de la quincena</div>
+    // ── Vista (rediseño GeoCore 4-nov-2026): vidrio, carbón/naranja/gris ──
+    const lblMes = (m) => { const [my, mn] = m.split("-").map(Number); const l = new Date(my, mn - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" }); return l.charAt(0).toUpperCase() + l.slice(1); };
+    const maxCosto = Math.max(...rows.map(r => r.costo), 1);
+    const TH_C = { textAlign: "right", padding: "8px 14px", fontSize: 10.5, fontWeight: 700, color: "#8B847C", textTransform: "uppercase", letterSpacing: ".05em", whiteSpace: "nowrap" };
+    const TD_C = { padding: "8px 14px", textAlign: "right", whiteSpace: "nowrap", fontFamily: "var(--mono)", fontSize: 12.5 };
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="gt-vidrio" style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ marginRight: "auto", minWidth: 0 }}>
+          <div style={{ font: "800 17px/1.2 var(--display)", color: CHARCOAL }}>Costo de mano de obra</div>
+          <div style={{ fontSize: 12, color: "#6E6862", marginTop: 2 }}>Por proyecto, según la asistencia de la quincena</div>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Quincena</div>
-            <select value={sheet.id} onChange={e => setCostosSheetId(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff" }}>
-              {sheets.map(s => <option key={s.id} value={s.id}>{s.quincena} {s.periodo}</option>)}
-            </select>
-          </div>
-          <Btn variant="ghost" onClick={exportCostosExcel}>📊 Excel</Btn>
-          <Btn variant="info" onClick={exportCostosPDF}>📄 Descargar reporte PDF</Btn>
-          {/* Reporte EJECUTIVO del MES con ambas empresas (para direccion) */}
-          <div style={{ width: 1, alignSelf: "stretch", background: "#E2E8F0", margin: "0 4px" }} />
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Mes · ambas empresas</div>
-            <select value={mesEjec} onChange={e => setCostosMesEjec(e.target.value)} style={{ padding: "8px 12px", border: "1px solid #CBD5E1", borderRadius: 8, fontSize: 13, background: "#fff" }}>
-              {mesesDisponibles.map(m => {
-                const [my, mn] = m.split("-").map(Number);
-                const lbl = new Date(my, mn - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
-                return <option key={m} value={m}>{lbl.charAt(0).toUpperCase() + lbl.slice(1)}</option>;
-              })}
-            </select>
-          </div>
-          <Btn onClick={exportCostosEjecutivoPDF}>🏢 Reporte ejecutivo PDF</Btn>
-        </div>
+        <select aria-label="Quincena" value={sheet.id} onChange={e => setCostosSheetId(e.target.value)} style={{ ...CTRL_H, width: 140 }}>
+          {sheets.map(s => <option key={s.id} value={s.id}>{s.quincena} {s.periodo}</option>)}
+        </select>
+        {btnH("Excel", exportCostosExcel, { chico: true })}
+        {btnH("PDF de la quincena", exportCostosPDF, { chico: true })}
       </div>
 
-      {/* KPIs */}
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <StatCard icon="💰" label="Costo total mano de obra" value={fmtL(total)} color="#059669" />
-        <StatCard icon="📅" label="Días pagados" value={fmtDias(totalDias)} color="#2563EB" />
-        <StatCard icon="⏰" label={hayHe ? `HE pagadas (${fmtDias(totalHeHrs)} hrs · de ${prevQLabel})` : `HE pagadas (de ${prevQLabel} — sin registrar)`} value={fmtL(totalHeCosto)} color="#D97706" />
-        <StatCard icon="👥" label="Personas" value={personas} color="#E8762D" />
-        <StatCard icon="🏗️" label="Proyectos" value={rows.length} color="#7C3AED" />
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "minmax(0,1.4fr) repeat(4, minmax(0,1fr))", gap: 10 }}>
+        <div className="gt-vidrio" style={{ padding: "12px 14px", gridColumn: isMobile ? "span 2" : undefined }}>
+          <div style={{ font: "800 26px/1 var(--display)", color: CHARCOAL, letterSpacing: "-.02em" }}>{fmtL(total)}</div>
+          <div style={{ fontSize: 11.5, color: "#6E6862", marginTop: 5 }}>Costo total · {sheet.quincena} {sheet.periodo}</div>
+        </div>
+        {tileH(fmtDias(totalDias), "Días pagados")}
+        {tileH(fmtL(totalHeCosto), hayHe ? `HE de ${prevQLabel} · ${fmtDias(totalHeHrs)} h` : `HE de ${prevQLabel} · sin registrar`, totalHeCosto > 0 ? "#A94E16" : CHARCOAL)}
+        {tileH(personas, "Personas")}
+        {tileH(rows.length, "Proyectos")}
       </div>
 
-      {rows.length === 0 && (
-        <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 28, textAlign: "center", color: "#94A3B8", fontSize: 13 }}>
-          La hoja {sheet.quincena} {sheet.periodo} todavía no tiene días marcados. Registrá asistencia y volvé acá.
-        </div>
-      )}
+      {rows.length === 0 && <div className="gt-vidrio" style={{ padding: 28, textAlign: "center", color: "#8B847C", fontSize: 13.5 }}>
+        La hoja {sheet.quincena} {sheet.periodo} todavía no tiene días marcados.
+      </div>}
 
-      {/* Tabla por proyecto con detalle expandible por empleado */}
-      {rows.map(r => (
-        <div key={r.short} style={{ background: "#fff", border: "1px solid #DBD4C8", borderRadius: 12, overflow: "hidden" }}>
-          <details>
-            <summary style={{ cursor: "pointer", listStyle: "none", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", borderLeft: `4px solid ${cc.color}` }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-                <span style={{ fontWeight: 800, fontSize: 14, color: cc.color }}>{r.short}</span>
-                <span style={{ fontSize: 11, color: "#8B847C" }}>{r.name !== r.short ? r.name : ""}{r.code ? ` · ${r.code}` : ""}</span>
+      {rows.length > 0 && <div className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
+        {rows.map((r, i) => {
+          const abierto = !!costosAbiertos[r.short];
+          const pct = total > 0 ? Math.round((r.costo / total) * 100) : 0;
+          return <div key={r.short} style={{ borderTop: i ? "1px solid rgba(44,42,40,.07)" : "none" }}>
+            <div role="button" tabIndex={0} aria-expanded={abierto} onClick={() => setCostosAbiertos(s => ({ ...s, [r.short]: !s[r.short] }))} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCostosAbiertos(s => ({ ...s, [r.short]: !s[r.short] })); } }}
+              style={{ display: "grid", gridTemplateColumns: isMobile ? "18px minmax(0,1fr) auto" : "18px minmax(0,1.6fr) minmax(0,1fr) 150px 130px", gap: 12, alignItems: "center", padding: "13px 16px", cursor: "pointer" }}>
+              <span style={{ color: "#8B847C", fontSize: 12, transform: abierto ? "rotate(90deg)" : "none", transition: "transform .2s" }}>▸</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.short}</div>
+                {(r.name !== r.short || r.code) && <div style={{ fontSize: 11, color: "#8B847C", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name !== r.short ? r.name : ""}{r.code ? `${r.name !== r.short ? " · " : ""}${r.code}` : ""}</div>}
+                {isMobile && <div style={{ fontSize: 11.5, color: "#6E6862", marginTop: 4 }}>{r.emps.length} pers. · {fmtDias(r.diasPag)} días{r.heHrs > 0 ? ` · ${fmtDias(r.heHrs)} h HE` : ""}</div>}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 14, fontSize: 12, flexWrap: "wrap" }}>
-                <span><strong style={{ color: "#E8762D" }}>{r.emps.length}</strong> persona{r.emps.length !== 1 ? "s" : ""}</span>
-                <span><strong style={{ color: "#2563EB" }}>{fmtDias(r.diasPag)}</strong> días pag.</span>
-                {r.heHrs > 0 && <span title={`Horas extras de ${prevQLabel} pagadas en esta quincena`}><strong style={{ color: "#D97706" }}>{fmtDias(r.heHrs)}</strong> hrs HE · <strong style={{ color: "#D97706" }}>{fmtL(r.heCosto)}</strong></span>}
-                <span style={{ fontWeight: 800, fontSize: 15, color: "#059669" }}>{fmtL(r.costo)}</span>
-                <span style={{ fontSize: 10, color: "#94A3B8" }}>({total > 0 ? Math.round((r.costo / total) * 100) : 0}%)</span>
-                <span style={{ fontSize: 11, color: "#8B847C" }}>▸ detalle</span>
-              </div>
-            </summary>
-            <div style={{ overflowX: "auto", borderTop: "1px solid #F1EBE0" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 780 }}>
-                <thead><tr style={{ background: "#FFFBF5" }}>
-                  <th style={{ textAlign: "left", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Empleado</th>
-                  <th style={{ textAlign: "left", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Cargo</th>
-                  <th title="(Salario + bonificacion mensual) / 30" style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Costo diario</th>
-                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Días pag.</th>
-                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Costo días</th>
-                  <th title={`Horas extras de ${prevQLabel} pagadas en esta quincena`} style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>HE hrs</th>
-                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Costo HE</th>
-                  <th style={{ textAlign: "right", padding: "8px 14px", fontSize: 10, fontWeight: 700, color: "#8B847C", textTransform: "uppercase" }}>Total</th>
+              {!isMobile && <div style={{ fontSize: 12, color: "#6E6862", display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <span><b style={{ color: CHARCOAL }}>{r.emps.length}</b> persona{r.emps.length !== 1 ? "s" : ""}</span>
+                <span><b style={{ color: CHARCOAL }}>{fmtDias(r.diasPag)}</b> días</span>
+                {r.heHrs > 0 && <span title={`Horas extras de ${prevQLabel} pagadas en esta quincena`}><b style={{ color: "#A94E16" }}>{fmtDias(r.heHrs)}</b> h HE</span>}
+              </div>}
+              {!isMobile && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1, height: 6, borderRadius: 99, background: "rgba(44,42,40,.07)", overflow: "hidden" }}><div style={{ width: `${(r.costo / maxCosto) * 100}%`, height: "100%", borderRadius: 99, background: ORANGE }} /></div>
+                <span style={{ fontSize: 11, color: "#8B847C", width: 30, textAlign: "right" }}>{pct}%</span>
+              </div>}
+              <div style={{ font: "800 14.5px/1 var(--mono)", color: CHARCOAL, textAlign: "right" }}>{fmtL(r.costo)}</div>
+            </div>
+            {abierto && <div style={{ overflowX: "auto", background: "rgba(44,42,40,.025)", borderTop: "1px solid rgba(44,42,40,.06)" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+                <thead><tr>
+                  <th style={{ ...TH_C, textAlign: "left" }}>Colaborador</th>
+                  <th style={{ ...TH_C, textAlign: "left" }}>Cargo</th>
+                  <th style={TH_C} title="(Salario + bonificación mensual) ÷ 30">Costo diario</th>
+                  <th style={TH_C}>Días</th>
+                  <th style={TH_C}>Costo días</th>
+                  <th style={TH_C} title={`Horas extras de ${prevQLabel} pagadas en esta quincena`}>HE h</th>
+                  <th style={TH_C}>Costo HE</th>
+                  <th style={TH_C}>Total</th>
                 </tr></thead>
                 <tbody>
-                  {r.emps.map(x => (
-                    <tr key={x.emp.id} style={{ borderTop: "1px solid #F8F2E6" }}>
-                      <td style={{ padding: "7px 14px", fontWeight: 600, color: "#2C2A28" }}>{x.emp.fullName}</td>
-                      <td style={{ padding: "7px 14px", color: "#8B847C" }}>{x.emp.position || "—"}</td>
-                      <td style={{ padding: "7px 14px", textAlign: "right" }}>{fmtL(x.sd)}</td>
-                      <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: "#2563EB" }}>{fmtDias(x.dias)}</td>
-                      <td style={{ padding: "7px 14px", textAlign: "right" }}>{fmtL(x.costoDias)}</td>
-                      <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: x.heHrs > 0 ? "#D97706" : "#CBD5E1" }}>{x.heHrs > 0 ? fmtDias(x.heHrs) : "—"}</td>
-                      <td style={{ padding: "7px 14px", textAlign: "right", color: x.heCosto > 0 ? "#D97706" : "#CBD5E1" }}>{x.heCosto > 0 ? fmtL(x.heCosto) : "—"}</td>
-                      <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: 700, color: "#059669" }}>{fmtL(x.costo)}</td>
-                    </tr>
-                  ))}
+                  {r.emps.map(x => <tr key={x.emp.id} style={{ borderTop: "1px solid rgba(44,42,40,.06)" }}>
+                    <td style={{ ...TD_C, textAlign: "left", fontFamily: "var(--sans)", fontWeight: 700, color: CHARCOAL, fontSize: 13 }}>{x.emp.fullName}</td>
+                    <td style={{ ...TD_C, textAlign: "left", fontFamily: "var(--sans)", color: "#6E6862", fontSize: 12 }}>{x.emp.position || "—"}</td>
+                    <td style={TD_C}>{fmtL(x.sd)}</td>
+                    <td style={{ ...TD_C, fontWeight: 700 }}>{fmtDias(x.dias)}</td>
+                    <td style={TD_C}>{fmtL(x.costoDias)}</td>
+                    <td style={{ ...TD_C, color: x.heHrs > 0 ? "#A94E16" : "#C9C3BB" }}>{x.heHrs > 0 ? fmtDias(x.heHrs) : "—"}</td>
+                    <td style={{ ...TD_C, color: x.heCosto > 0 ? "#A94E16" : "#C9C3BB" }}>{x.heCosto > 0 ? fmtL(x.heCosto) : "—"}</td>
+                    <td style={{ ...TD_C, fontWeight: 800, color: CHARCOAL }}>{fmtL(x.costo)}</td>
+                  </tr>)}
                 </tbody>
               </table>
-            </div>
-          </details>
+            </div>}
+          </div>;
+        })}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "14px 16px", borderTop: "1px solid rgba(44,42,40,.1)", background: "rgba(232,118,45,.07)" }}>
+          <span style={{ font: "800 13px/1.2 var(--sans)", color: CHARCOAL, letterSpacing: ".04em", textTransform: "uppercase" }}>Total · {sheet.quincena} {sheet.periodo}</span>
+          <span style={{ font: "800 20px/1 var(--mono)", color: "#A94E16" }}>{fmtL(total)}</span>
         </div>
-      ))}
+      </div>}
 
-      {/* Total global */}
-      {rows.length > 0 && (
-        <div style={{ background: "#ECFDF5", border: "1px solid #6EE7B7", borderRadius: 12, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-          <span style={{ fontWeight: 800, color: "#065F46", fontSize: 15 }}>TOTAL MANO DE OBRA · {sheet.quincena} {sheet.periodo}</span>
-          <span style={{ fontWeight: 800, color: "#059669", fontSize: 20 }}>{fmtL(total)}</span>
+      <div className="gt-vidrio" style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ marginRight: "auto", minWidth: 0 }}>
+          <div style={{ font: "800 14.5px/1.2 var(--display)", color: CHARCOAL }}>Reporte ejecutivo del mes</div>
+          <div style={{ fontSize: 12, color: "#6E6862", marginTop: 2 }}>Ambas empresas, 1Q + 2Q</div>
         </div>
-      )}
+        <select aria-label="Mes del reporte ejecutivo" value={mesEjec} onChange={e => setCostosMesEjec(e.target.value)} style={{ ...CTRL_H, width: 190 }}>
+          {mesesDisponibles.map(m => <option key={m} value={m}>{lblMes(m)}</option>)}
+        </select>
+        {btnH("Reporte ejecutivo PDF", exportCostosEjecutivoPDF, { c: ORANGE, lleno: true })}
+      </div>
 
-      <div style={{ fontSize: 10.5, color: "#94A3B8", lineHeight: 1.5 }}>
-        Metodología: costo diario = (salario + bonificación mensual) ÷ 30 × días pagados por proyecto (cuadrilla + reasignaciones 1*).
-        Domingos/feriados de descanso pagan 1 día · DT ×2 · DT2 y TF ×3 · INC paga 1 · NSP no paga.
-        Horas extras: hora base = salario ÷ 30 ÷ 8 · 4-7pm +25% · 7-10pm +50% · 10pm-12am +75% · domingo ×2 — las HE de {prevQLabel} se muestran acá porque se pagan en esta quincena (pago quincena vencida). No incluye cargas patronales.
+      <div style={{ fontSize: 11, color: "#8B847C", lineHeight: 1.55, padding: "0 4px" }} title="Domingos/feriados de descanso pagan 1 día · DT ×2 · DT2 y TF ×3 · INC paga 1 · NSP no paga. HE: hora base = salario ÷ 30 ÷ 8 · 4-7pm +25 % · 7-10pm +50 % · 10pm-12am +75 % · domingo ×2.">
+        Costo diario = (salario + bonificación) ÷ 30 × días pagados en el proyecto. Las HE de {prevQLabel} salen acá porque se pagan en esta quincena. No incluye cargas patronales.
       </div>
     </div>;
   };
@@ -5842,103 +5843,100 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const grupoStats = { A: { altas: 0, bajas: 0 }, B: { altas: 0, bajas: 0 }, C: { altas: 0, bajas: 0 }, D: { altas: 0, bajas: 0 } };
     filtered.forEach(m => { if (grupoStats[m.grupo]) grupoStats[m.grupo][m.tipo === "alta" ? "altas" : "bajas"]++; });
 
-    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", flexWrap: "wrap", gap: 12 }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap" }}>
-          <div style={{ minWidth: 160 }}>
-            <Input label="Filtrar por mes" type="month" value={filterPer} onChange={e => setMovsFilter(s => ({ ...s, periodo: e.target.value }))} />
+    // ── Vista (rediseño GeoCore 4-nov-2026): vidrio, pocos colores ──
+    // Verde = alta, rojo = baja; el resto carbón/gris. Sin emojis.
+    const qTxt = movsQ.trim().toLowerCase();
+    const pasaQ = (m) => !qTxt || [m.fullName, m.dni, m.position, m.motivo, m.notas].some(v => String(v || "").toLowerCase().includes(qTxt));
+    const verAltas = movsVista !== "bajas" ? altas.filter(pasaQ) : [];
+    const verBajas = movsVista !== "altas" ? bajas.filter(pasaQ) : [];
+    const neto = altas.length - bajas.length;
+    const contratoTxt = (c) => c === "temporary" ? "Temporal" : c === "honorarios" ? "Honorarios" : "Permanente";
+    const COLS_MOV = isMobile ? "1fr" : `128px minmax(0,1.5fr) minmax(0,1fr) ${hideSalary ? "" : "110px "}minmax(0,1fr) 76px`;
+    const filaMov = (m) => {
+      const q = getQuincena(m.date);
+      const ef = m.tipo === "baja" ? emps.find(x => x.id === m.employeeId) : null;
+      const desf = ef && ef.endDate && ef.endDate !== m.date;
+      const dur = m.tipo === "alta" ? getDuracionContrato(m) : "—";
+      return <div key={m.id} style={{ display: "grid", gridTemplateColumns: COLS_MOV, gap: isMobile ? 6 : 14, alignItems: "center", padding: "12px 16px", borderTop: "1px solid rgba(44,42,40,.07)" }}>
+        <div>
+          <div style={{ font: "800 13.5px/1.2 var(--sans)", color: m.tipo === "baja" ? "#B03024" : CHARCOAL, display: "flex", alignItems: "center", gap: 5 }}>
+            {fmt(m.date)}
+            {desf && <span title={`La ficha dice ${fmt(ef.endDate)} — la asistencia se bloquea con esa. Editá el movimiento y guardá para dejar las dos en ${fmt(m.date)}.`} style={{ color: "#8A5A00", cursor: "help", fontSize: 12 }}>⚠</span>}
           </div>
-          <div style={{ minWidth: 140 }}>
-            <Select label="Quincena" options={[{ value: "1Q", label: "1Q (1-15)" }, { value: "2Q", label: "2Q (16-31)" }]} value={filterQ} onChange={e => setMovsFilter(s => ({ ...s, quincena: e.target.value }))} />
-          </div>
-          {(filterPer || filterQ) && <Btn small variant="ghost" onClick={() => setMovsFilter({ periodo: "", quincena: "" })}>Limpiar</Btn>}
+          <div style={{ fontSize: 11, color: "#8B847C", marginTop: 3 }}>{q.quincena} · Grupo {m.grupo}</div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <Btn variant="success" onClick={() => setModal({ t: "mn" })}>+ Alta</Btn>
-          <Btn variant="danger" onClick={() => setModal({ t: "mb" })}>+ Baja</Btn>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ font: "700 14px/1.25 var(--sans)", color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: isMobile ? "normal" : "nowrap" }}>{m.fullName}</div>
+          <div style={{ fontSize: 11.5, color: "#6E6862", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.position || "—"} · <span style={{ fontFamily: "var(--mono)" }}>{m.dni}</span></div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+          {chipH(contratoTxt(m.contractType))}
+          {dur !== "—" && <span style={{ fontSize: 11, color: "#6E6862", whiteSpace: "nowrap" }}>{dur}</span>}
+        </div>
+        {!hideSalary && <div style={{ font: "700 13px/1 var(--mono)", color: CHARCOAL, textAlign: isMobile ? "left" : "right" }}>{fmtL(m.salary)}</div>}
+        <div style={{ fontSize: 12, color: "#6E6862", minWidth: 0 }}>
+          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.motivo || "—"}</div>
+          {m.notas && <div style={{ fontSize: 11, color: "#8B847C", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={m.notas}>{m.notas}</div>}
+        </div>
+        <div style={{ display: "flex", gap: 6, justifyContent: isMobile ? "flex-start" : "flex-end" }}>
+          <button type="button" className="gt-circulo" title="Editar" aria-label="Editar movimiento" onClick={() => setModal({ t: "me", d: m })} style={{ width: 32, height: 32, fontSize: 13 }}>✎</button>
+          <button type="button" className="gt-circulo" title="Eliminar" aria-label="Eliminar movimiento" onClick={() => { if (confirm(`¿Eliminar el registro de ${m.tipo} de ${m.fullName}?`)) sM(movs.filter(x => x.id !== m.id)); }} style={{ width: 32, height: 32, fontSize: 13, color: "#B03024" }}>✕</button>
+        </div>
+      </div>;
+    };
+    const lista = (titulo, items, color) => <div className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px" }}>
+        <span style={{ width: 9, height: 9, borderRadius: 99, background: color }} />
+        <div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</div>
+        <span style={{ fontSize: 12.5, color: "#6E6862" }}>{items.length}</span>
+      </div>
+      {!isMobile && <div style={{ display: "grid", gridTemplateColumns: COLS_MOV, gap: 14, padding: "0 16px 8px", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "#8B847C" }}>
+        <span>{titulo === "Bajas" ? "Último día" : "Fecha"}</span><span>Colaborador</span><span>Contrato</span>{!hideSalary && <span style={{ textAlign: "right" }}>Salario</span>}<span>Motivo</span><span />
+      </div>}
+      {items.slice().reverse().map(filaMov)}
+    </div>;
+
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="gt-vidrio" style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <input type="month" aria-label="Mes" value={filterPer} onChange={e => setMovsFilter(s => ({ ...s, periodo: e.target.value }))} style={{ ...CTRL_H, width: 170 }} />
+        {pista([{ k: "", label: "Todo el mes" }, { k: "1Q", label: "1Q" }, { k: "2Q", label: "2Q" }].map(o => ({ ...o, on: filterQ === o.k, onClick: () => setMovsFilter(s => ({ ...s, quincena: o.k })) })))}
+        <input type="search" placeholder="Buscar nombre, DNI, cargo…" value={movsQ} onChange={e => setMovsQ(e.target.value)} style={{ ...CTRL_H, flex: "1 1 200px", minWidth: 0 }} />
+        {(filterPer || filterQ || movsQ) && btnH("Limpiar", () => { setMovsFilter({ periodo: "", quincena: "" }); setMovsQ(""); }, { chico: true })}
+        <div style={{ flex: isMobile ? "0 0 100%" : "0 0 auto", display: "flex", gap: 8, marginLeft: isMobile ? 0 : "auto" }}>
+          {btnH("+ Alta", () => setModal({ t: "mn" }), { c: ORANGE, lleno: true })}
+          {btnH("+ Baja", () => setModal({ t: "mb" }), { c: "#B03024" })}
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <StatCard icon="📈" label="Altas" value={altas.length} color="#059669" />
-        <StatCard icon="📉" label="Bajas" value={bajas.length} color="#DC2626" />
-        <StatCard icon="⚖️" label="Neto" value={(altas.length - bajas.length >= 0 ? "+" : "") + (altas.length - bajas.length)} color={altas.length - bajas.length >= 0 ? "#059669" : "#DC2626"} />
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(3, minmax(0,1fr))" : "repeat(3, minmax(0,1fr)) repeat(4, minmax(0,1fr))", gap: 10 }}>
+        {tileH(altas.length, "Altas", "#177243", () => setMovsVista(movsVista === "altas" ? "" : "altas"))}
+        {tileH(bajas.length, "Bajas", "#B03024", () => setMovsVista(movsVista === "bajas" ? "" : "bajas"))}
+        {tileH(`${neto >= 0 ? "+" : ""}${neto}`, "Neto")}
         {["A", "B", "C", "D"].map(g => {
           const s = grupoStats[g];
-          const neto = s.altas - s.bajas;
-          return <div key={g} style={{ background: "#fff", border: "1px solid #E2E8F0", borderLeft: `4px solid ${GRUPO_COLOR[g]}`, borderRadius: 10, padding: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <div style={{ fontWeight: 800, fontSize: 18, color: GRUPO_COLOR[g] }}>Grupo {g}</div>
-              <Badge color={GRUPO_COLOR[g]}>{neto >= 0 ? "+" : ""}{neto}</Badge>
-            </div>
-            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>{GRUPO_DESC[g]}</div>
-            <div style={{ display: "flex", gap: 12, fontSize: 13 }}>
-              <span style={{ color: "#059669", fontWeight: 700 }}>↑ {s.altas}</span>
-              <span style={{ color: "#DC2626", fontWeight: 700 }}>↓ {s.bajas}</span>
+          return <div key={g} className="gt-vidrio" title={GRUPO_DESC[g]} style={{ padding: "12px 14px", minWidth: 0, gridColumn: isMobile ? "span 3" : undefined, display: isMobile ? "flex" : "block", alignItems: "center", gap: 12 }}>
+            <div style={{ font: "800 14px/1 var(--display)", color: CHARCOAL }}>Grupo {g}</div>
+            <div style={{ fontSize: 11, color: "#6E6862", marginTop: isMobile ? 0 : 4, flex: isMobile ? 1 : undefined, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{GRUPO_DESC[g]}</div>
+            <div style={{ display: "flex", gap: 10, marginTop: isMobile ? 0 : 8, font: "700 13px/1 var(--sans)" }}>
+              <span style={{ color: s.altas ? "#177243" : "#A8A29C" }}>↑ {s.altas}</span>
+              <span style={{ color: s.bajas ? "#B03024" : "#A8A29C" }}>↓ {s.bajas}</span>
             </div>
           </div>;
         })}
       </div>
 
-      {altas.length > 0 && <div>
-        <div style={{ background: "#059669", color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, borderRadius: "10px 10px 0 0" }}>
-          ALTAS ({altas.length})
-        </div>
-        <Table columns={[
-          { key: "date", label: "Fecha", render: r => fmt(r.date) },
-          { key: "q", label: "Q", render: r => { const q = getQuincena(r.date); return <Badge color="#0891B2">{q.quincena}</Badge>; } },
-          { key: "grupo", label: "Grupo", render: r => <Badge color={GRUPO_COLOR[r.grupo]}>{r.grupo}</Badge> },
-          { key: "fullName", label: "Nombre" },
-          { key: "dni", label: "DNI" },
-          { key: "position", label: "Posicion" },
-          { key: "contractType", label: "Contrato", render: r => <Badge color={r.contractType === "temporary" ? "#D97706" : r.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{r.contractType === "temporary" ? "Temporal" : r.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge> },
-          { key: "salary", label: "Salario", render: r => fmtL(r.salary) },
-          { key: "motivo", label: "Motivo" },
-        ]} data={altas.slice().reverse()} actions={r => <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-          <Btn small variant="ghost" onClick={() => setModal({ t: "me", d: r })} title="Editar fecha y caso excepcional">✏️</Btn>
-          <Btn small variant="danger" onClick={() => { if (confirm(`Eliminar registro de alta de ${r.fullName}?`)) sM(movs.filter(m => m.id !== r.id)); }}>×</Btn>
-        </div>} />
-      </div>}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {pista([{ k: "", label: "Altas y bajas" }, { k: "altas", label: `Altas · ${altas.length}` }, { k: "bajas", label: `Bajas · ${bajas.length}` }].map(o => ({ ...o, on: movsVista === o.k, onClick: () => setMovsVista(o.k) })))}
+        <div style={{ flex: 1 }} />
+        {filtered.length > 0 && btnH("Excel", exportMovsExcel, { chico: true })}
+        {filtered.length > 0 && btnH("PDF", exportMovsPDF, { chico: true })}
+      </div>
 
-      {bajas.length > 0 && <div>
-        <div style={{ background: "#DC2626", color: "#fff", padding: "8px 14px", fontWeight: 700, fontSize: 13, borderRadius: "10px 10px 0 0" }}>
-          BAJAS ({bajas.length})
-        </div>
-        <Table columns={[
-          // Último día en la empresa. Si la ficha del colaborador quedó con otra
-          // fecha, avisamos: la asistencia se pinta con la ficha.
-          { key: "date", label: "Último día del colaborador en la empresa", render: r => {
-            const ef = emps.find(x => x.id === r.employeeId);
-            const desf = ef && ef.endDate && ef.endDate !== r.date;
-            return <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              {fmt(r.date)}
-              {desf && <span title={`La ficha dice ${fmt(ef.endDate)} — la asistencia se bloquea con esa. Editá el movimiento (✏️) y guardá para dejar las dos en ${fmt(r.date)}.`} style={{ color: "#B45309", cursor: "help" }}>⚠️</span>}
-            </span>;
-          } },
-          { key: "q", label: "Q", render: r => { const q = getQuincena(r.date); return <Badge color="#0891B2">{q.quincena}</Badge>; } },
-          { key: "grupo", label: "Grupo", render: r => <Badge color={GRUPO_COLOR[r.grupo]}>{r.grupo}</Badge> },
-          { key: "fullName", label: "Nombre" },
-          { key: "dni", label: "DNI" },
-          { key: "position", label: "Posicion" },
-          { key: "contractType", label: "Contrato", render: r => <Badge color={r.contractType === "temporary" ? "#D97706" : r.contractType === "honorarios" ? "#7C3AED" : "#2563EB"}>{r.contractType === "temporary" ? "Temporal" : r.contractType === "honorarios" ? "Honorarios" : "Permanente"}</Badge> },
-          { key: "motivo", label: "Motivo" },
-          { key: "notas", label: "Notas" },
-        ]} data={bajas.slice().reverse()} actions={r => <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-          <Btn small variant="ghost" onClick={() => setModal({ t: "me", d: r })} title="Editar fecha del movimiento">✏️</Btn>
-          <Btn small variant="danger" onClick={() => { if (confirm(`Eliminar registro de baja de ${r.fullName}?`)) sM(movs.filter(m => m.id !== r.id)); }}>×</Btn>
-        </div>} />
-      </div>}
+      {verAltas.length > 0 && lista("Altas", verAltas, "#2E9E5B")}
+      {verBajas.length > 0 && lista("Bajas", verBajas, "#C0392B")}
 
-      {filtered.length === 0 && <div style={{ background: "#F8FAFC", border: "1px dashed #CBD5E1", borderRadius: 12, padding: 30, textAlign: "center", color: "#94A3B8" }}>
-        Sin movimientos en el periodo seleccionado.
-      </div>}
-
-      {filtered.length > 0 && <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <Btn small variant="ghost" onClick={exportMovsExcel}>📊 Descargar Excel</Btn>
-        <Btn small variant="ghost" onClick={exportMovsPDF}>🖨️ Imprimir / PDF</Btn>
+      {verAltas.length + verBajas.length === 0 && <div className="gt-vidrio" style={{ padding: 28, textAlign: "center", color: "#8B847C", fontSize: 13.5 }}>
+        {filtered.length ? "Nada coincide con la búsqueda." : "Sin altas ni bajas en el período elegido."}
       </div>}
     </div>;
   };

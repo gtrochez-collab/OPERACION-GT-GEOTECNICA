@@ -278,7 +278,7 @@ export const descargarReportePDF = async (w) => {
 
 // Piezas (devuelven strings HTML)
 /** items: [{label, valor, sub?, tono?: "naranja"|"verde"|"rojo"}] */
-export const rKpis = (items) => `<div class="rp-kpis">${items.filter(Boolean).map(k => `<div class="rp-kpi"><div class="l">${escHTML(k.label)}</div><div class="v ${k.mono === false ? "" : "mono"}" style="${k.tono ? `color:${RP[k.tono] || k.tono}` : ""}">${k.valorHTML ?? escHTML(k.valor)}</div>${k.sub ? `<div class="s">${escHTML(k.sub)}</div>` : ""}</div>`).join("")}</div>`;
+export const rKpis = (items) => `<div class="rp-kpis">${items.filter(Boolean).map(k => `<div class="rp-kpi"><div class="l">${escHTML(k.label)}</div><div class="v ${k.mono === false ? "" : "mono"}" style="white-space:nowrap;${String(k.valor ?? "").length > 12 ? "font-size:16.5px;" : ""}${k.tono ? `color:${RP[k.tono] || k.tono}` : ""}">${k.valorHTML ?? escHTML(k.valor)}</div>${k.sub ? `<div class="s">${escHTML(k.sub)}</div>` : ""}</div>`).join("")}</div>`;
 export const rSeccion = (titulo, html, extra = "") => `<div class="rp-sec"><div class="rp-sec-t"><h2>${escHTML(titulo)}</h2>${extra ? `<span class="x">${extra}</span>` : ""}</div>${html}</div>`;
 /** Sección de UN proyecto con su pastel (cabecera tintada). `pc` = pastelProyecto(i). */
 export const rSeccionProyecto = (pc, titulo, html, extra = "") => `<div class="rp-sec proy" style="--pc-bg:${pc.bg};--pc-base:${pc.base};--pc-tinta:${pc.tinta}"><div class="rp-sec-t"><h2>${escHTML(titulo)}</h2>${extra ? `<span class="x">${extra}</span>` : ""}</div>${html}</div>`;
@@ -295,13 +295,14 @@ ${total ? `<tr class="total">${total.map((x, i) => `<td class="${columnas[i]?.nu
 /** Barra apilada: segs [{valor, color}] sobre `maximo`. */
 export const rBarra = (segs, maximo) => `<div class="rp-barra">${segs.filter(s => s.valor > 0).map(s => `<i style="width:${Math.max(0.5, (s.valor / (maximo || 1)) * 100).toFixed(1)}%;background:${s.color}"></i>`).join("")}</div>`;
 /** Dona SVG + leyenda. segs [{label, valor, color}] */
-export const rDona = (segs, { tam = 170, centro = "", centroSub = "" } = {}) => {
+export const rDona = (segs, { tam = 170, centro = "", centroSub = "", vertical = false } = {}) => {
   const total = segs.reduce((s, x) => s + (Number(x.valor) || 0), 0);
   const R = tam * 0.36, C = 2 * Math.PI * R, c = tam / 2;
   let acum = 0;
   const arcos = segs.map(sg => { const f = total > 0 ? sg.valor / total : 0; const el = `<circle r="${R}" cx="${c}" cy="${c}" fill="none" stroke="${sg.color}" stroke-width="${tam * 0.16}" stroke-dasharray="${(f * C).toFixed(2)} ${C.toFixed(2)}" stroke-dashoffset="${(-acum * C).toFixed(2)}" transform="rotate(-90 ${c} ${c})"/>`; acum += f; return el; }).join("");
   const svg = `<svg width="${tam}" height="${tam}" viewBox="0 0 ${tam} ${tam}"><circle r="${R}" cx="${c}" cy="${c}" fill="none" stroke="${RP.fondo}" stroke-width="${tam * 0.16}"/>${arcos}${centro ? `<text x="${c}" y="${c - 2}" text-anchor="middle" font-family="IBM Plex Mono" font-weight="700" font-size="${tam * 0.085}" fill="${RP.carbon}">${escHTML(centro)}</text>` : ""}${centroSub ? `<text x="${c}" y="${c + tam * 0.09}" text-anchor="middle" font-family="Plus Jakarta Sans" font-size="${tam * 0.055}" fill="${RP.texto3}">${escHTML(centroSub)}</text>` : ""}</svg>`;
   const ley = segs.map(sg => `<div class="rp-ley"><span class="p" style="background:${sg.color}"></span><b>${escHTML(sg.label)}</b><span class="mono" style="color:${RP.texto3}">${total > 0 ? ((sg.valor / total) * 100).toFixed(1) : "0"}%</span>${sg.valorTxt != null ? `<span class="mono" style="min-width:90px;text-align:right;font-weight:700">${escHTML(sg.valorTxt)}</span>` : ""}</div>`).join("");
+  if (vertical) return `<div style="display:flex;flex-direction:column;align-items:center;gap:14px">${svg}<div style="width:100%">${ley}</div></div>`;
   return `<div style="display:flex;align-items:center;gap:22px">${svg}<div style="flex:1;min-width:0">${ley}</div></div>`;
 };
 

@@ -1212,6 +1212,23 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (`HE_BANDAS`), totales en carbón/verde, botones Cerrar · PDF · Guardar
   (`gt-btn`). La lógica de las grids (ciclo de celdas, overrides, horas de
   entrada, NSP sugeridos, guardado) quedó INTACTA.
+  **ALTAS Y BAJAS + COSTOS rediseñadas (4-nov-2026, Gerson: "Movimientos lo
+  llamaría altas y bajas; el mismo estilo que los demás")**: la pestaña
+  `movimientos` se rotula **"Altas y bajas"** (el id no cambió). `renderMovs`:
+  barra de vidrio (mes, pista Todo el mes/1Q/2Q, buscador `movsQ`, + Alta
+  naranja / + Baja), tiles Altas (verde) · Bajas (rojo) · Neto + 4 cajitas de
+  grupo, pista `movsVista` (Altas y bajas / Altas / Bajas), Excel · PDF, y
+  listas de vidrio con una fila por movimiento (fecha · Q · grupo, nombre +
+  cargo + DNI, contrato y duración, salario si !hideSalary, motivo/notas, ✎ ✕
+  en circulitos). `renderCostosMO`: cabecera de vidrio con quincena + Excel +
+  PDF, 5 tiles, UNA caja con una fila por proyecto (barra naranja del % y
+  monto; click despliega la tabla — `costosAbiertos`), total en tinte naranja y
+  caja aparte "Reporte ejecutivo del mes". Lógica y exportes sin cambios.
+  **Portada del reporte ejecutivo de MO**: la hoja 1 es la portada completa —
+  KPIs + 3 cajas (dona vertical por proyecto `rDona({vertical:true})` · costo
+  por empresa + días y HE · personal por proyecto con barra GEO/SUB) — medida
+  a 958 px: termina en 688 de 710. `rKpis` ya no parte "L 1,587,523.59"
+  (nowrap y 16.5 px si el valor pasa de 12 caracteres).
 - `GeoClockModule.jsx` **rediseño GeoCore (23-oct-2026)**: monta GT_CSS +
   brillos; encabezado con logo, ícono, "GeoClock" y las ubicaciones que
   cubre la tablet, reloj en mono, pills Registros · Módulos · Salir; búsqueda
