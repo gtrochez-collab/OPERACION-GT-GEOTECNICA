@@ -227,8 +227,13 @@ export const ESTADOS_LINEA = {
   // producen acá (placas de anclaje, varillas roscadas…). No es compra.
   plantel_pendiente:  { label: "Pedido al plantel",         corto: "Plantel",      tono: "azul",    paso: 2 },
   plantel_enviado:    { label: "Enviado desde el plantel",  corto: "Enviado",      tono: "verde",   paso: 6 },
+  // RESUELTO SIN COMPRA (5-nov-2026, Gerson): la necesidad se cubrió por otra
+  // vía (ej. la pintura de Melissa sale de la que se compró para Torre Adobe).
+  // Se queda en su corte, con la nota de cómo se resolvió; sigue contando en
+  // el saldo de la receta (el material sí se usó en la obra).
+  resuelta:           { label: "Resuelto sin compra",       corto: "Resuelto",     tono: "verde",   paso: 6 },
 };
-export const LINEA_TERMINAL = ["despachada_almacen", "comprada", "rechazada", "plantel_enviado"];
+export const LINEA_TERMINAL = ["despachada_almacen", "comprada", "rechazada", "plantel_enviado", "resuelta"];
 
 /** Una solicitud "Pedir al plantel / taller": va directo a Almacén (Óscar), sin
  * receta, sin Coordinador y sin compra. Si no lo hay, se le devuelve al
@@ -299,13 +304,43 @@ export const pendienteDeCompra = (l) => {
 // solicitud se queda en su corte y el cumplimiento del residente (que sí
 // envió a tiempo) no cambia. `linea.corte` manda sobre el de la solicitud.
 export const corteDeLinea = (l, sol) => l?.corte || sol?.corte || null;
-export const LINEA_POSTERGABLE = ["por_cotizar", "revision_almacen"];
-/** Pasa la línea a `corte` (debe seguir pendiente de compra). Devuelve la línea nueva o null. */
-export const postergarLinea = (l, sol, corte, { por = "", at = "", motivo = "" } = {}) => {
+// 5-nov-2026 (Gerson): también se ADELANTAN ítems a un corte anterior (caso
+// SUP-2026-0018: Johan pidió tarde, sin marcar urgente, cosas que sí urgían)
+// y se pueden mover mientras esperan al Coordinador.
+export const LINEA_POSTERGABLE = ["por_cotizar", "revision_almacen", "pendiente_coord"];
+/** ¿La solicitud se envió DESPUÉS del cierre de `corte`? Un ítem que se mete
+ * a ese corte entra fuera de tiempo (queda la constancia). */
+export const entraFueraDeTiempo = (sol, corte, cfg) => {
+  if (!sol?.fechaEnvio || !corte) return false;
+  return estadoHito(hitoDeCorte(corte, "cierreSolicitudes", cfg), sol.fechaEnvio).pasado;
+};
+/** Pasa la línea a `corte` (debe seguir pendiente de compra). Devuelve la línea nueva o null.
+ * Volver al corte de la propia solicitud deshace el movimiento (sin constancia). */
+export const postergarLinea = (l, sol, corte, { por = "", at = "", motivo = "", cfg = null } = {}) => {
   if (!l || !corte || !LINEA_POSTERGABLE.includes(l.estado)) return null;
   const de = corteDeLinea(l, sol);
-  if (de && de.anio === corte.anio && de.semana === corte.semana) return null;
-  return { ...l, corte: { anio: corte.anio, semana: corte.semana }, postergada: { de: l.postergada?.de || de, por, at, motivo } };
+  if (mismoCorte(de, corte)) return null;
+  if (mismoCorte(corte, sol?.corte)) {
+    const { corte: _c, postergada: _p, ...resto } = l;
+    return resto;
+  }
+  const tarde = entraFueraDeTiempo(sol, corte, cfg);
+  return { ...l, corte: { anio: corte.anio, semana: corte.semana }, postergada: { de: l.postergada?.de || de, por, at, motivo, ...(tarde ? { fueraDeTiempo: true } : {}) } };
+};
+/** ¿El ítem va en un corte ANTERIOR al de su solicitud (adelantado)? */
+export const lineaAdelantada = (l, sol) => {
+  const c = l?.corte, base = sol?.corte;
+  if (!c || !base) return false;
+  return c.anio < base.anio || (c.anio === base.anio && c.semana < base.semana);
+};
+
+// PRIORIDAD (5-nov-2026, Gerson): el Coordinador marca con "!" lo que es vía
+// crítica para que Compras lo cotice primero (a veces hay fondos y se adelanta).
+export const marcarPrioridad = (l, on, { por = "", at = "" } = {}) => {
+  if (!l) return l;
+  if (on) return { ...l, prioridad: { por, at } };
+  const { prioridad: _p, ...resto } = l;
+  return resto;
 };
 
 export const estadoEfectivoLinea = (l, sol, cfg, ahora = new Date()) => {
@@ -352,6 +387,7 @@ const DESDE = {
   quitar_cotizacion: ["cotizada"],
   aprobar_cot:     ["cotizada"],
   devolver_cot:    ["cotizada"],
+  resolver:        ["pendiente_coord", "revision_almacen", "por_cotizar"],
 };
 export const aplicarAccionLinea = (l, accion, payload = {}) => {
   const desde = DESDE[accion];
@@ -406,6 +442,12 @@ export const aplicarAccionLinea = (l, accion, payload = {}) => {
     case "devolver_cot": {
       const quoteIds = (l.quoteIds || []).filter(x => x !== payload.quoteId);
       return { ok: true, linea: { ...l, quoteIds, estado: quoteIds.length ? "cotizada" : "por_cotizar" } };
+    }
+    case "resolver": {
+      if ((l.quoteIds || []).length) return { ok: false, error: "Ese ítem ya está en una cotización: quitalo de la cotización primero." };
+      const nota = String(payload.nota || "").trim();
+      if (nota.length < 5) return { ok: false, error: "Escribí cómo se resolvió (el ingeniero lo va a ver)." };
+      return { ok: true, linea: { ...l, estado: "resuelta", resolucion: { nota, por: payload.por || "", at: payload.at || "" } } };
     }
     default:
       return { ok: false, error: "Acción no implementada" };
@@ -680,9 +722,13 @@ export const metricasDashboard = ({ solicitudes = [], cotizaciones = [], purchas
     sols.forEach(s => {
       const k = key(s) || "—";
       m[k] = m[k] || { total: 0, urgentes: 0, enCorte: 0, conCorte: 0, lineas: 0, rechazadas: 0, ajustadas: 0 };
-      if (s.corteAjustado) m[k].ajustadas++;
+      // Un ítem ADELANTADO fuera de tiempo (5-nov-2026) deja la misma
+      // constancia que pasar la solicitud entera: fuera de hora, perdonada.
+      const itemTarde = (s.lineas || []).some(l => l?.postergada?.fueraDeTiempo);
+      if (s.corteAjustado || itemTarde) m[k].ajustadas++;
       m[k].total++; if (s.urgente) m[k].urgentes++;
-      const ec = enviadaEnCorte(s, c); if (ec != null) { m[k].conCorte++; if (ec) m[k].enCorte++; }
+      let ec = enviadaEnCorte(s, c); if (ec != null && itemTarde) ec = false;
+      if (ec != null) { m[k].conCorte++; if (ec) m[k].enCorte++; }
       (s.lineas || []).forEach(l => { m[k].lineas++; if (l.estado === "rechazada") m[k].rechazadas++; });
     });
     return Object.entries(m).map(([k, v]) => ({ k, ...v, pctUrgentes: v.total ? v.urgentes / v.total : 0, pctEnCorte: v.conCorte ? v.enCorte / v.conCorte : null })).sort((a, b) => b.total - a.total);

@@ -2061,6 +2061,33 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   hora). SUP-0008/0009/0010/0012 se pasaron del Corte 2 al Corte 1 en la nube
   (todo el primer corte = Corte 1). Solicitudes ganó el filtro por corte
   (`solCorte`) y va ANTES de Cotizaciones en el menú del Coordinador.
+  **Ítem por ítem: adelantar con constancia, "!" y resuelto sin compra
+  (5-nov-2026, Gerson; caso SUP-2026-0018 de Johan, enviada el miércoles
+  después del cierre del Corte 2 sin marcar urgente)**: (1) En el DETALLE de
+  la solicitud, el Coordinador ve por cada ítem "Corte de este ítem: Corte N ·
+  Pasar al Corte N−1 · Pasar al Corte N+1" (`postergarItems` de siempre, ahora
+  con `cfg`). `LINEA_POSTERGABLE` suma `pendiente_coord`. `postergarLinea`
+  marca `postergada.fueraDeTiempo` cuando la solicitud se envió DESPUÉS del
+  cierre del corte destino (`entraFueraDeTiempo`); volver al corte de la
+  propia solicitud BORRA `corte`/`postergada` (deshacer). `chipCorteLinea`:
+  "Adelantado al Corte 2 · fuera de tiempo · era del Corte 3" en ROJO, o
+  "Pasado al…" gris (`lineaAdelantada`). Bitácora `items_fuera_de_tiempo`. En
+  `metricasDashboard` un ítem fuera de tiempo deja a la solicitud como "fuera
+  de hora, perdonada" en Cumplimiento por residente (igual que
+  `corteAjustado`). (2) **"!" de prioridad** (`marcarPrioridad`, campo
+  `linea.prioridad {por, at}`, `alternarPrioridad` con audit
+  `prioridad_marcada/quitada`): botón en cada fila de Compras y en el detalle
+  (solo Coordinador); la fila se pinta naranja con el "!" y `porProyecto` pone
+  primero lo marcado (ítems y proyectos — aplica a todas las vistas que lo
+  usan); la tira de Compras suma "con prioridad !" y el grupo se resalta. El
+  residente NO ve el chip. (3) **Resuelto sin compra**: estado nuevo de línea
+  `resuelta` (terminal, verde; acción `resolver` desde pendiente_coord /
+  revision_almacen / por_cotizar, NO si está en una cotización; nota ≥ 5
+  obligatoria → `resolucion {nota, por, at}`), botón "Ya resuelto" en Compras
+  y en el detalle. Se queda en su corte; sigue contando en el saldo de la
+  receta (el material sí se usó). Tracking: paso "En cotización" en verde con
+  "Resuelto sin compra" y la nota debajo. Pruebas en
+  `tests/geosupply-calc.test.mjs`.
   **Cumplimiento por residente (28-oct-2026, Gerson: "que diga qué es cada
   una")**: la tarjeta del Dashboard es una tabla a todo lo ancho con columnas
   rotuladas (Enviadas · A tiempo "4 de 7" + % · Fuera de hora + perdonadas ·

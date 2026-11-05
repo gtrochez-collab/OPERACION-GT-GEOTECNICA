@@ -46,6 +46,7 @@ import {
   estadoInicialLinea, alertasDeLinea, ALERTAS, puedeCancelar, aplicarAccionLinea, pendienteDeCompra, saldoDePartida, partidasPedibles,
   puPresupuestoUSD, evaluarCotizacion, siguienteFolio, siguienteCodigoCompra, borradorDesdeCotizacion, fueraDeCorte, metricasDashboard,
   LINEA_TERMINAL, esPedidoPlantel, pendientePlantel, ymdSumar, partesHN, enviadaEnCorte, round2, corteAnterior, corteSiguiente, corteDeLinea, postergarLinea,
+  LINEA_POSTERGABLE, lineaAdelantada, marcarPrioridad,
 } from "./geosupply-calc.js";
 
 const ORANGE = "#E8762D";
@@ -122,6 +123,7 @@ const pasoDeLinea = (l, sol, purchase, entrega = {}) => {
   if (l.estado === "pendiente_coord") return { idx: 0, estado: "alerta", nota: "Esperando al Coordinador" };
   if (l.estado === "revision_almacen") return { idx: 1, estado: "activo" };
   if (l.estado === "despachada_almacen") return { idx: 1, estado: "fin", nota: "Sale de almacén" };
+  if (l.estado === "resuelta") return { idx: 2, estado: "fin", nota: "Resuelto sin compra" };
   if (l.estado === "por_cotizar") return { idx: 2, estado: "activo" };
   if (l.estado === "cotizada") return { idx: 3, estado: "activo" };
   if (l.estado === "comprada") {
@@ -890,6 +892,10 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   // Pasa ÍTEMS pendientes de cotizar a otro corte (3-nov-2026, Gerson: "lo
   // que le quedó a Ana y los ingenieros ya no ocupan de momento"). Una
   // escritura por solicitud, sobre el registro FRESCO de la nube.
+  // 5-nov-2026: también ADELANTA ítems (caso SUP-2026-0018) — si entran a un
+  // corte cuyo cierre ya había pasado cuando se envió la solicitud, el ítem
+  // queda con `postergada.fueraDeTiempo` (chip + bitácora + cumplimiento del
+  // residente como "fuera de hora, perdonada").
   const postergarItems = async (xs, corte) => {
     if (!xs.length) return;
     const motivo = window.prompt(`Pasar ${xs.length} ${xs.length === 1 ? "ítem" : "ítems"} al ${etiquetaCorte(corte).titulo}.\n¿Por qué? (opcional)`, "");
@@ -899,16 +905,33 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     const at = new Date().toISOString();
     let ok = 0, movidos = 0;
     for (const [solId, ids] of porSol) {
-      let n = 0;
+      let n = 0, tarde = 0;
+      const nombres = [];
       const rec = await actualizarSolicitud(solId, (sol) => {
-        n = 0;
-        const lineas = (sol.lineas || []).map(l => { if (!ids.has(l.id)) return l; const nl = postergarLinea(l, sol, corte, { por: userName, at, motivo: motivo.trim() }); if (nl) n++; return nl || l; });
+        n = 0; tarde = 0; nombres.length = 0;
+        const lineas = (sol.lineas || []).map(l => { if (!ids.has(l.id)) return l; const nl = postergarLinea(l, sol, corte, { por: userName, at, motivo: motivo.trim(), cfg }); if (nl) { n++; nombres.push(l.descripcion); if (nl.postergada?.fueraDeTiempo) tarde++; } return nl || l; });
         if (!n) return sol;
-        return { ...sol, lineas, audit: [...(sol.audit || []), auditEntry("items_postergados", `${n} ${n === 1 ? "ítem pasado" : "ítems pasados"} al ${etiquetaCorte(corte).titulo}${motivo.trim() ? ` — ${motivo.trim()}` : ""}`)] };
+        const cual = n === 1 ? `"${nombres[0]}" pasado` : `${n} ítems pasados`;
+        const nota = `${cual} al ${etiquetaCorte(corte).titulo}${tarde ? ` — ENTRA FUERA DE TIEMPO (la solicitud se envió después del cierre de ese corte)` : ""}${motivo.trim() ? ` — ${motivo.trim()}` : ""}`;
+        return { ...sol, lineas, audit: [...(sol.audit || []), auditEntry(tarde ? "items_fuera_de_tiempo" : "items_postergados", nota)] };
       });
       if (rec) { ok++; movidos += n; }
     }
     if (ok < porSol.size) alert(`Se movieron ${movidos} ítems; ${porSol.size - ok} solicitud(es) no se pudieron guardar. Revisá la conexión y volvé a intentar.`);
+  };
+  // "!" de prioridad (5-nov-2026): vía crítica para que Compras la cotice primero.
+  const alternarPrioridad = async (s, l) => {
+    const on = !l.prioridad;
+    await actualizarSolicitud(s.id, (sol) => {
+      const lineas = (sol.lineas || []).map(x => x.id === l.id ? marcarPrioridad(x, on, { por: userName, at: new Date().toISOString() }) : x);
+      return { ...sol, lineas, audit: [...(sol.audit || []), auditEntry(on ? "prioridad_marcada" : "prioridad_quitada", `${l.descripcion}: ${on ? "marcado como prioridad (!)" : "se quitó la prioridad"}`, { lineaId: l.id })] };
+    });
+  };
+  // Resuelto sin compra (5-nov-2026): se cubrió por otra vía; queda en su corte.
+  const resolverItem = async (s, l) => {
+    const nota = window.prompt(`"${l.descripcion}" se da por RESUELTO sin comprarlo.\nSe queda en su corte y el ingeniero ve la nota.\n\n¿Cómo se resolvió? (ej. sale de la pintura que se compró para Torre Adobe)`, "");
+    if (nota === null) return;
+    await accionLinea(s.id, l.id, "resolver", { nota, por: userName, at: new Date().toISOString() }, `${l.descripcion}: resuelto sin compra — ${String(nota).trim()}`);
   };
 
   // Acción sobre UNA línea (Coordinador, Almacén, Compras). La transición la
@@ -1253,12 +1276,21 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     <div style={{ font: "800 22px/1 var(--display)", color: c || CHARCOAL, letterSpacing: "-.02em" }}>{v}</div>
     <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 5, fontSize: 9 }}>{l}</div>
   </button>;
+  // Chip del corte propio de un ítem: adelantado (y si entró fuera de tiempo) o pasado.
+  const chipCorteLinea = (s, l) => {
+    if (!l.postergada) return null;
+    const adel = lineaAdelantada(l, s);
+    const tarde = !!l.postergada.fueraDeTiempo;
+    const tit = `${l.postergada.por || "El Coordinador"} lo ${adel ? "adelantó" : "pasó"}${l.postergada.at ? ` el ${fmtDT(l.postergada.at)}` : ""}${l.postergada.motivo ? ` — ${l.postergada.motivo}` : ""}${tarde ? ". La solicitud se envió después del cierre de ese corte." : ""}`;
+    return <Chip c={tarde ? C_ROJO : C_GRIS} title={tit}>{adel ? "Adelantado" : "Pasado"} al {etiquetaCorte(corteDeLinea(l, s)).titulo}{tarde ? " · fuera de tiempo" : ""}{l.postergada.de ? ` · era del ${etiquetaCorte(l.postergada.de).titulo}` : ""}</Chip>;
+  };
   const filaLinea = ({ s, l, ef, derecha, extra, enSolicitud }) => {
     const al = alertasDeLinea(l, s);
     const sd = l.partidaId ? saldoDe(s.projectCode, l.partidaId, s.id) : null;
-    return <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: "rgba(255,255,255,.75)", border: "1px solid rgba(44,42,40,.07)", flexWrap: "wrap" }}>
+    return <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: l.prioridad ? C_NARANJA.bg : "rgba(255,255,255,.75)", border: l.prioridad ? `1.5px solid ${ORANGE}` : "1px solid rgba(44,42,40,.07)", flexWrap: "wrap" }}>
       <div style={{ flex: 1, minWidth: 200 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {l.prioridad && <span title={`Prioridad: la marcó ${l.prioridad.por || "el Coordinador"}${l.prioridad.at ? ` el ${fmtDT(l.prioridad.at)}` : ""}`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: 999, background: ORANGE, color: "#fff", fontSize: 13, fontWeight: 900 }}>!</span>}
           {!enSolicitud && <span style={{ fontFamily: "var(--mono)", fontSize: 11, fontWeight: 700, color: "var(--text-3)" }}>{s.folio}</span>}
           <span style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{l.descripcion}</span>
           <span style={{ fontSize: 13, color: "var(--text-2)" }}>· <b>{fmtCant(ef?.estado === "por_cotizar" ? pendienteDeCompra(l.estado === "revision_almacen" ? { ...l, aCotizar: l.cantidad } : l) : l.cantidad)}</b> {l.unidad}</span>
@@ -1268,7 +1300,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           {l.solucion && enSolicitud && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{l.solucion}{l.categoria ? ` · ${l.categoria}` : ""}</span>}
           {al.map(a => <Chip key={a} c={a === "urgente" ? C_ROJO : C_AMARILLO}>{ALERTAS[a]}{a === "excede_saldo" && sd ? ` · saldo ${fmtCant(sd.saldo)}` : ""}</Chip>)}
           {ef?.sinRevisionAlmacen && <Chip c={C_AMARILLO}>Sin revisión de almacén</Chip>}
-          {l.postergada && <Chip c={C_GRIS} title={`${l.postergada.por || "El Coordinador"} lo pasó${l.postergada.motivo ? ` — ${l.postergada.motivo}` : ""}`}>Pasado al {etiquetaCorte(corteDeLinea(l, s)).titulo}{l.postergada.de ? ` · era del ${etiquetaCorte(l.postergada.de).titulo}` : ""}</Chip>}
+          {l.postergada && chipCorteLinea(s, l)}
           {(s.cotizacionesAdjuntas || []).length > 0 && <Chip c={C_AZUL}>Trae cotización</Chip>}
           {l.plantel && num(l.enviadoPlantel) > 0 && <Chip c={C_VERDE}>Enviado {fmtCant(l.enviadoPlantel)} de {fmtCant(l.cantidad)}</Chip>}
           {(l.fueraPresupuesto || l.plantel) && l.justificacion && <span style={{ fontSize: 11, color: "var(--text-2)", fontStyle: "italic" }}>"{l.justificacion}"</span>}
@@ -1283,7 +1315,9 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const porProyecto = (items) => {
     const m = {};
     items.forEach(x => { (m[x.s.projectCode] = m[x.s.projectCode] || []).push(x); });
-    return Object.entries(m).map(([k, v]) => ({ k, items: v.sort((a, b) => String(a.s.fechaRequeridaObra).localeCompare(String(b.s.fechaRequeridaObra))), minFecha: v.map(x => x.s.fechaRequeridaObra).sort()[0] })).sort((a, b) => String(a.minFecha).localeCompare(String(b.minFecha)));
+    // Lo marcado con "!" (vía crítica) va primero, en el proyecto y entre proyectos.
+    const pri = (x) => (x.l?.prioridad ? 1 : 0);
+    return Object.entries(m).map(([k, v]) => ({ k, items: v.sort((a, b) => (pri(b) - pri(a)) || String(a.s.fechaRequeridaObra).localeCompare(String(b.s.fechaRequeridaObra))), minFecha: v.map(x => x.s.fechaRequeridaObra).sort()[0], prioridades: v.filter(x => x.l?.prioridad).length })).sort((a, b) => ((b.prioridades > 0) - (a.prioridades > 0)) || String(a.minFecha).localeCompare(String(b.minFecha)));
   };
   // Dentro de un proyecto, una cajita POR SOLICITUD (27-oct-2026, Óscar: "no
   // me deja ver qué pidió cada uno, solo así por encima"): folio, quién la
@@ -1525,6 +1559,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div className="gt-vidrio gm-tira" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
         {stat(items.length, "ítems por cotizar", { c: items.length ? ORANGE_DARK : undefined })}
+        {items.some(x => x.l.prioridad) && stat(visibles.filter(x => x.l.prioridad).length, "con prioridad !", { c: ORANGE_DARK })}
         {stat(grupos.length, "proyectos")}
         {stat(devueltas.length, "devueltas por el Coord.", { c: devueltas.length ? C_AMARILLO.color : undefined, onClick: () => { setCotVista("devuelta"); setSec("cotizaciones"); } })}
         {stat(borr.length, "cotizaciones en borrador", { onClick: () => { setCotVista("borrador"); setSec("cotizaciones"); } })}
@@ -1544,12 +1579,18 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       </div>}
       {visibles.length === 0 ? <Vacio>Nada por cotizar.</Vacio> : <>
         {barraGrupos("compras", grupos)}
-        {grupos.map(g => <Grupo key={g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("compras", g.k)} onToggle={() => toggleGrupo("compras", g.k)}
+        {grupos.map(g => <Grupo key={g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"}${g.prioridades ? ` · ${g.prioridades} con prioridad !` : ""} · requerido desde ${fmtDiaCorto(g.minFecha)}`} alerta={g.prioridades > 0} abierto={estaAbierto("compras", g.k)} onToggle={() => toggleGrupo("compras", g.k)}
           derecha={puede && <Btn small onClick={() => setModal({ t: "cotizacion", projectCode: g.k })}>Cotizar ({g.items.length})</Btn>}>
           {porSolicitud(g.items, x => {
             const sigC = corteDeLinea(x.l, x.s) ? corteSiguiente(corteDeLinea(x.l, x.s)) : null;
             const pasar = puedePasar && sigC && !esPedidoPlantel(x.s) && !(x.l.quoteIds || []).length && <Btn small variant="ghost" disabled={ocupado} title="La obra no lo ocupa de momento: lo corre al siguiente corte" onClick={() => postergarItems([x], sigC)}>Pasar al {etiquetaCorte(sigC).titulo}</Btn>;
-            return filaLinea({ ...x, derecha: (x.l.quoteIds || []).length ? <Chip c={C_NARANJA}>Ya en {x.l.quoteIds.length} cotización(es)</Chip> : (puedeAlm && x.lGuardada?.estado === "revision_almacen") ? <><span style={{ fontSize: 11.5, color: "var(--text-3)" }}>¿Hay en almacén?</span>{botonesAlmacen({ ...x, l: x.lGuardada })}{pasar}</> : pasar || null });
+            // Coordinador (5-nov-2026): "!" de prioridad y "Ya resuelto" sin compra.
+            const lg = x.lGuardada || x.l;
+            const coord = esCoordinador && !esPedidoPlantel(x.s) && <>
+              <Btn small variant={x.l.prioridad ? "primary" : "ghost"} disabled={ocupado} title={x.l.prioridad ? "Quitar la prioridad" : "Vía crítica: que Compras la cotice primero"} onClick={() => alternarPrioridad(x.s, lg)}>{x.l.prioridad ? "! Prioridad" : "!"}</Btn>
+              {!(x.l.quoteIds || []).length && <Btn small variant="ghost" disabled={ocupado} title="Se cubrió por otra vía: queda en su corte como resuelto, sin comprarlo" onClick={() => resolverItem(x.s, lg)}>Ya resuelto</Btn>}
+            </>;
+            return filaLinea({ ...x, derecha: (x.l.quoteIds || []).length ? <><Chip c={C_NARANJA}>Ya en {x.l.quoteIds.length} cotización(es)</Chip>{coord}</> : (puedeAlm && x.lGuardada?.estado === "revision_almacen") ? <><span style={{ fontSize: 11.5, color: "var(--text-3)" }}>¿Hay en almacén?</span>{botonesAlmacen({ ...x, l: x.lGuardada })}{coord}{pasar}</> : (coord || pasar) ? <>{coord}{pasar}</> : null });
           })}
         </Grupo>)}
       </>}
@@ -1714,11 +1755,31 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
                   {al.filter(a => a !== "urgente").map(a => <Chip key={a} c={C_AMARILLO}>{ALERTAS[a]}</Chip>)}
                   {num(l.despachadoAlmacen) > 0 && <Chip c={C_VERDE}>{fmtCant(l.despachadoAlmacen)} {l.unidad} de almacén</Chip>}
                   {num(l.cantidadComprada) > 0 && l.estado !== "comprada" && <Chip c={C_VERDE}>{fmtCant(l.cantidadComprada)} {l.unidad} ya en compra</Chip>}
+                  {l.postergada && chipCorteLinea(s, l)}
+                  {l.prioridad && !esResidente && <Chip c={C_NARANJA} title={`La marcó ${l.prioridad.por || "el Coordinador"}`}>! Prioridad</Chip>}
                   {paso.nota && <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{paso.nota}</span>}
                 </div>
               </div>
               {pu && !esResidente && <span style={{ fontFamily: "var(--mono)", fontSize: 11.5, fontWeight: 700, color: "var(--text-3)" }}>{pu.codigo}</span>}
             </div>
+            {/* Coordinador (5-nov-2026): mover ESTE ítem de corte (adelantar o
+                pasar), marcarle "!" de prioridad o darlo por resuelto sin compra. */}
+            {esCoordinador && !plantel && s.estado !== "borrador" && s.estado !== "cancelada" && (() => {
+              const cL = corteDeLinea(l, s);
+              const movible = cL && LINEA_POSTERGABLE.includes(l.estado) && !(l.quoteIds || []).length;
+              const pendiente = !LINEA_TERMINAL.includes(l.estado);
+              const resoluble = ["pendiente_coord", "revision_almacen", "por_cotizar"].includes(l.estado) && !(l.quoteIds || []).length;
+              if (!movible && !pendiente) return null;
+              return <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 12, color: "var(--text-2)" }}>
+                {movible && <>
+                  <span>Corte de este ítem: <b>{etiquetaCorte(cL).titulo}</b></span>
+                  {[corteAnterior(cL), corteSiguiente(cL)].map(c => <Btn key={etiquetaCorte(c).id} small variant="ghost" disabled={ocupado} onClick={() => postergarItems([{ s, l }], c)}>Pasar al {etiquetaCorte(c).titulo}</Btn>)}
+                </>}
+                {pendiente && <Btn small variant={l.prioridad ? "primary" : "ghost"} disabled={ocupado} title={l.prioridad ? "Quitar la prioridad" : "Vía crítica: que Compras la cotice primero"} onClick={() => alternarPrioridad(s, l)}>{l.prioridad ? "! Prioridad" : "! Marcar prioridad"}</Btn>}
+                {resoluble && <Btn small variant="ghost" disabled={ocupado} title="Se cubrió por otra vía: queda en su corte como resuelto, sin comprarlo" onClick={() => resolverItem(s, l)}>Ya resuelto</Btn>}
+              </div>;
+            })()}
+            {l.estado === "resuelta" && <div style={{ fontSize: 12.5, color: C_VERDE.color }}><b>Resuelto sin compra:</b> {l.resolucion?.nota || "—"}{l.resolucion?.por ? ` — ${l.resolucion.por}` : ""}</div>}
             {l.estado === "rechazada"
               ? <div style={{ fontSize: 12.5, color: C_ROJO.color }}><b>{l.noHayPlantel ? "No lo hay en el plantel:" : "Rechazado:"}</b> {l.motivoRechazo || "sin motivo"}</div>
               : l.plantel ? <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

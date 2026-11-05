@@ -311,3 +311,63 @@ test("postergarLinea: pasa un ítem pendiente al corte siguiente sin tocar la so
   const rev = { estado: "revision_almacen", corte: { anio: 2026, semana: 45 } };
   assert.equal(estadoEfectivoLinea(rev, sol, null, new Date("2026-10-30T12:00:00-06:00")).estado, "revision_almacen");
 });
+
+// ── 5-nov-2026: adelantar ítems con constancia, prioridad "!" y resuelto sin compra ──
+test("adelantar un ítem a un corte ya cerrado deja constancia de fuera de tiempo (caso SUP-2026-0018)", async () => {
+  const { postergarLinea, corteDeLinea, lineaAdelantada, entraFueraDeTiempo, metricasDashboard } = await import("../src/geosupply-calc.js");
+  // Johan la envió el miércoles 4-nov 5:27 p. m. → cayó al Corte 3 (semana 46).
+  // El Corte 2 (semana 45) cerró el martes 3-nov a las 12:00.
+  const c2 = { anio: 2026, semana: 45 }, c3 = { anio: 2026, semana: 46 }, c4 = { anio: 2026, semana: 47 };
+  const sol = { id: "s18", folio: "SUP-2026-0018", residente: "johan", projectCode: "AUREA", estado: "enviada", fechaEnvio: "2026-11-04T23:27:00.000Z", corte: c3, lineas: [] };
+  assert.equal(entraFueraDeTiempo(sol, c2, null), true);
+  assert.equal(entraFueraDeTiempo(sol, c4, null), false);
+  const varilla = { id: "v", descripcion: "Varilla No.5", estado: "por_cotizar" };
+  const adel = postergarLinea(varilla, sol, c2, { por: "Lic. Gerson Trochez", motivo: "sí urge" });
+  assert.equal(corteDeLinea(adel, sol).semana, 45);
+  assert.equal(adel.postergada.fueraDeTiempo, true);
+  assert.equal(adel.postergada.de.semana, 46);
+  assert.equal(lineaAdelantada(adel, sol), true);
+  // Pasarlo para adelante NO es fuera de tiempo
+  const post = postergarLinea(varilla, sol, c4, {});
+  assert.equal(post.postergada.fueraDeTiempo, undefined);
+  assert.equal(lineaAdelantada(post, sol), false);
+  // Regresarlo al corte de su solicitud deshace el movimiento
+  const vuelta = postergarLinea(adel, sol, c3, {});
+  assert.equal(vuelta.corte, undefined);
+  assert.equal(vuelta.postergada, undefined);
+  assert.equal(corteDeLinea(vuelta, sol).semana, 46);
+  // Mientras espera al Coordinador también se puede mover
+  assert.ok(postergarLinea({ id: "x", estado: "pendiente_coord" }, sol, c2, {}));
+  // Cumplimiento del residente: cuenta como fuera de hora, perdonada
+  const m = metricasDashboard({ solicitudes: [{ ...sol, lineas: [adel] }], cfg: null });
+  const johan = m.porResidente.find(r => r.k === "johan");
+  assert.equal(johan.ajustadas, 1);
+  assert.equal(johan.enCorte, 0);
+  const sinMover = metricasDashboard({ solicitudes: [{ ...sol, lineas: [varilla] }], cfg: null }).porResidente.find(r => r.k === "johan");
+  assert.equal(sinMover.enCorte, 1, "sin adelantar ítems, esa solicitud sí había llegado a tiempo a su corte");
+});
+
+test("prioridad '!': se marca y se quita sin tocar lo demás del ítem", async () => {
+  const { marcarPrioridad } = await import("../src/geosupply-calc.js");
+  const l = { id: "a", estado: "por_cotizar", cantidad: 9 };
+  const on = marcarPrioridad(l, true, { por: "Lic. Gerson Trochez", at: "2026-11-05T15:00:00.000Z" });
+  assert.equal(on.prioridad.por, "Lic. Gerson Trochez");
+  assert.equal(on.cantidad, 9);
+  const off = marcarPrioridad(on, false);
+  assert.equal(off.prioridad, undefined);
+  assert.equal(off.estado, "por_cotizar");
+});
+
+test("resuelto sin compra: nota obligatoria, no si ya está cotizado, y termina la solicitud", async () => {
+  const { aplicarAccionLinea, estadoCabecera, LINEA_TERMINAL } = await import("../src/geosupply-calc.js");
+  const pintura = { id: "p", descripcion: "Pintura anticorrosiva gris", estado: "por_cotizar", cantidad: 4 };
+  assert.equal(aplicarAccionLinea(pintura, "resolver", { nota: "ok" }).ok, false, "nota muy corta");
+  assert.equal(aplicarAccionLinea({ ...pintura, quoteIds: ["q1"] }, "resolver", { nota: "Sale de lo de Torre Adobe" }).ok, false);
+  assert.equal(aplicarAccionLinea({ ...pintura, estado: "comprada" }, "resolver", { nota: "Sale de lo de Torre Adobe" }).ok, false);
+  const r = aplicarAccionLinea(pintura, "resolver", { nota: "Se cubre con la pintura comprada para Torre Adobe", por: "Lic. Gerson Trochez", at: "2026-11-05T15:00:00.000Z" });
+  assert.equal(r.ok, true);
+  assert.equal(r.linea.estado, "resuelta");
+  assert.equal(r.linea.resolucion.nota, "Se cubre con la pintura comprada para Torre Adobe");
+  assert.ok(LINEA_TERMINAL.includes("resuelta"));
+  assert.equal(estadoCabecera({ estado: "en_proceso", lineas: [r.linea, { estado: "comprada" }] }), "completada");
+});
