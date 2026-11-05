@@ -46,7 +46,7 @@ import {
   estadoInicialLinea, alertasDeLinea, ALERTAS, puedeCancelar, aplicarAccionLinea, pendienteDeCompra, saldoDePartida, partidasPedibles,
   puPresupuestoUSD, evaluarCotizacion, siguienteFolio, siguienteCodigoCompra, borradorDesdeCotizacion, fueraDeCorte, metricasDashboard,
   LINEA_TERMINAL, esPedidoPlantel, pendientePlantel, ymdSumar, partesHN, enviadaEnCorte, round2, corteAnterior, corteSiguiente, corteDeLinea, postergarLinea,
-  LINEA_POSTERGABLE, lineaAdelantada, marcarPrioridad,
+  LINEA_POSTERGABLE, marcarPrioridad, ajusteCorteLinea,
 } from "./geosupply-calc.js";
 
 const ORANGE = "#E8762D";
@@ -1276,13 +1276,13 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     <div style={{ font: "800 22px/1 var(--display)", color: c || CHARCOAL, letterSpacing: "-.02em" }}>{v}</div>
     <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 5, fontSize: 9 }}>{l}</div>
   </button>;
-  // Chip del corte propio de un ítem: adelantado (y si entró fuera de tiempo) o pasado.
+  // Chip del corte de un ítem frente al que le tocaba al enviarse: sale igual si
+  // se movió el ítem suelto o la solicitud entera (ajusteCorteLinea).
   const chipCorteLinea = (s, l) => {
-    if (!l.postergada) return null;
-    const adel = lineaAdelantada(l, s);
-    const tarde = !!l.postergada.fueraDeTiempo;
-    const tit = `${l.postergada.por || "El Coordinador"} lo ${adel ? "adelantó" : "pasó"}${l.postergada.at ? ` el ${fmtDT(l.postergada.at)}` : ""}${l.postergada.motivo ? ` — ${l.postergada.motivo}` : ""}${tarde ? ". La solicitud se envió después del cierre de ese corte." : ""}`;
-    return <Chip c={tarde ? C_ROJO : C_GRIS} title={tit}>{adel ? "Adelantado" : "Pasado"} al {etiquetaCorte(corteDeLinea(l, s)).titulo}{tarde ? " · fuera de tiempo" : ""}{l.postergada.de ? ` · era del ${etiquetaCorte(l.postergada.de).titulo}` : ""}</Chip>;
+    const a = ajusteCorteLinea(l, s, cfg);
+    if (!a) return null;
+    const tit = `${a.por || "El Coordinador"} ${a.nivel === "item" ? "movió este ítem" : "movió toda la solicitud"}${a.at ? ` el ${fmtDT(a.at)}` : ""}${a.motivo ? ` — ${a.motivo}` : ""}${a.fueraDeTiempo ? ". La solicitud se envió después del cierre de ese corte." : ""}`;
+    return <Chip c={a.fueraDeTiempo ? C_ROJO : C_GRIS} title={tit}>{a.adelantado ? "Adelantado" : "Pasado"} al {etiquetaCorte(a.actual).titulo}{a.fueraDeTiempo ? " · fuera de tiempo" : ""} · era del {etiquetaCorte(a.de).titulo}</Chip>;
   };
   const filaLinea = ({ s, l, ef, derecha, extra, enSolicitud }) => {
     const al = alertasDeLinea(l, s);
@@ -1300,7 +1300,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           {l.solucion && enSolicitud && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{l.solucion}{l.categoria ? ` · ${l.categoria}` : ""}</span>}
           {al.map(a => <Chip key={a} c={a === "urgente" ? C_ROJO : C_AMARILLO}>{ALERTAS[a]}{a === "excede_saldo" && sd ? ` · saldo ${fmtCant(sd.saldo)}` : ""}</Chip>)}
           {ef?.sinRevisionAlmacen && <Chip c={C_AMARILLO}>Sin revisión de almacén</Chip>}
-          {l.postergada && chipCorteLinea(s, l)}
+          {chipCorteLinea(s, l)}
           {(s.cotizacionesAdjuntas || []).length > 0 && <Chip c={C_AZUL}>Trae cotización</Chip>}
           {l.plantel && num(l.enviadoPlantel) > 0 && <Chip c={C_VERDE}>Enviado {fmtCant(l.enviadoPlantel)} de {fmtCant(l.cantidad)}</Chip>}
           {(l.fueraPresupuesto || l.plantel) && l.justificacion && <span style={{ fontSize: 11, color: "var(--text-2)", fontStyle: "italic" }}>"{l.justificacion}"</span>}
@@ -1755,7 +1755,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
                   {al.filter(a => a !== "urgente").map(a => <Chip key={a} c={C_AMARILLO}>{ALERTAS[a]}</Chip>)}
                   {num(l.despachadoAlmacen) > 0 && <Chip c={C_VERDE}>{fmtCant(l.despachadoAlmacen)} {l.unidad} de almacén</Chip>}
                   {num(l.cantidadComprada) > 0 && l.estado !== "comprada" && <Chip c={C_VERDE}>{fmtCant(l.cantidadComprada)} {l.unidad} ya en compra</Chip>}
-                  {l.postergada && chipCorteLinea(s, l)}
+                  {chipCorteLinea(s, l)}
                   {l.prioridad && !esResidente && <Chip c={C_NARANJA} title={`La marcó ${l.prioridad.por || "el Coordinador"}`}>! Prioridad</Chip>}
                   {paso.nota && <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{paso.nota}</span>}
                 </div>

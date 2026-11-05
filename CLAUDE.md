@@ -2069,12 +2069,19 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   con `cfg`). `LINEA_POSTERGABLE` suma `pendiente_coord`. `postergarLinea`
   marca `postergada.fueraDeTiempo` cuando la solicitud se envió DESPUÉS del
   cierre del corte destino (`entraFueraDeTiempo`); volver al corte de la
-  propia solicitud BORRA `corte`/`postergada` (deshacer). `chipCorteLinea`:
-  "Adelantado al Corte 2 · fuera de tiempo · era del Corte 3" en ROJO, o
-  "Pasado al…" gris (`lineaAdelantada`). Bitácora `items_fuera_de_tiempo`. En
-  `metricasDashboard` un ítem fuera de tiempo deja a la solicitud como "fuera
-  de hora, perdonada" en Cumplimiento por residente (igual que
-  `corteAjustado`). (2) **"!" de prioridad** (`marcarPrioridad`, campo
+  propia solicitud BORRA `corte`/`postergada` (deshacer). La etiqueta la arma
+  `ajusteCorteLinea(l, sol, cfg)` comparando el corte ACTUAL del ítem con el
+  ORIGINAL (`postergada.de` o, si se movió la solicitud entera,
+  `corteAjustado.de`) — ⚠ NO mirar solo `l.postergada`: el mismo 5-nov Gerson
+  movió 3 ítems sueltos y después la solicitud entera, y los otros 8 salían
+  sin constancia (y los 3 decían "Pasado" en vez de "Adelantado").
+  `chipCorteLinea`: "Adelantado al Corte 2 · fuera de tiempo · era del Corte
+  3" en ROJO, o "Pasado al…" gris; `fueraDeTiempo` = su corte actual ya había
+  cerrado al enviarse (no aplica a urgentes). Bitácora
+  `items_fuera_de_tiempo`. En `metricasDashboard` un ítem fuera de tiempo
+  deja a la solicitud como "fuera de hora, perdonada" en Cumplimiento por
+  residente. Con esto también salen en rojo las SUP-0009/0010/0012 que se
+  pasaron del Corte 2 al 1 el 28-oct (ya contaban como perdonadas). (2) **"!" de prioridad** (`marcarPrioridad`, campo
   `linea.prioridad {por, at}`, `alternarPrioridad` con audit
   `prioridad_marcada/quitada`): botón en cada fila de Compras y en el detalle
   (solo Coordinador); la fila se pinta naranja con el "!" y `porProyecto` pone

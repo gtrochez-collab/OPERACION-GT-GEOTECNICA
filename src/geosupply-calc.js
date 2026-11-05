@@ -325,13 +325,30 @@ export const postergarLinea = (l, sol, corte, { por = "", at = "", motivo = "", 
     return resto;
   }
   const tarde = entraFueraDeTiempo(sol, corte, cfg);
-  return { ...l, corte: { anio: corte.anio, semana: corte.semana }, postergada: { de: l.postergada?.de || de, por, at, motivo, ...(tarde ? { fueraDeTiempo: true } : {}) } };
+  return { ...l, corte: { anio: corte.anio, semana: corte.semana }, postergada: { de: l.postergada?.de || sol?.corteAjustado?.de || de, por, at, motivo, ...(tarde ? { fueraDeTiempo: true } : {}) } };
 };
-/** ¿El ítem va en un corte ANTERIOR al de su solicitud (adelantado)? */
-export const lineaAdelantada = (l, sol) => {
-  const c = l?.corte, base = sol?.corte;
-  if (!c || !base) return false;
-  return c.anio < base.anio || (c.anio === base.anio && c.semana < base.semana);
+/**
+ * Cómo quedó el corte de un ítem frente al que le tocaba al enviarse (5-nov-2026,
+ * caso SUP-2026-0018: se movieron 3 ítems sueltos y después la solicitud entera —
+ * los 8 restantes no traían marca propia y no salía la constancia).
+ * Vale igual si se movió el ÍTEM (`postergada`) o TODA la solicitud
+ * (`corteAjustado`). Devuelve null si el ítem está en su corte de origen.
+ *   { actual, de, adelantado, fueraDeTiempo, por, at, motivo, nivel: "item"|"solicitud" }
+ * `fueraDeTiempo`: su corte actual ya había cerrado cuando se envió la solicitud
+ * (las urgentes no: esas se saltan el corte por regla).
+ */
+export const ajusteCorteLinea = (l, sol, cfg) => {
+  const actual = corteDeLinea(l, sol);
+  const de = l?.postergada?.de || sol?.corteAjustado?.de || null;
+  if (!actual || !de || mismoCorte(actual, de)) return null;
+  const quien = l?.postergada || sol?.corteAjustado || {};
+  return {
+    actual, de,
+    adelantado: actual.anio < de.anio || (actual.anio === de.anio && actual.semana < de.semana),
+    fueraDeTiempo: !sol?.urgente && entraFueraDeTiempo(sol, actual, cfg),
+    por: quien.por || "", at: quien.at || "", motivo: quien.motivo || "",
+    nivel: l?.postergada ? "item" : "solicitud",
+  };
 };
 
 // PRIORIDAD (5-nov-2026, Gerson): el Coordinador marca con "!" lo que es vía
@@ -724,7 +741,7 @@ export const metricasDashboard = ({ solicitudes = [], cotizaciones = [], purchas
       m[k] = m[k] || { total: 0, urgentes: 0, enCorte: 0, conCorte: 0, lineas: 0, rechazadas: 0, ajustadas: 0 };
       // Un ítem ADELANTADO fuera de tiempo (5-nov-2026) deja la misma
       // constancia que pasar la solicitud entera: fuera de hora, perdonada.
-      const itemTarde = (s.lineas || []).some(l => l?.postergada?.fueraDeTiempo);
+      const itemTarde = (s.lineas || []).some(l => ajusteCorteLinea(l, s, c)?.fueraDeTiempo);
       if (s.corteAjustado || itemTarde) m[k].ajustadas++;
       m[k].total++; if (s.urgente) m[k].urgentes++;
       let ec = enviadaEnCorte(s, c); if (ec != null && itemTarde) ec = false;

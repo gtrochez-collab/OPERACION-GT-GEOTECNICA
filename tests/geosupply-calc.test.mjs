@@ -314,7 +314,7 @@ test("postergarLinea: pasa un ítem pendiente al corte siguiente sin tocar la so
 
 // ── 5-nov-2026: adelantar ítems con constancia, prioridad "!" y resuelto sin compra ──
 test("adelantar un ítem a un corte ya cerrado deja constancia de fuera de tiempo (caso SUP-2026-0018)", async () => {
-  const { postergarLinea, corteDeLinea, lineaAdelantada, entraFueraDeTiempo, metricasDashboard } = await import("../src/geosupply-calc.js");
+  const { postergarLinea, corteDeLinea, ajusteCorteLinea, entraFueraDeTiempo, metricasDashboard } = await import("../src/geosupply-calc.js");
   // Johan la envió el miércoles 4-nov 5:27 p. m. → cayó al Corte 3 (semana 46).
   // El Corte 2 (semana 45) cerró el martes 3-nov a las 12:00.
   const c2 = { anio: 2026, semana: 45 }, c3 = { anio: 2026, semana: 46 }, c4 = { anio: 2026, semana: 47 };
@@ -326,11 +326,13 @@ test("adelantar un ítem a un corte ya cerrado deja constancia de fuera de tiemp
   assert.equal(corteDeLinea(adel, sol).semana, 45);
   assert.equal(adel.postergada.fueraDeTiempo, true);
   assert.equal(adel.postergada.de.semana, 46);
-  assert.equal(lineaAdelantada(adel, sol), true);
+  assert.equal(ajusteCorteLinea(adel, sol, null).adelantado, true);
+  assert.equal(ajusteCorteLinea(adel, sol, null).fueraDeTiempo, true);
   // Pasarlo para adelante NO es fuera de tiempo
   const post = postergarLinea(varilla, sol, c4, {});
   assert.equal(post.postergada.fueraDeTiempo, undefined);
-  assert.equal(lineaAdelantada(post, sol), false);
+  assert.equal(ajusteCorteLinea(post, sol, null).adelantado, false);
+  assert.equal(ajusteCorteLinea(post, sol, null).fueraDeTiempo, false);
   // Regresarlo al corte de su solicitud deshace el movimiento
   const vuelta = postergarLinea(adel, sol, c3, {});
   assert.equal(vuelta.corte, undefined);
@@ -370,4 +372,39 @@ test("resuelto sin compra: nota obligatoria, no si ya está cotizado, y termina 
   assert.equal(r.linea.resolucion.nota, "Se cubre con la pintura comprada para Torre Adobe");
   assert.ok(LINEA_TERMINAL.includes("resuelta"));
   assert.equal(estadoCabecera({ estado: "en_proceso", lineas: [r.linea, { estado: "comprada" }] }), "completada");
+});
+
+test("SUP-2026-0018 real: 3 ítems sueltos al Corte 2 y después TODA la solicitud — los 11 llevan la constancia", async () => {
+  const { postergarLinea, ajusteCorteLinea, metricasDashboard } = await import("../src/geosupply-calc.js");
+  const c2 = { anio: 2026, semana: 45 }, c3 = { anio: 2026, semana: 46 };
+  let sol = { id: "s18", residente: "johan", projectCode: "AUREA", estado: "en_proceso", fechaEnvio: "2026-11-04T23:27:00.000Z", corte: c3,
+    lineas: ["varilla", "malla", "curador", "epoxico", "pvc"].map(id => ({ id, descripcion: id, estado: "por_cotizar" })) };
+  // 1) Tres ítems sueltos
+  sol = { ...sol, lineas: sol.lineas.map((l, i) => i < 3 ? postergarLinea(l, sol, c2, { por: "Lic. Gerson Trochez" }) : l) };
+  // 2) Después la solicitud entera (lo que hace cambiarCorte)
+  sol = { ...sol, corte: c2, corteAjustado: { de: c3, por: "Lic. Gerson Trochez", motivo: "Se envio fuera del corte." } };
+  for (const l of sol.lineas) {
+    const a = ajusteCorteLinea(l, sol, null);
+    assert.ok(a, `${l.id} debe llevar constancia`);
+    assert.equal(a.adelantado, true, `${l.id} adelantado (antes decía "Pasado")`);
+    assert.equal(a.fueraDeTiempo, true, `${l.id} fuera de tiempo`);
+    assert.equal(a.de.semana, 46, `${l.id} era del Corte 3`);
+  }
+  assert.equal(ajusteCorteLinea(sol.lineas[0], sol, null).nivel, "item");
+  assert.equal(ajusteCorteLinea(sol.lineas[4], sol, null).nivel, "solicitud");
+  assert.equal(ajusteCorteLinea(sol.lineas[4], sol, null).motivo, "Se envio fuera del corte.");
+  // Regresar un ítem a su corte de origen (3) le quita la constancia
+  const vuelta = postergarLinea(sol.lineas[4], sol, c3, {});
+  assert.equal(vuelta.postergada.de.semana, 46, "el origen sigue siendo el Corte 3");
+  assert.equal(ajusteCorteLinea(vuelta, sol, null), null);
+  // Cumplimiento: una sola solicitud fuera de hora, perdonada
+  const r = metricasDashboard({ solicitudes: [sol], cfg: null }).porResidente.find(x => x.k === "johan");
+  assert.equal(r.ajustadas, 1);
+  assert.equal(r.enCorte, 0);
+  // Una URGENTE no lleva "fuera de tiempo" (se salta el corte por regla)
+  const urg = { ...sol, urgente: true };
+  assert.equal(ajusteCorteLinea(urg.lineas[4], urg, null).fueraDeTiempo, false);
+  // Un ítem que nadie movió no lleva chip
+  const limpia = { id: "x", corte: c3, fechaEnvio: "2026-11-04T23:27:00.000Z", lineas: [] };
+  assert.equal(ajusteCorteLinea({ id: "z", estado: "por_cotizar" }, limpia, null), null);
 });
