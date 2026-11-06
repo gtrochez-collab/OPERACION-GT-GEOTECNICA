@@ -59,7 +59,7 @@ export const MOVIL_CSS = `
 .gm-scroll-x{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;margin:0 -14px;padding:0 14px}
 .gm-scroll-x::-webkit-scrollbar{display:none}
 @media (max-width:767px){.gm-tira{flex-wrap:nowrap !important;overflow-x:auto;scrollbar-width:none;padding:8px 4px !important;gap:0 !important}.gm-tira::-webkit-scrollbar{display:none}.gm-tira>*{flex:0 0 auto !important;padding:4px 14px !important}.gm-tira>*+*{border-left:1px solid rgba(44,42,40,.08) !important}}
-@media (max-width:767px){.gt-entra-modulo{animation:gmPush .34s cubic-bezier(.32,.72,0,1) both !important}}
+@media (max-width:767px){.gt-entra-modulo{animation:gmPush .34s cubic-bezier(.32,.72,0,1) backwards !important}}
 @keyframes gmCajon{from{transform:translateX(-100%)}}
 @media (prefers-reduced-motion: reduce){.gm-fondo,.gm-cajon,.gt-entra-modulo,.gm-esq,.gm-pop{animation:none !important}}
 `;

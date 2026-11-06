@@ -31,7 +31,7 @@ import Logo from "./Logo.jsx";
 import { esFeriadoQuincena } from "./holidays.js";
 import { HORARIOS, horarioDe, TOLERANCIA_MIN, gcMarkKey, minTardeDe } from "./HRModule.jsx";
 import { GT_CSS } from "./gt-ui.js";
-import { MOVIL_CSS, BarraMovil, BarraInferior, PantallaCarga } from "./movil.jsx";
+import { MOVIL_CSS, BarraMovil, BarraInferior, PantallaCarga, TiraMovil, HojaMovil } from "./movil.jsx";
 import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion } from "./geoclock-calc.js";
 import { vincularEmpleado, KEY_VINCULOS } from "./rrhh-solicitudes.js";
 import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, RP, escHTML, fmtNum, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
@@ -333,6 +333,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
   const [regHasta, setRegHasta] = useState(() => ahoraTegus().fecha);
   const [regPersona, setRegPersona] = useState("");
   const [regProy, setRegProy] = useState("");
+  const [regHoja, setRegHoja] = useState(false);   // hoja de filtros en el celular
   // Marcajes cargados por quincena para el reporte: { "periodo|Q": [...] }.
   const [regMarks, setRegMarks] = useState({});
   const [regLoading, setRegLoading] = useState(false);
@@ -1230,13 +1231,16 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
       {/* ── REGISTROS: reporte de entradas y salidas ── */}
       {view === "registros" && (() => {
         const hoy = ahoraTegus().fecha;
+        const lunesHoy = (() => {
+          const [y, m, d] = hoy.split("-").map(Number);
+          const dow = new Date(y, m - 1, d).getDay();
+          const lun = new Date(y, m - 1, d - ((dow + 6) % 7)); // lunes de esta semana
+          return `${lun.getFullYear()}-${String(lun.getMonth() + 1).padStart(2, "0")}-${String(lun.getDate()).padStart(2, "0")}`;
+        })();
         const preset = (tipo) => {
           if (tipo === "hoy") { setRegDesde(hoy); setRegHasta(hoy); }
           if (tipo === "semana") {
-            const [y, m, d] = hoy.split("-").map(Number);
-            const dow = new Date(y, m - 1, d).getDay();
-            const lun = new Date(y, m - 1, d - ((dow + 6) % 7)); // lunes de esta semana
-            setRegDesde(`${lun.getFullYear()}-${String(lun.getMonth() + 1).padStart(2, "0")}-${String(lun.getDate()).padStart(2, "0")}`);
+            setRegDesde(lunesHoy);
             setRegHasta(hoy);
           }
           if (tipo === "mes") { setRegDesde(`${hoy.slice(0, 7)}-01`); setRegHasta(hoy); }
@@ -1346,7 +1350,96 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
           return chipR(r.estado || "—", STONE, "rgba(44,42,40,.06)");
         };
         const COLS = varios ? "92px minmax(0,1.6fr) 1fr 1fr 90px 130px" : "minmax(0,1.6fr) 1fr 1fr 90px 130px";
+        // ── CELULAR (6-nov-2026, Gerson: "los registros en el celular se miran
+        // bien abultados"): arriba solo Hoy · Semana · Mes + "Filtros" (fechas,
+        // colaborador, proyecto y exportar van en una hoja), las cifras en una
+        // tira deslizable y cada persona en UNA fila compacta (foto, nombre,
+        // entrada → salida y las horas). La tabla de la computadora no cambia.
+        const movil = ancho < 768;
+        const esHoyR = regDesde === hoy && regHasta === hoy;
+        const esSemanaR = !esHoyR && regDesde === lunesHoy && regHasta === hoy;
+        const esMesR = !esHoyR && !esSemanaR && regDesde === `${hoy.slice(0, 7)}-01` && regHasta === hoy;
+        const rangoLibre = !esHoyR && !esSemanaR && !esMesR;
+        const nFiltrosR = (regPersona ? 1 : 0) + (regProy ? 1 : 0) + (rangoLibre ? 1 : 0);
+        const segM = (txt, on, onClick) => <button key={txt} type="button" onClick={onClick} style={{ flex: "0 0 auto", padding: "9px 14px", borderRadius: 999, border: "none", background: on ? CHARCOAL : "#fff", color: on ? "#fff" : CHARCOAL, font: `${on ? 700 : 600} 13.5px/1 var(--sans)`, boxShadow: on ? "none" : "0 1px 2px rgba(44,42,40,.06)", cursor: "pointer", whiteSpace: "nowrap" }}>{txt}</button>;
+        const campoM = { display: "block", width: "100%", minWidth: 0, height: 46, borderRadius: 12, border: "none", background: "#fff", padding: "0 12px", fontFamily: "inherit", fontSize: 16, color: CHARCOAL, boxSizing: "border-box", outline: "none" };
+        const accionM = (txt, onClick, color) => <button type="button" className="gm-item" onClick={() => { setRegHoja(false); onClick(); }} style={{ minHeight: 48 }}><span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: color || CHARCOAL }}>{txt}</span><span style={{ color: "#C9C3BA", fontSize: 18 }}>›</span></button>;
+        const barraMovilR = <>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {segM("Hoy", esHoyR, () => preset("hoy"))}
+            {segM("Semana", esSemanaR, () => preset("semana"))}
+            {segM("Mes", esMesR, () => preset("mes"))}
+            <div style={{ flex: 1 }} />
+            <button type="button" onClick={() => setRegHoja(true)} style={{ flexShrink: 0, height: 38, padding: "0 14px", borderRadius: 999, border: "none", background: nFiltrosR ? "rgba(232,118,45,.14)" : "#EDECEA", color: nFiltrosR ? "#A94E16" : CHARCOAL, font: "700 13.5px/1 var(--sans)", cursor: "pointer" }}>Filtros{nFiltrosR ? ` · ${nFiltrosR}` : ""}</button>
+          </div>
+          {nFiltrosR > 0 && <div style={{ fontSize: 12.5, color: STONE, padding: "0 4px", marginTop: -4 }}>{filtrosTxt}</div>}
+          <HojaMovil abierta={regHoja} onClose={() => setRegHoja(false)} titulo="Filtros">
+            <div className="gm-encab" style={{ marginTop: 4 }}>Fechas</div>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 8 }}>
+              <label style={{ fontSize: 12, color: STONE, minWidth: 0 }}>Desde<input type="date" value={regDesde} onChange={e => e.target.value && setRegDesde(e.target.value)} style={{ ...campoM, marginTop: 4 }} /></label>
+              <label style={{ fontSize: 12, color: STONE, minWidth: 0 }}>Hasta<input type="date" value={regHasta} onChange={e => e.target.value && setRegHasta(e.target.value)} style={{ ...campoM, marginTop: 4 }} /></label>
+            </div>
+            <div className="gm-encab">Colaborador</div>
+            <select value={regPersona} onChange={e => setRegPersona(e.target.value)} style={campoM}>
+              <option value="">Todos los colaboradores</option>
+              {personasOpc.map(e => <option key={e.id} value={e.id}>{nombreCorto(e.fullName)}</option>)}
+            </select>
+            <div className="gm-encab">Proyecto</div>
+            <select value={regProy} onChange={e => setRegProy(e.target.value)} style={campoM}>
+              <option value="">Todos los proyectos</option>
+              {proyOpciones.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <div className="gm-encab">Acciones</div>
+            <div className="gm-grupo">
+              {puedeCorregir && accionM("Marcaje manual", () => setCorr({ empId: "", fecha: ahoraTegus().fecha, tipo: "entrada", hora: "", justif: "" }))}
+              {accionM("Descargar Excel", bajarExcel)}
+              {accionM("Descargar PDF", imprimirPDF)}
+            </div>
+            {nFiltrosR > 0 && <button type="button" onClick={() => { preset("hoy"); setRegPersona(""); setRegProy(""); }} style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", color: "#B03024", font: "700 15px/1 var(--sans)", cursor: "pointer" }}>Limpiar filtros</button>}
+          </HojaMovil>
+          <div style={{ padding: "0 2px", overflowX: "clip" }}>
+            <TiraMovil items={[
+              { v: rows.length - totAusentes, l: "Registros" },
+              { v: totAusentes, l: "No marcaron", c: totAusentes ? RED : undefined },
+              { v: fmtHoras(totNetas), l: "Horas laboradas" },
+              { v: totTardes, l: "Llegadas tarde", c: totTardes ? AMBER : undefined },
+              { v: Object.keys(grupos).length, l: "Proyectos" },
+            ]} />
+          </div>
+        </>;
+        const grupoMovilR = (proy, rs, sub) => <div key={proy}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, margin: "2px 6px 8px" }}>
+            <span style={{ font: "700 12px/1.3 var(--sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "#8A847D", minWidth: 0 }}>{proy} · {rs.length}</span>
+            <span style={{ fontSize: 12, color: STONE, whiteSpace: "nowrap", fontFamily: "var(--mono)" }}>{fmtHoras(sub)}</span>
+          </div>
+          <div className="gm-grupo">
+            {rs.map(r => {
+              const st = r.ent && r.ent.tarde ? estiloTarde(r.ent) : null;
+              const ef = (r.emp && emps.find(x => x.id === r.emp.id)) || r.emp;
+              return <div key={`${r.emp.id}-${r.fecha}`} className="gm-item" style={{ cursor: "default", minHeight: 60, alignItems: "center" }}>
+                {fotos[ef?.photo?.fileId] ? <img src={fotos[ef.photo.fileId]} alt="" style={{ width: 38, height: 38, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} /> : <span style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(44,42,40,.07)", color: STONE, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{iniciales(r.emp.fullName)}</span>}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: CHARCOAL, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nombreCorto(r.emp.fullName)}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 3, fontSize: 13, color: STONE }}>
+                    {varios && <span>{fmtDiaCorto(r.fecha)} ·</span>}
+                    {r.ent ? hora(r.ent, st ? st.hora : GREEN) : r.cerrado || r.ausente ? falta(r, "entrada") : <span style={{ color: "#C9C3BA" }}>—</span>}
+                    <span style={{ color: "#C9C3BA" }}>→</span>
+                    {r.sal ? hora(r.sal, "#1D5FAF") : r.cerrado || r.ausente ? falta(r, "salida") : <span style={{ color: "#C9C3BA" }}>—</span>}
+                    {st && chipR(`+${minTardeMk(r.ent)} min`, st.fg, st.bg, `Tarde · ${st.txt}`)}
+                  </div>
+                  {r.sal && r.sal.comentario && <div style={{ fontSize: 12, color: STONE, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.sal.comentario}</div>}
+                </div>
+                <div style={{ flexShrink: 0, textAlign: "right" }}>
+                  {r.netas != null
+                    ? <span title={r.brutas != null ? `${fmtHoras(r.brutas)} brutas${r.almuerzo ? " − 1 h de almuerzo" : ""}` : ""} style={{ fontFamily: "var(--mono)", fontSize: 14, fontWeight: 700, color: CHARCOAL }}>{fmtHoras(r.netas)}</span>
+                    : estadoDe(r)}
+                </div>
+              </div>;
+            })}
+          </div>
+        </div>;
         return <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 1320, margin: "0 auto" }}>
+          {movil ? barraMovilR : <>
           {/* Barra: rango · filtros · acciones */}
           <div className="gt-vidrio" style={{ padding: "12px 14px", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <div style={{ display: "flex", gap: 6 }}>
@@ -1380,6 +1473,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
               </div>
             ))}
           </div>
+          </>}
           {regErr.length > 0 && <div className="gt-vidrio" style={{ padding: "10px 14px", fontSize: 13, color: RED }}>No se pudieron cargar los marcajes de {regErr.join(", ")}. El reporte puede estar incompleto: revisá la conexión y volvé a elegir el rango.</div>}
           {truncado && <div className="gt-vidrio" style={{ padding: "10px 14px", fontSize: 13, color: AMBER }}>El rango supera 120 días: se muestra hasta el {truncado}.</div>}
           {regLoading && <div style={{ textAlign: "center", color: STONE, fontSize: 13, padding: 10 }}>Cargando marcajes…</div>}
@@ -1387,6 +1481,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
           {Object.keys(grupos).sort().map(proy => {
             const rs = grupos[proy];
             const sub = rs.reduce((t, r) => t + (r.netas || 0), 0);
+            if (movil) return grupoMovilR(proy, rs, sub);
             return <div key={proy} className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, padding: "12px 18px", borderBottom: "1px solid rgba(44,42,40,.07)" }}>
                 <span style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{proy} <span style={{ color: "#A39C92", fontWeight: 600, fontSize: 12.5 }}>{rs.length}</span></span>
@@ -1418,7 +1513,8 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
               })}
             </div>;
           })}
-          {rows.length > 0 && <div style={{ fontSize: 11.5, color: "#A39C92", padding: "0 4px" }}>Tocá una hora para ver la foto, la firma y el historial. Las horas descuentan 1 h de almuerzo cuando la jornada cruza el mediodía. Los minutos tarde se cuentan desde que vence la tolerancia de {TOLERANCIA_MIN} min.</div>}
+          {rows.length > 0 && movil && <div style={{ fontSize: 11.5, color: "#A39C92", padding: "0 6px" }}>Tocá una hora para ver la foto, la firma y el historial.</div>}
+          {rows.length > 0 && !movil && <div style={{ fontSize: 11.5, color: "#A39C92", padding: "0 4px" }}>Tocá una hora para ver la foto, la firma y el historial. Las horas descuentan 1 h de almuerzo cuando la jornada cruza el mediodía. Los minutos tarde se cuentan desde que vence la tolerancia de {TOLERANCIA_MIN} min.</div>}
           {/* ── Modal de MARCAJE MANUAL (justificación obligatoria) ── */}
           {corr && <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }} onClick={() => !corrSaving && setCorr(null)}>
             <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: "20px 22px", width: "100%", maxWidth: 460, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 20px 60px rgba(44,42,40,0.3)" }}>
