@@ -2518,6 +2518,13 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   Subterra/Geotecnica junto al título (`TituloMovil derecha`) y GeoCost la
   tasa. GeoClock pasa `guardia={conClave}`. `MenuMovil` (cajón) queda sin
   uso. App ya NO renderiza la barra en `conEntrada` (solo en `PanelMovil`).
+  **6-nov-2026**: Registros de GeoClock en el celular = pills Hoy · Semana ·
+  Mes + "Filtros" (`regHoja`: fechas, colaborador, proyecto, Marcaje manual,
+  Excel, PDF), `TiraMovil` y una fila `gm-item` por persona (foto, entrada →
+  salida, horas o estado). ⚠ La entrada `gmPush` va con `backwards`, NUNCA
+  `both`: el transform que dejaba pegado convertía al root del módulo en
+  bloque contenedor y la `BarraInferior` (position fixed) quedaba al final
+  de la página en vez de flotar.
 - **ESTILO ÚNICO DE REPORTES (26-oct-2026, Gerson: "todo reporte que
   exportemos, PDF o Excel, en estilo Apple")**: `src/reporte-estilo.js` es la
   ÚNICA fuente — reportes HTML para "Guardar PDF" (`reporteHTML` +
