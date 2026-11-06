@@ -46,8 +46,7 @@ import {
   estadoInicialLinea, alertasDeLinea, ALERTAS, puedeCancelar, aplicarAccionLinea, pendienteDeCompra, saldoDePartida, partidasPedibles,
   puPresupuestoUSD, evaluarCotizacion, siguienteFolio, siguienteCodigoCompra, borradorDesdeCotizacion, fueraDeCorte, metricasDashboard,
   LINEA_TERMINAL, esPedidoPlantel, pendientePlantel, ymdSumar, partesHN, enviadaEnCorte, round2, corteAnterior, corteSiguiente, corteDeLinea, postergarLinea,
-  LINEA_POSTERGABLE, marcarPrioridad, ajusteCorteLinea,
-} from "./geosupply-calc.js";
+  LINEA_POSTERGABLE, marcarPrioridad, ajusteCorteLinea, esPartidaGenerica, queEs } from "./geosupply-calc.js";
 
 const ORANGE = "#E8762D";
 const ORANGE_DARK = "#C75F1F";
@@ -205,6 +204,9 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, catalogo = [
       if (l.varilla && enviar && (!l.varilla.n || !(num(l.varilla.lances) > 0))) e.push(`${l.descripcion || "Varilla"}: elegí la varilla y cuántos lances.`);
       else if (enviar && !(num(l.cantidad) > 0)) e.push(`${l.descripcion || "Ítem"}: la cantidad debe ser mayor que 0.`);
       if (l.fueraPresupuesto && (!String(l.descripcion || "").trim() || (enviar && !sinReceta && String(l.justificacion || "").trim().length < 5))) e.push(`${l.descripcion || "Ítem fuera de presupuesto"}: escribí qué es y por qué no está en la receta.`);
+      // Partida genérica de la receta: hay que decir QUÉ es (si no, Compras y
+      // el Coordinador solo ven "Bodega / Atenciones / EPP / Etc.").
+      if (enviar && l.partidaId && !l.varilla && esPartidaGenerica(pedibles.find(p => p.id === l.partidaId)) && String(l.detalle || "").trim().length < 3) e.push(`${l.descripcion}: escribí qué es exactamente lo que necesitás.`);
     });
     if (f.urgente && enviar && String(f.justificacionUrgencia || "").trim().length < 5) e.push("Una urgente necesita justificación.");
     return e;
@@ -345,6 +347,7 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, catalogo = [
               {ex && <Chip c={C_ROJO}>Excede el saldo · lo aprueba el Coordinador</Chip>}
             </div>
             {l.fueraPresupuesto && !sinReceta && <input value={l.justificacion || ""} onChange={e => uLinea(l.id, "justificacion", e.target.value)} placeholder="Por qué hace falta y no está en la receta *" style={{ ...CTRL, width: "100%", marginTop: 6, background: "#fff" }} />}
+            {l.partidaId && !l.varilla && (() => { const gen = esPartidaGenerica(pedibles.find(p => p.id === l.partidaId)); return <input value={l.detalle || ""} onChange={e => uLinea(l.id, "detalle", e.target.value)} placeholder={gen ? "Qué es exactamente (ej. microondas para el personal) *" : "Detalle (opcional: marca, medida, para qué)"} style={{ ...CTRL, width: "100%", marginTop: 6, background: "#fff", borderColor: gen && !String(l.detalle || "").trim() ? "rgba(232,118,45,.55)" : undefined }} />; })()}
           </div>
           {l.varilla
             ? <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -439,7 +442,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
   const toggle = (c) => {
     if (incluida(c.l.id)) return u("lineas", f.lineas.filter(x => x.requestLineId !== c.l.id));
     const vr = c.l.varilla ? { lances: lancesDe(c.l, c.pendiente), puLance: "" } : {};
-    u("lineas", [...f.lineas, { requestLineId: c.l.id, requestId: c.sol.id, cantidad: c.pendiente, parcial: false, puLps: "", justificacion: "", descripcion: c.l.descripcion, unidad: c.l.unidad, ...vr }]);
+    u("lineas", [...f.lineas, { requestLineId: c.l.id, requestId: c.sol.id, cantidad: c.pendiente, parcial: false, puLps: "", justificacion: "", descripcion: queEs(c.l), unidad: c.l.unidad, ...vr }]);
   };
   const uL = (lid, k, v) => u("lineas", f.lineas.map(x => x.requestLineId === lid ? { ...x, [k]: v } : x));
   // VARILLA: Ana cotiza por LANCE (como viene la cotización); la cantidad y el
@@ -570,7 +573,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
               <span style={{ flex: 1, minWidth: 200, color: CHARCOAL }}>{fmtCant(it.cantidad)} {it.unidad} × {it.nombre} · {fmtL(it.monto)}</span>
               {libres.length > 0 && <select value="" onChange={e => e.target.value && asignar(it, e.target.value)} style={{ ...CTRL, padding: "6px 8px", maxWidth: "100%", background: "#fff" }}>
                 <option value="">Es… (elegí de lo pedido)</option>
-                {libres.map(c => <option key={c.l.id} value={c.l.id}>{c.l.descripcion} · {fmtCant(c.pendiente)} {c.l.unidad}</option>)}
+                {libres.map(c => <option key={c.l.id} value={c.l.id}>{queEs(c.l)} · {fmtCant(c.pendiente)} {c.l.unidad}</option>)}
               </select>}
             </div>)}
           </div>}
@@ -606,8 +609,9 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <input type="checkbox" checked={inc} onChange={() => toggle(c)} />
             <div style={{ flex: 1, minWidth: 180 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{c.l.descripcion}</div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{queEs(c.l)}{String(c.l.detalle || "").trim() ? <span style={{ fontWeight: 500, color: "var(--text-3)", fontSize: 11.5 }}> · {c.l.descripcion}</span> : null}</div>
               <div style={{ fontSize: 11, color: "var(--text-3)" }}>{c.sol.folio} · pendiente <b>{fmtCant(c.pendiente)} {c.l.unidad}</b> · requerido {fmtDiaCorto(c.sol.fechaRequeridaObra)}{c.l.sinRevisionAlmacen ? " · sin revisión de almacén" : ""}{c.l.fueraPresupuesto ? (c.l.sinReceta ? " · sin receta" : " · fuera de presupuesto") : puPres ? ` · presupuesto ${fmtUSD(puPres)} / ${c.l.unidad} (≈ ${fmtL(puPres * tasa)})` : ""}</div>
+              {String(c.sol.notas || "").trim() && !String(c.l.detalle || "").trim() && <div style={{ fontSize: 11.5, color: C_AZUL.color, fontStyle: "italic", marginTop: 2 }}>Notas de quien pidió: "{c.sol.notas}"</div>}
             </div>
             {inc && e && chipSem(e.semaforo)}
           </div>
@@ -1292,7 +1296,8 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {l.prioridad && <span title={`Prioridad: la marcó ${l.prioridad.por || "el Coordinador"}${l.prioridad.at ? ` el ${fmtDT(l.prioridad.at)}` : ""}`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: 999, background: ORANGE, color: "#fff", fontSize: 13, fontWeight: 900 }}>!</span>}
           {!enSolicitud && <span style={{ fontFamily: "var(--mono)", fontSize: 11, fontWeight: 700, color: "var(--text-3)" }}>{s.folio}</span>}
-          <span style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{l.descripcion}</span>
+          <span style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{queEs(l)}</span>
+          {String(l.detalle || "").trim() && <span style={{ fontSize: 11, color: "var(--text-3)" }}>· {l.descripcion}</span>}
           <span style={{ fontSize: 13, color: "var(--text-2)" }}>· <b>{fmtCant(ef?.estado === "por_cotizar" ? pendienteDeCompra(l.estado === "revision_almacen" ? { ...l, aCotizar: l.cantidad } : l) : l.cantidad)}</b> {l.unidad}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
@@ -1745,7 +1750,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           return <div key={l.id} style={{ padding: "12px 14px", borderRadius: 14, background: l.estado === "rechazada" ? C_ROJO.bg : "rgba(255,255,255,.75)", border: "1px solid rgba(44,42,40,.08)", display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL }}>{l.descripcion} <span style={{ fontWeight: 600, color: "var(--text-2)" }}>· {fmtCant(l.cantidad)} {l.unidad}</span></div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL }}>{queEs(l)} <span style={{ fontWeight: 600, color: "var(--text-2)" }}>· {fmtCant(l.cantidad)} {l.unidad}</span>{String(l.detalle || "").trim() ? <span style={{ fontWeight: 500, color: "var(--text-3)", fontSize: 12 }}> · {l.descripcion}</span> : null}</div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
                   {paso.etapa === "entregado" ? <Chip c={C_VERDE}>Entregado en tu proyecto</Chip>
                     : paso.etapa === "pagado" ? <Chip c={C_AZUL}>Pagado · en camino</Chip>
@@ -1835,6 +1840,9 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           <div style={{ textAlign: "right" }}><div style={{ fontSize: 18, fontWeight: 800, color: CHARCOAL }}>{fmtL(q.totalDeclarado)}</div><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>total con ISV · {ev.cuadra ? "cuadra" : `dif. ${fmtL(ev.diferencia)}`}</div></div>
         </div>
       </div>
+      {/* Lo que escribió el residente (6-nov-2026): sin esto el Coordinador
+          solo veía la partida ("Bodega / Atenciones / EPP…") y no qué era. */}
+      {(() => { const sols = [...new Set((q.lineas || []).map(l => l.requestId).filter(Boolean))].map(id => solicitudes.find(x => x.id === id)).filter(x => x && String(x.notas || "").trim()); return sols.length ? <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AZUL.bg, color: C_AZUL.color, fontSize: 12.5, display: "flex", flexDirection: "column", gap: 2 }}>{sols.map(x => <div key={x.id}><b>{sols.length > 1 ? `${x.folio} · ` : ""}Notas de {quien(x.residente)}:</b> {x.notas}</div>)}</div> : null; })()}
       {prov && !(prov.bankAccounts || []).length && <div style={{ padding: "8px 12px", borderRadius: 10, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12 }}>Proveedor sin datos bancarios en el maestro: el borrador se crea con la advertencia para Finanzas.</div>}
       {!prov && <div style={{ padding: "8px 12px", borderRadius: 10, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12 }}>Proveedor nuevo: al aprobar se crea en el maestro sin datos bancarios.</div>}
       {/* Tres columnas: pedido · cotizado · presupuesto */}
@@ -1846,7 +1854,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
             const pa = ls ? partidaDe(q.projectCode, ls.partidaId) : null;
             const sd = ls?.partidaId ? saldoDe(q.projectCode, ls.partidaId) : null;
             return <tr key={l.requestLineId || i} style={{ background: "rgba(255,255,255,.75)" }}>
-              <td style={{ padding: "10px", borderRadius: "12px 0 0 12px", verticalAlign: "top" }}><div style={{ fontWeight: 800, color: CHARCOAL }}>{ls?.descripcion || l.descripcion}</div><div style={{ color: "var(--text-3)", fontSize: 11.5 }}>{ls ? `${fmtCant(ls.cantidad)} ${ls.unidad} pedidos · ${fmtCant(l.pendiente ?? 0)} por comprar` : ""}{ls?.fueraPresupuesto ? (ls.sinReceta ? " · sin receta" : " · fuera de presupuesto") : ""}</div></td>
+              <td style={{ padding: "10px", borderRadius: "12px 0 0 12px", verticalAlign: "top" }}><div style={{ fontWeight: 800, color: CHARCOAL }}>{ls ? queEs(ls) : l.descripcion}</div>{ls && String(ls.detalle || "").trim() && <div style={{ color: "var(--text-2)", fontSize: 11.5 }}>partida: {ls.descripcion}</div>}<div style={{ color: "var(--text-3)", fontSize: 11.5 }}>{ls ? `${fmtCant(ls.cantidad)} ${ls.unidad} pedidos · ${fmtCant(l.pendiente ?? 0)} por comprar` : ""}{ls?.fueraPresupuesto ? (ls.sinReceta ? " · sin receta" : " · fuera de presupuesto") : ""}</div></td>
               <td style={{ padding: "10px", verticalAlign: "top" }}><div style={{ fontWeight: 800, color: CHARCOAL }}>{fmtCant(l.cantidad)} {l.unidad} × {fmtL(l.puLps)}{l.parcial ? <Chip c={C_AMARILLO} style={{ marginLeft: 6 }}>Parcial</Chip> : null}</div><div style={{ color: "var(--text-3)", fontSize: 11.5 }}>subtotal {fmtL(l.subtotal)} · {fmtUSD(l.puUSD)} / {l.unidad}</div>{l.justificacion && <div style={{ fontSize: 11.5, color: C_ROJO.color, fontStyle: "italic" }}>"{l.justificacion}"</div>}</td>
               <td style={{ padding: "10px", verticalAlign: "top" }}>{pa ? <><div style={{ fontWeight: 700, color: CHARCOAL }}>{fmtUSD(l.puPresupuestoUSD)} / {pa.unidad || l.unidad} <span style={{ color: "var(--text-3)", fontWeight: 500 }}>(≈ {fmtL(l.puPresupuestoUSD * tasa)})</span></div><div style={{ color: "var(--text-3)", fontSize: 11.5 }}>{pa.nombre}{sd && !sd.sinCantidad ? ` · saldo ${fmtCant(sd.saldo)} ${pa.unidad}` : ""}</div></> : <span style={{ color: "var(--text-3)" }}>Sin partida</span>}</td>
               <td style={{ padding: "10px", borderRadius: "0 12px 12px 0", verticalAlign: "top", textAlign: "right" }}>{chipSem(l.semaforo)}<div style={{ fontSize: 11.5, color: SEM[l.semaforo]?.c.color, fontWeight: 700, marginTop: 4 }}>{fmtPct(l.variacionPct)}</div>{l.semaforo === "rojo" && num(l.variacionPct) >= 2 && <div style={{ fontSize: 10.5, color: C_AMARILLO.color, fontWeight: 600, marginTop: 3, maxWidth: 150, marginLeft: "auto" }}>¿Otra presentación? (rollo, caja…) Revisá la cantidad</div>}</td>

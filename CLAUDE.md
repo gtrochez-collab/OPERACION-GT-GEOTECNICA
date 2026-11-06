@@ -2095,6 +2095,23 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   receta (el material sí se usó). Tracking: paso "En cotización" en verde con
   "Resuelto sin compra" y la nota debajo. Pruebas en
   `tests/geosupply-calc.test.mjs`.
+  **"QUÉ ES EXACTAMENTE" en las partidas genéricas (6-nov-2026, Gerson —
+  caso SUP-2026-0008: Johan pidió "Bodega / Letrina / Atenciones / EPP / Etc."
+  y en la aprobación nadie sabía que era un microondas; lo había puesto en
+  las NOTAS de la solicitud, que la ventana de aprobar no mostraba)**:
+  `esPartidaGenerica(p)` (geosupply-calc: unidad Global/vacía o nombre con
+  varios · etc · imprevistos · herramienta menor · bodega · atenciones ·
+  otros) y campo ADITIVO `linea.detalle`: en `SolicitudFormImpl` cada ítem de
+  la receta trae el input "Qué es exactamente" (obligatorio al ENVIAR si la
+  partida es genérica; opcional "Detalle" en las demás). `queEs(l)` = detalle
+  o descripción, y se usa en Almacén/Compras (`filaLinea`, con la partida en
+  chiquito), el detalle del residente, la aprobación ("Lo pedido" + "partida:
+  …"), el form de cotización (y `descripcion` de la línea cotizada → llega
+  así a la descripción del borrador de GeoShopping) y el lector de PDF
+  (`lineasSupplyDesdeLectura` empareja contra el detalle). La aprobación
+  muestra además las NOTAS de la(s) solicitud(es) en una caja azul, y el form
+  de cotización las pone bajo el ítem cuando no hay detalle (para las
+  solicitudes viejas). Pruebas en `tests/geosupply-calc.test.mjs`.
   **Cumplimiento por residente (28-oct-2026, Gerson: "que diga qué es cada
   una")**: la tarjeta del Dashboard es una tabla a todo lo ancho con columnas
   rotuladas (Enviadas · A tiempo "4 de 7" + % · Fuera de hora + perdonadas ·

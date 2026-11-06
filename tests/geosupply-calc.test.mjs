@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  semanaISO, lunesDeSemanaISO, corteDe, etiquetaCorte, llegadaEstimada, hitoDeCorte, estadoHito,
+  esPartidaGenerica, queEs, semanaISO, lunesDeSemanaISO, corteDe, etiquetaCorte, llegadaEstimada, hitoDeCorte, estadoHito,
   saldoDePartida, semaforoVariacion, evaluarCotizacion, siguienteFolio, aplicarAccionLinea,
   estadoCabecera, estadoInicialLinea, estadoEfectivoLinea, destinoSugerido, borradorDesdeCotizacion,
   partesHN, puedeCancelar, contarPendientes, configEfectiva, pendienteDeCompra, siguienteCodigoCompra, fueraDeCorte, metricasDashboard,
@@ -407,4 +407,14 @@ test("SUP-2026-0018 real: 3 ítems sueltos al Corte 2 y después TODA la solicit
   // Un ítem que nadie movió no lleva chip
   const limpia = { id: "x", corte: c3, fechaEnvio: "2026-11-04T23:27:00.000Z", lineas: [] };
   assert.equal(ajusteCorteLinea({ id: "z", estado: "por_cotizar" }, limpia, null), null);
+});
+
+test("partida genérica exige decir qué es; queEs prefiere el detalle", () => {
+  assert.equal(esPartidaGenerica({ nombre: "Bodega / Letrina / Atenciones / EPP/ Etc.", unidad: "Global" }), true);
+  assert.equal(esPartidaGenerica({ nombre: "Materiales Varios", unidad: "Global" }), true);
+  assert.equal(esPartidaGenerica({ nombre: "Herramienta Menor", unidad: "Global" }), true);
+  assert.equal(esPartidaGenerica({ nombre: "Tubo PVC 4\"", unidad: "Lance" }), false);
+  assert.equal(esPartidaGenerica({ nombre: "Cemento GU", unidad: "Bolsa" }), false);
+  assert.equal(queEs({ descripcion: "Bodega / Letrina / Atenciones / EPP/ Etc.", detalle: " Microondas para el personal " }), "Microondas para el personal");
+  assert.equal(queEs({ descripcion: "Tubo PVC 4\"" }), "Tubo PVC 4\"");
 });

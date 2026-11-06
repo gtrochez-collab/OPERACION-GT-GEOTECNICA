@@ -504,6 +504,22 @@ export const saldoDePartida = ({ partida, purchases = [], solicitudes = [], excl
 };
 
 /** Partidas de la receta que un residente puede pedir: compras + libre (no MO, no movilización). */
+/**
+ * Partida GENÉRICA de la receta (6-nov-2026, caso SUP-2026-0008: Johan pidió
+ * "Bodega / Letrina / Atenciones / EPP / Etc." y nadie sabía que era un
+ * microondas): la que no describe un material concreto — unidad Global o un
+ * nombre tipo varios / imprevistos / herramienta menor / atenciones. Al
+ * pedirla, el residente DEBE decir qué es exactamente (`linea.detalle`).
+ */
+export const esPartidaGenerica = (p) => {
+  if (!p) return false;
+  const u = String(p.unidad || "").trim().toLowerCase();
+  const n = String(p.nombre || "").toLowerCase();
+  return u === "global" || u === "" || /\b(varios|etc|imprevist|herramienta menor|bodega|atenciones|miscel|otros)\b/.test(n);
+};
+/** Lo que de verdad se pide: el detalle del residente o, si no hay, el nombre de la partida. */
+export const queEs = (l) => String(l?.detalle || "").trim() || String(l?.descripcion || "");
+
 export const partidasPedibles = (pres) => (pres?.partidas || []).filter(p => p && (p.modulo === "compras" || p.modulo === "libre" || !p.modulo) && (p.nombre || "").trim());
 
 // ── Semáforo de precio ─────────────────────────────────────────────────────
@@ -547,7 +563,7 @@ export const evaluarCotizacion = ({ cotizacion, tasa, cfg, partidaDe = () => nul
     const variacionPct = puPres > 0 ? (puUSD - puPres) / puPres : null;
     const semaforo = sol?.fueraPresupuesto ? "sin_base" : semaforoVariacion(variacionPct, c);
     const pend = sol ? pendienteDeCompra(sol) : null;
-    return { ...l, cantidad, puLps: pu, subtotal, puUSD: round2(puUSD * 100) / 100, puPresupuestoUSD: puPres, variacionPct, semaforo, pendiente: pend, descripcion: l.descripcion || sol?.descripcion || "", unidad: l.unidad || sol?.unidad || "" };
+    return { ...l, cantidad, puLps: pu, subtotal, puUSD: round2(puUSD * 100) / 100, puPresupuestoUSD: puPres, variacionPct, semaforo, pendiente: pend, descripcion: l.descripcion || queEs(sol) || "", unidad: l.unidad || sol?.unidad || "" };
   });
   if (!String(cotizacion?.provider || "").trim()) errores.push("Elegí el proveedor.");
   if (!ls.length) errores.push("La cotización no tiene ítems.");

@@ -440,7 +440,7 @@ export const lineaSupplyDe = (item, c, factor = 1.15, score = null) => {
   const montoIsv = item.monto * factor;
   const conv = l.varilla ? { factor: 1 } : cantidadEnUnidad(item, l.unidad);
   const leido = { nombre: item.nombre, cantidad: item.cantidad, unidad: item.unidad, monto: item.monto, score, ...(conv.factor > 1 ? { convertido: { factor: conv.factor, unidad: conv.presentacion.unidad, cantidad: conv.cantidad } } : {}) };
-  const base = { requestLineId: l.id, requestId: sol.id, justificacion: "", descripcion: l.descripcion, unidad: l.unidad, leido };
+  const base = { requestLineId: l.id, requestId: sol.id, justificacion: "", descripcion: String(l.detalle || "").trim() || l.descripcion, unidad: l.unidad, leido };
   if (l.varilla) {
     const kgL = pesoLanceKg(l.varilla.n, l.varilla.largo), kgU = kgPorUnidad(item.unidad);
     const lances = kgU && kgL ? Math.round((item.cantidad * kgU) / kgL) : item.cantidad;
@@ -461,7 +461,7 @@ export const lineaSupplyDe = (item, c, factor = 1.15, score = null) => {
 export const lineasSupplyDesdeLectura = (r, candidatas, { memoria = [] } = {}) => {
   const aj = ajusteAlTotal(r);
   const recuerdos = new Map((r?.items || []).map(it => [it, recordar(it.nombre, memoria)]));
-  const cands = (candidatas || []).map(c => ({ id: c.l.id, nombre: c.l.varilla ? `${nombreVarilla(c.l.varilla)} ${c.l.descripcion || ""}` : (c.l.descripcion || ""), cantidad: c.l.varilla ? null : c.pendiente, c }));
+  const cands = (candidatas || []).map(c => ({ id: c.l.id, nombre: c.l.varilla ? `${nombreVarilla(c.l.varilla)} ${c.l.descripcion || ""}` : (String(c.l.detalle || "").trim() || c.l.descripcion || ""), cantidad: c.l.varilla ? null : c.pendiente, c }));
   const ajuste = (it, cd, s) => {
     const rec = recuerdos.get(it);
     if (rec && mismoNombre(rec.partida, cd.c.l.descripcion)) s = Math.max(s, 0.92);   // ya se confirmó antes
