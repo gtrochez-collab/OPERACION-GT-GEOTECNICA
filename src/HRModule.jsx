@@ -13,8 +13,9 @@ import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, rProyecto
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES, USUARIOS_DE_BAJA } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
 // Planilla (16-oct-2026): lógica pura + PDF/Excel.
-import { diasDeQuincena, quincenaAnterior as quincenaAnteriorPl, quincenaSiguiente, nombreQuincena, rangoQuincena, etiquetaCorta, asistenciaDe, rachaIncapAlCierre, sumarAsistencias, esHonorarioMensual, horasExtrasDe, armarLinea, totalesLinea, lineaParaGuardar, resumenPlanilla, entraEnPlanilla, diasMostrados, lineasConHe, GRUPOS_CT, METODOS_PAGO } from "./planilla-calc.js";
+import { diasDeQuincena, quincenaAnterior as quincenaAnteriorPl, quincenaSiguiente, nombreQuincena, rangoQuincena, etiquetaCorta, asistenciaDe, rachaIncapAlCierre, sumarAsistencias, esHonorarioMensual, horasExtrasDe, armarLinea, totalesLinea, lineaParaGuardar, resumenPlanilla, entraEnPlanilla, diasMostrados, lineasConHe, GRUPOS_CT, METODOS_PAGO, lineasVoucher, modalidadDe } from "./planilla-calc.js";
 import { exportarPlanillaPDF, exportarPlanillaExcel } from "./planilla-export.js";
+import { descargarVouchers } from "./voucher-pdf.js";
 // Hub de RRHH (20-oct-2026): portal "Mi RRHH" de cada colaborador + bandeja de
 // solicitudes (vacaciones, permisos, constancias, reportes) para RRHH.
 import { KEY_SOLICITUDES, KEY_VINCULOS, vincularEmpleado, siguienteFolio, vacacionDeSolicitud, permisosDeSolicitud, constanciaDoc, textoConstancia, estaAbierta, esAprobador as esAprobadorHub, veTodo as veTodoHub, vacacionesTomadas, rangoCorto as rangoCortoHub } from "./rrhh-solicitudes.js";
@@ -989,6 +990,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const [payAbiertos, setPayAbiertos] = useState({});
   const [payBusy, setPayBusy] = useState(false);
   const [payQ, setPayQ] = useState("");
+  const [payVoucherP, setPayVoucherP] = useState(null);   // planilla abierta en Vouchers
   const [payGrupo, setPayGrupo] = useState("todos");
   const [payNuevo, setPayNuevo] = useState(null);      // mini-form de ingreso/deducción extra
   const [payPer, setPayPer] = useState("");
@@ -1509,7 +1511,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   // sin nada de dinero (planilla/costos) ni el reporte de altas y bajas.
   // "tardanzas" SÍ (ella gestiona las explicaciones), pero los montos del
   // descuento van gateados por hideSalary dentro de la pestaña.
-  const ANA_TABS = ["employees", "contracts", "solicitudes", "asistencia", "mi"];
+  const ANA_TABS = ["employees", "contracts", "payroll", "solicitudes", "asistencia", "mi"];
   const nav = esPortalSolo ? allNav.filter(n => n.id === "mi")
     : isAsistente ? allNav.filter(n => ["asistencia", "mi"].includes(n.id))
     : isPhotoOnly ? allNav.filter(n => ["employees", "mi"].includes(n.id))
@@ -2812,9 +2814,22 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}><button type="button" className="gt-circulo" onClick={() => setSolSub("")} aria-label="Atrás" style={{ width: 34, height: 34, fontSize: 15 }}>←</button><div style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL }}>{solSub === "vacations" ? "Registro de vacaciones" : solSub === "leaves" ? "Registro de permisos" : "Constancias emitidas"}</div><span style={{ fontSize: 12.5, color: "#6E6862" }}>{cc.name}</span></div>
       {solSub === "vacations" ? renderVacs() : solSub === "leaves" ? renderLvs() : renderCons()}
     </div>;
-    const caja = (titulo, n, sub, id) => <div key={id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => setSolSub(id)} onKeyDown={e => { if (e.key === "Enter") setSolSub(id); }} style={{ padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}>
-      <div style={{ flex: 1 }}><div style={{ font: "800 14.5px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</div><div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>{sub}</div></div>
-      <div style={{ font: "800 22px/1 var(--display)", color: CHARCOAL }}>{n}</div><span style={{ color: "#A39C92" }}>›</span>
+    // Cajas GRANDES (9-nov-2026, Gerson: "más grandes, para aprovechar el
+    // espacio"): ícono, cifra grande y los 4 registros más recientes.
+    const caja = (titulo, icono, n, sub, id, recientes) => <div key={id} className="gt-vidrio gt-vidrio-hover gt-sube" role="button" tabIndex={0} onClick={() => setSolSub(id)} onKeyDown={e => { if (e.key === "Enter") setSolSub(id); }} style={{ padding: isMobile ? "16px 16px" : "20px 22px", cursor: "pointer", display: "flex", flexDirection: "column", gap: 14, minHeight: isMobile ? 0 : 280, borderRadius: 22 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <div style={{ width: 46, height: 46, borderRadius: 14, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IcoH d={icono} size={23} /></div>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ font: "800 17px/1.2 var(--display)", color: CHARCOAL }}>{titulo}</div><div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 4, lineHeight: 1.35 }}>{sub}</div></div>
+        <div style={{ font: "800 38px/1 var(--display)", color: CHARCOAL, letterSpacing: "-.02em" }}>{n}</div>
+      </div>
+      {!isMobile && <div style={{ flex: 1, display: "flex", flexDirection: "column", borderTop: "1px solid rgba(44,42,40,.07)" }}>
+        <div className="gt-label" style={{ color: "#A39C92", fontSize: 9, margin: "12px 0 4px" }}>Lo más reciente</div>
+        {recientes.length ? recientes.map(r => <div key={r.k} style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "7px 0", borderBottom: "1px solid rgba(44,42,40,.05)" }}>
+          <span style={{ flex: 1, minWidth: 0, font: "600 13px/1.3 var(--sans)", color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nombre}</span>
+          <span style={{ font: "500 12px/1.3 var(--sans)", color: "#6E6862", whiteSpace: "nowrap" }}>{r.detalle}</span>
+        </div>) : <div style={{ fontSize: 12.5, color: "#A39C92", padding: "8px 0" }}>Nada registrado todavía.</div>}
+      </div>}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, font: "700 12.5px/1 var(--sans)", color: "var(--naranja-tinta)" }}>Ver todo el registro <span aria-hidden>›</span></div>
     </div>;
     const anio = hoyISO().slice(0, 4);
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -2823,9 +2838,12 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       <div>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "6px 2px 10px" }}><span style={{ font: "800 16px/1 var(--display)", color: CHARCOAL }}>Registros</span><span style={{ font: "600 13px/1 var(--sans)", color: "#A39C92" }}>{cc.name} · lo aprobado y lo cargado a mano</span></div>
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 10 }}>
-          {caja("Vacaciones", cv.filter(v => String(v.startDate || "").startsWith(anio)).length, `registradas en ${anio} · marcan "V" en la asistencia`, "vacations")}
-          {caja("Permisos", cl.filter(l => String(l.date || "").startsWith(anio)).length, `en ${anio} · con o sin goce`, "leaves")}
-          {caja("Constancias", cc2.filter(c => String(c.date || "").startsWith(anio)).length, `emitidas en ${anio}`, "constancias")}
+          {caja("Vacaciones", ICO_HUB.vacaciones, cv.filter(v => String(v.startDate || "").startsWith(anio)).length, `registradas en ${anio} · marcan "V" en la asistencia`, "vacations",
+            cv.slice().sort((a, b) => String(b.startDate || "").localeCompare(String(a.startDate || ""))).slice(0, 4).map(v => ({ k: v.id, nombre: en(v.employeeId), detalle: `${rangoCortoHub(v.startDate, v.endDate)}${v.days ? ` · ${v.days} d` : ""}` })))}
+          {caja("Permisos", ICO_HUB.permiso, cl.filter(l => String(l.date || "").startsWith(anio)).length, `en ${anio} · con o sin goce`, "leaves",
+            cl.slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))).slice(0, 4).map(l => ({ k: l.id, nombre: en(l.employeeId), detalle: `${fmt(l.date)}${l.type ? ` · ${l.type}` : ""}` })))}
+          {caja("Constancias", ICO_HUB.constancia, cc2.filter(c => String(c.date || "").startsWith(anio)).length, `emitidas en ${anio}`, "constancias",
+            cc2.slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))).slice(0, 4).map(c => ({ k: c.id, nombre: en(c.employeeId), detalle: `${c.type === "laboral" ? "Laboral" : "De trabajo"} · ${fmt(c.date)}` })))}
         </div>
       </div>
     </div>;
@@ -4439,6 +4457,18 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   // Lógica pura en planilla-calc.js (probada); PDF y Excel en planilla-export.
   // ═══════════════════════════════════════════════════════════════════════
   const puedePlanilla = userRole === "admin" || userRole === "tesoreria";
+  // VOUCHERS (9-nov-2026, Gerson): Ana entra a Planilla SOLO para generar los
+  // comprobantes de pago de la gente — no genera, no edita, no publica.
+  const puedeVouchers = puedePlanilla || isAnaRH;
+  const soloVouchers = isAnaRH;
+  const abrirVouchers = (p) => { setPayVoucherP(p); setPayQ(""); setPayVista("vouchers"); };
+  const bajarVouchers = async (p, lines) => {
+    if (p.estado !== "publicada" && !confirm(`La planilla ${etiquetaCorta(p.periodo, p.quincena)} de ${cc.name} todavía está en BORRADOR: los montos pueden cambiar.\n\n¿Generar los vouchers igual?`)) return;
+    setPayBusy(true);
+    try { const n = await descargarVouchers({ empresa: co, periodo: p.periodo, quincena: p.quincena, lines, borrador: p.estado !== "publicada" }); if (!n) alert("No hay colaboradores para generar."); }
+    catch (e) { alert(`No se pudieron generar los vouchers: ${e?.message || e}`); }
+    finally { setPayBusy(false); }
+  };
   const planillasEmpresa = cp.slice().sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`));
   // Sugerencia: la más RECIENTE entre "la que sigue a la última planilla" y
   // "la última quincena con asistencia registrada" — así la primera vez
@@ -4593,7 +4623,48 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const chipPay = (txt, color = "#5C5853", bg = "rgba(44,42,40,.06)") => <span key={txt} style={{ padding: "4px 9px", borderRadius: 999, background: bg, color, font: "700 11px/1 var(--sans)", whiteSpace: "nowrap" }}>{txt}</span>;
   const estadoChip = (p) => p.estado === "publicada" ? chipPay("Publicada", "#3E8E5A", "rgba(62,142,90,.10)") : chipPay("Borrador", ORANGE_DARK, "rgba(232,118,45,.12)");
 
-  const renderPayroll = () => payVista === "editor" && payDraft ? renderPlanillaEditor() : renderPlanillaLista();
+  const renderPayroll = () => payVista === "vouchers" && payVoucherP && pays.some(x => x.id === payVoucherP.id) && payVoucherP.company === co ? renderVouchers() : payVista === "editor" && payDraft && !soloVouchers ? renderPlanillaEditor() : renderPlanillaLista();
+
+  const renderVouchers = () => {
+    const p = pays.find(x => x.id === payVoucherP.id) || payVoucherP;
+    const todas = lineasVoucher(p.lines || []);
+    const q = payQ.trim().toLowerCase();
+    const rows = todas.filter(l => !q || `${l.name} ${l.pos} ${l.dni}`.toLowerCase().includes(q)).sort((a, b) => String(a.name).localeCompare(String(b.name), "es"));
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div className="gt-vidrio gt-sube" style={{ padding: isMobile ? 14 : "16px 22px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <button type="button" className="gt-circulo" onClick={() => setPayVista("lista")} aria-label="Volver a planillas" style={{ width: 36, height: 36, fontSize: 15 }}>←</button>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><span style={{ font: "800 17px/1.2 var(--display)", color: CHARCOAL }}>Vouchers · {nombreQuincena(p.periodo, p.quincena)}</span>{estadoChip(p)}</div>
+          <div style={{ font: "500 12.5px/1.4 var(--sans)", color: "#6E6862", marginTop: 3 }}>{cc.name} · {rangoQuincena(p.periodo, p.quincena)} · {todas.length} comprobantes</div>
+        </div>
+        <button className="gt-btn gt-btn-primario" disabled={payBusy || !todas.length} onClick={() => bajarVouchers(p, todas)} style={{ minHeight: 40, padding: "10px 18px", fontSize: 13.5 }}>{payBusy ? "Generando…" : `Descargar todos (${todas.length})`}</button>
+      </div>
+      <div className="gt-vidrio" style={{ padding: 10, display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A39C92" strokeWidth="2" strokeLinecap="round" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <input type="search" value={payQ} onChange={e => setPayQ(e.target.value)} placeholder="Buscar colaborador" style={{ ...PAY_IN, width: "100%", textAlign: "left", fontWeight: 500, paddingLeft: 38 }} />
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map((l, i) => {
+          const e = emps.find(x => x.id === l.eid);
+          const foto = e?.photo?.fileId ? photoCache[e.photo.fileId] : null;
+          const t = totalesLinea(l);
+          return <div key={l.id} className="gt-vidrio gt-sube" style={{ borderRadius: 18, padding: isMobile ? "10px 12px" : "11px 18px", display: "grid", gridTemplateColumns: isMobile ? "36px minmax(0,1fr) auto" : "36px minmax(0,1.5fr) 120px 150px auto", alignItems: "center", gap: isMobile ? 10 : 14, animationDelay: `${Math.min(i, 14) * 20}ms` }}>
+            <EmpAvatar name={l.name} dataUrl={foto} size={36} borderRadius={11} suave />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "700 14px/1.25 var(--sans)", color: CHARCOAL }}>{l.name}</div>
+              <div style={{ font: "500 12px/1.3 var(--sans)", color: "#6E6862", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.pos || "Sin cargo"}{isMobile ? ` · ${fmtL(t.totalConHe)}` : ""}</div>
+            </div>
+            {!isMobile && <div style={{ font: "600 12.5px/1.2 var(--sans)", color: "#5C5853" }}>{modalidadDe(l)}</div>}
+            {!isMobile && <div style={{ textAlign: "right" }}><div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>{fmtL(t.totalConHe)}</div>{t.heMonto > 0 && <div style={{ font: "600 11px/1 var(--sans)", color: "#6E6862", marginTop: 5 }}>incluye HE {fmtL(t.heMonto)}</div>}</div>}
+            <button disabled={payBusy} onClick={() => bajarVouchers(p, [l])} style={{ minHeight: 36, padding: "8px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>Voucher</button>
+          </div>;
+        })}
+        {rows.length === 0 && <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>{todas.length ? "Nadie coincide con la búsqueda." : "Esta planilla no tiene colaboradores."}</div>}
+      </div>
+    </div>;
+  };
 
   const renderPlanillaLista = () => {
     const sug = quincenaSugerida();
@@ -4619,7 +4690,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       {Object.keys(porAnio).sort((a, b) => b.localeCompare(a)).map(y => <div key={y}>
         <div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL, margin: "6px 2px 10px" }}>{y}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {porAnio[y].map((p, i) => <div key={p.id} role="button" tabIndex={0} className="gt-vidrio gt-vidrio-hover gt-sube" onClick={() => abrirPlanilla(p)} onKeyDown={(ev) => { if (ev.key === "Enter") abrirPlanilla(p); }}
+          {porAnio[y].map((p, i) => <div key={p.id} role="button" tabIndex={0} className="gt-vidrio gt-vidrio-hover gt-sube" onClick={() => soloVouchers ? abrirVouchers(p) : abrirPlanilla(p)} onKeyDown={(ev) => { if (ev.key === "Enter") (soloVouchers ? abrirVouchers(p) : abrirPlanilla(p)); }}
             style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) auto" : "minmax(0,1.4fr) 120px 110px 160px minmax(0,1fr) auto", alignItems: "center", gap: 14, padding: isMobile ? "12px 14px" : "14px 20px", cursor: "pointer", borderRadius: 18, animationDelay: `${i * 25}ms` }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ font: "700 14.5px/1.2 var(--sans)", color: CHARCOAL }}>{nombreQuincena(p.periodo, p.quincena)}</div>
@@ -4631,6 +4702,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             {!isMobile && <div style={{ font: "500 12px/1.3 var(--sans)", color: "#A39C92", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.estado === "publicada" && p.publicadaAt ? `Publicada el ${fmt(p.publicadaAt)}${p.publicadaPor ? ` · ${p.publicadaPor}` : ""}` : `Generada el ${fmt(p.updatedAt || p.date)}${p.updatedBy || p.createdBy ? ` · ${p.updatedBy || p.createdBy}` : ""}`}</div>}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {isMobile && <span style={{ font: "800 14px/1 var(--display)", color: CHARCOAL }}>{fmtL(p.total)}</span>}
+              {puedeVouchers && !soloVouchers && <span role="button" onClick={(ev) => { ev.stopPropagation(); abrirVouchers(p); }} style={{ padding: "7px 12px", borderRadius: 999, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.8)", color: CHARCOAL, font: "700 12px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>Vouchers</span>}
               {userRole === "admin" && <span role="button" aria-label="Eliminar planilla" onClick={(ev) => { ev.stopPropagation(); borrarPlanilla(p); }} style={{ color: "#A39C92", font: "600 12px/1 var(--sans)", cursor: "pointer", padding: 6 }}>Eliminar</span>}
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A39C92" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="m9 6 6 6-6 6" /></svg>
             </div>
@@ -4929,6 +5001,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           <span style={{ font: "600 12.5px/1.3 var(--sans)", color: "#6E6862", marginRight: "auto" }}>{payBusy ? "Un momento…" : payParte === "he" ? `Horas extras · ${res.hePersonas} colaboradores · ${fmtL(res.he)}` : `Salarios · ${res.personas} colaboradores · ${fmtL(res.neto)}`}</span>
           <button disabled={payBusy} onClick={() => descargarPlanilla("excel")} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{payParte === "he" ? "Excel de horas extras" : "Excel"}</button>
           <button disabled={payBusy} onClick={() => descargarPlanilla("pdf")} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{payParte === "he" ? "PDF de horas extras" : "PDF"}</button>
+          {d.id && pays.some(x => x.id === d.id) && <button disabled={payBusy} onClick={() => abrirVouchers(pays.find(x => x.id === d.id))} title="Comprobantes de lo GUARDADO" style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>Vouchers</button>}
           {editable && <button disabled={payBusy} onClick={async () => { if (await guardarPlanilla(d.estado === "publicada" ? "publicada" : "borrador")) alert(d.estado === "publicada" ? "Cambios guardados en la planilla publicada." : "Borrador guardado."); }} style={{ minHeight: 38, padding: "9px 16px", borderRadius: 999, border: "none", background: "#3E8E5A", color: "#fff", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{d.estado === "publicada" ? "Guardar cambios" : "Guardar borrador"}</button>}
           {editable && d.estado !== "publicada" && <button disabled={payBusy} onClick={async () => { if (!confirm(`¿Publicar las planillas ${etiquetaCorta(d.periodo, d.quincena)} de ${cc.name}?\n\nSalarios: ${fmtL(res.neto)}\nHoras extras: ${fmtL(res.he)}\n\nQuedan como las planillas oficiales de la quincena. Después igual podés corregirlas.`)) return; if (await guardarPlanilla("publicada")) alert("Planilla publicada. Ya podés descargar el PDF y el Excel."); }} className="gt-btn gt-btn-primario" style={{ minHeight: 38, padding: "9px 18px", fontSize: 13 }}>Publicar</button>}
         </div>

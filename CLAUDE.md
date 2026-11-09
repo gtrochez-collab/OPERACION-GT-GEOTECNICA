@@ -1109,6 +1109,20 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   3,000, Nacho 1,019 vs 1,000, Teófilo 1,980 vs 2,000, coop Nelson 1,056 vs
   1,294.50, Mauro salario 0 vs 54,000; honorarios mensuales según ella:
   Arturo, Gustavo, Mauro, Melissa y Oscar.
+  **VOUCHERS / comprobantes de pago (9-nov-2026, Gerson)**: `src/voucher-pdf.js`
+  (`descargarVouchers`, jsPDF carta vertical, UNO por colaborador y por hoja,
+  estilo único de reportes: logo de la empresa, tarjeta del colaborador, 4
+  cifras, Ingresos y Deducciones lado a lado, Horas extras abajo, total en
+  tinte naranja, firmas RRHH / Recibí conforme) + `conceptosVoucher` /
+  `lineasVoucher` / `sinVoucher` en planilla-calc (`tests/voucher.test.mjs`).
+  ⚠ El de **Gerson Trochez NUNCA se genera** (pedido explícito). Vista
+  `payVista "vouchers"` (`renderVouchers`): Descargar todos (N) + Voucher por
+  persona; botón "Vouchers" en cada planilla de la lista y en el editor (de lo
+  GUARDADO). Borrador → confirm y chip BORRADOR en el PDF. **Ana**
+  (`soloVouchers`) ve la pestaña Planilla SOLO para esto: la fila abre
+  Vouchers, no el editor, y no genera/edita/publica; cambia de empresa con el
+  selector de siempre. Las cajas de Registros de Solicitudes (Vacaciones ·
+  Permisos · Constancias) son GRANDES con los 4 más recientes.
   **HUB DE RRHH (20-oct-2026, pedido de Gerson: "un hub de RRHH para todos:
   ver su asistencia de GeoClock, pedir vacaciones, permisos, constancias y
   reportar problemas; Ana carga por la gente de campo y yo apruebo; que

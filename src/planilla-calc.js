@@ -397,3 +397,45 @@ export const fmtL = (n) => `L ${(num(n)).toLocaleString("en-US", { minimumFracti
 
 /** Líneas que tienen horas extras (la planilla de horas extras va aparte). */
 export const lineasConHe = (lines) => (lines || []).filter(l => num(l.he?.monto) > 0);
+
+// ── VOUCHERS / comprobantes de pago (9-nov-2026) ───────────────────────────
+// Gerson: "el de Gerson Trochez nunca lo genere".
+const sinAcentos = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+export const sinVoucher = (l) => { const n = sinAcentos(l?.name); return n.includes("gerson") && n.includes("trochez"); };
+export const lineasVoucher = (lines) => (lines || []).filter(l => !sinVoucher(l));
+const MODALIDAD = { permanent: "Permanente", temporary: "Temporal", honorarios: "Honorarios" };
+export const modalidadDe = (l) => MODALIDAD[l?.ct] || "—";
+/** Días del período / pagados y los renglones de ingresos y deducciones del comprobante. */
+export const conceptosVoucher = (l) => {
+  const t = totalesLinea(l);
+  const esHon = l.ct === "honorarios", mensual = esHon && l.honorariosPago === "mensual";
+  const diasOrd = l.diasFueraRango ? l.diasEfectivos : l.totalDays;
+  const pl = (n, s, p) => `${n} ${n === 1 ? s : p}`;
+  const ing = [
+    { concepto: `${esHon ? (mensual ? "Honorarios del mes" : "Honorarios quincenales") : "Salario ordinario quincenal"}${diasOrd ? ` (${pl(diasOrd, "día", "días")})` : ""}`, monto: t.ordinario },
+    { concepto: "Bonificación", monto: num(l.bq) },
+    { concepto: `Domingos trabajados${l.domTrab || l.domTrabTriple ? ` (${num(l.domTrab) + num(l.domTrabTriple)})` : ""}`, monto: num(l.bonoDomingo) },
+    { concepto: `Feriados trabajados${l.ferTrab ? ` (${l.ferTrab})` : ""}`, monto: num(l.bonoFeriado) },
+    ...(l.extras || []).filter(x => x.tipo === "ingreso").map(x => ({ concepto: x.concepto || "Otro ingreso", monto: num(x.monto) })),
+  ].filter((r, i) => i === 0 || r.monto > 0);
+  const ded = [
+    { concepto: `No se presentó${l.diasNSP ? ` (${pl(l.diasNSP, "día", "días")})` : ""}`, monto: num(l.descuentoNSP) },
+    { concepto: `Llegadas tarde${l.tardes ? ` (${l.tardes})` : ""}`, monto: num(l.descuentoHoras) },
+    { concepto: `Incapacidad · ${pl(num(l.diasIncapIhss), "día", "días")} al 34 %`, monto: num(l.descuentoIncap) },
+    { concepto: esHon && !mensual ? "ISR honorarios (12.5 %)" : "Impuesto sobre la renta (ISR)", monto: num(l.isr) },
+    { concepto: "Seguro social (IHSS)", monto: num(l.ihss) },
+    { concepto: "Régimen de aportaciones privadas (RAP)", monto: num(l.rap) },
+    { concepto: "Cooperativa", monto: num(l.coop) },
+    ...(l.extras || []).filter(x => x.tipo === "deduccion").map(x => ({ concepto: x.concepto || "Otra deducción", monto: num(x.monto) })),
+  ].filter(r => r.monto > 0);
+  const he = l.he && num(l.he.monto) > 0 ? [
+    ...HE_BANDAS.map(b => ({ concepto: `${b.label} · ×${b.mult}`, hrs: num(l.he.bandas?.[b.k]?.hrs), monto: num(l.he.bandas?.[b.k]?.monto) })),
+    { concepto: "Domingo · ×2", hrs: num(l.he.bandas?.dom?.hrs), monto: num(l.he.bandas?.dom?.monto) },
+  ].filter(r => r.hrs > 0) : [];
+  return {
+    t, ingresos: ing, deducciones: ded, he,
+    // Días pagados = los del período (o los que estuvo, si entró/salió a mitad) menos los NSP.
+    diasPeriodo: num(l.totalDays), diasPagados: Math.max(0, r2(num(diasOrd) - num(l.diasNSP))),
+    totalIngresos: t.bruto, totalDeducciones: t.deducciones, neto: t.neto, heMonto: t.heMonto, totalConHe: t.totalConHe,
+  };
+};
