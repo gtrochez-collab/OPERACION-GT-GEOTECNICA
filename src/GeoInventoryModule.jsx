@@ -268,9 +268,9 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, esta
     setExistente(it);
     if (it.tipo === "cantidad") { setSumar(""); }
     else if (it.tipo === "caja") setF(p => ({ ...p, nombre: it.caja?.contenido || it.nombre, tipo: "caja", categoria: it.categoria, cajaMarca: it.caja?.marca || "", tamano: it.caja?.tamano || "", capacidad: String(it.caja?.capacidad || it.caja?.cantidad || ""), fotoDe: it.foto || null, foto: null, foto2De: it.foto2 || null, foto2: null, condicion: it.condicion || p.condicion }));
-    else setF(p => ({ ...p, nombre: it.nombre, tipo: "individual", categoria: it.categoria, marca: it.marca || "", modelo: it.modelo || "", herrTipo: it.herramienta?.tipo || p.herrTipo, diametro: it.herramienta?.diametro || "", unidad: it.unidad || p.unidad, fotoDe: it.foto || null, foto: null }));
+    else setF(p => ({ ...p, nombre: it.nombre, tipo: "individual", categoria: it.categoria, marca: it.marca || "", modelo: it.modelo || "", herrTipo: it.herramienta?.tipo || p.herrTipo, diametro: it.herramienta?.diametro || "", unidad: it.unidad || p.unidad, fotoDe: it.foto || null, foto: null, foto2De: it.foto2 || null, foto2: null }));
   };
-  const limpiarExistente = () => { setExistente(null); setSumar(""); setF(p => ({ ...p, fotoDe: null })); };
+  const limpiarExistente = () => { setExistente(null); setSumar(""); setF(p => ({ ...p, fotoDe: null, foto2De: null })); };
   const validar = () => {
     if (!ubic) return "Elegí la ubicación donde estás cargando.";
     if (existente?.tipo === "cantidad") return num(sumar) > 0 ? null : "Escribí cuánto vas a sumar.";
@@ -328,17 +328,17 @@ function AgregarFormImpl({ ubicaciones, ubicFija, setUbicFija, items, emps, esta
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>{linkGaleria}{(f.foto || f.fotoDe) && <button type="button" onClick={() => setF(p => ({ ...p, foto: null, fotoDe: null }))} style={{ background: "none", border: "none", color: C_ROJO.color, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12, padding: 0 }}>Quitar foto</button>}</div>
         </div>
       </div>
-      {esCajaF && <div style={{ display: "flex", gap: 12, alignItems: "center", padding: 10, borderRadius: 14, background: "rgba(44,42,40,.04)" }}>
-        <label title="Foto de la caja" style={{ width: 64, height: 64, flexShrink: 0, borderRadius: 12, border: f.foto2 || f.foto2De ? "none" : `1.5px dashed ${ORANGE}`, background: "rgba(232,118,45,.06)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--naranja-tinta)", cursor: procesando ? "wait" : "pointer", overflow: "hidden" }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", padding: 10, borderRadius: 14, background: "rgba(44,42,40,.04)" }}>
+        <label title={esCajaF ? "Foto de la caja" : "Segunda foto"} style={{ width: 64, height: 64, flexShrink: 0, borderRadius: 12, border: f.foto2 || f.foto2De ? "none" : `1.5px dashed ${ORANGE}`, background: "rgba(232,118,45,.06)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--naranja-tinta)", cursor: procesando ? "wait" : "pointer", overflow: "hidden" }}>
           {f.foto2 ? <img src={f.foto2.dataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : f.foto2De ? <Foto foto={f.foto2De} size={64} radius={12} categoria={f.categoria} /> : <Ico d={ICO.camara} size={22} />}
           <input type="file" accept="image/*" capture="environment" disabled={procesando} style={{ display: "none" }} onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; tomarFoto2(file); }} />
         </label>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 800, fontSize: 13 }}>Foto de la caja <span style={{ fontWeight: 600, color: "var(--text-3)" }}>(opcional)</span></div>
-          <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Cómo se ve la caja con lo que trae. Solo se ve al abrir la caja; las tarjetas siguen con la foto de arriba.</div>
+          <div style={{ fontWeight: 800, fontSize: 13 }}>{esCajaF ? "Foto de la caja" : "Segunda foto"} <span style={{ fontWeight: 600, color: "var(--text-3)" }}>(opcional)</span></div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{esCajaF ? "Cómo se ve la caja con lo que trae." : "Ej. la caja o la placa con el número de serie."} Solo se ve al abrir el artículo; las tarjetas siguen con la foto de arriba.</div>
         </div>
         {(f.foto2 || f.foto2De) && <button type="button" onClick={() => setF(p => ({ ...p, foto2: null, foto2De: null }))} style={{ background: "none", border: "none", color: C_ROJO.color, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12, padding: 0 }}>Quitar</button>}
-      </div>}
+      </div>
       {sugeridos.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={LBL}>¿Es alguno de estos? Tocalo y no se duplica</div>
         {sugeridos.map(it => <button key={it.id} type="button" onClick={() => elegirExistente(it)} style={{ display: "flex", alignItems: "center", gap: 10, padding: 7, borderRadius: 12, border: "1px solid rgba(44,42,40,.1)", background: "rgba(255,255,255,.8)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", minHeight: 48 }}>
@@ -519,7 +519,7 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms: permsBa
     <div style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: isMobile ? "wrap" : "nowrap" }}>
       <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
         <Foto foto={item.foto} size={isMobile ? 120 : 150} radius={18} categoria={item.categoria} onClick={() => item.foto?.fileId && verFoto(item.foto)} />
-        {item.tipo === "caja" && item.foto2?.fileId && <Foto foto={item.foto2} size={isMobile ? 120 : 150} radius={18} categoria={item.categoria} onClick={() => verFoto(item.foto2)} />}
+        {item.foto2?.fileId && <Foto foto={item.foto2} size={isMobile ? 120 : 150} radius={18} categoria={item.categoria} onClick={() => verFoto(item.foto2)} />}
       </div>
       <div style={{ flex: 1, minWidth: 200, display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -632,12 +632,13 @@ function EditarFormImpl({ item, onSave, onClose, ocupado, isMobile }) {
         <input type="file" accept="image/*" style={{ display: "none" }} disabled={procesando} onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setProcesando(true); try { u("foto", { dataUrl: await comprimirFoto(file), name: file.name }); } catch (err) { alert(err?.message || err); } finally { setProcesando(false); } }} />
       </label>
     </div>
-    {item.tipo === "caja" && <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-      {f.foto2 ? <img src={f.foto2.dataUrl} alt="" style={{ width: 72, height: 72, borderRadius: 14, objectFit: "cover" }} /> : item.foto2 ? <Foto foto={item.foto2} size={72} radius={14} categoria={item.categoria} /> : <div style={{ width: 72, height: 72, borderRadius: 14, background: "rgba(44,42,40,.05)" }} />}
+    {<div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+      {f.foto2 ? <img src={f.foto2.dataUrl} alt="" style={{ width: 72, height: 72, borderRadius: 14, objectFit: "cover" }} /> : item.foto2 && !f.quitarFoto2 ? <Foto foto={item.foto2} size={72} radius={14} categoria={item.categoria} /> : <div style={{ width: 72, height: 72, borderRadius: 14, background: "rgba(44,42,40,.05)" }} />}
       <label style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: `1px dashed ${ORANGE}`, color: "var(--naranja-tinta)", fontSize: 13, fontWeight: 800, cursor: "pointer", background: "rgba(232,118,45,.06)" }}>
-        <Ico d={ICO.camara} size={18} /> {procesando ? "Procesando…" : item.foto2 || f.foto2 ? "Cambiar foto de la caja" : "Agregar foto de la caja"}
-        <input type="file" accept="image/*" style={{ display: "none" }} disabled={procesando} onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setProcesando(true); try { u("foto2", { dataUrl: await comprimirFoto(file), name: file.name }); } catch (err) { alert(err?.message || err); } finally { setProcesando(false); } }} />
+        <Ico d={ICO.camara} size={18} /> {procesando ? "Procesando…" : (item.foto2 && !f.quitarFoto2) || f.foto2 ? (item.tipo === "caja" ? "Cambiar foto de la caja" : "Cambiar segunda foto") : (item.tipo === "caja" ? "Agregar foto de la caja" : "Agregar segunda foto")}
+        <input type="file" accept="image/*" style={{ display: "none" }} disabled={procesando} onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; setProcesando(true); try { setF(p => ({ ...p, foto2: null, quitarFoto2: false })); u("foto2", { dataUrl: await comprimirFoto(file), name: file.name }); } catch (err) { alert(err?.message || err); } finally { setProcesando(false); } }} />
       </label>
+      {((item.foto2 && !f.quitarFoto2) || f.foto2) && <button type="button" onClick={() => setF(p => ({ ...p, foto2: null, quitarFoto2: !!item.foto2 }))} style={{ background: "none", border: "none", color: C_ROJO.color, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12, padding: 0 }}>Quitar</button>}
     </div>}
     {item.tipo === "caja"
       ? <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
@@ -773,7 +774,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   // quedó en cache al pintarse en las tarjetas). Ids únicos: muchas cajas
   // iguales comparten la misma foto.
   useEffect(() => {
-    const ids = [...new Set(items.filter(x => x.tipo === "caja" && !x.eliminado && x.foto2?.fileId).map(x => x.foto2.fileId))];
+    const ids = [...new Set(items.filter(x => !x.eliminado && x.foto2?.fileId).map(x => x.foto2.fileId))];
     ids.forEach(id => precalentarFoto(id));
   }, [items]);
   const [ubicGuardadas, setUbicGuardadas] = useState([]);
@@ -926,9 +927,9 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
         // el estante tiene que ser de ESA ubicación (la memoria del form puede traer uno de otra)
         const estanteId = d.estanteId && estantesDe(ubicGuardadas, d.ubicacionId).some(e => e.id === d.estanteId) ? d.estanteId : "";
         for (let k = 0; k < n; k++) {
-          const base = { id: uid(), codigo: codigos[k], tipo: d.tipo, nombre: String(d.nombre).trim(), categoria: cat.id, foto: d.fotoRef !== undefined ? d.fotoRef : fotoRef, marca: d.marca || "", modelo: d.modelo || "", serie: n > 1 ? "" : (d.serie || ""), notas: d.notas || "", ...(llevaCondicion(d.tipo, cat.id) && d.condicion ? { condicion: d.condicion } : {}), createdAt: at, createdBy: userKey, createdByNombre: userName, updatedAt: at };
+          const base = { id: uid(), codigo: codigos[k], tipo: d.tipo, nombre: String(d.nombre).trim(), categoria: cat.id, foto: d.fotoRef !== undefined ? d.fotoRef : fotoRef, ...(foto2Ref && d.fotoRef === undefined ? { foto2: foto2Ref } : {}), marca: d.marca || "", modelo: d.modelo || "", serie: n > 1 ? "" : (d.serie || ""), notas: d.notas || "", ...(llevaCondicion(d.tipo, cat.id) && d.condicion ? { condicion: d.condicion } : {}), createdAt: at, createdBy: userKey, createdByNombre: userName, updatedAt: at };
           const it = d.tipo === "caja"
-            ? { ...base, ...(foto2Ref ? { foto2: foto2Ref } : {}), marca: "", nombre: nombreCaja({ contenido: String(d.contenido || d.nombre).trim(), marca: d.cajaMarca || d.marca || "", tamano: d.tamano || "" }), ubicacionId: d.ubicacionId, estanteId, nivel: estanteId ? String(d.nivel || "1") : "", caja: { contenido: String(d.contenido || d.nombre).trim(), marca: d.cajaMarca || d.marca || "", tamano: d.tamano || "", cantidad: num(d.capacidad || d.cantidad), capacidad: num(d.capacidad || d.cantidad) } }
+            ? { ...base, marca: "", nombre: nombreCaja({ contenido: String(d.contenido || d.nombre).trim(), marca: d.cajaMarca || d.marca || "", tamano: d.tamano || "" }), ubicacionId: d.ubicacionId, estanteId, nivel: estanteId ? String(d.nivel || "1") : "", caja: { contenido: String(d.contenido || d.nombre).trim(), marca: d.cajaMarca || d.marca || "", tamano: d.tamano || "", cantidad: num(d.capacidad || d.cantidad), capacidad: num(d.capacidad || d.cantidad) } }
             : d.tipo === "individual"
             ? { ...base, ubicacionId: d.ubicacionId, estanteId, nivel: estanteId ? String(d.nivel || "1") : "", estado: d.estado || estadoInicial(cat.id), asignadoA: k === 0 ? (d.asignadoA || "") : "", asignadoNombre: k === 0 ? (d.asignadoNombre || "") : "", ...(cat.id === "herramientas_perforacion" ? { herramienta: { tipo: d.herrTipo || d.herramienta?.tipo || "broca", diametro: String(d.diametro || d.herramienta?.diametro || "").trim() } } : {}) }
             : { ...base, unidad: String(d.unidad || "Unidad").trim(), estante: d.estante || "", stock: { [d.ubicacionId]: num(d.cantidad) }, ...(estanteId ? { posiciones: { [d.ubicacionId]: { estanteId, nivel: String(d.nivel || "1") } } } : {}) };
@@ -966,8 +967,8 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     let foto2Ref;
     if (f.foto2?.dataUrl) { try { foto2Ref = await subirFoto(f.foto2); } catch (e) { alert(e.message); return; } }
     const cambios = item.tipo === "caja"
-      ? (() => { const c = { ...(item.caja || {}), contenido: String(f.contenido).trim(), marca: String(f.cajaMarca || "").trim(), tamano: f.tamano || "", capacidad: Math.max(num(f.capacidad), num(item.caja?.cantidad)) || num(item.caja?.cantidad) }; return { nombre: nombreCaja(c), categoria: f.categoria, caja: c, notas: f.notas, ...(f.condicion ? { condicion: f.condicion } : {}), ...(fotoRef ? { foto: fotoRef } : {}), ...(foto2Ref ? { foto2: foto2Ref } : {}) }; })()
-      : { nombre: String(f.nombre).trim(), categoria: f.categoria, ...(f.condicion && llevaCondicion(item.tipo, f.categoria) ? { condicion: f.condicion } : {}), marca: f.marca, modelo: f.modelo, serie: f.serie, notas: f.notas, ...(item.tipo === "cantidad" ? { unidad: String(f.unidad || "Unidad").trim(), estante: f.estante } : {}), ...(fotoRef ? { foto: fotoRef } : {}), ...(f.categoria === "herramientas_perforacion" && item.tipo === "individual" ? { herramienta: { tipo: f.herrTipo, diametro: String(f.diametro).trim() } } : {}) };
+      ? (() => { const c = { ...(item.caja || {}), contenido: String(f.contenido).trim(), marca: String(f.cajaMarca || "").trim(), tamano: f.tamano || "", capacidad: Math.max(num(f.capacidad), num(item.caja?.cantidad)) || num(item.caja?.cantidad) }; return { nombre: nombreCaja(c), categoria: f.categoria, caja: c, notas: f.notas, ...(f.condicion ? { condicion: f.condicion } : {}), ...(fotoRef ? { foto: fotoRef } : {}), ...(foto2Ref ? { foto2: foto2Ref } : f.quitarFoto2 ? { foto2: null } : {}) }; })()
+      : { nombre: String(f.nombre).trim(), categoria: f.categoria, ...(f.condicion && llevaCondicion(item.tipo, f.categoria) ? { condicion: f.condicion } : {}), marca: f.marca, modelo: f.modelo, serie: f.serie, notas: f.notas, ...(item.tipo === "cantidad" ? { unidad: String(f.unidad || "Unidad").trim(), estante: f.estante } : {}), ...(fotoRef ? { foto: fotoRef } : {}), ...(foto2Ref ? { foto2: foto2Ref } : f.quitarFoto2 ? { foto2: null } : {}), ...(f.categoria === "herramientas_perforacion" && item.tipo === "individual" ? { herramienta: { tipo: f.herrTipo, diametro: String(f.diametro).trim() } } : {}) };
     // Si cambia de familia de estados (herramienta ↔ equipo), el estado se traduce
     if (item.tipo === "individual" && (f.categoria === "herramientas_perforacion") !== esHerramienta(item)) cambios.estado = estadoInicial(f.categoria);
     const ok = await accionSobre(item, { accion: "editar", cambios });

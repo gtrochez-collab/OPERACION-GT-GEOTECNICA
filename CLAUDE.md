@@ -2391,7 +2391,12 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   "Foto de la caja"), en Editar y "Otra igual" la copia. SOLO se ve en la ficha
   (al lado de la foto principal); tarjetas y listas siguen con `foto`.
   Se PRE-DECODIFICA en segundo plano al cargar (`precalentarFoto`) para que
-  salga al instante. **Condición** (20-oct-2026): campo aditivo `condicion`
+  salga al instante.
+  **9-nov-2026 — segunda foto para TODO artículo** (Gerson: "la impresora y
+  la foto de su caja"): `foto2` ya no es solo de cajas — por cantidad e
+  individuales también ("Segunda foto · ej. la caja o la placa con el número
+  de serie"); "Otro igual" la copia, Editar la cambia o la quita
+  (`quitarFoto2` → `foto2: null`). La portada sigue siendo `foto`. **Condición** (20-oct-2026): campo aditivo `condicion`
   nuevo | usado_bueno | usado_malo (`CONDICIONES`) en cajas, por cantidad y
   herramientas (los individuales comunes ya tienen Bueno/Regular/Malo); se
   elige al agregar (default Nuevo, se recuerda para el siguiente), chip en la
