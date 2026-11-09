@@ -86,9 +86,13 @@ export const idProyecto = (short) => `proy:${short}`;
  * Devuelve TODAS las ubicaciones visibles, en orden: almacén, oficinas, vault,
  * taller, proyectos (alfabético).
  */
+/** ¿Este usuario maneja la ubicación? El responsable o uno de sus AYUDANTES
+ *  (9-nov-2026, Gerson: Jonathan mete y saca inventario del Vault, el Almacén
+ *  y el Taller sin quitarle la responsabilidad a Óscar). */
+export const manejaUbicacion = (u, username) => !!username && !!u && (u.responsable === username || (Array.isArray(u.ayudantes) && u.ayudantes.includes(username)));
 export const ubicacionesDe = ({ guardadas = [], proyectos = [] } = {}) => {
   const porId = new Map((guardadas || []).filter(u => u && u.id).map(u => [u.id, u]));
-  const mezcla = (base) => ({ ...base, ...(porId.get(base.id) ? { responsable: porId.get(base.id).responsable || "", responsableNombre: porId.get(base.id).responsableNombre || "", activa: porId.get(base.id).activa !== false, codigo: porId.get(base.id).codigo || "" } : { responsable: "", responsableNombre: "", activa: true, codigo: "" }) });
+  const mezcla = (base) => ({ ...base, ...(porId.get(base.id) ? { responsable: porId.get(base.id).responsable || "", responsableNombre: porId.get(base.id).responsableNombre || "", ayudantes: Array.isArray(porId.get(base.id).ayudantes) ? porId.get(base.id).ayudantes : [], activa: porId.get(base.id).activa !== false, codigo: porId.get(base.id).codigo || "" } : { responsable: "", responsableNombre: "", ayudantes: [], activa: true, codigo: "" }) });
   const fijas = UBICACIONES_FIJAS.map(mezcla);
   const oficinas = (guardadas || []).filter(u => u && u.tipo === "oficina").map(u => ({ ...u, activa: u.activa !== false }))
     .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es", { sensitivity: "base" }));

@@ -190,3 +190,14 @@ test("alcance: Óscar solo manipula lo suyo; los demás roles de carga, todo", (
   assert.equal(permisosDe("admin").alcance, "todo");
   assert.equal(permisosDe("tesoreria").alcance, "todo");
 });
+
+test("manejaUbicacion: responsable o ayudante (9-nov-2026)", async () => {
+  const { manejaUbicacion, ubicacionesDe } = await import("../src/geoinventory-calc.js");
+  const u = { id: "taller", responsable: "oscarpaz", ayudantes: ["jonathan.argueta"] };
+  assert.equal(manejaUbicacion(u, "oscarpaz"), true);
+  assert.equal(manejaUbicacion(u, "jonathan.argueta"), true);
+  assert.equal(manejaUbicacion(u, "ana"), false);
+  assert.equal(manejaUbicacion({ id: "x", responsable: "a" }, "b"), false);
+  const [almacen] = ubicacionesDe({ guardadas: [{ id: "almacen", ayudantes: ["jonathan.argueta"] }] });
+  assert.deepEqual(almacen.ayudantes, ["jonathan.argueta"]);
+});

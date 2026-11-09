@@ -34,6 +34,7 @@ import {
   permisosDe, resumenInventario, buscarItems, UNIDADES, num, plantillaCSV, parseTabla, prepararImportacion,
   esCaja, PREFIJO_CAJA, prefijoDe, CONTENIDOS_CAJA, MARCAS_CAJA, TAMANOS_CAJA, tamanoLabel, nombreCaja, nivelCaja, estantesDe, nombreEstante, textoEstante, resumenCajas,
   PREFIJO_UBIC, PREFIJO_EST, MUEBLES, muebleLabel, codigoNivel, nivelesDe, resolverCodigo, posicionDe, itemsEnUbicacion, itemsEnEstante, itemsEnNivel, itemsSinEstante, resumenDe, movimientosDe,
+  manejaUbicacion,
 } from "./geoinventory-calc.js";
 import { generarEtiquetas, generarEtiquetasPDF, qrDataUrl, urlDeFicha } from "./geoinventory-etiquetas.js";
 
@@ -449,15 +450,23 @@ function EstanteFormImpl({ estante, ubicacionNombre, onSave, onClose, ocupado })
 // ═══════════════════════════════════════════════════════════════════════════
 function UbicacionFormImpl({ ubicacion, usuarios, onSave, onClose, ocupado }) {
   const nueva = !ubicacion;
-  const [f, setF] = useState(() => ({ nombre: ubicacion?.nombre || "", responsable: ubicacion?.responsable || "", activa: ubicacion?.activa !== false }));
+  const [f, setF] = useState(() => ({ nombre: ubicacion?.nombre || "", responsable: ubicacion?.responsable || "", ayudantes: Array.isArray(ubicacion?.ayudantes) ? ubicacion.ayudantes : [], activa: ubicacion?.activa !== false }));
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const resp = usuarios.find(x => x.username === f.responsable);
+  const ayudables = usuarios.filter(x => x.username !== f.responsable && ["logistica", "asistente_compras", "residente", "recepcion"].includes(x.role));
+  const toggleAyudante = (un) => setF(p => ({ ...p, ayudantes: p.ayudantes.includes(un) ? p.ayudantes.filter(x => x !== un) : [...p.ayudantes, un] }));
   return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
     {(nueva || ubicacion.tipo === "oficina") && <Input label="Nombre de la oficina *" value={f.nombre} onChange={e => u("nombre", e.target.value)} placeholder="Ej. Oficina Operaciones · Recepción · Sala de reuniones" autoFocus />}
     {!nueva && ubicacion.tipo !== "oficina" && <div style={{ fontSize: 13, color: "var(--text-2)" }}><b>{ubicacion.nombre}</b> · {TIPO_UBICACION[ubicacion.tipo]}</div>}
     {!nueva && ubicacion.codigo && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Código <b style={{ fontFamily: "var(--mono)", color: CHARCOAL }}>{ubicacion.codigo}</b> (no cambia aunque cambie el nombre)</div>}
     {nueva && <div style={{ fontSize: 12, color: "var(--text-3)" }}>Al guardar le doy su código (UBI-…) y te muestro el QR para imprimirlo y pegarlo afuera de la oficina.</div>}
     <Select label="Responsable (usuario del sistema)" emptyLabel="— Sin responsable —" options={usuarios.map(x => ({ value: x.username, label: `${x.label} · ${ROLE_LABEL[x.role] || x.role}` }))} value={f.responsable} onChange={e => u("responsable", e.target.value)} />
+    {ayudables.length > 0 && <div>
+      <div style={LBL}>También la manejan (meten, sacan y mueven inventario)</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+        {ayudables.map(x => { const on = f.ayudantes.includes(x.username); return <button key={x.username} type="button" onClick={() => toggleAyudante(x.username)} aria-pressed={on} style={{ padding: "7px 12px", borderRadius: 999, border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.14)", background: on ? CHARCOAL : "rgba(255,255,255,.8)", color: on ? "#fff" : CHARCOAL, font: "700 12px/1 var(--sans)", cursor: "pointer" }}>{x.label}</button>; })}
+      </div>
+    </div>}
     {!nueva && ubicacion.tipo === "oficina" && <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}><input type="checkbox" checked={f.activa} onChange={e => u("activa", e.target.checked)} /> Activa (si la desactivás deja de aparecer, pero no se borra nada)</label>}
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
       <Btn variant="ghost" onClick={onClose} disabled={ocupado}>Cancelar</Btn>
@@ -839,7 +848,8 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   })();
   const ubicaciones = ubicacionesDe({ guardadas: ubicGuardadas, proyectos });
   // Dónde puede MANIPULAR este usuario (Óscar: Almacén Central + donde es responsable)
-  const editables = new Set(perms.alcance === "propias" ? ubicaciones.filter(u2 => u2.id === "almacen" || (u2.responsable && u2.responsable === userKey)).map(u2 => u2.id) : ubicaciones.map(u2 => u2.id));
+  const nombresAyudantes = (u2) => { const a = (u2.ayudantes || []).map(un => usuarios.find(x => x.username === un)?.label || un); return a.length ? ` · también ${a.join(", ")}` : ""; };
+  const editables = new Set(perms.alcance === "propias" ? ubicaciones.filter(u2 => u2.id === "almacen" || manejaUbicacion(u2, userKey)).map(u2 => u2.id) : ubicaciones.map(u2 => u2.id));
   const puedeEn = (ubId) => !!perms.cargar && (perms.alcance !== "propias" || editables.has(ubId));
   const ubicacionesMias = ubicaciones.filter(u2 => puedeEn(u2.id));
   const estantes = estantesDe(ubicGuardadas);
@@ -985,8 +995,8 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       const c = await store.getCloud(K_UBIC); const arr = Array.isArray(c) ? c : [];
       const at = new Date().toISOString();
       const rec = ubicacion
-        ? { ...(arr.find(x => x.id === ubicacion.id) || { id: ubicacion.id, tipo: ubicacion.tipo, createdAt: at, createdBy: userKey }), ...(ubicacion.tipo === "oficina" ? { nombre: String(f.nombre).trim(), activa: f.activa !== false } : {}), responsable: f.responsable || "", responsableNombre: f.responsableNombre || "", updatedAt: at, updatedBy: userKey }
-        : { id: `of:${uid()}`, tipo: "oficina", nombre: String(f.nombre).trim(), codigo: siguientesCodigos(arr, PREFIJO_UBIC)[0], responsable: f.responsable || "", responsableNombre: f.responsableNombre || "", activa: true, createdAt: at, createdBy: userKey, updatedAt: at };
+        ? { ...(arr.find(x => x.id === ubicacion.id) || { id: ubicacion.id, tipo: ubicacion.tipo, createdAt: at, createdBy: userKey }), ...(ubicacion.tipo === "oficina" ? { nombre: String(f.nombre).trim(), activa: f.activa !== false } : {}), responsable: f.responsable || "", responsableNombre: f.responsableNombre || "", ayudantes: (f.ayudantes || []).filter(x => x !== f.responsable), updatedAt: at, updatedBy: userKey }
+        : { id: `of:${uid()}`, tipo: "oficina", nombre: String(f.nombre).trim(), codigo: siguientesCodigos(arr, PREFIJO_UBIC)[0], responsable: f.responsable || "", responsableNombre: f.responsableNombre || "", ayudantes: (f.ayudantes || []).filter(x => x !== f.responsable), activa: true, createdAt: at, createdBy: userKey, updatedAt: at };
       if (!ubicacion && arr.some(x => x.tipo === "oficina" && x.activa !== false && String(x.nombre).trim().toLowerCase() === rec.nombre.toLowerCase())) { alert("Ya hay una oficina con ese nombre."); return; }
       const next = arr.some(x => x.id === rec.id) ? arr.map(x => x.id === rec.id ? rec : x) : [...arr, rec];
       const ok = await store.set(K_UBIC, next); if (!ok) throw new Error("La nube no aceptó el guardado.");
@@ -1204,7 +1214,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   const abierto = (k) => !cerrados.includes(k) || !!qUbic;
   const renderInicio = () => {
     if (ruta.ubic) return renderUbicacionVista();
-    const mias = ubicaciones.filter(u2 => u2.responsable && u2.responsable === userKey);
+    const mias = ubicaciones.filter(u2 => manejaUbicacion(u2, userKey));
     // 26-oct-2026 (Gerson): las tuyas van arriba Y también en su grupo, así el
     // Vault sale en "Almacén y bodegas" aunque seas su responsable.
     const noMia = () => true;
@@ -1256,7 +1266,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
         <div style={{ width: 54, height: 54, borderRadius: 16, background: "rgba(232,118,45,.12)", color: ORANGE_DARK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO_UBIC[u2.tipo] || ICO.ubicaciones} size={27} /></div>
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ font: "800 21px/1.15 var(--display)", color: CHARCOAL }}>{u2.nombre}</div>
-          <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4 }}>{subUbic(u2)} · {resp ? `responsable ${resp.label}` : "sin responsable"}{r.articulos ? ` · ${resumenTxt(r)}` : ""}</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4 }}>{subUbic(u2)} · {resp ? `responsable ${resp.label}` : "sin responsable"}{nombresAyudantes(u2)}{r.articulos ? ` · ${resumenTxt(r)}` : ""}</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {(u2.codigo || puedeEn(u2.id)) && chipCodigo(u2.codigo || "Generar QR", () => verQRUbicacion(u2))}
@@ -1396,7 +1406,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
             <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(232,118,45,.10)", color: ORANGE_DARK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO_UBIC[u2.tipo] || ICO.ubicaciones} size={17} /></div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13.5, fontWeight: 800, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u2.nombre}</div>
-              <div style={{ fontSize: 11, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{resp ? resp.label : u2.responsableNombre || "Sin responsable"} · {n} artículo{n === 1 ? "" : "s"}{ne ? ` · ${ne} estante${ne === 1 ? "" : "s"}` : ""}</div>
+              <div style={{ fontSize: 11, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{resp ? resp.label : u2.responsableNombre || "Sin responsable"}{nombresAyudantes(u2)} · {n} artículo{n === 1 ? "" : "s"}{ne ? ` · ${ne} estante${ne === 1 ? "" : "s"}` : ""}</div>
             </div>
             <span onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 6, alignItems: "center" }}>
               {(u2.codigo || puedeEn(u2.id)) && chipCodigo(u2.codigo || "QR", () => verQRUbicacion(u2))}

@@ -2443,6 +2443,16 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   y entradas a sus ubicaciones; Ajustar sigue sin tenerlo. `asegurarCodigos`
   no genera códigos de ubicaciones ajenas. Admin, tesorería y Ana siguen con
   alcance "todo". Verificado el 14-oct con datos de prueba (borrados).
+  **AYUDANTES por ubicación (9-nov-2026, Gerson: "Jonathan mete y saca
+  inventario del Vault, el Almacén y el Taller")**: campo ADITIVO
+  `ayudantes: [username]` en inv-ubicaciones (pills "También la manejan" en el
+  form de ubicación, solo roles logistica/asistente_compras/residente/
+  recepcion). `manejaUbicacion(u, username)` (calc) = responsable O ayudante;
+  lo usan `editables` (alcance "propias") y "Tus ubicaciones"; las listas
+  dicen "· también X". Datos del 9-nov: Jonathan Argueta (acceso
+  `jonathan.argueta`, rol logistica, creado en gt-usuarios) es RESPONSABLE del
+  Vault (antes Gerson) y AYUDANTE del Almacén y del Taller (Óscar sigue de
+  responsable). ⚠ No tiene `marcaPropia` ni `ubicacion` (eso vive en users.js).
   **Panel**: GeoSafety, GeoDrill Vault y Mis Tareas llevan `oculto: true` en
   MODULES (14-oct, "de momento"): no salen en el panel; el código sigue y Mis
   Tareas se abre igual desde la tarjeta TO-DOS de la bienvenida.
