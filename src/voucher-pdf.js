@@ -74,7 +74,7 @@ const paginaVoucher = async (doc, l, { empresa, periodo, quincena, borrador }) =
   pdfKpi(doc, M, y, kw, kh, "Días pagados", `${v.diasPagados} de ${v.diasPeriodo || v.diasPagados}`);
   pdfKpi(doc, M + (kw + 3), y, kw, kh, "Ingresos", Ls(v.totalIngresos));
   pdfKpi(doc, M + 2 * (kw + 3), y, kw, kh, "Deducciones", Ls(v.totalDeducciones));
-  pdfKpi(doc, M + 3 * (kw + 3), y, kw, kh, "A pagar", Ls(v.totalConHe), { tono: "naranjaTexto" });
+  pdfKpi(doc, M + 3 * (kw + 3), y, kw, kh, "Salario a pagar", Ls(v.neto), { tono: "naranjaTexto" });
   y += kh + 9;
 
   // ── Tablas de conceptos: Ingresos y Deducciones lado a lado, HE abajo ──
@@ -113,16 +113,26 @@ const paginaVoucher = async (doc, l, { empresa, periodo, quincena, borrador }) =
   y = Math.max(yI, yD) + 11;
   if (v.he.length) y = tabla(M, CW, y, `Horas extras · trabajadas en ${etiquetaCorta(l.he.periodo, l.he.quincena)} · hora base ${Ls(l.he.horaBase)}`, v.he, "Total horas extras", v.heMonto, { conHoras: true }) + 11;
 
-  // ── Total a pagar ──
-  const hTot = 22;
-  doc.setFillColor(...T.tinte); doc.roundedRect(M, y - 4, CW, hTot, 4, 4, "F");
-  doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(...T.naranjaTexto);
-  doc.text("TOTAL A PAGAR", M + 7, y + 3.5, { charSpace: 0.4 });
-  doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...T.texto2);
-  const det = v.he.length ? `Salario ${Ls(v.neto)}  +  horas extras ${Ls(v.heMonto)}` : "Salario de la quincena";
-  doc.text(latin1(`${det}  ·  ${METODO[l.metodoPago] || "Transferencia"}`), M + 7, y + 10.5);
-  doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(...T.naranjaTexto);
-  doc.text(Ls(v.totalConHe), W - M - 7, y + 10.5, { align: "right" });
+  // ── Totales a pagar: SALARIO y HORAS EXTRAS por separado (Gerson, 9-nov:
+  // "se pagan en dos transacciones distintas") ──
+  const metodo = METODO[l.metodoPago] || "Transferencia";
+  const hTot = 22, conHe = v.he.length > 0;
+  const cajaTotal = (x, w, titulo, sub, monto, destacada) => {
+    doc.setFillColor(...(destacada ? T.tinte : T.fondo)); doc.roundedRect(x, y - 4, w, hTot, 4, 4, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(...(destacada ? T.naranjaTexto : T.texto3));
+    doc.text(latin1(titulo), x + 7, y + 3.5, { charSpace: 0.4 });
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.6); doc.setTextColor(...T.texto2);
+    doc.text(latin1(sub), x + 7, y + 10.5, { maxWidth: w - 60 });
+    doc.setFont("helvetica", "bold"); doc.setFontSize(conHe ? 16 : 20); doc.setTextColor(...(destacada ? T.naranjaTexto : T.carbon));
+    doc.text(Ls(monto), x + w - 7, y + 10.5, { align: "right" });
+  };
+  if (conHe) {
+    const w2 = (CW - 6) / 2;
+    cajaTotal(M, w2, "TOTAL A PAGAR · SALARIO", `Transacción 1 · ${metodo}`, v.neto, true);
+    cajaTotal(M + w2 + 6, w2, "TOTAL A PAGAR · HORAS EXTRAS", `Transacción 2 · ${metodo}`, v.heMonto, true);
+  } else {
+    cajaTotal(M, CW, "TOTAL A PAGAR · SALARIO", `Salario de la quincena · ${metodo}`, v.neto, true);
+  }
 
   // ── Firmas (al pie de la hoja) ──
   const yF = Math.min(Math.max(y + hTot + 20, H - 44), H - 26);

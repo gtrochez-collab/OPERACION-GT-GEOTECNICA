@@ -1113,7 +1113,9 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (`descargarVouchers`, jsPDF carta vertical, UNO por colaborador y por hoja,
   estilo único de reportes: logo de la empresa, tarjeta del colaborador, 4
   cifras, Ingresos y Deducciones lado a lado, Horas extras abajo, total en
-  tinte naranja, firmas RRHH / Recibí conforme) + `conceptosVoucher` /
+  DOS cajas de total al pie: SALARIO (transacción 1) y HORAS EXTRAS
+  (transacción 2) — Gerson: "se pagan en dos transacciones distintas"; la
+  cifra de arriba es "Salario a pagar"; firmas RRHH / Recibí conforme) + `conceptosVoucher` /
   `lineasVoucher` / `sinVoucher` en planilla-calc (`tests/voucher.test.mjs`).
   ⚠ El de **Gerson Trochez NUNCA se genera** (pedido explícito). Vista
   `payVista "vouchers"` (`renderVouchers`): Descargar todos (N) + Voucher por
