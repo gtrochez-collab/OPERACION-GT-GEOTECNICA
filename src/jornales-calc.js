@@ -15,6 +15,11 @@
 
 export const KEY_JORNALEROS = "hr-jornaleros";
 export const keyCorteJornal = (corteId) => `hr-jornal-${corteId}`;
+// Responsables de la asistencia de jornales por proyecto (10-nov-2026, Gerson:
+// "designar qué ingeniero es el responsable de cada proyecto"): {[short]: [username]}.
+export const KEY_RESPONSABLES = "hr-jornal-responsables";
+/** Proyectos de los que `username` es responsable. */
+export const proyectosDeResponsable = (resp, username) => Object.entries(resp || {}).filter(([, us]) => (us || []).includes(username)).map(([s]) => s);
 // Un sábado de inicio de corte conocido (el Excel de Cataleya: 17-oct → 30-oct).
 export const ANCLA_CORTE = "2026-10-17";
 export const DIAS_CORTE = 14;

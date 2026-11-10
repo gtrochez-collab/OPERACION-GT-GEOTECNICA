@@ -30,8 +30,10 @@ import { safeDynamicImport } from "./lazyLoad.js";
 import { Modal, Chip, C_GRIS, C_VERDE, C_AMARILLO, C_NARANJA, ORANGE, ORANGE_DARK, CHARCOAL, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
 import { abrirReporte } from "./reporte-estilo.js";
+import { USERS, ROLE_LABEL, USUARIOS_DE_BAJA } from "./users.js";
+import { admiteSolicitudes } from "./projects.js";
 import {
-  KEY_JORNALEROS, keyCorteJornal, corteDe, corteAnterior, corteSiguiente, diasDelCorte, diaCorto, fechaCorta, fechaLarga,
+  KEY_JORNALEROS, keyCorteJornal, KEY_RESPONSABLES, proyectosDeResponsable, corteDe, corteAnterior, corteSiguiente, diasDelCorte, diaCorto, fechaCorta, fechaLarga,
   nombreCorte, proyectoVacio, ponerCelda, mezclarProyecto, cambiosEntre, liquidarProyecto, validarJornalero, formatoDni,
   tieneIdentidad, valorHora, num, MAX_HE_DIA,
 } from "./jornales-calc.js";
@@ -137,6 +139,53 @@ export function useJornaleros() {
     return true;
   }, []);
   return { lista, error, cargar, guardar };
+}
+
+// ── Responsables por proyecto (quién lleva la asistencia de sus jornales) ──
+export function useResponsables() {
+  const [resp, setResp] = useState(null);
+  const cargar = useCallback(async () => { try { const c = await store.getCloud(KEY_RESPONSABLES); setResp(c && typeof c === "object" ? c : {}); } catch { setResp(r => r || {}); } }, []);
+  useEffect(() => { cargar(); }, [cargar]);
+  const guardar = useCallback(async (short, usernames) => {
+    let nube;
+    try { nube = await store.getCloud(KEY_RESPONSABLES); } catch { alert("No hay conexión con la nube: no se guardó."); return false; }
+    const next = { ...(nube && typeof nube === "object" ? nube : {}) };
+    if (usernames.length) next[short] = usernames; else delete next[short];
+    if (!(await store.set(KEY_RESPONSABLES, next))) { alert("No se pudo guardar en la nube."); return false; }
+    try { const v = await store.getCloud(KEY_RESPONSABLES); setResp(v || next); if (JSON.stringify(v?.[short] || []) !== JSON.stringify(usernames)) { alert("Se guardó, pero no pude confirmarlo. Tocá ↻."); return false; } } catch { setResp(next); }
+    return true;
+  }, []);
+  return { resp, cargar, guardar };
+}
+/** Usuarios que pueden ser responsables: los fijos + los accesos creados en GeoTeam. */
+function useUsuarios() {
+  const [extra, setExtra] = useState([]);
+  useEffect(() => { let vivo = true; store.getCloud("gt-usuarios").then(c => { if (vivo) setExtra(Array.isArray(c) ? c.filter(u => u.activo !== false) : []); }).catch(() => {}); return () => { vivo = false; }; }, []);
+  return useMemo(() => {
+    const m = new Map();
+    [...USERS, ...extra].forEach(u => { if (!u?.username || u.role === "marcaje" || (USUARIOS_DE_BAJA || []).includes?.(u.username) || m.has(u.username)) return; m.set(u.username, { username: u.username, label: u.label || u.username, role: u.role }); });
+    return [...m.values()];
+  }, [extra]);
+}
+const ORDEN_ROL = { residente: 0, logistica: 1, coordinador: 2 };
+function ResponsablesModal({ short, nombre, actuales, usuarios, onGuardar, onClose }) {
+  const [sel, setSel] = useState(actuales || []);
+  const [q, setQ] = useState("");
+  const [saving, setSaving] = useState(false);
+  const qq = q.trim().toLowerCase();
+  const lista = usuarios.filter(u => !qq || `${u.label} ${u.username}`.toLowerCase().includes(qq)).sort((a, b) => (ORDEN_ROL[a.role] ?? 9) - (ORDEN_ROL[b.role] ?? 9) || a.label.localeCompare(b.label, "es"));
+  return <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ fontSize: 12.5, color: "#6E6862" }}>Quién lleva la asistencia de los jornales de <b>{nombre}</b>. Puede ser más de uno (ej. el residente y quien lo cubre).</div>
+    <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar persona" style={CTRL} />
+    <div style={{ maxHeight: 360, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+      {lista.map(u => { const on = sel.includes(u.username); return <button key={u.username} type="button" onClick={() => setSel(s => on ? s.filter(x => x !== u.username) : [...s, u.username])}
+        style={{ display: "flex", alignItems: "center", gap: 10, textAlign: "left", padding: "8px 10px", borderRadius: 12, border: on ? `1.5px solid ${ORANGE}` : "1px solid rgba(44,42,40,.08)", background: on ? "rgba(232,118,45,.07)" : "rgba(255,255,255,.8)", cursor: "pointer", fontFamily: "inherit", minHeight: 46 }}>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, fontSize: 13.5, color: CHARCOAL }}>{u.label}</div><div style={{ fontSize: 11.5, color: "#6E6862" }}>{ROLE_LABEL[u.role] || u.role}</div></div>
+        <span style={{ width: 22, height: 22, borderRadius: 7, border: on ? "none" : "1.5px solid rgba(44,42,40,.2)", background: on ? ORANGE : "transparent", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}>{on ? "✓" : ""}</span>
+      </button>; })}
+    </div>
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>{btn("Cancelar", onClose, { disabled: saving })}{btn(saving ? "Guardando…" : "Guardar", async () => { setSaving(true); try { if (await onGuardar(short, sel)) onClose(); } finally { setSaving(false); } }, { c: ORANGE_DARK, lleno: true, disabled: saving })}</div>
+  </div>;
 }
 
 // ── Ficha del jornal: formulario ─────────────────────────────────────────
@@ -374,6 +423,10 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
   const esRRHH = ROLES_RRHH_JORNAL.includes(rol);
   const soloVer = ROLES_SOLO_VER.includes(rol);
   const { lista: jornaleros, guardar: guardarJornal, cargar: recargarJornales } = useJornaleros();
+  const { resp, guardar: guardarResp, cargar: recargarResp } = useResponsables();
+  const usuarios = useUsuarios();
+  const labelDe = (u) => usuarios.find(x => x.username === u)?.label || u;
+  const misProyectos = useMemo(() => new Set(proyectosDeResponsable(resp, user.username)), [resp, user.username]);
   const [corte, setCorte] = useState(() => corteDe(hoy));
   const prefKey = `gt-jornal-proy-${user.username}`;
   const [short, setShortRaw] = useState(() => { try { return localStorage.getItem(prefKey) || ""; } catch { return ""; } });
@@ -392,8 +445,15 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
   useEffect(() => { const t = tiraRef.current; const el = t?.querySelector(`[data-dia="${fecha}"]`); if (t && el) t.scrollLeft = el.offsetLeft - t.offsetLeft - t.clientWidth / 2 + el.clientWidth / 2; }, [fecha, vista, short, docs.cargando]);
 
   const corteHoy = corteDe(hoy);
-  const editable = !soloVer && (esRRHH || corte.id >= corteAnterior(corteHoy).id) && corte.id <= corteHoy.id;
-  const proyOrden = useMemo(() => proyectos.filter(p => p.short && p.active !== false && !p.archived).slice().sort((a, b) => String(a.name || a.short).localeCompare(String(b.name || b.short), "es", { sensitivity: "base", numeric: true })), [proyectos]);
+  const editable = !soloVer && (esRRHH || (misProyectos.has(short) && corte.id >= corteAnterior(corteHoy).id)) && corte.id <= corteHoy.id;
+  // El ingeniero solo trabaja en SUS proyectos: si el recordado ya no es suyo, cae en el primero.
+  useEffect(() => {
+    if (!resp || esRRHH || soloVer) return;
+    if (short && misProyectos.has(short)) return;
+    const primero = [...misProyectos][0] || "";
+    if (primero !== short) setShortRaw(primero);
+  }, [resp, misProyectos]); // eslint-disable-line react-hooks/exhaustive-deps
+  const proyOrden = useMemo(() => proyectos.filter(p => p.short && p.active !== false && !p.archived && (admiteSolicitudes(p.short) || (resp && resp[p.short])) && (esRRHH || soloVer || misProyectos.has(p.short))).slice().sort((a, b) => String(a.name || a.short).localeCompare(String(b.name || b.short), "es", { sensitivity: "base", numeric: true })), [proyectos, esRRHH, soloVer, misProyectos, resp]);
   const nombreDe = (s) => { const p = proyectos.find(x => x.short === s); return p?.name && p.name !== s ? `${p.short} · ${p.name}` : s; };
 
   const cargarCorte = useCallback(async (c) => {
@@ -483,7 +543,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
       <div style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL }}>Jornales</div>
       <span style={{ fontSize: 12.5, color: "#6E6862" }}>personal por día · se paga cada 2 semanas</span>
       <div style={{ flex: 1 }} />
-      <span role="button" title="Volver a leer de la nube" aria-label="Actualizar" className="gt-circulo" onClick={() => salir(() => { cargarCorte(corte); recargarJornales(); })} style={{ width: 36, height: 36, fontSize: 15 }}>↻</span>
+      <span role="button" title="Volver a leer de la nube" aria-label="Actualizar" className="gt-circulo" onClick={() => salir(() => { cargarCorte(corte); recargarJornales(); recargarResp(); })} style={{ width: 36, height: 36, fontSize: 15 }}>↻</span>
     </div>
     <div className="gt-vidrio" style={{ padding: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, flex: isMobile ? "1 1 100%" : "0 0 auto" }}>
@@ -494,7 +554,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
         </div>
         <button type="button" className="gt-circulo" aria-label="Corte siguiente" disabled={corte.id >= corteHoy.id} onClick={() => salir(() => setCorte(corteSiguiente(corte)))} style={{ width: 34, height: 34, opacity: corte.id >= corteHoy.id ? .35 : 1 }}>›</button>
       </div>
-      {vista !== "resumen" && <select value={short} onChange={e => salir(() => setShort(e.target.value))} style={{ ...CTRL, flex: "1 1 220px", width: "auto", minWidth: 0 }}>
+      {vista !== "resumen" && vista !== "responsables" && <select value={short} onChange={e => salir(() => setShort(e.target.value))} style={{ ...CTRL, flex: "1 1 220px", width: "auto", minWidth: 0 }}>
         <option value="">Elegí el proyecto…</option>
         {(() => {
           // Arriba los proyectos que ya tienen jornales asignados (en este corte o en el anterior).
@@ -506,6 +566,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
       </select>}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {esRRHH && pill("Todos los proyectos", vista === "resumen", () => salir(() => setVista("resumen")))}
+        {esRRHH && pill("Responsables", vista === "responsables", () => salir(() => setVista("responsables")))}
         {pill("Por día", vista === "dia", () => setVista("dia"))}
         {pill("Corte completo", vista === "corte", () => setVista("corte"))}
       </div>
@@ -518,6 +579,30 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
   if (!jornaleros || docs.cargando) return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{cabecera}<div className="gt-vidrio" style={{ padding: 30, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Cargando…</div></div>;
 
   // ── Vista: todos los proyectos del corte (RRHH) ──
+  const modalResp = modal?.t === "resp" ? <Modal title={`Responsables · ${nombreDe(modal.short)}`} onClose={() => setModal(null)}>
+    <ResponsablesModal short={modal.short} nombre={nombreDe(modal.short)} actuales={resp?.[modal.short] || []} usuarios={usuarios} onGuardar={guardarResp} onClose={() => setModal(null)} /></Modal> : null;
+  const chipsResp = (s2) => (resp?.[s2] || []).length ? (resp[s2]).map(u => <Chip key={u} c={C_GRIS}>{labelDe(u)}</Chip>) : [<Chip key="-" c={C_AMARILLO}>Sin responsable</Chip>];
+
+  // ── Vista: responsables por proyecto (RRHH) ──
+  if (vista === "responsables") {
+    const conJ = (s2) => docs.corte?.proyectos?.[s2]?.jornaleros?.length || docs.previo?.proyectos?.[s2]?.jornaleros?.length || 0;
+    const orden = proyOrden.slice().sort((a, b) => (conJ(b.short) ? 1 : 0) - (conJ(a.short) ? 1 : 0) || ((resp?.[b.short]?.length ? 1 : 0) - (resp?.[a.short]?.length ? 1 : 0)));
+    return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {cabecera}
+      <div style={{ fontSize: 12.5, color: "#6E6862" }}>Cada responsable ve solo sus proyectos en Mi RRHH → Asistencia de campo y marca la asistencia de los jornales. Puede haber más de uno por proyecto.</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {orden.map(p => <div key={p.short} className="gt-vidrio" style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+            <div style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>{nombreDe(p.short)}</div>
+            <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>{chipsResp(p.short)}{conJ(p.short) ? <Chip c={C_NARANJA}>{conJ(p.short)} jornales</Chip> : null}</div>
+          </div>
+          {btn(resp?.[p.short]?.length ? "Cambiar" : "Asignar", () => setModal({ t: "resp", short: p.short }), { c: ORANGE_DARK, chico: true })}
+        </div>)}
+      </div>
+      {modalResp}
+    </div>;
+  }
+
   if (vista === "resumen") {
     const shorts = new Set(Object.keys(docs.corte?.proyectos || {}));
     const vierPrevio = diasDelCorte(corteAnterior(corte))[13];
@@ -534,7 +619,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
             <div style={{ flex: "1 1 220px", minWidth: 0, cursor: "pointer" }} onClick={() => { setShort(s); setVista(isMobile ? "dia" : "corte"); }}>
               <div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{nombreDe(s)}</div>
               <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>{l.filas.length} persona{l.filas.length === 1 ? "" : "s"} · {fmtN(l.totales.dias)} días · {fmtN(l.totales.horasHe)} h extra · {conDatos} de 14 días con asistencia{proy?.updatedBy ? ` · ${proy.updatedBy}` : ""}</div>
-              <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>{l.encargado ? <Chip c={C_GRIS}>Depositar a {l.encargado}</Chip> : <Chip c={C_AMARILLO}>Sin encargado del pago</Chip>}{faltan > 0 && <Chip c={C_AMARILLO}>Faltan {faltan} ID</Chip>}</div>
+              <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>{chipsResp(s)}{l.encargado ? <Chip c={C_GRIS}>Depositar a {l.encargado}</Chip> : <Chip c={C_AMARILLO}>Sin encargado del pago</Chip>}{faltan > 0 && <Chip c={C_AMARILLO}>Faltan {faltan} ID</Chip>}</div>
             </div>
             <div style={{ font: "800 18px/1 var(--mono)", color: CHARCOAL }}>{fmtL(l.totales.total)}</div>
             <div style={{ display: "flex", gap: 6 }}>{btn("Excel", () => exportar([paqueteDe(s, proy, l)], "excel"), { chico: true })}{btn("PDF", () => exportar([paqueteDe(s, proy, l)], "pdf"), { c: ORANGE_DARK, lleno: true, chico: true })}</div>
@@ -544,7 +629,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
     </div>;
   }
 
-  if (!short) return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{cabecera}<div className="gt-vidrio" style={{ padding: 30, textAlign: "center", fontSize: 13.5, color: "#6E6862" }}>Elegí el proyecto para llevar la asistencia de sus jornales.</div></div>;
+  if (!short) return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{cabecera}<div className="gt-vidrio" style={{ padding: 30, textAlign: "center", fontSize: 13.5, color: "#6E6862" }}>{esRRHH || soloVer || misProyectos.size ? "Elegí el proyecto para llevar la asistencia de sus jornales." : "Todavía no sos responsable de ningún proyecto. RRHH te lo asigna."}</div></div>;
 
   const roster = local.jornaleros || [];
   const viernesFin = corte.fin;
@@ -555,6 +640,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
   const barraLista = <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
     <span style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{roster.length} jornal{roster.length === 1 ? "" : "es"}</span>
     <span style={{ fontSize: 12.5, color: "#8A847D" }}>en {short}</span>
+    {esRRHH && <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>{chipsResp(short)}<button type="button" onClick={() => setModal({ t: "resp", short })} style={{ border: "none", background: "none", color: ORANGE_DARK, font: "700 12px/1 var(--sans)", cursor: "pointer", padding: 2 }}>cambiar</button></span>}
     <div style={{ flex: 1 }} />
     {editable && esRRHH && roster.length === 0 && rosterPrevio.length > 0 && btn(`Copiar los ${rosterPrevio.length} del corte anterior`, () => agregar(rosterPrevio), { chico: true })}
     {editable && esRRHH && btn("+ Agregar jornal", () => setModal({ t: "agregar" }), { c: ORANGE_DARK, chico: true })}
@@ -687,6 +773,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
       <JornalFormImpl inicial={null} todos={jornaleros} puedeTarifa user={user} onGuardar={async (rec) => { const ok = await guardarJornal(rec); if (ok) agregar([rec.id], { [rec.id]: rec }); return ok; }} onClose={() => setModal(null)} />
     </Modal>}
     {celdaModal}
+    {modalResp}
   </div>;
 }
 

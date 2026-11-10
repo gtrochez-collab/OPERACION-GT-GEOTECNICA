@@ -20,7 +20,8 @@ import { descargarVouchers } from "./voucher-pdf.js";
 // Hub de RRHH (20-oct-2026): portal "Mi RRHH" de cada colaborador + bandeja de
 // solicitudes (vacaciones, permisos, constancias, reportes) para RRHH.
 import { KEY_SOLICITUDES, KEY_VINCULOS, vincularEmpleado, siguienteFolio, vacacionDeSolicitud, permisosDeSolicitud, constanciaDoc, textoConstancia, estaAbierta, esAprobador as esAprobadorHub, veTodo as veTodoHub, vacacionesTomadas, rangoCorto as rangoCortoHub } from "./rrhh-solicitudes.js";
-import { FichasJornales, AsistenciaCampo, AsistenciaJornales, EMPRESA_JORNALES, ROLES_RRHH_JORNAL, ROLES_CAMPO_JORNAL } from "./jornales.jsx";
+import { FichasJornales, AsistenciaCampo, AsistenciaJornales, EMPRESA_JORNALES, ROLES_RRHH_JORNAL, ROLES_CAMPO_JORNAL, useResponsables } from "./jornales.jsx";
+import { proyectosDeResponsable } from "./jornales-calc.js";
 import { PortalRRHH, BandejaRRHH, SolicitudFormImpl, SolicitudDetalleImpl, ModalHub, ICO as ICO_HUB, GenerarConstanciaImpl, pdfDeRegistroConstancia } from "./rrhh-hub.jsx";
 
 // ── GeoInventory → GeoTeam (13-oct-2026): "Equipo asignado" ────────────────
@@ -871,6 +872,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const [hubModal, setHubModal] = useState(null);     // {t:"nueva", tipo} | {t:"ver", id}
   const [solSub, setSolSub] = useState("");           // "" | vacations | leaves | constancias
   const [miSub, setMiSub] = useState("");             // "" | campo (Asistencia de campo: jornales)
+  // Responsables de jornales por proyecto: quien tiene alguno ve "Asistencia de campo" (Óscar, residentes).
+  const { resp: respJornales } = useResponsables();
+  const veCampo = ROLES_RRHH_JORNAL.includes(userRole) || (userRole === "residente") || proyectosDeResponsable(respJornales, userKey).length > 0;
   // Hub de ASISTENCIA (23-oct-2026): Asistencia · Llegadas tardías · Horas
   // extras (y el acceso a GeoClock) viven en UNA pestaña con cajas de vidrio.
   const [asisSub, setAsisSubRaw] = useState(() => { try { return sessionStorage.getItem("gt-hr-asis") || ""; } catch { return ""; } });
@@ -2824,7 +2828,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     {solicitudesErr && <div style={{ background: "rgba(192,57,43,.07)", borderRadius: 14, padding: "10px 14px", fontSize: 12.5, color: "#B03024" }}>{solicitudesErr}</div>}
     <PortalRRHH user={hubUser} yo={yo} vinculoEstado={vinculoYo.como} emps={emps} vacs={vacs} lvs={lvs} cons={cons} solicitudes={solicitudes} fotoDe={fotoDe} gcTardies={gcTardies} leerMarcas={leerMarcas}
       onNueva={(tipo) => setHubModal({ t: "nueva", tipo })} onAbrir={(s) => setHubModal({ t: "ver", id: s.id })} onVincular={vincularUsuario}
-      onAsistenciaCampo={ROLES_CAMPO_JORNAL.includes(userRole) ? () => setMiSub("campo") : undefined} />
+      onAsistenciaCampo={veCampo ? () => setMiSub("campo") : undefined} />
   </div>;
   const renderSolicitudesHub = () => {
     if (solSub) return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

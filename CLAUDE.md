@@ -1320,7 +1320,17 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   corte siguiente (un proyecto sin guardar en el corte arranca con la lista
   activa del anterior; `mezclarProyecto` parte de la base cuando la nube no
   tiene el proyecto). Ingenieros editan el corte actual y el anterior; RRHH
-  cualquiera. En el PDF: "Asistencia tomada por" = el ingeniero
+  cualquiera. **RESPONSABLES por proyecto (10-nov-2026, Gerson: "designar qué
+  ingeniero es el responsable de cada proyecto"; Óscar Paz lleva los jornales
+  del plantel y el taller)**: key **`hr-jornal-responsables`** `{[short]:
+  [username]}` (puede haber varios), pill "Responsables" en Asistencia →
+  Jornales (RRHH: Asignar/Cambiar con la lista de USERS + gt-usuarios) y
+  "cambiar" junto a la lista del proyecto. Quien no es RRHH ve SOLO sus
+  proyectos (cae solo en el primero) y solo los edita él; "Asistencia de campo"
+  en Mi RRHH sale para RRHH, residentes y CUALQUIER rol que sea responsable de
+  algo (`useResponsables` en HRModule — así le sale a Óscar, rol logistica).
+  PLANTEL y PLANTEL-OFICINA no se ofrecen (`admiteSolicitudes`): el plantel es
+  PLAN-TALLER. Dato del 10-nov: PLAN-TALLER → oscarpaz. En el PDF: "Asistencia tomada por" = el ingeniero
   (`asistenciaPor`, el primero no-RRHH que guarda) y "Elaborado por · Recursos
   Humanos" = quien exporta. **Solicitud de pago** (calca el Excel de
   Cataleya "SOLICITUD DE PAGO M.O PERSONAL LOCAL POR DIA"): PDF apaisado con
@@ -2581,7 +2591,8 @@ manda la FECHA, no el orden),
 de GeoMachinery, separadas de las de GeoShopping), `lg-despachos` (compartido compras/máquinas/
 logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 `hr-he` (horas extras), `hr-pays`, `hr-contracts`, etc. Jornales (nov 2026):
-`hr-jornaleros` (fichas) y `hr-jornal-<sábado de inicio del corte>` (asistencia).
+`hr-jornaleros` (fichas), `hr-jornal-<sábado de inicio del corte>` (asistencia) y
+`hr-jornal-responsables` ({short: [username]}).
 `gt-todos-<username>` (tareas personales — las comparten la tarjeta TO-DOS de
 la bienvenida y el módulo Mis Tareas; nadie ve las de otro).
 `gt-usuarios` (accesos creados desde GeoTeam → Accesos; el login los lee con
