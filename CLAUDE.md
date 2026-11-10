@@ -64,6 +64,14 @@ etiquetas "(L)" de salarios también siguen en lempiras.
 **Roberto Guerra** (administrador de Subterra El Salvador): acceso
 `roberto.guerra` en gt-usuarios, rol `gerencia` (solo lectura),
 `operaciones: ["sv"]`, sin ficha (empId null) — creado el 9-nov-2026 por REST.
+**Fichas SV (10-nov-2026)**: 3 colaboradores del listado de Roberto en
+`hr-emps5@sv` + `hr-contracts@sv` (Roberto = José Roberto Campos Guerra,
+su acceso ya tiene `empId`). `MONEDA` / `DOC_ID` de operacion.js: GeoTeam,
+jornales y `fmtLps` muestran $ y "DUI" en El Salvador. Campos aditivos de
+la ficha (form solo en SV, salvo los de pago): `fechaNacimiento`, `sede`,
+`nit`, `afp`, `nup`, `isss`, `metodoPago`, `banco {nombre, tipoCuenta,
+cuenta}`, `descuentosConvenidos`; el dorso del carnet los muestra (Pago se
+oculta con hideSalary).
 
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
