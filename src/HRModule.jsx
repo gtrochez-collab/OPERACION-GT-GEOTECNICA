@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, findProject, resolveShort, projectName, projectCode } from "./projects.js";
+import { esSV, OPERACION, OPERACIONES, operacionesDe } from "./operacion.js";
 import { esFeriadoQuincena, nombreFeriado } from "./holidays.js";
 import { hoyISO } from "./fechas.js";
 // GT_CSS (vidrio): desde el 15-oct-2026 lo monta TODO GeoTeam (rediseño de
@@ -80,10 +81,15 @@ function useIsMobile(breakpoint = 768) {
 const HR_ACCENT = "#2C5F5D";
 const HR_ACCENT_DARK = "#1E4A48";
 
-const COMPANIES = {
+// Operaciones (9-nov-2026): en El Salvador solo Subterra (la pista
+// Subterra/Geotecnica se esconde cuando hay una sola empresa).
+const COMPANIES = esSV ? {
+  subterra: { name: "Subterra El Salvador", color: "#3E6A99", accent: "#5A8AB8" },
+} : {
   subterra: { name: "Subterra Honduras", color: "#3E6A99", accent: "#5A8AB8" },
   geotecnica: { name: "Geotecnica Soluciones", color: "#2C5F5D", accent: "#3D8580" },
 };
+const VARIAS_EMPRESAS = Object.keys(COMPANIES).length > 1;
 const DEPARTMENTS = ["Administracion", "Ingenieria", "Operaciones", "Logistica", "RRHH", "Contabilidad", "Campo", "Mecanica"];
 const LEAVE_TYPES = ["Personal", "Medico", "Duelo", "Maternidad", "Paternidad", "Sin goce de sueldo", "Otro"];
 // Lista canonica unificada con Operations CC y Compras (src/projects.js).
@@ -791,7 +797,9 @@ const usernameSugerido = (fullName, tomados) => {
 const claveSugerida = () => `geo${Math.floor(1000 + Math.random() * 9000)}`;
 
 function AccesoFormImpl({ acceso, emps, proyectos, tomados, userName, onSave, onClose }) {
-  const [f, setF] = useState(acceso || { id: "", empId: "", username: "", password: claveSugerida(), role: "residente", label: "", proyectos: [], activo: true });
+  const [f, setF] = useState(acceso || { id: "", empId: "", username: "", password: claveSugerida(), role: "residente", label: "", proyectos: [], activo: true, operaciones: [OPERACION] });
+  const opsF = operacionesDe(f);
+  const toggleOp = (id) => setF(p => { const cur = operacionesDe(p); const next = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]; return { ...p, operaciones: next.length ? next : cur }; });
   const [verClave, setVerClave] = useState(!acceso);
   const [saving, setSaving] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -824,6 +832,8 @@ function AccesoFormImpl({ acceso, emps, proyectos, tomados, userName, onSave, on
     {!usernameOk && f.username && <div style={{ fontSize: 12, color: "#B03024", marginTop: -8 }}>Solo minúsculas, números, punto, guion. Mínimo 3.</div>}
     {usernameOk && !usernameLibre && <div style={{ fontSize: 12, color: "#B03024", marginTop: -8 }}>Ese usuario ya existe.</div>}
     {campo("Rol", <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{ROLES_ASIGNABLES.map(r => chip(ROLE_LABEL[r] || r, f.role === r, () => u("role", r)))}</div>)}
+    {campo("Operaciones (países a los que entra)", <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{OPERACIONES.map(o => chip(o.pais, opsF.includes(o.id), () => toggleOp(o.id)))}</div>)}
+    {opsF.length > 1 && <div style={{ fontSize: 12, color: "#6E6862", marginTop: -4 }}>Con más de un país, al entrar elige en el mapa "¿Dónde vas a trabajar hoy?".</div>}
     {f.role === "residente" && <div style={{ fontSize: 12, color: "#6E6862", marginTop: -4 }}>El residente entra SOLO a GeoSupply y Mis Tareas, nunca a GeoShopping. El proyecto lo elige en cada solicitud (se rotan y se cubren entre ellos).</div>}
     {acceso && <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: CHARCOAL, cursor: "pointer" }}>
       <input type="checkbox" checked={f.activo !== false} onChange={e => u("activo", e.target.checked)} /> Acceso activo {f.activo === false && <span style={{ color: "#B03024", fontWeight: 700 }}>(no puede entrar)</span>}
@@ -1032,7 +1042,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       // base real (fotos, salarios, altas/bajas). Eliminado. Si no cargo
       // nada, se muestra advertencia y se reintenta con "Actualizar" —
       // nunca se escribe nada automaticamente.
-      setEmpsLoadWarning(true);
+      // Operación NUEVA (El Salvador, 9-nov-2026): la base arranca VACÍA de
+      // verdad — si la nube responde y no hay fila, no es un fallo de carga.
+      let vacioReal = false;
+      if (esSV) { try { const c = await store.getCloud("hr-emps5"); vacioReal = c === null || (Array.isArray(c) && c.length === 0); } catch { vacioReal = false; } }
+      if (vacioReal) { setEmps([]); setEmpsLoadWarning(false); } else setEmpsLoadWarning(true);
     }
     if (v) setVacs(v); if (l) setLvs(l); if (a) setAtts(a); if (c) setCons(c); if (p) setPays(p); if (cq2) setCuadrillas(cq2); if (mv) setMovs(mv); if (ct) setContracts(ct); if (bn) setBonifs(bn);
     if (Array.isArray(he0)) setHes(he0);
@@ -6891,7 +6905,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       <style>{MOVIL_CSS}</style>
       <BarraMovil titulo="GeoTeam" icono={ICO_GEOTEAM} usuario={userName} rol={isReadOnly ? "Solo lectura" : roleLabel} onLogout={onLogout} />
       <BarraInferior tituloMas="GeoTeam" principales={["mi", "asistencia", "solicitudes"]} secciones={nav.length > 1 ? nav : []} activa={secVista} onElegir={setSec}
-        extra={!esPortalSolo && pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: v.name.split(" ")[0], on: co === k, onClick: () => setCo(k) })))} />
+        extra={!esPortalSolo && VARIAS_EMPRESAS && pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: v.name.split(" ")[0], on: co === k, onClick: () => setCo(k) })))} />
     </>}
     {!isMobile && <>
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: isMobile ? "wrap" : "nowrap" }}>
@@ -6904,7 +6918,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         {!isMobile && <div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>GeoTeam</div>}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0, order: isMobile ? 3 : 0, width: isMobile ? "100%" : "auto", justifyContent: isMobile ? "center" : "flex-start" }}>
-        {!esPortalSolo && pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: isMobile ? v.name.split(" ")[0] : v.name, on: co === k, onClick: () => setCo(k) })))}
+        {!esPortalSolo && VARIAS_EMPRESAS && pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: isMobile ? v.name.split(" ")[0] : v.name, on: co === k, onClick: () => setCo(k) })))}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
         {!isMobile && <div style={{ textAlign: "right" }}>
@@ -6923,7 +6937,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         {candado && <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "7px 14px", borderRadius: 999, background: "rgba(44,42,40,.06)", color: "#5C5853", font: "600 12px/1 var(--sans)", marginBottom: 14 }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#A39C92" }} />Solo lectura: podés ver todo, sin editar
         </div>}
-        {isMobile && nav.length > 1 && <TituloMovil derecha={!esPortalSolo && pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: v.name.split(" ")[0], on: co === k, onClick: () => setCo(k) })))}>{(nav.find(n => n.id === secVista) || {}).label}</TituloMovil>}
+        {isMobile && nav.length > 1 && <TituloMovil derecha={!esPortalSolo && VARIAS_EMPRESAS && pista(Object.entries(COMPANIES).map(([k, v]) => ({ k, label: v.name.split(" ")[0], on: co === k, onClick: () => setCo(k) })))}>{(nav.find(n => n.id === secVista) || {}).label}</TituloMovil>}
         <fieldset disabled={candado} style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
           {renderSec()}
         </fieldset>

@@ -5,6 +5,11 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// Operaciones (9-nov-2026): la data de El Salvador vive en sus propias filas
+// (`hr-emps5@sv`…). Toda entrada al store pasa por `sufijoKey`; Honduras no
+// lleva sufijo, así que sus keys quedan como siempre. Ver src/operacion.js.
+import { sufijoKey, keyDe } from './operacion.js';
+
 /**
  * Shared store backed by Supabase (replaces localStorage).
  * Uses a simple key-value table: app_data(key TEXT, value JSONB).
@@ -203,6 +208,7 @@ const getWithTimeout = (promise, ms = 30000) => {
 
 export const store = {
   async get(k) {
+    k = sufijoKey(k);
     // 1) Leer ambos: cloud (con su updated_at) y local (con su ts).
     let cloudValue = undefined;
     let cloudTs = null;
@@ -298,6 +304,7 @@ export const store = {
   // y verificacion del guardado de horas extras). LANZA si la nube no
   // responde (el caller decide el fallback); devuelve null si la key no existe.
   async getCloud(k) {
+    k = sufijoKey(k);
     const { data, error } = await getWithTimeout(
       supabase.from('app_data').select('value').eq('key', k).maybeSingle(),
       15000
@@ -306,7 +313,19 @@ export const store = {
     return data ? data.value : null;
   },
 
+  // Lectura directa de la nube en OTRA operación (el mapa "¿Dónde vas a
+  // trabajar hoy?" cuenta los colaboradores de cada país antes de entrar).
+  async getCloudDe(k, op) {
+    const { data, error } = await getWithTimeout(
+      supabase.from('app_data').select('value').eq('key', keyDe(k, op)).maybeSingle(),
+      15000
+    );
+    if (error && error.code !== 'PGRST116') throw error;
+    return data ? data.value : null;
+  },
+
   async set(k, v) {
+    k = sufijoKey(k);
     const ts = new Date().toISOString();
     // 1) Guardar SIEMPRE en localStorage primero (red de seguridad), con timestamp.
     writeLocalWithTs(k, v, ts);
@@ -351,6 +370,7 @@ export const store = {
   // quiet: true → no dispara el banner global si falla (para borrados
   // best-effort donde la operacion principal ya se completo y verifico).
   async remove(k, { quiet = false } = {}) {
+    k = sufijoKey(k);
     try { localStorage.removeItem(k); localStorage.removeItem(k + TS_SUFFIX); } catch { /* quota/privado */ }
     try {
       const { error } = await supabase.from('app_data').delete().eq('key', k);

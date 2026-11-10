@@ -21,6 +21,8 @@ import { MOVIL_CSS, AppMovilContext, BarraInferior, CuentaMovil, esAppInstalada 
 import Logo, { GeoCoreSello, GeoCoreMark } from "./Logo.jsx";
 import { BRAND, FONT } from "./theme.js";
 import { USERS, ROLE_LABEL, USUARIOS_DE_BAJA } from "./users.js";
+import MapaOperaciones from "./mapa-operaciones.jsx";
+import { OPERACION, OPERACION_ACTUAL, leerOperacion, guardarOperacion, operacionesDe } from "./operacion.js";
 // GeoSupply (2-oct-2026): contador de pendientes por rol en la tarjeta del Panel.
 import { contarPendientes, configEfectiva } from "./geosupply-calc.js";
 
@@ -30,6 +32,7 @@ import { contarPendientes, configEfectiva } from "./geosupply-calc.js";
 const MODULES = [
   {
     id: "rrhh",
+    operaciones: ["hn", "sv"],   // (9-nov-2026) también en la operación de El Salvador
     name: "GeoTeam",
     icon: "👥",
     desc: "El equipo, la asistencia y la planilla.",
@@ -72,6 +75,7 @@ const MODULES = [
     // Roles en geoinventory-calc.js (permisosDe): Gerson y la Lic. Carolina
     // todo; Óscar y Ana cargan; Christian, Arturo y gerencia solo ven.
     id: "geoinventory",
+    operaciones: ["hn", "sv"],   // (9-nov-2026) también en la operación de El Salvador
     name: "GeoInventory",
     icon: "🧰",
     desc: "Inventario, ubicaciones y herramientas.",
@@ -149,6 +153,7 @@ const MODULES = [
     // Cada quien ve solo las suyas (key `gt-todos-<username>`), así que va
     // abierto a todos los roles menos la tablet kiosco de marcaje.
     id: "tareas",
+    operaciones: ["hn", "sv"],   // (9-nov-2026) también en la operación de El Salvador
     oculto: true,   // 14-oct-2026: Gerson pidió esconderlo del panel "de momento" (el código sigue intacto)
     name: "Mis Tareas",
     icon: "✅",
@@ -252,12 +257,33 @@ export default function App() {
   const [welcomeDone, setWelcomeDone] = useState(() => {
     try { return sessionStorage.getItem("gt-welcome-done") === "1"; } catch { return true; }
   });
+  // Operaciones (9-nov-2026): el país elegido en "¿Dónde vas a trabajar hoy?"
+  // (sessionStorage `gt-operacion`, sobrevive al F5). null = todavía no eligió.
+  // La página ARRANCA en `OPERACION` (operacion.js): elegir otro país recarga.
+  const [operacionElegida, setOperacionElegida] = useState(() => leerOperacion());
+  const irAOperacion = (id) => {
+    guardarOperacion(id);
+    try { sessionStorage.removeItem("gt-welcome-done"); sessionStorage.removeItem("gt-panel-hero-done"); } catch {}
+    if (id !== OPERACION) { window.location.reload(); return; }
+    setOperacionElegida(id);
+    setWelcomeDone(false);
+  };
+  const cambiarOperacion = () => {
+    cancelarSalida();
+    guardarOperacion(null);
+    setOperacionElegida(null);
+    setActiveModule(null);
+  };
   useEffect(() => {
     try {
       const s = sessionStorage.getItem("gt-session");
       const ses = s ? JSON.parse(s) : null;
       if (ses && USUARIOS_DE_BAJA.includes(ses.username)) sessionStorage.removeItem("gt-session");
-      else if (ses) setUser(ses);
+      else if (ses) {
+        const ops = operacionesDe(ses);
+        if (ops.length === 1 && ops[0] !== OPERACION) { guardarOperacion(ops[0]); window.location.reload(); return; }
+        setUser(ses);
+      }
     } catch {}
   }, []);
 
@@ -303,15 +329,27 @@ export default function App() {
     const u = String(username || "").trim();
     if (USUARIOS_DE_BAJA.includes(u)) return false;
     const found = USERS.find((x) => x.username === u && x.password === password);
-    let session = found ? { username: found.username, role: found.role, label: found.label } : null;
+    let session = found ? { username: found.username, role: found.role, label: found.label, operaciones: found.operaciones } : null;
     if (!session) {
       try {
         const nube = await store.getCloud("gt-usuarios");
         const c = (Array.isArray(nube) ? nube : []).find((x) => x && x.activo !== false && x.username === u && x.password === password);
-        if (c) session = { username: c.username, role: c.role, label: c.label, empId: c.empId || null, proyectos: Array.isArray(c.proyectos) ? c.proyectos : [] };
+        if (c) session = { username: c.username, role: c.role, label: c.label, empId: c.empId || null, proyectos: Array.isArray(c.proyectos) ? c.proyectos : [], operaciones: Array.isArray(c.operaciones) ? c.operaciones : undefined };
       } catch (e) { console.warn("[login] no se pudo leer gt-usuarios:", e?.message || e); return "sin_red"; }
     }
     if (!session) return false;
+    // Operaciones: con UN solo país se entra directo (y si la página arrancó
+    // en otro, se recarga en el suyo); con varios, el mapa pregunta.
+    const ops = operacionesDe(session);
+    if (ops.length === 1) {
+      guardarOperacion(ops[0]);
+      if (ops[0] !== OPERACION) {
+        try { sessionStorage.setItem("gt-session", JSON.stringify(session)); sessionStorage.removeItem("gt-welcome-done"); sessionStorage.removeItem("gt-panel-hero-done"); } catch {}
+        window.location.reload();
+        return true;
+      }
+      setOperacionElegida(ops[0]);
+    } else { guardarOperacion(null); setOperacionElegida(null); }
     setUser(session);
     const porQR = hashInventario() && ROLES_INVENTARIO.includes(session.role);
     setActiveModule(porQR ? "geoinventory" : null);   // ninguna sesión hereda el módulo de la anterior (salvo que venga de un QR)
@@ -331,6 +369,8 @@ export default function App() {
     cancelarSalida();
     setUser(null);
     setActiveModule(null);
+    guardarOperacion(null);
+    setOperacionElegida(null);
     try {
       sessionStorage.removeItem("gt-session");
       sessionStorage.removeItem("gt-welcome-done");
@@ -369,6 +409,18 @@ export default function App() {
 
   if (!user) return <LoginScreen onLogin={login} />;
 
+  // ── ¿Dónde vas a trabajar hoy? (solo quien tiene más de una operación) ──
+  const opsUsuario = operacionesDe(user);
+  const variasOperaciones = opsUsuario.length > 1 && user.role !== "marcaje";
+  if (variasOperaciones && !operacionElegida) {
+    return (
+      <>
+        <style>{UI_CSS}</style>
+        <MapaOperaciones user={user} operaciones={opsUsuario} onElegir={irAOperacion} onLogout={logout} />
+      </>
+    );
+  }
+
   const syncBanner = !syncState.ok && syncState.error ? (
     <div style={{ position: "fixed", top: 0, left: 0, right: 0, background: BRAND.red, color: "#fff", padding: "10px 18px", fontSize: 13, fontWeight: 600, zIndex: 9999, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, boxShadow: "0 2px 10px rgba(0,0,0,.2)", fontFamily: FONT.body }}>
       <span>⚠️ No se sincronizó a la nube ({syncState.error.key}). Los datos están en este navegador pero NO en Supabase.</span>
@@ -385,7 +437,7 @@ export default function App() {
     onBack: () => { const o = origenModuloRef.current; origenModuloRef.current = null; setActiveModule(o || null); },
     volverA: origenModuloRef.current ? (MODULES.find(m => m.id === origenModuloRef.current)?.name || null) : null,
     onLogout: logout,
-    onAbrirModulo: (id) => { if (MODULES.some(m => m.id === id && m.roles.includes(user.role))) { origenModuloRef.current = activeModule; setActiveModule(id); } } };
+    onAbrirModulo: (id) => { if (MODULES.some(m => m.id === id && m.roles.includes(user.role) && (m.operaciones || ["hn"]).includes(OPERACION))) { origenModuloRef.current = activeModule; setActiveModule(id); } } };
   // `oculto` (14-oct-2026): GeoSafety, GeoDrill Vault y Mis Tareas no salen en
   // el panel por ahora. Mis Tareas sigue abriéndose desde la tarjeta TO-DOS de
   // la bienvenida (onAbrirTareas), que no pasa por esta lista.
@@ -394,7 +446,10 @@ export default function App() {
   // `marcaPropia` (users.js, 3-nov-2026): GeoClock aparece en SU panel para
   // marcar desde el celular, aunque su rol no lo tenga y el módulo esté oculto.
   const marcaPropia = !!USERS.find((x) => x.username === user.username)?.marcaPropia;
-  const permitidos = MODULES.filter((m) => (m.roles.includes(user.role) || (m.id === "geoclock" && marcaPropia)) && !sinModulos.includes(m.id));
+  // Operaciones (9-nov-2026): en El Salvador solo los módulos con `operaciones`
+  // que incluyan "sv" (GeoTeam, GeoInventory, Mis Tareas); sin el campo = Honduras.
+  const enOperacion = (m) => (m.operaciones || ["hn"]).includes(OPERACION);
+  const permitidos = MODULES.filter((m) => enOperacion(m) && (m.roles.includes(user.role) || (m.id === "geoclock" && marcaPropia)) && !sinModulos.includes(m.id));
   const visibleEnPanel = (m) => !m.oculto || (m.id === "geoclock" && marcaPropia);
   const availableModules = permitidos.some(visibleEnPanel) ? permitidos.filter(visibleEnPanel) : permitidos;
   // Celular (3-nov-2026): el menú ☰ de cualquier módulo lista los demás
@@ -442,7 +497,7 @@ export default function App() {
       <>
         <style>{UI_CSS}</style>
         {syncBanner}
-        <WelcomeScreen user={user} onStart={finishWelcome} onLogout={logout} onAbrirTareas={() => { finishWelcome(); setActiveModule("tareas"); }} />
+        <WelcomeScreen user={user} onStart={finishWelcome} onLogout={logout} onAbrirTareas={() => { finishWelcome(); setActiveModule("tareas"); }} onCambiarOperacion={variasOperaciones ? cambiarOperacion : null} />
       </>
     );
   }
@@ -460,6 +515,7 @@ export default function App() {
           saliendo={saliendo}
           onLogout={logout}
           onVolverBienvenida={volverBienvenida}
+          onCambiarOperacion={variasOperaciones ? cambiarOperacion : null}
           badges={badges}
         />
       </AppMovilContext.Provider>
@@ -510,7 +566,7 @@ function TituloHero({ esHero, escala = 1.4, altura = 0.4, children }) {
   );
 }
 
-function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolverBienvenida, saliendo = false, badges = {} }) {
+function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolverBienvenida, onCambiarOperacion = null, saliendo = false, badges = {} }) {
   // El hero corre CADA VEZ que aparece el panel (3-sep, pedido de Gerson:
   // "si entrás a un módulo y volvés, ya no hace la transición"). La primera
   // vez por login aguanta 1.5 s; en los regresos 0.8 s para que ir y venir
@@ -549,7 +605,7 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
           {user.role !== "marcaje" && (
             <button className="gt-circulo" onClick={onVolverBienvenida} title="Volver a la bienvenida" aria-label="Volver a la bienvenida"><IconoFlecha /></button>
           )}
-          <MenuUsuario user={user} onLogout={onLogout} />
+          <MenuUsuario user={user} onLogout={onLogout} onCambiarOperacion={onCambiarOperacion} />
           <span style={{ marginLeft: 6, display: "inline-flex" }}><Logo size={40} /></span>
         </div>
         <div style={{ textAlign: "right" }}>
@@ -562,7 +618,7 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
       <div style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", boxSizing: "border-box", padding: "clamp(6px,3vh,40px) 28px 0" }}>
         <TituloHero esHero={esHero} escala={1.4}>
           <div className="gt-label gt-aparece" style={{ color: "var(--text-3)" }}>
-            GeoCore · Grupo Geotecnica · Honduras
+            GeoCore · Grupo Geotecnica · {OPERACION_ACTUAL.pais}
           </div>
           <h1 className="gt-sube" style={{ font: "800 clamp(32px,min(5vw,7.5vh),64px)/1.05 var(--display)", letterSpacing: "-.025em", color: "var(--text)", margin: "clamp(6px,1.4vh,14px) 0 0" }}>
             Panel de <span style={{ color: "var(--marca-2)" }}>Control</span>
@@ -671,7 +727,7 @@ function PanelMovil({ user, availableModules, syncOk, onOpen, onLogout, saliendo
 }
 
 // ── Tuerquita del header: menú de cuenta con la opción de cerrar sesión ──
-function MenuUsuario({ user, onLogout }) {
+function MenuUsuario({ user, onLogout, onCambiarOperacion }) {
   const [abierto, setAbierto] = useState(false);
   return (
     <div style={{ position: "relative", display: "inline-flex" }}>
@@ -681,9 +737,15 @@ function MenuUsuario({ user, onLogout }) {
       {abierto && (
         <>
           <div onClick={() => setAbierto(false)} aria-hidden style={{ position: "fixed", inset: 0, zIndex: 30 }} />
-          <div className="gt-card gt-aparece" style={{ position: "absolute", top: 52, left: 0, zIndex: 31, minWidth: 240, padding: 18, boxShadow: "var(--e2)" }}>
+          <div className="gt-card gt-aparece" style={{ position: "absolute", top: 52, left: 0, zIndex: 31, minWidth: onCambiarOperacion ? 290 : 240, padding: 18, boxShadow: "var(--e2)" }}>
             <div style={{ font: "700 15px/1.3 var(--display)", color: "var(--text)" }}>{user.label}</div>
             <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 5 }}>{ROLE_LABEL[user.role] || user.role}</div>
+            {onCambiarOperacion && (
+              <button
+                onClick={() => { setAbierto(false); onCambiarOperacion(); }}
+                style={{ marginTop: 16, width: "100%", minHeight: 42, padding: "10px 14px", borderRadius: "var(--radio-control)", border: "1px solid var(--v-borde)", background: "rgba(255,255,255,.7)", color: "var(--text)", font: "700 13.5px/1 var(--sans)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}
+              ><span style={{ whiteSpace: "nowrap" }}>Cambiar de operación</span><span className="gt-label" style={{ color: "var(--text-3)", whiteSpace: "nowrap" }}>{OPERACION_ACTUAL.pais}</span></button>
+            )}
             <button
               onClick={onLogout}
               style={{ marginTop: 16, width: "100%", minHeight: 42, padding: "10px 14px", borderRadius: "var(--radio-control)", border: "1px solid rgba(192,57,43,.25)", background: "rgba(192,57,43,.06)", color: "#B03024", font: "700 13.5px/1 var(--sans)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8 }}
@@ -774,7 +836,7 @@ function PanelCard({ m, onOpen, index = 0, animar = true, badge = 0 }) {
 // y tres tarjetas escalonadas: TO-DOS (personales, persistidos por usuario),
 // BANDEJA (pendientes reales del sistema según el rol) y VERSÍCULO DEL DÍA.
 // ═══════════════════════════════════════════════════════════════════════════
-function WelcomeScreen({ user, onStart, onLogout, onAbrirTareas }) {
+function WelcomeScreen({ user, onStart, onLogout, onAbrirTareas, onCambiarOperacion = null }) {
   // fase "hero" (saludo centrado XL, que se disfrute) → fase "día" (arriba + tarjetas)
   const [fase, setFase] = useState(() => (prefiereMenosMovimiento() ? "dia" : "hero"));
   useEffect(() => {
@@ -847,7 +909,7 @@ function WelcomeScreen({ user, onStart, onLogout, onAbrirTareas }) {
       {/* Header: tuerquita de cuenta + logo a la izquierda, Saltar a la derecha */}
       <div style={{ position: "relative", zIndex: 3, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "18px 24px" }}>
         <div className="gt-aparece" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <MenuUsuario user={user} onLogout={onLogout} />
+          <MenuUsuario user={user} onLogout={onLogout} onCambiarOperacion={onCambiarOperacion} />
           <span style={{ marginLeft: 6, display: "inline-flex" }}><Logo size={40} /></span>
         </div>
         <button

@@ -8,8 +8,25 @@
 //     un feriado, segun politica interna de Geotecnica
 // =====================================================================
 
-// Feriados FIJOS (mismo dia cada anio)
-const FERIADOS_FIJOS = [
+import { esSV } from "./operacion.js";
+
+// EL SALVADOR (9-nov-2026, operación salvadoreña): Código de Trabajo art. 190.
+// Se usan cuando la página arrancó en la operación "sv"; la Semana Morazánica
+// y los movibles de octubre son solo de Honduras. ⚠ El 6 de agosto es feriado
+// en San Salvador (el resto del país descansa el 3) — se toma el 6.
+const FERIADOS_FIJOS_SV = [
+  { mes: 1, dia: 1, nombre: "Año Nuevo" },
+  { mes: 5, dia: 1, nombre: "Día del Trabajo" },
+  { mes: 5, dia: 10, nombre: "Día de la Madre" },
+  { mes: 6, dia: 17, nombre: "Día del Padre" },
+  { mes: 8, dia: 6, nombre: "Fiestas Agostinas (Divino Salvador del Mundo)" },
+  { mes: 9, dia: 15, nombre: "Día de la Independencia" },
+  { mes: 11, dia: 2, nombre: "Día de los Difuntos" },
+  { mes: 12, dia: 25, nombre: "Navidad" },
+];
+
+// Feriados FIJOS (mismo dia cada anio) — HONDURAS
+const FERIADOS_FIJOS_HN = [
   { mes: 1, dia: 1, nombre: "Año Nuevo" },
   { mes: 4, dia: 14, nombre: "Día de las Américas" },
   { mes: 5, dia: 1, nombre: "Día del Trabajo" },
@@ -26,10 +43,11 @@ const FERIADOS_FIJOS = [
 //   2026: el feriado arrancó el miércoles 7 a las 12:00 m. y siguió jueves 8,
 //   viernes 9 y sábado 10; se retomó el lunes 12 (aviso de Gerson, 15-oct).
 //   El 7 queda como día REGULAR (se trabajó la mañana y el día se paga igual).
-const OCTUBRE_MOVIBLES = [3, 12, 21];
-const SEMANA_MORAZANICA = {
+const OCTUBRE_MOVIBLES = esSV ? [] : [3, 12, 21];
+const SEMANA_MORAZANICA = esSV ? {} : {
   2026: [8, 9, 10],
 };
+const FERIADOS_FIJOS = esSV ? FERIADOS_FIJOS_SV : FERIADOS_FIJOS_HN;
 
 // Calcular Domingo de Pascua (algoritmo de Gauss).
 function pascua(year) {

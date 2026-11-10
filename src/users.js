@@ -7,13 +7,13 @@
 // =====================================================================
 
 export const USERS = [
-  { username: "administrador", password: "1234geo",        role: "admin",              label: "Lic. Gerson Trochez" },
+  { username: "administrador", password: "1234geo",        role: "admin",              label: "Lic. Gerson Trochez", operaciones: ["hn", "sv"] },
   { username: "daniel",        password: "daniel1234",     role: "admin",              label: "Daniel Flores" },
   { username: "asistente",     password: "asistente1234",  role: "asistente",          label: "Asistente" },
-  { username: "carolina",      password: "carolina1234",   role: "tesoreria",          label: "Lic. Carolina Flores-Hernandez" },
+  { username: "carolina",      password: "carolina1234",   role: "tesoreria",          label: "Lic. Carolina Flores-Hernandez", operaciones: ["hn", "sv"] },
   { username: "gerencia",      password: "gerencia1234",   role: "gerencia",           label: "Gerencia" },
   { username: "gerson",        password: "gerson1234",     role: "coordinador",        label: "Lic. Gerson Trochez" },
-  { username: "christian",     password: "christian1234",  role: "costos",             label: "Lic. Christian Gallo" },
+  { username: "christian",     password: "christian1234",  role: "costos",             label: "Lic. Christian Gallo", operaciones: ["hn", "sv"] },
   // ubicacion: la "sede" de la tablet de marcaje de este usuario. GeoClock la
   // estampa en cada marcaje y Registros la usa para listar como NO MARCÓ a
   // los asignados de esa sede que no marcaron. Para sumar la tablet de un
@@ -35,7 +35,7 @@ export const USERS = [
   // también es el candado del modo kiosco para salir del reloj.
   // 15-oct-2026, pedido de Gerson: Dr. Raúl Flores con acceso COMPLETO (admin)
   // e Ing. César Iglesias como visualizador de todo (gerencia = solo lectura).
-  { username: "raul.flores",   password: "GeoCore-i2Ro4f",  role: "admin",                label: "Dr. Raúl Flores" },
+  { username: "raul.flores",   password: "GeoCore-i2Ro4f",  role: "admin",                label: "Dr. Raúl Flores", operaciones: ["hn", "sv"] },
   { username: "cesar.iglesias", password: "GeoCore-K6pdC8", role: "gerencia",             label: "Ing. César Iglesias" },
   // 26-oct-2026, pedido de Gerson: Dr. Edy Montalván SOLO VISUALIZADOR de
   // GeoSupply, GeoShopping, GeoMachinery, GeoInventory y GeoCost (gerencia =
@@ -72,6 +72,8 @@ export const ROLE_LABEL = {
 
 // Roles que puede asignar Gerson al dar acceso desde GeoTeam. Admin NO: el
 // administrador se agrega a mano en este archivo.
+// `operaciones` (9-nov-2026): países a los que entra el usuario (hn · sv). Sin el
+// campo = solo Honduras. Con más de uno, al entrar elige en el mapa.
 export const ROLES_ASIGNABLES = ["residente", "gerencia", "visor_compras", "recepcion", "logistica", "asistente_compras", "compras_ops", "costos", "tesoreria"];
 
 // Color para el avatar de cada usuario (rotativo segun el username)

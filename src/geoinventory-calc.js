@@ -1,3 +1,4 @@
+import { OPERACION } from "./operacion.js";
 // ═══════════════════════════════════════════════════════════════════════════
 // GeoInventory — lógica PURA (sin React ni store), 13-oct-2026
 // ═══════════════════════════════════════════════════════════════════════════
@@ -74,10 +75,13 @@ export const estadoLabel = (item) => estadosDe(item)[item?.estado]?.label || ite
 // (automáticas desde la lista de proyectos; id "proy:<short>"). Lo guardado
 // en inv-ubicaciones son las oficinas y los ajustes (responsable, activa) de
 // cualquiera; las automáticas no se guardan completas.
+// `operaciones` (9-nov-2026): el Vault y el Taller son de Honduras; El
+// Salvador arranca solo con su Almacén Central (más las oficinas y los
+// proyectos que creen allá).
 export const UBICACIONES_FIJAS = [
   { id: "almacen", nombre: "Almacén Central", tipo: "almacen" },
-  { id: "vault",   nombre: "GeoDrill Vault",  tipo: "vault" },
-  { id: "taller",  nombre: "Taller externo",  tipo: "taller" },
+  { id: "vault",   nombre: "GeoDrill Vault",  tipo: "vault", operaciones: ["hn"] },
+  { id: "taller",  nombre: "Taller externo",  tipo: "taller", operaciones: ["hn"] },
 ];
 export const TIPO_UBICACION = { almacen: "Almacén", oficina: "Oficina", proyecto: "Proyecto", vault: "Bodega", taller: "Taller" };
 export const idProyecto = (short) => `proy:${short}`;
@@ -90,10 +94,10 @@ export const idProyecto = (short) => `proy:${short}`;
  *  (9-nov-2026, Gerson: Jonathan mete y saca inventario del Vault, el Almacén
  *  y el Taller sin quitarle la responsabilidad a Óscar). */
 export const manejaUbicacion = (u, username) => !!username && !!u && (u.responsable === username || (Array.isArray(u.ayudantes) && u.ayudantes.includes(username)));
-export const ubicacionesDe = ({ guardadas = [], proyectos = [] } = {}) => {
+export const ubicacionesDe = ({ guardadas = [], proyectos = [], operacion = OPERACION } = {}) => {
   const porId = new Map((guardadas || []).filter(u => u && u.id).map(u => [u.id, u]));
   const mezcla = (base) => ({ ...base, ...(porId.get(base.id) ? { responsable: porId.get(base.id).responsable || "", responsableNombre: porId.get(base.id).responsableNombre || "", ayudantes: Array.isArray(porId.get(base.id).ayudantes) ? porId.get(base.id).ayudantes : [], activa: porId.get(base.id).activa !== false, codigo: porId.get(base.id).codigo || "" } : { responsable: "", responsableNombre: "", ayudantes: [], activa: true, codigo: "" }) });
-  const fijas = UBICACIONES_FIJAS.map(mezcla);
+  const fijas = UBICACIONES_FIJAS.map(mezcla).map(u => (!u.operaciones || u.operaciones.includes(operacion)) ? u : { ...u, activa: false });
   const oficinas = (guardadas || []).filter(u => u && u.tipo === "oficina").map(u => ({ ...u, activa: u.activa !== false }))
     .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es", { sensitivity: "base" }));
   const proys = (proyectos || []).filter(p => p && p.short).map(p => mezcla({ id: idProyecto(p.short), nombre: p.short, nombreLargo: p.name || p.short, tipo: "proyecto", projectCode: p.short }))

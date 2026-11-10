@@ -1,3 +1,4 @@
+import { esSV } from "./operacion.js";
 // =====================================================================
 // LISTA CANONICA DE PROYECTOS — GRUPO GEOTECNICA
 // =====================================================================
@@ -6,7 +7,9 @@
 // con datos ya guardados en Supabase (cuadrillas, asistencia, planillas).
 // =====================================================================
 
-export const PROJECTS = [
+// Operaciones (9-nov-2026): esta lista es la de HONDURAS. En El Salvador no
+// hay proyectos base — los que se creen allá viven en cp-projects@sv.
+const PROJECTS_HN = [
   {
     id: "p-ebenezer",
     short: "EBENEZER",
@@ -123,6 +126,8 @@ export const PROJECTS = [
 // tres que son lo mismo"). Todo lo del plantel y el taller se pide a
 // PLAN-TALLER. Las compras viejas con estos proyectos se quedan como están:
 // esto solo los saca de los selectores de proyecto al pedir.
+export const PROJECTS = esSV ? [] : PROJECTS_HN;
+
 export const PROYECTOS_SIN_SOLICITUDES = new Set(["PLANTEL", "PLANTEL-OFICINA"]);
 export const admiteSolicitudes = (short) => !PROYECTOS_SIN_SOLICITUDES.has(String(short || "").trim());
 

@@ -12,6 +12,54 @@ App React (Vite) interna para Geotecnica Soluciones / Subterra Honduras.
 SPA sin backend propio: datos en Supabase (tabla key-value `app_data`) con
 cache localStorage. Deploy automático a GitHub Pages al hacer push a `main`.
 
+## OPERACIONES — Honduras y El Salvador (9-nov-2026)
+Gerson: "me pidieron migrar la operación salvadoreña a nuestro sistema;
+empecemos con RRHH". `src/operacion.js` (puro, Node-safe): `OPERACIONES`
+(hn · sv, con país, empresas, moneda y sedes con lon/lat y foto),
+`OPERACION` = la operación con la que ARRANCÓ la página (sessionStorage
+`gt-operacion`, default hn), `esSV`, `keyDe(k, op)` / `sufijoKey(k)`.
+**Separación de datos**: el store (`supabase.js`) le pega el sufijo `@sv` a
+TODA key en la operación de El Salvador (`hr-emps5@sv`, `inv-items@sv`,
+`cp-file-<id>@sv`…) en get/getCloud/set/remove; Honduras NO lleva sufijo
+(sus keys quedan exactas, nada se migró). Globales sin sufijo: `gt-usuarios`
+y `gt-todos-*`. `store.getCloudDe(k, op)` lee otra operación (el mapa cuenta
+colaboradores). Como varios módulos arman constantes al cargar (PROJECTS,
+feriados, EMPRESAS, COMPANIES), la operación es FIJA por página: elegir otra
+guarda `gt-operacion` y RECARGA (la sesión sobrevive y cae en la bienvenida).
+**Mapa "¿Dónde vas a trabajar hoy?"** (`src/mapa-operaciones.jsx`, inspirado
+en el del IST que hizo Gerson): tras el login, quien tiene `operaciones` con
+más de un país (users.js: administrador, carolina, christian, raul.flores; o
+`operaciones` en gt-usuarios) ve Centroamérica (`src/mapa-centroamerica.js`,
+Natural Earth 50m → paths SVG + `proyectar(lon,lat)`, generado con un script
+de la sesión); toca un país → el mapa se acerca (viewBox animado, el país
+centrado en el 56 % izquierdo) y con una sola sede se abre sola la tarjeta
+(foto — Tegucigalpa usa `brand/login/obra-4.jpg`; San Salvador "Foto
+pendiente"—, colaboradores activos, empresas, moneda, "Entrar a esta
+operación") → bienvenida de siempre. Pines y rótulos en HTML sobre el SVG con
+el MISMO viewBox (ampliado a la proporción del contenedor, nunca recortado).
+"Cambiar de operación" en la tuerquita (bienvenida y panel) vuelve al mapa.
+Un usuario de UN solo país entra directo (y si la página arrancó en otro,
+se recarga en el suyo). La tablet `marcaje` nunca ve el mapa.
+**El Salvador**: `MODULES` lleva `operaciones: ["hn","sv"]` solo en rrhh,
+geoinventory y tareas (sin el campo = Honduras); `onAbrirModulo` también lo
+respeta. Empresa única Subterra (`COMPANIES`/`EMPRESAS` con esSV; razón
+social PENDIENTE de confirmar con Roberto, va "SUBTERRA EL SALVADOR"); la
+pista Subterra/Geotecnica se esconde con una sola empresa (`VARIAS_EMPRESAS`).
+`PROJECTS` = [] en sv (los proyectos nacen en cp-projects@sv). Feriados de
+El Salvador en holidays.js (`FERIADOS_FIJOS_SV`, sin Semana Morazánica).
+GeoInventory: Vault y Taller son solo hn (`UBICACIONES_FIJAS[].operaciones`);
+SV arranca con el Almacén Central. GeoTeam: una base vacía de verdad NO
+muestra el aviso rojo de "no se pudieron cargar" (solo en esSV, verificando
+con getCloud). Accesos: pills "Operaciones" en `AccesoFormImpl` (campo
+`operaciones` en gt-usuarios; default la operación actual). El panel dice
+"GeoCore · Grupo Geotecnica · <país>". ⚠ PENDIENTE a propósito: la planilla
+sigue con reglas de Honduras (IHSS/RAP/L); El Salvador necesita ISSS 3 %,
+AFP 7.25 %, renta en USD — se hace cuando Roberto mande la data. Las
+etiquetas "(L)" de salarios también siguen en lempiras.
+**Roberto Guerra** (administrador de Subterra El Salvador): acceso
+`roberto.guerra` en gt-usuarios, rol `gerencia` (solo lectura),
+`operaciones: ["sv"]`, sin ficha (empId null) — creado el 9-nov-2026 por REST.
+
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
