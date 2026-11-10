@@ -10,6 +10,7 @@
 // 26-oct-2026: cabecera, pie, KPIs, tablas y Excel con el estilo único de
 // reportes (reporte-estilo.js). Números, columnas y hojas NO cambiaron.
 // ═══════════════════════════════════════════════════════════════════════════
+import { MONEDA } from "./operacion.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { PDF_TEMA, RP, pdfPie, pdfKpi, cargarImagen, LOGO_EMPRESA } from "./reporte-estilo.js";
 import { totalesLinea, resumenPlanilla, nombreQuincena, rangoQuincena, etiquetaCorta, mesLargo, GRUPOS_CT, METODOS_PAGO, notaAutomatica, diasMostrados, gruposPlanilla } from "./planilla-calc.js";
@@ -23,7 +24,7 @@ const MAPA_L1 = { "–": "-", "—": "-", "‘": "'", "’": "'", "“": '"', "�
 export const latin1 = (s) => String(s ?? "").replace(/[–—‘’“”…×→✓€]/g, c => MAPA_L1[c] ?? "").replace(/[^\u0000-ÿ]/g, "");
 const nf = (n, d = 2) => (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const L = (n) => (Number(n) || 0) === 0 ? "-" : `${n < 0 ? "-" : ""}${nf(Math.abs(n))}`;
-const Lsiempre = (n) => `L ${nf(n)}`;
+const Lsiempre = (n) => `${MONEDA} ${nf(n)}`;
 const fechaLarga = (d = new Date()) => `${d.getDate()} de ${mesLargo(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`).split(" ")[0]} de ${d.getFullYear()}`;
 const MES3 = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const fechaCorta = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split("-"); return m ? `${d} ${MES3[Number(m) - 1]} ${y}` : String(iso || ""); };
@@ -363,7 +364,7 @@ export const exportarPlanillaPDF = async (args) => {
 // naranja clarito y el total en carbón con el neto en naranja. Letra Calibri
 // (Helvetica Neue y Menlo no existen en Windows y Excel las cambiaba por
 // Arial / Courier). Las celdas, fórmulas, columnas y hojas son las mismas.
-const FMT_L = '"L" #,##0.00;[Red]-"L" #,##0.00;"-"';
+const FMT_L = `"${MONEDA}" #,##0.00;[Red]-"${MONEDA}" #,##0.00;"-"`;
 const ARGB = (h) => "FF" + h.replace("#", "").toUpperCase();
 const FUENTE = "Calibri";
 /**
@@ -532,9 +533,9 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     { k: "ferL", h: "Feriados / domingos", w: 13, sec: "ing", fmt: "L", ingreso: true, v: (l) => n0(l.bonoFeriado) + n0(l.bonoDomingo) },
     { k: "oi", h: "Otros ingresos", w: 13, sec: "ing", fmt: "L", ingreso: true, v: (l, t) => t.extrasIng },
     { k: "ting", h: "Total ingresos", w: 15, sec: "ing", fmt: "L", total: "ingreso", negrita: true },
-    { k: "nspL", h: "No se presentó (L)", w: 12, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.descuentoNSP) },
-    { k: "tardeL", h: "Llegadas tarde (L)", w: 12, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.descuentoHoras) },
-    { k: "incL", h: "Incapacidad (L)", w: 12, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.descuentoIncap) },
+    { k: "nspL", h: `No se presentó (${MONEDA})`, w: 12, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.descuentoNSP) },
+    { k: "tardeL", h: `Llegadas tarde (${MONEDA})`, w: 12, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.descuentoHoras) },
+    { k: "incL", h: `Incapacidad (${MONEDA})`, w: 12, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.descuentoIncap) },
     { k: "isr", h: "ISR", w: 11, sec: "ded", fmt: "L", deduccion: true, ley: true, v: (l) => n0(l.isr) },
     { k: "ihss", h: "IHSS", w: 11, sec: "ded", fmt: "L", deduccion: true, ley: true, v: (l) => n0(l.ihss) },
     { k: "rap", h: "RAP", w: 11, sec: "ded", fmt: "L", deduccion: true, ley: true, v: (l) => n0(l.rap) },

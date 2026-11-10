@@ -404,7 +404,7 @@ export const hojaExcel = (wb, { nombre, titulo, subtitulo = "", columnas, filas,
     cell.border = { bottom: { style: "thin", color: { argb: ARGB(RP.lineaFuerte) } } };
   });
   enc.height = 20;
-  const FMT = { lps: '"L "#,##0.00', num: "#,##0", num2: "#,##0.00", pct: "0.0%", fecha: "dd-mmm-yyyy" };
+  const FMT = { lps: `"${MONEDA} "#,##0.00`, num: "#,##0", num2: "#,##0.00", pct: "0.0%", fecha: "dd-mmm-yyyy" };
   const pintar = (row, esTotal, esSub) => {
     columnas.forEach((c, i) => {
       const cell = row.getCell(i + 1);

@@ -1,4 +1,4 @@
-import { esSV } from "./operacion.js";
+import { esSV, MONEDA } from "./operacion.js";
 // =====================================================================
 // HUB DE RRHH — lógica PURA (20-oct-2026, pedido de Gerson)
 // =====================================================================
@@ -259,7 +259,7 @@ export function lempirasEnLetras(monto) {
   const n = r2(monto), ent = Math.floor(n), cent = Math.round((n - ent) * 100);
   const letras = numeroALetras(ent, { apocope: false }).toUpperCase();
   const cents = cent ? `CON ${String(cent).padStart(2, "0")}/100` : "EXACTOS";
-  return `${letras} LEMPIRA${ent === 1 ? "" : "S"} ${cents} (L. ${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
+  return `${letras} ${esSV ? (ent === 1 ? "DÓLAR" : "DÓLARES") : (ent === 1 ? "LEMPIRA" : "LEMPIRAS")} ${cents} (${esSV ? "US$" : "L."} ${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
 }
 const MESES_L = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 /** "2025-07-02" → "dos (02) de julio de dos mil veinticinco (2025)" */

@@ -1,3 +1,4 @@
+import { MONEDA } from "./operacion.js";
 // ═══════════════════════════════════════════════════════════════════════════
 // GeoTeam — PLANILLA (16-oct-2026). Lógica PURA, sin React ni store: Node la
 // prueba en tests/planilla-calc.test.mjs. Calca el Excel con el que la Lic.
@@ -393,7 +394,7 @@ export const diasMostrados = (l) => {
   const ef = l.diasPresenteEfectivo, pr = l.diasPresente ?? 0;
   return ef != null && ef !== pr ? ef.toFixed(2) : String(pr);
 };
-export const fmtL = (n) => `L ${(num(n)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const fmtL = (n) => `${MONEDA} ${(num(n)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /** Líneas que tienen horas extras (la planilla de horas extras va aparte). */
 export const lineasConHe = (lines) => (lines || []).filter(l => num(l.he?.monto) > 0);

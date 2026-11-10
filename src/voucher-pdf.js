@@ -6,6 +6,7 @@
 // probada) así el comprobante cuadra al centavo con la planilla. El de
 // Gerson Trochez NUNCA se genera (lineasVoucher lo saca).
 // ═══════════════════════════════════════════════════════════════════════════
+import { MONEDA } from "./operacion.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { PDF_TEMA, pdfPie, pdfKpi, cargarImagen, LOGO_EMPRESA, latin1 } from "./reporte-estilo.js";
 import { conceptosVoucher, lineasVoucher, modalidadDe, mesLargo, rangoQuincena, etiquetaCorta } from "./planilla-calc.js";
@@ -13,7 +14,7 @@ import { EMPRESAS } from "./rrhh-solicitudes.js";
 
 const T = PDF_TEMA;
 const nf = (n) => (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const Ls = (n) => `L ${nf(n)}`;
+const Ls = (n) => `${MONEDA} ${nf(n)}`;
 const METODO = { transferencia: "Transferencia", cheque: "Cheque", ach: "ACH" };
 const slug = (s) => latin1(s).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9.-]+/g, "_").replace(/^_+|_+$/g, "");
 const iniciales = (n) => String(n || "").trim().split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]).join("").toUpperCase();
