@@ -12,7 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MAPA_W, MAPA_H, PAISES, proyectar } from "./mapa-centroamerica.js";
-import { OPERACIONES, OPERACION_ACTUAL } from "./operacion.js";
+import { OPERACIONES } from "./operacion.js";
 import { store } from "./supabase.js";
 import { GeoCoreMark } from "./Logo.jsx";
 import { prefiereMenosMovimiento } from "./geocost-ui.jsx";
@@ -30,9 +30,9 @@ const CSS = `
 .op-mapa svg{position:absolute;inset:0;width:100%;height:100%;display:block}
 .op-pais{fill:#FBFBFA;stroke:rgba(44,42,40,.18);stroke-width:1.1;vector-effect:non-scaling-stroke;transition:fill .25s var(--curva)}
 .op-pais.op-inactivo{fill:#F2F2F1;stroke:rgba(44,42,40,.10)}
-.op-pais.op-activo{cursor:pointer;stroke:rgba(44,42,40,.42);fill:#fff}
-.op-pais.op-activo:hover,.op-pais.op-hover{fill:rgba(232,118,45,.12)}
-.op-pais.op-elegido,.op-pais.op-elegido:hover{fill:#fff;stroke:rgba(44,42,40,.5)}
+.op-pais.op-activo{cursor:pointer;stroke:#C4602A;fill:rgba(232,118,45,.55)}
+.op-pais.op-activo:hover,.op-pais.op-hover{fill:rgba(232,118,45,.80)}
+.op-pais.op-elegido,.op-pais.op-elegido:hover{fill:var(--marca-2);stroke:#B55522}
 .op-pais:focus{outline:none}.op-pais:focus-visible{stroke:var(--marca-2);stroke-width:2}
 .op-capa{position:absolute;inset:0;pointer-events:none}
 .op-rotulo{position:absolute;transform:translate(-50%,-50%);font:600 11px/1 var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);white-space:nowrap;transition:opacity .3s}
@@ -189,9 +189,7 @@ export default function MapaOperaciones({ user, operaciones, onElegir, onLogout 
               <button className="op-pill" onClick={verTodo}>← Toda Centroamérica</button>
               <span style={{ font: "600 13.5px/1 var(--sans)", color: "var(--text-2)" }}>{paisElegido.nombre} · {opElegida?.sedes.length === 1 ? "1 sede" : `${opElegida?.sedes.length || 0} sedes`}</span>
             </>
-          ) : (
-            <span style={{ font: "500 14px/1.3 var(--sans)", color: "var(--text-3)" }}>Tocá un país para acercarte. Tenés operación en {ops.map(o => o.pais).join(" y ")}.</span>
-          )}
+          ) : null}
         </div>
 
         <div className="op-mapa" ref={cajaRef}>
@@ -241,9 +239,6 @@ export default function MapaOperaciones({ user, operaciones, onElegir, onLogout 
               </div>
             </aside>
           )}
-        </div>
-        <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 12 }}>
-          Ahora estás en {OPERACION_ACTUAL.pais}. Cambiar de país recarga la pantalla un instante.
         </div>
       </div>
     </div>
