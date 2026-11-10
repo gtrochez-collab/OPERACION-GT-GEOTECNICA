@@ -27,7 +27,7 @@ export const OPERACIONES = [
     empresas: ["geotecnica", "subterra"],
     moneda: "L",
     sedes: [
-      { id: "tegucigalpa", nombre: "Tegucigalpa", sub: "Francisco Morazán, Honduras", tipo: "Plantel y oficinas", lon: -87.2068, lat: 14.0818, foto: "brand/login/obra-4.jpg", empresas: ["Geotecnica Soluciones", "Subterra Honduras"] },
+      { id: "tegucigalpa", nombre: "Tegucigalpa", sub: "Francisco Morazán, Honduras", tipo: "Plantel y oficinas", lon: -87.2068, lat: 14.0818, foto: null, logo: "brand/logo-color.png", empresas: ["Geotecnica Soluciones", "Subterra Honduras"] },
     ],
   },
   {
@@ -37,7 +37,7 @@ export const OPERACIONES = [
     empresas: ["subterra"],
     moneda: "$",
     sedes: [
-      { id: "san-salvador", nombre: "San Salvador", sub: "San Salvador, El Salvador", tipo: "Operación", lon: -89.2182, lat: 13.6929, foto: null, empresas: ["Subterra El Salvador"] },
+      { id: "san-salvador", nombre: "San Salvador", sub: "San Salvador, El Salvador", tipo: "Operación", lon: -89.2182, lat: 13.6929, foto: null, logo: "brand/subterra.png", empresas: ["Subterra El Salvador"] },
     ],
   },
 ];

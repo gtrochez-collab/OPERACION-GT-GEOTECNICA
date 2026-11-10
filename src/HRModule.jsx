@@ -6884,8 +6884,6 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   }};
 
   const roleLabel = userRole === "admin" ? "Recursos Humanos" : userRole === "tesoreria" ? "Tesorería — acceso completo" : userRole === "asistente" ? "Asistente RRHH" : userRole === "gerencia" ? "Gerencia (solo lectura)" : userRole === "costos" ? "Costos (solo lectura)" : userRole === "recepcion" ? "Fotos del personal" : userRole === "asistente_compras" ? "Personal y asistencia" : userRole === "logistica" ? "Aprobador de llegadas tardías (plantel/almacén)" : esPortalSolo ? "Mi RRHH" : (userRole || "Usuario");
-  const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
-
   // ── Encabezado y pestañas (15-oct-2026): mismo estilo que GeoInventory /
   // GeoSupply. Se retiró el hero con la ilustración, el título repetido de la
   // pestaña ("Dashboard / Subterra Honduras") y los emojis de las pestañas.
@@ -6911,7 +6909,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: isMobile ? "wrap" : "nowrap" }}>
       <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
         {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
-        <img src={logoUrl} alt="Geotecnica Soluciones" style={{ height: isMobile ? 28 : 34, width: "auto", display: "block" }} />
+        <Logo size={isMobile ? 28 : 34} />
         <div title="GeoTeam" style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="9" cy="8" r="3.2" /><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" /><circle cx="17" cy="9" r="2.4" /><path d="M16 14.2c2.4-.2 4.1 1.3 4.6 4" /></svg>
         </div>

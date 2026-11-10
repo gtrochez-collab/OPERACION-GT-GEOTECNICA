@@ -6,9 +6,36 @@
 //   - logo-gris.png   (logo en gris/charcoal para uso monocromatico)
 // =====================================================================
 
+import { esSV } from "./operacion.js";
+
 const BASE = import.meta.env.BASE_URL || "/";
 
+// Logo de la EMPRESA según la operación (9-nov-2026, pedido de Gerson: "cuando
+// entrás a El Salvador, arriba a la izquierda que diga Subterra"). En Honduras
+// es Geotecnica Soluciones (los archivos oficiales de abajo); en El Salvador la
+// única empresa es Subterra, así que se arma el lockup horizontal con la marca
+// redonda de `brand/subterra.png` (el archivo oficial es vertical: la marca
+// ocupa el 70 % de arriba y el texto va abajo, ilegible a 40 px de alto).
+function LogoSubterra({ size, showText }) {
+  const marca = (
+    <div style={{ width: size, height: size, overflow: "hidden", position: "relative", flexShrink: 0 }} aria-label="Subterra">
+      <img src={`${BASE}brand/subterra.png`} alt="" style={{ position: "absolute", top: 0, left: -size * 0.212, height: size * 1.414, width: "auto", display: "block" }} />
+    </div>
+  );
+  if (!showText) return marca;
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: size * 0.22 }} role="img" aria-label="Subterra · A Geotecnica Group Company">
+      {marca}
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: size * 0.06, lineHeight: 1 }}>
+        <span style={{ font: `700 ${size * 0.38}px/1 var(--sans, Inter, sans-serif)`, letterSpacing: ".2em", color: "#6B6B70", whiteSpace: "nowrap" }}>SUBTERRA</span>
+        <span style={{ font: `italic 500 ${size * 0.19}px/1 var(--sans, Inter, sans-serif)`, color: "#E8762D", whiteSpace: "nowrap" }}>A Geotecnica Group Company</span>
+      </div>
+    </div>
+  );
+}
+
 export default function Logo({ size = 56, color = "color", showText = true }) {
+  if (esSV) return <LogoSubterra size={size} showText={showText} />;
   const src = color === "gris" || color === "gray" ? `${BASE}brand/logo-gris.png` : `${BASE}brand/logo-color.png`;
   // El logo oficial ya incluye el texto "GEOTECNICA / SOLUCIONES" al lado
   // de la G estriada. Si solo se pide la marca G (showText=false), recortamos

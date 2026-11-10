@@ -33,11 +33,16 @@ más de un país (users.js: administrador, carolina, christian, raul.flores; o
 Natural Earth 50m → paths SVG + `proyectar(lon,lat)`, generado con un script
 de la sesión); toca un país → el mapa se acerca (viewBox animado, el país
 centrado en el 56 % izquierdo) y con una sola sede se abre sola la tarjeta
-(foto — Tegucigalpa usa `brand/login/obra-4.jpg`; San Salvador "Foto
-pendiente"—, colaboradores activos, empresas, moneda, "Entrar a esta
+(logo de la empresa en vez de foto — Tegucigalpa `brand/logo-color.png` (el que tiene transparencia),
+San Salvador `brand/subterra.png`, campo `logo` de la sede—, colaboradores activos, empresas, moneda, "Entrar a esta
 operación") → bienvenida de siempre. Pines y rótulos en HTML sobre el SVG con
 el MISMO viewBox (ampliado a la proporción del contenedor, nunca recortado).
 "Cambiar de operación" en la tuerquita (bienvenida y panel) vuelve al mapa.
+Honduras y El Salvador van pintados de NARANJA (donde hay presencia), sin
+texto de ayuda. **Logo de la empresa por operación**: `Logo` (Logo.jsx) con
+`esSV` arma el lockup horizontal de Subterra (marca redonda recortada de
+`subterra.png` + "SUBTERRA · A Geotecnica Group Company"); GeoTeam y
+GeoInventory usan `<Logo>` (antes un <img> fijo de Geotecnica).
 Un usuario de UN solo país entra directo (y si la página arrancó en otro,
 se recarga en el suyo). La tablet `marcaje` nunca ve el mapa.
 **El Salvador**: `MODULES` lleva `operaciones: ["hn","sv"]` solo en rrhh,

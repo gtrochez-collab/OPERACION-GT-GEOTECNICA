@@ -49,6 +49,8 @@ const CSS = `
 @keyframes opEntra{from{opacity:0;transform:translateX(24px)}}
 .op-foto{height:150px;flex:none;background:#2C2A28;position:relative;overflow:hidden}
 .op-foto img{width:100%;height:100%;object-fit:cover;display:block}
+.op-foto-logo{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(120% 90% at 70% 15%,rgba(232,118,45,.14),transparent 60%),#FBFBFA}
+.op-foto-logo img{width:auto;height:auto;max-height:78%;max-width:78%;object-fit:contain}
 .op-foto-vacia{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:rgba(255,255,255,.72);font:600 12px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;background:radial-gradient(120% 80% at 70% 20%,rgba(232,118,45,.35),transparent 60%),#2C2A28}
 .op-cuerpo{padding:16px 20px 18px;display:flex;flex-direction:column;gap:5px;flex:1;min-height:0;overflow:auto}
 .op-eyebrow{font:700 11px/1 var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--marca-2)}
@@ -221,7 +223,9 @@ export default function MapaOperaciones({ user, operaciones, onElegir, onLogout 
           {sede && (
             <aside className="op-tarjeta" key={sede.sede.id}>
               <div className="op-foto">
-                {sede.sede.foto ? <img src={`${base}${sede.sede.foto}`} alt={sede.sede.nombre} /> : (
+                {sede.sede.foto ? <img src={`${base}${sede.sede.foto}`} alt={sede.sede.nombre} /> : sede.sede.logo ? (
+                  <div className="op-foto-logo"><img src={`${base}${sede.sede.logo}`} alt={sede.sede.empresas?.[0] || sede.sede.nombre} /></div>
+                ) : (
                   <div className="op-foto-vacia"><span style={{ display: "inline-flex", transform: "scale(.8)" }}><GeoCoreMark size={40} /></span><span>Foto pendiente</span></div>
                 )}
               </div>

@@ -20,6 +20,7 @@
 // Keys: inv-items · inv-ubicaciones · inv-mov-AAAA-MM · cp-file-<id>.
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
+import Logo from "./Logo.jsx";
 import { GT_CSS } from "./gt-ui.js";
 import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
@@ -1489,7 +1490,6 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   // ═══════════════════════════ ROOT ═══════════════════════════
   if (!perms.ver) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#F9F9F8", color: "#6E6862", fontSize: 13 }}>Este usuario no tiene acceso a GeoInventory.</div>;
   if (!loaded) return <PantallaCarga titulo={"GeoInventory"} />;
-  const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
   const secOk = nav.some(x => x.id === sec) ? sec : "inicio";
   return <div className="gt-root gt-entra-modulo" style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "var(--bg)", position: "relative", overflow: "hidden" }}>
     <style>{GT_CSS}</style>
@@ -1505,7 +1505,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
         {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
-        <img src={logoUrl} alt="Geotecnica Soluciones" style={{ height: isMobile ? 28 : 34, width: "auto", display: "block" }} />
+        <Logo size={isMobile ? 28 : 34} />
         <div title="GeoInventory" style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO.materiales} size={22} /></div>
         {!isMobile && <div style={{ font: "800 15px/1 var(--display)", color: "var(--text)" }}>GeoInventory</div>}
       </div>
