@@ -99,7 +99,7 @@ const bloqueProyecto = (p, identidades, { primero }) => {
     <div><div class="l">Fecha de pago</div><div class="v">${escHTML(fechaLarga(corte.pago))}</div></div>
     <div><div class="l">Motivo</div><div class="v">Pago de personal M.O. por día</div></div>
     <div><div class="l">Depositar a</div><div class="v">${escHTML(liq.encargado || "—")}</div></div>
-    <div><div class="l">Elaborado por</div><div class="v">${escHTML(p.elaboradoPor || "—")}</div></div>
+    <div><div class="l">Asistencia tomada por</div><div class="v">${escHTML(p.asistenciaPor || "—")}</div></div>
     <div><div class="l">Identidades</div><div class="v">${filas.filter(f => identidades[f.id]?.frente).length} de ${filas.length} adjuntas</div></div>
   </div>`;
   const kpis = rKpis([
@@ -112,7 +112,7 @@ const bloqueProyecto = (p, identidades, { primero }) => {
     <div class="caja"><div class="l">Observaciones</div>${liq.encargado ? `Favor depositar a <b>${escHTML(liq.encargado)}</b>, quien se encargará de gestionar el pago y el cierre.` : "Sin encargado del pago indicado."}${liq.observaciones ? `<div style="margin-top:6px">${escHTML(liq.observaciones)}</div>` : ""}<div style="margin-top:6px;color:#9A948D;font-size:9.5px">${notas.join(" ")}</div></div>
     <div class="caja total"><div class="l">Total a pagar · ${escHTML(fechaCorta(corte.pago))}</div><div class="v">${fmtLps(totales.total)}</div></div>
   </div>`;
-  const firmas = `<div class="rp-firmas"><div>Elaborado por${p.elaboradoPor ? `<br><b>${escHTML(p.elaboradoPor)}</b>` : ""}</div><div>Revisado · Recursos Humanos</div><div>Autorizado</div></div>`;
+  const firmas = `<div class="rp-firmas"><div>Asistencia${p.asistenciaPor ? `<br><b>${escHTML(p.asistenciaPor)}</b>` : ""}</div><div>Elaborado por · Recursos Humanos${p.elaboradoPor ? `<br><b>${escHTML(p.elaboradoPor)}</b>` : ""}</div><div>Autorizado</div></div>`;
   const ids = filas.map((f, i) => {
     const idn = identidades[f.id] || {};
     return `<div class="rp-caja"><div class="cab"><b>${i + 1}. ${escHTML(f.nombre)}</b><span>${escHTML(f.dni || "")}</span></div>

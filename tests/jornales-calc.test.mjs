@@ -61,3 +61,12 @@ test("ficha del jornal", () => {
   assert.match(validarJornalero({ id: "2", fullName: "X", dni: "0801-2007-14765", salarioDia: 600 }, [{ id: "1", fullName: "Randy", dni: "0801200714765" }]), /Randy/);
   assert.equal(validarJornalero({ fullName: "X", dni: "0801200714765", salarioDia: 600 }), null);
 });
+
+test("proyecto nuevo en el corte: la lista que pasó del corte anterior no se pierde al guardar", () => {
+  const base = { jornaleros: ["a", "b"], tarifas: { a: 600 } };
+  const local = { ...base, dias: { a: { d1: 1 } } };
+  const m = mezclarProyecto(base, local, null);
+  assert.deepEqual(m.jornaleros, ["a", "b"]);
+  assert.equal(m.dias.a.d1, 1);
+  assert.equal(m.tarifas.a, 600);
+});

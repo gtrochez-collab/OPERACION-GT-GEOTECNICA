@@ -73,7 +73,9 @@ export const ponerCelda = (mapa, id, fecha, v) => {
  * otro. Celda por celda (días y HE), jornal por jornal (lista y tarifas).
  */
 export function mezclarProyecto(base, local, nube) {
-  const B = norm(base), L = norm(local), N = norm(nube);
+  // Si el proyecto todavía no existe en la nube, se parte de la base (ej. la lista
+  // que pasó sola del corte anterior), no de una lista vacía.
+  const B = norm(base), L = norm(local), N = norm(nube ?? base);
   const out = norm(N);
   // Lista: lo de la nube + lo que yo agregué − lo que yo quité (orden de la nube).
   const agregados = L.jornaleros.filter(id => !B.jornaleros.includes(id));

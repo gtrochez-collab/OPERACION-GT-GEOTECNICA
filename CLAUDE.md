@@ -1308,12 +1308,21 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   los proyectos" con total por proyecto, PDF/Excel por proyecto o de todos) ·
   **Mi RRHH → Asistencia de campo** (`ROLES_CAMPO_JORNAL`: residentes + RRHH)
   con dos cajas: Jornales y "Por contrato" (apagada: la sigue llevando Ana). El
-  ingeniero elige el proyecto (se recuerda), vista **Por día** (tira de 14 días,
-  "Todos vinieron", controles No vino/½/Día/Doble + HE) o **Corte completo**
-  (cuadrícula; tocar celda abre el editor), agrega jornales o crea la ficha ahí
-  mismo (no puede cambiar el pago/día de una ficha existente; RRHH sí, y la
-  tarifa del corte con un toque). Ingenieros editan el corte actual y el
-  anterior; RRHH cualquiera. **Solicitud de pago** (calca el Excel de
+  ingeniero elige el proyecto (se recuerda; arriba los que tienen jornales),
+  vista **Por día** (tira de 14 días, "Todos vinieron", controles
+  No vino/½/Día/Doble + HE) o **Corte completo** (cuadrícula; tocar celda abre
+  el editor). ⚠ **El ingeniero SOLO marca la asistencia** (11-nov-2026, Gerson:
+  "ellos no pueden decidir si contratar a alguien; el ingeniero solamente pone
+  la asistencia, nada más"): no crea fichas, no agrega ni quita gente del
+  proyecto, no ve montos, ni "depositar a", ni exporta — todo eso es de RRHH
+  (admin/tesorería/Ana), que arma la lista del proyecto desde Asistencia →
+  Jornales y genera la solicitud de pago. La lista del proyecto PASA SOLA al
+  corte siguiente (un proyecto sin guardar en el corte arranca con la lista
+  activa del anterior; `mezclarProyecto` parte de la base cuando la nube no
+  tiene el proyecto). Ingenieros editan el corte actual y el anterior; RRHH
+  cualquiera. En el PDF: "Asistencia tomada por" = el ingeniero
+  (`asistenciaPor`, el primero no-RRHH que guarda) y "Elaborado por · Recursos
+  Humanos" = quien exporta. **Solicitud de pago** (calca el Excel de
   Cataleya "SOLICITUD DE PAGO M.O PERSONAL LOCAL POR DIA"): PDF apaisado con
   lugar y fecha, proyecto, período, fecha de pago, motivo, depositar a,
   elaborado por, cifras, tabla por persona con los 14 días (HE debajo de cada

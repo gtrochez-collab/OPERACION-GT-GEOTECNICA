@@ -9,7 +9,11 @@
 //    lleva el ingeniero de campo desde Mi RRHH (y RRHH desde Asistencia):
 //    `hr-jornal-<corteId>` = { corte, proyectos: { [short]: {jornaleros,
 //    dias {id:{fecha:v}}, he {id:{fecha:h}}, tarifas, encargado,
-//    observaciones, updatedAt, updatedBy, elaboradoPor} } }.
+//    observaciones, updatedAt, updatedBy, asistenciaPor} } }.
+//    El INGENIERO solo marca días y horas extra (11-nov, Gerson: "no pueden
+//    decidir si contratar a alguien"): fichas, quién trabaja en cada proyecto,
+//    pago por día, "depositar a" y la solicitud de pago son de RRHH. La lista
+//    de cada proyecto pasa sola al corte siguiente.
 //    Se guarda con mezcla a TRES VÍAS (lo que cambié yo sobre lo que hay en
 //    la nube, celda por celda) + verificación + segunda lectura, y el
 //    borrador vive en localStorage hasta que se guarda (en el campo la señal
@@ -344,7 +348,7 @@ async function guardarProyecto({ corteId, short, base, local, user, esRRHH }) {
     const nubeP = doc.proyectos?.[short] || null;
     const mezcla = mezclarProyecto(base, local, nubeP);
     const at = new Date().toISOString();
-    const rec = { ...mezcla, updatedAt: at, updatedBy: user.nombre, elaboradoPor: nubeP?.elaboradoPor || (esRRHH ? "" : user.nombre) };
+    const rec = { ...mezcla, updatedAt: at, updatedBy: user.nombre, asistenciaPor: nubeP?.asistenciaPor || (esRRHH ? "" : user.nombre) };
     const next = { ...doc, corte: corteId, proyectos: { ...(doc.proyectos || {}), [short]: rec } };
     if (!(await store.set(key, next))) return { ok: false, msg: "No se pudo guardar en la nube. Tus cambios quedan en este equipo; probá otra vez." };
     // ¿Lo mío está en la nube? (o porque es mi versión, o porque otro guardó encima ya con mis cambios)
@@ -404,11 +408,17 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
   // Al cambiar de proyecto o llegar la nube: base = nube; si hay borrador sin guardar, se recupera.
   useEffect(() => {
     if (!docs.corte || !short) return;
-    const nube = docs.corte.proyectos?.[short] || proyectoVacio();
+    // Proyecto que nadie ha guardado en este corte: arranca con la lista del corte
+    // anterior (RRHH decide quién trabaja; no hay que volver a armarla cada 2 semanas).
+    const prev = docs.previo?.proyectos?.[short];
+    const nube = docs.corte.proyectos?.[short] || (prev?.jornaleros?.length ? (() => {
+      const ids = prev.jornaleros.filter(id => (jornaleros || []).find(j => j.id === id)?.status !== "inactive");
+      return { ...proyectoVacio(), jornaleros: ids, tarifas: Object.fromEntries(ids.filter(id => prev.tarifas?.[id] != null).map(id => [id, prev.tarifas[id]])) };
+    })() : proyectoVacio());
     const dr = leerDraft(draftKey(corte.id, short));
     if (dr && cambiosEntre(dr.base, dr.local)) { setBase(dr.base); setLocalRaw(dr.local); setRecuperado(true); }
     else { setBase(nube); setLocalRaw(nube); setRecuperado(false); ponerDraft(draftKey(corte.id, short), null); }
-  }, [docs.corte, short, corte.id]);
+  }, [docs.corte, docs.previo, short, corte.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sucio = cambiosEntre(base, local);
   const setLocal = (fn) => setLocalRaw(prev => { const nx = typeof fn === "function" ? fn(prev) : fn; ponerDraft(draftKey(corte.id, short), { base, local: nx, at: new Date().toISOString() }); return nx; });
@@ -464,7 +474,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
       abrirReporte(w, reporteJornalesHTML({ proyectos: lista, identidades: ids, empresa: EMPRESA_JORNALES, lugar: LUGAR, hoy }));
     } catch (e) { w.close(); alert("No se pudo armar el reporte: " + (e?.message || e)); }
   };
-  const paqueteDe = (s, proy, liqx) => ({ short: s, nombre: nombreDe(s), liq: liqx, elaboradoPor: proy?.elaboradoPor || proy?.updatedBy || "" });
+  const paqueteDe = (s, proy, liqx) => ({ short: s, nombre: nombreDe(s), liq: liqx, elaboradoPor: user.nombre, asistenciaPor: proy?.asistenciaPor || "" });
 
   // ── Encabezado: corte + proyecto ──
   const cabecera = <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -486,7 +496,13 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
       </div>
       {vista !== "resumen" && <select value={short} onChange={e => salir(() => setShort(e.target.value))} style={{ ...CTRL, flex: "1 1 220px", width: "auto", minWidth: 0 }}>
         <option value="">Elegí el proyecto…</option>
-        {proyOrden.map(p => { const n = docs.corte?.proyectos?.[p.short]?.jornaleros?.length || 0; return <option key={p.short} value={p.short}>{nombreDe(p.short)}{n ? ` · ${n}` : ""}</option>; })}
+        {(() => {
+          // Arriba los proyectos que ya tienen jornales asignados (en este corte o en el anterior).
+          const n = (s2) => docs.corte?.proyectos?.[s2]?.jornaleros?.length || docs.previo?.proyectos?.[s2]?.jornaleros?.length || 0;
+          const op = (p) => <option key={p.short} value={p.short}>{nombreDe(p.short)}{n(p.short) ? ` · ${n(p.short)}` : ""}</option>;
+          const con = proyOrden.filter(p => n(p.short)), sin = proyOrden.filter(p => !n(p.short));
+          return con.length ? <><optgroup label="Con jornales">{con.map(op)}</optgroup><optgroup label="Otros proyectos">{sin.map(op)}</optgroup></> : sin.map(op);
+        })()}
       </select>}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {esRRHH && pill("Todos los proyectos", vista === "resumen", () => salir(() => setVista("resumen")))}
@@ -495,7 +511,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
       </div>
     </div>
     {docs.error && aviso(docs.error, C_ROJO)}
-    {!editable && !soloVer && corte.id < corteHoy.id && aviso("Este corte ya cerró: lo podés ver y exportar, pero solo RRHH lo corrige.", C_GRIS)}
+    {!editable && !soloVer && corte.id < corteHoy.id && aviso(esRRHH ? "Este corte ya cerró." : "Este corte ya cerró: lo podés ver, pero solo RRHH lo corrige.", C_GRIS)}
     {soloVer && aviso("Solo lectura.", C_GRIS)}
   </div>;
 
@@ -540,8 +556,8 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
     <span style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{roster.length} jornal{roster.length === 1 ? "" : "es"}</span>
     <span style={{ fontSize: 12.5, color: "#8A847D" }}>en {short}</span>
     <div style={{ flex: 1 }} />
-    {editable && roster.length === 0 && rosterPrevio.length > 0 && btn(`Copiar los ${rosterPrevio.length} del corte anterior`, () => agregar(rosterPrevio), { chico: true })}
-    {editable && btn("+ Agregar jornal", () => setModal({ t: "agregar" }), { c: ORANGE_DARK, chico: true })}
+    {editable && esRRHH && roster.length === 0 && rosterPrevio.length > 0 && btn(`Copiar los ${rosterPrevio.length} del corte anterior`, () => agregar(rosterPrevio), { chico: true })}
+    {editable && esRRHH && btn("+ Agregar jornal", () => setModal({ t: "agregar" }), { c: ORANGE_DARK, chico: true })}
   </div>;
 
   // ── Vista por día ──
@@ -562,12 +578,12 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
         {editable && roster.length > 0 && btn("Todos vinieron", () => todosVinieron(fecha), { chico: true })}
       </div>
       {esFin && aviso(`Hoy es el día del corte (en la mañana): el día se paga en este corte, pero las horas extra de la tarde pasan al corte siguiente.`, C_NARANJA)}
-      {roster.length === 0 ? <div className="gt-vidrio" style={{ padding: 26, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Agregá a los jornales que trabajan en {short}.</div>
+      {roster.length === 0 ? <div className="gt-vidrio" style={{ padding: 26, textAlign: "center", fontSize: 13, color: "#6E6862" }}>{esRRHH ? `Agregá a los jornales que trabajan en ${short}.` : `RRHH todavía no asignó jornales a ${short}. Pedile a Ana que los agregue.`}</div>
         : <div className={isMobile ? "gm-grupo" : ""} style={isMobile ? {} : { display: "flex", flexDirection: "column", gap: 6 }}>
           {roster.map(id => { const f = ficha(id); return <div key={id} className={isMobile ? "" : "gt-vidrio"} style={{ padding: isMobile ? "12px 14px" : "10px 14px", display: "flex", alignItems: isMobile ? "stretch" : "center", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 10 : 14, borderBottom: isMobile ? "1px solid rgba(44,42,40,.07)" : undefined }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
               <Avatar nombre={f?.fullName} fileId={f?.photo?.fileId} size={38} radius={11} />
-              <div style={{ minWidth: 0, flex: 1 }}><div style={{ font: "700 14px/1.2 var(--sans)", color: CHARCOAL, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f?.fullName || "(ficha borrada)"}</div><div style={{ fontSize: 11.5, color: "#8A847D", marginTop: 2 }}>{fmtL0(local.tarifas?.[id] ?? f?.salarioDia)} / día{!tieneIdentidad(f) ? " · falta ID" : ""}</div></div>
+              <div style={{ minWidth: 0, flex: 1 }}><div style={{ font: "700 14px/1.2 var(--sans)", color: CHARCOAL, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f?.fullName || "(ficha borrada)"}</div><div style={{ fontSize: 11.5, color: "#8A847D", marginTop: 2 }}>{esRRHH ? `${fmtL0(local.tarifas?.[id] ?? f?.salarioDia)} / día${!tieneIdentidad(f) ? " · falta ID" : ""}` : (f?.position || "Jornal")}</div></div>
             </div>
             <ControlDia compacto={isMobile} disabled={!editable} valor={local.dias?.[id]?.[fecha]} onValor={(v) => ponerDia(id, fecha, v)} he={local.he?.[id]?.[fecha]} onHe={(v) => ponerHe(id, fecha, v)} heNota={esFin ? "Se pagan en el próximo corte" : undefined} />
           </div>; })}
@@ -592,7 +608,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
             <th style={{ ...th, textAlign: "left", position: "sticky", left: 0, zIndex: 2, minWidth: 170, paddingLeft: 14 }}>Jornal</th>
             {hayPrevia && <th style={th} title="Horas extra del viernes del corte anterior (en la tarde)">HE {+liq.viernesPrevio.slice(8)}</th>}
             {dias.map(d => <th key={d} style={{ ...th, color: d === hoy ? ORANGE_DARK : th.color }}>{diaCorto(d)}<div style={{ font: "800 13px/1.2 var(--display)", color: d === hoy ? ORANGE_DARK : CHARCOAL, textTransform: "none" }}>{+d.slice(8)}</div>{editable && roster.length > 0 && <button type="button" title="Todos vinieron" onClick={() => todosVinieron(d)} style={{ marginTop: 3, border: "none", background: "rgba(62,142,90,.12)", color: "#177243", borderRadius: 6, font: "700 9px/1 var(--sans)", padding: "3px 5px", cursor: "pointer" }}>todos</button>}</th>)}
-            <th style={th}>Días</th><th style={th}>HE</th><th style={{ ...th, textAlign: "right", paddingRight: 14 }}>Total</th>
+            <th style={th}>Días</th><th style={th}>HE</th>{esRRHH && <th style={{ ...th, textAlign: "right", paddingRight: 14 }}>Total</th>}
           </tr></thead>
           <tbody>
             {liq.filas.map(f => <tr key={f.id}>
@@ -600,17 +616,17 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <Avatar nombre={f.nombre} fileId={f.ficha?.photo?.fileId} size={28} radius={8} />
                   <div style={{ minWidth: 0 }}><div style={{ font: "700 12.5px/1.2 var(--sans)", color: CHARCOAL, maxWidth: 150, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.nombre}</div>
-                    <div style={{ fontSize: 10.5, color: "#8A847D" }}>{esRRHH && editable && !f.soloHePrevia ? <button type="button" onClick={() => { const n = prompt(`Pago por día de ${f.nombre} en este corte (L):`, String(f.tarifa)); if (n == null) return; const v = Number(String(n).replace(/[^\d.]/g, "")); if (!(v > 0)) return alert("Monto no válido."); setLocal(p => ({ ...p, tarifas: { ...(p.tarifas || {}), [f.id]: v } })); }} style={{ border: "none", background: "none", padding: 0, color: "#8A847D", textDecoration: "underline dotted", cursor: "pointer", font: "inherit" }}>{fmtL0(f.tarifa)}/día</button> : `${fmtL0(f.tarifa)}/día`}{f.soloHePrevia ? " · solo HE del corte anterior" : ""}
-                      {editable && !f.soloHePrevia && <button type="button" onClick={() => quitar(f.id)} style={{ border: "none", background: "none", color: "#B03024", font: "700 10.5px/1 var(--sans)", cursor: "pointer", marginLeft: 6, padding: 0 }}>quitar</button>}</div></div>
+                    <div style={{ fontSize: 10.5, color: "#8A847D" }}>{esRRHH && editable && !f.soloHePrevia ? <button type="button" onClick={() => { const n = prompt(`Pago por día de ${f.nombre} en este corte (L):`, String(f.tarifa)); if (n == null) return; const v = Number(String(n).replace(/[^\d.]/g, "")); if (!(v > 0)) return alert("Monto no válido."); setLocal(p => ({ ...p, tarifas: { ...(p.tarifas || {}), [f.id]: v } })); }} style={{ border: "none", background: "none", padding: 0, color: "#8A847D", textDecoration: "underline dotted", cursor: "pointer", font: "inherit" }}>{fmtL0(f.tarifa)}/día</button> : (f.ficha?.position || "Jornal")}{f.soloHePrevia ? " · solo HE del corte anterior" : ""}
+                      {editable && esRRHH && !f.soloHePrevia && <button type="button" onClick={() => quitar(f.id)} style={{ border: "none", background: "none", color: "#B03024", font: "700 10.5px/1 var(--sans)", cursor: "pointer", marginLeft: 6, padding: 0 }}>quitar</button>}</div></div>
                 </div>
               </td>
               {hayPrevia && <td style={{ ...td, font: "700 11px/1 var(--mono)", color: "#B5571C" }}>{f.hePrevia ? `+${fmtN(f.hePrevia)}` : ""}</td>}
               {dias.map(d => <td key={d} style={td}>{f.soloHePrevia ? null : celda(f.id, d)}</td>)}
               <td style={{ ...td, font: "700 12.5px/1 var(--mono)" }}>{fmtN(f.totalDias)}</td>
               <td style={{ ...td, font: "700 12.5px/1 var(--mono)", color: f.horasHe ? "#B5571C" : "#A39C92" }}>{fmtN(f.horasHe)}</td>
-              <td style={{ ...td, textAlign: "right", paddingRight: 14, font: "800 12.5px/1 var(--mono)", color: CHARCOAL, whiteSpace: "nowrap" }}>{fmtL(f.total)}</td>
+              {esRRHH && <td style={{ ...td, textAlign: "right", paddingRight: 14, font: "800 12.5px/1 var(--mono)", color: CHARCOAL, whiteSpace: "nowrap" }}>{fmtL(f.total)}</td>}
             </tr>)}
-            {liq.filas.length === 0 && <tr><td colSpan={dias.length + 5} style={{ padding: 26, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Agregá a los jornales que trabajan en {short}.</td></tr>}
+            {liq.filas.length === 0 && <tr><td colSpan={dias.length + 5} style={{ padding: 26, textAlign: "center", fontSize: 13, color: "#6E6862" }}>{esRRHH ? `Agregá a los jornales que trabajan en ${short}.` : `RRHH todavía no asignó jornales a ${short}. Pedile a Ana que los agregue.`}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -652,7 +668,11 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
     {recuperado && sucio && aviso("Recuperé cambios que hiciste en este equipo y no se habían guardado en la nube. Revisalos y tocá Guardar.", C_NARANJA)}
     {barraLista}
     {vista === "corte" ? vistaCorte() : vistaDia()}
-    {roster.length > 0 && pie}
+    {roster.length > 0 && (esRRHH ? pie : <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", gap: 22, flexWrap: "wrap", alignItems: "baseline" }}>
+      <div><div style={LBL}>Días marcados en el corte</div><div style={{ font: "800 20px/1.2 var(--display)", color: CHARCOAL }}>{fmtN(liq.totales.dias)}</div></div>
+      <div><div style={LBL}>Horas extra</div><div style={{ font: "800 20px/1.2 var(--display)", color: CHARCOAL }}>{fmtN(liq.totales.horasHe)}</div></div>
+      <div style={{ fontSize: 12, color: "#8A847D", flex: "1 1 220px" }}>RRHH arma la solicitud de pago con lo que marqués.</div>
+    </div>)}
     {msg && aviso(msg.t, msg.c)}
     {(sucio || guardando) && editable && <div style={{ position: "sticky", bottom: isMobile ? "calc(var(--gm-inferior, 0px) + 10px)" : 12, zIndex: 20, display: "flex", justifyContent: "center" }}>
       <div className="gt-vidrio" style={{ padding: "8px 8px 8px 16px", display: "flex", alignItems: "center", gap: 12, borderRadius: 999, boxShadow: "0 10px 30px rgba(44,42,40,.18)", background: "rgba(255,255,255,.96)" }}>
