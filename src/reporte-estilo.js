@@ -13,6 +13,7 @@
 // cálidos para lo secundario, verde solo para "pagado/positivo" y rojo solo
 // para "negativo/vencido". Nada de arcoíris ni emojis. Montos en mono.
 // ═══════════════════════════════════════════════════════════════════════════
+import { MONEDA } from "./operacion.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 
 export const RP = {
@@ -53,7 +54,7 @@ export const pastelProyecto = (i) => PASTEL_PROYECTOS[((i % PASTEL_PROYECTOS.len
 export const pastelesDe = (shorts) => { const m = {}; let i = 0; (shorts || []).forEach(s => { if (s != null && !m[s]) m[s] = pastelProyecto(i++); }); return m; };
 
 export const escHTML = (t) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-export const fmtLps = (n) => "L " + (Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const fmtLps = (n) => MONEDA + " " + (Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const fmtNum = (n, d = 0) => (Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: d, maximumFractionDigits: d });
 export const fechaGenerado = () => new Date().toLocaleString("es-HN", { timeZone: "America/Tegucigalpa", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" });
 

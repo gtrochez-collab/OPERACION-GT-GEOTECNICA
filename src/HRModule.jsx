@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, findProject, resolveShort, projectName, projectCode } from "./projects.js";
-import { esSV, OPERACION, OPERACIONES, operacionesDe } from "./operacion.js";
+import { esSV, OPERACION, OPERACIONES, operacionesDe, MONEDA, DOC_ID } from "./operacion.js";
 import { esFeriadoQuincena, nombreFeriado } from "./holidays.js";
 import { hoyISO } from "./fechas.js";
 // GT_CSS (vidrio): desde el 15-oct-2026 lo monta TODO GeoTeam (rediseño de
@@ -356,7 +356,11 @@ const fmt = (d) => {
 };
 // maximumFractionDigits: sin esto los acumuladores flotantes mostraban
 // montos con 3 decimales (ej. "L 86,154.893" en Costos MO).
-const fmtL = n => n != null && n !== "" && n !== 0 ? `L ${Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "L 0.00";
+// Datos de pago / previsión (El Salvador primero, 10-nov-2026).
+const METODO_PAGO_LABEL = Object.fromEntries(METODOS_PAGO);
+const AFPS_SV = ["CONFÍA", "CRECER"];
+const edadDe = (iso) => { const [y, m, d] = String(iso).split("-").map(Number); const [hy, hm, hd] = hoyISO().split("-").map(Number); return hy - y - ((hm < m || (hm === m && hd < d)) ? 1 : 0); };
+const fmtL = n => n != null && n !== "" && n !== 0 ? `${MONEDA} ${Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${MONEDA} 0.00`;
 const daysBetween = (a, b) => Math.ceil((new Date(b) - new Date(a)) / 86400000) + 1;
 
 // ── Seed data from real planillas 2Q Marzo 2026 ──
@@ -1699,7 +1703,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         </div>
       ) : (<>
         <Input label="Nombre completo" value={f.fullName} onChange={e => u("fullName", e.target.value)} />
-        <Input label="DNI" value={f.dni} onChange={e => u("dni", e.target.value)} />
+        <Input label={DOC_ID} value={f.dni} onChange={e => u("dni", e.target.value)} />
         <Input label="Cargo" value={f.position} onChange={e => u("position", e.target.value)} />
         <Select label="Departamento" options={DEPARTMENTS} value={f.department} onChange={e => u("department", e.target.value)} />
         <Select label="Contrato" options={[{ value: "permanent", label: "Permanente" }, { value: "temporary", label: "Temporal" }, { value: "honorarios", label: "Honorarios" }]} value={f.contractType} onChange={e => u("contractType", e.target.value)} />
@@ -1720,9 +1724,23 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             🔒 El salario y la bonificación no se muestran con tu usuario — se conservan tal cual al guardar.
           </div>
         ) : (<>
-          <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
-          <Input label="Bonificacion (L)" type="number" value={f.bonificacion || 0} onChange={e => u("bonificacion", e.target.value)} />
+          <Input label={`Salario bruto (${MONEDA})`} type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
+          <Input label={`Bonificación (${MONEDA})`} type="number" value={f.bonificacion || 0} onChange={e => u("bonificacion", e.target.value)} />
         </>)}
+        {esSV && <>
+          <Input label="Fecha de nacimiento" type="date" value={f.fechaNacimiento || ""} onChange={e => u("fechaNacimiento", e.target.value)} />
+          <Input label="Sede" value={f.sede || ""} onChange={e => u("sede", e.target.value)} placeholder="Laboratorio San Miguel" />
+          <Input label="NIT" value={f.nit || ""} onChange={e => u("nit", e.target.value)} placeholder="Homologado con DUI" />
+          <Select label="AFP" options={AFPS_SV} value={f.afp || ""} onChange={e => u("afp", e.target.value)} />
+          <Input label="NUP" value={f.nup || ""} onChange={e => u("nup", e.target.value)} />
+          <Input label="ISSS" value={f.isss || ""} onChange={e => u("isss", e.target.value)} />
+        </>}
+        {!hideSalary && <>
+          <Select label="Forma de pago" options={METODOS_PAGO.map(([value, label]) => ({ value, label }))} value={f.metodoPago || "transferencia"} onChange={e => u("metodoPago", e.target.value)} />
+          <Input label="Banco" value={f.banco?.nombre || ""} onChange={e => u("banco", { ...(f.banco || {}), nombre: e.target.value })} />
+          <Select label="Tipo de cuenta" options={["Ahorro", "Corriente"]} value={f.banco?.tipoCuenta || ""} onChange={e => u("banco", { ...(f.banco || {}), tipoCuenta: e.target.value })} />
+          <Input label="Número de cuenta" value={f.banco?.cuenta || ""} onChange={e => u("banco", { ...(f.banco || {}), cuenta: e.target.value.replace(/[^\d-]/g, "") })} />
+        </>}
         <Input label="Telefono" value={f.phone || ""} onChange={e => u("phone", e.target.value)} placeholder="9999-9999" />
         <Input label="Email" type="email" value={f.email || ""} onChange={e => u("email", e.target.value)} placeholder="empleado@correo.com" />
         {/* Sexo (KPI de estructura del personal) + Horario (GeoClock) — ago 2026 */}
@@ -3776,7 +3794,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const [yy, mmn] = mesEjec.split("-").map(Number);
       const mesNombreRaw = new Date(yy, mmn - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
       const mesTitulo = mesNombreRaw.charAt(0).toUpperCase() + mesNombreRaw.slice(1);
-      const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const fL = (n) => MONEDA + " " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
       // ── Correr el motor por empresa × quincena y combinar por proyecto ──
@@ -4135,7 +4153,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const deptos = Object.entries(porDepto).sort((a, b) => b[1] - a[1]);
     const masa = deptos.reduce((s, [, v]) => s + v, 0);
     const DEPTO_COLORS = [CHARCOAL, ORANGE, "#8C857D", ORANGE_DARK, "#C9C3BB", "#5C5853", "#F2B48A", "#E4E0DA"];
-    const corto = (v) => v >= 1e6 ? `L ${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `L ${Math.round(v / 1e3)}k` : `L ${Math.round(v)}`;
+    const corto = (v) => v >= 1e6 ? `${MONEDA} ${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `${MONEDA} ${Math.round(v / 1e3)}k` : `${MONEDA} ${Math.round(v)}`;
     const proyShorts = Object.keys(st.proy).sort((a, b) => (st.proy[b] || 0) - (st.proy[a] || 0));
     const maxProy = Math.max(1, ...Object.values(st.proy));
     // Asistencia de HOY (GeoClock): marcajes del día en la quincena actual.
@@ -4457,9 +4475,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             fila("Antigüedad", antig !== null && antig >= 0 ? (antig < 1 ? `${Math.max(1, Math.round(antig * 12))} meses` : `${antig.toFixed(1)} años`) : null),
             fila("Horario", horarioDe(e).label + (e.noMarca ? " · no marca" : "")),
           ])}
-          {bloque("Identidad", [fila("DNI", e.dni), fila("Sexo", e.sexo === "femenino" ? "Femenino" : e.sexo === "masculino" ? "Masculino" : null)])}
+          {bloque("Identidad", [fila(DOC_ID, e.dni ? `${e.dni}${e.duiPorConfirmar ? " · por confirmar" : ""}` : null), fila("Sexo", e.sexo === "femenino" ? "Femenino" : e.sexo === "masculino" ? "Masculino" : null), fila("Nacimiento", e.fechaNacimiento ? `${fmt(e.fechaNacimiento)} · ${edadDe(e.fechaNacimiento)} años` : null), fila("Sede", e.sede)])}
+          {esSV && bloque("Seguridad social", [fila("NIT", e.nit), fila("AFP", e.afp), fila("NUP", e.nup), fila("ISSS", e.isss)])}
           {bloque("Contacto", [fila("Teléfono", e.phone), fila("Correo", e.email)])}
           {!hideSalary && bloque("Salario", [fila("Salario mensual", Number(e.salary) ? fmtL(e.salary) : null), fila("Bonificación", Number(e.bonificacion) ? fmtL(e.bonificacion) : null)])}
+          {!hideSalary && bloque("Pago", [fila("Forma de pago", METODO_PAGO_LABEL[e.metodoPago] || null), fila("Banco", e.banco?.nombre), fila("Tipo de cuenta", e.banco?.tipoCuenta), fila("Número de cuenta", e.banco?.cuenta), fila("Descuentos convenidos", Number(e.descuentosConvenidos) ? fmtL(e.descuentosConvenidos) : null)])}
           {(() => { const t = vacacionesTomadas(vacs, e.id, hoyISO().slice(0, 4)); return bloque("Vacaciones tomadas", [
             fila("Este año", `${t.diasAnio} día${t.diasAnio === 1 ? "" : "s"}`),
             ...t.lista.slice(0, 4).map(v => fila(String(v.startDate).slice(0, 4), `${rangoCortoHub(v.startDate, v.endDate)} · ${v.days} d`)),
@@ -5392,7 +5412,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           {mk.explicacion ? <>“{mk.explicacion}”</> : <span style={{ color: "#A39C92" }}>Sin explicación</span>}
         </div>
         {!hideSalary && d && <div style={{ fontSize: 12, color: dec?.estado === "aprobada" ? "#A39C92" : dec?.estado === "denegada" ? "#B03024" : "#6E6862" }}>
-          {dec?.estado === "aprobada" ? "Sin descuento" : dec?.estado === "denegada" ? "Descuento aplicado" : "Si se deniega se descuenta"}: <b>{fmtL(d.monto)}</b> · {(d.horasTarde * 60).toFixed(0)} min = {(d.horasTarde / 8 * 100).toFixed(1)} % del día{e?.salary ? ` (L ${(Number(e.salary) / 30).toFixed(2)} diario)` : ""}
+          {dec?.estado === "aprobada" ? "Sin descuento" : dec?.estado === "denegada" ? "Descuento aplicado" : "Si se deniega se descuenta"}: <b>{fmtL(d.monto)}</b> · {(d.horasTarde * 60).toFixed(0)} min = {(d.horasTarde / 8 * 100).toFixed(1)} % del día{e?.salary ? ` (${MONEDA} ${(Number(e.salary) / 30).toFixed(2)} diario)` : ""}
         </div>}
         {(firmaCache[mk.id] || firmaCache[`foto:${mk.id}`]) && <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {firmaCache[`foto:${mk.id}`] && <img src={firmaCache[`foto:${mk.id}`]} alt="Foto del marcaje" style={{ height: 120, borderRadius: 14, border: "1px solid rgba(44,42,40,.1)" }} />}
@@ -5534,8 +5554,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         </div>}
       </div>}
 
-      <Input label={`Salario bruto (L)${esHonorarios ? " — base, sin retencion" : ""}`} type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
-      <Input label="Bonificacion (L)" type="number" value={f.bonificacion} onChange={e => u("bonificacion", e.target.value)} />
+      <Input label={`Salario bruto (${MONEDA})${esHonorarios ? " — base, sin retencion" : ""}`} type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
+      <Input label={`Bonificación (${MONEDA})`} type="number" value={f.bonificacion} onChange={e => u("bonificacion", e.target.value)} />
 
       {/* Recordatorio visible cuando el tipo de contrato es Honorarios (Grupo D) */}
       {esHonorarios && <div style={{ gridColumn: "1/-1", background: "#F7F6F4", border: "1px solid rgba(44,42,40,.08)", borderRadius: 16, borderLeft: "3px solid #E8762D", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
@@ -6113,8 +6133,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Input label="Fecha de efecto de la permanencia" type="date" value={fecha} onChange={e => setFecha(e.target.value)} />
-        <Input label="Salario bruto como permanente (L)" type="number" value={salario} onChange={e => setSalario(e.target.value)} />
-        <Input label="Bonificación (L)" type="number" value={bonif} onChange={e => setBonif(e.target.value)} />
+        <Input label={`Salario bruto como permanente (${MONEDA})`} type="number" value={salario} onChange={e => setSalario(e.target.value)} />
+        <Input label={`Bonificación (${MONEDA})`} type="number" value={bonif} onChange={e => setBonif(e.target.value)} />
         <Input label="Notas (opcional)" value={notas} onChange={e => setNotas(e.target.value)} />
       </div>
       <div style={{ background: "#EFF6FF", border: "1px solid #93C5FD", borderRadius: 10, padding: 11, fontSize: 12, color: "#1E40AF", lineHeight: 1.5 }}>
@@ -6127,7 +6147,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           if (saving) return;
           if (!fecha) return alert("Indicá la fecha de efecto de la permanencia.");
           if (!salario || Number(salario) <= 0) return alert("Indicá el salario como permanente.");
-          if (!confirm(`¿Pasar a ${emp.fullName} a PERMANENTE con efecto ${fmt(fecha)}?\n\n• Contrato temporal se cierra el ${fmt(diaAnterior)}\n• Nuevo contrato permanente indefinido desde ${fmt(fecha)}\n• Salario: L ${Number(salario).toLocaleString("es-HN")}\n• Movimientos: baja (${grupoViejo}) + alta (${grupoNuevo}) automáticos`)) return;
+          if (!confirm(`¿Pasar a ${emp.fullName} a PERMANENTE con efecto ${fmt(fecha)}?\n\n• Contrato temporal se cierra el ${fmt(diaAnterior)}\n• Nuevo contrato permanente indefinido desde ${fmt(fecha)}\n• Salario: ${MONEDA} ${Number(salario).toLocaleString("es-HN")}\n• Movimientos: baja (${grupoViejo}) + alta (${grupoNuevo}) automáticos`)) return;
           setSaving(true);
           const ts = new Date().toISOString();
           // 1) Ficha del empleado: permanente, sin vencimiento
@@ -6200,8 +6220,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           🔒 El salario y la bonificación no se muestran con tu usuario — el contrato conserva los del colaborador.
         </div>
       ) : (<>
-        <Input label="Salario bruto (L)" type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
-        <Input label="Bonificacion (L)" type="number" value={f.bonificacion} onChange={e => u("bonificacion", e.target.value)} />
+        <Input label={`Salario bruto (${MONEDA})`} type="number" value={f.salary} onChange={e => u("salary", e.target.value)} />
+        <Input label={`Bonificación (${MONEDA})`} type="number" value={f.bonificacion} onChange={e => u("bonificacion", e.target.value)} />
       </>)}
       {!isPermOrHon && days > 0 && (
         <div style={{ gridColumn: "1/-1", background: "#EFF6FF", padding: 10, borderRadius: 8, fontSize: 13, color: "#1E40AF" }}>
@@ -6625,7 +6645,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       <div style={{ gridColumn: "1/-1" }}>
         <Input label="Descripción del bono" value={f.description} onChange={e => u("description", e.target.value)} placeholder="ej: Bono por productividad, Bono antigüedad, Bono mes de mayo..." />
       </div>
-      <Input label="Monto mensual (L)" type="number" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="ej: 1500" />
+      <Input label={`Monto mensual (${MONEDA})`} type="number" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="ej: 1500" />
       <Input label="Fecha de inicio" type="date" value={f.startDate} onChange={e => u("startDate", e.target.value)} />
       <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8, padding: "10px 12px", background: "#F8F2E6", borderRadius: 10, border: "1px solid #DBD4C8" }}>
         <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#2C2A28" }}>

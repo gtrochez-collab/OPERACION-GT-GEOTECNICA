@@ -54,6 +54,10 @@ export const guardarOperacion = (id) => { try { if (IDS.has(id)) ss()?.setItem(S
 export const OPERACION = leerOperacion() || OPERACION_DEFAULT;
 export const esSV = OPERACION === "sv";
 export const OPERACION_ACTUAL = operacionPorId(OPERACION) || OPERACIONES[0];
+/** Símbolo de la moneda de la operación (L en Honduras, $ en El Salvador). */
+export const MONEDA = OPERACION_ACTUAL.moneda || "L";
+/** Documento de identidad: DNI en Honduras, DUI en El Salvador. */
+export const DOC_ID = esSV ? "DUI" : "DNI";
 
 // Keys que NO se separan por operación: los accesos (el login es uno solo) y
 // las tareas personales de cada quien.

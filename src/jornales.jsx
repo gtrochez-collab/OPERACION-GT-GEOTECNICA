@@ -25,7 +25,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { store } from "./supabase.js";
 import { hoyISO } from "./fechas.js";
-import { esSV, OPERACION } from "./operacion.js";
+import { esSV, OPERACION, MONEDA } from "./operacion.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { Modal, Chip, C_GRIS, C_VERDE, C_AMARILLO, C_NARANJA, ORANGE, ORANGE_DARK, CHARCOAL, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
@@ -47,8 +47,8 @@ export const ROLES_CAMPO_JORNAL = ["residente", ...ROLES_RRHH_JORNAL];
 const ROLES_SOLO_VER = ["gerencia", "costos"];
 
 const C_ROJO = { color: "#B03024", bg: "rgba(192,57,43,.07)" };
-const fmtL = (n) => "L " + (Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtL0 = (n) => "L " + (Number(n) || 0).toLocaleString("es-HN", { maximumFractionDigits: 0 });
+const fmtL = (n) => MONEDA + " " + (Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtL0 = (n) => MONEDA + " " + (Number(n) || 0).toLocaleString("es-HN", { maximumFractionDigits: 0 });
 const fmtN = (n) => { const v = Number(n) || 0; return v % 1 ? v.toLocaleString("es-HN", { maximumFractionDigits: 1 }) : String(v); };
 const LBL = { fontSize: 11, fontWeight: 700, color: "#6E6862", letterSpacing: ".02em" };
 const CTRL = { minHeight: 42, padding: "9px 12px", borderRadius: 12, border: "1px solid rgba(44,42,40,.12)", background: "rgba(255,255,255,.85)", fontSize: 14, fontFamily: "inherit", color: CHARCOAL, width: "100%", boxSizing: "border-box", outline: "none" };
@@ -226,7 +226,7 @@ export function JornalFormImpl({ inicial, todos, puedeTarifa, user, onGuardar, o
         <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Teléfono</span><input value={f.phone || ""} inputMode="tel" onChange={e => u("phone", e.target.value)} placeholder="9999-9999" style={CTRL} /></label>
         <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Cargo</span><input value={f.position || ""} onChange={e => u("position", e.target.value)} list="jornal-cargos" style={CTRL} />
           <datalist id="jornal-cargos">{["Ayudante", "Ayudante de concreto", "Albañil", "Armador", "Carpintero", "Soldador", "Operador", "Vigilante"].map(x => <option key={x} value={x} />)}</datalist></label>
-        <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Pago por día (L) *</span><input value={f.salarioDia} inputMode="decimal" disabled={tarifaBloqueada} onChange={e => u("salarioDia", e.target.value.replace(/[^\d.]/g, ""))} style={{ ...CTRL, fontFamily: "var(--mono)", opacity: tarifaBloqueada ? .6 : 1 }} />
+        <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Pago por día ({MONEDA}) *</span><input value={f.salarioDia} inputMode="decimal" disabled={tarifaBloqueada} onChange={e => u("salarioDia", e.target.value.replace(/[^\d.]/g, ""))} style={{ ...CTRL, fontFamily: "var(--mono)", opacity: tarifaBloqueada ? .6 : 1 }} />
           <span style={{ fontSize: 11.5, color: "#8A847D" }}>{num(f.salarioDia) > 0 ? `Hora extra: ${fmtL(valorHora(f.salarioDia))} (el día ÷ 8)` : "La hora extra sale del día ÷ 8"}{tarifaBloqueada ? " · lo cambia RRHH" : ""}</span></label>
       </div>
     </div>
@@ -702,7 +702,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <Avatar nombre={f.nombre} fileId={f.ficha?.photo?.fileId} size={28} radius={8} />
                   <div style={{ minWidth: 0 }}><div style={{ font: "700 12.5px/1.2 var(--sans)", color: CHARCOAL, maxWidth: 150, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.nombre}</div>
-                    <div style={{ fontSize: 10.5, color: "#8A847D" }}>{esRRHH && editable && !f.soloHePrevia ? <button type="button" onClick={() => { const n = prompt(`Pago por día de ${f.nombre} en este corte (L):`, String(f.tarifa)); if (n == null) return; const v = Number(String(n).replace(/[^\d.]/g, "")); if (!(v > 0)) return alert("Monto no válido."); setLocal(p => ({ ...p, tarifas: { ...(p.tarifas || {}), [f.id]: v } })); }} style={{ border: "none", background: "none", padding: 0, color: "#8A847D", textDecoration: "underline dotted", cursor: "pointer", font: "inherit" }}>{fmtL0(f.tarifa)}/día</button> : (f.ficha?.position || "Jornal")}{f.soloHePrevia ? " · solo HE del corte anterior" : ""}
+                    <div style={{ fontSize: 10.5, color: "#8A847D" }}>{esRRHH && editable && !f.soloHePrevia ? <button type="button" onClick={() => { const n = prompt(`Pago por día de ${f.nombre} en este corte (${MONEDA}):`, String(f.tarifa)); if (n == null) return; const v = Number(String(n).replace(/[^\d.]/g, "")); if (!(v > 0)) return alert("Monto no válido."); setLocal(p => ({ ...p, tarifas: { ...(p.tarifas || {}), [f.id]: v } })); }} style={{ border: "none", background: "none", padding: 0, color: "#8A847D", textDecoration: "underline dotted", cursor: "pointer", font: "inherit" }}>{fmtL0(f.tarifa)}/día</button> : (f.ficha?.position || "Jornal")}{f.soloHePrevia ? " · solo HE del corte anterior" : ""}
                       {editable && esRRHH && !f.soloHePrevia && <button type="button" onClick={() => quitar(f.id)} style={{ border: "none", background: "none", color: "#B03024", font: "700 10.5px/1 var(--sans)", cursor: "pointer", marginLeft: 6, padding: 0 }}>quitar</button>}</div></div>
                 </div>
               </td>
