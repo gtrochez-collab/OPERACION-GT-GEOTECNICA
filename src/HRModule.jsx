@@ -20,6 +20,7 @@ import { descargarVouchers } from "./voucher-pdf.js";
 // Hub de RRHH (20-oct-2026): portal "Mi RRHH" de cada colaborador + bandeja de
 // solicitudes (vacaciones, permisos, constancias, reportes) para RRHH.
 import { KEY_SOLICITUDES, KEY_VINCULOS, vincularEmpleado, siguienteFolio, vacacionDeSolicitud, permisosDeSolicitud, constanciaDoc, textoConstancia, estaAbierta, esAprobador as esAprobadorHub, veTodo as veTodoHub, vacacionesTomadas, rangoCorto as rangoCortoHub } from "./rrhh-solicitudes.js";
+import { FichasJornales, AsistenciaCampo, AsistenciaJornales, EMPRESA_JORNALES, ROLES_RRHH_JORNAL, ROLES_CAMPO_JORNAL } from "./jornales.jsx";
 import { PortalRRHH, BandejaRRHH, SolicitudFormImpl, SolicitudDetalleImpl, ModalHub, ICO as ICO_HUB, GenerarConstanciaImpl, pdfDeRegistroConstancia } from "./rrhh-hub.jsx";
 
 // ── GeoInventory → GeoTeam (13-oct-2026): "Equipo asignado" ────────────────
@@ -869,6 +870,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const [vinculos, setVinculos] = useState({});
   const [hubModal, setHubModal] = useState(null);     // {t:"nueva", tipo} | {t:"ver", id}
   const [solSub, setSolSub] = useState("");           // "" | vacations | leaves | constancias
+  const [miSub, setMiSub] = useState("");             // "" | campo (Asistencia de campo: jornales)
   // Hub de ASISTENCIA (23-oct-2026): Asistencia · Llegadas tardías · Horas
   // extras (y el acceso a GeoClock) viven en UNA pestaña con cajas de vidrio.
   const [asisSub, setAsisSubRaw] = useState(() => { try { return sessionStorage.getItem("gt-hr-asis") || ""; } catch { return ""; } });
@@ -2818,10 +2820,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     else return false;
     return sSol(list => list.map(x => x.id === sol.id ? { ...x, ...patch, decision: { por, at, motivo }, updatedAt: at, historial: [...(x.historial || []), { accion: label, por, at, nota: motivo }] } : x));
   };
-  const renderMiRRHH = () => <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+  const renderMiRRHH = () => miSub === "campo" ? <AsistenciaCampo user={hubUser} rol={userRole} proyectos={hrProjects} onVolver={() => setMiSub("")} /> : <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
     {solicitudesErr && <div style={{ background: "rgba(192,57,43,.07)", borderRadius: 14, padding: "10px 14px", fontSize: 12.5, color: "#B03024" }}>{solicitudesErr}</div>}
     <PortalRRHH user={hubUser} yo={yo} vinculoEstado={vinculoYo.como} emps={emps} vacs={vacs} lvs={lvs} cons={cons} solicitudes={solicitudes} fotoDe={fotoDe} gcTardies={gcTardies} leerMarcas={leerMarcas}
-      onNueva={(tipo) => setHubModal({ t: "nueva", tipo })} onAbrir={(s) => setHubModal({ t: "ver", id: s.id })} onVincular={vincularUsuario} />
+      onNueva={(tipo) => setHubModal({ t: "nueva", tipo })} onAbrir={(s) => setHubModal({ t: "ver", id: s.id })} onVincular={vincularUsuario}
+      onAsistenciaCampo={ROLES_CAMPO_JORNAL.includes(userRole) ? () => setMiSub("campo") : undefined} />
   </div>;
   const renderSolicitudesHub = () => {
     if (solSub) return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -4344,7 +4347,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       return hay.includes(q);
     });
     const porTipo = (t) => base.filter(e => e.contractType === t);
-    const filtered = empTipo === "todos" ? base : porTipo(empTipo);
+    // Jornales (10-nov-2026): personal por día en su PROPIA lista (hr-jornaleros),
+    // la paga Geotecnica — la pill sale solo con esa empresa.
+    const hayJornales = co === EMPRESA_JORNALES;
+    const verJornales = hayJornales && empTipo === "jornales";
+    const filtered = empTipo === "todos" || (empTipo === "jornales" && !verJornales) ? base : verJornales ? [] : porTipo(empTipo);
     const deptSet = new Set(DEPARTMENTS);
     ce.forEach(e => { if (e.department) deptSet.add(e.department); });
     const deptOptions = [...deptSet].sort();
@@ -4374,10 +4381,10 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           <option value="">Todos los departamentos</option>
           {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
         </select>
-        {pista([["todos", `Todos ${base.length}`], ...grupos.filter(([k]) => porTipo(k).length || empTipo === k).map(([k, l]) => [k, `${l} ${porTipo(k).length}`])].map(([k, label]) => ({ k, label, on: empTipo === k, onClick: () => setEmpTipo(k) })))}
+        {pista([["todos", `Todos ${base.length}`], ...grupos.filter(([k]) => porTipo(k).length || empTipo === k).map(([k, l]) => [k, `${l} ${porTipo(k).length}`]), ...(hayJornales ? [["jornales", "Jornales"]] : [])].map(([k, label]) => ({ k, label, on: empTipo === k || (k === "todos" && empTipo === "jornales" && !hayJornales), onClick: () => setEmpTipo(k) })))}
         <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
           <span role="button" title="Volver a leer de la nube" aria-label="Actualizar" className="gt-circulo" onClick={async () => { if (refreshing) return; setRefreshing(true); try { await loadAll(); } finally { setRefreshing(false); } }} style={{ width: 40, height: 40, fontSize: 16, opacity: refreshing ? .5 : 1 }}>↻</span>
-          {!isPhotoOnly && !isReadOnly && <button className="gt-btn gt-btn-primario" onClick={() => setModal({ t: "en" })} style={{ minHeight: 40, padding: "10px 18px", fontSize: 13.5 }}>+ Nuevo</button>}
+          {!isPhotoOnly && !isReadOnly && !verJornales && <button className="gt-btn gt-btn-primario" onClick={() => setModal({ t: "en" })} style={{ minHeight: 40, padding: "10px 18px", fontSize: 13.5 }}>+ Nuevo</button>}
         </div>
       </div>
 
@@ -4385,7 +4392,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         <b>No se pudieron cargar los empleados desde la nube.</b> Tocá ↻ para reintentar y no agregues ni edites hasta que cargue la lista.
       </div>}
 
-      {empTipo === "todos"
+      {verJornales ? <FichasJornales q={empSearch} rol={userRole} user={hubUser} />
+        : empTipo === "todos" || empTipo === "jornales"
         ? grupos.map(([k, l]) => { const rows = filtered.filter(e => e.contractType === k); return rows.length > 0 && <div key={k}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "4px 2px 12px" }}>
               <span style={{ font: "800 16px/1 var(--display)", color: CHARCOAL }}>{l}</span>
@@ -4395,7 +4403,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           </div>; })
         : grid(filtered)}
 
-      {filtered.length === 0 && <div className="gt-vidrio" style={{ padding: 40, textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>
+      {filtered.length === 0 && !verJornales && <div className="gt-vidrio" style={{ padding: 40, textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>
         {ce.length === 0 ? `Sin colaboradores en ${cc.name}` : "Nadie coincide con la búsqueda"}
       </div>}
     </div>;
@@ -5042,6 +5050,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const tHe = ultHe ? heTotalsOf(ultHe) : null;
     const puedeClock = ["admin", "coordinador", "tesoreria", "asistente_compras", "logistica"].includes(userRole) && typeof onAbrirModulo === "function";
     const soloTard = isOscarTardies;
+    const puedeJornales = ROLES_RRHH_JORNAL.includes(userRole);
+    if (asisSub === "jornales" && puedeJornales) return <AsistenciaJornales user={hubUser} rol={userRole} proyectos={hrProjects} onVolver={() => setAsisSub("")} />;
     if (asisSub) {
       const t = asisSub === "hojas" ? ["Asistencia", "hojas por quincena · " + cc.name] : asisSub === "tardanzas" ? ["Llegadas tardías", `${TOLERANCIA_MIN} min de tolerancia sobre el horario de cada quien · ${cc.name}`] : ["Horas extras", "se pagan quincena vencida · " + cc.name];
       return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -5051,8 +5061,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     }
     // Cajas grandes que llenan la pantalla (23-oct-2026): 2×2 que se estiran
     // al alto disponible; el número y el ícono crecen con ellas.
-    const tarjeta = (ico, titulo, sub, n, onClick, tonoN = CHARCOAL, detalle) => <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={onClick} onKeyDown={e => { if (e.key === "Enter") onClick(); }}
-      style={{ padding: isMobile ? "20px" : "clamp(22px,4vh,40px) clamp(24px,3vw,44px)", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 18, cursor: "pointer", minHeight: isMobile ? 150 : 0, boxSizing: "border-box" }}>
+    const tarjeta = (ico, titulo, sub, n, onClick, tonoN = CHARCOAL, detalle, ancha = false) => <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={onClick} onKeyDown={e => { if (e.key === "Enter") onClick(); }}
+      style={{ gridColumn: ancha && !isMobile ? "1 / -1" : undefined, padding: isMobile ? "20px" : "clamp(22px,4vh,40px) clamp(24px,3vw,44px)", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 18, cursor: "pointer", minHeight: isMobile ? 150 : 0, boxSizing: "border-box" }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14 }}>
         <div style={{ width: "clamp(52px,8vh,76px)", height: "clamp(52px,8vh,76px)", borderRadius: 22, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IcoH d={ico} size={36} /></div>
         {n != null && <div style={{ font: "800 clamp(44px,9vh,84px)/1 var(--display)", color: tonoN, letterSpacing: "-.04em" }}>{n}</div>}
@@ -5071,8 +5081,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         <>{chipH(nPend ? `${nPend} por decidir` : "Al día", nPend ? "naranja" : "verde")}{chipH(`${TOLERANCIA_MIN} min de tolerancia`, "gris")}</>)}
       {!soloTard && tarjeta(ICO_HUB.horas, "Horas extras", ultHe ? `Última hoja: ${etiquetaCorta(ultHe.periodo, ultHe.quincena)} · se paga quincena vencida` : "Hojas por quincena, se pagan quincena vencida", che.length, () => setAsisSub("he"), CHARCOAL,
         ultHe ? <>{chipH(`${fmtDias(tHe.hrs)} h`, "gris")}{!hideSalary && chipH(fmtL(tHe.costo), "verde")}</> : null)}
+      {puedeJornales && tarjeta(ICO_HUB.casco, "Jornales", "Personal por día, por proyecto y por corte de 2 semanas (sábado a viernes). Solicitud de pago en PDF con las identidades.", null, () => setAsisSub("jornales"), CHARCOAL)}
       {puedeClock && tarjeta(ICO_HUB.tablet, "GeoClock", "El reloj de las tablets: marcaje, foto y firma, y el registro de entradas y salidas", null, () => onAbrirModulo("geoclock"), CHARCOAL,
-        <>{chipH(`${entradasHoy} entrada${entradasHoy === 1 ? "" : "s"} hoy`, entradasHoy ? "verde" : "gris")}</>)}
+        <>{chipH(`${entradasHoy} entrada${entradasHoy === 1 ? "" : "s"} hoy`, entradasHoy ? "verde" : "gris")}</>, !soloTard && puedeJornales)}
     </div>;
   };
 

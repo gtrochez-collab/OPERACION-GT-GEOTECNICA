@@ -68,7 +68,7 @@ etiquetas "(L)" de salarios también siguen en lempiras.
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
-- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs`, `tests/planilla-calc.test.mjs`, `tests/abonos.test.mjs`, `tests/rrhh-solicitudes.test.mjs`, `tests/geoclock-calc.test.mjs` y `tests/reporte-estilo.test.mjs`.
+- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs`, `tests/planilla-calc.test.mjs`, `tests/abonos.test.mjs`, `tests/rrhh-solicitudes.test.mjs`, `tests/geoclock-calc.test.mjs`, `tests/reporte-estilo.test.mjs` y `tests/jornales-calc.test.mjs`.
 - Deploy: `git push origin main` dispara `.github/workflows/deploy.yml` → gh-pages.
   URL: https://gtrochez-collab.github.io/OPERACION-GT-GEOTECNICA/
 - Verificar deploy: `gh run list` + grep del texto nuevo en el bundle publicado.
@@ -1281,6 +1281,49 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (`HE_BANDAS`), totales en carbón/verde, botones Cerrar · PDF · Guardar
   (`gt-btn`). La lógica de las grids (ciclo de celdas, overrides, horas de
   entrada, NSP sugeridos, guardado) quedó INTACTA.
+  **JORNALES — personal por día (10-nov-2026, Gerson)**: `src/jornales-calc.js`
+  (PURA, `tests/jornales-calc.test.mjs`) + `src/jornales.jsx` (pantallas) +
+  `src/jornales-reporte.js` (PDF/Excel). Ayudantes y otros que se pagan AL DÍA,
+  SIN contrato, en su PROPIA lista **`hr-jornaleros`** (nunca en hr-emps5: no
+  tocan planilla, cuadrillas, GeoClock, costos MO ni KPIs). Los paga Geotecnica
+  (`EMPRESA_JORNALES`; Subterra en SV). Ficha: nombre, identidad (13 dígitos,
+  sin duplicados), teléfono, cargo, `salarioDia`, foto y la **identidad
+  escaneada** `dniFrente`/`dniReverso` (foto o PDF → la 1ª hoja se convierte a
+  imagen con pdf.js; todo en `cp-file-*`). **Cortes** de 14 días de SÁBADO a
+  VIERNES (ancla 17-oct-2026), el corte es el viernes EN LA MAÑANA y se paga el
+  LUNES siguiente (`corteDe`: 31-oct→13-nov se paga 16-nov). Los DÍAS del
+  viernes del corte entran; sus HORAS EXTRA (tarde) pasan al corte siguiente
+  (`fechasHeDelCorte` = vie anterior…jueves). HE = día ÷ 8, sin recargos. Día:
+  0 no vino · ½ · 1 · 2 doble. Asistencia en **`hr-jornal-<sábado de inicio>`**
+  = `{corte, proyectos: {[short]: {jornaleros, dias {id:{fecha:v}}, he, tarifas
+  (snapshot del pago/día al agregarlo), encargado ("depositar a"),
+  observaciones, updatedAt/By, elaboradoPor}}}`. Guardado con **mezcla a TRES
+  VÍAS** por celda (`mezclarProyecto`: lo que cambié yo sobre la nube fresca) +
+  verify + segunda lectura a 1.2 s + 2 reintentos; el borrador vive en
+  localStorage (`gt-jornal-draft-<op>-<corte>-<short>`) hasta guardar (en campo
+  se cae la señal) y se recupera solo. Keys `hr-jornal*` en SKIP_LOCAL_PREFIXES
+  (solo getCloud). **Dónde**: GeoTeam → Empleados → pill **Jornales** (solo con
+  Geotecnica; tarjetas tipo carnet, "Falta identidad", ficha con las fotos;
+  editan admin/tesorería/Ana) · Asistencia → caja **Jornales** (RRHH: "Todos
+  los proyectos" con total por proyecto, PDF/Excel por proyecto o de todos) ·
+  **Mi RRHH → Asistencia de campo** (`ROLES_CAMPO_JORNAL`: residentes + RRHH)
+  con dos cajas: Jornales y "Por contrato" (apagada: la sigue llevando Ana). El
+  ingeniero elige el proyecto (se recuerda), vista **Por día** (tira de 14 días,
+  "Todos vinieron", controles No vino/½/Día/Doble + HE) o **Corte completo**
+  (cuadrícula; tocar celda abre el editor), agrega jornales o crea la ficha ahí
+  mismo (no puede cambiar el pago/día de una ficha existente; RRHH sí, y la
+  tarifa del corte con un toque). Ingenieros editan el corte actual y el
+  anterior; RRHH cualquiera. **Solicitud de pago** (calca el Excel de
+  Cataleya "SOLICITUD DE PAGO M.O PERSONAL LOCAL POR DIA"): PDF apaisado con
+  lugar y fecha, proyecto, período, fecha de pago, motivo, depositar a,
+  elaborado por, cifras, tabla por persona con los 14 días (HE debajo de cada
+  día, las del viernes con → al próximo, columna de HE del viernes anterior),
+  días × valor + HE × valor/8, total, "Favor depositar a X, quien se encargará
+  de gestionar el pago y el cierre", firmas y — en hoja aparte — las
+  **IDENTIDADES** frente/reverso de cada persona (Gerson: "100 % tienen que
+  venir"; si falta avisa antes y sale "Falta escanear"). Verificado el 10-nov
+  con datos ZZ (borrados): fichas con identidad, asistencia, mezcla con un
+  guardado ajeno simultáneo, reporte, celular y rol residente.
   **ALTAS Y BAJAS + COSTOS rediseñadas (4-nov-2026, Gerson: "Movimientos lo
   llamaría altas y bajas; el mismo estilo que los demás")**: la pestaña
   `movimientos` se rotula **"Altas y bajas"** (el id no cambió). `renderMovs`:
@@ -2528,7 +2571,8 @@ manda la FECHA, no el orden),
 `mq-purchases`, `mq-machines`, `mq-prioridades` / `mq-cxp` (las colas de pago
 de GeoMachinery, separadas de las de GeoShopping), `lg-despachos` (compartido compras/máquinas/
 logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
-`hr-he` (horas extras), `hr-pays`, `hr-contracts`, etc.
+`hr-he` (horas extras), `hr-pays`, `hr-contracts`, etc. Jornales (nov 2026):
+`hr-jornaleros` (fichas) y `hr-jornal-<sábado de inicio del corte>` (asistencia).
 `gt-todos-<username>` (tareas personales — las comparten la tarjeta TO-DOS de
 la bienvenida y el módulo Mis Tareas; nadie ve las de otro).
 `gt-usuarios` (accesos creados desde GeoTeam → Accesos; el login los lee con

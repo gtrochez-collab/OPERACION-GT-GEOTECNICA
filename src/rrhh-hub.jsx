@@ -44,6 +44,7 @@ export const ICO = {
   hojas: <><rect x="4" y="5" width="16" height="15" rx="3" /><path d="M8 3v4M16 3v4M4 10h16M8 14h2M12 14h2M16 14h2M8 17.5h2M12 17.5h2" /></>,
   tarde: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /><path d="M19.5 4.5l2 2M4.5 4.5l-2 2" /></>,
   horas: <><path d="M12 3.5a8.5 8.5 0 108.5 8.5" /><path d="M12 7.5V12l3 2" /><path d="M18 3v5M15.5 5.5h5" /></>,
+  casco: <><path d="M2.5 17.5h19" /><path d="M4.5 17.5V15a7.5 7.5 0 0115 0v2.5" /><path d="M10 8V5.2h4V8" /><path d="M8.2 9.2l.8 4.3M15.8 9.2l-.8 4.3" /></>,
   tablet: <><rect x="5" y="3" width="14" height="18" rx="2.5" /><path d="M10.5 18h3" /><circle cx="12" cy="9.5" r="2" /><path d="M8.5 14.5c.8-1.4 2-2 3.5-2s2.7.6 3.5 2" /></>,
   flecha: <path d="M9 6l6 6-6 6" />,
   atras: <path d="M15 6l-6 6 6 6" />,
@@ -421,7 +422,7 @@ function MiAsistencia({ emp, gcTardies, hoy, leerMarcas, noMarca }) {
 // props: user {username, nombre, rol, empId}, yo (ficha vinculada o null),
 // emps, vacs, solicitudes, fotoDe(emp), gcTardies, leerMarcas, onNueva(tipo),
 // onAbrir(sol), onVincular(empId), elegirFicha (cuando no se encontró)
-export function PortalRRHH({ user, yo, emps, vacs, lvs, cons = [], solicitudes, fotoDe, gcTardies, leerMarcas, onNueva, onAbrir, onVincular, vinculoEstado }) {
+export function PortalRRHH({ user, yo, emps, vacs, lvs, cons = [], solicitudes, fotoDe, gcTardies, leerMarcas, onNueva, onAbrir, onVincular, vinculoEstado, onAsistenciaCampo }) {
   const isMobile = useIsMobile();
   const hoy = hoyISO();
   const [vista, setVista] = useState("inicio");   // inicio | asistencia
@@ -529,6 +530,10 @@ export function PortalRRHH({ user, yo, emps, vacs, lvs, cons = [], solicitudes, 
         </div>
         {enTramite.length > 0 ? <Chip c={C_NARANJA}>{enTramite.length} en trámite</Chip> : <Chip c={C_GRIS}>Al día</Chip>}
       </div> : perfil}
+      {onAsistenciaCampo && <>
+        <div className="gm-encab">Campo</div>
+        <div className="gm-grupo">{item(ICO.casco, "Asistencia de campo", "Jornales: quién vino y sus horas extra", onAsistenciaCampo)}</div>
+      </>}
       <div className="gm-encab">Mi RRHH</div>
       <div className="gm-grupo">
         {yo && item(ICO.asistencia, "Mi asistencia", "Entradas, salidas y horas", () => setVista("asistencia"))}
@@ -557,6 +562,11 @@ export function PortalRRHH({ user, yo, emps, vacs, lvs, cons = [], solicitudes, 
         {tarjeta(ICO.constancia, "Constancias", yo ? "De trabajo o laboral, en PDF · ver las emitidas y pedir" : "De trabajo o laboral, en PDF", () => yo ? setVista("constancias") : onNueva("constancia"), { grande: true })}
       </div>
     </div>
+    {onAsistenciaCampo && <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={onAsistenciaCampo} onKeyDown={e => { if (e.key === "Enter") onAsistenciaCampo(); }} style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
+      <div style={{ width: 46, height: 46, borderRadius: 15, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO.casco} size={24} /></div>
+      <div style={{ flex: 1, minWidth: 0 }}><div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>Asistencia de campo</div><div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 3 }}>Jornales: marcá quién vino cada día y sus horas extra; el sistema arma la solicitud de pago del corte</div></div>
+      <Ico d={ICO.flecha} size={18} color="#A39C92" />
+    </div>}
     {yo && <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => onNueva("reporte")} onKeyDown={e => { if (e.key === "Enter") onNueva("reporte"); }} style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
       <div style={{ width: 36, height: 36, borderRadius: 11, background: "rgba(44,42,40,.06)", color: "#6E6862", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO.reporte} size={19} /></div>
       <div style={{ flex: 1, minWidth: 0 }}><span style={{ font: "700 14px/1.2 var(--sans)", color: CHARCOAL }}>Reportar un problema</span><span style={{ fontSize: 12.5, color: "#6E6862" }}> · pago, asistencia, equipo, seguridad, trato…</span></div>
