@@ -360,14 +360,17 @@ export const marcarPrioridad = (l, on, { por = "", at = "" } = {}) => {
   return resto;
 };
 
+// 11-nov-2026 (Gerson): "Ana debería aparecer hasta que Óscar confirme que no
+// lo tiene". Antes, pasado el martes 15:00 una línea sin revisar se trataba
+// como "por cotizar" y salía en Almacén Y en Compras a la vez. Ahora NO pasa
+// sola: se queda en Almacén con `plazoAlmacenVencido` (chip) hasta que Óscar
+// (o el Coordinador) diga Hay / Parcial / No hay.
 export const estadoEfectivoLinea = (l, sol, cfg, ahora = new Date()) => {
-  if (!l) return { estado: "", sinRevisionAlmacen: false };
+  if (!l) return { estado: "", sinRevisionAlmacen: false, plazoAlmacenVencido: false };
+  let vencido = false;
   const corteL = corteDeLinea(l, sol);
-  if (l.estado === "revision_almacen" && corteL) {
-    const h = hitoDeCorte(corteL, "almacenHasta", cfg);
-    if (estadoHito(h, ahora).pasado) return { estado: "por_cotizar", sinRevisionAlmacen: true };
-  }
-  return { estado: l.estado, sinRevisionAlmacen: !!l.sinRevisionAlmacen };
+  if (l.estado === "revision_almacen" && corteL) vencido = estadoHito(hitoDeCorte(corteL, "almacenHasta", cfg), ahora).pasado;
+  return { estado: l.estado, sinRevisionAlmacen: !!l.sinRevisionAlmacen, plazoAlmacenVencido: vencido };
 };
 
 /** Estado de la cabecera a partir de sus líneas. Borrador y cancelada mandan. */

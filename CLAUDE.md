@@ -2251,6 +2251,24 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   muestra además las NOTAS de la(s) solicitud(es) en una caja azul, y el form
   de cotización las pone bajo el ítem cuando no hay detalle (para las
   solicitudes viejas). Pruebas en `tests/geosupply-calc.test.mjs`.
+  **Almacén ANTES que Compras, siempre (11-nov-2026, Gerson: "Ana debería
+  aparecer hasta que Óscar confirme que no lo tiene"; caso SUP-2026-0034 de
+  Allan, adelantada al Corte 3 cuando el plazo de almacén ya había vencido y
+  salía en Almacén y en Compras a la vez)**: `estadoEfectivoLinea` YA NO
+  convierte una línea `revision_almacen` vencida en "por cotizar": devuelve
+  su estado guardado + `plazoAlmacenVencido` (chip "Almacén no ha revisado ·
+  plazo vencido"). Se queda en Almacén hasta que Óscar o el Coordinador digan
+  Hay / Parcial / No hay; los contadores del Panel siguen la misma regla.
+  Reemplaza la decisión (5) de la Fase 0 y la del 27-oct.
+  **Solicitudes más limpia (11-nov-2026, Gerson: "desordenado, muchos
+  colores; prefiero ver solo el corte más reciente")**: arriba pills de los 4
+  cortes más nuevos + "Todos los cortes" (los anteriores en un select);
+  por defecto el corte EN CURSO (`solCorte` "__auto__"; el residente ve todos
+  los suyos). Todo pedido cae en un corte: los de compra en el suyo, los
+  pedidos al plantel y los borradores en la semana en que se mandaron.
+  Agrupadas por PROYECTO en una caja de vidrio, una fila por solicitud con el
+  estado como PUNTO de color + texto; urgente en rojo y lo demás (al plantel,
+  fuera de corte, enviada tarde, rechazados) en gris, sin chips.
   **Cumplimiento por residente (28-oct-2026, Gerson: "que diga qué es cada
   una")**: la tarjeta del Dashboard es una tabla a todo lo ancho con columnas
   rotuladas (Enviadas · A tiempo "4 de 7" + % · Fuera de hora + perdonadas ·

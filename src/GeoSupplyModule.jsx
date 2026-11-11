@@ -1224,7 +1224,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const estaAbierto = (vista, k, defecto = true) => abiertos[`${vista}:${k}`] ?? defecto;
   const [solQ, setSolQ] = useState("");
   const [solProy, setSolProy] = useState("");
-  const [solCorte, setSolCorte] = useState("");
+  const [solCorte, setSolCorte] = useState("__auto__");
   const [compCorte, setCompCorte] = useState("");
   const [hoyCorte, setHoyCorte] = useState("");
   const [solVista, setSolVista] = useState("abiertas");
@@ -1305,6 +1305,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           {l.solucion && enSolicitud && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{l.solucion}{l.categoria ? ` · ${l.categoria}` : ""}</span>}
           {al.map(a => <Chip key={a} c={a === "urgente" ? C_ROJO : C_AMARILLO}>{ALERTAS[a]}{a === "excede_saldo" && sd ? ` · saldo ${fmtCant(sd.saldo)}` : ""}</Chip>)}
           {ef?.sinRevisionAlmacen && <Chip c={C_AMARILLO}>Sin revisión de almacén</Chip>}
+          {ef?.plazoAlmacenVencido && <Chip c={C_AMARILLO}>Almacén no ha revisado · plazo vencido</Chip>}
           {chipCorteLinea(s, l)}
           {(s.cotizacionesAdjuntas || []).length > 0 && <Chip c={C_AZUL}>Trae cotización</Chip>}
           {l.plantel && num(l.enviadoPlantel) > 0 && <Chip c={C_VERDE}>Enviado {fmtCant(l.enviadoPlantel)} de {fmtCant(l.cantidad)}</Chip>}
@@ -1474,9 +1475,9 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   };
   const renderAlmacen = () => {
     const puede = rol === "almacen" || esCoordinador;
-    // 27-oct-2026 (Gerson): lo que se PASÓ del plazo sin revisión sigue acá
-    // (además de en Compras) mientras nadie lo cotice: si Óscar todavía lo
-    // tiene en bodega, lo despacha. Lleva el chip "Sin revisión de almacén".
+    // 11-nov-2026 (Gerson): lo que se pasó del plazo sin revisión se QUEDA
+    // acá (ya no sale también en Compras) hasta que Óscar o el Coordinador
+    // digan Hay / Parcial / No hay. Lleva el chip "plazo vencido".
     const items = lineasEf.filter(x => x.ef.estado === "revision_almacen" || (x.ef.sinRevisionAlmacen && x.l.estado === "revision_almacen"));
     const grupos = porProyecto(items);
     // La cuenta regresiva es la del corte MÁS PRÓXIMO entre lo pendiente (una
@@ -1646,17 +1647,58 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     // completada en GeoSupply (todo comprado) sigue abierta hasta que lo
     // comprado llegue a obra (despacho entregado en GeoLogistics).
     const terminada = (s) => s.estado === "cancelada" || (estadoCabecera(s) === "completada" && (s.lineas || []).every(l => l.estado !== "comprada" || entregaDe(purchaseDeLinea(l)).completa));
+    // 11-nov-2026 (Gerson: "muy desordenado, muchos colores; prefiero ver solo
+    // el corte más reciente"): TODA solicitud cae en un corte — las de compra
+    // en el suyo; los pedidos al plantel y los borradores en el de la semana
+    // en que se mandaron — y por defecto se ve solo el corte en curso,
+    // agrupado por proyecto, con el estado como un punto de color.
+    const corteVista = (s) => (!esPedidoPlantel(s) && s.corte) ? s.corte : corteActual(new Date(s.fechaEnvio || s.createdAt || Date.now()));
+    const idCorte = (s) => etiquetaCorte(corteVista(s)).id;
+    const cortesConSol = [...new Map(base.map(s => [idCorte(s), corteVista(s)]).filter(([id]) => id)).entries()]
+      .sort((a, b) => (b[1].anio - a[1].anio) || (b[1].semana - a[1].semana));
+    const idEnCurso = etiquetaCorte(corteActual(ahora)).id;
+    const corteDefault = esResidente ? "" : (cortesConSol.some(([id]) => id === idEnCurso) ? idEnCurso : (cortesConSol[0]?.[0] || ""));
+    const corteSel = solCorte === "__auto__" ? corteDefault : solCorte;
     const visibles = base
       .filter(s => solVista === "todas" ? true : solVista === "abiertas" ? !terminada(s) : terminada(s))
       .filter(s => !solProy || s.projectCode === solProy)
-      .filter(s => !solCorte || (s.corte && !esPedidoPlantel(s) && etiquetaCorte(s.corte).id === solCorte))
+      .filter(s => !corteSel || idCorte(s) === corteSel)
       .filter(s => !solQ || `${s.folio} ${nombreProy(s.projectCode)} ${quien(s.residente)} ${(s.lineas || []).map(l => l.descripcion).join(" ")}`.toLowerCase().includes(solQ.toLowerCase()))
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
     const proyectosConSol = [...new Set(base.map(s => s.projectCode))];
-    // Filtro por corte (28-oct-2026, Gerson): los cortes que tienen solicitudes, el más nuevo primero.
-    const cortesConSol = [...new Map(base.filter(s => s.corte && !esPedidoPlantel(s)).map(s => [etiquetaCorte(s.corte).id, s.corte])).entries()]
-      .sort((a, b) => (b[1].anio - a[1].anio) || (b[1].semana - a[1].semana));
+    const grupos = [...visibles.reduce((m, s) => m.set(s.projectCode, [...(m.get(s.projectCode) || []), s]), new Map()).entries()]
+      .sort((a, b) => nombreProy(a[0]).localeCompare(nombreProy(b[0]), "es", { sensitivity: "base" }));
+    const PUNTO = { borrador: "#C9C4BD", enviada: "#8A847D", en_proceso: ORANGE, completada: "#16A34A", cancelada: "#C9C4BD" };
+    const selStyle = { padding: "8px 12px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 999, fontSize: 13, background: "rgba(255,255,255,.7)", fontFamily: "inherit" };
+    const fila = (s) => {
+      const est = estadoCabecera(s);
+      const ls = s.lineas || [];
+      const plantel = esPedidoPlantel(s);
+      const fc = fueraDeCorte(s, cfg, ahora);
+      const lleg = s.corte && !plantel ? llegadaEstimada(s.corte, cfg) : null;
+      const notas = [plantel && "al plantel / taller", fc && "fuera de corte", s.corteAjustado && "enviada tarde, ajustada", ls.some(l => l.estado === "rechazada") && `${ls.filter(l => l.estado === "rechazada").length} rechazado(s)`].filter(Boolean);
+      return <div key={s.id} role="button" tabIndex={0} onClick={() => setModal({ t: "detalle", id: s.id })} onKeyDown={e => { if (e.key === "Enter") setModal({ t: "detalle", id: s.id }); }}
+        className="gt-fila-sol" style={{ padding: "11px 16px", display: "flex", alignItems: "center", gap: 14, flexWrap: isMobile ? "wrap" : "nowrap", cursor: "pointer", borderTop: "1px solid rgba(44,42,40,.06)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, width: isMobile ? "auto" : 128, flexShrink: 0 }}>
+          <span title={ESTADOS_SOLICITUD[est]?.label} style={{ width: 8, height: 8, borderRadius: "50%", background: PUNTO[est] || "#C9C4BD", flexShrink: 0 }} />
+          <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700, color: CHARCOAL }}>{s.folio}</span>
+        </div>
+        <div style={{ width: isMobile ? "auto" : 92, flexShrink: 0, fontSize: 12.5, color: "var(--text-2)" }}>{ESTADOS_SOLICITUD[est]?.label || est}</div>
+        <div style={{ flex: 1, minWidth: 160, fontSize: 12.5, color: "var(--text-2)" }}>
+          {s.urgente && <b style={{ color: C_ROJO.color, marginRight: 6 }}>Urgente</b>}
+          {ls.length} {ls.length === 1 ? "ítem" : "ítems"} · {quien(s.residente)}
+          {notas.length > 0 && <span style={{ color: "var(--text-3)" }}> · {notas.join(" · ")}</span>}
+        </div>
+        <div style={{ textAlign: "right", fontSize: 12.5, color: "var(--text-2)", whiteSpace: "nowrap" }}>
+          en obra <b style={{ color: CHARCOAL }}>{s.fechaRequeridaObra ? fmtDiaCorto(s.fechaRequeridaObra) : "—"}</b>
+          {lleg && est !== "completada" && est !== "cancelada" && <span style={{ color: "var(--text-3)" }}> · llega {fmtDiaCorto(lleg.desde)} – {fmtDiaCorto(lleg.hasta)}</span>}
+        </div>
+        {sim && <button type="button" disabled={ocupado} onClick={e => { e.stopPropagation(); borrarSolicitudSim(s); }} onKeyDown={e => e.stopPropagation()} title="Borrar esta solicitud de la simulación"
+          style={{ padding: "6px 12px", borderRadius: 999, border: `1px solid ${C_ROJO.borde || "rgba(185,28,28,.25)"}`, background: "rgba(255,255,255,.7)", color: C_ROJO.color, fontSize: 12, fontWeight: 800, cursor: ocupado ? "wait" : "pointer", fontFamily: "inherit" }}>Borrar</button>}
+      </div>;
+    };
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <style>{`.gt-fila-sol:hover{background:rgba(44,42,40,.035)}`}</style>
       {(esResidente || rol === "almacen") && <div className="gt-vidrio" style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
         <div>
           <div style={{ font: "800 15px/1.1 var(--display)", color: CHARCOAL }}>{etq.titulo}</div>
@@ -1671,46 +1713,30 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         </div>
       </div>}
       <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        {[["abiertas", "En camino"], ["cerradas", "Terminadas"], ["todas", "Todas"]].map(([k, l]) => pillBtn(l, solVista === k, () => setSolVista(k)))}
+        {cortesConSol.length > 0 && <>
+          {cortesConSol.slice(0, 4).map(([id, c]) => pillBtn(etiquetaCorte(c).titulo, corteSel === id, () => setSolCorte(id), { key: id, title: etiquetaCorte(c).sub }))}
+          {pillBtn("Todos los cortes", !corteSel, () => setSolCorte(""), { key: "todos" })}
+          <span style={{ width: 1, height: 22, background: "rgba(44,42,40,.12)", margin: "0 4px" }} />
+        </>}
+        {[["abiertas", "En camino"], ["cerradas", "Terminadas"], ["todas", "Todas"]].map(([k, l]) => pillBtn(l, solVista === k, () => setSolVista(k), { key: k, c: CHARCOAL }))}
         <Buscador value={solQ} onChange={setSolQ} placeholder="Buscar folio, proyecto, ítem o residente" />
-        {!esResidente && proyectosConSol.length > 1 && <select value={solProy} onChange={e => setSolProy(e.target.value)} style={{ padding: "8px 12px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 999, fontSize: 13, background: "rgba(255,255,255,.7)", fontFamily: "inherit" }}>
+        {!esResidente && proyectosConSol.length > 1 && <select value={solProy} onChange={e => setSolProy(e.target.value)} style={selStyle}>
           <option value="">Todos los proyectos</option>{proyectosConSol.map(p => <option key={p} value={p}>{nombreProy(p)}</option>)}
         </select>}
-        {cortesConSol.length > 0 && <select value={solCorte} onChange={e => setSolCorte(e.target.value)} style={{ padding: "8px 12px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 999, fontSize: 13, background: "rgba(255,255,255,.7)", fontFamily: "inherit" }}>
-          <option value="">Todos los cortes</option>{cortesConSol.map(([id, c]) => <option key={id} value={id}>{etiquetaCorte(c).titulo} · {etiquetaCorte(c).sub}</option>)}
+        {cortesConSol.length > 4 && <select value={cortesConSol.slice(0, 4).some(([id]) => id === corteSel) ? "" : corteSel} onChange={e => setSolCorte(e.target.value)} style={selStyle}>
+          <option value="">Cortes anteriores…</option>{cortesConSol.slice(4).map(([id, c]) => <option key={id} value={id}>{etiquetaCorte(c).titulo} · {etiquetaCorte(c).sub}</option>)}
         </select>}
-        {(solQ || solProy || solCorte) && <Btn small variant="ghost" onClick={() => { setSolQ(""); setSolProy(""); setSolCorte(""); }}>Limpiar</Btn>}
+        {(solQ || solProy) && <Btn small variant="ghost" onClick={() => { setSolQ(""); setSolProy(""); }}>Limpiar</Btn>}
       </div>
       {visibles.length === 0
         ? <Vacio>{base.length === 0 ? (esResidente ? "Todavía no tenés solicitudes." : "Todavía no hay solicitudes de material.") : "Nada coincide con el filtro."}</Vacio>
-        : visibles.map(s => {
-          const est = estadoCabecera(s);
-          const ls = s.lineas || [];
-          const fc = fueraDeCorte(s, cfg, ahora);
-          const lleg = s.corte && !esPedidoPlantel(s) ? llegadaEstimada(s.corte, cfg) : null;
-          return <div key={s.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => setModal({ t: "detalle", id: s.id })} style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", cursor: "pointer" }}>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700, color: CHARCOAL }}>{s.folio}</div>
-            {chipEstado(ESTADOS_SOLICITUD, est)}
-            {esPedidoPlantel(s) && <Chip c={C_AZUL}>Al plantel</Chip>}
-            {s.urgente && <Chip c={C_ROJO}>Urgente</Chip>}
-            {fc && <Chip c={C_ROJO}>Fuera de corte</Chip>}
-            {s.corteAjustado && <Chip c={C_AMARILLO} title={`Se envió fuera de hora; ${s.corteAjustado.por} la pasó al ${etiquetaCorte(s.corte).titulo}`}>Enviada tarde · ajustada</Chip>}
-            <div style={{ flex: 1, minWidth: 160 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{nombreProy(s.projectCode)}</div>
-              <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{ls.length} {ls.length === 1 ? "ítem" : "ítems"}{ls.some(l => l.estado === "rechazada") ? ` · ${ls.filter(l => l.estado === "rechazada").length} rechazado(s)` : ""} · pidió {quien(s.residente)} · {esPedidoPlantel(s) ? (s.estado === "borrador" ? "borrador" : "pedido al plantel / taller") : s.corte ? etiquetaCorte(s.corte).titulo : "borrador"}</div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: CHARCOAL }}>{s.fechaRequeridaObra ? fmtDiaCorto(s.fechaRequeridaObra) : "—"}</div>
-              <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 3 }}>requerida en obra</div>
-            </div>
-            {lleg && est !== "completada" && est !== "cancelada" && <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: C_AZUL.color }}>{fmtDiaCorto(lleg.desde)} – {fmtDiaCorto(lleg.hasta)}</div>
-              <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 3 }}>llegada estimada</div>
-            </div>}
-            {sim && <button type="button" disabled={ocupado} onClick={e => { e.stopPropagation(); borrarSolicitudSim(s); }} onKeyDown={e => e.stopPropagation()} title="Borrar esta solicitud de la simulación"
-              style={{ padding: "6px 12px", borderRadius: 999, border: `1px solid ${C_ROJO.borde || "rgba(185,28,28,.25)"}`, background: "rgba(255,255,255,.7)", color: C_ROJO.color, fontSize: 12, fontWeight: 800, cursor: ocupado ? "wait" : "pointer", fontFamily: "inherit" }}>Borrar</button>}
-          </div>;
-        })}
+        : grupos.map(([pc, lista]) => <div key={pc} className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px 10px", display: "flex", alignItems: "baseline", gap: 10 }}>
+            <span style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>{nombreProy(pc)}</span>
+            <span style={{ fontSize: 12, color: "var(--text-3)" }}>{lista.length} {lista.length === 1 ? "solicitud" : "solicitudes"}</span>
+          </div>
+          {lista.map(fila)}
+        </div>)}
     </div>;
   };
 
@@ -1757,6 +1783,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
                     : paso.etapa === "pendiente_pago" ? <Chip c={C_GRIS}>Pendiente de pago</Chip>
                     : chipEstado(ESTADOS_LINEA, l.estado === "rechazada" ? "rechazada" : ef.estado === "por_cotizar" ? "por_cotizar" : ef.estado)}
                   {ef.sinRevisionAlmacen && <Chip c={C_AMARILLO}>Sin revisión de almacén</Chip>}
+                  {ef.plazoAlmacenVencido && <Chip c={C_AMARILLO}>Almacén no ha revisado</Chip>}
                   {al.filter(a => a !== "urgente").map(a => <Chip key={a} c={C_AMARILLO}>{ALERTAS[a]}</Chip>)}
                   {num(l.despachadoAlmacen) > 0 && <Chip c={C_VERDE}>{fmtCant(l.despachadoAlmacen)} {l.unidad} de almacén</Chip>}
                   {num(l.cantidadComprada) > 0 && l.estado !== "comprada" && <Chip c={C_VERDE}>{fmtCant(l.cantidadComprada)} {l.unidad} ya en compra</Chip>}

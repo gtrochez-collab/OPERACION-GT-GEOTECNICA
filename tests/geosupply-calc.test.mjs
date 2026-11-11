@@ -158,8 +158,9 @@ test("estado inicial, efectivo y de cabecera", () => {
   assert.equal(estadoInicialLinea({}, sol), "revision_almacen");
   // martes 15:00 pasado → se trata como por cotizar sin revisión de almacén
   const l = { estado: "revision_almacen" };
-  assert.deepEqual(estadoEfectivoLinea(l, sol, null, hn("2026-09-29", "14:59")), { estado: "revision_almacen", sinRevisionAlmacen: false });
-  assert.deepEqual(estadoEfectivoLinea(l, sol, null, hn("2026-09-29", "15:00")), { estado: "por_cotizar", sinRevisionAlmacen: true });
+  assert.deepEqual(estadoEfectivoLinea(l, sol, null, hn("2026-09-29", "14:59")), { estado: "revision_almacen", sinRevisionAlmacen: false, plazoAlmacenVencido: false });
+  // Pasado el plazo NO pasa sola a Compras: sigue en Almacén, marcada como vencida.
+  assert.deepEqual(estadoEfectivoLinea(l, sol, null, hn("2026-09-29", "15:00")), { estado: "revision_almacen", sinRevisionAlmacen: false, plazoAlmacenVencido: true });
   assert.equal(estadoCabecera({ estado: "enviada", lineas: [{ estado: "pendiente_coord" }, { estado: "revision_almacen" }] }), "enviada");
   assert.equal(estadoCabecera({ estado: "enviada", lineas: [{ estado: "por_cotizar" }, { estado: "revision_almacen" }] }), "en_proceso");
   assert.equal(estadoCabecera({ estado: "enviada", lineas: [{ estado: "comprada" }, { estado: "rechazada" }, { estado: "despachada_almacen" }] }), "completada");
@@ -212,8 +213,10 @@ test("contadores por rol", () => {
   assert.equal(contarPendientes({ solicitudes: sols, cotizaciones: cots, rol: "logistica", cfg, ahora }), 1);
   assert.equal(contarPendientes({ solicitudes: sols, cotizaciones: cots, rol: "asistente_compras", cfg, ahora }), 2);
   assert.equal(contarPendientes({ solicitudes: sols, cotizaciones: cots, rol: "residente", username: "res1", cfg, ahora }), 1);
-  // pasado el martes 15:00 la de almacén pasa a Compras
-  assert.equal(contarPendientes({ solicitudes: sols, cotizaciones: cots, rol: "asistente_compras", cfg, ahora: hn("2026-09-29", "15:30") }), 3);
+  // pasado el martes 15:00 la de almacén NO pasa sola a Compras (11-nov-2026):
+  // sigue contando para Óscar hasta que diga Hay / Parcial / No hay.
+  assert.equal(contarPendientes({ solicitudes: sols, cotizaciones: cots, rol: "asistente_compras", cfg, ahora: hn("2026-09-29", "15:30") }), 2);
+  assert.equal(contarPendientes({ solicitudes: sols, cotizaciones: cots, rol: "logistica", cfg, ahora: hn("2026-09-29", "15:30") }), 1);
 });
 
 test("código MAT siguiente y fuera de corte", () => {
