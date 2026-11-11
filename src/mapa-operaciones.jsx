@@ -69,6 +69,11 @@ const CSS = `
   .op-mapa{min-height:300px;max-height:none;aspect-ratio:1000/765;flex:none}
   .op-tarjeta{position:relative;inset:auto;width:auto;margin-top:14px;animation-name:opEntraAbajo}
   .op-foto{height:160px}
+  .op-elegir{display:flex;gap:10px;margin-top:14px}
+  .op-elegir button{flex:1;min-height:52px;border-radius:16px;border:1px solid rgba(44,42,40,.10);background:#fff;box-shadow:var(--e1);font:700 15px/1.15 var(--sans);color:var(--text);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:8px}
+  .op-elegir button small{font:500 12px/1 var(--sans);color:var(--text-3)}
+  .op-elegir button.on{background:var(--text);color:#fff;border-color:var(--text)}
+  .op-elegir button.on small{color:rgba(255,255,255,.7)}
   @keyframes opEntraAbajo{from{opacity:0;transform:translateY(16px)}}
 }
 `;
@@ -94,6 +99,22 @@ export default function MapaOperaciones({ user, operaciones, onElegir, onLogout 
   const [paisId, setPaisId] = useState(null);     // país acercado
   const [sede, setSede] = useState(null);         // {op, sede}
   const [hover, setHover] = useState(null);
+  // En el celular la tarjeta va DEBAJO del mapa (adentro quedaba recortada y
+  // tapaba el mapa) y hay botones grandes por país (El Salvador es muy chico
+  // para tocarlo con el dedo).
+  const [movil, setMovil] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(max-width:760px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia?.("(max-width:760px)"); if (!mq) return;
+    const f = () => setMovil(mq.matches);
+    mq.addEventListener ? mq.addEventListener("change", f) : mq.addListener(f);
+    return () => { mq.removeEventListener ? mq.removeEventListener("change", f) : mq.removeListener(f); };
+  }, []);
+  const tarjetaRef = useRef(null);
+  useEffect(() => {
+    if (!movil || !sede) return;
+    const t = setTimeout(() => tarjetaRef.current?.scrollIntoView({ behavior: prefiereMenosMovimiento() ? "auto" : "smooth", block: "nearest" }), 60);
+    return () => clearTimeout(t);
+  }, [movil, sede]);
   const [vb, setVb] = useState(VB_TODO);
   const animRef = useRef(null);
   // El contenedor no tiene la proporción del viewBox: se AMPLÍA el encuadre
@@ -167,6 +188,30 @@ export default function MapaOperaciones({ user, operaciones, onElegir, onLogout 
   const zoom = MAPA_W / vb[2];
   const base = import.meta.env.BASE_URL;
 
+  const tarjeta = sede && (
+            <aside className="op-tarjeta" key={sede.sede.id} ref={tarjetaRef}>
+              <div className="op-foto">
+                {sede.sede.foto ? <img src={`${base}${sede.sede.foto}`} alt={sede.sede.nombre} /> : sede.sede.logo ? (
+                  <div className="op-foto-logo"><img src={`${base}${sede.sede.logo}`} alt={sede.sede.empresas?.[0] || sede.sede.nombre} /></div>
+                ) : (
+                  <div className="op-foto-vacia"><span style={{ display: "inline-flex", transform: "scale(.8)" }}><GeoCoreMark size={40} /></span><span>Foto pendiente</span></div>
+                )}
+              </div>
+              <div className="op-cuerpo">
+                <div className="op-eyebrow">Operación · {sede.op.pais}</div>
+                <div className="op-nombre">{sede.sede.nombre}</div>
+                <div className="op-lugar">{sede.sede.sub}</div>
+                <div style={{ height: 8 }} />
+                <div className="op-dato"><b>{cuentas[sede.op.id] === undefined ? "…" : cuentas[sede.op.id] === null ? "—" : cuentas[sede.op.id]}</b> colaboradores activos</div>
+                <div className="op-dato"><b>{sede.sede.empresas.length}</b> {sede.sede.empresas.length === 1 ? "empresa" : "empresas"} · {sede.sede.empresas.join(" · ")}</div>
+                <div className="op-dato"><b>{sede.op.moneda}</b> {sede.op.moneda === "L" ? "lempiras" : "dólares"}</div>
+                <div className="op-acciones">
+                  <button className="op-entrar" onClick={() => onElegir(sede.op.id)}>Entrar a esta operación</button>
+                </div>
+              </div>
+            </aside>
+  );
+
   return (
     <div className="gt-ui op-root">
       <style>{CSS}</style>
@@ -220,30 +265,18 @@ export default function MapaOperaciones({ user, operaciones, onElegir, onLogout 
           </div>
           {!sede && <div className="op-norte">N ↑</div>}
 
-          {sede && (
-            <aside className="op-tarjeta" key={sede.sede.id}>
-              <div className="op-foto">
-                {sede.sede.foto ? <img src={`${base}${sede.sede.foto}`} alt={sede.sede.nombre} /> : sede.sede.logo ? (
-                  <div className="op-foto-logo"><img src={`${base}${sede.sede.logo}`} alt={sede.sede.empresas?.[0] || sede.sede.nombre} /></div>
-                ) : (
-                  <div className="op-foto-vacia"><span style={{ display: "inline-flex", transform: "scale(.8)" }}><GeoCoreMark size={40} /></span><span>Foto pendiente</span></div>
-                )}
-              </div>
-              <div className="op-cuerpo">
-                <div className="op-eyebrow">Operación · {sede.op.pais}</div>
-                <div className="op-nombre">{sede.sede.nombre}</div>
-                <div className="op-lugar">{sede.sede.sub}</div>
-                <div style={{ height: 8 }} />
-                <div className="op-dato"><b>{cuentas[sede.op.id] === undefined ? "…" : cuentas[sede.op.id] === null ? "—" : cuentas[sede.op.id]}</b> colaboradores activos</div>
-                <div className="op-dato"><b>{sede.sede.empresas.length}</b> {sede.sede.empresas.length === 1 ? "empresa" : "empresas"} · {sede.sede.empresas.join(" · ")}</div>
-                <div className="op-dato"><b>{sede.op.moneda}</b> {sede.op.moneda === "L" ? "lempiras" : "dólares"}</div>
-                <div className="op-acciones">
-                  <button className="op-entrar" onClick={() => onElegir(sede.op.id)}>Entrar a esta operación</button>
-                </div>
-              </div>
-            </aside>
-          )}
+          {sede && !movil && tarjeta}
         </div>
+        {movil && (
+          <div className="op-elegir">
+            {ops.map(o => {
+              const p = PAISES.find(x => porPais.get(x.id) === o);
+              if (!p) return null;
+              return <button key={o.id} className={paisId === p.id ? "on" : ""} onClick={() => elegirPais(p)}>{o.pais}<small>{o.sedes.map(x => x.nombre).join(" · ")}</small></button>;
+            })}
+          </div>
+        )}
+        {sede && movil && tarjeta}
       </div>
     </div>
   );
