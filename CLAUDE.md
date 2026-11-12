@@ -64,6 +64,7 @@ etiquetas "(L)" de salarios también siguen en lempiras.
 **Roberto Guerra** (administrador de Subterra El Salvador): acceso
 `roberto.guerra` en gt-usuarios, rol `gerencia` (solo lectura),
 `operaciones: ["sv"]`, sin ficha (empId null) — creado el 9-nov-2026 por REST.
+**Óscar Paz en SV (12-nov-2026)**: `oscarpaz` (users.js) lleva `operaciones: ["hn","sv"]`, `modulosPorOperacion: {sv: ["geoinventory"]}` (App.jsx filtra el panel: en SV solo GeoInventory) e `inventarioCompletoEn: ["sv"]` (GeoInventoryModule usa `permisosDe("admin")` en esa operación: crea ubicaciones y carga en cualquiera). En Honduras sigue como siempre.
 **Fichas SV (10-nov-2026)**: 3 colaboradores del listado de Roberto en
 `hr-emps5@sv` + `hr-contracts@sv` (Roberto = José Roberto Campos Guerra,
 su acceso ya tiene `empId`). `MONEDA` / `DOC_ID` de operacion.js: GeoTeam,
