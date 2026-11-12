@@ -149,3 +149,51 @@ export const nubeTraeAbonosNuevos = (local, nube) => {
   const loc = new Map(todosLosAbonos(local).map((a) => [a.id, a]));
   return todosLosAbonos(nube).some((a) => !loc.has(a.id) || (a.anulado && !loc.get(a.id).anulado));
 };
+
+// =====================================================================
+// PAGO PARCIAL SOLICITADO (11-nov-2026, pedido de Christian)
+// =====================================================================
+// La cuenta es de L 1,000,000 pero hoy solo se le pide a la Lic. Carolina un
+// pago de L 200,000; después Finanzas pide el siguiente, y así hasta cubrir
+// el total. Campos ADITIVOS en cp-/mq-purchases:
+//   pagosParciales: true             → la solicitud se paga por pedidos
+//   pagoSolicitado: {id, monto, nota, fechaRequerida, por, at} | null
+//                                    → lo que se le pide pagar AHORA
+//   solicitudesPago: [{id, monto, nota, fechaRequerida, por, at}]
+//                                    → historial de lo que se ha pedido
+// Cada pago se registra como un ABONO (con su comprobante); al registrarlo,
+// lo pedido baja (`solicitadoTrasAbono`). Sin pedido vigente la solicitud
+// queda "esperando el siguiente pedido" — Tesorería sabe que no hay que pagar.
+// =====================================================================
+
+export const usaPagosParciales = (p) => !!p?.pagosParciales;
+
+// Lo que se pide pagar ahora (nunca más de lo que falta). 0 = no hay pedido.
+export const pagoSolicitadoDe = (p) => {
+  const m = n(p?.pagoSolicitado?.monto);
+  return m > 0 ? r2(Math.min(m, saldoDe(p))) : 0;
+};
+
+// Pagada por pedidos, con saldo, y nadie ha pedido el siguiente pago.
+export const esperandoPedidoDePago = (p) =>
+  usaPagosParciales(p) && p?.status === "validado" && saldoDe(p) > TOLERANCIA_ABONO && !pagoSolicitadoDe(p);
+
+// Cuánto hay que pagar HOY (Prioridades, tarjetas): con pedidos, solo lo pedido.
+export const aPagarAhoraDe = (p) => (usaPagosParciales(p) ? pagoSolicitadoDe(p) : porPagarDe(p));
+
+export const validarPagoSolicitado = (p, monto) => {
+  if (!(n(monto) > 0)) return "Poné cuánto se pide pagar ahora.";
+  const falta = saldoDe(p);
+  if (n(monto) > falta + TOLERANCIA_ABONO) {
+    return `Lo pedido (L ${n(monto).toLocaleString("es-HN", { minimumFractionDigits: 2 })}) es mayor a lo que falta pagar (L ${falta.toLocaleString("es-HN", { minimumFractionDigits: 2 })}).`;
+  }
+  return null;
+};
+
+// Tras un abono de `monto`, lo que queda del pedido vigente (o null si se cubrió).
+export const solicitadoTrasAbono = (p, monto) => {
+  const sol = p?.pagoSolicitado;
+  if (!sol || !(n(sol.monto) > 0)) return null;
+  const resta = r2(n(sol.monto) - n(monto));
+  return resta > TOLERANCIA_ABONO ? { ...sol, monto: resta } : null;
+};

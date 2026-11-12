@@ -22,7 +22,7 @@ import { etiquetaCorte } from "./geosupply-calc.js";
 import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, PDF_TEMA, pdfCabecera, pdfPie, latin1, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 // Abonos (17-oct-2026): pagos parciales con su comprobante; la solicitud se
 // cierra solo cuando la suma de abonos cubre el total. Lógica pura y probada.
-import { abonosVigentes, todosLosAbonos, tieneAbonos, totalAbonado, saldoDe, esAbonoParcial, porPagarDe, validarAbono, estadoTrasAbonos, cierreServicioAlPagar, unirAbonos, nubeTraeAbonosNuevos } from "./abonos.js";
+import { abonosVigentes, todosLosAbonos, tieneAbonos, totalAbonado, saldoDe, esAbonoParcial, porPagarDe, validarAbono, estadoTrasAbonos, cierreServicioAlPagar, unirAbonos, nubeTraeAbonosNuevos, usaPagosParciales, pagoSolicitadoDe, esperandoPedidoDePago, aPagarAhoraDe, validarPagoSolicitado, solicitadoTrasAbono } from "./abonos.js";
 
 // Marca Geotecnica
 const ORANGE = "#E8762D";
@@ -1285,6 +1285,19 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   const linkedProject = getProject(f.projectCode);
   // Destino del pago: si nadie lo eligió, crédito → Cuentas por pagar; si no, normal.
   const destinoForm = f.destinoPago || ((f.condicionPago || "contado") === "credito" ? "cxp" : "normal");
+  // PAGO PARCIAL (11-nov-2026): lo que se pide AHORA de la cuenta completa.
+  // Devuelve el mensaje de error o los campos a guardar. Al aprobar queda
+  // firmado (quién y cuándo) y entra al historial `solicitudesPago`.
+  const camposParcial = (aprobar) => {
+    if (tieneAbonos(f)) return {};                                   // ya tiene abonos: el pedido vive en el detalle
+    if (!f.pagoSolicitado) return { pagosParciales: false, pagoSolicitado: null, solicitudesPago: [] };
+    const monto = r2(num(f.pagoSolicitado.monto));
+    if (!(monto > 0)) return { error: "Poné cuánto se pide pagar ahora (o elegí «El monto completo»)." };
+    if (num(f.amount) > 0 && monto > num(f.amount) + 1) return { error: "Lo que se pide ahora no puede ser mayor al monto total de la cuenta." };
+    const sol = { id: f.pagoSolicitado.id || uid(), monto, nota: String(f.pagoSolicitado.nota || "").trim(), fechaRequerida: f.fechaPagoRequerida || "",
+      ...(aprobar ? { por: userName || "", at: new Date().toISOString() } : {}) };
+    return { pagosParciales: true, pagoSolicitado: sol, solicitudesPago: aprobar ? [sol] : [] };
+  };
 
   // ── GeoCost: partida + sobregiro (9-sep-2026) ──
   // Solo aplica si el proyecto elegido tiene presupuesto ACTIVO; si no, el
@@ -1744,6 +1757,34 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           </div>
         </div>}
       </div>
+      {/* PAGO PARCIAL (11-nov-2026, pedido de Christian): "la cuenta es de un
+          millón pero ahorita solo le pido a la Lic. 200 mil". El monto total
+          sigue siendo la cuenta completa; acá se dice cuánto se pide AHORA.
+          Los siguientes pagos se piden desde el detalle de la solicitud. Solo
+          antes del primer abono (después el pedido vive en el detalle). */}
+      {!tieneAbonos(f) && <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", gap: 8 }}>
+        <label style={LABEL_CP}>¿Cuánto se pide pagar ahora?</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {[{ k: false, t: "El monto completo" }, { k: true, t: "Solo una parte" }].map(o => {
+            const activo = !!f.pagoSolicitado === o.k;
+            return <button key={String(o.k)} type="button"
+              onClick={() => setF(p => ({ ...p, pagoSolicitado: o.k ? (p.pagoSolicitado || { id: uid(), monto: "", nota: "" }) : null }))}
+              style={{ padding: "8px 18px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 800,
+                border: activo ? "1px solid transparent" : "1px solid #CBD5E1",
+                background: activo ? ORANGE_DARK : "#F8FAFC", color: activo ? "#fff" : "#475569" }}>{o.t}</button>;
+          })}
+        </div>
+        {f.pagoSolicitado && <div style={{ background: C_NARANJA_CHIP.bg, border: "1px solid rgba(232,118,45,.28)", borderRadius: 10, padding: 12, display: "grid", gridTemplateColumns: "minmax(160px, 220px) minmax(0,1fr)", gap: 12, alignItems: "end" }}>
+          <Input label="Se pide pagar ahora (L)" type="number" min="0" step="0.01" value={f.pagoSolicitado.monto ?? ""} onChange={e => setF(p => ({ ...p, pagoSolicitado: { ...p.pagoSolicitado, monto: e.target.value } }))} />
+          <Input label="Nota para la Lic. (opcional)" value={f.pagoSolicitado.nota || ""} onChange={e => setF(p => ({ ...p, pagoSolicitado: { ...p.pagoSolicitado, nota: e.target.value } }))} placeholder="Ej. primer abono acordado con el proveedor" />
+          <div style={{ gridColumn: "1/-1", fontSize: 12, color: "#A94E16", lineHeight: 1.5 }}>
+            {num(f.amount) > 0 && num(f.pagoSolicitado.monto) > 0
+              ? <>La cuenta es de <b>{fmtL(f.amount)}</b>; ahora se pide <b>{fmtL(f.pagoSolicitado.monto)}</b> y quedan <b>{fmtL(Math.max(0, num(f.amount) - num(f.pagoSolicitado.monto)))}</b> para los siguientes pedidos.</>
+              : <>Poné arriba el monto total de la cuenta y acá cuánto se pide pagar ahora.</>}
+            {" "}La Lic. registra el pago como abono y la solicitud sigue abierta hasta completar el total. El siguiente pago se pide desde el detalle de la solicitud.
+          </div>
+        </div>}
+      </div>}
       {/* FECHA REQUERIDA + DESTINO DEL PAGO (25-sep-2026, pedido de Finanzas):
           todas entran al Calendario de Pago con esa fecha; si es Prioridad o
           Cuenta por pagar, al APROBARLA se agrega sola a esa pestaña (ya no
@@ -1929,9 +1970,10 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         <Btn variant="warn" disabled={saving} onClick={async () => {
           if (!f.projectCode || !f.provider || (lineasLibres && !esMaqForm && !lineasMValidas.length && !String(extraForm || "").trim()) || !f.amount) return alert(lineasLibres && !esMaqForm && !lineasMValidas.length ? "Complete proyecto, proveedor, monto y al menos una línea de lo que se compra" : "Complete proyecto, proveedor y monto");
           { const eCC = errorPartidaCC(false); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
+          const parc = camposParcial(false); if (parc.error) return alert(parc.error);
           setSaving(true);
           try {
-            const rec = { ...f, ...camposCC(), destinoPago: destinoForm, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases, undefined, prefijo), status: "borrador", treasuryStatus: null };
+            const rec = { ...f, ...camposCC(), ...parc, destinoPago: destinoForm, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases, undefined, prefijo), status: "borrador", treasuryStatus: null };
             await registrarProveedorSiNuevo(rec);
             const saved = purchase ? addAudit(rec, "edited", "Guardado como borrador") : addAudit(rec, "created", "Creado como borrador");
             const next = purchase
@@ -1946,15 +1988,17 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         <Btn variant="success" disabled={saving} onClick={async () => {
           if (!f.projectCode || !f.provider || (lineasLibres && !esMaqForm && !lineasMValidas.length && !String(extraForm || "").trim()) || !f.amount || !f.quoteNumber || !f.opsResponsible) return alert(lineasLibres && !esMaqForm && !lineasMValidas.length ? "Para aprobar: complete proyecto, proveedor, monto, N° cotizacion, responsable y al menos una línea" : "Para aprobar: complete proyecto, proveedor, monto, N° cotizacion y responsable");
           { const eCC = errorPartidaCC(true); if (eCC) return alert(eCC); }   // GeoCost: partida + sobregiro
+          const parc = camposParcial(true); if (parc.error) return alert(parc.error);
           // La fecha requerida es OPCIONAL (29-sep-2026, pedido de Gerson): sin
           // ella la solicitud no sale en el Calendario (salvo que vaya a
           // Cuentas por pagar, que la programa para hoy y se reprograma ahí).
           if (!f.quoteFile) { if (!confirm("No hay cotizacion adjunta. ¿Aprobar de todas formas?")) return; }
           setSaving(true);
           try {
-            const rec = { ...f, ...camposCC(), destinoPago: destinoForm, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases, undefined, prefijo), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
+            const rec = { ...f, ...camposCC(), ...parc, destinoPago: destinoForm, id: f.id || uid(), codigo: f.codigo || siguienteCodigo(purchases, undefined, prefijo), status: "validado", treasuryStatus: "pendiente", validatedAt: new Date().toISOString() };
             await registrarProveedorSiNuevo(rec);
-            const saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
+            let saved = addAudit(rec, "approved", `Aprobado por Coord. Operaciones (${f.opsResponsible})`);
+            if (parc.pagoSolicitado) saved = addAudit(saved, "pago_solicitado", `Pago parcial: se pide ${fmtL(parc.pagoSolicitado.monto)} de ${fmtL(rec.amount)}${parc.pagoSolicitado.nota ? ` — ${parc.pagoSolicitado.nota}` : ""}`);
             const next = purchase
               ? purchases.map(p => p.id === saved.id ? saved : p)
               : [...purchases, saved];
@@ -1965,7 +2009,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
               // la solicitud ya quedó guardada; si esto falla, avisa y se
               // puede agregar a mano desde esa pestaña).
               const donde = encolarPago ? await encolarPago(saved) : null;
-              alert(`✓ Solicitud aprobada. Paso a Tesoreria como 'Pendiente Lic. Carolina'.${donde ? `\n\nSe agregó a ${donde} para el ${saved.fechaPagoRequerida}.` : ""}`);
+              alert(`✓ Solicitud aprobada. Paso a Tesoreria como 'Pendiente Lic. Carolina'.${parc.pagoSolicitado ? `\n\nSe le pide pagar ahora ${fmtL(parc.pagoSolicitado.monto)} de ${fmtL(saved.amount)}.` : ""}${donde ? `\n\nSe agregó a ${donde} para el ${saved.fechaPagoRequerida}.` : ""}`);
             }
           } finally {
             setSaving(false);
@@ -2236,7 +2280,8 @@ function AbonoFormImpl({ purchase, modo = "nuevo", setModal, addAudit, updatePur
   const falta = saldoDe(base);
   const nAbonos = abonosVigentes(base).length;
   const [f, setF] = useState({
-    monto: convertir ? String(num(purchase.amount)) : String(falta),
+    // Pago parcial (11-nov-2026): si Finanzas pidió solo una parte, arranca con lo pedido.
+    monto: convertir ? String(num(purchase.amount)) : String(pagoSolicitadoDe(base) || falta),
     fecha: convertir ? (String(purchase.paymentDate || "").slice(0, 10) || hoyISO()) : hoyISO(),
     metodo: (convertir && purchase.paymentMethod) || purchase.paymentMethod || "Transferencia BAC",
     comprobante: convertir ? (purchase.receiptFile || null) : null,
@@ -2273,7 +2318,8 @@ function AbonoFormImpl({ purchase, modo = "nuevo", setModal, addAudit, updatePur
       // 2) Abono nuevo + estado de la solicitud según TODOS sus abonos
       const ahora = new Date().toISOString();
       const abono = { id: uid(), monto, fecha: f.fecha, metodo: f.metodo, comprobante: ref, nota: f.nota.trim(), registradoPor: userName || "", registradoAt: ahora };
-      const conAbono = { ...base, abonos: [...todosLosAbonos(base), abono] };
+      // Lo pedido por Finanzas baja con el abono (si se cubrió, queda esperando el siguiente pedido).
+      const conAbono = { ...base, abonos: [...todosLosAbonos(base), abono], ...(usaPagosParciales(base) ? { pagoSolicitado: solicitadoTrasAbono(base, monto) } : {}) };
       const { rec, completo, esServicio, recienCompletada } = estadoTrasAbonos(conAbono, ahora);
       const n = abonosVigentes(rec).length;
       const resumen = `abonado ${fmtL(totalAbonado(rec))} de ${fmtL(rec.amount)}${completo ? "" : ` — falta ${fmtL(saldoDe(rec))}`}`;
@@ -2292,7 +2338,9 @@ function AbonoFormImpl({ purchase, modo = "nuevo", setModal, addAudit, updatePur
       setModal({ t: "detail", d: saved });
       setTimeout(() => alert(completo
         ? `✓ Abono registrado. Con ${n} abono${n === 1 ? "" : "s"} se completó el pago: la solicitud quedó FINALIZADA.`
-        : `✓ Abono registrado. Falta ${fmtL(saldoDe(saved))}; la solicitud sigue pendiente de pago en Tesorería.`), 100);
+        : esperandoPedidoDePago(saved)
+          ? `✓ Abono registrado. De la cuenta faltan ${fmtL(saldoDe(saved))}, pero por ahora no hay otro pago pedido: queda esperando que Finanzas pida el siguiente.`
+          : `✓ Abono registrado. Falta ${fmtL(saldoDe(saved))}; la solicitud sigue pendiente de pago en Tesorería.`), 100);
     } catch (err) {
       console.error("Error registrando abono:", err);
       alert(`❌ Error registrando el abono: ${err?.message || err}`);
@@ -2302,11 +2350,12 @@ function AbonoFormImpl({ purchase, modo = "nuevo", setModal, addAudit, updatePur
   };
 
   return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 10 }}>
       {[
         ["Monto de la solicitud", fmtL(purchase.amount), CHARCOAL],
         [convertir ? "Ya abonado" : `Abonado (${nAbonos} abono${nAbonos === 1 ? "" : "s"})`, fmtL(totalAbonado(base)), "#059669"],
         ["Falta pagar", fmtL(falta), C_AMARILLO.color],
+        ...(!convertir && usaPagosParciales(base) ? [["Se pide pagar ahora", pagoSolicitadoDe(base) ? fmtL(pagoSolicitadoDe(base)) : "Nada pedido", "#A94E16"]] : []),
       ].map(([l, v, c]) => <div key={l} style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: "10px 12px" }}>
         <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>{l}</div>
         <div style={{ fontSize: 17, fontWeight: 800, color: c, marginTop: 2 }}>{v}</div>
@@ -2324,6 +2373,7 @@ function AbonoFormImpl({ purchase, modo = "nuevo", setModal, addAudit, updatePur
       <Select label="Método" options={PAYMENT_METHODS} value={f.metodo} onChange={e => u("metodo", e.target.value)} />
     </div>
     {!convertir && falta > 0 && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: -6 }}>
+      {pagoSolicitadoDe(base) > 0 && pagoSolicitadoDe(base) < falta && <button type="button" onClick={() => u("monto", String(pagoSolicitadoDe(base)))} style={{ background: "none", border: "1px solid rgba(232,118,45,.45)", borderRadius: 999, padding: "3px 10px", fontSize: 11.5, fontWeight: 700, color: "#A94E16", cursor: "pointer", fontFamily: "inherit" }}>Lo que pidió Finanzas ({fmtL(pagoSolicitadoDe(base))})</button>}
       <button type="button" onClick={() => u("monto", String(falta))} style={{ background: "none", border: "1px solid #CBD5E1", borderRadius: 999, padding: "3px 10px", fontSize: 11.5, fontWeight: 700, color: "#475569", cursor: "pointer", fontFamily: "inherit" }}>Todo lo que falta ({fmtL(falta)})</button>
     </div>}
 
@@ -2348,6 +2398,80 @@ function AbonoFormImpl({ purchase, modo = "nuevo", setModal, addAudit, updatePur
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
       <Btn variant="ghost" onClick={() => setModal({ t: "detail", d: purchase })} disabled={saving}>Cancelar</Btn>
       <Btn variant="success" disabled={saving || !!error} onClick={guardar}>{saving ? "Guardando..." : convertir ? "Pasar a abonos" : "Registrar abono"}</Btn>
+    </div>
+  </div>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PedirPagoFormImpl (11-nov-2026, pedido de Christian): pedirle a la Lic.
+// Carolina el SIGUIENTE pago parcial de una solicitud ya aprobada ("la cuenta
+// es de un millón; ahora pido 200 mil, después otros 300…"). También sirve
+// para pasar a pagos parciales una solicitud que se aprobó por el total, o
+// para corregir lo pedido mientras todavía no se paga. La solicitud vuelve a
+// "Pendiente Lic. Carolina" y, si va a Cuentas por pagar, se programa ese pago.
+// ─────────────────────────────────────────────────────────────────────────
+function PedirPagoFormImpl({ purchase, setModal, addAudit, updatePurchase, userName, encolarPago }) {
+  const vigente = pagoSolicitadoDe(purchase) > 0 ? purchase.pagoSolicitado : null;
+  const falta = saldoDe(purchase);
+  const [f, setF] = useState({
+    monto: vigente ? String(pagoSolicitadoDe(purchase)) : "",
+    nota: vigente?.nota || "",
+    fecha: vigente?.fechaRequerida || purchase.fechaPagoRequerida || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const monto = r2(num(f.monto));
+  const error = validarPagoSolicitado(purchase, monto);
+  const historial = (purchase.solicitudesPago || []).filter(Boolean);
+
+  const guardar = async () => {
+    if (error) return alert(error);
+    setSaving(true);
+    try {
+      const ahora = new Date().toISOString();
+      const sol = { id: vigente?.id || uid(), monto, nota: f.nota.trim(), fechaRequerida: f.fecha || "", por: userName || "", at: ahora };
+      const hist = vigente ? historial.map(h => h.id === sol.id ? sol : h) : [...historial, sol];
+      if (!hist.some(h => h.id === sol.id)) hist.push(sol);
+      const rec = { ...purchase, pagosParciales: true, pagoSolicitado: sol, solicitudesPago: hist, treasuryStatus: "pendiente",
+        ...(f.fecha ? { fechaPagoRequerida: f.fecha } : {}) };
+      const nPedido = hist.findIndex(h => h.id === sol.id) + 1;
+      const saved = addAudit(rec, "pago_solicitado", `${vigente ? "Pedido de pago corregido" : `Pedido de pago ${nPedido}`}: ${fmtL(monto)} de ${fmtL(purchase.amount)} (falta ${fmtL(falta)})${sol.nota ? ` — ${sol.nota}` : ""}`);
+      const ok = await updatePurchase(saved);
+      if (ok === false) return;
+      const donde = encolarPago ? await encolarPago(saved) : null;
+      setModal({ t: "detail", d: saved });
+      setTimeout(() => alert(`✓ Se le pidió a la Lic. Carolina pagar ${fmtL(monto)}.${donde ? `\n\nQuedó en ${donde}${sol.fechaRequerida ? ` para el ${sol.fechaRequerida}` : ""}.` : ""}`), 100);
+    } finally { setSaving(false); }
+  };
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 10 }}>
+      {[["Cuenta completa", fmtL(purchase.amount), CHARCOAL],
+        ["Ya pagado", fmtL(totalAbonado(purchase)), "#059669"],
+        ["Falta pagar", fmtL(falta), C_AMARILLO.color]].map(([l, v, c]) => <div key={l} style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: "10px 12px" }}>
+        <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>{l}</div>
+        <div style={{ fontSize: 17, fontWeight: 800, color: c, marginTop: 2 }}>{v}</div>
+      </div>)}
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: 14 }}>
+      <Input label="Se pide pagar ahora (L)" type="number" min="0" step="0.01" value={f.monto} onChange={e => u("monto", e.target.value)} />
+      <Input label="Fecha en que se requiere (opcional)" type="date" value={f.fecha} onChange={e => u("fecha", e.target.value)} />
+    </div>
+    {falta > 0 && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: -6 }}>
+      <button type="button" onClick={() => u("monto", String(falta))} style={{ background: "none", border: "1px solid #CBD5E1", borderRadius: 999, padding: "3px 10px", fontSize: 11.5, fontWeight: 700, color: "#475569", cursor: "pointer", fontFamily: "inherit" }}>Todo lo que falta ({fmtL(falta)})</button>
+    </div>}
+    <Textarea label="Nota para la Lic. (opcional)" value={f.nota} onChange={e => u("nota", e.target.value)} placeholder="Ej. segundo abono acordado con el proveedor" />
+    {monto > 0 && !error && <div style={{ background: C_NARANJA_CHIP.bg, border: "1px solid rgba(232,118,45,.28)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#A94E16", fontWeight: 600 }}>
+      La Lic. va a ver que de esta cuenta se pide pagar ahora <b>{fmtL(monto)}</b>. Después de pagarlo faltarán <b>{fmtL(Math.max(0, falta - monto))}</b>.
+    </div>}
+    {error && monto > 0 && <div style={{ fontSize: 12.5, color: C_ROJO.color, fontWeight: 700 }}>{error}</div>}
+    {historial.length > 0 && <div style={{ fontSize: 12, color: "#64748b" }}>
+      <div style={{ fontWeight: 700, marginBottom: 4 }}>Pedidos anteriores</div>
+      {historial.map((h, i) => <div key={h.id}>Pedido {i + 1}: {fmtL(h.monto)}{h.por ? ` · ${h.por}` : ""}{h.at ? ` · ${fmtCorta(h.at.slice(0, 10)) || h.at.slice(0, 10)}` : ""}</div>)}
+    </div>}
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+      <Btn variant="ghost" onClick={() => setModal({ t: "detail", d: purchase })} disabled={saving}>Cancelar</Btn>
+      <Btn variant="success" disabled={saving || !!error} onClick={guardar}>{saving ? "Guardando..." : vigente ? "Corregir lo pedido" : "Pedir este pago"}</Btn>
     </div>
   </div>;
 }
@@ -3242,8 +3366,23 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           const ACC = new Set(["abono", "abono_anulado", "pago_a_abonos", "paid", "closed_no_ficha"]);
           const yaEn = new Set((out.audit || []).map(a => `${a?.action}|${a?.at}`));
           const auditNube = (c.audit || []).filter(a => ACC.has(a?.action) && !yaEn.has(`${a.action}|${a.at}`));
-          const { rec } = estadoTrasAbonos({ ...out, abonos: unirAbonos(out.abonos, c.abonos) }, new Date().toISOString());
+          // Pago parcial: el abono de la nube ya bajó lo pedido — manda la nube.
+          // (Salvo que ESTA pantalla acabe de pedir uno nuevo: ese se respeta.)
+          const atsPedNube = new Set((c.audit || []).filter(a => a?.action === "pago_solicitado").map(a => a.at));
+          const pedidoPropioNuevo = (out.audit || []).some(a => a?.action === "pago_solicitado" && !atsPedNube.has(a.at));
+          const pedidoNube = usaPagosParciales(c) && !pedidoPropioNuevo ? { pagoSolicitado: c.pagoSolicitado ?? null } : {};
+          const { rec } = estadoTrasAbonos({ ...out, ...pedidoNube, abonos: unirAbonos(out.abonos, c.abonos) }, new Date().toISOString());
           out = { ...rec, audit: [...(out.audit || []), ...auditNube] };
+        }
+        // PAGO PARCIAL (11-nov-2026): si en la nube Finanzas pidió un pago que
+        // esta fila no tiene, se adopta (si no, guardar con la foto vieja lo borraba).
+        {
+          const yaPed = new Set((out.audit || []).filter(a => a?.action === "pago_solicitado").map(a => a.at));
+          const pedNube = (c.audit || []).filter(a => a?.action === "pago_solicitado" && !yaPed.has(a.at));
+          if (pedNube.length) {
+            out = { ...out, pagosParciales: true, pagoSolicitado: c.pagoSolicitado ?? null, solicitudesPago: c.solicitudesPago || out.solicitudesPago,
+              treasuryStatus: c.treasuryStatus, fechaPagoRequerida: c.fechaPagoRequerida ?? out.fechaPagoRequerida, audit: [...(out.audit || []), ...pedNube] };
+          }
         }
         return out;
       });
@@ -3773,6 +3912,16 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     }
     if (p?.destinoPago === "cxp") {
       const cur = cxpRef.current || [];
+      // PAGO PARCIAL (11-nov-2026): cada pedido es UN pago programado, por lo
+      // pedido y con el id del pedido (idempotente: re-encolar solo lo ajusta).
+      const sol = usaPagosParciales(p) && p.pagoSolicitado?.id ? p.pagoSolicitado : null;
+      if (sol) {
+        const ya = cur.find(e => e.id === sol.id);
+        const entrada = { id: sol.id, purchaseId: p.id, fecha: sol.fechaRequerida || fecha || hoyISO(), monto: pagoSolicitadoDe(p), nota: sol.nota || "", addedBy: ya?.addedBy || userName, createdAt: ya?.createdAt || ahora };
+        if (ya && ya.fecha === entrada.fecha && Number(ya.monto) === entrada.monto) return "Cuentas por pagar";
+        const next = ya ? cur.map(e => e.id === sol.id ? { ...e, ...entrada } : e) : [...cur, entrada];
+        return (await sCxp(next)) ? "Cuentas por pagar" : null;
+      }
       const suyas = cur.filter(e => e.purchaseId === p.id);
       if (suyas.length > 1) return "Cuentas por pagar";          // plan de abonos ya armado: no se toca
       if (suyas.length === 1) {
@@ -4695,6 +4844,28 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         </div>
       </div>
 
+      {/* PAGO PARCIAL (11-nov-2026, pedido de Christian): lo que Finanzas le
+          pide pagar AHORA a la Lic. de la cuenta completa. */}
+      {usaPagosParciales(p) && p.status === "validado" && (() => {
+        const pedido = pagoSolicitadoDe(p);
+        const sol = p.pagoSolicitado;
+        const nPed = Math.max(1, (p.solicitudesPago || []).findIndex(h => h.id === sol?.id) + 1);
+        return <div style={{ background: pedido ? C_NARANJA_CHIP.bg : "#F4F3F1", border: `1px solid ${pedido ? "rgba(232,118,45,.30)" : "rgba(44,42,40,.10)"}`, borderRadius: 12, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: pedido ? "#A94E16" : "#6E6862", textTransform: "uppercase", letterSpacing: 0.5 }}>{pedido ? `Pago parcial · pedido ${nPed}` : "Pago parcial"}</div>
+            {pedido
+              ? <div style={{ fontSize: 15, color: CHARCOAL }}>Se pide pagar ahora <b style={{ fontSize: 19 }}>{fmtL(pedido)}</b> <span style={{ color: "#6E6862" }}>de la cuenta de {fmtL(p.amount)}</span></div>
+              : <div style={{ fontSize: 14, color: CHARCOAL }}>Por ahora no hay pago pedido. Faltan <b>{fmtL(saldoDe(p))}</b> de la cuenta; Finanzas pide el siguiente cuando toque.</div>}
+            {pedido > 0 && <div style={{ fontSize: 12, color: "#6E6862" }}>
+              {sol?.por ? `Lo pidió ${sol.por}` : ""}{sol?.at ? ` el ${fmtCorta(sol.at.slice(0, 10)) || sol.at.slice(0, 10)}` : ""}
+              {sol?.fechaRequerida ? ` · se requiere el ${fmtCorta(sol.fechaRequerida) || sol.fechaRequerida}` : ""}
+              {sol?.nota ? ` · “${sol.nota}”` : ""}
+            </div>}
+          </div>
+          {canCreate && <Btn small variant={pedido ? "ghost" : "success"} onClick={() => setModal({ t: "pedir-pago", d: p })}>{pedido ? "Corregir lo pedido" : "Pedir siguiente pago"}</Btn>}
+        </div>;
+      })()}
+
       {/* Origen GeoSupply (2-oct-2026): solo lectura, para que Finanzas vea de dónde viene */}
       {p.origenSupply && <div style={{ background: C_NARANJA_CHIP.bg, border: "1px solid rgba(232,118,45,.25)", borderRadius: 12, padding: "12px 16px", fontSize: 13, color: CHARCOAL, display: "flex", flexDirection: "column", gap: 4 }}>
         <div style={{ fontSize: 11, fontWeight: 800, color: C_NARANJA_CHIP.color, textTransform: "uppercase", letterSpacing: 0.5 }}>Viene de GeoSupply</div>
@@ -5038,8 +5209,11 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           {/* Corregir proyecto/partida de una compra YA PAGADA — solo Gerson y
               Christian (18-sep-2026). No toca el pago ni el comprobante. */}
           {canCorregirPagada && esPagadaP(p) && <Btn variant="ghost" onClick={() => setModal({ t: "corregir", d: p })} title="Corregir el proyecto o la partida presupuestaria">✏️ Corregir proyecto / partida</Btn>}
-          {canRegisterPay && !hayAbonosVigentes && <Btn variant="success" onClick={() => setModal({ t: "pay", d: p })}>💰 Registrar pago{isActingAsEmergency && p.status === "validado" ? " (emergencia)" : ""}</Btn>}
-          {canAbonar && <Btn variant={hayAbonosVigentes ? "success" : "ghost"} onClick={() => setModal({ t: "abono", d: p })} title="Pago parcial: se registra con su comprobante y la solicitud se cierra cuando se complete el total">➕ Registrar abono{hayAbonosVigentes ? ` (falta ${fmtL(saldoDe(p))})` : ""}</Btn>}
+          {canRegisterPay && !hayAbonosVigentes && !usaPagosParciales(p) && <Btn variant="success" onClick={() => setModal({ t: "pay", d: p })}>💰 Registrar pago{isActingAsEmergency && p.status === "validado" ? " (emergencia)" : ""}</Btn>}
+          {canAbonar && (usaPagosParciales(p)
+            ? <Btn variant={pagoSolicitadoDe(p) ? "success" : "ghost"} onClick={() => setModal({ t: "abono", d: p })} title="Se registra como abono con su comprobante; la solicitud se cierra cuando se complete el total">💰 Registrar pago{pagoSolicitadoDe(p) ? ` de ${fmtL(pagoSolicitadoDe(p))}` : " (abono)"}</Btn>
+            : <Btn variant={hayAbonosVigentes ? "success" : "ghost"} onClick={() => setModal({ t: "abono", d: p })} title="Pago parcial: se registra con su comprobante y la solicitud se cierra cuando se complete el total">➕ Registrar abono{hayAbonosVigentes ? ` (falta ${fmtL(saldoDe(p))})` : ""}</Btn>)}
+          {canCreate && p.status === "validado" && !usaPagosParciales(p) && <Btn variant="ghost" onClick={() => setModal({ t: "pedir-pago", d: p })} title="La cuenta es por el total, pero ahora solo se pide pagar una parte">Pedir solo una parte</Btn>}
           {canPasarAAbonos && <Btn variant="ghost" onClick={() => setModal({ t: "abono", d: p, modo: "convertir" })} title="Se registró como pagada completa pero solo lleva una parte: el pago que tiene pasa a ser el abono 1">↔ Pasar a abonos</Btn>}
           {canRevertPay && !conAbonos && <Btn variant="warn" onClick={revertToValidado}>↺ Revertir pago</Btn>}
           {canCreate && <Btn variant="danger" onClick={() => { if (confirm(`¿Eliminar la solicitud de ${p.provider}?`)) { removePurchase(p.id); setModal(null); } }}>🗑 Eliminar</Btn>}
@@ -7546,7 +7720,8 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const huerfanas = prioridades.filter(e => !porIdGlobal.has(e.id));
 
     // Abonos (17-oct-2026): de una solicitud abonada solo cuenta lo que falta.
-    const total = pendientes.reduce((s, x) => s + porPagarDe(x.p), 0);
+    // Pago parcial (11-nov-2026): de una cuenta que se paga por pedidos, solo lo pedido.
+    const total = pendientes.reduce((s, x) => s + aPagarAhoraDe(x.p), 0);
     const nUrg = pendientes.filter(x => x.e.urgente).length;
     const nVenc = pendientes.filter(x => estaVencida(x.p)).length;
 
@@ -7658,15 +7833,19 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               Arturo la puso en prioridad que salga que fue él"). */}
           {e.addedBy && <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>la priorizó {e.addedBy}</div>}
           {isMobile && <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 3 }}>
-            <span style={{ font: "800 15px/1 var(--display)", color: "var(--text)" }}>{fmtL(porPagarDe(p))}</span>
-            {esAbonoParcial(p) && <span style={{ fontSize: 11, color: C_AMARILLO.color, fontWeight: 700 }}>falta de {fmtL(p.amount)}</span>}
+            <span style={{ font: "800 15px/1 var(--display)", color: "var(--text)" }}>{fmtL(aPagarAhoraDe(p))}</span>
+            {usaPagosParciales(p)
+              ? <span style={{ fontSize: 11, color: "#A94E16", fontWeight: 700 }}>{pagoSolicitadoDe(p) ? `pedido de ${fmtL(p.amount)}` : "sin pago pedido"}</span>
+              : esAbonoParcial(p) && <span style={{ fontSize: 11, color: C_AMARILLO.color, fontWeight: 700 }}>falta de {fmtL(p.amount)}</span>}
             <span style={{ fontSize: 11, color: venc ? C_ROJO.color : "var(--text-3)", fontWeight: venc ? 800 : 500 }}>{dias != null ? `${dias} días` : ""}</span>
           </div>}
         </div>
         {/* Cuánto y desde cuándo */}
         {!isMobile && <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-          <div style={{ font: "800 16px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(porPagarDe(p))}</div>
-          {esAbonoParcial(p) && <div style={{ fontSize: 10.5, marginTop: 2, color: C_AMARILLO.color, fontWeight: 700 }}>falta de {fmtL(p.amount)} · abonado {fmtL(totalAbonado(p))}</div>}
+          <div style={{ font: "800 16px/1.15 var(--display)", letterSpacing: "-.01em", color: "var(--text)" }}>{fmtL(aPagarAhoraDe(p))}</div>
+          {usaPagosParciales(p)
+            ? <div style={{ fontSize: 10.5, marginTop: 2, color: "#A94E16", fontWeight: 700 }}>{pagoSolicitadoDe(p) ? `pedido de la cuenta de ${fmtL(p.amount)}` : `sin pago pedido · falta ${fmtL(saldoDe(p))}`}</div>
+            : esAbonoParcial(p) && <div style={{ fontSize: 10.5, marginTop: 2, color: C_AMARILLO.color, fontWeight: 700 }}>falta de {fmtL(p.amount)} · abonado {fmtL(totalAbonado(p))}</div>}
           <div style={{ fontSize: 10.5, marginTop: 3, color: venc ? C_ROJO.color : "var(--text-3)", fontWeight: venc ? 800 : 500 }}>
             {dias != null ? `esperando ${dias} días` : "—"}
           </div>
@@ -8390,6 +8569,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               <StatusBadge status={p.status} />
               {venc && chip(`Vencida · ${diasV} d`, C_ROJO, `Lleva ${diasV} días sin pago`)}
               <TreasuryBadge status={p.treasuryStatus} />
+              {usaPagosParciales(p) && p.status === "validado" && (pagoSolicitadoDe(p)
+                ? chip(`Se pide ${fmtL(pagoSolicitadoDe(p))}`, C_NARANJA_CHIP)
+                : chip("Esperando pedido de pago", C_GRIS))}
               {esAbonoParcial(p) && chip(`Abonada · falta ${fmtL(saldoDe(p))}`, C_AMARILLO)}
               {p.tipoCompra === "servicio" && chip("Servicio", C_AZUL)}
               {p.origenSupply && chip("GeoSupply", C_NARANJA_CHIP)}
@@ -8437,6 +8619,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
                   {venc && <span title={`Lleva ${diasV} días sin pago`} style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_ROJO.color, background: C_ROJO.bg, border: `1px solid ${C_ROJO.borde}`, whiteSpace: "nowrap" }}>Vencida · {diasV} d</span>}
                   <TreasuryBadge status={p.treasuryStatus} />
                   {/* Abonos (17-oct-2026): pagada por partes, todavía con saldo */}
+                  {usaPagosParciales(p) && p.status === "validado" && <span title="La cuenta se paga por partes: Finanzas pide cada pago" style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: pagoSolicitadoDe(p) ? "#A94E16" : "#6E6862", background: pagoSolicitadoDe(p) ? C_NARANJA_CHIP.bg : "#F1F0EE", whiteSpace: "nowrap" }}>{pagoSolicitadoDe(p) ? "Pago parcial" : "Esperando pedido"}</span>}
                   {esAbonoParcial(p) && <span title={`${abonosVigentes(p).length} abono(s) · ${fmtL(totalAbonado(p))} de ${fmtL(p.amount)}`} style={{ padding: "2px 10px", borderRadius: 20, fontSize: 11.5, fontWeight: 800, color: C_AMARILLO.color, background: C_AMARILLO.bg, whiteSpace: "nowrap" }}>Abonada · {abonosVigentes(p).length}</span>}
                   <DeliveryBadge status={
                     // Entregado por Logística pero sin ficha → lo que falta es la ficha.
@@ -8450,7 +8633,11 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               <td style={{ ...TD, maxWidth: 280, whiteSpace: "normal" }}>{p.description}</td>
               <td style={{ ...TD, fontWeight: 700, color: "var(--text)" }}>
                 {fmtL(p.amount)}
-                {esAbonoParcial(p) && <div style={{ fontSize: 11, fontWeight: 700, color: C_AMARILLO.color, marginTop: 2, whiteSpace: "nowrap" }}>falta {fmtL(saldoDe(p))}</div>}
+                {usaPagosParciales(p) && p.status === "validado"
+                  ? (pagoSolicitadoDe(p)
+                    ? <div style={{ fontSize: 11, fontWeight: 800, color: "#A94E16", marginTop: 2, whiteSpace: "nowrap" }}>se pide {fmtL(pagoSolicitadoDe(p))}</div>
+                    : <div style={{ fontSize: 11, fontWeight: 700, color: "#6E6862", marginTop: 2, whiteSpace: "nowrap" }}>sin pago pedido · falta {fmtL(saldoDe(p))}</div>)
+                  : esAbonoParcial(p) && <div style={{ fontSize: 11, fontWeight: 700, color: C_AMARILLO.color, marginTop: 2, whiteSpace: "nowrap" }}>falta {fmtL(saldoDe(p))}</div>}
               </td>
               <td style={TD}>{fmt(p.createdAt)}</td>
               <td style={TD}>{p.paymentDate ? fmt(p.paymentDate) : "—"}</td>
@@ -8566,6 +8753,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       case "corregir": return <Modal title={`Corregir proyecto / partida — ${m.d.codigo || m.d.provider}`} onClose={() => setModal(null)} wide><CorreccionFormImpl purchase={m.d} setModal={setModal} allProjects={allProjects} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} updatePurchase={updatePurchase} addAudit={addAudit} userName={userName} moduloPartida={CFG.moduloPartida} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "abono": return <Modal title={`${m.modo === "convertir" ? "Pasar a abonos" : "Registrar abono"} — ${m.d.codigo || m.d.provider}`} onClose={() => setModal({ t: "detail", d: m.d })} wide><AbonoFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} modo={m.modo} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} userName={userName} /></Modal>;
+      case "pedir-pago": return <Modal title={`Pedir pago — ${m.d.codigo || m.d.provider}`} onClose={() => setModal({ t: "detail", d: m.d })} wide><PedirPagoFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} userName={userName} encolarPago={encolarPago} /></Modal>;
       case "new-project": return <Modal title="Nuevo proyecto" onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} onSaved={(short) => { if (m.returnTo) setModal(m.returnTo); }} /></Modal>;
       case "edit-project": return <Modal title={`Editar proyecto — ${m.d.short}`} onClose={() => setModal(null)}><ProjectFormImpl allProjects={allProjects} upsertProjectMeta={upsertProjectMeta} renameProjectAlias={renameProjectAlias} setModal={setModal} project={m.d} /></Modal>;
       case "provider-new":  return <Modal title="Nuevo proveedor" onClose={() => setModal(null)} wide><ProviderFormImpl setModal={setModal} upsertProvider={upsertProvider} subirConstanciaProveedor={subirConstanciaProveedor} /></Modal>;

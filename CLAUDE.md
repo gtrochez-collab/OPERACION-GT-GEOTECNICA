@@ -350,6 +350,27 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   N DE M"). Pendiente a propósito: GeoCost sigue contando la compra entera
   como comprometida hasta el pago completo (no parte ejecutado/comprometido),
   y los pagos programados de `cp-cxp` no se marcan solos al abonar.
+  **PAGO PARCIAL SOLICITADO (11-nov-2026, pedido de Christian)**: "la cuenta
+  es de L 1,000,000 pero ahorita solo le pido a la Lic. 200 mil". Campos
+  ADITIVOS: `pagosParciales: true`, `pagoSolicitado {id, monto, nota,
+  fechaRequerida, por, at}` (lo que se pide pagar AHORA; null = nada pedido) y
+  `solicitudesPago[]` (historial). Lógica en `abonos.js` (`pagoSolicitadoDe`,
+  `esperandoPedidoDePago`, `aPagarAhoraDe`, `validarPagoSolicitado`,
+  `solicitadoTrasAbono`; pruebas en `tests/abonos.test.mjs`). Form de
+  solicitud: "¿Cuánto se pide pagar ahora? El monto completo / Solo una parte"
+  (solo antes del primer abono); el monto total sigue siendo la cuenta entera.
+  Detalle: franja naranja "Pago parcial · pedido N — se pide L X de la cuenta
+  de L Y" (o gris "Por ahora no hay pago pedido"), botón **Pedir siguiente
+  pago / Corregir lo pedido** (canCreate) y "Pedir solo una parte" en una
+  aprobada por el total — `PedirPagoFormImpl`, modal `pedir-pago`: vuelve a
+  treasuryStatus `pendiente` y, si va a Cuentas por pagar, `encolarPago`
+  programa UN pago por lo pedido con el id del pedido. Carolina paga con
+  **Registrar pago de L X** (= AbonoFormImpl prellenado con lo pedido; el
+  "Registrar pago" completo se oculta); el abono baja lo pedido y, cubierto,
+  queda "Esperando pedido". Tabla/tarjetas: chip "Pago parcial" / "Esperando
+  pedido" y "se pide L X" bajo el monto; Prioridades muestra y suma solo lo
+  pedido. `sP` rescata los pedidos de la nube (audit `pago_solicitado`).
+  Dashboard y tiras siguen sumando la deuda completa (`porPagarDe`).
   **CALENDARIO DE PAGO (21-sep-2026)**: `renderCalendario`, pestaña después de
   Cuentas por pagar. Mes en la columna izquierda (~1/4) y el detalle del día a
   la derecha, como lo pidió. Une las DOS fuentes: `cp-cxp` (pagos programados,

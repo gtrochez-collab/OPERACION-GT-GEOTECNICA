@@ -106,3 +106,54 @@ test("unir abonos: no se pierde el de la otra pantalla y la anulación es pegajo
   assert.equal(nubeTraeAbonosNuevos({ abonos: u }, { abonos: nube }), false);
   assert.equal(nubeTraeAbonosNuevos({}, {}), false);
 });
+
+// ── Pago parcial solicitado (11-nov-2026, Christian: "la cuenta es de un
+// millón pero ahorita solo le pido a la Lic. 200 mil") ──
+import {
+  usaPagosParciales, pagoSolicitadoDe, esperandoPedidoDePago, aPagarAhoraDe,
+  validarPagoSolicitado, solicitadoTrasAbono,
+} from "../src/abonos.js";
+
+const millon = (extra = {}) => ({ id: "m1", amount: 1000000, status: "validado", treasuryStatus: "pendiente",
+  pagosParciales: true, pagoSolicitado: { id: "s1", monto: 200000 }, ...extra });
+
+test("pago parcial: se paga hoy solo lo pedido, la deuda sigue siendo el total", () => {
+  const p = millon();
+  assert.equal(usaPagosParciales(p), true);
+  assert.equal(pagoSolicitadoDe(p), 200000);
+  assert.equal(aPagarAhoraDe(p), 200000);
+  assert.equal(porPagarDe(p), 1000000);
+  assert.equal(esperandoPedidoDePago(p), false);
+});
+
+test("pago parcial: al abonar lo pedido, queda esperando el siguiente pedido", () => {
+  const p = millon({ abonos: [abono("a1", 200000, "2026-11-11")] });
+  const sol = solicitadoTrasAbono(millon(), 200000);
+  assert.equal(sol, null);
+  const tras = { ...estadoTrasAbonos(p, AHORA).rec, pagoSolicitado: sol };
+  assert.equal(tras.status, "validado");
+  assert.equal(saldoDe(tras), 800000);
+  assert.equal(esperandoPedidoDePago(tras), true);
+  assert.equal(aPagarAhoraDe(tras), 0);
+});
+
+test("pago parcial: un abono menor deja el resto de lo pedido", () => {
+  assert.deepEqual(solicitadoTrasAbono(millon(), 150000), { id: "s1", monto: 50000 });
+  assert.equal(solicitadoTrasAbono(millon(), 199999.5), null); // tolerancia L 1
+});
+
+test("pago parcial: no se puede pedir más de lo que falta ni 0", () => {
+  const p = millon({ abonos: [abono("a1", 900000, "2026-11-11")] });
+  assert.match(validarPagoSolicitado(p, 0), /Poné/);
+  assert.match(validarPagoSolicitado(p, 150000), /mayor/);
+  assert.equal(validarPagoSolicitado(p, 100000), null);
+  // lo pedido nunca pasa del saldo aunque el pedido viejo diga más
+  assert.equal(pagoSolicitadoDe(p), 100000);
+});
+
+test("sin pagos parciales todo sigue igual que antes", () => {
+  const p = ecometal([abono("a1", 300000, "2026-10-01")]);
+  assert.equal(usaPagosParciales(p), false);
+  assert.equal(aPagarAhoraDe(p), porPagarDe(p));
+  assert.equal(esperandoPedidoDePago(p), false);
+});
