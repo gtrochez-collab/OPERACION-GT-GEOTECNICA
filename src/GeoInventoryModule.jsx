@@ -25,6 +25,7 @@ import { GT_CSS } from "./gt-ui.js";
 import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
+import { OPERACION } from "./operacion.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { Input, Select, Textarea, Btn, Chip, Modal, C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
@@ -776,7 +777,10 @@ function EscanerImpl({ onCodigo, onClose }) {
 // ═══════════════════════════════════════════════════════════════════════════
 export default function GeoInventoryModule({ userRole, userName, userKey, onBack, onLogout }) {
   const isMobile = useIsMobile(760);
-  const perms = permisosDe(userRole);
+  // `inventarioCompletoEn` (users.js, 12-nov-2026): en esa operación el usuario
+  // tiene GeoInventory COMPLETO (Óscar cargando el inventario de El Salvador).
+  const completoAqui = (USERS.find(x => x.username === userKey)?.inventarioCompletoEn || []).includes(OPERACION);
+  const perms = permisosDe(completoAqui ? "admin" : userRole);
   const [loaded, setLoaded] = useState(false);
   const [items, setItems] = useState([]);
   // La 2ª foto de las cajas solo se ve en la ficha: se precarga en segundo

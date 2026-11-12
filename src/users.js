@@ -22,7 +22,11 @@ export const USERS = [
   // marcaPropia (3-nov-2026): marca SU PROPIA entrada/salida en GeoClock desde
   // su celular ("Mi marcaje", con foto, firma y GPS). Fernando y Oscar empiezan
   // la jornada antes de las 7 recibiendo llamadas, sin haber llegado al plantel.
-  { username: "oscarpaz",      password: "oscarpaz1234",   role: "logistica",          label: "Oscar Paz", ubicacion: "PLANTEL", marcaPropia: true },
+  { username: "oscarpaz",      password: "oscarpaz1234",   role: "logistica",          label: "Oscar Paz", ubicacion: "PLANTEL", marcaPropia: true,
+    // 12-nov-2026 (Gerson): Óscar va a El Salvador a cargar el inventario —
+    // allá entra SOLO a GeoInventory y con acceso COMPLETO (crea ubicaciones,
+    // carga artículos en cualquier ubicación). En Honduras todo sigue igual.
+    operaciones: ["hn", "sv"], modulosPorOperacion: { sv: ["geoinventory"] }, inventarioCompletoEn: ["sv"] },
   { username: "jorge",         password: "jorge1234",      role: "recepcion",          label: "Jorge Castellanos" },
   { username: "ana",           password: "ana1234",        role: "asistente_compras",  label: "Ana Vasquez" },
   { username: "fernando",      password: "fernando1234",   role: "coordinador_maquinas", label: "Lic. Fernando Diaz", marcaPropia: true },

@@ -449,7 +449,10 @@ export default function App() {
   // Operaciones (9-nov-2026): en El Salvador solo los módulos con `operaciones`
   // que incluyan "sv" (GeoTeam, GeoInventory, Mis Tareas); sin el campo = Honduras.
   const enOperacion = (m) => (m.operaciones || ["hn"]).includes(OPERACION);
-  const permitidos = MODULES.filter((m) => enOperacion(m) && (m.roles.includes(user.role) || (m.id === "geoclock" && marcaPropia)) && !sinModulos.includes(m.id));
+  // `modulosPorOperacion` (users.js, 12-nov-2026): en esa operación el usuario
+  // ve SOLO esos módulos (Óscar en El Salvador = solo GeoInventory).
+  const soloEnOp = USERS.find((x) => x.username === user.username)?.modulosPorOperacion?.[OPERACION];
+  const permitidos = MODULES.filter((m) => enOperacion(m) && (m.roles.includes(user.role) || (m.id === "geoclock" && marcaPropia)) && !sinModulos.includes(m.id) && (!soloEnOp || soloEnOp.includes(m.id)));
   const visibleEnPanel = (m) => !m.oculto || (m.id === "geoclock" && marcaPropia);
   const availableModules = permitidos.some(visibleEnPanel) ? permitidos.filter(visibleEnPanel) : permitidos;
   // Celular (3-nov-2026): el menú ☰ de cualquier módulo lista los demás
