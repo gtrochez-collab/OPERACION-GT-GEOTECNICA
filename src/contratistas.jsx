@@ -17,6 +17,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { store } from "./supabase.js";
 import { hoyISO } from "./fechas.js";
 import { MONEDA, DOC_ID } from "./operacion.js";
+import { esFeriado, nombreFeriado } from "./holidays.js";
 import { Modal, ORANGE, ORANGE_DARK, CHARCOAL, uid, useIsMobile } from "./geocost-ui.jsx";
 import { abrirReporte, reporteHTML, rKpis, rTabla, escHTML, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 import {
@@ -40,6 +41,13 @@ const CTRL = { minHeight: 40, padding: "8px 11px", borderRadius: 11, border: "1p
 const btn = (primario) => ({ minHeight: 38, padding: "9px 16px", borderRadius: 999, border: primario ? "none" : "1px solid rgba(44,42,40,.14)", background: primario ? ORANGE : "rgba(255,255,255,.8)", color: primario ? "#fff" : "#5C5853", font: "700 13px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" });
 const pill = (on) => ({ padding: "8px 14px", borderRadius: 999, border: "none", background: on ? CHARCOAL : "rgba(44,42,40,.06)", color: on ? "#fff" : "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" });
 const draftKey = (p, q) => `gt-contrat-draft-sv-${p}-${q}`;
+// Mismos estilos que la hoja de asistencia de GeoTeam (TH_H / TD_H / PAL_CELDA de HRModule).
+const TH_H = { padding: "8px 10px", textAlign: "left", color: "#6E6862", fontWeight: 700, borderBottom: "1px solid rgba(44,42,40,.08)", whiteSpace: "nowrap", fontSize: 11 };
+const TD_H = { padding: "6px 10px", color: "#2C2A28", whiteSpace: "nowrap" };
+const PAL = {
+  presente: { bg: "#DCF3E4", fg: "#177243" }, descanso: { bg: "#F1F0ED", fg: "#8B847C" }, nsp: { bg: "#F7DEDC", fg: "#B03024" },
+  inc: { bg: "#FBEFC4", fg: "#8A5A00" }, extra: { bg: "#FBE3D0", fg: "#A94E16" },
+};
 
 // ── Form del contratista (a nivel de módulo: no se remonta al teclear) ──
 const contratoVacio = () => ({ id: uid(), codigo: "", servicio: "", rol: "", proyecto: "", modo: "dia", unidad: "", tarifa: "", valorHora: "", activo: true });
@@ -156,7 +164,7 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
   const [guardando, setGuardando] = useState(false);
   const [form, setForm] = useState(null);     // {inicial} | null
   const [verInactivos, setVerInactivos] = useState(false);
-  const [ubic, setUbic] = useState("__todas__");   // filtro de ubicación en la asistencia
+  const [celdaHe, setCeldaHe] = useState(null);    // celda con el menú de horas extra abierto ("contrato|fecha")
   const key = keyAsistContrat(q.periodo, q.quincena);
   const fechas = useMemo(() => diasQuincena(q.periodo, q.quincena), [q]);
 
@@ -284,84 +292,151 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
     </div>;
   }
 
-  // ── Asistencia de la quincena ──
+  // ── Asistencia de la quincena: MISMO formato que la hoja de asistencia de
+  // GeoTeam (13-nov-2026, Gerson: "tal cual, literal, como la llenamos en
+  // Honduras"): tarjeta con la leyenda, resumen por ubicación y una tabla por
+  // ubicación con un renglón por contrato, los días en columnas (D y F en
+  // naranja), "Todos presentes" y los totales a la derecha. Tocá la celda:
+  // 1 → ½ → 2 → 0 → vacío; click derecho: horas extra de ese día.
   const reg = (id) => local.registros?.[id] || {};
-  // Dividida por ubicación (13-nov-2026, Gerson): un grupo por proyecto.
   const ubicaciones = Object.entries(contratos.reduce((m, { c }) => { const u = c.proyecto || ""; m[u] = (m[u] || 0) + 1; return m; }, {})).sort((a, b) => String(a[0] || "~").localeCompare(String(b[0] || "~"), "es"));
-  const gruposUbic = ubicaciones.filter(([u]) => ubic === "__todas__" || ubic === u).map(([u]) => [u, contratos.filter(({ c }) => (c.proyecto || "") === u)]);
-  const cel = { width: isMobile ? 30 : 34, minWidth: isMobile ? 30 : 34, height: 30, borderRadius: 8, border: "1px solid rgba(44,42,40,.10)", font: "700 12.5px/1 var(--sans)", display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" };
-  const colorDia = (v) => v === 1 ? { background: "rgba(62,142,90,.14)", color: "#1F6B3C" } : v === 0.5 ? { background: "rgba(232,118,45,.14)", color: ORANGE_DARK } : v === 2 ? { background: "rgba(31,79,140,.12)", color: "#1F4F8C" } : v === 0 ? { background: "rgba(192,57,43,.10)", color: "#B03024" } : { background: "rgba(255,255,255,.85)", color: "#A39C92" };
-  const todosVinieron = (id) => editar(l => fechas.reduce((acc, f) => diaSem(f) === 0 ? acc : ponerDia(acc, id, f, (acc.registros?.[id]?.dias || {})[f] ?? 1), l));
+  const gruposUbic = ubicaciones.map(([u]) => [u, contratos.filter(({ c }) => (c.proyecto || "") === u)]);
+  const proyDe = (u) => proyectos.find(p => p.short === u);
+  const dias = fechas.map(f => { const d = +f.slice(8), y = +f.slice(0, 4), m0 = +f.slice(5, 7) - 1; const fer = esFeriado(y, m0, d); return { fecha: f, day: d, dow: DIAS_C[diaSem(f)], isSun: diaSem(f) === 0, isHoliday: fer, holidayName: fer ? nombreFeriado(y, m0, d) : "" }; });
+  const colorCelda = (v, d) => v === 1 ? ((d.isSun || d.isHoliday) ? PAL.descanso : PAL.presente) : v === 0.5 ? PAL.inc : v === 2 ? PAL.extra : v === 0 ? PAL.nsp : null;
+  const todosLlenos = (filas) => filas.every(({ c }) => c.modo === "unidad" || dias.every(d => d.isSun || d.isHoliday || (reg(c.id).dias || {})[d.fecha] !== undefined));
+  const todosPresentes = (filas) => {
+    const llenos = todosLlenos(filas);
+    editar(l => filas.reduce((acc, { c }) => c.modo === "unidad" ? acc : dias.reduce((a2, d) => {
+      const v = (a2.registros?.[c.id]?.dias || {})[d.fecha];
+      if (llenos) return ponerDia(a2, c.id, d.fecha, "");
+      return v === undefined && !d.isSun && !d.isHoliday ? ponerDia(a2, c.id, d.fecha, 1) : a2;   // domingos y feriados: solo si los trabajó (a mano)
+    }, acc), l));
+  };
   const ant = qAnterior(q.periodo, q.quincena), sig = qSiguiente(q.periodo, q.quincena);
-  const cambiarQ = (n) => { if (sucio && !confirm("Tenés cambios sin guardar (siguen en este navegador). ¿Cambiar de quincena?")) return; setQ(n); };
+  const cambiarQ = (n) => { if (sucio && !confirm("Tenés cambios sin guardar (siguen en este navegador). ¿Cambiar de quincena?")) return; setCeldaHe(null); setQ(n); };
+  const salir = () => { if (sucio && !confirm("Tenés cambios sin guardar en la asistencia (siguen guardados en este navegador). ¿Salir?")) return; onVolver(); };
+  const nombreQc = `${q.quincena} ${MESES[+q.periodo.slice(5, 7) - 1].slice(0, 3)} ${q.periodo.slice(0, 4)}`;
 
-  return <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 90 }}>
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingBottom: 90 }}>
     {cabecera}
     <div className="gt-vidrio" style={{ padding: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
       <button type="button" className="gt-circulo" onClick={() => cambiarQ(ant)} aria-label="Quincena anterior" style={{ width: 32, height: 32 }}>‹</button>
       <div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL, minWidth: 220, textAlign: "center" }}>{nombreQ(q.periodo, q.quincena)}</div>
       <button type="button" className="gt-circulo" onClick={() => cambiarQ(sig)} aria-label="Quincena siguiente" style={{ width: 32, height: 32 }}>›</button>
-      <div style={{ flex: 1 }} />
-      <span style={{ fontSize: 11.5, color: "#8A847D" }}>Tocá el día: 1 · ½ · 2 (doble) · 0 (no vino) · vacío</span>
     </div>
-    {contratos.length === 0 && <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>No hay contratos activos. Agregalos en la pestaña Contratistas.</div>}
-    {ubicaciones.length > 1 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-      <button type="button" style={pill(ubic === "__todas__")} onClick={() => setUbic("__todas__")}>Todas {contratos.length}</button>
-      {ubicaciones.map(([u, n]) => <button key={u} type="button" style={pill(ubic === u)} onClick={() => setUbic(u)}>{u || "Sin ubicación"} {n}</button>)}
-    </div>}
-    {gruposUbic.map(([u, filas]) => <div key={u} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-    <div style={{ display: "flex", alignItems: "baseline", gap: 10, margin: "4px 2px 0" }}>
-      <span style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>{u || "Sin ubicación"}</span>
-      <span style={{ font: "600 13px/1 var(--sans)", color: "#A39C92" }}>{filas.length} {filas.length === 1 ? "contrato" : "contratos"}</span>
-      {verMontos && <span style={{ marginLeft: "auto", font: "700 13px/1 var(--sans)", color: "#5C5853" }}>{fmt$(filas.reduce((a, { c }) => a + liquidarContrato(c, reg(c.id)).liqX, 0))}</span>}
+
+    <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+      <div>
+        <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>{nombreQc} · Contratistas de servicios</div>
+        <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>Tocá una celda para cambiarla (1 → ½ → 2 → 0). Click derecho: horas extra de ese día.{contratos.some(({ c }) => c.modo === "unidad") ? " Los de pago por unidad llevan la cantidad de la quincena." : ""}</div>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+        {[["1", "Servicio", PAL.presente], ["½", "Medio día", PAL.inc], ["2", "Doble", PAL.extra], ["0", "No vino", PAL.nsp], ["+h", "Horas extra", PAL.extra]].map(([k, l, c]) => <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6E6862" }}><span style={{ minWidth: 22, textAlign: "center", padding: "2px 6px", borderRadius: 6, background: c.bg, color: c.fg, fontWeight: 800, fontSize: 10.5 }}>{k}</span>{l}</span>)}
+      </div>
     </div>
-    {filas.map(({ p, c }) => {
-      const r = reg(c.id), liq = liquidarContrato(c, r);
-      return <div key={c.id} className="gt-vidrio" style={{ padding: isMobile ? 12 : "14px 18px" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ font: "800 14.5px/1.25 var(--display)", color: CHARCOAL }}>{p.nombre}</div>
-            <div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 2 }}>{servicioDe(c)}{c.codigo ? ` · ${c.codigo}` : ""}{c.proyecto ? ` · ${c.proyecto}` : ""}</div>
-            {verMontos && <div style={{ fontSize: 11.5, color: "#8A847D", marginTop: 2 }}>{c.modo === "unidad" ? `${fmt$(c.tarifa)} por ${c.unidad || "unidad"}` : `${fmt$(c.tarifa)} por día · hora extra ${fmt$(valorHoraDe(c))}`}</div>}
+
+    {contratos.length === 0 && <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>No hay contratos activos.{verMontos ? " Agregalos en la pestaña Contratistas." : ""}</div>}
+
+    {gruposUbic.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8 }}>
+      {gruposUbic.map(([u, filas]) => {
+        const personas = new Set(filas.map(({ p }) => p.id)).size;
+        const dSum = filas.reduce((a, { c }) => a + liquidarContrato(c, reg(c.id)).dias, 0);
+        const hSum = filas.reduce((a, { c }) => a + liquidarContrato(c, reg(c.id)).horas, 0);
+        return <div key={u} className="gt-vidrio" style={{ padding: "11px 14px" }}>
+          <div style={{ font: "800 13.5px/1.2 var(--display)", color: CHARCOAL }}>{u || "Sin ubicación"}</div>
+          <div style={{ fontSize: 11, color: "#A39C92", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{proyDe(u)?.name || "Subterra El Salvador"}</div>
+          <div style={{ marginTop: 8, display: "flex", gap: 10, fontSize: 12, flexWrap: "wrap", color: "#6E6862" }}>
+            <span><b style={{ color: CHARCOAL }}>{personas}</b> persona{personas !== 1 ? "s" : ""}</span>
+            <span><b style={{ color: CHARCOAL }}>{fmtN(dSum)}</b> días</span>
+            {hSum > 0 && <span><b style={{ color: CHARCOAL }}>{fmtN(hSum)}</b> h extra</span>}
           </div>
-          <div style={{ display: "flex", gap: 16, textAlign: "right", flexWrap: "wrap" }}>
-            <div><div style={{ font: "700 13.5px/1 var(--sans)", color: CHARCOAL }}>{c.modo === "unidad" ? `${fmtN(liq.unidades)} ${c.unidad || "u."}` : `${fmtN(liq.dias)} d${liq.horas ? ` · ${fmtN(liq.horas)} h` : ""}`}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>servicio</div></div>
-            {verMontos && <><div><div style={{ font: "700 13.5px/1 var(--sans)", color: CHARCOAL }}>{fmt$(liq.suma)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>suma global</div></div>
-            <div><div style={{ font: "700 13.5px/1 var(--sans)", color: liq.retencion ? "#B03024" : "#A39C92" }}>{liq.retencion ? `−${fmt$(liq.retencion)}` : "—"}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>ISR 10 %</div></div>
-            <div><div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>{fmt$(liq.liquido)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>líquido</div></div></>}
+        </div>;
+      })}
+    </div>}
+
+    {gruposUbic.map(([u, filas]) => {
+      const llenos = todosLlenos(filas);
+      return <div key={u} className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", borderBottom: "1px solid rgba(44,42,40,.07)" }}>
+          <span style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>{u || "Sin ubicación"} <span style={{ color: "#A39C92", fontWeight: 600, fontSize: 12.5 }}>{filas.length}</span></span>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "#A39C92" }}>{proyDe(u)?.code || ""}</span>
+            {puedeEditar && <button type="button" onClick={() => todosPresentes(filas)} style={{ minHeight: 30, padding: "5px 12px", borderRadius: 999, border: llenos ? "1px solid rgba(192,57,43,.3)" : "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: llenos ? "#B03024" : CHARCOAL, font: "700 12px/1 var(--sans)", cursor: "pointer" }}>{llenos ? "Limpiar" : "Todos presentes"}</button>}
           </div>
         </div>
-        {c.modo === "unidad"
-          ? <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-            <span style={LBL}>{(c.unidad || "Unidades").replace(/^\w/, x => x.toUpperCase())} en la quincena</span>
-            <input type="number" min="0" step="0.5" disabled={!puedeEditar} value={r.unidades ?? ""} placeholder="0" onChange={e => editar(l => ponerCampo(l, c.id, "unidades", e.target.value === "" ? undefined : Math.max(0, Number(e.target.value))))} style={{ ...CTRL, width: 110, fontFamily: "var(--mono)" }} />
-            <input disabled={!puedeEditar} value={r.nota || ""} placeholder="Nota (ej. sondeos 1 a 3)" onChange={e => editar(l => ponerCampo(l, c.id, "nota", e.target.value || undefined))} style={{ ...CTRL, flex: 1, minWidth: 180 }} />
-          </div>
-          : <div style={{ overflowX: "auto", marginTop: 12, paddingBottom: 4 }}>
-            <div style={{ display: "inline-grid", gridTemplateColumns: `64px repeat(${fechas.length}, auto)`, gap: 4, alignItems: "center" }}>
-              <span />
-              {fechas.map(f => <span key={f} style={{ textAlign: "center", font: "600 10px/1.2 var(--sans)", color: diaSem(f) === 0 ? ORANGE_DARK : "#8A847D" }}>{DIAS_C[diaSem(f)]}<br />{+f.slice(8)}</span>)}
-              <span style={{ ...LBL, fontSize: 10.5 }}>Días</span>
-              {fechas.map(f => { const v = (r.dias || {})[f]; return <button key={f} type="button" disabled={!puedeEditar} onClick={() => editar(l => ponerDia(l, c.id, f, siguienteValor(v)))} style={{ ...cel, ...colorDia(v), cursor: puedeEditar ? "pointer" : "default" }}>{textoDia(v)}</button>; })}
-              <span style={{ ...LBL, fontSize: 10.5 }}>H. extra</span>
-              {fechas.map(f => { const h = (r.he || {})[f]; return <input key={f} type="number" min="0" step="0.5" disabled={!puedeEditar} value={h || ""} onChange={e => editar(l => ponerHoras(l, c.id, f, e.target.value === "" ? 0 : Math.max(0, Math.min(16, Number(e.target.value)))))} style={{ ...cel, padding: 0, textAlign: "center", fontFamily: "var(--mono)", fontSize: 11.5, background: h ? "rgba(232,118,45,.10)" : "rgba(255,255,255,.85)", color: CHARCOAL }} />; })}
-            </div>
-            {puedeEditar && <button type="button" onClick={() => todosVinieron(c.id)} style={{ marginTop: 8, border: "none", background: "none", color: ORANGE_DARK, font: "700 12px/1 var(--sans)", cursor: "pointer", padding: 0 }}>Marcar 1 en los días vacíos (menos domingos)</button>}
-          </div>}
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ background: "rgba(44,42,40,.025)" }}>
+              <th style={{ ...TH_H, position: "sticky", left: 0, background: "#FAFAF9", zIndex: 2, minWidth: 190 }}>Contratista</th>
+              {dias.map(d => <th key={d.fecha} title={d.isHoliday ? `Feriado: ${d.holidayName}` : ""} style={{ ...TH_H, textAlign: "center", minWidth: 32 }}>
+                <div style={{ fontSize: 10, color: (d.isHoliday || d.isSun) ? "#A94E16" : "#A39C92", fontWeight: d.isHoliday ? 700 : 600 }}>{d.isHoliday ? "F" : d.dow}</div>{d.day}
+              </th>)}
+              <th style={{ ...TH_H, textAlign: "center" }}>Días</th>
+              <th style={{ ...TH_H, textAlign: "center" }}>H. extra</th>
+              {verMontos && <th style={{ ...TH_H, textAlign: "right" }}>Suma global</th>}
+              {verMontos && <th style={{ ...TH_H, textAlign: "right" }}>Líquido</th>}
+            </tr></thead>
+            <tbody>{filas.map(({ p, c }) => {
+              const r = reg(c.id), liq = liquidarContrato(c, r);
+              return <tr key={c.id} style={{ borderBottom: "1px solid rgba(44,42,40,.06)" }}>
+                <td style={{ ...TD_H, position: "sticky", left: 0, background: "#FAFAF9", zIndex: 1, fontWeight: 600, fontSize: 11 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span>{p.nombre}</span>
+                    <span style={{ fontFamily: "var(--mono)", fontSize: 9, fontWeight: 600, color: "#A39C92", letterSpacing: 0.5 }}>{c.codigo || ""}{c.rol ? ` · ${c.rol.toUpperCase()}` : ""}</span>
+                  </div>
+                </td>
+                {c.modo === "unidad"
+                  ? <td colSpan={dias.length} style={{ ...TD_H, background: "rgba(44,42,40,.025)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11.5, color: "#6E6862" }}>Se paga por {c.unidad || "unidad"} · cantidad de la quincena</span>
+                      <input type="number" min="0" step="0.5" disabled={!puedeEditar} value={r.unidades ?? ""} placeholder="0" onChange={e => editar(l => ponerCampo(l, c.id, "unidades", e.target.value === "" ? undefined : Math.max(0, Number(e.target.value))))} style={{ ...CTRL, width: 90, minHeight: 30, padding: "4px 8px", fontFamily: "var(--mono)", fontSize: 12.5 }} />
+                      <input disabled={!puedeEditar} value={r.nota || ""} placeholder="Nota (ej. sondeos 1 a 3)" onChange={e => editar(l => ponerCampo(l, c.id, "nota", e.target.value || undefined))} style={{ ...CTRL, minHeight: 30, padding: "4px 8px", fontSize: 12, flex: 1, minWidth: 160 }} />
+                    </div>
+                  </td>
+                  : dias.map(d => {
+                    const v = (r.dias || {})[d.fecha], h = (r.he || {})[d.fecha] || 0;
+                    const k = `${c.id}|${d.fecha}`, abierto = celdaHe === k;
+                    const pc = colorCelda(v, d);
+                    return <td key={d.fecha} title={d.isHoliday ? d.holidayName : "Click derecho: horas extra"}
+                      onClick={() => puedeEditar && editar(l => ponerDia(l, c.id, d.fecha, siguienteValor(v)))}
+                      onContextMenu={(ev) => { ev.preventDefault(); if (puedeEditar) setCeldaHe(abierto ? null : k); }}
+                      style={{ ...TD_H, textAlign: "center", cursor: puedeEditar ? "pointer" : "default", background: pc ? pc.bg : "transparent", color: pc ? pc.fg : "#2C2A28", fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid rgba(44,42,40,.06)", position: "relative", fontSize: 11.5 }}>
+                      {textoDia(v) || <span style={{ color: "#D8D4CE" }}>·</span>}
+                      {h > 0 && <div style={{ fontSize: 8, color: "#A94E16", lineHeight: 1, fontWeight: 800, marginTop: 1 }}>+{fmtN(h)}h</div>}
+                      {abierto && <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 170, padding: 8, textAlign: "left" }} onClick={ev => ev.stopPropagation()}>
+                        <div style={{ fontSize: 10.5, color: "#64748b", marginBottom: 6, fontWeight: 600 }}>Horas extra · {d.dow} {d.day}</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                          {[0, 1, 2, 3, 4, 5, 6].map(n => <button key={n} type="button" onClick={() => { editar(l => ponerHoras(l, c.id, d.fecha, n)); setCeldaHe(null); }} style={{ minWidth: 30, padding: "5px 0", borderRadius: 6, border: "1px solid rgba(44,42,40,.12)", background: h === n || (!h && n === 0) ? "#FBE3D0" : "#fff", font: "700 11.5px/1 var(--sans)", cursor: "pointer" }}>{n}</button>)}
+                        </div>
+                        <input type="number" min="0" max="16" step="0.5" defaultValue={h || ""} placeholder="Otra cantidad" onKeyDown={e => { if (e.key === "Enter") { editar(l => ponerHoras(l, c.id, d.fecha, Math.max(0, Math.min(16, Number(e.currentTarget.value) || 0)))); setCeldaHe(null); } }} style={{ marginTop: 6, width: "100%", boxSizing: "border-box", padding: "5px 8px", borderRadius: 6, border: "1px solid #CBD5E1", fontSize: 12 }} />
+                      </div>}
+                    </td>;
+                  })}
+                <td style={{ ...TD_H, textAlign: "center", fontWeight: 800 }}>{c.modo === "unidad" ? `${fmtN(liq.unidades)}` : fmtN(liq.dias)}</td>
+                <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: liq.horas ? "#A94E16" : "#A39C92" }}>{c.modo === "unidad" ? "—" : fmtN(liq.horas) || "0"}</td>
+                {verMontos && <td style={{ ...TD_H, textAlign: "right", fontWeight: 600 }}>{fmt$(liq.suma)}</td>}
+                {verMontos && <td style={{ ...TD_H, textAlign: "right", fontWeight: 800 }}>{fmt$(liq.liquido)}</td>}
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>
       </div>;
     })}
-    </div>)}
+
     {contratos.length > 0 && verMontos && <div className="gt-vidrio" style={{ padding: isMobile ? 14 : "14px 18px", display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
-      <div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL, flex: 1, minWidth: 180 }}>Estimación de pago<div style={{ fontSize: 12, fontWeight: 500, color: "#6E6862", marginTop: 3 }}>{est.filas.length} contratos · {est.personas} personas</div></div>
+      <div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL, flex: 1, minWidth: 180 }}>Estimación de pago<div style={{ fontSize: 12, fontWeight: 500, color: "#6E6862", marginTop: 3 }}>{est.filas.length} contratos · {est.personas} personas · sale de esta asistencia</div></div>
       <div style={{ textAlign: "right" }}><div style={{ font: "700 14px/1 var(--sans)" }}>{fmt$(est.suma)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>suma global</div></div>
       <div style={{ textAlign: "right" }}><div style={{ font: "700 14px/1 var(--sans)", color: "#B03024" }}>−{fmt$(est.retencion)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>retención ISR</div></div>
       <div style={{ textAlign: "right" }}><div style={{ font: "800 19px/1 var(--display)", color: ORANGE_DARK }}>{fmt$(est.liquido)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>total a pagar</div></div>
     </div>}
-    <div style={{ position: "sticky", bottom: 10, zIndex: 5, display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", padding: 10, borderRadius: 18, background: "rgba(255,255,255,.92)", boxShadow: "0 10px 30px rgba(44,42,40,.12)" }}>
-      {sucio && <span style={{ alignSelf: "center", fontSize: 12.5, color: ORANGE_DARK, fontWeight: 600, marginRight: "auto" }}>Cambios sin guardar</span>}
-      {verMontos && <button type="button" disabled={!est.filas.length} style={btn(false)} onClick={() => estimacionExcel({ periodo: q.periodo, quincena: q.quincena, est }).catch(() => alert("No se pudo generar el Excel."))}>Excel</button>}
-      {verMontos && <button type="button" disabled={!est.filas.length} style={btn(false)} onClick={() => { const w = window.open("", "_blank"); estimacionPDF(w, { periodo: q.periodo, quincena: q.quincena, est, elaboradoPor: user?.nombre }); }}>PDF</button>}
-      {puedeEditar && <button type="button" disabled={!sucio || guardando} onClick={guardarAsistencia} style={{ ...btn(true), opacity: !sucio || guardando ? .55 : 1 }}>{guardando ? "Guardando…" : "Guardar asistencia"}</button>}
+
+    <div style={{ position: "sticky", bottom: 10, zIndex: 5, display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center" }}>
+      {sucio && <span style={{ fontSize: 12.5, color: ORANGE_DARK, fontWeight: 600, marginRight: "auto", background: "rgba(255,255,255,.92)", padding: "6px 12px", borderRadius: 999 }}>Cambios sin guardar</span>}
+      <button type="button" onClick={salir} style={{ minHeight: 44, padding: "10px 24px", borderRadius: 999, border: "none", background: "#EEEDEA", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Cerrar</button>
+      {verMontos && <button type="button" disabled={!est.filas.length} onClick={() => estimacionExcel({ periodo: q.periodo, quincena: q.quincena, est }).catch(() => alert("No se pudo generar el Excel."))} style={{ minHeight: 44, padding: "10px 20px", borderRadius: 999, border: "1px solid rgba(44,42,40,.16)", background: "#fff", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Exportar Excel</button>}
+      {verMontos && <button type="button" disabled={!est.filas.length} onClick={() => { const w = window.open("", "_blank"); estimacionPDF(w, { periodo: q.periodo, quincena: q.quincena, est, elaboradoPor: user?.nombre }); }} style={{ minHeight: 44, padding: "10px 20px", borderRadius: 999, border: "1px solid rgba(44,42,40,.16)", background: "#fff", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Exportar PDF</button>}
+      {puedeEditar && <button type="button" disabled={!sucio || guardando} onClick={guardarAsistencia} style={{ minHeight: 44, padding: "10px 26px", borderRadius: 999, border: "none", background: ORANGE, color: "#fff", font: "800 14px/1 var(--sans)", cursor: "pointer", opacity: !sucio || guardando ? .55 : 1, boxShadow: "0 8px 20px rgba(232,118,45,.28)" }}>{guardando ? "Guardando…" : "Guardar asistencia"}</button>}
     </div>
     {modal}
   </div>;
