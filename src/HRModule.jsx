@@ -4421,7 +4421,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
 
       {verJornales ? (esSV
           ? <ContratistasSV proyectos={hrProjects} user={hubUser} puedeEditar={ROLES_RRHH_JORNAL.includes(userRole)} soloLista q={empSearch} onVolver={() => setEmpTipo("todos")} />
-          : <FichasJornales q={empSearch} rol={userRole} user={hubUser} />)
+          : <FichasJornales q={empSearch} rol={userRole} user={hubUser} proyectos={hrProjects} />)
         : empTipo === "todos" || empTipo === "jornales"
         ? grupos.map(([k, l]) => { const rows = filtered.filter(e => e.contractType === k); return rows.length > 0 && <div key={k}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "4px 2px 12px" }}>

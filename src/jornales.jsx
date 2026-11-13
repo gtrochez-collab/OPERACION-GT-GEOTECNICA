@@ -65,6 +65,8 @@ const btn = (label, onClick, { c = CHARCOAL, lleno = false, chico = false, disab
   style={{ minHeight: chico ? 36 : 44, padding: chico ? "7px 13px" : "10px 18px", borderRadius: 12, border: lleno ? "1px solid transparent" : `1px solid ${c === CHARCOAL ? "rgba(44,42,40,.14)" : c + "55"}`, background: lleno ? c : "rgba(255,255,255,.75)", color: lleno ? "#fff" : c, font: `700 ${chico ? 12.5 : 13.5}px/1 var(--sans)`, cursor: disabled ? "default" : "pointer", opacity: disabled ? .5 : 1, whiteSpace: "nowrap", ...style }}>{label}</button>;
 const pill = (label, on, onClick, { key } = {}) => <button key={key} type="button" onClick={onClick} aria-pressed={on}
   style={{ padding: "7px 13px", borderRadius: 999, border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: on ? ORANGE_DARK : "rgba(255,255,255,.7)", color: on ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>;
+// Proyectos donde puede trabajar un jornal (los activos que admiten solicitudes: el plantel es PLAN-TALLER).
+const proyectosJornal = (proyectos) => (proyectos || []).filter(p => p.short && p.active !== false && !p.archived && !p.hidden && !p.deleted && admiteSolicitudes(p.short)).slice().sort((a, b) => String(a.short).localeCompare(String(b.short), "es", { sensitivity: "base", numeric: true }));
 const tile = (v, l, c = CHARCOAL) => <div className="gt-vidrio" style={{ padding: "12px 14px", minWidth: 0 }}><div style={{ font: "800 22px/1 var(--display)", color: c, letterSpacing: "-.02em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{v}</div><div style={{ fontSize: 11.5, color: "#6E6862", marginTop: 5 }}>{l}</div></div>;
 const aviso = (txt, c = C_AMARILLO) => <div style={{ background: c.bg, color: c.color, borderRadius: 14, padding: "10px 14px", fontSize: 12.5, lineHeight: 1.45 }}>{txt}</div>;
 
@@ -210,10 +212,11 @@ function CampoFoto({ titulo, sub, valor, onCambio, MAX, accept = "image/*", capt
   </div>;
 }
 
-export function JornalFormImpl({ inicial, todos, puedeTarifa, user, onGuardar, onClose }) {
+export function JornalFormImpl({ inicial, todos, puedeTarifa, user, onGuardar, onClose, proyectos = [], proyectoDefault = "" }) {
   const nuevo = !inicial;
   const sugerida = useMemo(() => { const c = {}; (todos || []).forEach(j => { if (j.salarioDia) c[j.salarioDia] = (c[j.salarioDia] || 0) + 1; }); return Number(Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0]) || ""; }, [todos]);
-  const [f, setF] = useState(() => inicial ? { ...inicial } : { fullName: "", dni: "", phone: "", position: "Ayudante", salarioDia: sugerida, notas: "", status: "active" });
+  const [f, setF] = useState(() => inicial ? { ...inicial } : { fullName: "", dni: "", phone: "", position: "Ayudante", salarioDia: sugerida, notas: "", status: "active", proyecto: proyectoDefault || "" });
+  const opcionesProy = proyectosJornal(proyectos);
   const [saving, setSaving] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const tarifaBloqueada = !nuevo && !puedeTarifa;
@@ -227,6 +230,13 @@ export function JornalFormImpl({ inicial, todos, puedeTarifa, user, onGuardar, o
         <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Teléfono</span><input value={f.phone || ""} inputMode="tel" onChange={e => u("phone", e.target.value)} placeholder="9999-9999" style={CTRL} /></label>
         <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Cargo</span><input value={f.position || ""} onChange={e => u("position", e.target.value)} list="jornal-cargos" style={CTRL} />
           <datalist id="jornal-cargos">{["Ayudante", "Ayudante de concreto", "Albañil", "Armador", "Carpintero", "Soldador", "Operador", "Vigilante"].map(x => <option key={x} value={x} />)}</datalist></label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 5, gridColumn: "1 / -1" }}><span style={LBL}>Proyecto donde trabaja</span>
+          <select value={f.proyecto || ""} onChange={e => u("proyecto", e.target.value)} style={CTRL}>
+            <option value="">Sin proyecto</option>
+            {opcionesProy.map(p => <option key={p.short} value={p.short}>{p.short}{p.name && p.name !== p.short ? ` · ${p.name}` : ""}</option>)}
+            {f.proyecto && !opcionesProy.some(p => p.short === f.proyecto) && <option value={f.proyecto}>{f.proyecto}</option>}
+          </select>
+          <span style={{ fontSize: 11.5, color: "#8A847D" }}>Sale solo en la asistencia de ese proyecto. Si lo movés a otro, cambiá el proyecto acá.</span></label>
         <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Pago por día ({MONEDA}) *</span><input value={f.salarioDia} inputMode="decimal" disabled={tarifaBloqueada} onChange={e => u("salarioDia", e.target.value.replace(/[^\d.]/g, ""))} style={{ ...CTRL, fontFamily: "var(--mono)", opacity: tarifaBloqueada ? .6 : 1 }} />
           <span style={{ fontSize: 11.5, color: "#8A847D" }}>{num(f.salarioDia) > 0 ? `Hora extra: ${fmtL(valorHora(f.salarioDia))} (el día ÷ 8)` : "La hora extra sale del día ÷ 8"}{tarifaBloqueada ? " · lo cambia RRHH" : ""}</span></label>
       </div>
@@ -303,6 +313,7 @@ function TarjetaJornal({ j, onClick, i }) {
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "10px 14px 12px", gap: 3 }}>
       <div style={{ font: "800 14.5px/1.22 var(--display)", color: CHARCOAL }}>{j.fullName}</div>
       <div style={{ fontSize: 12, color: "#6E6862" }}>{j.position || "Jornal"}</div>
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: j.proyecto ? "var(--naranja-tinta, #A94E16)" : "#A39C92", marginTop: 2 }}>{j.proyecto || "Sin proyecto"}</div>
       <div style={{ flex: 1 }} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", paddingTop: 9, borderTop: "1px solid rgba(44,42,40,.07)", gap: 6 }}>
         <span style={{ font: "600 10.5px/1 var(--mono)", color: "#8A847D" }}>{j.dni}</span>
@@ -312,7 +323,7 @@ function TarjetaJornal({ j, onClick, i }) {
   </div>;
 }
 
-export function FichasJornales({ q = "", rol, user }) {
+export function FichasJornales({ q = "", rol, user, proyectos = [] }) {
   const isMobile = useIsMobile();
   const { lista, error, cargar, guardar } = useJornaleros();
   const [filtro, setFiltro] = useState("activos");
@@ -320,7 +331,7 @@ export function FichasJornales({ q = "", rol, user }) {
   const puedeEditar = ROLES_RRHH_JORNAL.includes(rol);
   if (!lista) return <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Cargando jornales…</div>;
   const qq = q.trim().toLowerCase();
-  const base = lista.filter(j => !qq || [j.fullName, j.dni, j.position, j.phone].filter(Boolean).join(" ").toLowerCase().includes(qq));
+  const base = lista.filter(j => !qq || [j.fullName, j.dni, j.position, j.phone, j.proyecto].filter(Boolean).join(" ").toLowerCase().includes(qq));
   const activos = base.filter(j => j.status !== "inactive");
   const sinId = activos.filter(j => !tieneIdentidad(j));
   const vista = (filtro === "activos" ? activos : filtro === "sinid" ? sinId : base.filter(j => j.status === "inactive")).slice().sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "es"));
@@ -339,7 +350,7 @@ export function FichasJornales({ q = "", rol, user }) {
       : <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 158 : 210}px, 1fr))`, gap: isMobile ? 10 : 16 }}>{vista.map((j, i) => <TarjetaJornal key={j.id} j={j} i={i} onClick={() => setModal({ t: "ver", j })} />)}</div>}
     {modal?.t === "ver" && <Modal title="Ficha del jornal" onClose={() => setModal(null)}><JornalDetalle j={lista.find(x => x.id === modal.j.id) || modal.j} puedeEditar={puedeEditar} onEditar={() => setModal({ t: "editar", j: lista.find(x => x.id === modal.j.id) || modal.j })} onClose={() => setModal(null)} /></Modal>}
     {(modal?.t === "editar" || modal?.t === "nuevo") && <Modal title={modal.t === "nuevo" ? "Nuevo jornal" : "Editar jornal"} wide onClose={() => setModal(null)} fondoCierra={false}>
-      <JornalFormImpl inicial={modal.j || null} todos={lista} puedeTarifa={puedeEditar} user={user} onGuardar={guardar} onClose={() => setModal(null)} /></Modal>}
+      <JornalFormImpl inicial={modal.j || null} todos={lista} puedeTarifa={puedeEditar} user={user} proyectos={proyectos} onGuardar={guardar} onClose={() => setModal(null)} /></Modal>}
   </div>;
 }
 
@@ -476,13 +487,23 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
     // anterior (RRHH decide quién trabaja; no hay que volver a armarla cada 2 semanas).
     const prev = docs.previo?.proyectos?.[short];
     const nube = docs.corte.proyectos?.[short] || (prev?.jornaleros?.length ? (() => {
-      const ids = prev.jornaleros.filter(id => (jornaleros || []).find(j => j.id === id)?.status !== "inactive");
+      const ids = prev.jornaleros.filter(id => { const fj = (jornaleros || []).find(j => j.id === id); return fj?.status !== "inactive" && (!fj?.proyecto || fj.proyecto === short); });
       return { ...proyectoVacio(), jornaleros: ids, tarifas: Object.fromEntries(ids.filter(id => prev.tarifas?.[id] != null).map(id => [id, prev.tarifas[id]])) };
     })() : proyectoVacio());
     const dr = leerDraft(draftKey(corte.id, short));
     if (dr && cambiosEntre(dr.base, dr.local)) { setBase(dr.base); setLocalRaw(dr.local); setRecuperado(true); }
     else { setBase(nube); setLocalRaw(nube); setRecuperado(false); ponerDraft(draftKey(corte.id, short), null); }
   }, [docs.corte, docs.previo, short, corte.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Jornales con ESTE proyecto en su ficha (13-nov-2026, Gerson: "ponerle un proyecto a
+  // cada jornal y que dependiendo de eso aparezcan"): entran solos a la lista del corte.
+  // Quien se quitó a mano de este proyecto en esta pantalla no vuelve a entrar.
+  const quitadosRef = useRef(new Set());
+  useEffect(() => {
+    if (!short || !jornaleros || !docs.corte) return;
+    const enLista = new Set(local.jornaleros || []);
+    const faltan = jornaleros.filter(j => j.status !== "inactive" && j.proyecto === short && !enLista.has(j.id) && !quitadosRef.current.has(`${corte.id}|${short}|${j.id}`)).map(j => j.id);
+    if (faltan.length) agregar(faltan);
+  }, [short, jornaleros, base, docs.corte]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sucio = cambiosEntre(base, local);
   const setLocal = (fn) => setLocalRaw(prev => { const nx = typeof fn === "function" ? fn(prev) : fn; ponerDraft(draftKey(corte.id, short), { base, local: nx, at: new Date().toISOString() }); return nx; });
@@ -510,6 +531,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
 
   const agregar = (ids, nuevas = {}) => setLocal(p => { const n = { ...p, jornaleros: [...p.jornaleros], tarifas: { ...(p.tarifas || {}) } }; ids.forEach(id => { if (!n.jornaleros.includes(id)) { n.jornaleros.push(id); const f = nuevas[id] || ficha(id); if (f && n.tarifas[id] == null) n.tarifas[id] = num(f.salarioDia); } }); return n; });
   const quitar = (id) => {
+    quitadosRef.current.add(`${corte.id}|${short}|${id}`);
     const tiene = Object.keys(local.dias?.[id] || {}).length || Object.keys(local.he?.[id] || {}).length;
     if (!confirm(`¿Quitar a ${ficha(id)?.fullName || "esta persona"} de ${short} en este corte?${tiene ? "\n\nSe borran los días y horas que tenía marcados en este corte." : ""}`)) return;
     setLocal(p => { const n = { ...p, jornaleros: p.jornaleros.filter(x => x !== id), dias: { ...p.dias }, he: { ...p.he }, tarifas: { ...(p.tarifas || {}) } }; delete n.dias[id]; delete n.he[id]; delete n.tarifas[id]; return n; });
@@ -608,28 +630,57 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
   }
 
   if (vista === "resumen") {
+    // Una CAJITA por proyecto (13-nov-2026, Gerson: "una cajita por proyecto que
+    // ingresas y ves la asistencia del corte"): los que tienen asistencia en el
+    // corte y los que tienen jornales asignados en la ficha.
     const shorts = new Set(Object.keys(docs.corte?.proyectos || {}));
     const vierPrevio = diasDelCorte(corteAnterior(corte))[13];
     Object.entries(docs.previo?.proyectos || {}).forEach(([s, p]) => { if (Object.values(p.he || {}).some(m => num(m?.[vierPrevio]) > 0)) shorts.add(s); });
-    const filas = [...shorts].map(s => { const proy = docs.corte?.proyectos?.[s]; const l = liquidarProyecto({ corte, proy, proyPrevio: docs.previo?.proyectos?.[s], jornaleros }); return { s, proy, l }; }).filter(x => x.l.filas.length).sort((a, b) => b.l.totales.total - a.l.totales.total);
+    const porFicha = {};
+    (jornaleros || []).filter(j => j.status !== "inactive" && j.proyecto).forEach(j => { (porFicha[j.proyecto] = porFicha[j.proyecto] || []).push(j.id); });
+    Object.keys(porFicha).forEach(s => shorts.add(s));
+    const filas = [...shorts].filter(s => esRRHH || soloVer || misProyectos.has(s)).map(s => {
+      const guardado = docs.corte?.proyectos?.[s];
+      const ids = [...new Set([...(guardado?.jornaleros || []), ...(porFicha[s] || [])])];
+      const proy = { ...(guardado || {}), jornaleros: ids };
+      const l = liquidarProyecto({ corte, proy, proyPrevio: docs.previo?.proyectos?.[s], jornaleros });
+      return { s, proy, l, guardado: !!guardado };
+    }).filter(x => x.l.filas.length).sort((a, b) => String(a.s).localeCompare(String(b.s), "es", { sensitivity: "base", numeric: true }));
     const tot = filas.reduce((t, x) => ({ p: t.p + x.l.filas.length, d: t.d + x.l.totales.dias, total: t.total + x.l.totales.total, faltan: t.faltan + x.l.filas.filter(f => !tieneIdentidad(f.ficha)).length }), { p: 0, d: 0, total: 0, faltan: 0 });
+    const abrir = (s) => { setShort(s); setVista(isMobile ? "dia" : "corte"); };
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {cabecera}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap: 8 }}>{tile(filas.length, "proyectos con jornales")}{tile(tot.p, "personas")}{tile(fmtN(tot.d), "días")}{tile(fmtL0(tot.total), `a pagar el ${fechaCorta(corte.pago)}`, "#A94E16")}</div>
-      {tot.faltan > 0 && aviso(`Faltan ${tot.faltan} identidad${tot.faltan === 1 ? "" : "es"} por escanear. Se suben en GeoTeam → Empleados → Jornales.`)}
-      {filas.length === 0 ? <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Ningún proyecto tiene jornales en este corte todavía. Elegí un proyecto en el menú de arriba y tocá «+ Agregar jornal» para asignarle su gente.</div>
-        : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {filas.map(({ s, proy, l }) => { const faltan = l.filas.filter(f => !tieneIdentidad(f.ficha)).length; const conDatos = diasDelCorte(corte).filter(d => l.filas.some(f => f.dias?.[d] !== undefined)).length; return <div key={s} className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 220px", minWidth: 0, cursor: "pointer" }} onClick={() => { setShort(s); setVista(isMobile ? "dia" : "corte"); }}>
-              <div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{nombreDe(s)}</div>
-              <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>{l.filas.length} persona{l.filas.length === 1 ? "" : "s"} · {fmtN(l.totales.dias)} días · {fmtN(l.totales.horasHe)} h extra · {conDatos} de 14 días con asistencia{proy?.updatedBy ? ` · ${proy.updatedBy}` : ""}</div>
-              <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>{chipsResp(s)}{l.encargado ? <Chip c={C_GRIS}>Depositar a {l.encargado}</Chip> : <Chip c={C_AMARILLO}>Sin encargado del pago</Chip>}{faltan > 0 && <Chip c={C_AMARILLO}>Faltan {faltan} ID</Chip>}</div>
-            </div>
-            <div style={{ font: "800 18px/1 var(--mono)", color: CHARCOAL }}>{fmtL(l.totales.total)}</div>
-            <div style={{ display: "flex", gap: 6 }}>{btn("Excel", () => exportar([paqueteDe(s, proy, l)], "excel"), { chico: true })}{btn("PDF", () => exportar([paqueteDe(s, proy, l)], "pdf"), { c: ORANGE_DARK, lleno: true, chico: true })}</div>
-          </div>; })}
-          {filas.length > 1 && <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>{btn("Excel de todos", () => exportar(filas.map(x => paqueteDe(x.s, x.proy, x.l)), "excel"), { chico: true })}{btn("PDF de todos los proyectos", () => exportar(filas.map(x => paqueteDe(x.s, x.proy, x.l)), "pdf"), { c: ORANGE_DARK, lleno: true, chico: true })}</div>}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap: 8 }}>{tile(filas.length, "proyectos con jornales")}{tile(tot.p, "personas")}{tile(fmtN(tot.d), "días")}{esRRHH ? tile(fmtL0(tot.total), `a pagar el ${fechaCorta(corte.pago)}`, "#A94E16") : tile(fechaCorta(corte.pago), "día de pago")}</div>
+      {tot.faltan > 0 && esRRHH && aviso(`Faltan ${tot.faltan} identidad${tot.faltan === 1 ? "" : "es"} por escanear. Se suben en GeoTeam → Empleados → Jornales.`)}
+      {filas.length === 0 ? <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Todavía no hay jornales en ningún proyecto. Ponele el proyecto a cada jornal en su ficha (GeoTeam → Empleados → Jornales) y aparece acá su cajita.</div>
+        : <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 260 : 300}px, 1fr))`, gap: 12 }}>
+          {filas.map(({ s, proy, l }, i) => {
+            const faltan = l.filas.filter(f => !tieneIdentidad(f.ficha)).length;
+            const conDatos = diasDelCorte(corte).filter(d => l.filas.some(f => f.dias?.[d] !== undefined)).length;
+            const p = proyectos.find(x => x.short === s);
+            return <div key={s} role="button" tabIndex={0} className="gt-vidrio gt-vidrio-hover gt-sube" onClick={() => abrir(s)} onKeyDown={e => { if (e.key === "Enter") abrir(s); }}
+              style={{ padding: "16px 18px", cursor: "pointer", display: "flex", flexDirection: "column", gap: 10, animationDelay: `${Math.min(i, 10) * 25}ms` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>{s}</div>
+                  <div style={{ fontSize: 11.5, color: "#A39C92", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p?.name && p.name !== s ? p.name : (p?.code || "")}</div>
+                </div>
+                <span style={{ width: 30, height: 30, borderRadius: "50%", background: "rgba(44,42,40,.05)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: "#6E6862" }}>›</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 8 }}>
+                {[[l.filas.length, l.filas.length === 1 ? "persona" : "personas"], [fmtN(l.totales.dias), "días"], [fmtN(l.totales.horasHe), "h extra"]].map(([v, t]) => <div key={t}><div style={{ font: "800 19px/1 var(--display)", color: CHARCOAL }}>{v}</div><div style={{ fontSize: 11, color: "#6E6862", marginTop: 3 }}>{t}</div></div>)}
+              </div>
+              <div style={{ height: 6, borderRadius: 999, background: "rgba(44,42,40,.07)", overflow: "hidden" }}><div style={{ width: `${Math.round(conDatos / 14 * 100)}%`, height: "100%", background: conDatos >= 14 ? "#3E8E5A" : ORANGE }} /></div>
+              <div style={{ fontSize: 11.5, color: "#6E6862", marginTop: -4 }}>{conDatos} de 14 días con asistencia{proy?.updatedBy ? ` · ${proy.updatedBy}` : ""}</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{chipsResp(s)}{esRRHH && (l.encargado ? <Chip c={C_GRIS}>Depositar a {l.encargado}</Chip> : <Chip c={C_AMARILLO}>Sin encargado del pago</Chip>)}{esRRHH && faltan > 0 && <Chip c={C_AMARILLO}>Faltan {faltan} ID</Chip>}</div>
+              {esRRHH && <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 10, borderTop: "1px solid rgba(44,42,40,.07)" }} onClick={e => e.stopPropagation()}>
+                <div style={{ flex: 1, font: "800 18px/1 var(--mono)", color: "#A94E16" }}>{fmtL(l.totales.total)}</div>
+                {btn("Excel", () => exportar([paqueteDe(s, proy, l)], "excel"), { chico: true })}{btn("PDF", () => exportar([paqueteDe(s, proy, l)], "pdf"), { c: ORANGE_DARK, lleno: true, chico: true })}
+              </div>}
+            </div>;
+          })}
         </div>}
+      {esRRHH && filas.length > 1 && <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>{btn("Excel de todos", () => exportar(filas.map(x => paqueteDe(x.s, x.proy, x.l)), "excel"), { chico: true })}{btn("PDF de todos los proyectos", () => exportar(filas.map(x => paqueteDe(x.s, x.proy, x.l)), "pdf"), { c: ORANGE_DARK, lleno: true, chico: true })}</div>}
     </div>;
   }
 
@@ -834,7 +885,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
       <AgregarJornales jornaleros={jornaleros} enLista={roster} otrosProyectos={docs.corte?.proyectos || {}} short={short} onAgregar={(ids) => { agregar(ids); setModal(null); }} onNuevo={() => setModal({ t: "nuevo" })} />
     </Modal>}
     {modal?.t === "nuevo" && <Modal title="Nuevo jornal" wide onClose={() => setModal(null)} fondoCierra={false}>
-      <JornalFormImpl inicial={null} todos={jornaleros} puedeTarifa user={user} onGuardar={async (rec) => { const ok = await guardarJornal(rec); if (ok) agregar([rec.id], { [rec.id]: rec }); return ok; }} onClose={() => setModal(null)} />
+      <JornalFormImpl inicial={null} todos={jornaleros} puedeTarifa user={user} proyectos={proyectos} proyectoDefault={short} onGuardar={async (rec) => { const ok = await guardarJornal(rec); if (ok) agregar([rec.id], { [rec.id]: rec }); return ok; }} onClose={() => setModal(null)} />
     </Modal>}
     {celdaModal}
     {modalResp}
