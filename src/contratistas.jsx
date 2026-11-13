@@ -134,13 +134,13 @@ export const estimacionExcel = async ({ periodo, quincena, est }) => {
 };
 
 // ── Pantalla ──
-export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, onVolver }) {
+export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, soloLista = false, q: busqueda = "", onVolver }) {
   // soloAsistencia: el PM (Edy) solo marca días y horas — no ve montos, ni la
   // lista de contratistas, ni exporta (eso es de RRHH / administración).
   const verMontos = !soloAsistencia;
   const isMobile = useIsMobile();
   const hoy = hoyISO();
-  const [vista, setVista] = useState("asistencia");
+  const [vista, setVista] = useState(soloLista ? "lista" : "asistencia");
   const [q, setQ] = useState(() => quincenaDeFecha(hoy));
   const [lista, setLista] = useState(null);
   const [base, setBase] = useState(null);     // la asistencia como vino de la nube
@@ -241,11 +241,12 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, onVo
   </Modal>;
 
   if (vista === "lista" && verMontos) {
-    const mostrados = verInactivos ? lista : activos;
+    const bq = String(busqueda || "").trim().toLowerCase();
+    const mostrados = (verInactivos ? lista : activos).filter(p => !bq || `${p.nombre} ${p.dui} ${(p.contratos || []).map(c => `${c.codigo} ${c.servicio} ${c.rol}`).join(" ")}`.toLowerCase().includes(bq));
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {cabecera}
+      {!soloLista && cabecera}
       <div className="gt-vidrio" style={{ padding: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ fontSize: 13, color: "#5C5853", flex: 1 }}>{activos.length} contratistas · {contratos.length} contratos activos</span>
+        <span style={{ fontSize: 13, color: "#5C5853", flex: 1 }}>{activos.length} contratistas · {contratos.length} contratos activos{soloLista ? " · la asistencia y la estimación de pago están en Asistencia → Contratistas" : ""}</span>
         {lista.length !== activos.length && <button type="button" style={pill(verInactivos)} onClick={() => setVerInactivos(v => !v)}>Ver inactivos</button>}
         {puedeEditar && <button type="button" style={btn(true)} onClick={() => setForm({ inicial: null })}>+ Contratista</button>}
       </div>

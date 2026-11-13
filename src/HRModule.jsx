@@ -4408,7 +4408,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           <option value="">Todos los departamentos</option>
           {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
         </select>
-        {pista([["todos", `Todos ${base.length}`], ...grupos.filter(([k]) => porTipo(k).length || empTipo === k).map(([k, l]) => [k, `${l} ${porTipo(k).length}`]), ...(hayJornales ? [["jornales", "Jornales"]] : [])].map(([k, label]) => ({ k, label, on: empTipo === k || (k === "todos" && empTipo === "jornales" && !hayJornales), onClick: () => setEmpTipo(k) })))}
+        {pista([["todos", `Todos ${base.length}`], ...grupos.filter(([k]) => porTipo(k).length || empTipo === k).map(([k, l]) => [k, `${l} ${porTipo(k).length}`]), ...(hayJornales ? [["jornales", esSV ? "Contratistas" : "Jornales"]] : [])].map(([k, label]) => ({ k, label, on: empTipo === k || (k === "todos" && empTipo === "jornales" && !hayJornales), onClick: () => setEmpTipo(k) })))}
         <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
           <span role="button" title="Volver a leer de la nube" aria-label="Actualizar" className="gt-circulo" onClick={async () => { if (refreshing) return; setRefreshing(true); try { await loadAll(); } finally { setRefreshing(false); } }} style={{ width: 40, height: 40, fontSize: 16, opacity: refreshing ? .5 : 1 }}>↻</span>
           {!isPhotoOnly && !isReadOnly && !verJornales && <button className="gt-btn gt-btn-primario" onClick={() => setModal({ t: "en" })} style={{ minHeight: 40, padding: "10px 18px", fontSize: 13.5 }}>+ Nuevo</button>}
@@ -4419,7 +4419,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         <b>No se pudieron cargar los empleados desde la nube.</b> Tocá ↻ para reintentar y no agregues ni edites hasta que cargue la lista.
       </div>}
 
-      {verJornales ? <FichasJornales q={empSearch} rol={userRole} user={hubUser} />
+      {verJornales ? (esSV
+          ? <ContratistasSV user={hubUser} puedeEditar={ROLES_RRHH_JORNAL.includes(userRole)} soloLista q={empSearch} onVolver={() => setEmpTipo("todos")} />
+          : <FichasJornales q={empSearch} rol={userRole} user={hubUser} />)
         : empTipo === "todos" || empTipo === "jornales"
         ? grupos.map(([k, l]) => { const rows = filtered.filter(e => e.contractType === k); return rows.length > 0 && <div key={k}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "4px 2px 12px" }}>
