@@ -218,11 +218,10 @@ export function detalleSolicitud(s) {
 // permanentes) con el neto; firma "Lic. Gerson Trochez · Coordinador de
 // Operaciones · <empresa>". Se devuelve un DOC estructurado (párrafos con
 // runs en negrita + tabla) para pintarlo igual en pantalla y en el PDF.
-// Operaciones (9-nov-2026): en El Salvador solo opera Subterra. ⚠ La razón
-// social salvadoreña está PENDIENTE de confirmar con Roberto (administrador
-// de allá) — mientras, va el nombre comercial.
+// Operaciones (9-nov-2026): en El Salvador solo opera Subterra; razón social
+// SUBTERRA, S.A. DE C.V. (confirmada por Gerson el 13-nov-2026).
 export const EMPRESAS = esSV ? {
-  subterra:   { nombre: "Subterra El Salvador", legal: "SUBTERRA EL SALVADOR", logo: "brand/subterra.png" },
+  subterra:   { nombre: "Subterra El Salvador", legal: "SUBTERRA, S.A. DE C.V.", logo: "brand/subterra.png" },  // razón social confirmada por Gerson el 13-nov-2026
 } : {
   subterra:   { nombre: "Subterra Honduras", legal: "SUBTERRA, S.A.", logo: "brand/subterra.png" },
   geotecnica: { nombre: "Geotecnica Soluciones", legal: "GEOSTRUCTURES, S.A. DE C.V.", logo: "brand/geotecnica.png" },

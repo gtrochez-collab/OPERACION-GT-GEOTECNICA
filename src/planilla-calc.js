@@ -320,7 +320,9 @@ export const armarLinea = ({ emp, periodo, quincena, asistencia, he = null, bono
 // sobre el salario cotizable, recargo de vacación y horas extras de la MISMA
 // quincena (diurnas/nocturnas, se escriben en la línea). Feriado trabajado =
 // pago doble (+1 diario) y descanso semanal trabajado +50 % (+0.5 diario).
-// Sin regla de incapacidad de Honduras (IHSS 34 %): se ajusta con extras.
+// Incapacidad (Código de Trabajo / ISSS): la empresa paga los 3 primeros días
+// seguidos; desde el 4º el ISSS paga el subsidio (75 %) y la empresa ya no
+// paga ese día → se descuenta el diario completo (misma racha que Honduras).
 export const SV_FERIADO_EXTRA = 1;
 export const SV_DESCANSO_EXTRA = 0.5;
 const armarLineaSV = ({ emp, periodo, quincena, asistencia, bonosExtra = 0, recordado = {} }) => {
@@ -344,9 +346,9 @@ const armarLineaSV = ({ emp, periodo, quincena, asistencia, bonosExtra = 0, reco
     sb, bn, sd,
     totalDays: a.totalDays, diasEfectivos: a.diasEfectivos, diasFueraRango: a.diasFueraRango,
     diasPresente: a.presentes, diasPresenteEfectivo: a.presentesEfectivo,
-    diasNSP: a.nsp, diasIncap: a.inc, diasIncapIhss: 0, diasVac: a.vac, domTrab: a.dt + a.dt2, domTrabTriple: 0, ferTrab: a.tf,
+    diasNSP: a.nsp, diasIncap: a.inc, diasIncapIhss: a.incIhss || 0, diasVac: a.vac, domTrab: a.dt + a.dt2, domTrabTriple: 0, ferTrab: a.tf,
     tardes: a.tardes, horasTarde: a.horasTarde, sinAsistencia: !a.conDatos,
-    ordinario, descuentoNSP: r2(a.nsp * sdx), descuentoHoras: r2(a.descuentoHorasFraccion * sdx), descuentoIncap: 0,
+    ordinario, descuentoNSP: r2(a.nsp * sdx), descuentoHoras: r2(a.descuentoHorasFraccion * sdx), descuentoIncap: r2((a.incIhss || 0) * sdx),
     bq: r2(bn / 2),
     bonoDomingo: r2((a.dt + a.dt2) * SV_DESCANSO_EXTRA * sdx),
     bonoFeriado: r2(a.tf * SV_FERIADO_EXTRA * sdx),
@@ -509,6 +511,7 @@ export const conceptosVoucher = (l) => {
     const dedSV = [
       { concepto: `No se presentó${l.diasNSP ? ` (${pl(l.diasNSP, "día", "días")})` : ""}`, monto: num(l.descuentoNSP) },
       { concepto: `Llegadas tarde${l.tardes ? ` (${l.tardes})` : ""}`, monto: num(l.descuentoHoras) },
+      { concepto: `Incapacidad · ${pl(num(l.diasIncapIhss), "día", "días")} que paga el ISSS`, monto: num(l.descuentoIncap) },
       { concepto: "ISSS (3 %)", monto: num(l.isss) },
       { concepto: `AFP (7.25 %)${l.afpNombre ? ` · ${l.afpNombre}` : ""}`, monto: num(l.afp) },
       { concepto: "Impuesto sobre la renta (ISR)", monto: num(l.isr) },

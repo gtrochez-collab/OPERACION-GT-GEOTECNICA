@@ -66,3 +66,9 @@ test("Honduras no cambia", () => {
   assert.equal(l.pais, undefined);
   assert.equal(l.ihss, 595.16);
 });
+
+test("incapacidad: desde el 4º día seguido la paga el ISSS (se descuenta el diario)", () => {
+  const l = linea(600, "temporary", {}, { inc: 5, incIhss: 2 });
+  assert.equal(l.descuentoIncap, 40);                // 2 × $20
+  assert.equal(l.cotizable, 260);
+});

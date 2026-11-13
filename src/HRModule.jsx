@@ -4926,7 +4926,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
               <div className="gt-label" style={{ color: "#B03024", fontSize: 9, marginBottom: 4 }}>Deducciones</div>
               {l.descuentoNSP > 0 && dato(`Inasistencias · ${l.diasNSP} NSP`, `−${fmtL(l.descuentoNSP)}`, { color: "#B03024" })}
               {l.descuentoHoras > 0 && dato(`Llegadas tarde denegadas · ${l.horasTarde} h`, `−${fmtL(l.descuentoHoras)}`, { color: "#B03024" })}
-              {l.descuentoIncap > 0 && dato(`Incapacidad · ${l.diasIncapIhss} ${l.diasIncapIhss === 1 ? "día" : "días"} al 34 % (paga el IHSS)`, `−${fmtL(l.descuentoIncap)}`, { color: "#B03024" })}
+              {l.descuentoIncap > 0 && dato(`Incapacidad · ${l.diasIncapIhss} ${l.diasIncapIhss === 1 ? "día" : "días"} ${l.pais === "sv" ? "desde el 4º (paga el ISSS)" : "al 34 % (paga el IHSS)"}`, `−${fmtL(l.descuentoIncap)}`, { color: "#B03024" })}
               {l.pais === "sv"
                 ? <>
                   {dato("ISSS 3 %", l.isss ? `−${fmtL(l.isss)}` : "—", { color: l.isss ? "#B03024" : "#A39C92" })}
