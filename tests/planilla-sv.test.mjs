@@ -72,3 +72,21 @@ test("incapacidad: desde el 4º día seguido la paga el ISSS (se descuenta el di
   assert.equal(l.descuentoIncap, 40);                // 2 × $20
   assert.equal(l.cotizable, 260);
 });
+
+test("bonificación SV va aparte: servicios profesionales eventuales $500 − 10 % = $450", async () => {
+  const { eventualSV } = await import("../src/planilla-sv.js");
+  const m = await import("../src/planilla-calc.js");
+  assert.deepEqual([eventualSV(500).monto, eventualSV(500).isr, eventualSV(500).liquido], [500, 50, 450]);
+  const emp = { id: "rob", fullName: "José Roberto Campos Guerra", salary: 1000, bonificacion: 1000, contractType: "permanent", company: "subterra", startDate: "2019-11-01", status: "active" };
+  const asistencia = m.asistenciaDe(emp, "2026-11", "1Q", {});
+  const l = m.lineaParaGuardar(m.armarLinea({ emp, periodo: "2026-11", quincena: "1Q", asistencia, pais: "sv" }));
+  assert.equal(l.bq, 0);                 // no cotiza ISSS/AFP ni sube el ISR de la planilla
+  assert.equal(l.eventual, 500);
+  const t = m.totalesLinea(l);
+  assert.equal(t.neto, 418.52);          // salario $500 − ISSS 15 − AFP 36.25 − ISR 30.23
+  const r = m.resumenPlanilla([l]);
+  assert.equal(r.eventualLiquido, 450);
+  assert.equal(r.totalGeneral, 868.52);
+  const v = m.conceptosVoucher(l);
+  assert.equal(v.eventual.liquido, 450);
+});

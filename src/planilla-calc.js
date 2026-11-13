@@ -1,5 +1,5 @@
 import { MONEDA, OPERACION } from "./operacion.js";
-import { deduccionesSV, horasExtrasSV, primaVacacion, r2 as r2sv } from "./planilla-sv.js";
+import { deduccionesSV, horasExtrasSV, primaVacacion, eventualSV, r2 as r2sv } from "./planilla-sv.js";
 // ═══════════════════════════════════════════════════════════════════════════
 // GeoTeam — PLANILLA (16-oct-2026). Lógica PURA, sin React ni store: Node la
 // prueba en tests/planilla-calc.test.mjs. Calca el Excel con el que la Lic.
@@ -349,7 +349,10 @@ const armarLineaSV = ({ emp, periodo, quincena, asistencia, bonosExtra = 0, reco
     diasNSP: a.nsp, diasIncap: a.inc, diasIncapIhss: a.incIhss || 0, diasVac: a.vac, domTrab: a.dt + a.dt2, domTrabTriple: 0, ferTrab: a.tf,
     tardes: a.tardes, horasTarde: a.horasTarde, sinAsistencia: !a.conDatos,
     ordinario, descuentoNSP: r2(a.nsp * sdx), descuentoHoras: r2(a.descuentoHorasFraccion * sdx), descuentoIncap: r2((a.incIhss || 0) * sdx),
-    bq: r2(bn / 2),
+    // La bonificación NO va en la planilla de salarios: se paga aparte como
+    // "Servicios profesionales eventuales" ($500 − ISR 10 %, Roberto 13-nov).
+    bq: 0,
+    eventual: r2(bn / 2),
     bonoDomingo: r2((a.dt + a.dt2) * SV_DESCANSO_EXTRA * sdx),
     bonoFeriado: r2(a.tf * SV_FERIADO_EXTRA * sdx),
     vacacion: primaVacacion(sb, a.vac),
@@ -395,7 +398,8 @@ export const totalesLinea = (l) => {
     // Líquido calcado del Excel: cotizable − ISSS − AFP − ISR (sin redondeos intermedios).
     const netoX = c.liquidoX - num(l.coop) - extrasDed;
     const neto = r2sv(netoX);
-    return { ordinario, extrasIng: c.extrasIng, extrasDed, heMonto: 0, heIncluido: c.heMonto, ingresos, dedLey, dedAsist, deducciones, neto, bruto: r2(ordinario + ingresos), salarioSinHe: neto, totalConHe: neto, netoX, deduccionesX, sv: c };
+    const eventual = eventualSV(l.eventual);
+    return { ordinario, extrasIng: c.extrasIng, extrasDed, heMonto: 0, heIncluido: c.heMonto, ingresos, dedLey, dedAsist, deducciones, neto, bruto: r2(ordinario + ingresos), salarioSinHe: neto, totalConHe: neto, netoX, deduccionesX, sv: c, eventual };
   }
   const v3 = (l.payrollVersion || 0) >= 3 || l.ordinario != null;
   const extras = Array.isArray(l.extras) ? l.extras : [];
@@ -425,12 +429,13 @@ export const lineaParaGuardar = (l0) => {
 
 /** Resumen de toda la planilla. */
 export const resumenPlanilla = (lines) => {
-  const out = { personas: lines.length, ordinario: 0, ingresos: 0, deducciones: 0, he: 0, heHrs: 0, hePersonas: 0, neto: 0, salarios: 0, nsp: 0, porGrupo: {}, porMetodo: {}, hePorMetodo: {}, porProyecto: {} };
+  const out = { personas: lines.length, ordinario: 0, ingresos: 0, deducciones: 0, he: 0, heHrs: 0, hePersonas: 0, neto: 0, salarios: 0, nsp: 0, porGrupo: {}, porMetodo: {}, hePorMetodo: {}, porProyecto: {}, eventual: 0, eventualIsr: 0, eventualLiquido: 0, eventualPersonas: 0 };
   GRUPOS_CT.forEach(([k, label]) => { out.porGrupo[k] = { label, n: 0, neto: 0 }; });
   METODOS_PAGO.forEach(([k, label]) => { out.porMetodo[k] = { label, n: 0, neto: 0 }; });
   lines.forEach(l => {
     const t = totalesLinea(l);
     out.ordinario += t.ordinario; out.ingresos += t.ingresos; out.deducciones += t.deduccionesX ?? t.deducciones;
+    if (t.eventual && t.eventual.monto > 0) { out.eventualPersonas++; out.eventual += t.eventual.monto; out.eventualIsr += t.eventual.isrX; out.eventualLiquido += t.eventual.liquidoX; }
     out.he += t.heMonto; out.heHrs += num(l.he?.hrs); out.neto += t.netoX ?? t.neto; out.salarios += t.netoX ?? t.neto; out.nsp += num(l.diasNSP);
     if (t.heMonto > 0) {
       out.hePersonas++;
@@ -450,7 +455,8 @@ export const resumenPlanilla = (lines) => {
   });
   ["ordinario", "ingresos", "he", "heHrs"].forEach(k => { out[k] = r2(out[k]); });
   ["neto", "salarios", "deducciones"].forEach(k => { out[k] = r2sv(out[k]); });
-  out.totalGeneral = r2(out.neto + out.he);
+  ["eventual", "eventualIsr", "eventualLiquido"].forEach(k => { out[k] = r2(out[k]); });
+  out.totalGeneral = r2(out.neto + out.he + out.eventualLiquido);
   Object.values(out.hePorMetodo).forEach(g => { g.monto = r2(g.monto); });
   Object.values(out.porGrupo).forEach(g => { g.neto = r2sv(g.neto); });
   Object.values(out.porMetodo).forEach(g => { g.neto = r2sv(g.neto); });
@@ -522,6 +528,7 @@ export const conceptosVoucher = (l) => {
       t, ingresos: ing.filter((r, i) => i === 0 || r.monto > 0), deducciones: dedSV, he: [],
       diasPeriodo: num(l.totalDays), diasPagados: Math.max(0, r2(num(diasOrd) - num(l.diasNSP))),
       totalIngresos: t.bruto, totalDeducciones: t.deducciones, neto: t.neto, heMonto: 0, totalConHe: t.neto,
+      eventual: t.eventual && t.eventual.monto > 0 ? t.eventual : null,
     };
   }
   const ded = [

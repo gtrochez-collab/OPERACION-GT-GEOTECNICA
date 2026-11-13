@@ -10,7 +10,8 @@
 // 26-oct-2026: cabecera, pie, KPIs, tablas y Excel con el estilo único de
 // reportes (reporte-estilo.js). Números, columnas y hojas NO cambiaron.
 // ═══════════════════════════════════════════════════════════════════════════
-import { MONEDA } from "./operacion.js";
+import { MONEDA, DOC_ID } from "./operacion.js";
+import { eventualSV } from "./planilla-sv.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { PDF_TEMA, RP, pdfPie, pdfKpi, cargarImagen, LOGO_EMPRESA } from "./reporte-estilo.js";
 import { totalesLinea, resumenPlanilla, nombreQuincena, rangoQuincena, etiquetaCorta, mesLargo, GRUPOS_CT, METODOS_PAGO, notaAutomatica, diasMostrados, gruposPlanilla } from "./planilla-calc.js";
@@ -29,7 +30,7 @@ const fechaLarga = (d = new Date()) => `${d.getDate()} de ${mesLargo(`${d.getFul
 const MES3 = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const fechaCorta = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split("-"); return m ? `${d} ${MES3[Number(m) - 1]} ${y}` : String(iso || ""); };
 const slug = (s) => latin1(s).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9.-]+/g, "_").replace(/^_+|_+$/g, "");
-const nombreArchivo = (ext, empresa, periodo, quincena, parte = "salarios") => `${parte === "he" ? "Planilla_Horas_Extras" : "Planilla"}_${slug(empresa)}_${quincena}_${periodo}.${ext}`;
+const nombreArchivo = (ext, empresa, periodo, quincena, parte = "salarios") => `${parte === "he" ? "Planilla_Horas_Extras" : parte === "eventual" ? "Planilla_Servicios_Eventuales" : "Planilla"}_${slug(empresa)}_${quincena}_${periodo}.${ext}`;
 
 // Columnas de la tabla principal. `ley` agrega ISR/IHSS/RAP (solo en la 2Q).
 const columnas = (ley) => [
@@ -95,7 +96,84 @@ const SEC_PDF = {
 };
 
 /** Construye el jsPDF (sin guardar) — así se puede revisar en Node/replicar. */
+// ── El Salvador: planilla de SERVICIOS PROFESIONALES EVENTUALES (13-nov-2026)
+// La bonificación de Edy y Roberto se paga APARTE (Roberto Guerra): calcada de
+// la hoja de la Lic. Diana — N°, nombre, puesto, DUI, NIT, salario, ISR 10 %,
+// total descuentos y líquido a pagar; "Elaborado por" y "Autorizado".
+export const filasEventual = (lines) => (lines || []).filter(l => Number(l.eventual) > 0).map(l => ({ l, ...eventualSV(l.eventual) }));
+const tituloEventual = (periodo, quincena) => `Planilla correspondiente a servicios profesionales eventuales · ${nombreQuincena(periodo, quincena).replace(" · ", " del mes de ").toLowerCase().replace(/^\w/, c => c.toUpperCase())}`;
+const construirEventualPDF = async ({ empresa, periodo, quincena, lines, meta = {}, jsPDF }) => {
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "letter" });
+  const PW = doc.internal.pageSize.getWidth(), M = 14, CW = PW - 2 * M;
+  const f = (n, st = "normal") => { doc.setFontSize(n); doc.setFont("helvetica", st); };
+  const tc = (c) => doc.setTextColor(...c);
+  const filas = filasEventual(lines);
+  const tot = filas.reduce((a, r) => ({ monto: a.monto + r.monto, isr: a.isr + r.isrX, liq: a.liq + r.liquidoX }), { monto: 0, isr: 0, liq: 0 });
+  const marca = await cargarImagen("brand/geocore/geocore-180.png");
+  if (marca) doc.addImage(marca.dataUrl, "PNG", M, M, 8, 8);
+  f(7.5, "bold"); tc(GRIS_FAINT); doc.text(latin1("GEOCORE · GRUPO GEOTECNICA"), M + 11, M + 5.4, { charSpace: 0.5 });
+  const ek = empresaKey(empresa);
+  const logo = await achicarLogo(await cargarImagen(LOGO_EMPRESA[ek] || LOGO_EMPRESA.geotecnica).catch(() => null), 360);
+  if (logo) { const h = ek === "subterra" ? 30 : 18, w = Math.min(90, h * logo.w / logo.h); doc.addImage(logo.dataUrl, "PNG", PW - M - w, M - 2, w, h); }
+  let y = M + 24;
+  f(16, "bold"); tc(CARBON); doc.text(latin1(meta.razonSocial || "SUBTERRA, S.A. DE C.V."), M, y);
+  y += 7; f(11, "bold"); tc(NARANJA_TEXTO);
+  const tl = doc.splitTextToSize(latin1(tituloEventual(periodo, quincena)), CW - 70);
+  doc.text(tl, M, y); y += 5 * (tl.length - 1) + 6; f(9); tc(GRIS); doc.text(latin1(`${rangoQuincena(periodo, quincena)} · ${meta.estado === "publicada" ? "Publicada" : "Borrador"}${meta.generadaPor ? ` · generada por ${meta.generadaPor}` : ""}`), M, y);
+  y += 8;
+  const kw = (CW - 9) / 4;
+  pdfKpi(doc, M, y, kw, 16, "Personas", String(filas.length));
+  pdfKpi(doc, M + (kw + 3), y, kw, 16, "Salario", Lsiempre(tot.monto));
+  pdfKpi(doc, M + 2 * (kw + 3), y, kw, 16, "ISR 10 %", Lsiempre(tot.isr));
+  pdfKpi(doc, M + 3 * (kw + 3), y, kw, 16, "Líquido a pagar", Lsiempre(tot.liq), { tono: "naranjaTexto" });
+  y += 26;
+  // Tabla
+  const cols = [["#", 8, "c"], ["Nombre", 56, "l"], ["Puesto", 36, "l"], [`${DOC_ID}/Residencia`, 26, "l"], ["NIT", 30, "l"], ["Salario", 24, "r"], ["ISR 10 %", 20, "r"], ["Total", 24, "r"], ["Líquido a pagar", 0, "r"]];
+  const fijo = cols.reduce((a, c) => a + c[1], 0); cols[cols.length - 1][1] = CW - fijo;
+  const xs = []; let x = M; cols.forEach(c => { xs.push(x); x += c[1]; });
+  const celda = (txt, i, yy, st = "normal", color = CARBON) => {
+    const [, w, al] = cols[i]; f(8.6, st); tc(color);
+    const t = latin1(txt);
+    if (al === "r") doc.text(t, xs[i] + w - 2, yy, { align: "right" }); else if (al === "c") doc.text(t, xs[i] + w / 2, yy, { align: "center" }); else doc.text(doc.splitTextToSize(t, w - 3)[0], xs[i] + 2, yy);
+  };
+  doc.setFillColor(...TINTE); doc.rect(M, y, CW, 9, "F");
+  doc.setFillColor(...FONDO); doc.rect(xs[6], y - 6, cols[6][1] + cols[7][1], 6, "F");
+  f(6.8, "bold"); tc(GRIS); doc.text("DESCUENTOS", xs[6] + (cols[6][1] + cols[7][1]) / 2, y - 2, { align: "center", charSpace: 0.4 });
+  cols.forEach(([lab], i) => { f(7, "bold"); tc(NARANJA_TEXTO); const [, w, al] = cols[i]; const t = latin1(lab.toUpperCase()); if (al === "r") doc.text(t, xs[i] + w - 2, y + 5.8, { align: "right" }); else if (al === "c") doc.text(t, xs[i] + w / 2, y + 5.8, { align: "center" }); else doc.text(t, xs[i] + 2, y + 5.8); });
+  y += 9;
+  filas.forEach((r, i) => {
+    if (i % 2 === 1) { doc.setFillColor(251, 250, 248); doc.rect(M, y, CW, 8, "F"); }
+    const yy = y + 5.4;
+    celda(String(i + 1), 0, yy, "normal", GRIS_FAINT);
+    celda(String(r.l.name || "").toUpperCase(), 1, yy, "bold");
+    celda(r.l.pos || "", 2, yy, "normal", GRIS);
+    celda(r.l.dni || "", 3, yy); celda(r.l.nit || "", 4, yy);
+    celda(Lsiempre(r.monto), 5, yy); celda(Lsiempre(r.isr), 6, yy); celda(Lsiempre(r.isr), 7, yy);
+    celda(Lsiempre(r.liquido), 8, yy, "bold");
+    doc.setDrawColor(...LINEA); doc.setLineWidth(0.15); doc.line(M, y + 8, M + CW, y + 8);
+    y += 8;
+  });
+  doc.setFillColor(...TINTE); doc.rect(M, y, CW, 9, "F");
+  doc.setDrawColor(232, 118, 45); doc.setLineWidth(0.5); doc.line(M, y, M + CW, y);
+  celda("TOTAL", 1, y + 6, "bold", NARANJA_TEXTO);
+  celda(Lsiempre(tot.monto), 5, y + 6, "bold"); celda(Lsiempre(tot.isr), 6, y + 6, "bold"); celda(Lsiempre(tot.isr), 7, y + 6, "bold");
+  celda(Lsiempre(tot.liq), 8, y + 6, "bold", NARANJA_TEXTO);
+  y += 18;
+  f(8.5); tc(GRIS); doc.text(latin1("Se paga aparte de la planilla de sueldos y salarios. Solo retención de ISR 10 % (sin ISSS ni AFP)."), M, y);
+  // Firmas
+  const yF = Math.max(y + 26, 175);
+  [["Elaborado por", meta.elaboradoPor || ""], ["Autorizado", ""]].forEach(([lab, nom], i) => {
+    const fx = M + 10 + i * 120;
+    doc.setDrawColor(...CARBON); doc.setLineWidth(0.3); doc.line(fx, yF, fx + 80, yF);
+    f(8.5, "bold"); tc(CARBON); doc.text(latin1(lab), fx, yF + 5);
+    if (nom) { f(8.5); tc(GRIS); doc.text(latin1(nom), fx, yF + 10); }
+  });
+  pdfPie(doc, { margen: M });
+  return doc;
+};
+
 export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, meta = {}, jsPDF, parte = "salarios" }) => {
+  if (parte === "eventual") return construirEventualPDF({ empresa, periodo, quincena, lines, meta, jsPDF });
   const esHe = parte === "he";
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "legal" });
   const PW = doc.internal.pageSize.getWidth(), PH = doc.internal.pageSize.getHeight(), M = 10, CW = PW - 2 * M, Y_MAX = PH - 16;
@@ -490,6 +568,46 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     if (nom) { hoja.getCell(r + 2, c).value = nom; hoja.getCell(r + 2, c).font = ft({ size: 9, color: { argb: GR } }); }
   });
   const estadoTxt = (extra = "") => `${meta.estado === "publicada" ? "Publicada" : "Borrador"} · generada el ${fechaLarga()}${meta.generadaPor ? ` por ${meta.generadaPor}` : ""}${extra} · GeoCore`;
+
+  // ── SERVICIOS PROFESIONALES EVENTUALES (El Salvador, archivo propio) ──
+  if (parte === "eventual") {
+    const filas = filasEventual(lines);
+    const we = wb.addWorksheet("Servicios eventuales", { views: [{ state: "frozen", ySplit: 6, showGridLines: false }], pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+    we.columns = [["N°", 5], ["Nombre", 36], ["Puesto", 26], [`${DOC_ID}/Residencia`, 15], ["NIT", 20], ["Salario", 14], ["ISR 10 %", 13], ["Total descuentos", 15], ["Líquido a pagar", 16], ["Método de pago", 16]].map(([header, width]) => ({ header, width }));
+    we.spliceRows(1, 1);
+    const UE = 10;
+    cabeceraHoja(we, { desde: "C", hasta: "F", ultima: UE }, [
+      meta.razonSocial || "SUBTERRA, S.A. DE C.V.", tituloEventual(periodo, quincena), rangoQuincena(periodo, quincena), estadoTxt(),
+    ]);
+    tile(we, "G", "H", "Personas", filas.length);
+    tile(we, "I", "J", "Líquido a pagar", Math.round(filas.reduce((a, r) => a + r.liquidoX, 0) * 100) / 100, { naranja: true, fmt: FMT_L });
+    we.getRow(6).values = we.columns.map(c => c.header);
+    filaEncabezado(we.getRow(6));
+    let r = 7; const r0 = r;
+    filas.forEach((f0, i) => {
+      const row = we.getRow(r);
+      row.values = [i + 1, String(f0.l.name || "").toUpperCase(), f0.l.pos || "", f0.l.dni || "", f0.l.nit || "", f0.monto,
+        { formula: `ROUND(F${r}*10%,2)`, result: f0.isr }, { formula: `G${r}`, result: f0.isr }, { formula: `F${r}-H${r}`, result: f0.liquido }, pagoTxt[f0.l.metodoPago] || "Transferencia"];
+      pintarFila(row, i, UE);
+      row.font = ft(); row.alignment = { vertical: "middle" };
+      row.getCell(2).font = ft({ bold: true }); row.getCell(1).font = ft({ color: { argb: GR3 } }); row.getCell(3).font = ft({ color: { argb: GR } });
+      [6, 7, 8, 9].forEach(c => { row.getCell(c).numFmt = FMT_L; });
+      row.getCell(9).font = ft({ bold: true }); row.getCell(9).fill = fill(TINTE_X);
+      r++;
+    });
+    const tt = we.getRow(r); tt.values = ["", "TOTAL"];
+    [6, 7, 8, 9].forEach(c => { const col = we.getColumn(c).letter; tt.getCell(c).value = { formula: `SUM(${col}${r0}:${col}${Math.max(r0, r - 1)})`, result: Math.round(filas.reduce((a, x) => a + (c === 6 ? x.monto : c === 9 ? x.liquido : x.isr), 0) * 100) / 100 }; tt.getCell(c).numFmt = FMT_L; });
+    filaTotal(tt, UE, 9);
+    r += 2;
+    const nota = we.getCell(r, 2); nota.value = "Se paga aparte de la planilla de sueldos y salarios. Solo retención de ISR 10 % (sin ISSS ni AFP)."; nota.font = ft({ size: 9.5, color: { argb: GR } });
+    [["Elaborado por", meta.elaboradoPor || ""], ["Autorizado", ""]].forEach(([lab, nom], i) => {
+      const c = 2 + i * 4, rf = r + 5;
+      we.getCell(rf, c).border = { bottom: { style: "thin", color: { argb: CARB } } };
+      we.getCell(rf + 1, c).value = lab; we.getCell(rf + 1, c).font = ft({ size: 9.5, bold: true });
+      if (nom) { we.getCell(rf + 2, c).value = nom; we.getCell(rf + 2, c).font = ft({ size: 9, color: { argb: GR } }); }
+    });
+    return wb;
+  }
 
   // ── PLANILLA DE HORAS EXTRAS (archivo propio) ──
   if (parte === "he") {

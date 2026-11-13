@@ -84,3 +84,15 @@ export const deduccionesSV = (cotizable, { sinIsss = false, sinAfp = false, sinI
     patronal: { afp: r2(c * PATRONAL_AFP_PCT), isss: r2(Math.min(c * PATRONAL_ISSS_PCT, PATRONAL_ISSS_TOPE)) },
   };
 };
+
+// ── SERVICIOS PROFESIONALES EVENTUALES (13-nov-2026, Roberto Guerra) ──────
+// La bonificación de Edy y Roberto ($1,000/mes) NO va en la planilla de
+// salarios: "se paga por aparte", en la planilla "Servicios profesionales
+// eventuales" que hacía la Lic. Diana — $500 cada quincena, solo ISR 10 %
+// (sin ISSS ni AFP): $500 − $50 = $450.
+export const RETENCION_EVENTUAL = 0.10;
+export const eventualSV = (monto) => {
+  const m = Math.max(0, num(monto));
+  const isrX = m * RETENCION_EVENTUAL;
+  return { monto: r2(m), isr: r2(isrX), liquido: r2(m - isrX), isrX, liquidoX: m - isrX };
+};

@@ -14,6 +14,7 @@ import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, rProyecto
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES, USUARIOS_DE_BAJA } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
 // Planilla (16-oct-2026): lógica pura + PDF/Excel.
+import { eventualSV } from "./planilla-sv.js";
 import { diasDeQuincena, quincenaAnterior as quincenaAnteriorPl, quincenaSiguiente, nombreQuincena, rangoQuincena, etiquetaCorta, asistenciaDe, rachaIncapAlCierre, sumarAsistencias, esHonorarioMensual, horasExtrasDe, armarLinea, conLeySV, totalesLinea, lineaParaGuardar, resumenPlanilla, entraEnPlanilla, diasMostrados, lineasConHe, GRUPOS_CT, METODOS_PAGO, lineasVoucher, modalidadDe } from "./planilla-calc.js";
 import { exportarPlanillaPDF, exportarPlanillaExcel } from "./planilla-export.js";
 import { descargarVouchers } from "./voucher-pdf.js";
@@ -4601,7 +4602,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const g = await generarLineasPlanilla(d.periodo, d.quincena);
       if (!g) return;
       const prev = Object.fromEntries((d.lines || []).map(l => [l.eid, l]));
-      g.lines = g.lines.map(l => { const p = prev[l.eid]; if (!p) return l; if (l.pais === "sv") return conLeySV({ ...l, extras: p.extras || [], nota: p.nota || "", metodoPago: p.metodoPago || l.metodoPago, heSV: p.heSV || l.heSV, vacacion: p.vacacionManual ? p.vacacion : l.vacacion, vacacionManual: !!p.vacacionManual }); return { ...l, extras: p.extras || [], nota: p.nota || "", isr: l.aplicaLey ? (p.isr ?? l.isr) : l.isr, metodoPago: p.metodoPago || l.metodoPago }; });
+      g.lines = g.lines.map(l => { const p = prev[l.eid]; if (!p) return l; if (l.pais === "sv") return conLeySV({ ...l, extras: p.extras || [], nota: p.nota || "", metodoPago: p.metodoPago || l.metodoPago, heSV: p.heSV || l.heSV, vacacion: p.vacacionManual ? p.vacacion : l.vacacion, vacacionManual: !!p.vacacionManual, eventual: p.eventualManual ? p.eventual : l.eventual, eventualManual: !!p.eventualManual }); return { ...l, extras: p.extras || [], nota: p.nota || "", isr: l.aplicaLey ? (p.isr ?? l.isr) : l.isr, metodoPago: p.metodoPago || l.metodoPago }; });
       setPayDraft({ ...d, ...g });
     } finally { setPayBusy(false); }
   };
@@ -4613,7 +4614,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const d = payDraft; if (!d) return false;
     const r = resumenPlanilla(d.lines);
     const at = new Date().toISOString();
-    const rec = { ...d, estado, lines: d.lines.map(lineaParaGuardar), total: r.neto, totalHe: r.he, count: d.lines.length, updatedAt: at, updatedBy: userName, ...(estado === "publicada" && d.estado !== "publicada" ? { publicadaAt: at, publicadaPor: userName } : {}) };
+    const rec = { ...d, estado, lines: d.lines.map(lineaParaGuardar), total: r.neto, totalHe: r.he, ...(r.eventual ? { totalEventual: r.eventualLiquido } : {}), count: d.lines.length, updatedAt: at, updatedBy: userName, ...(estado === "publicada" && d.estado !== "publicada" ? { publicadaAt: at, publicadaPor: userName } : {}) };
     delete rec.tardesPend;
     setPayBusy(true);
     try {
@@ -4668,7 +4669,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       // planilla se haya generado antes de que existiera el campo en la línea.
       const empPorId = Object.fromEntries(ce.map(e => [e.id, e]));
       const conBaja = d.lines.map(l => { const e = empPorId[l.eid]; return l.baja || !e ? l : { ...l, baja: e.status === "inactive" && e.endDate ? e.endDate : "" }; });
-      const args = { empresa: cc.name, periodo: d.periodo, quincena: d.quincena, lines: conBaja, meta: { estado: d.estado, generadaPor: d.updatedBy || d.createdBy || userName, elaboradoPor: userName, heDe: d.heDe }, parte: payParte };
+      const args = { empresa: cc.name, periodo: d.periodo, quincena: d.quincena, lines: conBaja, meta: { estado: d.estado, generadaPor: d.updatedBy || d.createdBy || userName, elaboradoPor: userName, heDe: d.heDe }, parte: esSV ? (payParte === "eventual" ? "eventual" : "salarios") : (payParte === "eventual" ? "salarios" : payParte) };
       if (tipo === "pdf") await exportarPlanillaPDF(args); else await exportarPlanillaExcel(args);
     } catch (e) { alert(`No se pudo generar el ${tipo === "pdf" ? "PDF" : "Excel"}: ${e?.message || e}`); }
     finally { setPayBusy(false); }
@@ -4753,7 +4754,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             </div>
             {!isMobile && <div>{estadoChip(p)}</div>}
             {!isMobile && <div style={{ font: "600 12.5px/1.2 var(--sans)", color: "#5C5853" }}>{p.count || (p.lines || []).length} personas</div>}
-            {!isMobile && <div><div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>{fmtL(p.total)}</div>{Number(p.totalHe) > 0 && <div style={{ font: "600 11.5px/1 var(--sans)", color: "#6E6862", marginTop: 5 }}>+ HE {fmtL(p.totalHe)}</div>}</div>}
+            {!isMobile && <div><div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>{fmtL(p.total)}</div>{Number(p.totalHe) > 0 && <div style={{ font: "600 11.5px/1 var(--sans)", color: "#6E6862", marginTop: 5 }}>+ HE {fmtL(p.totalHe)}</div>}{Number(p.totalEventual) > 0 && <div style={{ font: "600 11.5px/1 var(--sans)", color: "#6E6862", marginTop: 5 }}>+ eventuales {fmtL(p.totalEventual)}</div>}</div>}
             {!isMobile && <div style={{ font: "500 12px/1.3 var(--sans)", color: "#A39C92", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.estado === "publicada" && p.publicadaAt ? `Publicada el ${fmt(p.publicadaAt)}${p.publicadaPor ? ` · ${p.publicadaPor}` : ""}` : `Generada el ${fmt(p.updatedAt || p.date)}${p.updatedBy || p.createdBy ? ` · ${p.updatedBy || p.createdBy}` : ""}`}</div>}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {isMobile && <span style={{ font: "800 14px/1 var(--display)", color: CHARCOAL }}>{fmtL(p.total)}</span>}
@@ -4769,6 +4770,48 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
 
   // Planilla de HORAS EXTRAS (aparte de la de salarios): las de la quincena
   // ANTERIOR, por colaborador y banda, con su método de pago.
+  // El Salvador: la bonificación se paga APARTE (Roberto, 13-nov-2026) en la
+  // planilla "Servicios profesionales eventuales": monto − ISR 10 % = líquido.
+  const renderEventualParte = (d, res, editable) => {
+    const rows = d.lines.filter(l => (Number(l.eventual) || 0) > 0 || (Number(l.bn) || 0) > 0).filter(l => !payQ.trim() || `${l.name} ${l.pos}`.toLowerCase().includes(payQ.trim().toLowerCase()));
+    const tileEv = (lab, val, destacar) => <div className="gt-vidrio" style={{ padding: "12px 16px", minWidth: 0, background: destacar ? "linear-gradient(165deg, rgba(232,118,45,.95), rgba(199,95,31,.95))" : undefined, color: destacar ? "#fff" : CHARCOAL }}>
+      <div className="gt-label" style={{ color: destacar ? "rgba(255,255,255,.8)" : "#6E6862", fontSize: 9 }}>{lab}</div>
+      <div style={{ font: `800 ${isMobile ? 17 : 20}px/1 var(--display)`, marginTop: 9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{val}</div>
+    </div>;
+    if (!rows.length) return <div className="gt-vidrio" style={{ padding: 34, textAlign: "center", color: "#6E6862", fontSize: 13.5, lineHeight: 1.6 }}>Nadie tiene bonificación en esta quincena. Se pone en la ficha del colaborador (Bonificación al mes).</div>;
+    return <>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(4, minmax(0,1fr))", gap: 10 }}>
+        {tileEv("Personas", res.eventualPersonas)}
+        {tileEv("Monto", fmtL(res.eventual))}
+        {tileEv("ISR 10 %", fmtL(res.eventualIsr))}
+        {tileEv("Líquido a pagar", fmtL(res.eventualLiquido), true)}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map((l, i) => {
+          const e = emps.find(x => x.id === l.eid);
+          const foto = e?.photo?.fileId ? photoCache[e.photo.fileId] : null;
+          const ev = eventualSV(l.eventual);
+          return <div key={l.id} className="gt-vidrio gt-sube" style={{ borderRadius: 18, padding: isMobile ? "10px 12px" : "11px 18px", display: "grid", gridTemplateColumns: isMobile ? "36px minmax(0,1fr) auto" : "36px minmax(0,1.4fr) 150px 110px 130px", alignItems: "center", gap: isMobile ? 10 : 14, animationDelay: `${Math.min(i, 14) * 20}ms` }}>
+            <EmpAvatar name={l.name} dataUrl={foto} size={36} borderRadius={11} suave />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "700 14px/1.25 var(--sans)", color: CHARCOAL }}>{l.name}</div>
+              <div style={{ font: "500 12px/1.3 var(--sans)", color: "#6E6862", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.pos || "Sin cargo"}{l.nit ? ` · NIT ${l.nit}` : ""}</div>
+            </div>
+            {!isMobile && <div style={{ textAlign: "right" }}>{editable
+              ? <input type="number" step="0.01" value={l.eventual ?? 0} onChange={ev2 => { const v = ev2.target.value === "" ? 0 : Number(ev2.target.value); upLinea(l.id, x => ({ ...x, eventual: v, eventualManual: true })); }} style={{ ...PAY_IN, width: 120 }} />
+              : <div style={{ font: "700 13.5px/1 var(--sans)", color: CHARCOAL }}>{fmtL(ev.monto)}</div>}
+              <div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>monto · {fmtL(l.bn)} al mes</div></div>}
+            {!isMobile && <div style={{ textAlign: "right" }}><div style={{ font: "700 13.5px/1 var(--sans)", color: "#B03024" }}>−{fmtL(ev.isr)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>ISR 10 %</div></div>}
+            <div style={{ textAlign: "right" }}><div style={{ font: `800 ${isMobile ? 14 : 15.5}px/1 var(--display)`, color: CHARCOAL }}>{fmtL(ev.liquido)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>líquido</div></div>
+          </div>;
+        })}
+      </div>
+      <div className="gt-vidrio" style={{ padding: isMobile ? 14 : "14px 22px", font: "500 12.5px/1.5 var(--sans)", color: "#6E6862" }}>
+        Se paga aparte de la planilla de salarios, en otra transacción. Solo lleva ISR 10 % (sin ISSS ni AFP).
+      </div>
+    </>;
+  };
+
   const renderHeParte = (d, res, editable) => {
     const rows = lineasConHe(d.lines).filter(l => !payQ.trim() || `${l.name} ${l.pos}`.toLowerCase().includes(payQ.trim().toLowerCase()));
     const tileHe = (lab, val, destacar) => <div className="gt-vidrio" style={{ padding: "12px 16px", minWidth: 0, background: destacar ? "linear-gradient(165deg, rgba(232,118,45,.95), rgba(199,95,31,.95))" : undefined, color: destacar ? "#fff" : CHARCOAL }}>
@@ -4910,7 +4953,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             <div>
               <div className="gt-label" style={{ color: "#3E8E5A", fontSize: 9, marginBottom: 4 }}>Ingresos</div>
               {dato(l.ct === "honorarios" ? "Honorarios" : "Salario ordinario", fmtL(t.ordinario))}
-              {datoInput("Bonificación", l.bq, v => upLinea(l.id, x => ({ ...x, bq: v })), { sub: `${fmtL(l.bn)} al mes` })}
+              {l.pais === "sv"
+                ? ((Number(l.bn) || 0) > 0 || (Number(l.eventual) || 0) > 0) && datoInput("Bonificación · planilla aparte", l.eventual, v => upLinea(l.id, x => ({ ...x, eventual: v, eventualManual: true })), { sub: `Servicios profesionales eventuales · − ISR 10 % = ${fmtL(eventualSV(l.eventual).liquido)}` })
+                : datoInput("Bonificación", l.bq, v => upLinea(l.id, x => ({ ...x, bq: v })), { sub: `${fmtL(l.bn)} al mes` })}
               {l.pais === "sv" && <>
                 {datoInput("Vacación (recargo 30 %)", l.vacacion, v => upLinea(l.id, x => ({ ...x, vacacion: v, vacacionManual: true })), { sub: l.diasVac ? `${l.diasVac} días de vacación en la asistencia` : "30 % de los días de vacación" })}
                 {datoHoras("Horas extras diurnas", l.heSV?.diurnas, v => upLinea(l.id, x => ({ ...x, heSV: { ...(x.heSV || {}), diurnas: v } })), `×2 · ${fmtL(l.heSV?.montoDiurnas || 0)}`)}
@@ -5009,8 +5054,10 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
 
       {/* Dos planillas de la MISMA quincena, cada una con su PDF y su Excel.
           El Salvador: una sola (las horas extras van adentro). */}
-      {!esSV && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: 10 }}>
-        {[["salarios", "Planilla de salarios", `${res.personas} colaboradores`, res.neto], ["he", "Planilla de horas extras", d.heDe ? `${res.hePersonas} colaboradores · ${res.heHrs} h de ${etiquetaCorta(d.heDe.periodo, d.heDe.quincena)}` : "sin hoja de horas extras", res.he]].map(([k, tit, sub, monto]) => {
+      {<div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: 10 }}>
+        {[["salarios", "Planilla de salarios", `${res.personas} colaboradores`, res.neto], esSV
+          ? ["eventual", "Servicios profesionales eventuales", res.eventualPersonas ? `${res.eventualPersonas} · bonificación − ISR 10 %` : "nadie con bonificación", res.eventualLiquido]
+          : ["he", "Planilla de horas extras", d.heDe ? `${res.hePersonas} colaboradores · ${res.heHrs} h de ${etiquetaCorta(d.heDe.periodo, d.heDe.quincena)}` : "sin hoja de horas extras", res.he]].map(([k, tit, sub, monto]) => {
           const on = payParte === k;
           return <div key={k} role="button" tabIndex={0} aria-pressed={on} onClick={() => setPayParte(k)} onKeyDown={(ev) => { if (ev.key === "Enter") setPayParte(k); }} className="gt-vidrio gt-vidrio-hover"
             style={{ padding: "14px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, boxShadow: on ? `inset 0 0 0 2px ${ORANGE}, 0 12px 30px rgba(44,42,40,.10)` : undefined }}>
@@ -5023,7 +5070,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         })}
       </div>}
 
-      {payParte === "he" && !esSV ? renderHeParte(d, res, editable) : <>
+      {payParte === "he" && !esSV ? renderHeParte(d, res, editable) : payParte === "eventual" && esSV ? renderEventualParte(d, res, editable) : <>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(5, minmax(0,1fr))", gap: 10 }}>
         {tile("Colaboradores", res.personas)}
         {tile("Ordinario", fmtL(res.ordinario))}
@@ -5070,9 +5117,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
 
       <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 5, padding: isMobile ? "10px 12px" : "12px 32px", pointerEvents: "none" }}>
         <div className="gt-vidrio" style={{ maxWidth: 1436, margin: "0 auto", padding: isMobile ? "10px 12px" : "10px 16px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", pointerEvents: "auto", borderRadius: 18 }}>
-          <span style={{ font: "600 12.5px/1.3 var(--sans)", color: "#6E6862", marginRight: "auto" }}>{payBusy ? "Un momento…" : payParte === "he" ? `Horas extras · ${res.hePersonas} colaboradores · ${fmtL(res.he)}` : `Salarios · ${res.personas} colaboradores · ${fmtL(res.neto)}`}</span>
-          <button disabled={payBusy} onClick={() => descargarPlanilla("excel")} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{payParte === "he" ? "Excel de horas extras" : "Excel"}</button>
-          <button disabled={payBusy} onClick={() => descargarPlanilla("pdf")} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{payParte === "he" ? "PDF de horas extras" : "PDF"}</button>
+          <span style={{ font: "600 12.5px/1.3 var(--sans)", color: "#6E6862", marginRight: "auto" }}>{payBusy ? "Un momento…" : payParte === "he" && !esSV ? `Horas extras · ${res.hePersonas} colaboradores · ${fmtL(res.he)}` : payParte === "eventual" && esSV ? `Servicios eventuales · ${res.eventualPersonas} · ${fmtL(res.eventualLiquido)}` : `Salarios · ${res.personas} colaboradores · ${fmtL(res.neto)}`}</span>
+          <button disabled={payBusy} onClick={() => descargarPlanilla("excel")} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{payParte === "he" && !esSV ? "Excel de horas extras" : payParte === "eventual" && esSV ? "Excel de eventuales" : "Excel"}</button>
+          <button disabled={payBusy} onClick={() => descargarPlanilla("pdf")} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{payParte === "he" && !esSV ? "PDF de horas extras" : payParte === "eventual" && esSV ? "PDF de eventuales" : "PDF"}</button>
           {d.id && pays.some(x => x.id === d.id) && <button disabled={payBusy} onClick={() => abrirVouchers(pays.find(x => x.id === d.id))} title="Comprobantes de lo GUARDADO" style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>Vouchers</button>}
           {editable && <button disabled={payBusy} onClick={async () => { if (await guardarPlanilla(d.estado === "publicada" ? "publicada" : "borrador")) alert(d.estado === "publicada" ? "Cambios guardados en la planilla publicada." : "Borrador guardado."); }} style={{ minHeight: 38, padding: "9px 16px", borderRadius: 999, border: "none", background: "#3E8E5A", color: "#fff", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{d.estado === "publicada" ? "Guardar cambios" : "Guardar borrador"}</button>}
           {editable && d.estado !== "publicada" && <button disabled={payBusy} onClick={async () => { if (!confirm(`¿Publicar las planillas ${etiquetaCorta(d.periodo, d.quincena)} de ${cc.name}?\n\nSalarios: ${fmtL(res.neto)}\nHoras extras: ${fmtL(res.he)}\n\nQuedan como las planillas oficiales de la quincena. Después igual podés corregirlas.`)) return; if (await guardarPlanilla("publicada")) alert("Planilla publicada. Ya podés descargar el PDF y el Excel."); }} className="gt-btn gt-btn-primario" style={{ minHeight: 38, padding: "9px 18px", fontSize: 13 }}>Publicar</button>}

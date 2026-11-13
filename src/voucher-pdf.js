@@ -6,7 +6,7 @@
 // probada) así el comprobante cuadra al centavo con la planilla. El de
 // Gerson Trochez NUNCA se genera (lineasVoucher lo saca).
 // ═══════════════════════════════════════════════════════════════════════════
-import { MONEDA } from "./operacion.js";
+import { MONEDA, DOC_ID } from "./operacion.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { PDF_TEMA, pdfPie, pdfKpi, cargarImagen, LOGO_EMPRESA, latin1 } from "./reporte-estilo.js";
 import { conceptosVoucher, lineasVoucher, modalidadDe, mesLargo, rangoQuincena, etiquetaCorta } from "./planilla-calc.js";
@@ -14,7 +14,7 @@ import { EMPRESAS } from "./rrhh-solicitudes.js";
 
 const T = PDF_TEMA;
 const nf = (n) => (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const Ls = (n) => `${MONEDA} ${nf(n)}`;
+const Ls = (n) => `${Number(n) < 0 ? "-" : ""}${MONEDA} ${nf(Math.abs(Number(n) || 0))}`;
 const METODO = { transferencia: "Transferencia", cheque: "Cheque", ach: "ACH" };
 const slug = (s) => latin1(s).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9.-]+/g, "_").replace(/^_+|_+$/g, "");
 const iniciales = (n) => String(n || "").trim().split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]).join("").toUpperCase();
@@ -59,7 +59,7 @@ const paginaVoucher = async (doc, l, { empresa, periodo, quincena, borrador }) =
   doc.text(latin1(String(l.name || "").toUpperCase()), M + 22, y + 10);
   doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(...T.texto2);
   doc.text(latin1(l.pos || "Sin cargo"), M + 22, y + 15.2);
-  const campos = [["DNI", l.dni || "—"], ["Modalidad", modalidadDe(l)], [l.ct === "honorarios" ? "Honorarios mensuales" : "Salario mensual", Ls(l.sb)], ["Salario diario", Ls(l.sd)]];
+  const campos = [[DOC_ID, l.dni || "—"], ["Modalidad", modalidadDe(l)], [l.ct === "honorarios" ? "Honorarios mensuales" : "Salario mensual", Ls(l.sb)], ["Salario diario", Ls(l.sd)]];
   const cw = (CW - 16) / 4;
   campos.forEach(([lab, val], i) => {
     const x = M + 8 + i * cw;
@@ -112,12 +112,14 @@ const paginaVoucher = async (doc, l, { empresa, periodo, quincena, borrador }) =
   const yI = tabla(M, colW, y, "Ingresos", v.ingresos, "Total ingresos", v.totalIngresos);
   const yD = tabla(M + colW + 10, colW, y, "Deducciones", v.deducciones, "Total deducciones", v.totalDeducciones, { vacio: "Sin deducciones en esta quincena" });
   y = Math.max(yI, yD) + 11;
+  // El Salvador: la bonificación va en su planilla aparte (servicios profesionales eventuales).
+  if (v.eventual) y = tabla(M, CW, y, "Servicios profesionales eventuales · planilla aparte", [{ concepto: "Bonificación de la quincena", monto: v.eventual.monto }, { concepto: "(-) Retención ISR 10 %", monto: -v.eventual.isr }], "Líquido a pagar", v.eventual.liquido) + 11;
   if (v.he.length) y = tabla(M, CW, y, `Horas extras · trabajadas en ${etiquetaCorta(l.he.periodo, l.he.quincena)} · hora base ${Ls(l.he.horaBase)}`, v.he, "Total horas extras", v.heMonto, { conHoras: true }) + 11;
 
   // ── Totales a pagar: SALARIO y HORAS EXTRAS por separado (Gerson, 9-nov:
   // "se pagan en dos transacciones distintas") ──
   const metodo = METODO[l.metodoPago] || "Transferencia";
-  const hTot = 22, conHe = v.he.length > 0;
+  const hTot = 22, conHe = v.he.length > 0 || !!v.eventual;
   const cajaTotal = (x, w, titulo, sub, monto, destacada) => {
     doc.setFillColor(...(destacada ? T.tinte : T.fondo)); doc.roundedRect(x, y - 4, w, hTot, 4, 4, "F");
     doc.setFont("helvetica", "bold"); doc.setFontSize(6.8); doc.setTextColor(...(destacada ? T.naranjaTexto : T.texto3));
@@ -130,7 +132,8 @@ const paginaVoucher = async (doc, l, { empresa, periodo, quincena, borrador }) =
   if (conHe) {
     const w2 = (CW - 6) / 2;
     cajaTotal(M, w2, "TOTAL A PAGAR · SALARIO", `Transacción 1 · ${metodo}`, v.neto, true);
-    cajaTotal(M + w2 + 6, w2, "TOTAL A PAGAR · HORAS EXTRAS", `Transacción 2 · ${metodo}`, v.heMonto, true);
+    if (v.eventual) cajaTotal(M + w2 + 6, w2, "TOTAL A PAGAR · SERVICIOS EVENTUALES", `Transacción 2 · ${metodo}`, v.eventual.liquido, true);
+    else cajaTotal(M + w2 + 6, w2, "TOTAL A PAGAR · HORAS EXTRAS", `Transacción 2 · ${metodo}`, v.heMonto, true);
   } else {
     cajaTotal(M, CW, "TOTAL A PAGAR · SALARIO", `Salario de la quincena · ${metodo}`, v.neto, true);
   }
