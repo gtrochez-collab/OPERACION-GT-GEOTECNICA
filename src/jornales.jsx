@@ -32,6 +32,7 @@ import { VisorArchivo } from "./visor-archivo.jsx";
 import { abrirReporte } from "./reporte-estilo.js";
 import { USERS, ROLE_LABEL, USUARIOS_DE_BAJA } from "./users.js";
 import { admiteSolicitudes } from "./projects.js";
+import { esFeriado, nombreFeriado } from "./holidays.js";
 import {
   KEY_JORNALEROS, keyCorteJornal, KEY_RESPONSABLES, proyectosDeResponsable, corteDe, corteAnterior, corteSiguiente, diasDelCorte, diaCorto, fechaCorta, fechaLarga,
   nombreCorte, proyectoVacio, ponerCelda, mezclarProyecto, cambiosEntre, liquidarProyecto, validarJornalero, formatoDni,
@@ -431,13 +432,16 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
   const prefKey = `gt-jornal-proy-${user.username}`;
   const [short, setShortRaw] = useState(() => { try { return localStorage.getItem(prefKey) || ""; } catch { return ""; } });
   const setShort = (s) => { setShortRaw(s); try { localStorage.setItem(prefKey, s); } catch { /* */ } };
-  const [vista, setVista] = useState(() => esRRHH && !isMobile ? "resumen" : "dia");
+  // 13-nov-2026 (Gerson: "el mismo formato de la asistencia, por proyecto"): en la
+  // computadora se entra a la hoja del corte (formato de la hoja de asistencia).
+  const [vista, setVista] = useState(() => esRRHH && !isMobile ? "resumen" : isMobile ? "dia" : "corte");
   const [docs, setDocs] = useState({ corte: null, previo: null, error: "", cargando: true });
   const [base, setBase] = useState(proyectoVacio());
   const [local, setLocalRaw] = useState(proyectoVacio());
   const [recuperado, setRecuperado] = useState(false);
   const [fecha, setFecha] = useState(hoy);
   const [modal, setModal] = useState(null); // {t:"agregar"} | {t:"nuevo"} | {t:"celda", id, fecha}
+  const [celdaHe, setCeldaHe] = useState(null); // menú de horas extra abierto en la hoja ("id|fecha")
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState(null);
   const tiraRef = useRef(null);
@@ -678,45 +682,105 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
   };
 
   // ── Vista del corte completo (cuadrícula) ──
+  // Hoja del corte con el MISMO formato que la hoja de asistencia de GeoTeam
+  // (13-nov-2026, Gerson: "tal cual, literal, como la llenamos en Honduras"):
+  // tarjeta con la leyenda, el proyecto con su "Todos presentes", un renglón
+  // por jornal, los días en columnas (D y F en naranja) y los totales a la
+  // derecha. Tocá la celda: 1 → ½ → 2 → 0 → vacío; click derecho: horas extra.
+  // En el celular, tocar abre el control del día de siempre.
   const vistaCorte = () => {
     const hayPrevia = liq.filas.some(f => f.hePrevia > 0);
-    const th = { padding: "7px 4px", font: "700 10px/1.2 var(--sans)", color: "#8A847D", textTransform: "uppercase", letterSpacing: ".04em", borderBottom: "1px solid rgba(44,42,40,.12)", textAlign: "center", whiteSpace: "nowrap", background: "rgba(255,255,255,.92)" };
-    const td = { padding: "6px 3px", borderBottom: "1px solid rgba(44,42,40,.06)", textAlign: "center" };
-    const celda = (id, d) => { const v = local.dias?.[id]?.[d]; const h = num(local.he?.[id]?.[d]); const vacia = v === undefined; return <button type="button" disabled={!editable} onClick={() => setModal({ t: "celda", id, fecha: d })}
-      style={{ width: "100%", minWidth: 34, minHeight: 38, borderRadius: 9, border: "none", cursor: editable ? "pointer" : "default", fontFamily: "var(--mono)", background: vacia ? "rgba(44,42,40,.035)" : Number(v) === 0 ? "rgba(192,57,43,.09)" : Number(v) === 0.5 ? "#FBEFC4" : "#E3F2E8", color: Number(v) === 0 ? "#B03024" : CHARCOAL, padding: "2px 0" }}>
-      <div style={{ font: "800 13px/1 var(--mono)" }}>{vacia ? "" : Number(v) === 0.5 ? "½" : v}</div>
-      {h > 0 && <div style={{ font: "700 9.5px/1 var(--mono)", color: d === viernesFin ? "#A39C92" : "#B5571C", marginTop: 3 }}>+{fmtN(h)}{d === viernesFin ? "→" : ""}</div>}
-    </button>; };
-    return <div className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ borderCollapse: "separate", borderSpacing: 0, width: "100%", minWidth: 900 }}>
-          <thead><tr>
-            <th style={{ ...th, textAlign: "left", position: "sticky", left: 0, zIndex: 2, minWidth: 170, paddingLeft: 14 }}>Jornal</th>
-            {hayPrevia && <th style={th} title="Horas extra del viernes del corte anterior (en la tarde)">HE {+liq.viernesPrevio.slice(8)}</th>}
-            {dias.map(d => <th key={d} style={{ ...th, color: d === hoy ? ORANGE_DARK : th.color }}>{diaCorto(d)}<div style={{ font: "800 13px/1.2 var(--display)", color: d === hoy ? ORANGE_DARK : CHARCOAL, textTransform: "none" }}>{+d.slice(8)}</div>{editable && roster.length > 0 && <button type="button" title="Todos vinieron" onClick={() => todosVinieron(d)} style={{ marginTop: 3, border: "none", background: "rgba(62,142,90,.12)", color: "#177243", borderRadius: 6, font: "700 9px/1 var(--sans)", padding: "3px 5px", cursor: "pointer" }}>todos</button>}</th>)}
-            <th style={th}>Días</th><th style={th}>HE</th>{esRRHH && <th style={{ ...th, textAlign: "right", paddingRight: 14 }}>Total</th>}
-          </tr></thead>
-          <tbody>
-            {liq.filas.map(f => <tr key={f.id}>
-              <td style={{ ...td, textAlign: "left", position: "sticky", left: 0, background: "rgba(252,251,250,.97)", zIndex: 1, paddingLeft: 14 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <Avatar nombre={f.nombre} fileId={f.ficha?.photo?.fileId} size={28} radius={8} />
-                  <div style={{ minWidth: 0 }}><div style={{ font: "700 12.5px/1.2 var(--sans)", color: CHARCOAL, maxWidth: 150, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.nombre}</div>
-                    <div style={{ fontSize: 10.5, color: "#8A847D" }}>{esRRHH && editable && !f.soloHePrevia ? <button type="button" onClick={() => { const n = prompt(`Pago por día de ${f.nombre} en este corte (${MONEDA}):`, String(f.tarifa)); if (n == null) return; const v = Number(String(n).replace(/[^\d.]/g, "")); if (!(v > 0)) return alert("Monto no válido."); setLocal(p => ({ ...p, tarifas: { ...(p.tarifas || {}), [f.id]: v } })); }} style={{ border: "none", background: "none", padding: 0, color: "#8A847D", textDecoration: "underline dotted", cursor: "pointer", font: "inherit" }}>{fmtL0(f.tarifa)}/día</button> : (f.ficha?.position || "Jornal")}{f.soloHePrevia ? " · solo HE del corte anterior" : ""}
-                      {editable && esRRHH && !f.soloHePrevia && <button type="button" onClick={() => quitar(f.id)} style={{ border: "none", background: "none", color: "#B03024", font: "700 10.5px/1 var(--sans)", cursor: "pointer", marginLeft: 6, padding: 0 }}>quitar</button>}</div></div>
-                </div>
-              </td>
-              {hayPrevia && <td style={{ ...td, font: "700 11px/1 var(--mono)", color: "#B5571C" }}>{f.hePrevia ? `+${fmtN(f.hePrevia)}` : ""}</td>}
-              {dias.map(d => <td key={d} style={td}>{f.soloHePrevia ? null : celda(f.id, d)}</td>)}
-              <td style={{ ...td, font: "700 12.5px/1 var(--mono)" }}>{fmtN(f.totalDias)}</td>
-              <td style={{ ...td, font: "700 12.5px/1 var(--mono)", color: f.horasHe ? "#B5571C" : "#A39C92" }}>{fmtN(f.horasHe)}</td>
-              {esRRHH && <td style={{ ...td, textAlign: "right", paddingRight: 14, font: "800 12.5px/1 var(--mono)", color: CHARCOAL, whiteSpace: "nowrap" }}>{fmtL(f.total)}</td>}
-            </tr>)}
-            {liq.filas.length === 0 && <tr><td colSpan={dias.length + 5} style={{ padding: 26, textAlign: "center", fontSize: 13, color: "#6E6862" }}>{esRRHH ? `Agregá a los jornales que trabajan en ${short}.` : `RRHH todavía no asignó jornales a ${short}. Pedile a Ana que los agregue.`}</td></tr>}
-          </tbody>
-        </table>
+    const TH_H = { padding: "8px 10px", textAlign: "left", color: "#6E6862", fontWeight: 700, borderBottom: "1px solid rgba(44,42,40,.08)", whiteSpace: "nowrap", fontSize: 11 };
+    const TD_H = { padding: "6px 10px", color: "#2C2A28", whiteSpace: "nowrap" };
+    const PAL = { presente: { bg: "#DCF3E4", fg: "#177243" }, descanso: { bg: "#F1F0ED", fg: "#8B847C" }, nsp: { bg: "#F7DEDC", fg: "#B03024" }, medio: { bg: "#FBEFC4", fg: "#8A5A00" }, extra: { bg: "#FBE3D0", fg: "#A94E16" } };
+    const DOW = ["D", "L", "M", "M", "J", "V", "S"];
+    const dd = dias.map(f => { const y = +f.slice(0, 4), m0 = +f.slice(5, 7) - 1, d = +f.slice(8); const fer = esFeriado(y, m0, d); const w = new Date(f + "T12:00:00Z").getUTCDay(); return { fecha: f, day: d, dow: DOW[w], isSun: w === 0, isHoliday: fer, holidayName: fer ? nombreFeriado(y, m0, d) : "" }; });
+    const CICLO = ["", 1, 0.5, 2, 0];
+    const sig = (v) => CICLO[(CICLO.indexOf(v === undefined ? "" : Number(v)) + 1) % CICLO.length];
+    const color = (v, d) => v === undefined ? null : Number(v) === 1 ? ((d.isSun || d.isHoliday) ? PAL.descanso : PAL.presente) : Number(v) === 0.5 ? PAL.medio : Number(v) === 2 ? PAL.extra : PAL.nsp;
+    const filasDia = liq.filas.filter(f => !f.soloHePrevia);
+    const llenos = filasDia.length > 0 && filasDia.every(f => dd.every(d => d.isSun || d.isHoliday || local.dias?.[f.id]?.[d.fecha] !== undefined));
+    const todosPresentes = () => setLocal(p => {
+      let m = p.dias;
+      filasDia.forEach(f => dd.forEach(d => {
+        if (d.isSun || d.isHoliday) return;                          // domingos y feriados: solo si se trabajaron (a mano)
+        if (llenos) m = ponerCelda(m, f.id, d.fecha, "");
+        else if (m?.[f.id]?.[d.fecha] === undefined) m = ponerCelda(m, f.id, d.fecha, 1);
+      }));
+      return { ...p, dias: m };
+    });
+    const proy = proyectos.find(x => x.short === short);
+    return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>Corte {nombreCorte(corte)} · Jornales</div>
+          <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>Tocá una celda para cambiarla (1 → ½ → 2 → 0). Click derecho: horas extra de ese día. Las horas del viernes {+viernesFin.slice(8)} (→) se pagan en el próximo corte.</div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          {[["1", "Día", PAL.presente], ["½", "Medio día", PAL.medio], ["2", "Doble", PAL.extra], ["0", "No vino", PAL.nsp], ["+h", "Horas extra", PAL.extra]].map(([k, l, c]) => <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6E6862" }}><span style={{ minWidth: 22, textAlign: "center", padding: "2px 6px", borderRadius: 6, background: c.bg, color: c.fg, fontWeight: 800, fontSize: 10.5 }}>{k}</span>{l}</span>)}
+        </div>
       </div>
-      <div style={{ padding: "8px 14px", fontSize: 11.5, color: "#8A847D", borderTop: "1px solid rgba(44,42,40,.06)" }}>Tocá un día para marcarlo. Verde = día · ámbar = medio día · rojo = no vino · <span style={{ color: "#B5571C", fontWeight: 700 }}>+2</span> = horas extra · las del viernes {+viernesFin.slice(8)} (→) se pagan en el próximo corte.</div>
+      <div className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", borderBottom: "1px solid rgba(44,42,40,.07)" }}>
+          <span style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>{short} <span style={{ color: "#A39C92", fontWeight: 600, fontSize: 12.5 }}>{filasDia.length}</span>{proy?.name && proy.name !== short ? <span style={{ display: "block", font: "500 11px/1.3 var(--sans)", color: "#A39C92", marginTop: 2 }}>{proy.name}</span> : null}</span>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "#A39C92" }}>{proy?.code || ""}</span>
+            {editable && filasDia.length > 0 && <button type="button" onClick={todosPresentes} style={{ minHeight: 30, padding: "5px 12px", borderRadius: 999, border: llenos ? "1px solid rgba(192,57,43,.3)" : "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.75)", color: llenos ? "#B03024" : CHARCOAL, font: "700 12px/1 var(--sans)", cursor: "pointer" }}>{llenos ? "Limpiar" : "Todos presentes"}</button>}
+          </div>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ background: "rgba(44,42,40,.025)" }}>
+              <th style={{ ...TH_H, position: "sticky", left: 0, background: "#FAFAF9", zIndex: 2, minWidth: 190 }}>Jornal</th>
+              {hayPrevia && <th style={{ ...TH_H, textAlign: "center" }} title="Horas extra del viernes del corte anterior (en la tarde)">HE {+liq.viernesPrevio.slice(8)}</th>}
+              {dd.map(d => <th key={d.fecha} title={d.isHoliday ? `Feriado: ${d.holidayName}` : ""} style={{ ...TH_H, textAlign: "center", minWidth: 32, background: d.fecha === hoy ? "rgba(232,118,45,.08)" : undefined }}>
+                <div style={{ fontSize: 10, color: (d.isHoliday || d.isSun) ? "#A94E16" : "#A39C92", fontWeight: d.isHoliday ? 700 : 600 }}>{d.isHoliday ? "F" : d.dow}</div>{d.day}
+              </th>)}
+              <th style={{ ...TH_H, textAlign: "center" }}>Días</th>
+              <th style={{ ...TH_H, textAlign: "center" }}>H. extra</th>
+              {esRRHH && <th style={{ ...TH_H, textAlign: "right" }}>Total</th>}
+            </tr></thead>
+            <tbody>
+              {liq.filas.map(f => <tr key={f.id} style={{ borderBottom: "1px solid rgba(44,42,40,.06)" }}>
+                <td style={{ ...TD_H, position: "sticky", left: 0, background: "#FAFAF9", zIndex: 1, fontWeight: 600, fontSize: 11 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span>{f.nombre}</span>
+                    <span style={{ fontFamily: "var(--mono)", fontSize: 9, fontWeight: 600, color: "#A39C92", letterSpacing: 0.3 }}>
+                      {esRRHH && editable && !f.soloHePrevia ? <button type="button" onClick={() => { const n = prompt(`Pago por día de ${f.nombre} en este corte (${MONEDA}):`, String(f.tarifa)); if (n == null) return; const v = Number(String(n).replace(/[^\d.]/g, "")); if (!(v > 0)) return alert("Monto no válido."); setLocal(p => ({ ...p, tarifas: { ...(p.tarifas || {}), [f.id]: v } })); }} style={{ border: "none", background: "none", padding: 0, color: "#A39C92", textDecoration: "underline dotted", cursor: "pointer", font: "inherit" }}>{fmtL0(f.tarifa)}/día</button> : (f.ficha?.position || "JORNAL").toUpperCase()}
+                      {f.soloHePrevia ? " · solo HE del corte anterior" : ""}
+                      {editable && esRRHH && !f.soloHePrevia && <button type="button" onClick={() => quitar(f.id)} style={{ border: "none", background: "none", color: "#B03024", font: "700 9.5px/1 var(--sans)", cursor: "pointer", marginLeft: 6, padding: 0 }}>quitar</button>}
+                    </span>
+                  </div>
+                </td>
+                {hayPrevia && <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: "#A94E16" }}>{f.hePrevia ? `+${fmtN(f.hePrevia)}` : ""}</td>}
+                {dd.map(d => {
+                  if (f.soloHePrevia) return <td key={d.fecha} style={{ ...TD_H, border: "1px solid rgba(44,42,40,.06)" }} />;
+                  const v = local.dias?.[f.id]?.[d.fecha], h = num(local.he?.[f.id]?.[d.fecha]);
+                  const k = `${f.id}|${d.fecha}`, abierto = celdaHe === k, pc = color(v, d);
+                  return <td key={d.fecha} title={d.isHoliday ? d.holidayName : "Click derecho: horas extra"}
+                    onClick={() => { if (!editable) return; if (isMobile) setModal({ t: "celda", id: f.id, fecha: d.fecha }); else ponerDia(f.id, d.fecha, sig(v)); }}
+                    onContextMenu={(ev) => { ev.preventDefault(); if (editable) setCeldaHe(abierto ? null : k); }}
+                    style={{ ...TD_H, textAlign: "center", cursor: editable ? "pointer" : "default", background: pc ? pc.bg : "transparent", color: pc ? pc.fg : "#2C2A28", fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid rgba(44,42,40,.06)", position: "relative", fontSize: 11.5 }}>
+                    {v === undefined ? <span style={{ color: "#D8D4CE" }}>·</span> : Number(v) === 0.5 ? "½" : String(v)}
+                    {h > 0 && <div style={{ fontSize: 8, color: d.fecha === viernesFin ? "#A39C92" : "#A94E16", lineHeight: 1, fontWeight: 800, marginTop: 1 }}>+{fmtN(h)}h{d.fecha === viernesFin ? "→" : ""}</div>}
+                    {abierto && <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 170, padding: 8, textAlign: "left" }} onClick={ev => ev.stopPropagation()}>
+                      <div style={{ fontSize: 10.5, color: "#64748b", marginBottom: 6, fontWeight: 600 }}>Horas extra · {d.dow} {d.day}{d.fecha === viernesFin ? " · van al próximo corte" : ""}</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {[0, 1, 2, 3, 4, 5, 6].map(n => <button key={n} type="button" onClick={() => { ponerHe(f.id, d.fecha, n); setCeldaHe(null); }} style={{ minWidth: 30, padding: "5px 0", borderRadius: 6, border: "1px solid rgba(44,42,40,.12)", background: h === n ? "#FBE3D0" : "#fff", font: "700 11.5px/1 var(--sans)", cursor: "pointer" }}>{n}</button>)}
+                      </div>
+                      <input type="number" min="0" max={MAX_HE_DIA} step="0.5" defaultValue={h || ""} placeholder="Otra cantidad" onKeyDown={e => { if (e.key === "Enter") { ponerHe(f.id, d.fecha, Math.max(0, Math.min(MAX_HE_DIA, Number(e.currentTarget.value) || 0))); setCeldaHe(null); } }} style={{ marginTop: 6, width: "100%", boxSizing: "border-box", padding: "5px 8px", borderRadius: 6, border: "1px solid #CBD5E1", fontSize: 12 }} />
+                    </div>}
+                  </td>;
+                })}
+                <td style={{ ...TD_H, textAlign: "center", fontWeight: 800 }}>{fmtN(f.totalDias)}</td>
+                <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: f.horasHe ? "#A94E16" : "#A39C92" }}>{fmtN(f.horasHe)}</td>
+                {esRRHH && <td style={{ ...TD_H, textAlign: "right", fontWeight: 800 }}>{fmtL(f.total)}</td>}
+              </tr>)}
+              {liq.filas.length === 0 && <tr><td colSpan={dd.length + 5} style={{ padding: 26, textAlign: "center", fontSize: 13, color: "#6E6862" }}>{esRRHH ? `Agregá a los jornales que trabajan en ${short}.` : `RRHH todavía no asignó jornales a ${short}. Pedile a Ana que los agregue.`}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>;
   };
 
