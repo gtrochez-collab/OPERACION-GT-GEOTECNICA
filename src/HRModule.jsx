@@ -4618,7 +4618,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     delete rec.tardesPend;
     setPayBusy(true);
     try {
-      let cloud; try { cloud = await store.getCloud("hr-pays"); } catch { cloud = null; }
+      let cloud; try { cloud = (await store.getCloud("hr-pays")) ?? []; } catch { cloud = null; }
       if (!Array.isArray(cloud)) { alert("No se pudo leer la nube. Revisá la conexión y volvé a intentar; la planilla NO se guardó."); return false; }
       const ok = await store.set("hr-pays", [...cloud.filter(p => p.id !== rec.id), rec]);
       if (!ok) { alert("No se pudo guardar en la nube. Volvé a intentar."); return false; }
@@ -4654,7 +4654,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   };
   const borrarPlanilla = async (p) => {
     if (!confirm(`¿Eliminar la planilla ${etiquetaCorta(p.periodo, p.quincena)} de ${cc.name}?\n\nEsto no se puede deshacer.`)) return;
-    let cloud; try { cloud = await store.getCloud("hr-pays"); } catch { cloud = null; }
+    let cloud; try { cloud = (await store.getCloud("hr-pays")) ?? []; } catch { cloud = null; }
     if (!Array.isArray(cloud)) return alert("No se pudo leer la nube. Volvé a intentar.");
     const ok = await store.set("hr-pays", cloud.filter(x => x.id !== p.id));
     if (!ok) return alert("No se pudo borrar en la nube.");
