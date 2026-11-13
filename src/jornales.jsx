@@ -558,8 +558,8 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
         </div>
         <button type="button" className="gt-circulo" aria-label="Corte siguiente" disabled={corte.id >= corteHoy.id} onClick={() => salir(() => setCorte(corteSiguiente(corte)))} style={{ width: 34, height: 34, opacity: corte.id >= corteHoy.id ? .35 : 1 }}>›</button>
       </div>
-      {vista !== "resumen" && vista !== "responsables" && <select value={short} onChange={e => salir(() => setShort(e.target.value))} style={{ ...CTRL, flex: "1 1 220px", width: "auto", minWidth: 0 }}>
-        <option value="">Elegí el proyecto…</option>
+      {vista !== "responsables" && <select value={vista === "resumen" ? "" : short} onChange={e => salir(() => { setShort(e.target.value); if (vista === "resumen" && e.target.value) setVista(isMobile ? "dia" : "corte"); })} style={{ ...CTRL, flex: "1 1 220px", width: "auto", minWidth: 0 }}>
+        <option value="">{vista === "resumen" ? "Abrir o asignar jornales a un proyecto…" : "Elegí el proyecto…"}</option>
         {(() => {
           // Arriba los proyectos que ya tienen jornales asignados (en este corte o en el anterior).
           const n = (s2) => docs.corte?.proyectos?.[s2]?.jornaleros?.length || docs.previo?.proyectos?.[s2]?.jornaleros?.length || 0;
@@ -617,7 +617,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
       {cabecera}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap: 8 }}>{tile(filas.length, "proyectos con jornales")}{tile(tot.p, "personas")}{tile(fmtN(tot.d), "días")}{tile(fmtL0(tot.total), `a pagar el ${fechaCorta(corte.pago)}`, "#A94E16")}</div>
       {tot.faltan > 0 && aviso(`Faltan ${tot.faltan} identidad${tot.faltan === 1 ? "" : "es"} por escanear. Se suben en GeoTeam → Empleados → Jornales.`)}
-      {filas.length === 0 ? <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Ningún proyecto tiene jornales en este corte todavía. Los ingenieros los cargan desde Mi RRHH → Asistencia de campo.</div>
+      {filas.length === 0 ? <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Ningún proyecto tiene jornales en este corte todavía. Elegí un proyecto en el menú de arriba y tocá «+ Agregar jornal» para asignarle su gente.</div>
         : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {filas.map(({ s, proy, l }) => { const faltan = l.filas.filter(f => !tieneIdentidad(f.ficha)).length; const conDatos = diasDelCorte(corte).filter(d => l.filas.some(f => f.dias?.[d] !== undefined)).length; return <div key={s} className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 220px", minWidth: 0, cursor: "pointer" }} onClick={() => { setShort(s); setVista(isMobile ? "dia" : "corte"); }}>
