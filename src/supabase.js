@@ -47,6 +47,7 @@ const SKIP_LOCAL_PREFIXES = [
   'cp-file-',       // archivos PDF/foto de compras (cloud es source of truth)
   'cc-file-',       // comprobantes PDF/foto de GeoCost (cloud es source of truth, lectura on-demand)
   'sp-file-',       // PDFs de cotizaciones de GeoSupply (cloud es source of truth, lectura on-demand)
+  'hr-contrat',     // Contratistas de El Salvador (13-nov-2026): hr-contratistas y hr-contrat-<periodo>-<Q>, solo getCloud
   'hr-jornal',      // Jornales (10-nov-2026): hr-jornaleros y hr-jornal-<corte> SOLO se leen con getCloud
   'sp-solicitudes', // GeoSupply (26-oct-2026): SOLO se leen con getCloud; sin cache no hay re-sync posible
   'sp-cotizaciones',

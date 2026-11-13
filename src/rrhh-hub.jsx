@@ -10,6 +10,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { store } from "./supabase.js";
 import { hoyISO } from "./fechas.js";
+import { esSV } from "./operacion.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { Modal, Chip, C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, ORANGE, ORANGE_DARK, CHARCOAL, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
@@ -532,7 +533,7 @@ export function PortalRRHH({ user, yo, emps, vacs, lvs, cons = [], solicitudes, 
       </div> : perfil}
       {onAsistenciaCampo && <>
         <div className="gm-encab">Campo</div>
-        <div className="gm-grupo">{item(ICO.casco, "Asistencia de campo", "Jornales: quién vino y sus horas extra", onAsistenciaCampo)}</div>
+        <div className="gm-grupo">{item(ICO.casco, "Asistencia de campo", esSV ? "Contratistas: días de servicio y horas extra" : "Jornales: quién vino y sus horas extra", onAsistenciaCampo)}</div>
       </>}
       <div className="gm-encab">Mi RRHH</div>
       <div className="gm-grupo">
@@ -564,7 +565,7 @@ export function PortalRRHH({ user, yo, emps, vacs, lvs, cons = [], solicitudes, 
     </div>
     {onAsistenciaCampo && <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={onAsistenciaCampo} onKeyDown={e => { if (e.key === "Enter") onAsistenciaCampo(); }} style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
       <div style={{ width: 46, height: 46, borderRadius: 15, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO.casco} size={24} /></div>
-      <div style={{ flex: 1, minWidth: 0 }}><div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>Asistencia de campo</div><div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 3 }}>Jornales: marcá quién vino cada día y sus horas extra; el sistema arma la solicitud de pago del corte</div></div>
+      <div style={{ flex: 1, minWidth: 0 }}><div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>Asistencia de campo</div><div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 3 }}>{esSV ? "Contratistas de servicios: marcá los días de servicio y las horas extra de la quincena" : "Jornales: marcá quién vino cada día y sus horas extra; el sistema arma la solicitud de pago del corte"}</div></div>
       <Ico d={ICO.flecha} size={18} color="#A39C92" />
     </div>}
     {yo && <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => onNueva("reporte")} onKeyDown={e => { if (e.key === "Enter") onNueva("reporte"); }} style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>

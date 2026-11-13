@@ -21,6 +21,7 @@ import { descargarVouchers } from "./voucher-pdf.js";
 // solicitudes (vacaciones, permisos, constancias, reportes) para RRHH.
 import { KEY_SOLICITUDES, KEY_VINCULOS, vincularEmpleado, siguienteFolio, vacacionDeSolicitud, permisosDeSolicitud, constanciaDoc, textoConstancia, estaAbierta, esAprobador as esAprobadorHub, veTodo as veTodoHub, vacacionesTomadas, rangoCorto as rangoCortoHub } from "./rrhh-solicitudes.js";
 import { FichasJornales, AsistenciaCampo, AsistenciaJornales, EMPRESA_JORNALES, ROLES_RRHH_JORNAL, ROLES_CAMPO_JORNAL, useResponsables } from "./jornales.jsx";
+import { ContratistasSV } from "./contratistas.jsx";
 import { proyectosDeResponsable } from "./jornales-calc.js";
 import { PortalRRHH, BandejaRRHH, SolicitudFormImpl, SolicitudDetalleImpl, ModalHub, ICO as ICO_HUB, GenerarConstanciaImpl, pdfDeRegistroConstancia } from "./rrhh-hub.jsx";
 
@@ -2842,7 +2843,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     else return false;
     return sSol(list => list.map(x => x.id === sol.id ? { ...x, ...patch, decision: { por, at, motivo }, updatedAt: at, historial: [...(x.historial || []), { accion: label, por, at, nota: motivo }] } : x));
   };
-  const renderMiRRHH = () => miSub === "campo" ? <AsistenciaCampo user={hubUser} rol={userRole} proyectos={hrProjects} onVolver={() => setMiSub("")} /> : <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+  // El Salvador (13-nov-2026): la asistencia de campo es la de los CONTRATISTAS
+  // de servicios; quien no es de RRHH (Edy, el PM) solo marca días y horas.
+  const renderMiRRHH = () => miSub === "campo" ? (esSV
+    ? <ContratistasSV user={hubUser} puedeEditar soloAsistencia={!ROLES_RRHH_JORNAL.includes(userRole)} onVolver={() => setMiSub("")} />
+    : <AsistenciaCampo user={hubUser} rol={userRole} proyectos={hrProjects} onVolver={() => setMiSub("")} />) : <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
     {solicitudesErr && <div style={{ background: "rgba(192,57,43,.07)", borderRadius: 14, padding: "10px 14px", fontSize: 12.5, color: "#B03024" }}>{solicitudesErr}</div>}
     <PortalRRHH user={hubUser} yo={yo} vinculoEstado={vinculoYo.como} emps={emps} vacs={vacs} lvs={lvs} cons={cons} solicitudes={solicitudes} fotoDe={fotoDe} gcTardies={gcTardies} leerMarcas={leerMarcas}
       onNueva={(tipo) => setHubModal({ t: "nueva", tipo })} onAbrir={(s) => setHubModal({ t: "ver", id: s.id })} onVincular={vincularUsuario}
@@ -5094,7 +5099,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const puedeClock = ["admin", "coordinador", "tesoreria", "asistente_compras", "logistica"].includes(userRole) && typeof onAbrirModulo === "function";
     const soloTard = isOscarTardies;
     const puedeJornales = ROLES_RRHH_JORNAL.includes(userRole);
-    if (asisSub === "jornales" && puedeJornales) return <AsistenciaJornales user={hubUser} rol={userRole} proyectos={hrProjects} onVolver={() => setAsisSub("")} />;
+    if (asisSub === "jornales" && puedeJornales) return esSV
+      ? <ContratistasSV user={hubUser} puedeEditar onVolver={() => setAsisSub("")} />
+      : <AsistenciaJornales user={hubUser} rol={userRole} proyectos={hrProjects} onVolver={() => setAsisSub("")} />;
     if (asisSub) {
       const t = asisSub === "hojas" ? ["Asistencia", "hojas por quincena · " + cc.name] : asisSub === "tardanzas" ? ["Llegadas tardías", `${TOLERANCIA_MIN} min de tolerancia sobre el horario de cada quien · ${cc.name}`] : ["Horas extras", "se pagan quincena vencida · " + cc.name];
       return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -5124,7 +5131,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         <>{chipH(nPend ? `${nPend} por decidir` : "Al día", nPend ? "naranja" : "verde")}{chipH(`${TOLERANCIA_MIN} min de tolerancia`, "gris")}</>)}
       {!soloTard && tarjeta(ICO_HUB.horas, "Horas extras", ultHe ? `Última hoja: ${etiquetaCorta(ultHe.periodo, ultHe.quincena)} · se paga quincena vencida` : "Hojas por quincena, se pagan quincena vencida", che.length, () => setAsisSub("he"), CHARCOAL,
         ultHe ? <>{chipH(`${fmtDias(tHe.hrs)} h`, "gris")}{!hideSalary && chipH(fmtL(tHe.costo), "verde")}</> : null)}
-      {puedeJornales && tarjeta(ICO_HUB.casco, "Jornales", "Personal por día, por proyecto y por corte de 2 semanas (sábado a viernes). Solicitud de pago en PDF con las identidades.", null, () => setAsisSub("jornales"), CHARCOAL)}
+      {puedeJornales && (esSV
+        ? tarjeta(ICO_HUB.casco, "Contratistas", "Proveedores de servicios: días y horas extra de la quincena, con la estimación de pago (retención de ISR 10 %) en PDF y Excel.", null, () => setAsisSub("jornales"), CHARCOAL)
+        : tarjeta(ICO_HUB.casco, "Jornales", "Personal por día, por proyecto y por corte de 2 semanas (sábado a viernes). Solicitud de pago en PDF con las identidades.", null, () => setAsisSub("jornales"), CHARCOAL))}
       {puedeClock && tarjeta(ICO_HUB.tablet, "GeoClock", "El reloj de las tablets: marcaje, foto y firma, y el registro de entradas y salidas", null, () => onAbrirModulo("geoclock"), CHARCOAL,
         <>{chipH(`${entradasHoy} entrada${entradasHoy === 1 ? "" : "s"} hoy`, entradasHoy ? "verde" : "gris")}</>, !soloTard && puedeJornales)}
     </div>;
