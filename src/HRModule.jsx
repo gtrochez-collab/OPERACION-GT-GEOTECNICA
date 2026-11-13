@@ -2846,7 +2846,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   // El Salvador (13-nov-2026): la asistencia de campo es la de los CONTRATISTAS
   // de servicios; quien no es de RRHH (Edy, el PM) solo marca días y horas.
   const renderMiRRHH = () => miSub === "campo" ? (esSV
-    ? <ContratistasSV user={hubUser} puedeEditar soloAsistencia={!ROLES_RRHH_JORNAL.includes(userRole)} onVolver={() => setMiSub("")} />
+    ? <ContratistasSV proyectos={hrProjects} user={hubUser} puedeEditar soloAsistencia={!ROLES_RRHH_JORNAL.includes(userRole)} onVolver={() => setMiSub("")} />
     : <AsistenciaCampo user={hubUser} rol={userRole} proyectos={hrProjects} onVolver={() => setMiSub("")} />) : <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
     {solicitudesErr && <div style={{ background: "rgba(192,57,43,.07)", borderRadius: 14, padding: "10px 14px", fontSize: 12.5, color: "#B03024" }}>{solicitudesErr}</div>}
     <PortalRRHH user={hubUser} yo={yo} vinculoEstado={vinculoYo.como} emps={emps} vacs={vacs} lvs={lvs} cons={cons} solicitudes={solicitudes} fotoDe={fotoDe} gcTardies={gcTardies} leerMarcas={leerMarcas}
@@ -4420,7 +4420,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       </div>}
 
       {verJornales ? (esSV
-          ? <ContratistasSV user={hubUser} puedeEditar={ROLES_RRHH_JORNAL.includes(userRole)} soloLista q={empSearch} onVolver={() => setEmpTipo("todos")} />
+          ? <ContratistasSV proyectos={hrProjects} user={hubUser} puedeEditar={ROLES_RRHH_JORNAL.includes(userRole)} soloLista q={empSearch} onVolver={() => setEmpTipo("todos")} />
           : <FichasJornales q={empSearch} rol={userRole} user={hubUser} />)
         : empTipo === "todos" || empTipo === "jornales"
         ? grupos.map(([k, l]) => { const rows = filtered.filter(e => e.contractType === k); return rows.length > 0 && <div key={k}>
@@ -5102,7 +5102,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const soloTard = isOscarTardies;
     const puedeJornales = ROLES_RRHH_JORNAL.includes(userRole);
     if (asisSub === "jornales" && puedeJornales) return esSV
-      ? <ContratistasSV user={hubUser} puedeEditar onVolver={() => setAsisSub("")} />
+      ? <ContratistasSV proyectos={hrProjects} user={hubUser} puedeEditar onVolver={() => setAsisSub("")} />
       : <AsistenciaJornales user={hubUser} rol={userRole} proyectos={hrProjects} onVolver={() => setAsisSub("")} />;
     if (asisSub) {
       const t = asisSub === "hojas" ? ["Asistencia", "hojas por quincena · " + cc.name] : asisSub === "tardanzas" ? ["Llegadas tardías", `${TOLERANCIA_MIN} min de tolerancia sobre el horario de cada quien · ${cc.name}`] : ["Horas extras", "se pagan quincena vencida · " + cc.name];

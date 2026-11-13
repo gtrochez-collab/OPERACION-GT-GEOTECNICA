@@ -43,7 +43,7 @@ const draftKey = (p, q) => `gt-contrat-draft-sv-${p}-${q}`;
 
 // ── Form del contratista (a nivel de módulo: no se remonta al teclear) ──
 const contratoVacio = () => ({ id: uid(), codigo: "", servicio: "", rol: "", proyecto: "", modo: "dia", unidad: "", tarifa: "", valorHora: "", activo: true });
-export function ContratistaForm({ inicial, todos, onGuardar, onCancelar, guardando }) {
+export function ContratistaForm({ inicial, todos, proyectos = [], onGuardar, onCancelar, guardando }) {
   const [f, setF] = useState(() => inicial ? JSON.parse(JSON.stringify(inicial)) : { id: uid(), nombre: "", dui: "", telefono: "", correo: "", direccion: "", banco: { nombre: "", cuenta: "", nota: "" }, activo: true, contratos: [contratoVacio()] });
   const [err, setErr] = useState("");
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -78,7 +78,14 @@ export function ContratistaForm({ inicial, todos, onGuardar, onCancelar, guardan
           <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Código</span><input value={c.codigo} onChange={e => uc(c.id, "codigo", e.target.value.toUpperCase())} placeholder="SVSERV26-002" style={{ ...CTRL, fontFamily: "var(--mono)" }} /></label>
           <label style={{ display: "flex", flexDirection: "column", gap: 5, gridColumn: "span 2" }}><span style={LBL}>Servicio *</span><input value={c.servicio} onChange={e => uc(c.id, "servicio", e.target.value)} placeholder="Servicio de vigilancia nocturna" style={CTRL} /></label>
           <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Rol</span><input value={c.rol || ""} onChange={e => uc(c.id, "rol", e.target.value)} placeholder="Motorista" style={CTRL} /></label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Proyecto</span><input value={c.proyecto || ""} onChange={e => uc(c.id, "proyecto", e.target.value)} placeholder="SE-30-3-10 Estudio Sky Park" style={CTRL} /></label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Ubicación / proyecto</span>
+            {proyectos.length
+              ? <select value={c.proyecto || ""} onChange={e => uc(c.id, "proyecto", e.target.value)} style={CTRL}>
+                <option value="">Sin ubicación</option>
+                {proyectos.map(pr => <option key={pr.short} value={pr.short}>{pr.short}{pr.code && pr.code !== pr.short ? ` · ${pr.code}` : ""}</option>)}
+                {c.proyecto && !proyectos.some(pr => pr.short === c.proyecto) && <option value={c.proyecto}>{c.proyecto}</option>}
+              </select>
+              : <input value={c.proyecto || ""} onChange={e => uc(c.id, "proyecto", e.target.value)} style={CTRL} />}</label>
           <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Se paga</span><select value={c.modo || "dia"} onChange={e => uc(c.id, "modo", e.target.value)} style={CTRL}><option value="dia">Por día</option><option value="unidad">Por unidad</option></select></label>
           {c.modo === "unidad" && <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Unidad</span><input value={c.unidad || ""} onChange={e => uc(c.id, "unidad", e.target.value)} placeholder="metro, sondeo…" style={CTRL} /></label>}
           <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>{c.modo === "unidad" ? `Tarifa por ${c.unidad || "unidad"} (${MONEDA}) *` : `Tarifa por día (${MONEDA}) *`}</span><input value={c.tarifa} onChange={e => uc(c.id, "tarifa", e.target.value.replace(/[^\d.]/g, ""))} inputMode="decimal" style={{ ...CTRL, fontFamily: "var(--mono)" }} /></label>
@@ -134,7 +141,7 @@ export const estimacionExcel = async ({ periodo, quincena, est }) => {
 };
 
 // ── Pantalla ──
-export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, soloLista = false, q: busqueda = "", onVolver }) {
+export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, soloLista = false, q: busqueda = "", proyectos = [], onVolver }) {
   // soloAsistencia: el PM (Edy) solo marca días y horas — no ve montos, ni la
   // lista de contratistas, ni exporta (eso es de RRHH / administración).
   const verMontos = !soloAsistencia;
@@ -149,6 +156,7 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
   const [guardando, setGuardando] = useState(false);
   const [form, setForm] = useState(null);     // {inicial} | null
   const [verInactivos, setVerInactivos] = useState(false);
+  const [ubic, setUbic] = useState("__todas__");   // filtro de ubicación en la asistencia
   const key = keyAsistContrat(q.periodo, q.quincena);
   const fechas = useMemo(() => diasQuincena(q.periodo, q.quincena), [q]);
 
@@ -237,7 +245,7 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
   </div>;
 
   const modal = form && <Modal title={form.inicial ? "Editar contratista" : "Nuevo contratista"} onClose={() => !guardando && setForm(null)} wide fondoCierra={false}>
-    <ContratistaForm inicial={form.inicial} todos={lista} guardando={guardando} onCancelar={() => setForm(null)} onGuardar={guardarContratista} />
+    <ContratistaForm inicial={form.inicial} todos={lista} proyectos={proyectos} guardando={guardando} onCancelar={() => setForm(null)} onGuardar={guardarContratista} />
   </Modal>;
 
   if (vista === "lista" && verMontos) {
@@ -278,6 +286,9 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
 
   // ── Asistencia de la quincena ──
   const reg = (id) => local.registros?.[id] || {};
+  // Dividida por ubicación (13-nov-2026, Gerson): un grupo por proyecto.
+  const ubicaciones = Object.entries(contratos.reduce((m, { c }) => { const u = c.proyecto || ""; m[u] = (m[u] || 0) + 1; return m; }, {})).sort((a, b) => String(a[0] || "~").localeCompare(String(b[0] || "~"), "es"));
+  const gruposUbic = ubicaciones.filter(([u]) => ubic === "__todas__" || ubic === u).map(([u]) => [u, contratos.filter(({ c }) => (c.proyecto || "") === u)]);
   const cel = { width: isMobile ? 30 : 34, minWidth: isMobile ? 30 : 34, height: 30, borderRadius: 8, border: "1px solid rgba(44,42,40,.10)", font: "700 12.5px/1 var(--sans)", display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" };
   const colorDia = (v) => v === 1 ? { background: "rgba(62,142,90,.14)", color: "#1F6B3C" } : v === 0.5 ? { background: "rgba(232,118,45,.14)", color: ORANGE_DARK } : v === 2 ? { background: "rgba(31,79,140,.12)", color: "#1F4F8C" } : v === 0 ? { background: "rgba(192,57,43,.10)", color: "#B03024" } : { background: "rgba(255,255,255,.85)", color: "#A39C92" };
   const todosVinieron = (id) => editar(l => fechas.reduce((acc, f) => diaSem(f) === 0 ? acc : ponerDia(acc, id, f, (acc.registros?.[id]?.dias || {})[f] ?? 1), l));
@@ -294,7 +305,17 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
       <span style={{ fontSize: 11.5, color: "#8A847D" }}>Tocá el día: 1 · ½ · 2 (doble) · 0 (no vino) · vacío</span>
     </div>
     {contratos.length === 0 && <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>No hay contratos activos. Agregalos en la pestaña Contratistas.</div>}
-    {contratos.map(({ p, c }) => {
+    {ubicaciones.length > 1 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <button type="button" style={pill(ubic === "__todas__")} onClick={() => setUbic("__todas__")}>Todas {contratos.length}</button>
+      {ubicaciones.map(([u, n]) => <button key={u} type="button" style={pill(ubic === u)} onClick={() => setUbic(u)}>{u || "Sin ubicación"} {n}</button>)}
+    </div>}
+    {gruposUbic.map(([u, filas]) => <div key={u} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ display: "flex", alignItems: "baseline", gap: 10, margin: "4px 2px 0" }}>
+      <span style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>{u || "Sin ubicación"}</span>
+      <span style={{ font: "600 13px/1 var(--sans)", color: "#A39C92" }}>{filas.length} {filas.length === 1 ? "contrato" : "contratos"}</span>
+      {verMontos && <span style={{ marginLeft: "auto", font: "700 13px/1 var(--sans)", color: "#5C5853" }}>{fmt$(filas.reduce((a, { c }) => a + liquidarContrato(c, reg(c.id)).liqX, 0))}</span>}
+    </div>
+    {filas.map(({ p, c }) => {
       const r = reg(c.id), liq = liquidarContrato(c, r);
       return <div key={c.id} className="gt-vidrio" style={{ padding: isMobile ? 12 : "14px 18px" }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
@@ -329,6 +350,7 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
           </div>}
       </div>;
     })}
+    </div>)}
     {contratos.length > 0 && verMontos && <div className="gt-vidrio" style={{ padding: isMobile ? 14 : "14px 18px", display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
       <div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL, flex: 1, minWidth: 180 }}>Estimación de pago<div style={{ fontSize: 12, fontWeight: 500, color: "#6E6862", marginTop: 3 }}>{est.filas.length} contratos · {est.personas} personas</div></div>
       <div style={{ textAlign: "right" }}><div style={{ font: "700 14px/1 var(--sans)" }}>{fmt$(est.suma)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>suma global</div></div>
