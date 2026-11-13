@@ -54,6 +54,32 @@ const columnas = (ley) => [
   { k: "pago", t: "Pago", w: 15, al: "center", v: (l) => ({ transferencia: "Transf.", cheque: "Cheque", ach: "ACH" }[l.metodoPago || "transferencia"]) },
 ];
 
+// El Salvador (13-nov-2026): calca la planilla de la Lic. Diana Calles —
+// horas extras y vacación en la misma planilla, salario cotizable, aporte
+// patronal (informativo), monto sujeto a ISR y ISR · ISSS · AFP.
+const columnasSV = () => [
+  { k: "n", t: "N°", w: 6, al: "center", v: (l, i) => String(i + 1) },
+  { k: "nombre", t: "Colaborador", w: 50, al: "left" },
+  { k: "dias", t: "Días", w: 10, al: "center", v: (l) => diasMostrados(l) },
+  { k: "sb", t: "Sal. mensual", w: 18, al: "right", v: (l) => L(l.sb) },
+  { k: "ord", sec: "ing", t: "Salario", w: 18, al: "right", v: (l, i, t) => L(t.ordinario) },
+  { k: "he", sec: "ing", t: "Horas extras", w: 18, al: "right", v: (l) => { const h = (l.heSV?.diurnas || 0) + (l.heSV?.nocturnas || 0); return h ? `${nf(h, 1)} h · ${nf(l.heSV.monto)}` : "-"; } },
+  { k: "vac", sec: "ing", t: "Vacación", w: 15, al: "right", v: (l) => L(l.vacacion) },
+  { k: "oi", sec: "ing", t: "Otros ing.", w: 15, al: "right", v: (l, i, t) => L(t.extrasIng + (l.bq || 0) + (l.bonoFeriado || 0) + (l.bonoDomingo || 0)) },
+  { k: "asis", sec: "ded", t: "Asistencia", w: 15, al: "right", v: (l, i, t) => t.dedAsist ? `-${nf(t.dedAsist)}` : "-", color: ROJO },
+  { k: "cot", sec: "pat", t: "Sal. cotizable", w: 18, al: "right", v: (l) => L(l.cotizable) },
+  { k: "pafp", sec: "pat", t: "AFP patronal", w: 15, al: "right", v: (l) => L(l.patronal?.afp) },
+  { k: "pisss", sec: "pat", t: "ISSS patronal", w: 15, al: "right", v: (l) => L(l.patronal?.isss) },
+  { k: "suj", sec: "pat", t: "Sujeto a ISR", w: 17, al: "right", v: (l) => L(l.sujetoIsr) },
+  { k: "isr", sec: "ded2", t: "ISR", w: 15, al: "right", v: (l) => L(l.isr) },
+  { k: "isss", sec: "ded2", t: "ISSS", w: 14, al: "right", v: (l) => L(l.isss) },
+  { k: "afp", sec: "ded2", t: "AFP", w: 14, al: "right", v: (l) => L(l.afp) },
+  { k: "od", sec: "ded2", t: "Otras ded.", w: 15, al: "right", v: (l, i, t) => L(t.extrasDed + (l.coop || 0)) },
+  { k: "td", sec: "ded2", t: "Total desc.", w: 17, al: "right", v: (l, i, t) => L(t.deducciones), color: ROJO },
+  { k: "neto", sec: "neto", t: "Líquido", w: 21, al: "right", v: (l, i, t) => Lsiempre(t.neto), bold: true },
+  { k: "pago", t: "Pago", w: 13, al: "center", v: (l) => ({ transferencia: "Transf.", cheque: "Cheque", ach: "ACH" }[l.metodoPago || "transferencia"]) },
+];
+
 // Pastel por sección (30-oct-2026, Gerson: "colorcitos pasteles en ingresos y
 // deducciones, el neto en otro color, que no sea tan blanco"): los mismos tonos
 // del Excel — ingresos verde menta, deducciones rosa, neto naranja.
@@ -63,6 +89,8 @@ const BAJA_FONDO = [255, 241, 204], BAJA_TINTA = [146, 94, 0];
 const SEC_PDF = {
   ing: { t: "Ingresos", head: [213, 239, 221], cell: [243, 250, 245], tinta: [31, 107, 60] },
   ded: { t: "Deducciones", head: [249, 222, 219], cell: [253, 245, 244], tinta: [154, 42, 30] },
+  pat: { t: "Seguridad social (informativo)", head: [220, 232, 248], cell: [245, 248, 253], tinta: [31, 79, 140] },
+  ded2: { t: "Descuentos de ley", head: [249, 222, 219], cell: [253, 245, 244], tinta: [154, 42, 30] },
   neto: { t: "A pagar", head: [251, 217, 191], cell: [253, 238, 225], tinta: [169, 78, 22] },
 };
 
@@ -79,7 +107,8 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
   const rr = (x, y, w, h, r, st = "F") => doc.roundedRect(x, y, Math.max(0.1, w), Math.max(0.1, h), r, r, st);
   const recortar = (s, w) => { let t = latin1(s); if (P.ancho(t) <= w) return t; while (t.length > 1 && P.ancho(t + "...") > w) t = t.slice(0, -1); return t.trimEnd() + "..."; };
   const res = resumenPlanilla(lines);
-  const ley = quincena === "2Q";
+  const sv = lines.some(l => l.pais === "sv");
+  const ley = sv || quincena === "2Q";
   const ctx = { y: 0 };
   const titulo = esHe ? "Planilla de horas extras" : "Planilla de sueldos y salarios";
   // Horas extras (31-oct-2026, Gerson): el reporte se titula con la quincena
@@ -165,7 +194,7 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     const linea2 = [];
     if (esHe) linea2.push(meta.heDe ? `Horas trabajadas en la ${nombreQuincena(meta.heDe.periodo, meta.heDe.quincena).toLowerCase()} (${rangoQuincena(meta.heDe.periodo, meta.heDe.quincena)}), pagadas con la quincena vencida` : "Sin hoja de horas extras de la quincena anterior");
     else {
-      linea2.push(ley ? "Segunda quincena: aplican IHSS, RAP e ISR" : "Primera quincena: sin deducciones de ley (van en la 2Q)");
+      linea2.push(sv ? "ISSS, AFP e ISR de la quincena · horas extras y vacación incluidas" : ley ? "Segunda quincena: aplican IHSS, RAP e ISR" : "Primera quincena: sin deducciones de ley (van en la 2Q)");
       if (res.nsp) linea2.push(`${res.nsp} días de NSP`);
       if (res.he) linea2.push(`Las horas extras (${Lsiempre(res.he)}) van en su propia planilla`);
     }
@@ -174,7 +203,7 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
   }
 
   // ── Tablas por grupo (planilla de salarios) ──
-  const cols = columnas(ley);
+  const cols = sv ? columnasSV() : columnas(ley);
   const bw = (CW - 8) / 3;
   const caja = (x, tit, filas, destacar) => {
     const h = 10 + filas.length * 6.2 + (destacar ? 2 : 0);
@@ -261,9 +290,14 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
       oi: L(sum((l, t) => t.extrasIng)), asis: (() => { const v = sum((l, t) => t.dedAsist); return v ? `-${nf(v)}` : "-"; })(),
       isr: L(sum(l => l.isr)), ihss: L(sum(l => l.ihss)), rap: L(sum(l => l.rap)), coop: L(sum(l => l.coop)), od: L(sum((l, t) => t.extrasDed)),
       td: L(sum((l, t) => t.deducciones)), neto: Lsiempre(g.neto), pago: "",
+      he: L(sum(l => l.heSV?.monto || 0)), vac: L(sum(l => l.vacacion || 0)), cot: L(sum(l => l.cotizable || 0)),
+      pafp: L(sum(l => l.patronal?.afp || 0)), pisss: L(sum(l => l.patronal?.isss || 0)), suj: L(sum(l => l.sujetoIsr || 0)),
+      isss: L(sum(l => l.isss || 0)), afp: L(sum(l => l.afp || 0)),
+      ...(sv ? { oi: L(sum((l, t) => t.extrasIng + (l.bq || 0) + (l.bonoFeriado || 0) + (l.bonoDomingo || 0))), od: L(sum((l, t) => t.extrasDed + (l.coop || 0))) } : {}),
     };
     pintarSecciones(ctx.y + 0.4, 7, "head");
     cols.forEach((c, ci) => celda(ci, tot[c.k] ?? "", ctx.y + 4.7, { al: c.al, bold: true, color: c.k === "asis" || c.k === "td" ? ROJO : CARBON, fs: 7 }));
+    if (sv) { ctx.y += 7; P.f(6.5); P.tc(GRIS); P.t(`Aporte patronal (lo paga la empresa, no se descuenta): AFP ${Lsiempre(sum(l => l.patronal?.afp || 0))} · ISSS ${Lsiempre(sum(l => l.patronal?.isss || 0))}`, M, ctx.y + 4); }
     ctx.y += 7 + 8;
   });
 
@@ -506,6 +540,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     asis: { t: "Asistencia de la quincena", head: "FFDCE8F8", cell: "FFF5F8FD", alt: "FFEBF1FA", tinta: "FF1F4F8C" },
     ing: { t: "Ingresos", head: "FFD5EFDD", cell: "FFF3FAF5", alt: "FFE7F4EB", tinta: "FF1F6B3C" },
     ded: { t: "Deducciones", head: "FFF9DEDB", cell: "FFFDF5F4", alt: "FFFAEAE8", tinta: "FF9A2A1E" },
+    pat: { t: "Seguridad social (informativo)", head: "FFDCE8F8", cell: "FFF5F8FD", alt: "FFEBF1FA", tinta: "FF1F4F8C" },
     pagar: { t: "A pagar", head: "FFFBD9BF", cell: "FFFDF2E9", alt: "FFFBE8D9", tinta: NAR_T },
   };
   const tipoTxt = { permanent: "Permanente", temporary: "Temporal", honorarios: "Honorarios" };
@@ -564,7 +599,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   cabeceraHoja(ws, { desde: "C", hasta: C.dias.L, ultima: ULT }, [
     empresa, subtitulo,
     `${nombreQuincena(periodo, quincena)} · ${rangoQuincena(periodo, quincena)}`,
-    estadoTxt(cierre ? " · las horas extras van en su propia planilla" : ""),
+    estadoTxt(cierre && !sv ? " · las horas extras van en su propia planilla" : ""),
   ]);
   tile(ws, C.coop.L, C.od.L, "Colaboradores", linesHoja.length);
   tile(ws, C.tded.L, C.neto.L, cierre ? "Total a pagar" : "Total honorarios", netoDe(linesHoja), { naranja: true, fmt: FMT_L });
@@ -572,6 +607,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   const blancoFino = { style: "thin", color: { argb: BLANCO } };
   Object.entries(SEC).forEach(([k, s]) => {
     const cs = COLS.filter(c => c.sec === k);
+    if (!cs.length) return;
     ws.mergeCells(5, cs[0].i, 5, cs[cs.length - 1].i);
     const c = ws.getCell(5, cs[0].i); c.value = s.t.toUpperCase();
     c.font = ft({ size: 9.5, bold: true, color: { argb: s.tinta } }); c.alignment = { horizontal: "center", vertical: "middle" };
@@ -668,7 +704,35 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
   return ws;
   };
   const porK = Object.fromEntries(COLS.map(c => [c.k, c]));
-  const colsSal = COLS;
+  const sv = lines.some(l => l.pais === "sv");
+  // El Salvador (13-nov-2026): las columnas de la planilla de la Lic. Diana.
+  const colsSV = [
+    "n", "nombre",
+    { k: "dni", h: "DUI", w: 13, sec: "col", v: (l) => l.dni || "" },
+    "cargo",
+    { k: "afpN", h: "AFP", w: 10, sec: "col", v: (l) => l.afpNombre || "" },
+    { k: "isssN", h: "No. ISSS", w: 12, sec: "col", v: (l) => l.isssNum || "" },
+    { k: "nup", h: "No. AFP (NUP)", w: 15, sec: "col", v: (l) => l.nup || "" },
+    "sb", "sd",
+    "dias", "nsp", "vac",
+    { k: "heD", h: "Horas extras diurnas", w: 10, sec: "asis", fmt: "h", v: (l) => n0(l.heSV?.diurnas) },
+    { k: "heN", h: "Horas extras nocturnas", w: 10, sec: "asis", fmt: "h", v: (l) => n0(l.heSV?.nocturnas) },
+    { ...porK.ord, h: "Salario" },
+    { k: "heL", h: "Monto horas", w: 12, sec: "ing", fmt: "L", ingreso: true, v: (l) => n0(l.heSV?.monto) },
+    { k: "vacL", h: "Vacación", w: 12, sec: "ing", fmt: "L", ingreso: true, v: (l) => n0(l.vacacion) },
+    "bq", "ferL", "oi", { ...porK.ting, h: "Total devengado" },
+    { k: "cot", h: "Salario cotizable", w: 14, sec: "pat", fmt: "L", v: (l) => n0(l.cotizable) },
+    { k: "pafp", h: "AFP patronal (8.75 %)", w: 13, sec: "pat", fmt: "L", v: (l) => n0(l.patronal?.afp) },
+    { k: "pisss", h: "ISSS patronal (7.5 %)", w: 13, sec: "pat", fmt: "L", v: (l) => n0(l.patronal?.isss) },
+    { k: "suj", h: "Monto sujeto a ISR", w: 14, sec: "pat", fmt: "L", v: (l) => n0(l.sujetoIsr) },
+    "nspL", "tardeL",
+    { k: "isssL", h: "ISSS (3 %)", w: 11, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.isss) },
+    { k: "afpL", h: "AFP (7.25 %)", w: 11, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.afp) },
+    { ...porK.isr, ley: false },
+    "coop", "od", { ...porK.tded, h: "Total descuentos" },
+    { ...porK.neto, h: "Líquido a pagar" }, "metodo", "nota",
+  ].map(x => typeof x === "string" ? porK[x] : x);
+  const colsSal = sv ? colsSV : COLS;
   const colsHon = [
     "n", "nombre",
     { k: "dni", h: "DNI", w: 17, sec: "col", v: (l) => l.dni || "" },
@@ -681,7 +745,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     { ...porK.isr, ley: false },
     "coop", "od", "tded", "neto", "metodo", "nota",
   ].map(x => typeof x === "string" ? porK[x] : x);
-  armarHoja("Planilla", "Planilla de sueldos y salarios", colsSal, grupos.filter(g => !g.hon), { cierre: true, ocultarLey: !ley });
+  armarHoja("Planilla", "Planilla de sueldos y salarios", colsSal, grupos.filter(g => !g.hon), { cierre: true, ocultarLey: !ley && !sv });
   if (linesHon.length) armarHoja("Honorarios", "Planilla de honorarios profesionales", colsHon, grupos.filter(g => g.hon));
 
   // Hoja resumen por proyecto

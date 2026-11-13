@@ -1,4 +1,5 @@
-import { MONEDA } from "./operacion.js";
+import { MONEDA, OPERACION } from "./operacion.js";
+import { deduccionesSV, horasExtrasSV, primaVacacion, r2 as r2sv } from "./planilla-sv.js";
 // ═══════════════════════════════════════════════════════════════════════════
 // GeoTeam — PLANILLA (16-oct-2026). Lógica PURA, sin React ni store: Node la
 // prueba en tests/planilla-calc.test.mjs. Calca el Excel con el que la Lic.
@@ -264,7 +265,8 @@ export const entraEnPlanilla = (emp, periodo, quincena) => {
  * Arma la línea v3. he = horasExtrasDe(...) | null; bonosExtra = monto
  * MENSUAL de bonificaciones extra activas (módulo Bonificaciones).
  */
-export const armarLinea = ({ emp, periodo, quincena, asistencia, he = null, bonosExtra = 0, recordado = {} }) => {
+export const armarLinea = ({ emp, periodo, quincena, asistencia, he = null, bonosExtra = 0, recordado = {}, pais = OPERACION }) => {
+  if (pais === "sv") return armarLineaSV({ emp, periodo, quincena, asistencia, bonosExtra, recordado });
   const a = asistencia;
   const sb = num(emp.salary), bn = num(emp.bonificacion) + num(bonosExtra);
   // El diario se usa SIN redondear en las multiplicaciones (como =J/30 en
@@ -313,8 +315,86 @@ export const armarLinea = ({ emp, periodo, quincena, asistencia, he = null, bono
   };
 };
 
+// ── EL SALVADOR (13-nov-2026) ─────────────────────────────────────────────
+// Misma línea, otras reglas (planilla-sv.js): ISSS + AFP + ISR CADA quincena
+// sobre el salario cotizable, recargo de vacación y horas extras de la MISMA
+// quincena (diurnas/nocturnas, se escriben en la línea). Feriado trabajado =
+// pago doble (+1 diario) y descanso semanal trabajado +50 % (+0.5 diario).
+// Sin regla de incapacidad de Honduras (IHSS 34 %): se ajusta con extras.
+export const SV_FERIADO_EXTRA = 1;
+export const SV_DESCANSO_EXTRA = 0.5;
+const armarLineaSV = ({ emp, periodo, quincena, asistencia, bonosExtra = 0, recordado = {} }) => {
+  const a = asistencia;
+  const sb = num(emp.salary), bn = num(emp.bonificacion) + num(bonosExtra);
+  const sdx = sb / 30, sd = r2(sdx);
+  const completa = a.diasFueraRango === 0;
+  let ordinario = sb / 2;
+  if (!completa) ordinario = Math.min(sb / 2, sdx * a.diasEfectivos);
+  ordinario = r2(ordinario);
+  const l = {
+    id: `${emp.id}-${periodo}-${quincena}`, pais: "sv",
+    eid: emp.id, name: emp.fullName, pos: emp.position || "", dni: emp.dni || "", fc: emp.startDate || "",
+    baja: emp.status === "inactive" && emp.endDate ? emp.endDate : "",
+    ct: emp.contractType, company: emp.company, grupo: grupoDe(emp.company, emp.contractType),
+    proj: asistencia.baseProj || "", projDays: a.projDays,
+    metodoPago: emp.metodoPago || recordado.metodoPago || "transferencia",
+    // Datos de la hoja de la Lic. Diana (AFP, NIT, ISSS, NUP).
+    afpNombre: emp.afp || "", nit: emp.nit || "", isssNum: emp.isss || "", nup: emp.nup || "",
+    sinIsss: !!emp.sinIsss, sinAfp: !!emp.sinAfp, sinIsr: !!emp.sinIsr,
+    sb, bn, sd,
+    totalDays: a.totalDays, diasEfectivos: a.diasEfectivos, diasFueraRango: a.diasFueraRango,
+    diasPresente: a.presentes, diasPresenteEfectivo: a.presentesEfectivo,
+    diasNSP: a.nsp, diasIncap: a.inc, diasIncapIhss: 0, diasVac: a.vac, domTrab: a.dt + a.dt2, domTrabTriple: 0, ferTrab: a.tf,
+    tardes: a.tardes, horasTarde: a.horasTarde, sinAsistencia: !a.conDatos,
+    ordinario, descuentoNSP: r2(a.nsp * sdx), descuentoHoras: r2(a.descuentoHorasFraccion * sdx), descuentoIncap: 0,
+    bq: r2(bn / 2),
+    bonoDomingo: r2((a.dt + a.dt2) * SV_DESCANSO_EXTRA * sdx),
+    bonoFeriado: r2(a.tf * SV_FERIADO_EXTRA * sdx),
+    vacacion: primaVacacion(sb, a.vac),
+    heSV: horasExtrasSV(sb, recordado.heDiurnas, recordado.heNocturnas),
+    he: null,
+    extras: [],
+    aplicaLey: true, ihss: 0, rap: 0,
+    coop: r2(emp.cooperativa),
+    nota: "",
+    payrollVersion: PLANILLA_VERSION,
+  };
+  return conLeySV(l);
+};
+/** Cuentas de El Salvador de una línea: cotizable, ISSS, AFP, ISR y patronal. */
+export const cuentasSV = (l) => {
+  const extras = Array.isArray(l.extras) ? l.extras : [];
+  const extrasIng = extras.filter(x => x.tipo === "ingreso").reduce((s, x) => s + num(x.monto), 0);
+  const dedAsist = num(l.descuentoNSP) + num(l.descuentoHoras) + num(l.descuentoIncap);
+  const heMonto = num(l.heSV?.monto);
+  const cotizable = num(l.ordinario) - dedAsist + num(l.bq) + num(l.bonoDomingo) + num(l.bonoFeriado) + num(l.vacacion) + heMonto + extrasIng;
+  return { ...deduccionesSV(cotizable, { sinIsss: l.sinIsss, sinAfp: l.sinAfp, sinIsr: l.sinIsr }), heMonto: r2(heMonto), extrasIng: r2(extrasIng) };
+};
+/** Recalcula ISSS / AFP / ISR / patronal de la línea (llamar tras cada edición). */
+export const conLeySV = (l) => {
+  if (l?.pais !== "sv") return l;
+  const heSV = horasExtrasSV(l.sb, l.heSV?.diurnas, l.heSV?.nocturnas);
+  const base = { ...l, heSV };
+  const c = cuentasSV(base);
+  return { ...base, cotizable: c.cotizable, isss: c.isss, afp: c.afp, sujetoIsr: c.sujetoIsr, isr: c.isr, patronal: c.patronal };
+};
+
 /** Totales de una línea (v3 o vieja v2). */
 export const totalesLinea = (l) => {
+  if (l?.pais === "sv") {
+    const c = cuentasSV(l);
+    const extrasDed = r2((l.extras || []).filter(x => x.tipo === "deduccion").reduce((s, x) => s + num(x.monto), 0));
+    const ordinario = num(l.ordinario);
+    const ingresos = r2(num(l.bq) + num(l.bonoDomingo) + num(l.bonoFeriado) + num(l.vacacion) + c.heMonto + c.extrasIng);
+    const dedAsist = r2(num(l.descuentoNSP) + num(l.descuentoHoras) + num(l.descuentoIncap));
+    const dedLey = r2(c.total + num(l.coop));
+    const deduccionesX = c.totalX + num(l.coop) + extrasDed + dedAsist;
+    const deducciones = r2sv(deduccionesX);
+    // Líquido calcado del Excel: cotizable − ISSS − AFP − ISR (sin redondeos intermedios).
+    const netoX = c.liquidoX - num(l.coop) - extrasDed;
+    const neto = r2sv(netoX);
+    return { ordinario, extrasIng: c.extrasIng, extrasDed, heMonto: 0, heIncluido: c.heMonto, ingresos, dedLey, dedAsist, deducciones, neto, bruto: r2(ordinario + ingresos), salarioSinHe: neto, totalConHe: neto, netoX, deduccionesX, sv: c };
+  }
   const v3 = (l.payrollVersion || 0) >= 3 || l.ordinario != null;
   const extras = Array.isArray(l.extras) ? l.extras : [];
   const extrasIng = r2(extras.filter(x => x.tipo === "ingreso").reduce((s, x) => s + num(x.monto), 0));
@@ -335,7 +415,8 @@ export const totalesLinea = (l) => {
 };
 
 /** Línea lista para guardar: suma los campos "clásicos" (o1, otros, so, tDed, tOtros, neto) para lo que aún los lee. */
-export const lineaParaGuardar = (l) => {
+export const lineaParaGuardar = (l0) => {
+  const l = conLeySV(l0);
   const t = totalesLinea(l);
   return { ...l, o1: t.extrasIng, o2: 0, otros: t.extrasDed, so: r2(t.ordinario - t.dedAsist), tOtros: t.ingresos, tDed: r2(t.dedLey + t.extrasDed), neto: t.neto, payrollVersion: PLANILLA_VERSION };
 };
@@ -347,8 +428,8 @@ export const resumenPlanilla = (lines) => {
   METODOS_PAGO.forEach(([k, label]) => { out.porMetodo[k] = { label, n: 0, neto: 0 }; });
   lines.forEach(l => {
     const t = totalesLinea(l);
-    out.ordinario += t.ordinario; out.ingresos += t.ingresos; out.deducciones += t.deducciones;
-    out.he += t.heMonto; out.heHrs += num(l.he?.hrs); out.neto += t.neto; out.salarios += t.neto; out.nsp += num(l.diasNSP);
+    out.ordinario += t.ordinario; out.ingresos += t.ingresos; out.deducciones += t.deduccionesX ?? t.deducciones;
+    out.he += t.heMonto; out.heHrs += num(l.he?.hrs); out.neto += t.netoX ?? t.neto; out.salarios += t.netoX ?? t.neto; out.nsp += num(l.diasNSP);
     if (t.heMonto > 0) {
       out.hePersonas++;
       const hk = l.metodoPago || "transferencia";
@@ -356,20 +437,21 @@ export const resumenPlanilla = (lines) => {
       hm.n++; hm.monto += t.heMonto;
     }
     const g = out.porGrupo[l.ct] || (out.porGrupo[l.ct] = { label: l.ct, n: 0, neto: 0 });
-    g.n++; g.neto += t.neto;
+    g.n++; g.neto += t.netoX ?? t.neto;
     const mk = l.metodoPago || "transferencia";
     const m = out.porMetodo[mk] || (out.porMetodo[mk] = { label: mk, n: 0, neto: 0 });
-    m.n++; m.neto += t.neto;
+    m.n++; m.neto += t.netoX ?? t.neto;
     const pd = l.projDays || {};
     const dias = Object.values(pd).reduce((s, d) => s + d, 0);
     if (dias > 0) Object.entries(pd).forEach(([p, d]) => { out.porProyecto[p] = r2((out.porProyecto[p] || 0) + t.neto * d / dias); });
     else if (l.proj) out.porProyecto[l.proj] = r2((out.porProyecto[l.proj] || 0) + t.neto);
   });
-  ["ordinario", "ingresos", "deducciones", "he", "heHrs", "neto", "salarios"].forEach(k => { out[k] = r2(out[k]); });
+  ["ordinario", "ingresos", "he", "heHrs"].forEach(k => { out[k] = r2(out[k]); });
+  ["neto", "salarios", "deducciones"].forEach(k => { out[k] = r2sv(out[k]); });
   out.totalGeneral = r2(out.neto + out.he);
   Object.values(out.hePorMetodo).forEach(g => { g.monto = r2(g.monto); });
-  Object.values(out.porGrupo).forEach(g => { g.neto = r2(g.neto); });
-  Object.values(out.porMetodo).forEach(g => { g.neto = r2(g.neto); });
+  Object.values(out.porGrupo).forEach(g => { g.neto = r2sv(g.neto); });
+  Object.values(out.porMetodo).forEach(g => { g.neto = r2sv(g.neto); });
   return out;
 };
 
@@ -419,6 +501,26 @@ export const conceptosVoucher = (l) => {
     { concepto: `Feriados trabajados${l.ferTrab ? ` (${l.ferTrab})` : ""}`, monto: num(l.bonoFeriado) },
     ...(l.extras || []).filter(x => x.tipo === "ingreso").map(x => ({ concepto: x.concepto || "Otro ingreso", monto: num(x.monto) })),
   ].filter((r, i) => i === 0 || r.monto > 0);
+  if (l.pais === "sv") {
+    const hs = num(l.heSV?.diurnas) + num(l.heSV?.nocturnas);
+    ing.splice(1, 0,
+      { concepto: `Horas extras${hs ? ` (${hs} h)` : ""}`, monto: num(l.heSV?.monto) },
+      { concepto: "Vacación (recargo 30 %)", monto: num(l.vacacion) });
+    const dedSV = [
+      { concepto: `No se presentó${l.diasNSP ? ` (${pl(l.diasNSP, "día", "días")})` : ""}`, monto: num(l.descuentoNSP) },
+      { concepto: `Llegadas tarde${l.tardes ? ` (${l.tardes})` : ""}`, monto: num(l.descuentoHoras) },
+      { concepto: "ISSS (3 %)", monto: num(l.isss) },
+      { concepto: `AFP (7.25 %)${l.afpNombre ? ` · ${l.afpNombre}` : ""}`, monto: num(l.afp) },
+      { concepto: "Impuesto sobre la renta (ISR)", monto: num(l.isr) },
+      { concepto: "Cooperativa", monto: num(l.coop) },
+      ...(l.extras || []).filter(x => x.tipo === "deduccion").map(x => ({ concepto: x.concepto || "Otra deducción", monto: num(x.monto) })),
+    ].filter(r => r.monto > 0);
+    return {
+      t, ingresos: ing.filter((r, i) => i === 0 || r.monto > 0), deducciones: dedSV, he: [],
+      diasPeriodo: num(l.totalDays), diasPagados: Math.max(0, r2(num(diasOrd) - num(l.diasNSP))),
+      totalIngresos: t.bruto, totalDeducciones: t.deducciones, neto: t.neto, heMonto: 0, totalConHe: t.neto,
+    };
+  }
   const ded = [
     { concepto: `No se presentó${l.diasNSP ? ` (${pl(l.diasNSP, "día", "días")})` : ""}`, monto: num(l.descuentoNSP) },
     { concepto: `Llegadas tarde${l.tardes ? ` (${l.tardes})` : ""}`, monto: num(l.descuentoHoras) },

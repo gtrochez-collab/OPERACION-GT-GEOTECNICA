@@ -14,7 +14,7 @@ import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, rProyecto
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES, USUARIOS_DE_BAJA } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
 // Planilla (16-oct-2026): lógica pura + PDF/Excel.
-import { diasDeQuincena, quincenaAnterior as quincenaAnteriorPl, quincenaSiguiente, nombreQuincena, rangoQuincena, etiquetaCorta, asistenciaDe, rachaIncapAlCierre, sumarAsistencias, esHonorarioMensual, horasExtrasDe, armarLinea, totalesLinea, lineaParaGuardar, resumenPlanilla, entraEnPlanilla, diasMostrados, lineasConHe, GRUPOS_CT, METODOS_PAGO, lineasVoucher, modalidadDe } from "./planilla-calc.js";
+import { diasDeQuincena, quincenaAnterior as quincenaAnteriorPl, quincenaSiguiente, nombreQuincena, rangoQuincena, etiquetaCorta, asistenciaDe, rachaIncapAlCierre, sumarAsistencias, esHonorarioMensual, horasExtrasDe, armarLinea, conLeySV, totalesLinea, lineaParaGuardar, resumenPlanilla, entraEnPlanilla, diasMostrados, lineasConHe, GRUPOS_CT, METODOS_PAGO, lineasVoucher, modalidadDe } from "./planilla-calc.js";
 import { exportarPlanillaPDF, exportarPlanillaExcel } from "./planilla-export.js";
 import { descargarVouchers } from "./voucher-pdf.js";
 // Hub de RRHH (20-oct-2026): portal "Mi RRHH" de cada colaborador + bandeja de
@@ -4538,7 +4538,8 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const attSheet = ca.find(a => a.periodo === periodo && a.quincena === quincena) || null;
     const cuad = cq.find(x => x.periodo === periodo && x.quincena === quincena) || null;
     const prev = quincenaAnteriorPl(periodo, quincena);
-    const heSheet = che.find(h => h.periodo === prev.periodo && h.quincena === prev.quincena) || null;
+    // El Salvador: las horas extras van en la MISMA quincena y se escriben en la línea.
+    const heSheet = esSV ? null : (che.find(h => h.periodo === prev.periodo && h.quincena === prev.quincena) || null);
     // Hoja anterior: una incapacidad que viene de ella sigue contando sus días.
     const attPrev = ca.find(a => a.periodo === prev.periodo && a.quincena === prev.quincena) || null;
     const ovr = Object.fromEntries(Object.entries(attSheet?.projOverrides || {}).map(([k, v]) => [k, resolveShortHR(v)]));
@@ -4566,7 +4567,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const decididas = new Set((Array.isArray(tds) ? tds : []).filter(t => t && (t.estado === "aprobada" || t.estado === "denegada")).map(t => t.markId));
       tardesPend = (Array.isArray(mks) ? mks : []).filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.tarde && !decididas.has(mk.id)).map(mk => `${mk.empNombre || "?"} · ${fmt(mk.fecha)}`);
     } catch { tardesPend = null; }
-    return { lines, heDe: heSheet ? { periodo: prev.periodo, quincena: prev.quincena } : null, heFaltante: !heSheet ? prev : null, sinAsistencia: !attSheet, sinCuadrilla: !cuad, tardesPend };
+    return { lines, heDe: heSheet ? { periodo: prev.periodo, quincena: prev.quincena } : null, heFaltante: !heSheet && !esSV ? prev : null, sinAsistencia: !attSheet, sinCuadrilla: !cuad, tardesPend };
   };
 
   const nuevaPlanilla = async (periodo, quincena) => {
@@ -4593,11 +4594,12 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const g = await generarLineasPlanilla(d.periodo, d.quincena);
       if (!g) return;
       const prev = Object.fromEntries((d.lines || []).map(l => [l.eid, l]));
-      g.lines = g.lines.map(l => { const p = prev[l.eid]; return p ? { ...l, extras: p.extras || [], nota: p.nota || "", isr: l.aplicaLey ? (p.isr ?? l.isr) : l.isr, metodoPago: p.metodoPago || l.metodoPago } : l; });
+      g.lines = g.lines.map(l => { const p = prev[l.eid]; if (!p) return l; if (l.pais === "sv") return conLeySV({ ...l, extras: p.extras || [], nota: p.nota || "", metodoPago: p.metodoPago || l.metodoPago, heSV: p.heSV || l.heSV, vacacion: p.vacacionManual ? p.vacacion : l.vacacion, vacacionManual: !!p.vacacionManual }); return { ...l, extras: p.extras || [], nota: p.nota || "", isr: l.aplicaLey ? (p.isr ?? l.isr) : l.isr, metodoPago: p.metodoPago || l.metodoPago }; });
       setPayDraft({ ...d, ...g });
     } finally { setPayBusy(false); }
   };
-  const upLinea = (id, fn) => setPayDraft(d => ({ ...d, lines: d.lines.map(l => l.id === id ? fn(l) : l) }));
+  // En El Salvador ISSS/AFP/ISR dependen de todo lo demás: se recalculan en cada edición.
+  const upLinea = (id, fn) => setPayDraft(d => ({ ...d, lines: d.lines.map(l => l.id === id ? conLeySV(fn(l)) : l) }));
 
   // Guardado robusto: getCloud → reemplazar por id → set → verify.
   const guardarPlanilla = async (estado) => {
@@ -4724,7 +4726,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         </div>
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>Siguiente: {nombreQuincena(sug.periodo, sug.quincena)}</div>
-          <div style={{ font: "500 12.5px/1.4 var(--sans)", color: "#6E6862", marginTop: 3 }}>{asistSug ? "La asistencia ya está registrada." : "Todavía no hay asistencia registrada: se pagaría completa, sin NSP ni feriados."} Horas extras de {etiquetaCorta(quincenaAnteriorPl(sug.periodo, sug.quincena).periodo, quincenaAnteriorPl(sug.periodo, sug.quincena).quincena)}.</div>
+          <div style={{ font: "500 12.5px/1.4 var(--sans)", color: "#6E6862", marginTop: 3 }}>{asistSug ? "La asistencia ya está registrada." : "Todavía no hay asistencia registrada: se pagaría completa, sin NSP ni feriados."}{esSV ? " Las horas extras de la quincena se ponen en cada colaborador." : ` Horas extras de ${etiquetaCorta(quincenaAnteriorPl(sug.periodo, sug.quincena).periodo, quincenaAnteriorPl(sug.periodo, sug.quincena).quincena)}.`}</div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input type="month" value={payPer || sug.periodo} onChange={e => setPayPer(e.target.value)} style={{ ...PAY_IN, width: 150, textAlign: "left", fontWeight: 600 }} aria-label="Otro mes" />
@@ -4843,6 +4845,10 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       <span style={{ font: "500 12.5px/1.3 var(--sans)", color: "#6E6862", minWidth: 0 }}>{l}{sub && <span style={{ display: "block", font: "400 11px/1.3 var(--sans)", color: "#A39C92" }}>{sub}</span>}</span>
       {editable ? <input type="number" step="0.01" value={value} onChange={e => onChange(e.target.value === "" ? 0 : Number(e.target.value))} style={PAY_IN} /> : <span style={{ font: "700 13px/1.3 var(--sans)", color: CHARCOAL }}>{fmtL(value)}</span>}
     </div>;
+    const datoHoras = (l, value, onChange, sub) => <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "5px 0", borderBottom: "1px solid rgba(44,42,40,.06)" }}>
+      <span style={{ font: "500 12.5px/1.3 var(--sans)", color: "#6E6862", minWidth: 0 }}>{l}{sub && <span style={{ display: "block", font: "400 11px/1.3 var(--sans)", color: "#A39C92" }}>{sub}</span>}</span>
+      {editable ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><input type="number" step="0.5" min="0" value={value || ""} placeholder="0" onChange={e => onChange(e.target.value === "" ? 0 : Math.max(0, Number(e.target.value)))} style={{ ...PAY_IN, width: 70 }} /><span style={{ font: "500 11.5px/1 var(--sans)", color: "#A39C92" }}>h</span></span> : <span style={{ font: "700 13px/1.3 var(--sans)", color: CHARCOAL }}>{value || 0} h</span>}
+    </div>;
     const extrasDe = (l, tipo) => (l.extras || []).filter(x => x.tipo === tipo);
     const nuevoExtra = (l, tipo) => {
       const n = payNuevo && payNuevo.id === l.id && payNuevo.tipo === tipo ? payNuevo : null;
@@ -4898,8 +4904,13 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
               <div className="gt-label" style={{ color: "#3E8E5A", fontSize: 9, marginBottom: 4 }}>Ingresos</div>
               {dato(l.ct === "honorarios" ? "Honorarios" : "Salario ordinario", fmtL(t.ordinario))}
               {datoInput("Bonificación", l.bq, v => upLinea(l.id, x => ({ ...x, bq: v })), { sub: `${fmtL(l.bn)} al mes` })}
-              {l.bonoFeriado > 0 && dato(`Feriados trabajados ×${l.ferTrab} (dos diarios c/u)`, fmtL(l.bonoFeriado))}
-              {l.bonoDomingo > 0 && dato(`Domingos trabajados ×${l.domTrab}${l.domTrabTriple ? ` + ${l.domTrabTriple} triple` : ""}`, fmtL(l.bonoDomingo))}
+              {l.pais === "sv" && <>
+                {datoInput("Vacación (recargo 30 %)", l.vacacion, v => upLinea(l.id, x => ({ ...x, vacacion: v, vacacionManual: true })), { sub: l.diasVac ? `${l.diasVac} días de vacación en la asistencia` : "30 % de los días de vacación" })}
+                {datoHoras("Horas extras diurnas", l.heSV?.diurnas, v => upLinea(l.id, x => ({ ...x, heSV: { ...(x.heSV || {}), diurnas: v } })), `×2 · ${fmtL(l.heSV?.montoDiurnas || 0)}`)}
+                {datoHoras("Horas extras nocturnas", l.heSV?.nocturnas, v => upLinea(l.id, x => ({ ...x, heSV: { ...(x.heSV || {}), nocturnas: v } })), `×2.5 · ${fmtL(l.heSV?.montoNocturnas || 0)}`)}
+              </>}
+              {l.bonoFeriado > 0 && dato(`Feriados trabajados ×${l.ferTrab} (${l.pais === "sv" ? "pago doble" : "dos diarios c/u"})`, fmtL(l.bonoFeriado))}
+              {l.bonoDomingo > 0 && dato(l.pais === "sv" ? `Descanso trabajado ×${l.domTrab} (+50 %)` : `Domingos trabajados ×${l.domTrab}${l.domTrabTriple ? ` + ${l.domTrabTriple} triple` : ""}`, fmtL(l.bonoDomingo))}
               {extrasDe(l, "ingreso").map(x => <div key={x.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid rgba(44,42,40,.06)" }}>
                 <span style={{ font: "500 12.5px/1.3 var(--sans)", color: ORANGE_DARK, minWidth: 0 }}>{x.concepto}</span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><b style={{ font: "700 13px/1.3 var(--sans)", color: CHARCOAL }}>{fmtL(x.monto)}</b>{editable && <span role="button" aria-label="Quitar" onClick={() => quitarExtra(l, x.id)} style={{ color: "#A39C92", cursor: "pointer", fontSize: 14 }}>✕</span>}</span>
@@ -4911,7 +4922,14 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
               {l.descuentoNSP > 0 && dato(`Inasistencias · ${l.diasNSP} NSP`, `−${fmtL(l.descuentoNSP)}`, { color: "#B03024" })}
               {l.descuentoHoras > 0 && dato(`Llegadas tarde denegadas · ${l.horasTarde} h`, `−${fmtL(l.descuentoHoras)}`, { color: "#B03024" })}
               {l.descuentoIncap > 0 && dato(`Incapacidad · ${l.diasIncapIhss} ${l.diasIncapIhss === 1 ? "día" : "días"} al 34 % (paga el IHSS)`, `−${fmtL(l.descuentoIncap)}`, { color: "#B03024" })}
-              {l.ct === "honorarios"
+              {l.pais === "sv"
+                ? <>
+                  {dato("ISSS 3 %", l.isss ? `−${fmtL(l.isss)}` : "—", { color: l.isss ? "#B03024" : "#A39C92" })}
+                  {dato(`AFP 7.25 %${l.afpNombre ? ` · ${l.afpNombre}` : ""}`, l.afp ? `−${fmtL(l.afp)}` : "—", { color: l.afp ? "#B03024" : "#A39C92" })}
+                  {dato(`ISR · sobre ${fmtL(l.sujetoIsr || 0)}`, l.isr ? `−${fmtL(l.isr)}` : "—", { color: l.isr ? "#B03024" : "#A39C92" })}
+                  <div style={{ font: "400 11px/1.4 var(--sans)", color: "#A39C92", padding: "6px 0 2px" }}>Salario cotizable {fmtL(l.cotizable || 0)} · aporte patronal AFP {fmtL(l.patronal?.afp || 0)} e ISSS {fmtL(l.patronal?.isss || 0)} (lo paga la empresa)</div>
+                </>
+                : l.ct === "honorarios"
                 ? datoInput(l.honorariosPago === "mensual" ? "ISR" : "ISR 12.5 %", l.isr, v => upLinea(l.id, x => ({ ...x, isr: v })), { sub: l.honorariosPago === "mensual" ? "mes completo · ponelo a mano" : "sobre lo que cobra · editable" })
                 : ley
                   ? <>
@@ -4979,11 +4997,12 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         {d.sinAsistencia ? aviso("Sin asistencia registrada: se paga la quincena completa, sin NSP ni feriados", "naranja", tieneSec("attendance") ? () => irA("attendance") : undefined) : aviso("Asistencia leída de la hoja de la quincena", "verde")}
         {d.heDe ? aviso(`Horas extras de ${etiquetaCorta(d.heDe.periodo, d.heDe.quincena)}: ${res.heHrs ? `${res.heHrs} h · ${fmtL(res.he)}` : "sin horas"}`, res.he ? "verde" : "gris", res.he && payParte !== "he" ? () => setPayParte("he") : undefined) : d.heFaltante ? aviso(`No hay hoja de horas extras de ${etiquetaCorta(d.heFaltante.periodo, d.heFaltante.quincena)}`, "gris", nav.some(n => n.id === "horasextras") ? () => setSec("horasextras") : undefined) : null}
         {Array.isArray(d.tardesPend) && d.tardesPend.length > 0 && aviso(`${d.tardesPend.length} llegada${d.tardesPend.length > 1 ? "s" : ""} tarde sin decidir: se paga el día completo`, "naranja", tieneSec("tardanzas") ? () => irA("tardanzas") : undefined)}
-        {aviso(ley ? "Segunda quincena: aplican IHSS, RAP e ISR" : "Primera quincena: las deducciones de ley van en la 2Q", "gris")}
+        {aviso(esSV ? "El Salvador: ISSS, AFP e ISR cada quincena · horas extras en la misma quincena" : ley ? "Segunda quincena: aplican IHSS, RAP e ISR" : "Primera quincena: las deducciones de ley van en la 2Q", "gris")}
       </div>
 
-      {/* Dos planillas de la MISMA quincena, cada una con su PDF y su Excel. */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: 10 }}>
+      {/* Dos planillas de la MISMA quincena, cada una con su PDF y su Excel.
+          El Salvador: una sola (las horas extras van adentro). */}
+      {!esSV && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: 10 }}>
         {[["salarios", "Planilla de salarios", `${res.personas} colaboradores`, res.neto], ["he", "Planilla de horas extras", d.heDe ? `${res.hePersonas} colaboradores · ${res.heHrs} h de ${etiquetaCorta(d.heDe.periodo, d.heDe.quincena)}` : "sin hoja de horas extras", res.he]].map(([k, tit, sub, monto]) => {
           const on = payParte === k;
           return <div key={k} role="button" tabIndex={0} aria-pressed={on} onClick={() => setPayParte(k)} onKeyDown={(ev) => { if (ev.key === "Enter") setPayParte(k); }} className="gt-vidrio gt-vidrio-hover"
@@ -4995,9 +5014,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             <div style={{ font: "800 19px/1 var(--display)", color: on ? ORANGE_DARK : CHARCOAL, whiteSpace: "nowrap" }}>{fmtL(monto)}</div>
           </div>;
         })}
-      </div>
+      </div>}
 
-      {payParte === "he" ? renderHeParte(d, res, editable) : <>
+      {payParte === "he" && !esSV ? renderHeParte(d, res, editable) : <>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(5, minmax(0,1fr))", gap: 10 }}>
         {tile("Colaboradores", res.personas)}
         {tile("Ordinario", fmtL(res.ordinario))}
