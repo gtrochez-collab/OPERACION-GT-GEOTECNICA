@@ -1407,6 +1407,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   en este corte. ⚠ Al leer estos Excel con exceljs las fechas vienen como `Date`:
   pasarlas a ISO con `toISOString().slice(0,10)` (con `String()` quedaron mal en
   el primer intento y se corrigió al instante).
+  **PDF de HORAS EXTRAS en colores (14-nov-2026, Gerson: "que las horas extra vengan bonitas como la solicitud de jornales; un clic y se descarga, sin otra página")**: el botón "PDF para planilla" de la hoja de HE ya no abre el reporte HTML: `exportHePDF` arma las mismas filas de siempre y `pdfHorasExtras` (`src/horas-extras-reporte.js`, jsPDF carta apaisada) lo baja directo. Hoja 1: portada con logo de la empresa, 4 cifras, "Por proyecto" con el pastel de cada uno y barra, caja "cómo se calcula" + caja carbón con el total. Hoja 2: resumen por colaborador para planilla (Permanentes / Temporales / Otros) con franjas Colaborador · Horas extra por banda (+25/+50/+75 % ámbar, ×2 domingo naranja) · Total · A pagar, subtotales y firmas (Elaborado por RRHH · Revisado · Autorizado). Después: detalle por proyecto con su cabecera pastel. Verificado con la 2Q oct-2026 de Geotecnica (L 36,290.10, 6 hojas) y Subterra (L 39,308.41).
   **ALTAS Y BAJAS + COSTOS rediseñadas (4-nov-2026, Gerson: "Movimientos lo
   llamaría altas y bajas; el mismo estilo que los demás")**: la pestaña
   `movimientos` se rotula **"Altas y bajas"** (el id no cambió). `renderMovs`:

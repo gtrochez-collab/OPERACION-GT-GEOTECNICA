@@ -3171,12 +3171,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     //      y TEMPORALES. Eso es lo que se mete a planilla.
     //   2) DETALLE POR PROYECTO (PARA COSTOS POR PROYECTO) — en pagina
     //      nueva; el desglose de donde se trabajaron (reasignaciones incl.).
-    // Ventana de impresion → "Guardar como PDF".
-    const exportHePDF = () => {
-      const w = window.open("", "_blank");
-      if (!w) { alert("Permite popups para generar el PDF"); return; }
-      const fL = fmtLps;
-      const fH = (n) => Number.isInteger(n) ? n : n.toFixed(2);
+    // Se descarga directo como PDF (jsPDF).
+    // 14-nov-2026 (Gerson: "que las horas extra vengan bonitas como la solicitud
+    // de jornales; un clic y se descarga, sin ir a otra página"): el cálculo es
+    // el de siempre; el dibujo pasó a jsPDF en horas-extras-reporte.js.
+    const exportHePDF = async () => {
       const pago = sheet.quincena === "1Q"
         ? `2Q ${sheet.periodo} (fin de mes)`
         : (() => { const [py, pm] = sheet.periodo.split("-").map(Number); const d2 = new Date(py, pm, 1); return `1Q ${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, "0")} (15 del mes)`; })();
@@ -3209,45 +3208,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         });
       });
       const proyOrden = Object.entries(perProj).sort((a, b) => b[1].costo - a[1].costo);
-      const granH = proyOrden.reduce((s, [, p]) => s + p.hrs, 0);
-      const granL = proyOrden.reduce((s, [, p]) => s + p.costo, 0);
-      const nColab = new Set(proyOrden.flatMap(([, p]) => Object.keys(p.emps))).size;
       const projFullName = (short) => { const p = hrProjects.find(x => x.short === short); return (p && p.name && p.name !== short) ? p.name : ""; };
-      // Misma tabla para el resumen por colaborador y el detalle por proyecto.
-      const COLS_HE = [
-        { t: "Colaborador" }, { t: "L/hora", num: true, ancho: "88px" },
-        { t: "+25% · 4-7pm, sáb 11-7", num: true, ancho: "70px" }, { t: "+50% · 7-10pm", num: true, ancho: "62px" },
-        { t: "+75% · 10-12am", num: true, ancho: "62px" }, { t: "×2 · domingo", num: true, ancho: "62px" },
-        { t: "Horas", num: true, ancho: "52px" }, { t: "Total", num: true, ancho: "100px" },
-      ];
-      const nh = (n) => n ? fH(n) : `<span style="color:${RP.texto3}">—</span>`;
-      const tablaHe = (rows, etiquetaSub, hrs, tot) => rTabla({
-        columnas: COLS_HE,
-        filas: rows.map(r => [
-          `<b>${escHTML(r.e.fullName)}</b>`,
-          `${fL(r.hb)}${r.ajuste ? ` <b style="color:${RP.naranjaTexto}">*</b>` : ""}`,
-          nh(r.b1), nh(r.b2), nh(r.b3), nh(r.dom),
-          `<b>${fH(r.hrs)}</b>`, `<b>${fL(r.total)}</b>`,
-        ]),
-        total: [escHTML(etiquetaSub), "", "", "", "", "", fH(hrs), fL(tot)],
-      });
-      // Cada proyecto con su pastel (29-oct-2026): el mismo tono en el
-      // resumen de arriba y en su sección del detalle.
-      const pcHe = pastelesDe(proyOrden.map(([pr]) => pr));
-      const projSection = ([pr, P]) => {
-        const rows = Object.values(P.emps).sort((a, b) => b.total - a.total);
-        const fn = projFullName(pr);
-        return rSeccionProyecto(pcHe[pr], `${pr}${fn ? ` · ${fn}` : ""}`, tablaHe(rows, `Subtotal ${pr}`, P.hrs, P.costo), `<span class="mono">${fH(P.hrs)} hrs · ${fL(P.costo)}</span>`);
-      };
-      const resumenProyHe = proyOrden.length > 1 ? rSeccion("Por proyecto", rTabla({
-        columnas: [{ t: "Proyecto" }, { t: "Colaboradores", num: true, ancho: "100px" }, { t: "Horas", num: true, ancho: "80px" }, { t: "Total", num: true, ancho: "120px" }, { t: "", ancho: "200px" }],
-        filas: proyOrden.map(([pr, P]) => [
-          `${rProyecto(pcHe[pr], pr)} <span class="suave">${escHTML(projFullName(pr))}</span>`,
-          Object.keys(P.emps).length, fH(P.hrs), `<b>${fL(P.costo)}</b>`,
-          rBarra([{ valor: P.costo, color: pcHe[pr].base }], proyOrden[0][1].costo),
-        ]),
-      })) : "";
-
       // ── RESUMEN GENERAL POR COLABORADOR (para planilla) ──
       // Una fila por persona sumando TODOS sus proyectos (ej: Henry Polanco
       // con horas en 2 proyectos sale UNA vez con el total combinado),
@@ -3264,30 +3225,17 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         .map((g) => [g, Object.values(perEmp).filter((r) => grupoDe(r.e) === g).sort((a, b) => String(a.e.fullName).localeCompare(b.e.fullName))])
         .filter(([, rows]) => rows.length);
       const NOMBRE_GRUPO = { "PERMANENTES": "Permanentes", "TEMPORALES": "Temporales", "OTROS (HONORARIOS / SIN CONTRATO)": "Otros (honorarios / sin contrato)" };
-      const bloqueSection = ([g, rows]) => {
-        const hrsG = rows.reduce((s, r) => s + r.hrs, 0), totG = rows.reduce((s, r) => s + r.total, 0);
-        return rSeccion(`${NOMBRE_GRUPO[g]} · ${rows.length} colaborador${rows.length !== 1 ? "es" : ""}`,
-          tablaHe(rows, `Subtotal ${g.toLowerCase()}`, hrsG, totG), `<span class="mono">${fH(hrsG)} hrs · ${fL(totG)}</span>`);
-      };
-
-      const cuerpo = rKpis([
-        { label: "Total a pagar", valor: fL(granL), sub: `se paga en planilla ${pago}` },
-        { label: "Horas extras", valor: fH(granH) },
-        { label: "Colaboradores", valor: nColab },
-        { label: "Proyectos", valor: proyOrden.length },
-      ])
-        + resumenProyHe
-        // El rótulo viaja pegado al primer bloque: si no, quedaba solo al pie
-        // de la página 1 y su tabla arrancaba en la 2.
-        + `<div style="break-inside:avoid;page-break-inside:avoid"><div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${RP.texto3};margin-bottom:10px">Resumen general por colaborador · para planilla</div>${bloques.length ? bloqueSection(bloques[0]) : ""}</div>`
-        + bloques.slice(1).map(bloqueSection).join("")
-        + rTabla({ columnas: [{ t: "" }, { t: "", num: true }], filas: [], total: [`Total general · ${sheet.quincena} ${sheet.periodo}`, `${fH(granH)} hrs · ${fL(granL)}`] })
-        + `<div class="rp-salto"></div>`
-        + `<div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${RP.texto3};margin-bottom:10px">Detalle por proyecto · para costos por proyecto</div>`
-        + proyOrden.map(projSection).join("")
-        + `<div class="rp-nota" style="line-height:1.6">Hora base = salario ÷ 30 ÷ 8 (sin bonificación) · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2 en todas las bandas. Sábados: la jornada termina a las 11am, la 1ª banda (+25%) corre de 11am-7pm.
-          ${hayAjuste ? `<b style="color:${RP.naranjaTexto}">* Hora extra pactada sobre un salario base especial</b> (arreglo), distinto del salario real. ` : ""}Pago quincena vencida: estas HE de ${sheet.quincena} ${sheet.periodo} se pagan en la planilla ${pago}. Proyectos según cuadrilla + reasignaciones por día.</div>`;
-      abrirReporte(w, reporteHTML({ titulo: "Reporte de horas extras", subtitulo: `${cc.name} · Quincena trabajada ${sheet.quincena} ${sheet.periodo} · se paga en planilla ${pago}`, empresa: sheet.company || co, cuerpo }));
+      const fila = (r) => ({ nombre: r.e.fullName, hb: r.hb, ajuste: r.ajuste, b1: r.b1, b2: r.b2, b3: r.b3, dom: r.dom, hrs: r.hrs, total: r.total });
+      if (!proyOrden.length) { alert("Esta hoja no tiene horas extras."); return; }
+      try {
+        const { pdfHorasExtras } = await import("./horas-extras-reporte.js");
+        await pdfHorasExtras({
+          empresa: sheet.company || co, nombreEmpresa: cc.name, quincena: sheet.quincena, periodo: sheet.periodo, pago, hayAjuste,
+          elaboradoPor: userName || "",
+          proyectos: proyOrden.map(([pr, P]) => ({ short: pr, nombre: projFullName(pr), hrs: P.hrs, costo: P.costo, filas: Object.values(P.emps).sort((a, b) => b.total - a.total).map(fila) })),
+          grupos: bloques.map(([g, rows]) => ({ titulo: NOMBRE_GRUPO[g], filas: rows.map(fila) })),
+        });
+      } catch (e) { console.error(e); alert("No se pudo generar el PDF: " + (e?.message || e)); }
     };
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
