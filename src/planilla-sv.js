@@ -80,6 +80,7 @@ export const deduccionesSV = (cotizable, { sinIsss = false, sinAfp = false, sinI
     sujetoIsr: r2(sujetoX), isr: r2(isrX),
     // total y líquido con la misma precisión que el Excel (sin redondeos intermedios)
     total: r2(isssX + afpX + isrX), totalX: isssX + afpX + isrX,
+    isrX, sujetoX,
     liquido: r2(sujetoX - isrX), liquidoX: sujetoX - isrX,
     patronal: { afp: r2(c * PATRONAL_AFP_PCT), isss: r2(Math.min(c * PATRONAL_ISSS_PCT, PATRONAL_ISSS_TOPE)) },
   };

@@ -100,6 +100,9 @@ const SEC_PDF = {
 // La bonificación de Edy y Roberto se paga APARTE (Roberto Guerra): calcada de
 // la hoja de la Lic. Diana — N°, nombre, puesto, DUI, NIT, salario, ISR 10 %,
 // total descuentos y líquido a pagar; "Elaborado por" y "Autorizado".
+// El Salvador: desde 2021 el NIT de una persona ES su DUI ("homologado"): si la
+// ficha dice "Homologado con DUI", se muestra el número de DUI.
+const nitDe = (l) => /homolog/i.test(String(l?.nit || "")) ? (l.dni || l.nit) : (l?.nit || "");
 export const filasEventual = (lines) => (lines || []).filter(l => Number(l.eventual) > 0).map(l => ({ l, ...eventualSV(l.eventual) }));
 const tituloEventual = (periodo, quincena) => `Planilla correspondiente a servicios profesionales eventuales · ${nombreQuincena(periodo, quincena).replace(" · ", " del mes de ").toLowerCase().replace(/^\w/, c => c.toUpperCase())}`;
 const construirEventualPDF = async ({ empresa, periodo, quincena, lines, meta = {}, jsPDF }) => {
@@ -147,7 +150,7 @@ const construirEventualPDF = async ({ empresa, periodo, quincena, lines, meta = 
     celda(String(i + 1), 0, yy, "normal", GRIS_FAINT);
     celda(String(r.l.name || "").toUpperCase(), 1, yy, "bold");
     celda(r.l.pos || "", 2, yy, "normal", GRIS);
-    celda(r.l.dni || "", 3, yy); celda(r.l.nit || "", 4, yy);
+    celda(r.l.dni || "", 3, yy); celda(nitDe(r.l), 4, yy);
     celda(Lsiempre(r.monto), 5, yy); celda(Lsiempre(r.isr), 6, yy); celda(Lsiempre(r.isr), 7, yy);
     celda(Lsiempre(r.liquido), 8, yy, "bold");
     doc.setDrawColor(...LINEA); doc.setLineWidth(0.15); doc.line(M, y + 8, M + CW, y + 8);
@@ -263,7 +266,7 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
       return h;
     };
     const grupos = gruposPlanilla(esHe ? conHe : lines);
-    const sumaG = (rows) => rows.reduce((a2, l) => a2 + (esHe ? l.he.monto : totalesLinea(l).neto), 0);
+    const sumaG = (rows) => rows.reduce((a2, l) => a2 + (esHe ? l.he.monto : (totalesLinea(l).netoX ?? totalesLinea(l).neto)), 0);
     const porMet = METODOS_PAGO.filter(([k]) => (esHe ? res.hePorMetodo : res.porMetodo)[k]?.n).map(([k, lab]) => { const g = (esHe ? res.hePorMetodo : res.porMetodo)[k]; return [`${lab} (${g.n})`, Lsiempre(esHe ? g.monto : g.neto)]; });
     cajaP(M + 4, "Por tipo de contrato", grupos.map(g => [`${g.label} (${g.rows.length})`, Lsiempre(sumaG(g.rows))]));
     cajaP(M + 4 + bw3 + gap, "Por método de pago", porMet.length ? porMet : [["-", "-"]]);
@@ -324,7 +327,7 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     ctx.y += 6.5;
   };
   gruposPlanilla(lines).forEach(({ label, rows }) => {
-    const g = { neto: Math.round(rows.reduce((a, l) => a + totalesLinea(l).neto, 0) * 100) / 100 };
+    const g = { neto: Math.round(rows.reduce((a, l) => { const t = totalesLinea(l); return a + (t.netoX ?? t.neto); }, 0) * 100 + 1e-6) / 100 };
     // Un grupo que cabe entero en una hoja no se parte (29-oct-2026, Gerson:
     // "que no se corte a la mitad"): si no cabe en lo que queda, arranca en la
     // siguiente. Uno más largo que una hoja sí se parte, repitiendo encabezados.
@@ -371,7 +374,12 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
       he: L(sum(l => l.heSV?.monto || 0)), vac: L(sum(l => l.vacacion || 0)), cot: L(sum(l => l.cotizable || 0)),
       pafp: L(sum(l => l.patronal?.afp || 0)), pisss: L(sum(l => l.patronal?.isss || 0)), suj: L(sum(l => l.sujetoIsr || 0)),
       isss: L(sum(l => l.isss || 0)), afp: L(sum(l => l.afp || 0)),
-      ...(sv ? { oi: L(sum((l, t) => t.extrasIng + (l.bq || 0) + (l.bonoFeriado || 0) + (l.bonoDomingo || 0))), od: L(sum((l, t) => t.extrasDed + (l.coop || 0))) } : {}),
+      ...(sv ? {
+        oi: L(sum((l, t) => t.extrasIng + (l.bq || 0) + (l.bonoFeriado || 0) + (l.bonoDomingo || 0))), od: L(sum((l, t) => t.extrasDed + (l.coop || 0))),
+        // Como el Excel de la Lic. Diana: los totales suman los valores SIN redondear.
+        isr: L(Math.round(sum((l, t) => t.sv?.isrX ?? l.isr) * 100 + 1e-6) / 100), suj: L(Math.round(sum((l, t) => t.sv?.sujetoX ?? l.sujetoIsr ?? 0) * 100 + 1e-6) / 100),
+        td: L(Math.round(sum((l, t) => t.deduccionesX ?? t.deducciones) * 100 + 1e-6) / 100),
+      } : {}),
     };
     pintarSecciones(ctx.y + 0.4, 7, "head");
     cols.forEach((c, ci) => celda(ci, tot[c.k] ?? "", ctx.y + 4.7, { al: c.al, bold: true, color: c.k === "asis" || c.k === "td" ? ROJO : CARBON, fs: 7 }));
@@ -586,7 +594,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     let r = 7; const r0 = r;
     filas.forEach((f0, i) => {
       const row = we.getRow(r);
-      row.values = [i + 1, String(f0.l.name || "").toUpperCase(), f0.l.pos || "", f0.l.dni || "", f0.l.nit || "", f0.monto,
+      row.values = [i + 1, String(f0.l.name || "").toUpperCase(), f0.l.pos || "", f0.l.dni || "", nitDe(f0.l), f0.monto,
         { formula: `ROUND(F${r}*10%,2)`, result: f0.isr }, { formula: `G${r}`, result: f0.isr }, { formula: `F${r}-H${r}`, result: f0.liquido }, pagoTxt[f0.l.metodoPago] || "Transferencia"];
       pintarFila(row, i, UE);
       row.font = ft(); row.alignment = { vertical: "middle" };
@@ -842,11 +850,11 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     { k: "cot", h: "Salario cotizable", w: 14, sec: "pat", fmt: "L", v: (l) => n0(l.cotizable) },
     { k: "pafp", h: "AFP patronal (8.75 %)", w: 13, sec: "pat", fmt: "L", v: (l) => n0(l.patronal?.afp) },
     { k: "pisss", h: "ISSS patronal (7.5 %)", w: 13, sec: "pat", fmt: "L", v: (l) => n0(l.patronal?.isss) },
-    { k: "suj", h: "Monto sujeto a ISR", w: 14, sec: "pat", fmt: "L", v: (l) => n0(l.sujetoIsr) },
+    { k: "suj", h: "Monto sujeto a ISR", w: 14, sec: "pat", fmt: "L", v: (l) => n0(totalesLinea(l).sv?.sujetoX ?? l.sujetoIsr) },
     "nspL", "tardeL",
     { k: "isssL", h: "ISSS (3 %)", w: 11, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.isss) },
     { k: "afpL", h: "AFP (7.25 %)", w: 11, sec: "ded", fmt: "L", deduccion: true, v: (l) => n0(l.afp) },
-    { ...porK.isr, ley: false },
+    { ...porK.isr, ley: false, v: (l) => n0(totalesLinea(l).sv?.isrX ?? l.isr) },
     "coop", "od", { ...porK.tded, h: "Total descuentos" },
     { ...porK.neto, h: "Líquido a pagar" }, "metodo", "nota",
   ].map(x => typeof x === "string" ? porK[x] : x);

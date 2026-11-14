@@ -144,8 +144,6 @@ const filasReporte = (est, { periodo, quincena, proyectos = [] } = {}) => {
 };
 export const estimacionPDF = (w, { periodo, quincena, est, elaboradoPor, proyectos = [] }) => {
   const filas = filasReporte(est, { periodo, quincena, proyectos });
-  const n = (v) => v ? fmtN(v) : "—";
-  const m$ = (v) => v ? fmt$(v) : "—";
   const cuerpo = rKpis([
     { label: "Contratos", valor: String(est.filas.length), mono: false },
     { label: "Personas", valor: String(est.personas), mono: false },
@@ -153,12 +151,24 @@ export const estimacionPDF = (w, { periodo, quincena, est, elaboradoPor, proyect
     { label: `Retención ISR ${Math.round(RETENCION_ISR * 100)} %`, valor: fmt$(est.retencion), tono: "rojo" },
     { label: "Líquido a pagar", valor: fmt$(est.liquido), tono: "naranja" },
   ]) + `<h3 style="font:800 14px/1.2 var(--display, sans-serif);margin:22px 0 8px">Proveedores de servicios</h3>` + rTabla({
-    columnas: [{ t: "Código / nombre" }, { t: "Proyecto / UG · rol" }, { t: "Tarifa", num: true }, { t: "Entregado", num: true }, { t: "Suma por días / obra", num: true }, { t: "HE diurnas", num: true }, { t: "HE nocturnas", num: true }, { t: "Valor hora", num: true }, { t: "Suma global", num: true }, { t: "ISR 10 %", num: true }, { t: "Líquido a pagar", num: true }],
-    filas: filas.map(f => [`<span style="color:#8A847D;font-size:10px">${escHTML(f.codigo)}</span><br><b>${escHTML(f.nombre)}</b><br><span style="color:#8A847D;font-size:10px">${DOC_ID} ${escHTML(f.dui)}</span>`, `${escHTML(f.proyecto)}<br><span style="color:#8A847D;font-size:10px">${escHTML(f.rol)}</span>`, `${fmt$(f.tarifa)}<br><span style="color:#8A847D;font-size:10px">${f.unidadEntregado === "días" ? "por día" : "por " + escHTML(f.unidadEntregado)}</span>`, `${fmtN(f.entregado)}<br><span style="color:#8A847D;font-size:10px">${escHTML(f.unidadEntregado)}</span>`, fmt$(f.sumaDias), `${n(f.heD)}${f.heD ? `<br><span style="color:#8A847D;font-size:10px">${fmt$(f.sumaHeD)}</span>` : ""}`, `${n(f.heN)}${f.heN ? `<br><span style="color:#8A847D;font-size:10px">${fmt$(f.sumaHeN)}</span>` : ""}`, m$(f.precioHe), fmt$(f.suma), fmt$(f.retencion), `<b>${fmt$(f.liquido)}</b>`]),
-    total: ["<b>SUMAS</b>", "", "", "", fmt$(filas.reduce((a, f) => a + f.sumaDias, 0)), fmt$(filas.reduce((a, f) => a + f.sumaHeD, 0)), fmt$(filas.reduce((a, f) => a + f.sumaHeN, 0)), "", fmt$(est.suma), fmt$(est.retencion), `<b>${fmt$(est.liquido)}</b>`],
+    // 9 columnas (14-nov-2026: con 11 la última se salía de la hoja): la tarifa va
+    // con lo entregado ("15 días × $ 25.00") y el valor hora dentro de las HE.
+    columnas: [{ t: "Contratista" }, { t: "Proyecto / UG · rol" }, { t: "Servicio entregado" }, { t: "Suma por días / obra", num: true }, { t: "HE diurnas", num: true }, { t: "HE nocturnas", num: true }, { t: "Suma global", num: true }, { t: "ISR 10 %", num: true }, { t: "Líquido a pagar", num: true }],
+    filas: filas.map(f => {
+      const nw = (x) => `<span style="white-space:nowrap">${x}</span>`;
+      const he = (h, monto) => h ? `${nw(`${fmtN(h)} h × ${MONEDA} ${(Number(f.precioHe) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 3 })}`)}<br><span style="color:#8A847D;font-size:10px;white-space:nowrap">${fmt$(monto)}</span>` : "—";
+      return [
+        `<span style="color:#8A847D;font-size:10px;white-space:nowrap">${escHTML(f.codigo)}</span><br><b>${escHTML(f.nombre)}</b><br><span style="color:#8A847D;font-size:10px;white-space:nowrap">${DOC_ID} ${escHTML(f.dui)}</span>`,
+        `${escHTML(f.proyecto)}<br><span style="color:#8A847D;font-size:10px">${escHTML(f.rol)}</span>`,
+        `${nw(`${fmtN(f.entregado)} ${escHTML(f.unidadEntregado)}`)}<br><span style="color:#8A847D;font-size:10px;white-space:nowrap">× ${fmt$(f.tarifa)}${f.unidadEntregado === "días" ? " por día" : ""}</span>`,
+        nw(fmt$(f.sumaDias)), he(f.heD, f.sumaHeD), he(f.heN, f.sumaHeN),
+        nw(fmt$(f.suma)), nw(fmt$(f.retencion)), `<b style="white-space:nowrap">${fmt$(f.liquido)}</b>`,
+      ];
+    }),
+    total: ["<b>SUMAS</b>", "", "", ...[filas.reduce((a, f) => a + f.sumaDias, 0), filas.reduce((a, f) => a + f.sumaHeD, 0), filas.reduce((a, f) => a + f.sumaHeN, 0), est.suma, est.retencion].map(v => `<span style="white-space:nowrap">${fmt$(v)}</span>`), `<b style="white-space:nowrap">${fmt$(est.liquido)}</b>`],
   }) + `<h3 style="font:800 14px/1.2 var(--display, sans-serif);margin:22px 0 8px">Resumen para pagos</h3>` + rTabla({
     columnas: [{ t: "Nombre completo" }, { t: DOC_ID }, { t: "Servicio eventual" }, { t: "Suma global", num: true }, { t: "Retención ISR", num: true }, { t: "Líquido a pagar", num: true }, { t: "Dirección completa" }, { t: "Teléfono" }, { t: "Banco" }, { t: "Cuenta" }],
-    filas: filas.map(f => [`<b>${escHTML(f.nombre)}</b>${f.correo ? `<br><span style="color:#8A847D;font-size:10px">${escHTML(f.correo)}</span>` : ""}`, escHTML(f.dui), escHTML(f.servicio), fmt$(f.suma), fmt$(f.retencion), `<b>${fmt$(f.liquido)}</b>`, `<span style="font-size:10px">${escHTML(f.direccion)}</span>`, escHTML(f.telefono), escHTML(f.banco), `<span style="font-size:10px">${escHTML(f.cuenta)}</span>`]),
+    filas: filas.map(f => [`<b>${escHTML(f.nombre)}</b>${f.correo ? `<br><span style="color:#8A847D;font-size:10px">${escHTML(f.correo)}</span>` : ""}`, `<span style="white-space:nowrap">${escHTML(f.dui)}</span>`, escHTML(f.servicio), fmt$(f.suma), fmt$(f.retencion), `<b>${fmt$(f.liquido)}</b>`, `<span style="font-size:10px">${escHTML(f.direccion)}</span>`, escHTML(f.telefono), escHTML(f.banco), `<span style="font-size:10px">${escHTML(f.cuenta)}</span>`]),
     total: ["<b>TOTAL A PAGAR</b>", "", "", fmt$(est.suma), fmt$(est.retencion), `<b>${fmt$(est.liquido)}</b>`, "", "", "", ""],
   }) + `<div style="display:flex;justify-content:space-around;margin-top:46px;font-size:11px;color:#5B5650"><div style="text-align:center;min-width:220px;border-top:1px solid #2C2A28;padding-top:6px"><b>Elaborado por</b><br>${escHTML(elaboradoPor || "")}</div><div style="text-align:center;min-width:220px;border-top:1px solid #2C2A28;padding-top:6px"><b>Aprobado por</b></div></div>`;
   abrirReporte(w, reporteHTML({ titulo: "Estimación de pago · Contratistas de servicios", subtitulo: `${nombreQ(periodo, quincena)} · ${fechaCorta(diasQuincena(periodo, quincena)[0])} al ${fechaCorta(diasQuincena(periodo, quincena).slice(-1)[0])} · retención de ISR ${Math.round(RETENCION_ISR * 100)} %`, empresa: "subterra", cuerpo }));

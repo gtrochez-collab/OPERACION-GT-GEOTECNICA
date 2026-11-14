@@ -381,7 +381,9 @@ export const conLeySV = (l) => {
   const heSV = horasExtrasSV(l.sb, l.heSV?.diurnas, l.heSV?.nocturnas);
   const base = { ...l, heSV };
   const c = cuentasSV(base);
-  return { ...base, cotizable: c.cotizable, isss: c.isss, afp: c.afp, sujetoIsr: c.sujetoIsr, isr: c.isr, patronal: c.patronal };
+  // isrX / sujetoX: sin redondear, para que los TOTALES sumen como el Excel de la
+  // Lic. Diana (ISR 122.976 + 30.226 = 153.20, no 122.98 + 30.23 = 153.21).
+  return { ...base, cotizable: c.cotizable, isss: c.isss, afp: c.afp, sujetoIsr: c.sujetoIsr, isr: c.isr, isrX: c.isrX, sujetoX: c.sujetoX, patronal: c.patronal };
 };
 
 /** Totales de una línea (v3 o vieja v2). */
