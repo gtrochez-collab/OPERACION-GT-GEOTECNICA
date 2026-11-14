@@ -203,3 +203,15 @@ test("honorario mensual: entra solo en la 2Q, cobra el mes; si salió a mitad, s
   const allan = armarLinea({ emp: { id: "a", contractType: "honorarios", salary: 23500, status: "active" }, periodo: "2026-10", quincena: "2Q", asistencia: asistenciaDe({ id: "a" }, "2026-10", "2Q", {}) });
   assert.deepEqual(gruposPlanilla([lm, lg, allan]).map(g => [g.k, g.rows.length]), [["hon_q", 1], ["hon_m", 2]]);
 });
+
+test("honorarios quincenal: el 12.5 % incluye el domingo trabajado; con constancia (sinIsr) no se retiene", () => {
+  // Caso Allan, 1Q nov-2026: L 23,500 + domingo 8 trabajado (DT = +1 diario).
+  const a = emp({ id: "al", contractType: "honorarios", salary: 23500, bonificacion: 0 });
+  const g = grid("al", { 8: "DT" });
+  const la = armarLinea({ emp: a, periodo: "2026-11", quincena: "1Q", asistencia: asistenciaDe(a, "2026-11", "1Q", { grid: g }) });
+  assert.equal(la.bonoDomingo, 783.33);
+  assert.equal(la.isr, 1566.67);                 // (11,750 + 783.33) × 12.5 %
+  const j = emp({ id: "jo", contractType: "honorarios", salary: 25000, bonificacion: 0, sinIsr: true });
+  const lj = armarLinea({ emp: j, periodo: "2026-11", quincena: "1Q", asistencia: asistenciaDe(j, "2026-11", "1Q", {}) });
+  assert.equal(lj.isr, 0); assert.equal(totalesLinea(lj).neto, 12500);
+});

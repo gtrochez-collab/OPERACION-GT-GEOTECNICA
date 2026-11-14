@@ -1790,6 +1790,17 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             </div>
           </span>
         </label>
+        {/* Constancia de pagos a cuenta (14-nov-2026, caso Edwin Johan): a quien
+            la trae no se le retiene el 12.5 % de ISR de honorarios. */}
+        {f.contractType === "honorarios" && !hideSalary && <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#F1F0ED", border: "1px solid #E2DFDA", borderRadius: 10, fontSize: 13, color: "#2C2A28", cursor: "pointer" }}>
+          <input type="checkbox" checked={!!f.sinIsr} onChange={e => u("sinIsr", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer", accentColor: "#E8762D" }} />
+          <span>
+            <b>Trajo constancia de pagos a cuenta · no retener ISR 12.5 %</b>
+            <div style={{ fontSize: 11, color: "#6E6862", marginTop: 2 }}>
+              Con esto la planilla no le descuenta el 12.5 % de ISR de honorarios.
+            </div>
+          </span>
+        </label>}
         <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#92400E", cursor: "pointer" }}>
           <input type="checkbox" checked={!!f.payByHour} onChange={e => u("payByHour", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
           <span>

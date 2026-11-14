@@ -289,7 +289,10 @@ export const armarLinea = ({ emp, periodo, quincena, asistencia, he = null, bono
   const bq = r2(mensual ? bn : bn / 2);
   const ley = deduccionesLey(emp, quincena);
   let isr = ley.isr;
-  if (esHon && (emp.honorariosPago || "quincenal") === "quincenal" && !emp.sinIsr) isr = r2((ordinario + bq) * ISR_HONORARIOS);
+  // 14-nov-2026 (Gerson): el 12.5 % va sobre TODO lo que cobra el de honorarios
+  // (ordinario + bonificación + domingos y feriados trabajados). Quien trae la
+  // constancia de pagos a cuenta lleva `sinIsr` en la ficha y no se le retiene.
+  if (esHon && (emp.honorariosPago || "quincenal") === "quincenal" && !emp.sinIsr) isr = r2((ordinario + bq + bonoDomingo + bonoFeriado) * ISR_HONORARIOS);
   return {
     id: `${emp.id}-${periodo}-${quincena}`,
     eid: emp.id, name: emp.fullName, pos: emp.position || "", dni: emp.dni || "", fc: emp.startDate || "",

@@ -278,7 +278,16 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
   }
 
   // ── Tablas por grupo (planilla de salarios) ──
-  const cols = sv ? columnasSV() : columnas(ley);
+  // Honorarios (14-nov-2026, Gerson: "tiene que decir la deducción en la planilla,
+  // ISR 12.5 %"): su grupo siempre lleva la columna ISR con ese rótulo, también
+  // en la 1Q (cuando el resto no lleva deducciones de ley).
+  const colsHonPdf = () => {
+    const base = columnas(ley).map(c => c.k === "isr" ? { ...c, t: "ISR 12.5 %" } : c);
+    if (ley) return base;
+    const i = base.findIndex(c => c.k === "coop");
+    return [...base.slice(0, i), { k: "isr", sec: "ded", t: "ISR 12.5 %", w: 17, al: "right", v: (l) => L(l.isr) }, ...base.slice(i)];
+  };
+  let cols = sv ? columnasSV() : columnas(ley);
   const bw = (CW - 8) / 3;
   const caja = (x, tit, filas, destacar) => {
     const h = 10 + filas.length * 6.2 + (destacar ? 2 : 0);
@@ -292,8 +301,9 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     return h;
   };
   if (!esHe) {
-  const escala = CW / cols.reduce((s, c) => s + c.w, 0);
-  const xs = []; let acc = M; cols.forEach(c => { xs.push({ x: acc, w: c.w * escala }); acc += c.w * escala; });
+  let xs = [];
+  const usarCols = (cs) => { cols = cs; const escala = CW / cols.reduce((s, c) => s + c.w, 0); xs = []; let acc = M; cols.forEach(c => { xs.push({ x: acc, w: c.w * escala }); acc += c.w * escala; }); };
+  usarCols(cols);
   const celda = (ci, texto, y, { al, bold, color, fs = 6.8 }) => {
     const { x, w } = xs[ci];
     P.f(fs, bold ? "bold" : "normal"); P.tc(color || CARBON);
@@ -320,7 +330,8 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     P.dc(LINEA_FUERTE); doc.setLineWidth(0.25); doc.line(M, ctx.y + 6.5, PW - M, ctx.y + 6.5);
     ctx.y += 6.5;
   };
-  gruposPlanilla(lines).forEach(({ label, rows }) => {
+  gruposPlanilla(lines).forEach(({ k: gk, label, rows }) => {
+    if (!sv) usarCols(gk === "hon_q" ? colsHonPdf() : columnas(ley));  // honorarios mensuales: su ISR lo pone Gerson a mano (no es el 12.5 %)
     const g = { neto: Math.round(rows.reduce((a, l) => { const t = totalesLinea(l); return a + (t.netoX ?? t.neto); }, 0) * 100 + 1e-6) / 100 };
     // Un grupo que cabe entero en una hoja no se parte (29-oct-2026, Gerson:
     // "que no se corte a la mitad"): si no cabe en lo que queda, arranca en la
@@ -1019,7 +1030,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     "dias", "nsp", "tardes", "htarde", "vac", "fer", "dom",
     { ...porK.ord, h: "Honorarios del período" },
     "bq", "ferL", "oi", "ting", "nspL", "tardeL",
-    { ...porK.isr, ley: false },
+    { ...porK.isr, h: "ISR (12.5 % quincenales)", ley: false },
     "coop", "od", "tded", "neto", "metodo", "nota",
   ].map(x => typeof x === "string" ? porK[x] : x);
   armarHoja("Planilla", "Planilla de sueldos y salarios", colsSal, grupos.filter(g => !g.hon), { cierre: true, ocultarLey: !ley && !sv });
