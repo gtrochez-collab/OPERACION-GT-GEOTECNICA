@@ -323,8 +323,19 @@ export const cargarImagen = async (ruta) => {
     const resp = await fetch(`${import.meta.env.BASE_URL}${ruta}`);
     const blob = await resp.blob();
     const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
-    const dims = await new Promise((res) => { const im = new Image(); im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight }); im.onerror = () => res({ w: 1, h: 1 }); im.src = dataUrl; });
-    return (imgCache[ruta] = { dataUrl, ...dims });
+    const im = await new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = dataUrl; });
+    const w = im?.naturalWidth || 1, h = im?.naturalHeight || 1;
+    // 14-nov-2026: el logo de Subterra (1125 px, 538 KB) se incrustaba entero y
+    // cada PDF de Subterra pesaba ~5 MB. Lo que pase de 600 px se achica: en
+    // el tamaño en que sale impreso sigue nítido (~350 dpi).
+    const MAX = 600;
+    if (im && Math.max(w, h) > MAX) {
+      const k = MAX / Math.max(w, h), cw = Math.round(w * k), ch = Math.round(h * k);
+      const cv = document.createElement("canvas"); cv.width = cw; cv.height = ch;
+      cv.getContext("2d").drawImage(im, 0, 0, cw, ch);
+      return (imgCache[ruta] = { dataUrl: cv.toDataURL("image/png"), w: cw, h: ch });
+    }
+    return (imgCache[ruta] = { dataUrl, w, h });
   } catch { return null; }
 };
 /**
