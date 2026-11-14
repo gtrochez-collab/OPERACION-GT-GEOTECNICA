@@ -35,7 +35,7 @@ import { esFeriado, nombreFeriado } from "./holidays.js";
 import {
   KEY_JORNALEROS, keyCorteJornal, KEY_RESPONSABLES, proyectosDeResponsable, corteDe, corteAnterior, corteSiguiente, diasDelCorte, diaCorto, fechaCorta, fechaLarga,
   nombreCorte, proyectoVacio, ponerCelda, mezclarProyecto, cambiosEntre, liquidarProyecto, validarJornalero, formatoDni,
-  tieneIdentidad, valorHora, num, MAX_HE_DIA,
+  tieneIdentidad, valorHora, num, MAX_HE_DIA, traslapesDelCorte,
 } from "./jornales-calc.js";
 
 export const EMPRESA_JORNALES = esSV ? "subterra" : "geotecnica";
@@ -67,6 +67,8 @@ const pill = (label, on, onClick, { key } = {}) => <button key={key} type="butto
 // Proyectos donde puede trabajar un jornal (los activos que admiten solicitudes: el plantel es PLAN-TALLER).
 const proyectosJornal = (proyectos) => (proyectos || []).filter(p => p.short && p.active !== false && !p.archived && !p.hidden && !p.deleted && admiteSolicitudes(p.short)).slice().sort((a, b) => String(a.short).localeCompare(String(b.short), "es", { sensitivity: "base", numeric: true }));
 const tile = (v, l, c = CHARCOAL) => <div className="gt-vidrio" style={{ padding: "12px 14px", minWidth: 0 }}><div style={{ font: "800 22px/1 var(--display)", color: c, letterSpacing: "-.02em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{v}</div><div style={{ fontSize: 11.5, color: "#6E6862", marginTop: 5 }}>{l}</div></div>;
+// "Ricardo: sáb 31 también en PLAN-TALLER" (traslapes del corte: no pagar doble).
+const textoTraslape = (t, nombreDe, sinProyecto) => `${(nombreDe(t.id) || "").split(" ").slice(0, 2).join(" ")}: ${t.tipo === "he" ? "horas extra del " : ""}${diaCorto(t.fecha)} ${+t.fecha.slice(8)} ${sinProyecto ? "también en " + t.proyectos.filter(x => x !== sinProyecto).join(" y ") : "en " + t.proyectos.join(" y ")}`;
 const aviso = (txt, c = C_AMARILLO) => <div style={{ background: c.bg, color: c.color, borderRadius: 14, padding: "10px 14px", fontSize: 12.5, lineHeight: 1.45 }}>{txt}</div>;
 
 // ── Fotos (cp-file-<id>): cache en memoria y carga perezosa ──────────────
@@ -576,6 +578,9 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
     return out;
   };
   const exportar = async (lista, tipo) => {
+    const shortsLista = new Set(lista.map(p => p.short));
+    const choques = traslapesDelCorte(docs.corte?.proyectos || {}).filter(t => t.proyectos.some(x => shortsLista.has(x)));
+    if (choques.length && !confirm(`Ojo: hay ${choques.length} día${choques.length === 1 ? "" : "s"} marcado${choques.length === 1 ? "" : "s"} en DOS proyectos (se pagaría doble):\n\n${choques.slice(0, 12).map(t => textoTraslape(t, (id) => ficha(id)?.fullName)).join("\n")}${choques.length > 12 ? "\n…" : ""}\n\n¿Generar igual?`)) return;
     const faltan = lista.flatMap(p => p.liq.filas.filter(f => !tieneIdentidad(f.ficha)).map(f => f.nombre));
     if (tipo === "pdf" && faltan.length && !confirm(`Falta la identidad escaneada de:\n\n${faltan.join("\n")}\n\nEn el PDF van a salir con «Falta escanear». ¿Generarlo igual?`)) return;
     try {
@@ -672,11 +677,13 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
       const l = liquidarProyecto({ corte, proy, proyPrevio: docs.previo?.proyectos?.[s], jornaleros });
       return { s, proy, l, guardado: !!guardado };
     }).filter(x => x.l.filas.length).sort((a, b) => String(a.s).localeCompare(String(b.s), "es", { sensitivity: "base", numeric: true }));
+    const choquesTodos = traslapesDelCorte(docs.corte?.proyectos || {});
     const tot = filas.reduce((t, x) => ({ p: t.p + x.l.filas.length, d: t.d + x.l.totales.dias, total: t.total + x.l.totales.total, faltan: t.faltan + x.l.filas.filter(f => !tieneIdentidad(f.ficha)).length }), { p: 0, d: 0, total: 0, faltan: 0 });
     const abrir = (s) => { setShort(s); setVista(isMobile ? "dia" : "corte"); };
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {cabecera}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap: 8 }}>{tile(filas.length, "proyectos con jornales")}{tile(tot.p, "personas")}{tile(fmtN(tot.d), "días")}{esRRHH ? tile(fmtL0(tot.total), `a pagar el ${fechaCorta(corte.pago)}`, "#A94E16") : tile(fechaCorta(corte.pago), "día de pago")}</div>
+      {choquesTodos.length > 0 && aviso(<span><b>Días cobrados en dos proyectos ({choquesTodos.length}):</b> {choquesTodos.map(t => textoTraslape(t, (id) => ficha(id)?.fullName)).join(" · ")}. Corregilo en la hoja de uno de los dos para no pagar doble.</span>, C_ROJO)}
       {tot.faltan > 0 && esRRHH && aviso(`Faltan ${tot.faltan} identidad${tot.faltan === 1 ? "" : "es"} por escanear. Se suben en GeoTeam → Empleados → Jornales.`)}
       {filas.length === 0 ? <div className="gt-vidrio" style={{ padding: 30, textAlign: "center", fontSize: 13, color: "#6E6862" }}>Todavía no hay jornales en ningún proyecto. Ponele el proyecto a cada jornal en su ficha (GeoTeam → Empleados → Jornales) y aparece acá su cajita.</div>
         : <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 260 : 300}px, 1fr))`, gap: 12 }}>
@@ -698,7 +705,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
               </div>
               <div style={{ height: 6, borderRadius: 999, background: "rgba(44,42,40,.07)", overflow: "hidden" }}><div style={{ width: `${Math.round(conDatos / 14 * 100)}%`, height: "100%", background: conDatos >= 14 ? "#3E8E5A" : ORANGE }} /></div>
               <div style={{ fontSize: 11.5, color: "#6E6862", marginTop: -4 }}>{conDatos} de 14 días con asistencia{proy?.updatedBy ? ` · ${proy.updatedBy}` : ""}</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{chipsResp(s)}{esRRHH && (l.encargado ? <Chip c={C_GRIS}>Depositar a {l.encargado}</Chip> : <Chip c={C_AMARILLO}>Sin encargado del pago</Chip>)}{esRRHH && faltan > 0 && <Chip c={C_AMARILLO}>Faltan {faltan} ID</Chip>}</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{chipsResp(s)}{esRRHH && (l.encargado ? <Chip c={C_GRIS}>Depositar a {l.encargado}</Chip> : <Chip c={C_AMARILLO}>Sin encargado del pago</Chip>)}{esRRHH && faltan > 0 && <Chip c={C_AMARILLO}>Faltan {faltan} ID</Chip>}{(n => n ? <Chip c={C_ROJO}>{n} día{n === 1 ? "" : "s"} en otro proyecto</Chip> : null)(choquesTodos.filter(t => t.proyectos.includes(s)).length)}</div>
               {esRRHH && <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 10, borderTop: "1px solid rgba(44,42,40,.07)" }} onClick={e => e.stopPropagation()}>
                 <div style={{ flex: 1, font: "800 18px/1 var(--mono)", color: "#A94E16" }}>{fmtL(l.totales.total)}</div>
                 {btn("Excel", () => exportar([paqueteDe(s, proy, l)], "excel"), { chico: true })}{btn("PDF", () => exportar([paqueteDe(s, proy, l)], "pdf"), { c: ORANGE_DARK, lleno: true, chico: true })}
@@ -715,6 +722,8 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
   const roster = local.jornaleros || [];
   const viernesFin = corte.fin;
   const faltanId = liq.filas.filter(f => !tieneIdentidad(f.ficha));
+  const choques = traslapesDelCorte({ ...(docs.corte?.proyectos || {}), [short]: local }).filter(t => t.proyectos.includes(short));
+  const choqueEn = new Set(choques.filter(t => t.tipo === "dia").map(t => `${t.id}|${t.fecha}`));
 
   // Lista del proyecto vacía: agregar o copiar la del corte anterior.
   const rosterPrevio = (previoP?.jornaleros || []).filter(id => { const f = ficha(id); return f && f.status !== "inactive"; });
@@ -837,7 +846,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
                   return <td key={d.fecha} title={d.isHoliday ? d.holidayName : "Click derecho: horas extra"}
                     onClick={() => { if (!editable) return; if (isMobile) setModal({ t: "celda", id: f.id, fecha: d.fecha }); else ponerDia(f.id, d.fecha, sig(v)); }}
                     onContextMenu={(ev) => { ev.preventDefault(); if (editable) setCeldaHe(abierto ? null : k); }}
-                    style={{ ...TD_H, textAlign: "center", cursor: editable ? "pointer" : "default", background: pc ? pc.bg : "transparent", color: pc ? pc.fg : "#2C2A28", fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid rgba(44,42,40,.06)", position: "relative", fontSize: 11.5 }}>
+                    style={{ ...TD_H, textAlign: "center", cursor: editable ? "pointer" : "default", background: pc ? pc.bg : "transparent", color: pc ? pc.fg : "#2C2A28", fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid rgba(44,42,40,.06)", boxShadow: choqueEn.has(k) ? "inset 0 0 0 2px #B03024" : undefined, position: "relative", fontSize: 11.5 }}>
                     {v === undefined ? <span style={{ color: "#D8D4CE" }}>·</span> : Number(v) === 0.5 ? "½" : String(v)}
                     {h > 0 && <div style={{ fontSize: 8, color: d.fecha === viernesFin ? "#A39C92" : "#A94E16", lineHeight: 1, fontWeight: 800, marginTop: 1 }}>+{fmtN(h)}h{d.fecha === viernesFin ? "→" : ""}</div>}
                     {abierto && <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 170, padding: 8, textAlign: "left" }} onClick={ev => ev.stopPropagation()}>
@@ -894,6 +903,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
     {cabecera}
     {recuperado && sucio && aviso("Recuperé cambios que hiciste en este equipo y no se habían guardado en la nube. Revisalos y tocá Guardar.", C_NARANJA)}
     {barraLista}
+    {choques.length > 0 && aviso(<span><b>Ojo, se pagaría doble:</b> {choques.map(t => textoTraslape(t, (id) => ficha(id)?.fullName, short)).join(" · ")}. Dejá el día en uno solo de los proyectos.</span>, C_ROJO)}
     {vista === "corte" ? vistaCorte() : vistaDia()}
     {roster.length > 0 && (esRRHH ? pie : <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", gap: 22, flexWrap: "wrap", alignItems: "baseline" }}>
       <div><div style={LBL}>Días marcados en el corte</div><div style={{ font: "800 20px/1.2 var(--display)", color: CHARCOAL }}>{fmtN(liq.totales.dias)}</div></div>

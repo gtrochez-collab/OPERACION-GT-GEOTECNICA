@@ -70,3 +70,18 @@ test("proyecto nuevo en el corte: la lista que pasó del corte anterior no se pi
   assert.equal(m.dias.a.d1, 1);
   assert.equal(m.tarifas.a, 600);
 });
+
+test("traslapes: el mismo día en dos proyectos (y las HE de la misma fecha)", async () => {
+  const { traslapesDelCorte } = await import("../src/jornales-calc.js");
+  const plantel = { jornaleros: ["a", "b"], dias: { a: { "2026-10-31": 0.5 }, b: { "2026-11-02": 1 } }, he: {} };
+  const represa = { jornaleros: ["a", "b"], dias: { a: { "2026-11-02": 1 }, b: { "2026-11-02": 1, "2026-11-03": 0 } }, he: { b: { "2026-11-02": 2 } } };
+  const aurea = { jornaleros: ["b"], dias: { b: { "2026-11-03": 1 } }, he: { b: { "2026-11-02": 1 } } };
+  const t = traslapesDelCorte({ "PLAN-TALLER": plantel, REPRESA: represa, AUREA: aurea });
+  // a: sáb 31 en Plantel y lun 2 en Represa → días distintos, sin traslape
+  assert.equal(t.some(x => x.id === "a"), false);
+  // b: lun 2 en Plantel y Represa → traslape de día; el mar 3 vale 0 en Represa → no cuenta
+  assert.deepEqual(t.filter(x => x.tipo === "dia").map(x => [x.id, x.fecha, x.proyectos.join("+")]), [["b", "2026-11-02", "PLAN-TALLER+REPRESA"]]);
+  // b: horas extra del lun 2 en Represa y en Aurea
+  assert.deepEqual(t.filter(x => x.tipo === "he").map(x => [x.id, x.fecha]), [["b", "2026-11-02"]]);
+  assert.deepEqual(traslapesDelCorte({}), []);
+});

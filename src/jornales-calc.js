@@ -165,3 +165,23 @@ export function validarJornalero(j, todos = []) {
 }
 export const formatoDni = (v) => { const d = String(v || "").replace(/\D/g, "").slice(0, 13); return d.length > 8 ? `${d.slice(0, 4)}-${d.slice(4, 8)}-${d.slice(8)}` : d.length > 4 ? `${d.slice(0, 4)}-${d.slice(4)}` : d; };
 export const tieneIdentidad = (j) => !!(j?.dniFrente?.fileId);
+
+/**
+ * TRASLAPES del corte (14-nov-2026, Gerson: "que no se traslapen días, que no le
+ * estemos pagando doble en dos proyectos"): la misma persona con un día marcado
+ * (> 0) en la MISMA fecha en dos o más proyectos, o con horas extra de la misma
+ * fecha en dos proyectos. proyectos = { [short]: proy } (para revisar lo que se
+ * está editando, pasá el proyecto local en lugar del guardado).
+ * Devuelve [{ id, fecha, tipo: "dia" | "he", proyectos: [short…] }].
+ */
+export function traslapesDelCorte(proyectos = {}) {
+  const dias = {}, he = {};
+  Object.entries(proyectos || {}).forEach(([s, p]) => {
+    const P = norm(p);
+    Object.entries(P.dias).forEach(([id, m]) => Object.entries(m || {}).forEach(([f, v]) => { if (num(v) > 0) ((dias[id] ||= {})[f] ||= []).push(s); }));
+    Object.entries(P.he).forEach(([id, m]) => Object.entries(m || {}).forEach(([f, h]) => { if (num(h) > 0) ((he[id] ||= {})[f] ||= []).push(s); }));
+  });
+  const out = [];
+  [["dia", dias], ["he", he]].forEach(([tipo, mapa]) => Object.entries(mapa).forEach(([id, m]) => Object.entries(m).forEach(([fecha, ss]) => { if (ss.length > 1) out.push({ id, fecha, tipo, proyectos: ss }); })));
+  return out.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id.localeCompare(b.id) || a.tipo.localeCompare(b.tipo));
+}
