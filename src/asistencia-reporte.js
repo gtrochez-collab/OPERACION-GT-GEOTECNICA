@@ -169,7 +169,9 @@ export const construirAsistenciaPDF = async ({ empresa = "geotecnica", nombreEmp
   fc(T.naranja); doc.rect(M, ctx.y + 12, 22, 1, "F");
   ctx.y += 19;
   planilla.forEach(sec => {
-    asegurar(24);
+    // La sección entera pasa a la hoja siguiente si cabe en una (no se parte).
+    const hSec = 6 + (sec.filas.length ? 6.2 + sec.filas.length * 6.8 : 14) + 8;
+    asegurar(hSec <= Y_MAX - (M + 12) ? hSec : 24);
     const col = hex(sec.color) || T.carbon;
     f(10.5, "bold"); tc(T.carbon); t(sec.titulo, M, ctx.y + 3);
     if (sec.filas.length) { f(7.5); tc(T.texto3); t(`${sec.filas.length} colaborador${sec.filas.length === 1 ? "" : "es"} · ${sec.filas.reduce((a, r) => a + r.total, 0)} días`, PW - M, ctx.y + 3, { align: "right" }); }
@@ -177,11 +179,14 @@ export const construirAsistenciaPDF = async ({ empresa = "geotecnica", nombreEmp
     if (!sec.filas.length) { fc(T.fondo); doc.roundedRect(M, ctx.y, CW, 8, 2, 2, "F"); f(7.8); tc(T.texto2); t(sec.vacio, M + 4, ctx.y + 5.2); ctx.y += 14; return; }
     const cs = [["Colaborador", 80], ["Proyecto", 60], ["Días (del mes)", 0], ["Total", 22]];
     const fijo = cs.reduce((a, c) => a + c[1], 0); let x = M; const xs = cs.map(c => { const w = c[1] || CW - fijo; const o = { x, w }; x += w; return o; });
-    fc(SEC.col.head); doc.rect(M, ctx.y, CW, 6.2, "F");
-    cs.forEach((c, i) => { f(5.8, "bold"); tc(SEC.col.tinta); if (i === 3) t(c[0].toUpperCase(), xs[i].x + xs[i].w - 3, ctx.y + 4.2, { align: "right" }); else t(c[0].toUpperCase(), xs[i].x + 2, ctx.y + 4.2); });
-    ctx.y += 6.2;
+    const encab = () => {
+      fc(SEC.col.head); doc.rect(M, ctx.y, CW, 6.2, "F");
+      cs.forEach((c, i) => { f(5.8, "bold"); tc(SEC.col.tinta); if (i === 3) t(c[0].toUpperCase(), xs[i].x + xs[i].w - 3, ctx.y + 4.2, { align: "right" }); else t(c[0].toUpperCase(), xs[i].x + 2, ctx.y + 4.2); });
+      ctx.y += 6.2;
+    };
+    encab();
     sec.filas.forEach((r, i) => {
-      asegurar(6.8);
+      if (asegurar(6.8)) encab();
       fc(i % 2 ? [250, 250, 249] : [255, 255, 255]); doc.rect(M, ctx.y, CW, 6.8, "F");
       f(7.6, "bold"); tc(T.carbon); doc.text(recortar(r.nombre, xs[0].w - 4), xs[0].x + 2, ctx.y + 4.5);
       f(7); tc(T.texto2); doc.text(recortar(r.proj, xs[1].w - 4), xs[1].x + 2, ctx.y + 4.5);

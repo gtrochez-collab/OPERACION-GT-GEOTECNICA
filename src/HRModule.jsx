@@ -2666,6 +2666,20 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         });
         return out.sort((a, b) => b.total - a.total);
       };
+      const domingosTrabajados = () => {
+        const out = [];
+        ae.forEach((e) => {
+          const ds = [];
+          days.forEach((d) => {
+            if (dayLockReason(e, d)) return;
+            const v = getVal(e.id, d.day);
+            if (v === "DT") ds.push(String(d.day)); else if (v === "DT2") ds.push(`${d.day} (triple)`);
+          });
+          if (ds.length) out.push({ nombre: e.fullName, code: genEmpCode(e.fullName, e.dni), proj: resolverProy(e) || "-", dias: ds, total: ds.length });
+        });
+        return out.sort((a, b) => b.total - a.total || a.nombre.localeCompare(b.nombre));
+      };
+      const ferTrab = resumenDe("TF");
       const enUso = proyectos.map((p) => p.short);
       const otros = shorts.filter((s2) => !enUso.includes(s2) || ae.some((e) => days.some((d) => resolveShortHR(getProj(e.id, d.day)) === s2))).map((s2) => ({ short: s2, pastel: pcDe[s2] }));
       try {
@@ -2685,6 +2699,10 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             { titulo: "Ausencias sin goce de sueldo (NSP)", color: PAL_CELDA.nsp.fg, vacio: "Sin ausencias esta quincena: asistencia completa.", filas: resumenDe("NSP") },
             { titulo: "Incapacidades", color: PAL_CELDA.inc.fg, vacio: "Sin incapacidades esta quincena.", filas: resumenDe("INC") },
             { titulo: "Vacaciones", color: PAL_CELDA.vac.fg, vacio: "Sin vacaciones esta quincena.", filas: resumenDe("V") },
+            // 14-nov-2026 (la Lic. Carolina lo pidió): quién trabajó domingo y qué
+            // fechas, para pagárselos. DT2 = domingo triple; feriados aparte.
+            { titulo: "Domingos trabajados", color: PAL_CELDA.extra.fg, vacio: "Nadie trabajó domingo esta quincena.", filas: domingosTrabajados() },
+            ...(ferTrab.length ? [{ titulo: "Feriados trabajados", color: PAL_CELDA.extra.fg, vacio: "", filas: ferTrab }] : []),
           ],
         });
       } catch (err) { console.error(err); alert("No se pudo generar el PDF: " + (err?.message || err)); }
