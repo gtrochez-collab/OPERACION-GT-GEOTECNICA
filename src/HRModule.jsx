@@ -5599,7 +5599,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           const mov = {
             id: uid(), tipo: "alta", company: f.company, employeeId: empId,
             fullName: f.fullName, dni: f.dni, position: f.position, contractType: f.contractType,
-            grupo: getGrupo(f.company, f.contractType), salary: Number(f.salary), endDate: f.endDate || "",
+            grupo: getGrupo(f.company, f.contractType), salary: Number(f.salary), bonificacion: Number(f.bonificacion) || 0, endDate: f.endDate || "",
             date: usaExcepcional ? f.payrollEffectiveDate : f.startDate,
             motivo: f.motivo, notas: notasFinal, createdAt: new Date().toISOString(),
             ...(usaExcepcional ? {
@@ -5790,7 +5790,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           const mov = {
             id: uid(), tipo: "baja", company: emp.company, employeeId: emp.id,
             fullName: emp.fullName, dni: emp.dni, position: emp.position, contractType: emp.contractType,
-            grupo: getGrupo(emp.company, emp.contractType), salary: Number(emp.salary) || 0, endDate: emp.endDate || "",
+            grupo: getGrupo(emp.company, emp.contractType), salary: Number(emp.salary) || 0, bonificacion: Number(emp.bonificacion) || 0, endDate: emp.endDate || "",
             date: f.date, motivo: f.motivo, notas: f.notas, createdAt: new Date().toISOString(),
           };
           sM([...movs, mov]);
@@ -5834,6 +5834,10 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     // - Para altas: m.date ya ES el startDate.
     // - Para bajas: buscamos el empleado por employeeId y usamos su startDate.
     //   Si el empleado ya fue eliminado, fallback a m.date.
+    // Bonificación mensual del movimiento (14-nov-2026, Gerson: "Cristian René
+    // tiene 23,000 + 2,000 de bonificación; tiene que salir en la alta"). Los
+    // movimientos nuevos la guardan; los viejos la toman de la ficha.
+    const bonifMov = (m) => m.bonificacion != null ? (Number(m.bonificacion) || 0) : (Number(emps.find(e => e.id === m.employeeId)?.bonificacion) || 0);
     const getDia1 = (m) => {
       if (m.tipo === "alta") return m.date;
       const emp = emps.find(e => e.id === m.employeeId);
@@ -5855,7 +5859,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         const filas = filtered.map(m => {
           const q = getQuincena(m.date);
           return { tipo: m.tipo.toUpperCase(), dia1: getDia1(m) || "", fecha: m.date, q: `${q.quincena} ${q.periodo}`, grupo: m.grupo, nombre: m.fullName, dni: m.dni, pos: m.position || "",
-            empresa: COMPANIES[m.company]?.name || "", contrato: m.contractType, dur: getDuracionContrato(m), salario: Number(m.salary) || 0, motivo: m.motivo || "", notas: m.notas || "" };
+            empresa: COMPANIES[m.company]?.name || "", contrato: m.contractType, dur: getDuracionContrato(m), salario: Number(m.salary) || 0, bonif: bonifMov(m), motivo: m.motivo || "", notas: m.notas || "" };
         });
         const wb = await libroExcel();
         hojaExcel(wb, {
@@ -5874,6 +5878,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             { t: "Contrato", key: "contrato", ancho: 12, formato: "texto" },
             { t: "Duración contrato", key: "dur", ancho: 24, formato: "texto" },
             { t: "Salario", key: "salario", ancho: 14, formato: "lps" },
+            { t: "Bonificación", key: "bonif", ancho: 14, formato: "lps" },
             { t: "Motivo", key: "motivo", ancho: 24, formato: "texto" },
             { t: "Notas", key: "notas", ancho: 30, formato: "texto" },
           ],
@@ -5896,7 +5901,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         const corta = (iso) => { const x = String(iso || "").slice(0, 10).split("-"); return x.length === 3 ? `${x[2]}/${x[1]}/${x[0].slice(2)}` : ""; };
         const conDur = dur !== "\u2014";
         return { nombre: m.fullName, dni: m.dni, posicion: m.position || "", fecha: corta(fecha), q: q.quincena, grupo: m.grupo,
-          contrato: CONTRATO[m.contractType] || m.contractType || "", duracion: conDur ? `${corta(getDia1(m))} a ${corta(m.endDate)}` : "-", salario: Number(m.salary) || 0, motivo: m.motivo || "", notas: m.notas || "" };
+          contrato: CONTRATO[m.contractType] || m.contractType || "", duracion: conDur ? `${corta(getDia1(m))} a ${corta(m.endDate)}` : "-", salario: Number(m.salary) || 0, bonif: bonifMov(m), motivo: m.motivo || "", notas: m.notas || "" };
       };
       const grupoStats = {};
       ["A", "B", "C", "D"].forEach(g => grupoStats[g] = { altas: 0, bajas: 0 });
@@ -5947,7 +5952,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           {chipH(contratoTxt(m.contractType))}
           {dur !== "—" && <span style={{ fontSize: 11, color: "#6E6862", whiteSpace: "nowrap" }}>{dur}</span>}
         </div>
-        {!hideSalary && <div style={{ font: "700 13px/1 var(--mono)", color: CHARCOAL, textAlign: isMobile ? "left" : "right" }}>{fmtL(m.salary)}</div>}
+        {!hideSalary && <div style={{ textAlign: isMobile ? "left" : "right" }}><div style={{ font: "700 13px/1 var(--mono)", color: CHARCOAL }}>{fmtL(m.salary)}</div>{bonifMov(m) > 0 && <div style={{ font: "600 10.5px/1.2 var(--mono)", color: "#6E6862", marginTop: 4 }}>+ {fmtL(bonifMov(m))} bonif.</div>}</div>}
         <div style={{ fontSize: 12, color: "#6E6862", minWidth: 0 }}>
           <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.motivo || "—"}</div>
           {m.notas && <div style={{ fontSize: 11, color: "#8B847C", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={m.notas}>{m.notas}</div>}
@@ -6117,7 +6122,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             nuevoContrato,
           ]);
           // 3) Movimientos automaticos: baja temporal + alta permanente
-          const base = { employeeId: emp.id, fullName: emp.fullName, dni: emp.dni || "", position: emp.position || "", company: emp.company, createdAt: ts };
+          const base = { employeeId: emp.id, fullName: emp.fullName, dni: emp.dni || "", position: emp.position || "", company: emp.company, bonificacion: Number(emp.bonificacion) || 0, createdAt: ts };
           const movBaja = { id: uid(), tipo: "baja", ...base, contractType: "temporary", grupo: grupoViejo, salary: Number(contract.salary) || Number(emp.salary) || 0, endDate: diaAnterior, date: diaAnterior, motivo: "Fin de contrato temporal", notas: `Conversión a permanencia — pasa a permanente el ${fmt(fecha)}.${notas ? " " + notas : ""}` };
           const movAlta = { id: uid(), tipo: "alta", ...base, contractType: "permanent", grupo: grupoNuevo, salary: Number(salario), endDate: "", date: fecha, motivo: "Conversion temporal a permanente", notas: `Era temporal desde ${fmt(emp.startDate)} (${cumulativeDaysOf(contract)} días acumulados).${notas ? " " + notas : ""}` };
           const ok3 = await sM([...movs, movBaja, movAlta]);

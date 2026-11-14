@@ -22,7 +22,7 @@ const NARANJA = { head: [251, 217, 191], cell: [253, 238, 225], tinta: [169, 78,
 
 /**
  * empresa, nombreEmpresa, periodoTexto, verSalario, elaboradoPor
- * altas / bajas = [{ nombre, dni, posicion, fecha (texto), q, grupo, contrato, duracion, salario, motivo, notas }]
+ * altas / bajas = [{ nombre, dni, posicion, fecha (texto), q, grupo, contrato, duracion, salario, bonif (bonificación mensual), motivo, notas }]
  * grupos = [{ g, desc, altas, bajas }]
  */
 export const construirMovimientosPDF = async ({ empresa = "geotecnica", nombreEmpresa = "", periodoTexto = "", verSalario = true, elaboradoPor = "", altas = [], bajas = [], grupos = [], jsPDF }) => {
@@ -135,7 +135,7 @@ export const construirMovimientosPDF = async ({ empresa = "geotecnica", nombreEm
         else if (c.k === "grupo") { const w = xs[ci].w; fc(T.carbon); doc.roundedRect(xs[ci].x + w / 2 - 3.5, ctx.y + 3, 7, 4.2, 1, 1, "F"); txt(ci, r.grupo || "", ctx.y + 6.1, { bold: true, color: [255, 255, 255], fs: 6.8 }); }
         else if (c.k === "contrato") txt(ci, r.contrato || "", ym, { fs: 7 });
         else if (c.k === "duracion") txt(ci, r.duracion || "-", ym, { bold: r.duracion && r.duracion !== "-", color: r.duracion && r.duracion !== "-" ? T.naranjaTexto : T.texto3, fs: 7 });
-        else if (c.k === "salario") txt(ci, `${MONEDA} ${nf(r.salario)}`, ym, { bold: true, color: NARANJA.tinta });
+        else if (c.k === "salario") { txt(ci, `${MONEDA} ${nf(r.salario)}`, r.bonif ? y1 : ym, { bold: true, color: NARANJA.tinta }); if (r.bonif) txt(ci, `+ ${MONEDA} ${nf(r.bonif)} bonif.`, y2, { color: T.texto2, fs: 6.2 }); }
         else if (c.k === "motivo") { txt(ci, r.motivo || "-", r.notas ? y1 : ym, { bold: true, fs: 7 }); if (r.notas) txt(ci, r.notas, y2, { color: T.texto3, fs: 6.2 }); }
       });
       dc(T.linea); doc.setLineWidth(0.15); doc.line(M, ctx.y + alto, PW - M, ctx.y + alto);
@@ -144,7 +144,8 @@ export const construirMovimientosPDF = async ({ empresa = "geotecnica", nombreEm
     cols.forEach((c, ci) => { fc(SEC[c.sec].head); doc.rect(xs[ci].x, ctx.y, xs[ci].w, 7.5, "F"); });
     dc(esAlta ? [77, 190, 119] : [176, 48, 36]); doc.setLineWidth(0.5); doc.line(M, ctx.y, PW - M, ctx.y);
     txt(1, `Total · ${lista.length} ${esAlta ? "alta" : "baja"}${lista.length === 1 ? "" : "s"}`, ctx.y + 5, { bold: true, color: MOV.tinta, fs: 7.8 });
-    if (verSalario) txt(cols.findIndex(c => c.k === "salario"), `${MONEDA} ${nf(lista.reduce((a, r) => a + (Number(r.salario) || 0), 0))}`, ctx.y + 5, { bold: true, color: NARANJA.tinta, fs: 7.8 });
+    const totB = lista.reduce((a, r) => a + (Number(r.bonif) || 0), 0);
+    if (verSalario) { const iS = cols.findIndex(c => c.k === "salario"); txt(iS, `${MONEDA} ${nf(lista.reduce((a, r) => a + (Number(r.salario) || 0), 0))}`, ctx.y + (totB ? 3.6 : 5), { bold: true, color: NARANJA.tinta, fs: 7.8 }); if (totB) txt(iS, `+ ${MONEDA} ${nf(totB)} bonif.`, ctx.y + 6.6, { color: T.texto2, fs: 6 }); }
     ctx.y += 7.5 + 9;
   };
   const titulo = (s, n, col) => { asegurar(34); f(11.5, "bold"); tc(col); t(s, M, ctx.y + 3); const w = doc.getTextWidth(latin1(s)); f(8); tc(T.texto3); t(`${n} movimiento${n === 1 ? "" : "s"}`, M + w + 3, ctx.y + 3); ctx.y += 7; };
