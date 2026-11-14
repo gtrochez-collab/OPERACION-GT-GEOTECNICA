@@ -1395,6 +1395,16 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   (6 personas, L 39,525, depositar a Ester Cruz): 4 fichas nuevas con su
   identidad leída de las fotos del Excel (Gerson las confirmó) y Edson y Emir
   (ya existían) pasados a Represa; a Emir se le corrigió "Naher" → "Nahel".
+  **Aurea II cargada el 14-nov** (Excel "TORRE ICON" de Edwin Johan Ávila, proyecto
+  `AUREA EDIFICIO CORPORATIVO 2DA ETAPA`, depositar a Johan Avila): 14 personas,
+  L 96,675 — 11 fichas nuevas con identidad (4 fotos de celular recortadas a la
+  tarjeta) + Ricardo/Marvin/Gerson Daniel (sábado 31 en Aurea, desde el lunes en
+  Represa). En ESE Excel el sábado de 4 h cuenta como día completo (así cuadra su
+  total). Las HE de la tarde del viernes 30-oct van en `hr-jornal-2026-10-17`
+  (corte anterior, `proyPrevio`) para que salgan en la columna "HE 30" y se paguen
+  en este corte. ⚠ Al leer estos Excel con exceljs las fechas vienen como `Date`:
+  pasarlas a ISO con `toISOString().slice(0,10)` (con `String()` quedaron mal en
+  el primer intento y se corrigió al instante).
   **ALTAS Y BAJAS + COSTOS rediseñadas (4-nov-2026, Gerson: "Movimientos lo
   llamaría altas y bajas; el mismo estilo que los demás")**: la pestaña
   `movimientos` se rotula **"Altas y bajas"** (el id no cambió). `renderMovs`:
