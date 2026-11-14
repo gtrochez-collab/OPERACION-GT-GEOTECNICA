@@ -5885,62 +5885,32 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       }
     };
 
-    const exportMovsPDF = () => {
-      const w = window.open("", "_blank");
-      if (!w) { alert("Permite popups para imprimir"); return; }
-      const sub = filterPer ? `Periodo: ${filterQ || ""} ${filterPer}` : "Todos los periodos";
-      const salario = (m) => fmtLps(m.salary);
-      const chipTipo = (m) => rChip(m.tipo.toUpperCase(), m.tipo === "alta" ? "verde" : "rojo");
-
-      // ALTAS: muestran "Día 1 del colaborador" (startDate) + Duración contrato (solo grupo B).
-      const tablaAltas = rTabla({
-        columnas: [{ t: "Tipo" }, { t: "Día 1 del colaborador" }, { t: "Fecha mov." }, { t: "Q" }, { t: "Grupo" }, { t: "Nombre" }, { t: "DNI" }, { t: "Posición" }, { t: "Empresa" }, { t: "Contrato" }, { t: "Duración contrato" }, { t: "Salario", num: true }, { t: "Motivo" }, { t: "Notas" }],
-        filas: altas.map(m => {
-          const q = getQuincena(m.date);
-          const dia1 = getDia1(m);
-          const dur = getDuracionContrato(m);
-          return [chipTipo(m), `<b>${dia1 ? fmt(dia1) : "—"}</b>`, `<span style="color:${RP.texto3}">—</span>`, q.quincena, rChip(m.grupo, "carbon"),
-            `<b>${escHTML(m.fullName)}</b>`, `<span class="mono">${escHTML(m.dni)}</span>`, escHTML(m.position || ""), escHTML(COMPANIES[m.company]?.name || ""), escHTML(m.contractType),
-            dur === "—" ? `<span style="color:${RP.texto3}">—</span>` : `<span style="white-space:nowrap;color:${RP.naranjaTexto};font-weight:700">${dur}</span>`,
-            salario(m), escHTML(m.motivo || ""), `<span class="suave">${escHTML(m.notas || "")}</span>`];
-        }),
-      });
-
-      // BAJAS: "Último día del colaborador en la empresa" = hasta ahí se le paga;
-      // la asistencia se bloquea desde el día siguiente. Sin Duración contrato ni Fecha mov.
-      const tablaBajas = rTabla({
-        columnas: [{ t: "Tipo" }, { t: "Último día del colaborador en la empresa" }, { t: "Q" }, { t: "Grupo" }, { t: "Nombre" }, { t: "DNI" }, { t: "Posición" }, { t: "Empresa" }, { t: "Contrato" }, { t: "Salario", num: true }, { t: "Motivo" }, { t: "Notas" }],
-        filas: bajas.map(m => {
-          const q = getQuincena(m.date);
-          return [chipTipo(m), `<b style="color:${RP.rojo}">${m.date ? fmt(m.date) : "—"}</b>`, q.quincena, rChip(m.grupo, "carbon"),
-            `<b>${escHTML(m.fullName)}</b>`, `<span class="mono">${escHTML(m.dni)}</span>`, escHTML(m.position || ""), escHTML(COMPANIES[m.company]?.name || ""), escHTML(m.contractType),
-            salario(m), escHTML(m.motivo || ""), `<span class="suave">${escHTML(m.notas || "")}</span>`];
-        }),
-      });
-
-      // Resumen por grupo
+    // 14-nov-2026 (Gerson: "¿el reporte de altas y bajas viene como los nuevos
+    // formatos?"): se baja directo como PDF (jsPDF, movimientos-reporte.js).
+    const exportMovsPDF = async () => {
+      const CONTRATO = { permanent: "Permanente", temporary: "Temporal", honorarios: "Honorarios", fees: "Honorarios" };
+      const fila = (m) => {
+        const q = getQuincena(m.date);
+        const fecha = m.tipo === "alta" ? getDia1(m) : m.date;
+        const dur = getDuracionContrato(m);
+        const corta = (iso) => { const x = String(iso || "").slice(0, 10).split("-"); return x.length === 3 ? `${x[2]}/${x[1]}/${x[0].slice(2)}` : ""; };
+        const conDur = dur !== "\u2014";
+        return { nombre: m.fullName, dni: m.dni, posicion: m.position || "", fecha: corta(fecha), q: q.quincena, grupo: m.grupo,
+          contrato: CONTRATO[m.contractType] || m.contractType || "", duracion: conDur ? `${corta(getDia1(m))} a ${corta(m.endDate)}` : "-", salario: Number(m.salary) || 0, motivo: m.motivo || "", notas: m.notas || "" };
+      };
       const grupoStats = {};
       ["A", "B", "C", "D"].forEach(g => grupoStats[g] = { altas: 0, bajas: 0 });
       filtered.forEach(m => { if (grupoStats[m.grupo]) grupoStats[m.grupo][m.tipo === "alta" ? "altas" : "bajas"]++; });
-      const tablaGrupos = rTabla({
-        columnas: [{ t: "Grupo", ancho: "60px" }, { t: "Descripción" }, { t: "Altas", num: true, ancho: "70px" }, { t: "Bajas", num: true, ancho: "70px" }, { t: "Neto", num: true, ancho: "70px" }],
-        filas: ["A", "B", "C", "D"].map(g => {
-          const s = grupoStats[g];
-          const neto = s.altas - s.bajas;
-          return [rChip(g, "carbon"), escHTML(GRUPO_DESC[g]),
-            `<b style="color:${s.altas ? RP.verde : RP.texto3}">${s.altas}</b>`, `<b style="color:${s.bajas ? RP.rojo : RP.texto3}">${s.bajas}</b>`, `<b>${neto >= 0 ? "+" : ""}${neto}</b>`];
-        }),
-      });
-
-      const cuerpo = rKpis([
-        { label: "Altas", valor: altas.length, tono: altas.length ? "verde" : undefined },
-        { label: "Bajas", valor: bajas.length, tono: bajas.length ? "rojo" : undefined },
-        { label: "Neto", valor: `${altas.length - bajas.length >= 0 ? "+" : ""}${altas.length - bajas.length}` },
-      ])
-        + (altas.length > 0 ? rSeccion(`Altas (${altas.length})`, tablaAltas) : "")
-        + (bajas.length > 0 ? rSeccion(`Bajas (${bajas.length})`, tablaBajas) : "")
-        + rSeccion("Resumen por grupo", tablaGrupos);
-      abrirReporte(w, reporteHTML({ titulo: "Reporte de movimientos", subtitulo: `${cc.name} · ${sub}`, empresa: co, cuerpo, horizontal: true }));
+      try {
+        const { pdfMovimientos } = await import("./movimientos-reporte.js");
+        await pdfMovimientos({
+          empresa: co, nombreEmpresa: cc.name, verSalario: !hideSalary, elaboradoPor: userName || "",
+          periodoTexto: filterPer ? (filterQ ? `quincena ${filterQ} ${filterPer}` : `mes ${filterPer}`) : "todos los períodos",
+          archivo: `${filterPer || "todos"}${filterQ ? "_" + filterQ : ""}`,
+          altas: altas.map(fila), bajas: bajas.map(fila),
+          grupos: ["A", "B", "C", "D"].map(g => ({ g, desc: GRUPO_DESC[g], ...grupoStats[g] })),
+        });
+      } catch (err) { console.error(err); alert("No se pudo generar el PDF: " + (err?.message || err)); }
     };
 
     // Stats por grupo
