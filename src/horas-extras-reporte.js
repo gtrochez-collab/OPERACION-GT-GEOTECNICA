@@ -48,8 +48,14 @@ export const construirHorasExtrasPDF = async ({ empresa = "geotecnica", nombreEm
   const marca = await cargarImagen("brand/geocore/geocore-180.png");
   const logo = await cargarImagen(LOGO_EMPRESA[empresa] || LOGO_EMPRESA.geotecnica);
   const subterra = empresa === "subterra";
+  // Montos redondeados al centavo por persona antes de sumar (14-nov-2026): así el
+  // total cuadra al centavo con la planilla de horas extras, que suma lo mismo.
+  const r2 = (n) => Math.round((Number(n) || 0) * 100 + 1e-9) / 100;
+  grupos = grupos.map(g => ({ ...g, filas: g.filas.map(r => ({ ...r, total: r2(r.total) })) }));
+  proyectos = proyectos.map(p => { const filas = p.filas.map(r => ({ ...r, total: r2(r.total) })); return { ...p, filas, costo: r2(filas.reduce((a, r) => a + r.total, 0)) }; });
   const pc = pastelesDe(proyectos.map(p => p.short));
-  const granH = proyectos.reduce((a, p) => a + p.hrs, 0), granL = proyectos.reduce((a, p) => a + p.costo, 0);
+  const granH = proyectos.reduce((a, p) => a + p.hrs, 0);
+  const granL = r2(grupos.reduce((a, g) => a + g.filas.reduce((b, r) => b + r.total, 0), 0));  // = planilla de horas extras
   const nColab = new Set(grupos.flatMap(g => g.filas.map(r => r.nombre))).size;
 
   const encabezadoCont = () => {
