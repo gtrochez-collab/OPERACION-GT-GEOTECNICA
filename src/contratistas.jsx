@@ -19,7 +19,7 @@ import { hoyISO } from "./fechas.js";
 import { MONEDA, DOC_ID } from "./operacion.js";
 import { esFeriado, nombreFeriado } from "./holidays.js";
 import { Modal, ORANGE, ORANGE_DARK, CHARCOAL, uid, useIsMobile } from "./geocost-ui.jsx";
-import { abrirReporte, reporteHTML, rKpis, rTabla, escHTML, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
+import { libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 import {
   KEY_CONTRATISTAS, keyAsistContrat, diasQuincena, quincenaDeFecha, liquidarContrato, estimacionQuincena,
   ponerDia, ponerHoras, ponerPorDia, ponerCampo, mezclarAsistencia, validarContratista, formatoDui, valorHoraDe, servicioDe, RETENCION_ISR,
@@ -142,36 +142,15 @@ const filasReporte = (est, { periodo, quincena, proyectos = [] } = {}) => {
     };
   });
 };
-export const estimacionPDF = (w, { periodo, quincena, est, elaboradoPor, proyectos = [] }) => {
-  const filas = filasReporte(est, { periodo, quincena, proyectos });
-  const cuerpo = rKpis([
-    { label: "Contratos", valor: String(est.filas.length), mono: false },
-    { label: "Personas", valor: String(est.personas), mono: false },
-    { label: "Suma global", valor: fmt$(est.suma) },
-    { label: `Retención ISR ${Math.round(RETENCION_ISR * 100)} %`, valor: fmt$(est.retencion), tono: "rojo" },
-    { label: "Líquido a pagar", valor: fmt$(est.liquido), tono: "naranja" },
-  ]) + `<h3 style="font:800 14px/1.2 var(--display, sans-serif);margin:22px 0 8px">Proveedores de servicios</h3>` + rTabla({
-    // 9 columnas (14-nov-2026: con 11 la última se salía de la hoja): la tarifa va
-    // con lo entregado ("15 días × $ 25.00") y el valor hora dentro de las HE.
-    columnas: [{ t: "Contratista" }, { t: "Proyecto / UG · rol" }, { t: "Servicio entregado" }, { t: "Suma por días / obra", num: true }, { t: "HE diurnas", num: true }, { t: "HE nocturnas", num: true }, { t: "Suma global", num: true }, { t: "ISR 10 %", num: true }, { t: "Líquido a pagar", num: true }],
-    filas: filas.map(f => {
-      const nw = (x) => `<span style="white-space:nowrap">${x}</span>`;
-      const he = (h, monto) => h ? `${nw(`${fmtN(h)} h × ${MONEDA} ${(Number(f.precioHe) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 3 })}`)}<br><span style="color:#8A847D;font-size:10px;white-space:nowrap">${fmt$(monto)}</span>` : "—";
-      return [
-        `<span style="color:#8A847D;font-size:10px;white-space:nowrap">${escHTML(f.codigo)}</span><br><b>${escHTML(f.nombre)}</b><br><span style="color:#8A847D;font-size:10px;white-space:nowrap">${DOC_ID} ${escHTML(f.dui)}</span>`,
-        `${escHTML(f.proyecto)}<br><span style="color:#8A847D;font-size:10px">${escHTML(f.rol)}</span>`,
-        `${nw(`${fmtN(f.entregado)} ${escHTML(f.unidadEntregado)}`)}<br><span style="color:#8A847D;font-size:10px;white-space:nowrap">× ${fmt$(f.tarifa)}${f.unidadEntregado === "días" ? " por día" : ""}</span>`,
-        nw(fmt$(f.sumaDias)), he(f.heD, f.sumaHeD), he(f.heN, f.sumaHeN),
-        nw(fmt$(f.suma)), nw(fmt$(f.retencion)), `<b style="white-space:nowrap">${fmt$(f.liquido)}</b>`,
-      ];
-    }),
-    total: ["<b>SUMAS</b>", "", "", ...[filas.reduce((a, f) => a + f.sumaDias, 0), filas.reduce((a, f) => a + f.sumaHeD, 0), filas.reduce((a, f) => a + f.sumaHeN, 0), est.suma, est.retencion].map(v => `<span style="white-space:nowrap">${fmt$(v)}</span>`), `<b style="white-space:nowrap">${fmt$(est.liquido)}</b>`],
-  }) + `<h3 style="font:800 14px/1.2 var(--display, sans-serif);margin:22px 0 8px">Resumen para pagos</h3>` + rTabla({
-    columnas: [{ t: "Nombre completo" }, { t: DOC_ID }, { t: "Servicio eventual" }, { t: "Suma global", num: true }, { t: "Retención ISR", num: true }, { t: "Líquido a pagar", num: true }, { t: "Dirección completa" }, { t: "Teléfono" }, { t: "Banco" }, { t: "Cuenta" }],
-    filas: filas.map(f => [`<b>${escHTML(f.nombre)}</b>${f.correo ? `<br><span style="color:#8A847D;font-size:10px">${escHTML(f.correo)}</span>` : ""}`, `<span style="white-space:nowrap">${escHTML(f.dui)}</span>`, escHTML(f.servicio), fmt$(f.suma), fmt$(f.retencion), `<b>${fmt$(f.liquido)}</b>`, `<span style="font-size:10px">${escHTML(f.direccion)}</span>`, escHTML(f.telefono), escHTML(f.banco), `<span style="font-size:10px">${escHTML(f.cuenta)}</span>`]),
-    total: ["<b>TOTAL A PAGAR</b>", "", "", fmt$(est.suma), fmt$(est.retencion), `<b>${fmt$(est.liquido)}</b>`, "", "", "", ""],
-  }) + `<div style="display:flex;justify-content:space-around;margin-top:46px;font-size:11px;color:#5B5650"><div style="text-align:center;min-width:220px;border-top:1px solid #2C2A28;padding-top:6px"><b>Elaborado por</b><br>${escHTML(elaboradoPor || "")}</div><div style="text-align:center;min-width:220px;border-top:1px solid #2C2A28;padding-top:6px"><b>Aprobado por</b></div></div>`;
-  abrirReporte(w, reporteHTML({ titulo: "Estimación de pago · Contratistas de servicios", subtitulo: `${nombreQ(periodo, quincena)} · ${fechaCorta(diasQuincena(periodo, quincena)[0])} al ${fechaCorta(diasQuincena(periodo, quincena).slice(-1)[0])} · retención de ISR ${Math.round(RETENCION_ISR * 100)} %`, empresa: "subterra", cuerpo }));
+// PDF con jsPDF y el MISMO estilo de la planilla (14-nov-2026, Gerson: "muy gris,
+// muy aburrida; bonita como la de los fijos y las bonificaciones").
+export const estimacionPDF = async ({ periodo, quincena, est, elaboradoPor, proyectos = [] }) => {
+  const { exportarContratistasPDF } = await import("./planilla-export.js");
+  return exportarContratistasPDF({
+    periodo, quincena, filas: filasReporte(est, { periodo, quincena, proyectos }),
+    totales: { contratos: est.filas.length, personas: est.personas, suma: est.suma, retencion: est.retencion, liquido: est.liquido },
+    meta: { elaboradoPor },
+  });
 };
 export const estimacionExcel = async ({ periodo, quincena, est, proyectos = [] }) => {
   const wb = await libroExcel();
@@ -487,7 +466,7 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
       {sucio && <span style={{ fontSize: 12.5, color: ORANGE_DARK, fontWeight: 600, marginRight: "auto", background: "rgba(255,255,255,.92)", padding: "6px 12px", borderRadius: 999 }}>Cambios sin guardar</span>}
       <button type="button" onClick={salir} style={{ minHeight: 44, padding: "10px 24px", borderRadius: 999, border: "none", background: "#EEEDEA", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Cerrar</button>
       {verMontos && <button type="button" disabled={!est.filas.length} onClick={() => estimacionExcel({ periodo: q.periodo, quincena: q.quincena, est, proyectos }).catch(() => alert("No se pudo generar el Excel."))} style={{ minHeight: 44, padding: "10px 20px", borderRadius: 999, border: "1px solid rgba(44,42,40,.16)", background: "#fff", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Exportar Excel</button>}
-      {verMontos && <button type="button" disabled={!est.filas.length} onClick={() => { const w = window.open("", "_blank"); estimacionPDF(w, { periodo: q.periodo, quincena: q.quincena, est, elaboradoPor: user?.nombre, proyectos }); }} style={{ minHeight: 44, padding: "10px 20px", borderRadius: 999, border: "1px solid rgba(44,42,40,.16)", background: "#fff", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Exportar PDF</button>}
+      {verMontos && <button type="button" disabled={!est.filas.length} onClick={() => estimacionPDF({ periodo: q.periodo, quincena: q.quincena, est, elaboradoPor: user?.nombre, proyectos }).catch(() => alert("No se pudo generar el PDF."))} style={{ minHeight: 44, padding: "10px 20px", borderRadius: 999, border: "1px solid rgba(44,42,40,.16)", background: "#fff", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Exportar PDF</button>}
       {puedeEditar && <button type="button" disabled={!sucio || guardando} onClick={guardarAsistencia} style={{ minHeight: 44, padding: "10px 26px", borderRadius: 999, border: "none", background: ORANGE, color: "#fff", font: "800 14px/1 var(--sans)", cursor: "pointer", opacity: !sucio || guardando ? .55 : 1, boxShadow: "0 8px 20px rgba(232,118,45,.28)" }}>{guardando ? "Guardando…" : "Guardar asistencia"}</button>}
     </div>
     {modal}

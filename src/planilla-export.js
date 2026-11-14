@@ -468,6 +468,184 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
   return doc;
 };
 
+// ── El Salvador: ESTIMACIÓN DE PAGO DE CONTRATISTAS en jsPDF (14-nov-2026) ──
+// Gerson: "muy gris, muy aburrida; que se vea bonita como la de los fijos y las
+// bonificaciones". Misma familia visual que la planilla: cabecera con el logo de
+// Subterra, cifras arriba, franjas de color por sección (Servicio · Horas extra ·
+// Descuentos · A pagar), filas alternadas, totales en naranja y el Resumen para
+// pagos (banco y cuenta) en su propia tabla. Recibe las filas ya calculadas
+// (filasReporte de contratistas.jsx): acá solo se dibuja.
+const SEC_CT = {
+  col: { t: "Contratista", head: [241, 240, 237], cell: [255, 255, 255], tinta: [110, 104, 98] },
+  serv: { t: "Servicio de la quincena", head: [220, 232, 248], cell: [245, 248, 253], tinta: [31, 79, 140] },
+  he: { t: "Horas extra", head: [213, 239, 221], cell: [243, 250, 245], tinta: [31, 107, 60] },
+  glob: { t: "Suma global", head: [233, 231, 227], cell: [247, 246, 244], tinta: [60, 56, 52] },
+  ded: { t: "Retención", head: [249, 222, 219], cell: [253, 245, 244], tinta: [154, 42, 30] },
+  neto: { t: "A pagar", head: [251, 217, 191], cell: [253, 238, 225], tinta: [169, 78, 22] },
+  pago: { t: "Datos de pago", head: [220, 232, 248], cell: [245, 248, 253], tinta: [31, 79, 140] },
+};
+// "SE-30-3-10 ESTUDIO SKY PARK" → nombre arriba y el código abajo (no se corta).
+const partirProyecto = (s) => { const m = String(s || "").match(/^([A-Z]{2,4}-[\d-]+)\s+(.*)$/); return m ? { nombre: m[2], codigo: m[1] } : { nombre: String(s || "-"), codigo: "" }; };
+export const construirContratistasPDF = async ({ periodo, quincena, filas, totales, meta = {}, jsPDF }) => {
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "letter" });
+  const PW = doc.internal.pageSize.getWidth(), PH = doc.internal.pageSize.getHeight(), M = 12, CW = PW - 2 * M, Y_MAX = PH - 18;
+  const f = (n, st = "normal") => { doc.setFontSize(n); doc.setFont("helvetica", st); };
+  const tc = (c) => doc.setTextColor(...c), fc = (c) => doc.setFillColor(...c);
+  const recortar = (s, w) => { let t = latin1(s); if (doc.getTextWidth(t) <= w) return t; while (t.length > 1 && doc.getTextWidth(t + "...") > w) t = t.slice(0, -1); return t.trimEnd() + "..."; };
+  const $ = (n) => Lsiempre(n);
+  const n2 = (v) => { const x = Number(v) || 0; return x % 1 ? x.toLocaleString("en-US", { maximumFractionDigits: 2 }) : String(x); };
+  const rango = rangoQuincena(periodo, quincena);
+  const titulo = `Planilla de proveedores de servicios · ${nombreQuincena(periodo, quincena).replace(" · ", " del mes de ").toLowerCase().replace(/^\w/, c => c.toUpperCase())}`;
+  const ctx = { y: M };
+
+  // Cabecera de la PRIMERA hoja: marca, logo grande de Subterra, razón social y título.
+  const marca = await cargarImagen("brand/geocore/geocore-180.png");
+  if (marca) doc.addImage(marca.dataUrl, "PNG", M, M, 8, 8);
+  f(7.5, "bold"); tc(GRIS_FAINT); doc.text(latin1("GEOCORE · GRUPO GEOTECNICA"), M + 11, M + 5.4, { charSpace: 0.5 });
+  const logo = await achicarLogo(await cargarImagen(LOGO_EMPRESA.subterra).catch(() => null), 360);
+  if (logo) { const h = 28, w = Math.min(90, h * logo.w / logo.h); doc.addImage(logo.dataUrl, "PNG", PW - M - w, M - 2, w, h); }
+  let y = M + 23;
+  f(16, "bold"); tc(CARBON); doc.text(latin1(meta.razonSocial || "SUBTERRA, S.A. DE C.V."), M, y);
+  y += 7; f(11, "bold"); tc(NARANJA_TEXTO);
+  const tl = doc.splitTextToSize(latin1(titulo), CW - 75); doc.text(tl, M, y); y += 5 * (tl.length - 1) + 6;
+  f(9); tc(GRIS); doc.text(latin1(`${rango} · retención de ISR aplicable 10 %${meta.estado ? ` · ${meta.estado}` : ""}`), M, y);
+  y += 7;
+  const kw = (CW - 12) / 5;
+  pdfKpi(doc, M, y, kw, 16, "Contratos", String(totales.contratos));
+  pdfKpi(doc, M + (kw + 3), y, kw, 16, "Personas", String(totales.personas));
+  pdfKpi(doc, M + 2 * (kw + 3), y, kw, 16, "Suma global", $(totales.suma));
+  pdfKpi(doc, M + 3 * (kw + 3), y, kw, 16, "Retención ISR 10 %", $(totales.retencion), { tono: "rojo" });
+  pdfKpi(doc, M + 4 * (kw + 3), y, kw, 16, "Líquido a pagar", $(totales.liquido), { tono: "naranjaTexto" });
+  ctx.y = y + 24;
+
+  const encabezadoCont = () => {
+    f(7, "bold"); tc(GRIS_FAINT); doc.text(latin1("GEOCORE · GRUPO GEOTECNICA"), M, M + 3.2, { charSpace: 0.4 });
+    f(8.5, "bold"); tc(CARBON); doc.text(latin1(`Subterra El Salvador · Proveedores de servicios · ${nombreQuincena(periodo, quincena)}`), PW - M, M + 3.2, { align: "right" });
+    doc.setDrawColor(...LINEA); doc.setLineWidth(0.2); doc.line(M, M + 7, PW - M, M + 7);
+    ctx.y = M + 12;
+  };
+  const asegurar = (h) => { if (ctx.y + h > Y_MAX) { doc.addPage(); encabezadoCont(); return true; } return false; };
+
+  // Tabla genérica con franjas por sección.
+  const tabla = ({ titulo: tt, cols, filasT, total, alto = 10 }) => {
+    const fijo = cols.reduce((a, c) => a + (c.w || 0), 0); const libre = cols.filter(c => !c.w).length;
+    const xs = []; let x = M; cols.forEach(c => { const w = c.w || (CW - fijo) / libre; xs.push({ x, w }); x += w; });
+    const celda = (i, txt, yy, { bold = false, color = CARBON, fs = 7.2 } = {}) => {
+      const { x: cx, w } = xs[i], al = cols[i].al || "left"; f(fs, bold ? "bold" : "normal"); tc(color);
+      const t = recortar(txt, w - 3);
+      if (al === "right") doc.text(t, cx + w - 1.5, yy, { align: "right" }); else if (al === "center") doc.text(t, cx + w / 2, yy, { align: "center" }); else doc.text(t, cx + 1.5, yy);
+    };
+    const encabezado = () => {
+      Object.entries(SEC_CT).forEach(([k, sc]) => {
+        const ids = cols.map((c, ci) => c.sec === k ? ci : -1).filter(i => i >= 0); if (!ids.length) return;
+        const x0 = xs[ids[0]].x, x1 = xs[ids[ids.length - 1]].x + xs[ids[ids.length - 1]].w;
+        fc(sc.head); doc.rect(x0, ctx.y, x1 - x0, 4.4, "F");
+        f(5.8, "bold"); tc(sc.tinta); doc.text(latin1(sc.t.toUpperCase()), (x0 + x1) / 2, ctx.y + 3.1, { align: "center", charSpace: 0.2 });
+      });
+      ctx.y += 4.8;
+      cols.forEach((c, ci) => { const sc = SEC_CT[c.sec]; if (sc) { fc(sc.head); doc.rect(xs[ci].x, ctx.y, xs[ci].w, 7, "F"); } });
+      cols.forEach((c, ci) => celda(ci, c.t.toUpperCase(), ctx.y + 4.6, { bold: true, color: SEC_CT[c.sec]?.tinta || GRIS_FAINT, fs: 5.9 }));
+      doc.setDrawColor(...LINEA_FUERTE); doc.setLineWidth(0.25); doc.line(M, ctx.y + 7, PW - M, ctx.y + 7);
+      ctx.y += 7;
+    };
+    asegurar(20 + alto * Math.min(3, filasT.length));
+    f(11.5, "bold"); tc(CARBON); doc.text(latin1(tt), M, ctx.y + 4); ctx.y += 8;
+    encabezado();
+    filasT.forEach((r, ri) => {
+      if (asegurar(alto + (ri === filasT.length - 1 && total ? 9 : 0))) encabezado();
+      cols.forEach((c, ci) => { const sc = SEC_CT[c.sec]; if (sc && sc.cell) { fc(ri % 2 ? sc.cell.map(v => Math.max(0, v - 4)) : sc.cell); doc.rect(xs[ci].x, ctx.y, xs[ci].w, alto, "F"); } });
+      cols.forEach((c, ci) => {
+        const v = r[ci] || {}; const l1 = v.a ?? v, l2 = v.b;
+        celda(ci, String(l1 ?? ""), ctx.y + (l2 ? 4.2 : 5.9), { bold: !!c.bold, color: c.color || CARBON, fs: c.fs || 7.2 });
+        if (l2) celda(ci, String(l2), ctx.y + 8, { color: GRIS_FAINT, fs: 5.8 });
+      });
+      doc.setDrawColor(...LINEA); doc.setLineWidth(0.15); doc.line(M, ctx.y + alto, PW - M, ctx.y + alto);
+      ctx.y += alto;
+    });
+    if (total) {
+      cols.forEach((c, ci) => { const sc = SEC_CT[c.sec]; if (sc) { fc(sc.head); doc.rect(xs[ci].x, ctx.y, xs[ci].w, 8, "F"); } });
+      doc.setDrawColor(232, 118, 45); doc.setLineWidth(0.5); doc.line(M, ctx.y, PW - M, ctx.y);
+      cols.forEach((c, ci) => celda(ci, total[ci] ?? "", ctx.y + 5.4, { bold: true, color: ci === cols.length - 1 ? NARANJA_TEXTO : (SEC_CT[c.sec]?.tinta || CARBON), fs: 7.6 }));
+      ctx.y += 8;
+    }
+    ctx.y += 9;
+  };
+
+  // 1) Proveedores de servicios (el detalle, como la hoja de Roberto)
+  tabla({
+    titulo: "Proveedores de servicios",
+    cols: [
+      { t: "#", w: 6, al: "center", sec: "col", color: GRIS_FAINT },
+      { t: "Contratista", w: 51, sec: "col", bold: true, fs: 6.9 },
+      { t: "Proyecto / UG", w: 30, sec: "col" },
+      { t: "Entregado", w: 19, al: "right", sec: "serv" },
+      { t: "Tarifa", w: 16, al: "right", sec: "serv" },
+      { t: "Subtotal", w: 20, al: "right", sec: "serv" },
+      { t: "Diurnas", w: 13, al: "right", sec: "he", fs: 7 },
+      { t: "Noct.", w: 11, al: "right", sec: "he", fs: 7 },
+      { t: "Valor h.", w: 14, al: "right", sec: "he", fs: 7 },
+      { t: "Monto", w: 15, al: "right", sec: "he" },
+      { t: "Suma global", w: 20, al: "right", sec: "glob", bold: true },
+      { t: "ISR 10 %", w: 16, al: "right", sec: "ded", color: [154, 42, 30] },
+      { t: "Líquido a pagar", al: "right", sec: "neto", bold: true, color: NARANJA_TEXTO },
+    ],
+    filasT: filas.map((r, i) => [
+      String(i + 1),
+      { a: r.nombre, b: `${r.codigo}${r.dui ? ` · ${DOC_ID} ${r.dui}` : ""}` },
+      (() => { const pp = partirProyecto(r.proyecto); return { a: pp.nombre, b: [pp.codigo, r.rol].filter(Boolean).join(" · ") }; })(),
+      { a: `${n2(r.entregado)} ${r.unidadEntregado === "días" ? "días" : "ML"}`, b: r.unidadEntregado === "días" ? "" : r.unidadEntregado },
+      { a: $(r.tarifa), b: r.unidadEntregado === "días" ? "por día" : `por ${String(r.unidadEntregado).split(" ")[0]}` },
+      $(r.sumaDias),
+      r.heD ? `${n2(r.heD)} h` : "-", r.heN ? `${n2(r.heN)} h` : "-",
+      r.precioHe ? `${MONEDA} ${(Number(r.precioHe) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 3 })}` : "-",
+      r.sumaHeD + r.sumaHeN ? $(r.sumaHeD + r.sumaHeN) : "-",
+      $(r.suma), $(r.retencion), $(r.liquido),
+    ]),
+    total: ["", "SUMAS", "", "", "", $(filas.reduce((a, r) => a + r.sumaDias, 0)), "", "", "", $(filas.reduce((a, r) => a + r.sumaHeD + r.sumaHeN, 0)), $(totales.suma), $(totales.retencion), $(totales.liquido)],
+  });
+
+  // 2) Resumen para pagos (banco y cuenta de cada uno)
+  tabla({
+    titulo: "Resumen para pagos",
+    cols: [
+      { t: "Nombre completo", w: 56, sec: "col", bold: true },
+      { t: DOC_ID, w: 21, sec: "col" },
+      { t: "Servicio eventual", w: 58, sec: "col" },
+      { t: "Suma global", w: 21, al: "right", sec: "glob" },
+      { t: "Retención ISR", w: 20, al: "right", sec: "ded", color: [154, 42, 30] },
+      { t: "Líquido a pagar", w: 23, al: "right", sec: "neto", bold: true, color: NARANJA_TEXTO },
+      { t: "Banco", w: 24, sec: "pago" },
+      { t: "Cuenta", sec: "pago" },
+    ],
+    filasT: filas.map(r => [
+      { a: r.nombre, b: r.correo || r.telefono || "" },
+      r.dui, { a: r.servicio, b: r.telefono ? `Tel. ${r.telefono}` : "" },
+      $(r.suma), $(r.retencion), $(r.liquido),
+      r.banco || "-", { a: String(r.cuenta || "-").replace(/\s*\(.*\)$/, ""), b: (String(r.cuenta || "").match(/\((.*)\)$/) || [])[1] || "" },
+    ]),
+    total: ["TOTAL A PAGAR", "", "", $(totales.suma), $(totales.retencion), $(totales.liquido), "", ""],
+  });
+
+  // Firmas
+  if (ctx.y + 26 > Y_MAX) { doc.addPage(); encabezadoCont(); }
+  const yF = Math.max(ctx.y + 16, Math.min(Y_MAX - 10, ctx.y + 20));
+  [["Elaborado por", meta.elaboradoPor || ""], ["Aprobado por", ""]].forEach(([lab, nom], i) => {
+    const fx = M + 20 + i * 130;
+    doc.setDrawColor(...CARBON); doc.setLineWidth(0.3); doc.line(fx, yF, fx + 80, yF);
+    f(8.5, "bold"); tc(CARBON); doc.text(latin1(lab), fx, yF + 5);
+    if (nom) { f(8.5); tc(GRIS); doc.text(latin1(nom), fx, yF + 10); }
+  });
+  pdfPie(doc, { margen: M });
+  return doc;
+};
+export const exportarContratistasPDF = async (args) => {
+  const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
+  const doc = await construirContratistasPDF({ ...args, jsPDF });
+  const nombre = `Planilla_Contratistas_Subterra_${args.quincena}_${args.periodo}.pdf`;
+  doc.save(nombre);
+  return nombre;
+};
+
 export const exportarPlanillaPDF = async (args) => {
   const { jsPDF } = await safeDynamicImport(() => import("jspdf"), "jspdf");
   const doc = await construirPlanillaPDF({ ...args, jsPDF });
