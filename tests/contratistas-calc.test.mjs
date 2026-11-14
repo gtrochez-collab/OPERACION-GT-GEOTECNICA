@@ -82,3 +82,30 @@ test("validación", () => {
   assert.match(validarContratista({ nombre: "X", contratos: [{ servicio: "Vigilancia", tarifa: 0 }] }), /tarifa/);
   assert.equal(validarContratista({ nombre: "X", dui: "03938537-2", contratos: [{ servicio: "V", tarifa: 25 }] }), null);
 });
+
+// Batch Q01 NOV.26 de Roberto: $2,404.09 — metros por día del perforista y horas nocturnas aparte.
+test("Q01 NOV.26: metros por día, HE diurna y nocturna, total $2,404.09", async () => {
+  const { ponerPorDia } = await import("../src/contratistas-calc.js");
+  const nov = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`2026-11-${String(i + 1).padStart(2, "0")}`, 1]));
+  const per = { ...perez, contratos: perez.contratos };
+  let a = { registros: { c2: { dias: nov(15), he: { "2026-11-03": 2, "2026-11-04": 5 } }, c6: { dias: nov(15), he: { "2026-11-03": 2, "2026-11-04": 5 } }, c7: { dias: nov(12) }, c10: { dias: nov(15), he: { "2026-11-03": 2 } } } };
+  a = ponerPorDia(a, "c10", "heN", "2026-11-04", 5);                     // 5 h nocturnas: mismo precio
+  a = ponerPorDia(a, "c4", "uni", "2026-11-10", 23.55);
+  a = ponerPorDia(a, "c4", "uni", "2026-11-11", 26);
+  a = ponerPorDia(a, "c4", "uni", "2026-11-12", 25);
+  const l10 = liquidarContrato(per.contratos[1], a.registros.c10);
+  assert.equal(l10.horasD, 2); assert.equal(l10.horasN, 5); assert.equal(l10.suma, 349.25);
+  const l4 = liquidarContrato(martinez.contratos[0], a.registros.c4);
+  assert.equal(l4.unidades, 74.55);
+  const e = estimacionQuincena([domingo, { ...martinez, contratos: [{ ...martinez.contratos[0], tarifa: 16.66666 }] }, dolores, per], a);
+  assert.equal(e.liquido, 2404.09);
+  assert.equal(e.suma, 2671.21);
+  // el total sin detalle por día sigue sirviendo, y el detalle por día manda
+  assert.equal(liquidarContrato(martinez.contratos[0], { unidades: 57 }).unidades, 57);
+  assert.equal(liquidarContrato(martinez.contratos[0], { unidades: 57, uni: { "2026-11-10": 10 } }).unidades, 10);
+  // mezcla a tres vías también para heN y uni
+  const m = mezclarAsistencia({ registros: {} }, a, { registros: { c99: { dias: { "2026-11-01": 1 } } } });
+  assert.equal(m.registros.c4.uni["2026-11-11"], 26);
+  assert.equal(m.registros.c10.heN["2026-11-04"], 5);
+  assert.equal(m.registros.c99.dias["2026-11-01"], 1);
+});

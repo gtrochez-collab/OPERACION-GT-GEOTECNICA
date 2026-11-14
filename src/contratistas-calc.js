@@ -16,8 +16,14 @@
 //        activo, contratos: [{ id, codigo, servicio, rol, proyecto, modo
 //        "dia"|"unidad", unidad, tarifa, valorHora, activo }] }]
 //   hr-contrat-<AAAA-MM>-<1Q|2Q>   → { periodo, quincena, registros:
-//        { [contratoId]: { dias {fecha: 0|0.5|1|2}, he {fecha: horas},
-//          unidades, nota } }, updatedAt, updatedBy }
+//        { [contratoId]: { dias {fecha: 0|0.5|1|2}, he {fecha: horas diurnas},
+//          heN {fecha: horas nocturnas}, uni {fecha: unidades del día — el
+//          perforista: metros lineales de la bitácora}, unidades (total de la
+//          quincena SIN detalle por día; solo si no hay `uni`), nota } },
+//        updatedAt, updatedBy }
+// 14-nov-2026 (Excel de Roberto, Batch Q01 NOV.26 = $2,404.09): la hora extra
+// nocturna vale lo MISMO que la diurna (tarifa ÷ 8, sin recargo) pero va en su
+// columna; el perforista lleva sus metros por día (23.55 + 26 + 25).
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const KEY_CONTRATISTAS = "hr-contratistas";
@@ -52,19 +58,22 @@ export const servicioDe = (c) => String(c?.servicio || c?.rol || "Servicio").tri
  */
 export const liquidarContrato = (contrato, registro = {}, { retencion = RETENCION_ISR } = {}) => {
   const r = registro || {};
-  const dias = Object.values(r.dias || {}).reduce((s, v) => s + num(v), 0);
-  const horas = Object.values(r.he || {}).reduce((s, v) => s + num(v), 0);
+  const suma = (o) => Object.values(o || {}).reduce((s, v) => s + num(v), 0);
+  const dias = suma(r.dias);
+  const horasD = suma(r.he), horasN = suma(r.heN), horas = horasD + horasN;
   const porUnidad = contrato?.modo === "unidad";
-  const unidades = porUnidad ? num(r.unidades) : 0;
+  const hayUni = Object.keys(r.uni || {}).length > 0;
+  const unidades = porUnidad ? (hayUni ? suma(r.uni) : num(r.unidades)) : 0;
   const tarifa = num(contrato?.tarifa), vh = valorHoraDe(contrato);
   const montoBase = porUnidad ? unidades * tarifa : dias * tarifa;
-  const montoHe = horas * vh;
+  const montoHeD = horasD * vh, montoHeN = horasN * vh;
+  const montoHe = montoHeD + montoHeN;
   const sumaX = montoBase + montoHe;
   const retX = contrato?.sinRetencion ? 0 : sumaX * retencion;
   const liqX = sumaX - retX;
   return {
-    dias, horas, unidades, tarifa, valorHora: r2(vh),
-    montoBase: r2(montoBase), montoHe: r2(montoHe),
+    dias, horas, horasD, horasN, unidades, tarifa, valorHora: r2(vh),
+    montoBase: r2(montoBase), montoHe: r2(montoHe), montoHeD: r2(montoHeD), montoHeN: r2(montoHeN),
     suma: r2(sumaX), retencion: r2(retX), liquido: r2(liqX),
     sumaX, retX, liqX,
     vacio: sumaX <= 0,
@@ -95,14 +104,16 @@ export const ponerDia = (asis, contratoId, fecha, v) => {
   regs[contratoId] = { ...r, dias };
   return { ...(asis || {}), registros: regs };
 };
-export const ponerHoras = (asis, contratoId, fecha, h) => {
+// campo: "he" (horas extra diurnas) | "heN" (nocturnas) | "uni" (unidades del día).
+export const ponerPorDia = (asis, contratoId, campo, fecha, n) => {
   const regs = { ...(asis?.registros || {}) };
   const r = { ...(regs[contratoId] || {}) };
-  const he = { ...(r.he || {}) };
-  if (!num(h)) delete he[fecha]; else he[fecha] = num(h);
-  regs[contratoId] = { ...r, he };
+  const m = { ...(r[campo] || {}) };
+  if (!num(n)) delete m[fecha]; else m[fecha] = num(n);
+  regs[contratoId] = { ...r, [campo]: m };
   return { ...(asis || {}), registros: regs };
 };
+export const ponerHoras = (asis, contratoId, fecha, h) => ponerPorDia(asis, contratoId, "he", fecha, h);
 export const ponerCampo = (asis, contratoId, campo, valor) => {
   const regs = { ...(asis?.registros || {}) };
   regs[contratoId] = { ...(regs[contratoId] || {}), [campo]: valor };
@@ -121,7 +132,7 @@ export const mezclarAsistencia = (base, local, nube) => {
   ids.forEach(id => {
     const b = B[id] || {}, l = Lr[id] || {};
     const o = out.registros[id] = { ...(out.registros[id] || {}) };
-    ["dias", "he"].forEach(k => {
+    ["dias", "he", "heN", "uni"].forEach(k => {
       const bk = b[k] || {}, lk = l[k] || {};
       const ok = o[k] = { ...(o[k] || {}) };
       new Set([...Object.keys(bk), ...Object.keys(lk)]).forEach(f => {

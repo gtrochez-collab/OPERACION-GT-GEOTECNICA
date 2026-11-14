@@ -22,7 +22,8 @@ import { descargarVouchers } from "./voucher-pdf.js";
 // solicitudes (vacaciones, permisos, constancias, reportes) para RRHH.
 import { KEY_SOLICITUDES, KEY_VINCULOS, vincularEmpleado, siguienteFolio, vacacionDeSolicitud, permisosDeSolicitud, constanciaDoc, textoConstancia, estaAbierta, esAprobador as esAprobadorHub, veTodo as veTodoHub, vacacionesTomadas, rangoCorto as rangoCortoHub } from "./rrhh-solicitudes.js";
 import { FichasJornales, AsistenciaCampo, AsistenciaJornales, EMPRESA_JORNALES, ROLES_RRHH_JORNAL, ROLES_CAMPO_JORNAL, useResponsables } from "./jornales.jsx";
-import { ContratistasSV } from "./contratistas.jsx";
+import { ContratistasSV, estimacionPDF, estimacionExcel } from "./contratistas.jsx";
+import { KEY_CONTRATISTAS, keyAsistContrat, estimacionQuincena } from "./contratistas-calc.js";
 import { proyectosDeResponsable } from "./jornales-calc.js";
 import { PortalRRHH, BandejaRRHH, SolicitudFormImpl, SolicitudDetalleImpl, ModalHub, ICO as ICO_HUB, GenerarConstanciaImpl, pdfDeRegistroConstancia } from "./rrhh-hub.jsx";
 
@@ -1018,6 +1019,23 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const [payPer, setPayPer] = useState("");
   const [payQui, setPayQui] = useState("");
   const [payParte, setPayParte] = useState("salarios"); // salarios | he — la planilla de HE va APARTE (20-oct-2026)
+  // El Salvador (14-nov-2026): tercera planilla de la quincena = CONTRATISTAS
+  // (la estimación sale de su asistencia en hr-contrat-<periodo>-<Q>; solo se lee).
+  const [payContrat, setPayContrat] = useState(null);   // {k, est, asis} | {k, err}
+  const payContratK = esSV && payVista === "editor" && payDraft ? `${payDraft.periodo}|${payDraft.quincena}` : "";
+  useEffect(() => {
+    if (!payContratK) return;
+    let vivo = true;
+    const [periodo, quincena] = payContratK.split("|");
+    (async () => {
+      try {
+        const [lista, asis] = await Promise.all([store.getCloud(KEY_CONTRATISTAS), store.getCloud(keyAsistContrat(periodo, quincena))]);
+        const activos = (Array.isArray(lista) ? lista : []).filter(p => p.activo !== false).map(p => ({ ...p, contratos: (p.contratos || []).filter(c => c.activo !== false) }));
+        if (vivo) setPayContrat({ k: payContratK, est: estimacionQuincena(activos, asis || { registros: {} }), asis });
+      } catch { if (vivo) setPayContrat({ k: payContratK, err: true }); }
+    })();
+    return () => { vivo = false; };
+  }, [payContratK]);
   // Firmas de marcajes GeoClock cargadas on-demand en Llegadas tardías:
   // { markId: dataUrl }. Se cargan solo al tocar "Ver firma".
   const [firmaCache, setFirmaCache] = useState({});
@@ -4772,6 +4790,49 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   // ANTERIOR, por colaborador y banda, con su método de pago.
   // El Salvador: la bonificación se paga APARTE (Roberto, 13-nov-2026) en la
   // planilla "Servicios profesionales eventuales": monto − ISR 10 % = líquido.
+  // El Salvador: la planilla de CONTRATISTAS de la quincena (14-nov-2026). No se
+  // edita acá: sale de la asistencia de contratistas (Asistencia → Contratistas).
+  const renderContratistasParte = (d) => {
+    const listo = payContrat?.k === payContratK;
+    const est = listo ? payContrat.est : null;
+    const tileC = (lab, val, destacar) => <div className="gt-vidrio" style={{ padding: "12px 16px", minWidth: 0, background: destacar ? "linear-gradient(165deg, rgba(232,118,45,.95), rgba(199,95,31,.95))" : undefined, color: destacar ? "#fff" : CHARCOAL }}>
+      <div className="gt-label" style={{ color: destacar ? "rgba(255,255,255,.8)" : "#6E6862", fontSize: 9 }}>{lab}</div>
+      <div style={{ font: `800 ${isMobile ? 17 : 20}px/1 var(--display)`, marginTop: 9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{val}</div>
+    </div>;
+    const irAsistencia = ROLES_RRHH_JORNAL.includes(userRole) ? <span role="button" onClick={() => { setAsisSub("jornales"); setSec("asistencia"); }} style={{ color: ORANGE_DARK, fontWeight: 700, cursor: "pointer" }}>Abrir la asistencia de contratistas →</span> : null;
+    if (!listo) return <div className="gt-vidrio" style={{ padding: 34, textAlign: "center", color: "#6E6862", fontSize: 13.5 }}>Leyendo la asistencia de contratistas…</div>;
+    if (payContrat.err) return <div className="gt-vidrio" style={{ padding: 34, textAlign: "center", color: "#B03024", fontSize: 13.5 }}>No se pudo leer la asistencia de contratistas. Revisá la conexión.</div>;
+    if (!est.filas.length) return <div className="gt-vidrio" style={{ padding: 34, textAlign: "center", color: "#6E6862", fontSize: 13.5, lineHeight: 1.7 }}>Todavía no hay asistencia de contratistas en la {nombreQuincena(d.periodo, d.quincena).toLowerCase()}.<div>{irAsistencia}</div></div>;
+    return <>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(4, minmax(0,1fr))", gap: 10 }}>
+        {tileC("Contratos", `${est.filas.length} · ${est.personas} personas`)}
+        {tileC("Suma global", fmtL(est.suma))}
+        {tileC("ISR 10 %", fmtL(est.retencion))}
+        {tileC("Líquido a pagar", fmtL(est.liquido), true)}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {est.filas.map((f, i) => {
+          const porUnidad = f.contrato.modo === "unidad";
+          const detalle = porUnidad ? `${f.unidades.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${f.contrato.unidad || "unidades"} × ${fmtL(f.tarifa)}` : `${f.dias} días × ${fmtL(f.tarifa)}${f.horasD ? ` · ${f.horasD} h diurnas` : ""}${f.horasN ? ` · ${f.horasN} h nocturnas` : ""}`;
+          return <div key={f.contrato.id} className="gt-vidrio gt-sube" style={{ borderRadius: 18, padding: isMobile ? "10px 12px" : "11px 18px", display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) auto" : "minmax(0,1.4fr) minmax(0,1.3fr) 110px 100px 120px", alignItems: "center", gap: isMobile ? 10 : 14, animationDelay: `${Math.min(i, 14) * 20}ms` }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "700 14px/1.25 var(--sans)", color: CHARCOAL }}>{f.persona.nombre}</div>
+              <div style={{ font: "500 12px/1.3 var(--sans)", color: "#6E6862", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{[f.contrato.codigo, f.contrato.rol, f.contrato.proyecto].filter(Boolean).join(" · ")}</div>
+            </div>
+            {!isMobile && <div style={{ font: "500 12.5px/1.35 var(--sans)", color: "#5C5853" }}>{detalle}</div>}
+            {!isMobile && <div style={{ textAlign: "right" }}><div style={{ font: "700 13.5px/1 var(--sans)", color: CHARCOAL }}>{fmtL(f.suma)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>suma global</div></div>}
+            {!isMobile && <div style={{ textAlign: "right" }}><div style={{ font: "700 13.5px/1 var(--sans)", color: "#B03024" }}>−{fmtL(f.retencion)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>ISR 10 %</div></div>}
+            <div style={{ textAlign: "right" }}><div style={{ font: `800 ${isMobile ? 14 : 15.5}px/1 var(--display)`, color: CHARCOAL }}>{fmtL(f.liquido)}</div><div className="gt-label" style={{ color: "#A39C92", fontSize: 8.5, marginTop: 4 }}>líquido</div></div>
+          </div>;
+        })}
+      </div>
+      <div className="gt-vidrio" style={{ padding: isMobile ? 14 : "14px 22px", font: "500 12.5px/1.5 var(--sans)", color: "#6E6862", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ flex: 1, minWidth: 220 }}>Sale de la asistencia de contratistas de la quincena (días, horas extra y metros del perforista). Para cambiar algo, corregilo ahí y guardá.</span>
+        {irAsistencia}
+      </div>
+    </>;
+  };
+
   const renderEventualParte = (d, res, editable) => {
     const rows = d.lines.filter(l => (Number(l.eventual) || 0) > 0 || (Number(l.bn) || 0) > 0).filter(l => !payQ.trim() || `${l.name} ${l.pos}`.toLowerCase().includes(payQ.trim().toLowerCase()));
     const tileEv = (lab, val, destacar) => <div className="gt-vidrio" style={{ padding: "12px 16px", minWidth: 0, background: destacar ? "linear-gradient(165deg, rgba(232,118,45,.95), rgba(199,95,31,.95))" : undefined, color: destacar ? "#fff" : CHARCOAL }}>
@@ -5054,10 +5115,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
 
       {/* Dos planillas de la MISMA quincena, cada una con su PDF y su Excel.
           El Salvador: una sola (las horas extras van adentro). */}
-      {<div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: 10 }}>
-        {[["salarios", "Planilla de salarios", `${res.personas} colaboradores`, res.neto], esSV
-          ? ["eventual", "Servicios profesionales eventuales", res.eventualPersonas ? `${res.eventualPersonas} · bonificación − ISR 10 %` : "nadie con bonificación", res.eventualLiquido]
-          : ["he", "Planilla de horas extras", d.heDe ? `${res.hePersonas} colaboradores · ${res.heHrs} h de ${etiquetaCorta(d.heDe.periodo, d.heDe.quincena)}` : "sin hoja de horas extras", res.he]].map(([k, tit, sub, monto]) => {
+      {<div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : `repeat(${esSV ? 3 : 2}, minmax(0,1fr))`, gap: 10 }}>
+        {[["salarios", "Planilla de salarios", `${res.personas} colaboradores`, res.neto], ...(esSV
+          ? [["eventual", "Servicios profesionales eventuales", res.eventualPersonas ? `${res.eventualPersonas} · bonificación − ISR 10 %` : "nadie con bonificación", res.eventualLiquido],
+             ["contratistas", "Contratistas de servicios", payContrat?.k !== payContratK ? "leyendo la asistencia…" : payContrat?.err ? "no se pudo leer" : payContrat.est.filas.length ? `${payContrat.est.filas.length} contratos · ${payContrat.est.personas} personas − ISR 10 %` : "sin asistencia de contratistas", payContrat?.k === payContratK && payContrat.est ? payContrat.est.liquido : 0]]
+          : [["he", "Planilla de horas extras", d.heDe ? `${res.hePersonas} colaboradores · ${res.heHrs} h de ${etiquetaCorta(d.heDe.periodo, d.heDe.quincena)}` : "sin hoja de horas extras", res.he]])].map(([k, tit, sub, monto]) => {
           const on = payParte === k;
           return <div key={k} role="button" tabIndex={0} aria-pressed={on} onClick={() => setPayParte(k)} onKeyDown={(ev) => { if (ev.key === "Enter") setPayParte(k); }} className="gt-vidrio gt-vidrio-hover"
             style={{ padding: "14px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, boxShadow: on ? `inset 0 0 0 2px ${ORANGE}, 0 12px 30px rgba(44,42,40,.10)` : undefined }}>
@@ -5070,7 +5132,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         })}
       </div>}
 
-      {payParte === "he" && !esSV ? renderHeParte(d, res, editable) : payParte === "eventual" && esSV ? renderEventualParte(d, res, editable) : <>
+      {payParte === "he" && !esSV ? renderHeParte(d, res, editable) : payParte === "eventual" && esSV ? renderEventualParte(d, res, editable) : payParte === "contratistas" && esSV ? renderContratistasParte(d) : <>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(5, minmax(0,1fr))", gap: 10 }}>
         {tile("Colaboradores", res.personas)}
         {tile("Ordinario", fmtL(res.ordinario))}
@@ -5117,9 +5179,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
 
       <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 5, padding: isMobile ? "10px 12px" : "12px 32px", pointerEvents: "none" }}>
         <div className="gt-vidrio" style={{ maxWidth: 1436, margin: "0 auto", padding: isMobile ? "10px 12px" : "10px 16px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", pointerEvents: "auto", borderRadius: 18 }}>
-          <span style={{ font: "600 12.5px/1.3 var(--sans)", color: "#6E6862", marginRight: "auto" }}>{payBusy ? "Un momento…" : payParte === "he" && !esSV ? `Horas extras · ${res.hePersonas} colaboradores · ${fmtL(res.he)}` : payParte === "eventual" && esSV ? `Servicios eventuales · ${res.eventualPersonas} · ${fmtL(res.eventualLiquido)}` : `Salarios · ${res.personas} colaboradores · ${fmtL(res.neto)}`}</span>
-          <button disabled={payBusy} onClick={() => descargarPlanilla("excel")} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{payParte === "he" && !esSV ? "Excel de horas extras" : payParte === "eventual" && esSV ? "Excel de eventuales" : "Excel"}</button>
-          <button disabled={payBusy} onClick={() => descargarPlanilla("pdf")} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{payParte === "he" && !esSV ? "PDF de horas extras" : payParte === "eventual" && esSV ? "PDF de eventuales" : "PDF"}</button>
+          <span style={{ font: "600 12.5px/1.3 var(--sans)", color: "#6E6862", marginRight: "auto" }}>{payBusy ? "Un momento…" : payParte === "he" && !esSV ? `Horas extras · ${res.hePersonas} colaboradores · ${fmtL(res.he)}` : payParte === "eventual" && esSV ? `Servicios eventuales · ${res.eventualPersonas} · ${fmtL(res.eventualLiquido)}` : payParte === "contratistas" && esSV ? `Contratistas · ${payContrat?.est?.filas.length || 0} contratos · ${fmtL(payContrat?.est?.liquido || 0)}` : `Salarios · ${res.personas} colaboradores · ${fmtL(res.neto)}`}</span>
+          <button disabled={payBusy} onClick={() => { if (esSV && payParte === "contratistas") { if (payContrat?.est?.filas.length) estimacionExcel({ periodo: d.periodo, quincena: d.quincena, est: payContrat.est, proyectos: hrProjects }).catch(() => alert("No se pudo generar el Excel.")); else alert("No hay asistencia de contratistas en esta quincena."); return; } descargarPlanilla("excel"); }} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{payParte === "he" && !esSV ? "Excel de horas extras" : payParte === "eventual" && esSV ? "Excel de eventuales" : payParte === "contratistas" && esSV ? "Excel de contratistas" : "Excel"}</button>
+          <button disabled={payBusy} onClick={() => { if (esSV && payParte === "contratistas") { if (!payContrat?.est?.filas.length) { alert("No hay asistencia de contratistas en esta quincena."); return; } const w = window.open("", "_blank"); estimacionPDF(w, { periodo: d.periodo, quincena: d.quincena, est: payContrat.est, elaboradoPor: userName, proyectos: hrProjects }); return; } descargarPlanilla("pdf"); }} style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{payParte === "he" && !esSV ? "PDF de horas extras" : payParte === "eventual" && esSV ? "PDF de eventuales" : payParte === "contratistas" && esSV ? "PDF de contratistas" : "PDF"}</button>
           {d.id && pays.some(x => x.id === d.id) && <button disabled={payBusy} onClick={() => abrirVouchers(pays.find(x => x.id === d.id))} title="Comprobantes de lo GUARDADO" style={{ minHeight: 38, padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.8)", color: "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>Vouchers</button>}
           {editable && <button disabled={payBusy} onClick={async () => { if (await guardarPlanilla(d.estado === "publicada" ? "publicada" : "borrador")) alert(d.estado === "publicada" ? "Cambios guardados en la planilla publicada." : "Borrador guardado."); }} style={{ minHeight: 38, padding: "9px 16px", borderRadius: 999, border: "none", background: "#3E8E5A", color: "#fff", font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{d.estado === "publicada" ? "Guardar cambios" : "Guardar borrador"}</button>}
           {editable && d.estado !== "publicada" && <button disabled={payBusy} onClick={async () => { if (!confirm(`¿Publicar las planillas ${etiquetaCorta(d.periodo, d.quincena)} de ${cc.name}?\n\nSalarios: ${fmtL(res.neto)}\nHoras extras: ${fmtL(res.he)}\n\nQuedan como las planillas oficiales de la quincena. Después igual podés corregirlas.`)) return; if (await guardarPlanilla("publicada")) alert("Planilla publicada. Ya podés descargar el PDF y el Excel."); }} className="gt-btn gt-btn-primario" style={{ minHeight: 38, padding: "9px 18px", fontSize: 13 }}>Publicar</button>}

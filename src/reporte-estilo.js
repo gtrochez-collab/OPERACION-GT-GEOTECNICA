@@ -400,17 +400,17 @@ export const hojaExcel = (wb, { nombre, titulo, subtitulo = "", columnas, filas,
     const cell = enc.getCell(i + 1);
     cell.value = String(c.t).toUpperCase();
     cell.font = { name: FUENTE, size: 8.5, bold: true, color: { argb: ARGB(RP.texto3) } };
-    cell.alignment = { horizontal: ["lps", "num", "num2", "pct"].includes(c.formato) ? "right" : "left", vertical: "middle" };
+    cell.alignment = { horizontal: ["lps", "lps3", "num", "num2", "pct"].includes(c.formato) ? "right" : "left", vertical: "middle" };
     cell.border = { bottom: { style: "thin", color: { argb: ARGB(RP.lineaFuerte) } } };
   });
   enc.height = 20;
-  const FMT = { lps: `"${MONEDA} "#,##0.00`, num: "#,##0", num2: "#,##0.00", pct: "0.0%", fecha: "dd-mmm-yyyy" };
+  const FMT = { lps: `"${MONEDA} "#,##0.00`, lps3: `"${MONEDA} "#,##0.00#`, num: "#,##0", num2: "#,##0.00", pct: "0.0%", fecha: "dd-mmm-yyyy" };
   const pintar = (row, esTotal, esSub) => {
     columnas.forEach((c, i) => {
       const cell = row.getCell(i + 1);
       cell.font = { name: c.formato && c.formato !== "texto" && c.formato !== "fecha" ? "Menlo" : FUENTE, size: 10, bold: esTotal || esSub, color: { argb: ARGB(RP.carbon) } };
       if (FMT[c.formato]) cell.numFmt = FMT[c.formato];
-      cell.alignment = { vertical: "top", wrapText: c.formato === "texto" || !c.formato, horizontal: ["lps", "num", "num2", "pct"].includes(c.formato) ? "right" : "left" };
+      cell.alignment = { vertical: "top", wrapText: c.formato === "texto" || !c.formato, horizontal: ["lps", "lps3", "num", "num2", "pct"].includes(c.formato) ? "right" : "left" };
       cell.border = esTotal ? { top: { style: "medium", color: { argb: ARGB(RP.carbon) } } } : { bottom: { style: "hair", color: { argb: ARGB(RP.lineaFuerte) } } };
       if (esSub) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ARGB(RP.fondo) } };
     });

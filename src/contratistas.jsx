@@ -22,7 +22,7 @@ import { Modal, ORANGE, ORANGE_DARK, CHARCOAL, uid, useIsMobile } from "./geocos
 import { abrirReporte, reporteHTML, rKpis, rTabla, escHTML, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 import {
   KEY_CONTRATISTAS, keyAsistContrat, diasQuincena, quincenaDeFecha, liquidarContrato, estimacionQuincena,
-  ponerDia, ponerHoras, ponerCampo, mezclarAsistencia, validarContratista, formatoDui, valorHoraDe, servicioDe, RETENCION_ISR,
+  ponerDia, ponerHoras, ponerPorDia, ponerCampo, mezclarAsistencia, validarContratista, formatoDui, valorHoraDe, servicioDe, RETENCION_ISR,
 } from "./contratistas-calc.js";
 
 const fmt$ = (n) => MONEDA + " " + (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -114,35 +114,67 @@ export function ContratistaForm({ inicial, todos, proyectos = [], onGuardar, onC
 }
 
 // ── Reportes: Estimación de pago (PDF por HTML y Excel) ──
-const filasReporte = (est) => est.filas.map(f => ({
-  nombre: f.persona.nombre, dui: f.persona.dui || "", codigo: f.contrato.codigo || "",
-  servicio: servicioDe(f.contrato).toUpperCase(), proyecto: f.contrato.proyecto || "",
-  detalle: f.contrato.modo === "unidad" ? `${fmtN(f.unidades)} ${f.contrato.unidad || "unidades"}` : `${fmtN(f.dias)} días${f.horas ? ` + ${fmtN(f.horas)} h extra` : ""}`,
-  suma: f.suma, retencion: f.retencion, liquido: f.liquido,
-  direccion: f.persona.direccion || "", correo: f.persona.correo || "", telefono: f.persona.telefono || "",
-  banco: f.persona.banco?.nombre || "", cuenta: [f.persona.banco?.cuenta, f.persona.banco?.nota ? `(${f.persona.banco.nota})` : ""].filter(Boolean).join(" "),
-}));
-export const estimacionPDF = (w, { periodo, quincena, est, elaboradoPor }) => {
-  const filas = filasReporte(est);
+// Calcados de la "Estimación de Pago Contratistas de Servicios" de Roberto
+// (Batch Q01 NOV.26): hoja PROVEEDORES SERVICIOS (detalle: código, nombre,
+// proyecto/UG, rol, DUI, valor hora, tarifa, período, total entregado, suma por
+// días, horas extra diurnas y nocturnas, suma global, ISR, líquido, comentarios)
+// y hoja RESUMEN PARA PAGOS (con dirección, correo, teléfono, banco y cuenta).
+const fechaCorta = (iso) => { const [y, m, d] = String(iso || "").split("-"); return d ? `${d}/${m}/${y}` : ""; };
+const filasReporte = (est, { periodo, quincena, proyectos = [] } = {}) => {
+  const ds = periodo ? diasQuincena(periodo, quincena) : [];
+  return est.filas.map(f => {
+    const pr = proyectos.find(x => x.short === f.contrato.proyecto);
+    const porUnidad = f.contrato.modo === "unidad";
+    return {
+      codigo: f.contrato.codigo || "", nombre: f.persona.nombre, dui: f.persona.dui || "",
+      proyecto: [pr?.code && pr.code !== pr.short ? pr.code : "", f.contrato.proyecto || ""].filter(Boolean).join(" "),
+      rol: (f.contrato.rol || "").toUpperCase(), servicio: servicioDe(f.contrato),
+      valorHora: porUnidad ? 0 : valorHoraDe(f.contrato), tarifa: f.tarifa,
+      inicio: fechaCorta(ds[0]), fin: fechaCorta(ds[ds.length - 1]),
+      entregado: porUnidad ? f.unidades : f.dias, unidadEntregado: porUnidad ? (f.contrato.unidad || "unidades") : "días",
+      sumaDias: f.montoBase, precioHe: porUnidad ? 0 : valorHoraDe(f.contrato),
+      heD: f.horasD, sumaHeD: f.montoHeD, heN: f.horasN, sumaHeN: f.montoHeN,
+      suma: f.suma, retencion: f.retencion, liquido: f.liquido,
+      detalle: porUnidad ? `${fmtN(f.unidades)} ${f.contrato.unidad || "unidades"}` : `${fmtN(f.dias)} días${f.horas ? ` + ${fmtN(f.horas)} h extra` : ""}`,
+      direccion: f.persona.direccion || "", correo: f.persona.correo || "", telefono: f.persona.telefono || "",
+      banco: f.persona.banco?.nombre || "", cuenta: [f.persona.banco?.cuenta, f.persona.banco?.nota ? `(${f.persona.banco.nota})` : ""].filter(Boolean).join(" "),
+      comentario: (f.contrato.servicio || "").toUpperCase(),
+    };
+  });
+};
+export const estimacionPDF = (w, { periodo, quincena, est, elaboradoPor, proyectos = [] }) => {
+  const filas = filasReporte(est, { periodo, quincena, proyectos });
+  const n = (v) => v ? fmtN(v) : "—";
+  const m$ = (v) => v ? fmt$(v) : "—";
   const cuerpo = rKpis([
     { label: "Contratos", valor: String(est.filas.length), mono: false },
     { label: "Personas", valor: String(est.personas), mono: false },
     { label: "Suma global", valor: fmt$(est.suma) },
     { label: `Retención ISR ${Math.round(RETENCION_ISR * 100)} %`, valor: fmt$(est.retencion), tono: "rojo" },
-    { label: "Total a pagar", valor: fmt$(est.liquido), tono: "naranja" },
-  ]) + rTabla({
-    columnas: [{ t: "Nombre completo" }, { t: DOC_ID }, { t: "Servicio eventual" }, { t: "Detalle" }, { t: "Suma global", num: true }, { t: "Retención ISR", num: true }, { t: "Líquido a pagar", num: true }, { t: "Dirección" }, { t: "Teléfono" }, { t: "Banco" }, { t: "Cuenta" }],
-    filas: filas.map(f => [`<b>${escHTML(f.nombre)}</b>${f.correo ? `<br><span style="color:#8A847D;font-size:10px">${escHTML(f.correo)}</span>` : ""}`, escHTML(f.dui), `${escHTML(f.servicio)}${f.codigo ? `<br><span style="color:#8A847D;font-size:10px">${escHTML(f.codigo)}${f.proyecto ? ` · ${escHTML(f.proyecto)}` : ""}</span>` : ""}`, escHTML(f.detalle), fmt$(f.suma), fmt$(f.retencion), `<b>${fmt$(f.liquido)}</b>`, `<span style="font-size:10px">${escHTML(f.direccion)}</span>`, escHTML(f.telefono), escHTML(f.banco), `<span style="font-size:10px">${escHTML(f.cuenta)}</span>`]),
-    total: ["<b>TOTAL A PAGAR</b>", "", "", "", fmt$(est.suma), fmt$(est.retencion), `<b>${fmt$(est.liquido)}</b>`, "", "", "", ""],
+    { label: "Líquido a pagar", valor: fmt$(est.liquido), tono: "naranja" },
+  ]) + `<h3 style="font:800 14px/1.2 var(--display, sans-serif);margin:22px 0 8px">Proveedores de servicios</h3>` + rTabla({
+    columnas: [{ t: "Código / nombre" }, { t: "Proyecto / UG · rol" }, { t: "Tarifa", num: true }, { t: "Entregado", num: true }, { t: "Suma por días / obra", num: true }, { t: "HE diurnas", num: true }, { t: "HE nocturnas", num: true }, { t: "Valor hora", num: true }, { t: "Suma global", num: true }, { t: "ISR 10 %", num: true }, { t: "Líquido a pagar", num: true }],
+    filas: filas.map(f => [`<span style="color:#8A847D;font-size:10px">${escHTML(f.codigo)}</span><br><b>${escHTML(f.nombre)}</b><br><span style="color:#8A847D;font-size:10px">${DOC_ID} ${escHTML(f.dui)}</span>`, `${escHTML(f.proyecto)}<br><span style="color:#8A847D;font-size:10px">${escHTML(f.rol)}</span>`, `${fmt$(f.tarifa)}<br><span style="color:#8A847D;font-size:10px">${f.unidadEntregado === "días" ? "por día" : "por " + escHTML(f.unidadEntregado)}</span>`, `${fmtN(f.entregado)}<br><span style="color:#8A847D;font-size:10px">${escHTML(f.unidadEntregado)}</span>`, fmt$(f.sumaDias), `${n(f.heD)}${f.heD ? `<br><span style="color:#8A847D;font-size:10px">${fmt$(f.sumaHeD)}</span>` : ""}`, `${n(f.heN)}${f.heN ? `<br><span style="color:#8A847D;font-size:10px">${fmt$(f.sumaHeN)}</span>` : ""}`, m$(f.precioHe), fmt$(f.suma), fmt$(f.retencion), `<b>${fmt$(f.liquido)}</b>`]),
+    total: ["<b>SUMAS</b>", "", "", "", fmt$(filas.reduce((a, f) => a + f.sumaDias, 0)), fmt$(filas.reduce((a, f) => a + f.sumaHeD, 0)), fmt$(filas.reduce((a, f) => a + f.sumaHeN, 0)), "", fmt$(est.suma), fmt$(est.retencion), `<b>${fmt$(est.liquido)}</b>`],
+  }) + `<h3 style="font:800 14px/1.2 var(--display, sans-serif);margin:22px 0 8px">Resumen para pagos</h3>` + rTabla({
+    columnas: [{ t: "Nombre completo" }, { t: DOC_ID }, { t: "Servicio eventual" }, { t: "Suma global", num: true }, { t: "Retención ISR", num: true }, { t: "Líquido a pagar", num: true }, { t: "Dirección completa" }, { t: "Teléfono" }, { t: "Banco" }, { t: "Cuenta" }],
+    filas: filas.map(f => [`<b>${escHTML(f.nombre)}</b>${f.correo ? `<br><span style="color:#8A847D;font-size:10px">${escHTML(f.correo)}</span>` : ""}`, escHTML(f.dui), escHTML(f.servicio), fmt$(f.suma), fmt$(f.retencion), `<b>${fmt$(f.liquido)}</b>`, `<span style="font-size:10px">${escHTML(f.direccion)}</span>`, escHTML(f.telefono), escHTML(f.banco), `<span style="font-size:10px">${escHTML(f.cuenta)}</span>`]),
+    total: ["<b>TOTAL A PAGAR</b>", "", "", fmt$(est.suma), fmt$(est.retencion), `<b>${fmt$(est.liquido)}</b>`, "", "", "", ""],
   }) + `<div style="display:flex;justify-content:space-around;margin-top:46px;font-size:11px;color:#5B5650"><div style="text-align:center;min-width:220px;border-top:1px solid #2C2A28;padding-top:6px"><b>Elaborado por</b><br>${escHTML(elaboradoPor || "")}</div><div style="text-align:center;min-width:220px;border-top:1px solid #2C2A28;padding-top:6px"><b>Aprobado por</b></div></div>`;
-  abrirReporte(w, reporteHTML({ titulo: "Estimación de pago · Contratistas de servicios", subtitulo: `${nombreQ(periodo, quincena)} · retención de ISR ${Math.round(RETENCION_ISR * 100)} %`, empresa: "subterra", cuerpo }));
+  abrirReporte(w, reporteHTML({ titulo: "Estimación de pago · Contratistas de servicios", subtitulo: `${nombreQ(periodo, quincena)} · ${fechaCorta(diasQuincena(periodo, quincena)[0])} al ${fechaCorta(diasQuincena(periodo, quincena).slice(-1)[0])} · retención de ISR ${Math.round(RETENCION_ISR * 100)} %`, empresa: "subterra", cuerpo }));
 };
-export const estimacionExcel = async ({ periodo, quincena, est }) => {
+export const estimacionExcel = async ({ periodo, quincena, est, proyectos = [] }) => {
   const wb = await libroExcel();
-  const filas = filasReporte(est);
+  const filas = filasReporte(est, { periodo, quincena, proyectos });
+  const sum = (k) => Math.round(filas.reduce((a, f) => a + (Number(f[k]) || 0), 0) * 100) / 100;
   hojaExcel(wb, {
-    nombre: "Estimación", titulo: "Estimación de pago · Contratistas de servicios", subtitulo: nombreQ(periodo, quincena),
-    columnas: [{ t: "Nombre completo", key: "nombre", ancho: 34 }, { t: DOC_ID, key: "dui", ancho: 13 }, { t: "Código", key: "codigo", ancho: 15 }, { t: "Servicio eventual", key: "servicio", ancho: 42 }, { t: "Proyecto", key: "proyecto", ancho: 26 }, { t: "Detalle", key: "detalle", ancho: 20 }, { t: "Suma global", key: "suma", ancho: 14, formato: "lps" }, { t: "Retención ISR", key: "retencion", ancho: 14, formato: "lps" }, { t: "Líquido a pagar", key: "liquido", ancho: 15, formato: "lps" }, { t: "Dirección completa", key: "direccion", ancho: 46 }, { t: "Correo", key: "correo", ancho: 28 }, { t: "Teléfono", key: "telefono", ancho: 12 }, { t: "Banco", key: "banco", ancho: 16 }, { t: "Cuenta", key: "cuenta", ancho: 30 }],
+    nombre: "Proveedores servicios", titulo: "Planilla · Proveedores de servicios", subtitulo: `${nombreQ(periodo, quincena)} · ISR aplicable ${Math.round(RETENCION_ISR * 100)} %`,
+    columnas: [{ t: "Código de contrato", key: "codigo", ancho: 15 }, { t: "Nombre completo", key: "nombre", ancho: 32 }, { t: "Proyecto / UG actual", key: "proyecto", ancho: 28 }, { t: "Rol", key: "rol", ancho: 16 }, { t: DOC_ID, key: "dui", ancho: 12 }, { t: "Valor hora", key: "valorHora", ancho: 11, formato: "lps3" }, { t: "Servicios diarios / obra", key: "tarifa", ancho: 13, formato: "lps" }, { t: "Inicio del período", key: "inicio", ancho: 12 }, { t: "Fin del período", key: "fin", ancho: 12 }, { t: "Total entregado", key: "entregado", ancho: 11, formato: "num2" }, { t: "Suma por días laborados", key: "sumaDias", ancho: 14, formato: "lps" }, { t: "Precio hora extra diurna", key: "precioHe", ancho: 12, formato: "lps3" }, { t: "Horas extras diurnas", key: "heD", ancho: 10, formato: "num2" }, { t: "Suma horas extras diurnas", key: "sumaHeD", ancho: 13, formato: "lps" }, { t: "Precio hora extra nocturna", key: "precioHe", ancho: 12, formato: "lps3" }, { t: "Horas extras nocturnas", key: "heN", ancho: 10, formato: "num2" }, { t: "Suma horas extras nocturnas", key: "sumaHeN", ancho: 13, formato: "lps" }, { t: "Suma global", key: "suma", ancho: 13, formato: "lps" }, { t: "Retención ISR aplicable", key: "retencion", ancho: 13, formato: "lps" }, { t: "Líquido a pagar", key: "liquido", ancho: 14, formato: "lps" }, { t: "Comentarios", key: "comentario", ancho: 34 }],
+    filas, total: { nombre: "SUMAS", sumaDias: sum("sumaDias"), sumaHeD: sum("sumaHeD"), sumaHeN: sum("sumaHeN"), suma: est.suma, retencion: est.retencion, liquido: est.liquido },
+  });
+  hojaExcel(wb, {
+    nombre: "Resumen para pagos", titulo: "Resumen para pagos · Contratistas de servicios", subtitulo: nombreQ(periodo, quincena),
+    columnas: [{ t: "Nombre completo", key: "nombre", ancho: 32 }, { t: DOC_ID, key: "dui", ancho: 12 }, { t: "Servicio eventual", key: "servicio", ancho: 44 }, { t: "Suma global", key: "suma", ancho: 13, formato: "lps" }, { t: "Retención ISR", key: "retencion", ancho: 13, formato: "lps" }, { t: "Monto líquido a pagar", key: "liquido", ancho: 15, formato: "lps" }, { t: "Dirección completa", key: "direccion", ancho: 46 }, { t: "Correo electrónico", key: "correo", ancho: 28 }, { t: "Teléfono", key: "telefono", ancho: 12 }, { t: "Banco", key: "banco", ancho: 16 }, { t: "Cuenta", key: "cuenta", ancho: 30 }],
     filas, total: { nombre: "TOTAL A PAGAR", suma: est.suma, retencion: est.retencion, liquido: est.liquido },
   });
   await descargarExcel(wb, `Estimacion_Contratistas_${quincena}_${periodo}.xlsx`);
@@ -303,14 +335,16 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
   const gruposUbic = ubicaciones.map(([u]) => [u, contratos.filter(({ c }) => (c.proyecto || "") === u)]);
   const proyDe = (u) => proyectos.find(p => p.short === u);
   const dias = fechas.map(f => { const d = +f.slice(8), y = +f.slice(0, 4), m0 = +f.slice(5, 7) - 1; const fer = esFeriado(y, m0, d); return { fecha: f, day: d, dow: DIAS_C[diaSem(f)], isSun: diaSem(f) === 0, isHoliday: fer, holidayName: fer ? nombreFeriado(y, m0, d) : "" }; });
-  const colorCelda = (v, d) => v === 1 ? ((d.isSun || d.isHoliday) ? PAL.descanso : PAL.presente) : v === 0.5 ? PAL.inc : v === 2 ? PAL.extra : v === 0 ? PAL.nsp : null;
-  const todosLlenos = (filas) => filas.every(({ c }) => c.modo === "unidad" || dias.every(d => d.isSun || d.isHoliday || (reg(c.id).dias || {})[d.fecha] !== undefined));
+  const colorCelda = (v) => v === 1 ? PAL.presente : v === 0.5 ? PAL.inc : v === 2 ? PAL.extra : v === 0 ? PAL.nsp : null;
+  // Contratistas: el servicio se da TODOS los días, domingos y feriados incluidos
+  // (Excel de Roberto Q01 NOV.26: 15 días en una quincena de 15).
+  const todosLlenos = (filas) => filas.every(({ c }) => c.modo === "unidad" || dias.every(d => (reg(c.id).dias || {})[d.fecha] !== undefined));
   const todosPresentes = (filas) => {
     const llenos = todosLlenos(filas);
     editar(l => filas.reduce((acc, { c }) => c.modo === "unidad" ? acc : dias.reduce((a2, d) => {
       const v = (a2.registros?.[c.id]?.dias || {})[d.fecha];
       if (llenos) return ponerDia(a2, c.id, d.fecha, "");
-      return v === undefined && !d.isSun && !d.isHoliday ? ponerDia(a2, c.id, d.fecha, 1) : a2;   // domingos y feriados: solo si los trabajó (a mano)
+      return v === undefined ? ponerDia(a2, c.id, d.fecha, 1) : a2;
     }, acc), l));
   };
   const ant = qAnterior(q.periodo, q.quincena), sig = qSiguiente(q.periodo, q.quincena);
@@ -329,7 +363,7 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
     <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
       <div>
         <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>{nombreQc} · Contratistas de servicios</div>
-        <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>Tocá una celda para cambiarla (1 → ½ → 2 → 0). Click derecho: horas extra de ese día.{contratos.some(({ c }) => c.modo === "unidad") ? " Los de pago por unidad llevan la cantidad de la quincena." : ""}</div>
+        <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>Tocá una celda para cambiarla (1 → ½ → 2 → 0). Click derecho: horas extra de ese día (diurnas o nocturnas).{contratos.some(({ c }) => c.modo === "unidad") ? " El perforista lleva los metros de cada día (bitácora de Geo Ops)." : ""}</div>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
         {[["1", "Servicio", PAL.presente], ["½", "Medio día", PAL.inc], ["2", "Doble", PAL.extra], ["0", "No vino", PAL.nsp], ["+h", "Horas extra", PAL.extra]].map(([k, l, c]) => <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6E6862" }}><span style={{ minWidth: 22, textAlign: "center", padding: "2px 6px", borderRadius: 6, background: c.bg, color: c.fg, fontWeight: 800, fontSize: 10.5 }}>{k}</span>{l}</span>)}
@@ -372,8 +406,9 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
               {dias.map(d => <th key={d.fecha} title={d.isHoliday ? `Feriado: ${d.holidayName}` : ""} style={{ ...TH_H, textAlign: "center", minWidth: 32 }}>
                 <div style={{ fontSize: 10, color: (d.isHoliday || d.isSun) ? "#A94E16" : "#A39C92", fontWeight: d.isHoliday ? 700 : 600 }}>{d.isHoliday ? "F" : d.dow}</div>{d.day}
               </th>)}
-              <th style={{ ...TH_H, textAlign: "center" }}>Días</th>
-              <th style={{ ...TH_H, textAlign: "center" }}>H. extra</th>
+              <th style={{ ...TH_H, textAlign: "center" }}>Días / ML</th>
+              <th style={{ ...TH_H, textAlign: "center" }}>HE diur.</th>
+              <th style={{ ...TH_H, textAlign: "center" }}>HE noct.</th>
               {verMontos && <th style={{ ...TH_H, textAlign: "right" }}>Suma global</th>}
               {verMontos && <th style={{ ...TH_H, textAlign: "right" }}>Líquido</th>}
             </tr></thead>
@@ -383,38 +418,45 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
                 <td style={{ ...TD_H, position: "sticky", left: 0, background: "#FAFAF9", zIndex: 1, fontWeight: 600, fontSize: 11 }}>
                   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                     <span>{p.nombre}</span>
-                    <span style={{ fontFamily: "var(--mono)", fontSize: 9, fontWeight: 600, color: "#A39C92", letterSpacing: 0.5 }}>{c.codigo || ""}{c.rol ? ` · ${c.rol.toUpperCase()}` : ""}</span>
+                    <span style={{ fontFamily: "var(--mono)", fontSize: 9, fontWeight: 600, color: "#A39C92", letterSpacing: 0.5 }}>{c.codigo || ""}{c.rol ? ` · ${c.rol.toUpperCase()}` : ""}{c.modo === "unidad" ? ` · ${(c.unidad || "UNIDAD").toUpperCase()} POR DÍA` : ""}</span>
+                    {r.nota && <span title={r.nota} style={{ fontSize: 9.5, fontWeight: 500, color: "#A94E16", maxWidth: 220, whiteSpace: "normal", lineHeight: 1.25 }}>{r.nota}</span>}
                   </div>
                 </td>
                 {c.modo === "unidad"
-                  ? <td colSpan={dias.length} style={{ ...TD_H, background: "rgba(44,42,40,.025)" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 11.5, color: "#6E6862" }}>Se paga por {c.unidad || "unidad"} · cantidad de la quincena</span>
-                      <input type="number" min="0" step="0.5" disabled={!puedeEditar} value={r.unidades ?? ""} placeholder="0" onChange={e => editar(l => ponerCampo(l, c.id, "unidades", e.target.value === "" ? undefined : Math.max(0, Number(e.target.value))))} style={{ ...CTRL, width: 90, minHeight: 30, padding: "4px 8px", fontFamily: "var(--mono)", fontSize: 12.5 }} />
-                      <input disabled={!puedeEditar} value={r.nota || ""} placeholder="Nota (ej. sondeos 1 a 3)" onChange={e => editar(l => ponerCampo(l, c.id, "nota", e.target.value || undefined))} style={{ ...CTRL, minHeight: 30, padding: "4px 8px", fontSize: 12, flex: 1, minWidth: 160 }} />
-                    </div>
-                  </td>
+                  ? dias.map(d => {
+                    const u = (r.uni || {})[d.fecha];
+                    return <td key={d.fecha} style={{ ...TD_H, padding: 2, textAlign: "center", border: "1px solid rgba(44,42,40,.06)", background: u ? PAL.presente.bg : "transparent", minWidth: 44 }}>
+                      <input type="number" min="0" step="0.01" disabled={!puedeEditar} value={u ?? ""} placeholder="·" aria-label={`${c.unidad || "unidades"} del ${d.day}`}
+                        onChange={e => editar(l => ponerPorDia(l, c.id, "uni", d.fecha, e.target.value === "" ? 0 : Math.max(0, Number(e.target.value))))}
+                        style={{ width: 44, border: "none", background: "transparent", textAlign: "center", font: "700 11px/1 var(--mono)", color: PAL.presente.fg, outline: "none", padding: "6px 0" }} />
+                    </td>;
+                  })
                   : dias.map(d => {
-                    const v = (r.dias || {})[d.fecha], h = (r.he || {})[d.fecha] || 0;
+                    const v = (r.dias || {})[d.fecha], hD = (r.he || {})[d.fecha] || 0, hN = (r.heN || {})[d.fecha] || 0;
                     const k = `${c.id}|${d.fecha}`, abierto = celdaHe === k;
-                    const pc = colorCelda(v, d);
+                    const pc = colorCelda(v);
                     return <td key={d.fecha} title={d.isHoliday ? d.holidayName : "Click derecho: horas extra"}
                       onClick={() => puedeEditar && editar(l => ponerDia(l, c.id, d.fecha, siguienteValor(v)))}
                       onContextMenu={(ev) => { ev.preventDefault(); if (puedeEditar) setCeldaHe(abierto ? null : k); }}
                       style={{ ...TD_H, textAlign: "center", cursor: puedeEditar ? "pointer" : "default", background: pc ? pc.bg : "transparent", color: pc ? pc.fg : "#2C2A28", fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid rgba(44,42,40,.06)", position: "relative", fontSize: 11.5 }}>
                       {textoDia(v) || <span style={{ color: "#D8D4CE" }}>·</span>}
-                      {h > 0 && <div style={{ fontSize: 8, color: "#A94E16", lineHeight: 1, fontWeight: 800, marginTop: 1 }}>+{fmtN(h)}h</div>}
+                      {(hD > 0 || hN > 0) && <div style={{ fontSize: 8, color: "#A94E16", lineHeight: 1, fontWeight: 800, marginTop: 1 }}>{hD > 0 ? `+${fmtN(hD)}h` : ""}{hN > 0 ? `${hD > 0 ? " " : "+"}${fmtN(hN)}n` : ""}</div>}
                       {abierto && <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 170, padding: 8, textAlign: "left" }} onClick={ev => ev.stopPropagation()}>
                         <div style={{ fontSize: 10.5, color: "#64748b", marginBottom: 6, fontWeight: 600 }}>Horas extra · {d.dow} {d.day}</div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                          {[0, 1, 2, 3, 4, 5, 6].map(n => <button key={n} type="button" onClick={() => { editar(l => ponerHoras(l, c.id, d.fecha, n)); setCeldaHe(null); }} style={{ minWidth: 30, padding: "5px 0", borderRadius: 6, border: "1px solid rgba(44,42,40,.12)", background: h === n || (!h && n === 0) ? "#FBE3D0" : "#fff", font: "700 11.5px/1 var(--sans)", cursor: "pointer" }}>{n}</button>)}
-                        </div>
-                        <input type="number" min="0" max="16" step="0.5" defaultValue={h || ""} placeholder="Otra cantidad" onKeyDown={e => { if (e.key === "Enter") { editar(l => ponerHoras(l, c.id, d.fecha, Math.max(0, Math.min(16, Number(e.currentTarget.value) || 0)))); setCeldaHe(null); } }} style={{ marginTop: 6, width: "100%", boxSizing: "border-box", padding: "5px 8px", borderRadius: 6, border: "1px solid #CBD5E1", fontSize: 12 }} />
+                        {[["he", "Diurnas", hD], ["heN", "Nocturnas", hN]].map(([campo, lab, actual]) => <div key={campo} style={{ marginBottom: 6 }}>
+                          <div style={{ fontSize: 10, color: "#8A847D", fontWeight: 700, marginBottom: 4 }}>{lab}</div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {[0, 1, 2, 3, 4, 5, 6].map(n => <button key={n} type="button" onClick={() => { editar(l => ponerPorDia(l, c.id, campo, d.fecha, n)); }} style={{ minWidth: 28, padding: "5px 0", borderRadius: 6, border: "1px solid rgba(44,42,40,.12)", background: actual === n || (!actual && n === 0) ? "#FBE3D0" : "#fff", font: "700 11.5px/1 var(--sans)", cursor: "pointer" }}>{n}</button>)}
+                          </div>
+                          <input type="number" min="0" max="16" step="0.5" defaultValue={actual || ""} placeholder="Otra cantidad + Enter" onKeyDown={e => { if (e.key === "Enter") editar(l => ponerPorDia(l, c.id, campo, d.fecha, Math.max(0, Math.min(16, Number(e.currentTarget.value) || 0)))); }} style={{ marginTop: 4, width: "100%", boxSizing: "border-box", padding: "4px 8px", borderRadius: 6, border: "1px solid #CBD5E1", fontSize: 11.5 }} />
+                        </div>)}
+                        <button type="button" onClick={() => setCeldaHe(null)} style={{ width: "100%", marginTop: 2, padding: "6px 0", borderRadius: 6, border: "none", background: CHARCOAL, color: "#fff", font: "700 11.5px/1 var(--sans)", cursor: "pointer" }}>Listo</button>
                       </div>}
                     </td>;
                   })}
-                <td style={{ ...TD_H, textAlign: "center", fontWeight: 800 }}>{c.modo === "unidad" ? `${fmtN(liq.unidades)}` : fmtN(liq.dias)}</td>
-                <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: liq.horas ? "#A94E16" : "#A39C92" }}>{c.modo === "unidad" ? "—" : fmtN(liq.horas) || "0"}</td>
+                <td style={{ ...TD_H, textAlign: "center", fontWeight: 800 }} title={c.modo === "unidad" && !Object.keys(r.uni || {}).length && r.unidades ? "Total de la quincena sin detalle por día" : ""}>{c.modo === "unidad" ? `${fmtN(liq.unidades)} ${c.unidad ? c.unidad.split(" ")[0] : ""}` : fmtN(liq.dias)}</td>
+                <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: liq.horasD ? "#A94E16" : "#A39C92" }}>{c.modo === "unidad" ? "—" : fmtN(liq.horasD) || "0"}</td>
+                <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: liq.horasN ? "#A94E16" : "#A39C92" }}>{c.modo === "unidad" ? "—" : fmtN(liq.horasN) || "0"}</td>
                 {verMontos && <td style={{ ...TD_H, textAlign: "right", fontWeight: 600 }}>{fmt$(liq.suma)}</td>}
                 {verMontos && <td style={{ ...TD_H, textAlign: "right", fontWeight: 800 }}>{fmt$(liq.liquido)}</td>}
               </tr>;
@@ -434,8 +476,8 @@ export function ContratistasSV({ user, puedeEditar, soloAsistencia = false, solo
     <div style={{ position: "sticky", bottom: 10, zIndex: 5, display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center" }}>
       {sucio && <span style={{ fontSize: 12.5, color: ORANGE_DARK, fontWeight: 600, marginRight: "auto", background: "rgba(255,255,255,.92)", padding: "6px 12px", borderRadius: 999 }}>Cambios sin guardar</span>}
       <button type="button" onClick={salir} style={{ minHeight: 44, padding: "10px 24px", borderRadius: 999, border: "none", background: "#EEEDEA", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Cerrar</button>
-      {verMontos && <button type="button" disabled={!est.filas.length} onClick={() => estimacionExcel({ periodo: q.periodo, quincena: q.quincena, est }).catch(() => alert("No se pudo generar el Excel."))} style={{ minHeight: 44, padding: "10px 20px", borderRadius: 999, border: "1px solid rgba(44,42,40,.16)", background: "#fff", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Exportar Excel</button>}
-      {verMontos && <button type="button" disabled={!est.filas.length} onClick={() => { const w = window.open("", "_blank"); estimacionPDF(w, { periodo: q.periodo, quincena: q.quincena, est, elaboradoPor: user?.nombre }); }} style={{ minHeight: 44, padding: "10px 20px", borderRadius: 999, border: "1px solid rgba(44,42,40,.16)", background: "#fff", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Exportar PDF</button>}
+      {verMontos && <button type="button" disabled={!est.filas.length} onClick={() => estimacionExcel({ periodo: q.periodo, quincena: q.quincena, est, proyectos }).catch(() => alert("No se pudo generar el Excel."))} style={{ minHeight: 44, padding: "10px 20px", borderRadius: 999, border: "1px solid rgba(44,42,40,.16)", background: "#fff", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Exportar Excel</button>}
+      {verMontos && <button type="button" disabled={!est.filas.length} onClick={() => { const w = window.open("", "_blank"); estimacionPDF(w, { periodo: q.periodo, quincena: q.quincena, est, elaboradoPor: user?.nombre, proyectos }); }} style={{ minHeight: 44, padding: "10px 20px", borderRadius: 999, border: "1px solid rgba(44,42,40,.16)", background: "#fff", color: CHARCOAL, font: "700 14px/1 var(--sans)", cursor: "pointer" }}>Exportar PDF</button>}
       {puedeEditar && <button type="button" disabled={!sucio || guardando} onClick={guardarAsistencia} style={{ minHeight: 44, padding: "10px 26px", borderRadius: 999, border: "none", background: ORANGE, color: "#fff", font: "800 14px/1 var(--sans)", cursor: "pointer", opacity: !sucio || guardando ? .55 : 1, boxShadow: "0 8px 20px rgba(232,118,45,.28)" }}>{guardando ? "Guardando…" : "Guardar asistencia"}</button>}
     </div>
     {modal}
