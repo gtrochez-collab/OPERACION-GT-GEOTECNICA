@@ -1387,6 +1387,14 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   `excelJornales({proyectos, empresa})`: logo, franjas, días pintados, HE por
   fecha, fórmulas con `result` (total días = SUM, valor HE = valor día ÷ 8,
   total = días + HE) y hoja Resumen con varios proyectos.
+  **Identidad derecha (14-nov-2026, Gerson: "aseguremos siempre que la identidad
+  venga recta")**: `CampoFoto` con `girable` (frente y reverso del jornal) trae
+  botones ⟲ ⟳ que giran la foto 90° y la REESCRIBEN en el mismo `cp-file-<id>`
+  (`girarFoto`; la ficha no cambia) y un aviso ámbar cuando la foto es más alta
+  que ancha. **Represa San José cargada el 14-nov** desde el Excel de Ester Cruz
+  (6 personas, L 39,525, depositar a Ester Cruz): 4 fichas nuevas con su
+  identidad leída de las fotos del Excel (Gerson las confirmó) y Edson y Emir
+  (ya existían) pasados a Represa; a Emir se le corrigió "Naher" → "Nahel".
   **ALTAS Y BAJAS + COSTOS rediseñadas (4-nov-2026, Gerson: "Movimientos lo
   llamaría altas y bajas; el mismo estilo que los demás")**: la pestaña
   `movimientos` se rotula **"Altas y bajas"** (el id no cambió). `renderMovs`:

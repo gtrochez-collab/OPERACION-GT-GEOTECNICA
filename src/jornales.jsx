@@ -191,22 +191,51 @@ function ResponsablesModal({ short, nombre, actuales, usuarios, onGuardar, onClo
 }
 
 // ── Ficha del jornal: formulario ─────────────────────────────────────────
-function CampoFoto({ titulo, sub, valor, onCambio, MAX, accept = "image/*", capture, alto = 110 }) {
+// Gira una foto ya subida 90° (izquierda -90 · derecha 90) y la vuelve a guardar en
+// el MISMO cp-file-<id>: la ficha no cambia y el PDF de la solicitud sale derecho
+// (14-nov-2026, Gerson: "aseguremos siempre que la identidad venga recta").
+async function girarFoto(fileId, dataUrl, grados) {
+  const im = await cargarImg(dataUrl);
+  const c = document.createElement("canvas"); c.width = im.naturalHeight; c.height = im.naturalWidth;
+  const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.translate(c.width / 2, c.height / 2); ctx.rotate(grados * Math.PI / 180); ctx.drawImage(im, -im.naturalWidth / 2, -im.naturalHeight / 2);
+  const nuevo = c.toDataURL("image/jpeg", 0.85);
+  const prev = await store.getCloud(`cp-file-${fileId}`).catch(() => null);
+  if (!(await store.set(`cp-file-${fileId}`, { ...(prev || { name: "identidad.jpg", type: "image/jpeg" }), type: "image/jpeg", size: nuevo.length, dataUrl: nuevo }))) throw new Error("No se pudo guardar la foto girada. Revisá la señal y probá otra vez.");
+  cacheFotos.set(fileId, nuevo);
+  return nuevo;
+}
+function CampoFoto({ titulo, sub, valor, onCambio, MAX, accept = "image/*", capture, alto = 110, girable = false }) {
   const [subiendo, setSubiendo] = useState(false);
-  const foto = useFoto(valor?.fileId);
+  const [girada, setGirada] = useState(null);       // la foto ya girada (mientras el cache se pone al día)
+  const [deLado, setDeLado] = useState(false);
+  const fotoNube = useFoto(valor?.fileId);
+  const foto = girada && valor?.fileId && girada.id === valor.fileId ? girada.d : fotoNube;
   const ref = useRef(null);
+  const girar = async (g) => {
+    if (!foto || !valor?.fileId) return;
+    setSubiendo(true);
+    try { const d = await girarFoto(valor.fileId, foto, g); setGirada({ id: valor.fileId, d }); } catch (err) { alert(err?.message || String(err)); } finally { setSubiendo(false); }
+  };
+  const btnGiro = { border: "1px solid rgba(44,42,40,.14)", background: "rgba(255,255,255,.85)", borderRadius: 999, minWidth: 30, height: 28, cursor: "pointer", color: CHARCOAL, font: "700 14px/1 var(--sans)", padding: "0 9px" };
   return <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
     <span style={LBL}>{titulo}</span>
     <button type="button" onClick={() => ref.current?.click()} disabled={subiendo}
-      style={{ height: alto, borderRadius: 14, border: foto ? "1px solid rgba(44,42,40,.1)" : "1.5px dashed rgba(44,42,40,.22)", background: foto ? "#F4F2EF" : "rgba(255,255,255,.6)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: 0, color: "#8A847D", fontFamily: "inherit" }}>
-      {subiendo ? <span style={{ fontSize: 12.5 }}>Subiendo…</span> : foto ? <img src={foto} alt="" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }} />
+      style={{ height: alto, borderRadius: 14, border: foto ? (girable && deLado ? "1.5px solid #E8A33D" : "1px solid rgba(44,42,40,.1)") : "1.5px dashed rgba(44,42,40,.22)", background: foto ? "#F4F2EF" : "rgba(255,255,255,.6)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: 0, color: "#8A847D", fontFamily: "inherit" }}>
+      {subiendo ? <span style={{ fontSize: 12.5 }}>{foto ? "Guardando…" : "Subiendo…"}</span> : foto ? <img src={foto} alt="" onLoad={(e) => setDeLado(e.currentTarget.naturalHeight > e.currentTarget.naturalWidth * 1.08)} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }} />
         : <span style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontSize: 12 }}><Ico d={I.camara} size={22} />{sub}</span>}
     </button>
-    {foto && !subiendo && <button type="button" onClick={() => ref.current?.click()} style={{ border: "none", background: "none", color: ORANGE_DARK, font: "700 12px/1 var(--sans)", cursor: "pointer", padding: 2, alignSelf: "flex-start" }}>Cambiar</button>}
+    {foto && !subiendo && <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <button type="button" onClick={() => ref.current?.click()} style={{ border: "none", background: "none", color: ORANGE_DARK, font: "700 12px/1 var(--sans)", cursor: "pointer", padding: 2 }}>Cambiar</button>
+      {girable && <><span style={{ flex: 1 }} />
+        <button type="button" title="Girar a la izquierda" aria-label="Girar a la izquierda" onClick={() => girar(-90)} style={btnGiro}>⟲</button>
+        <button type="button" title="Girar a la derecha" aria-label="Girar a la derecha" onClick={() => girar(90)} style={btnGiro}>⟳</button></>}
+    </div>}
+    {girable && foto && deLado && !subiendo && <span style={{ fontSize: 11.5, color: "#8A5A00", fontWeight: 600, lineHeight: 1.3 }}>Parece que está de lado: girala con ⟲ ⟳ para que se lea derecha.</span>}
     <input ref={ref} type="file" accept={accept} capture={capture} style={{ display: "none" }} onChange={async (e) => {
       const f = e.target.files?.[0]; e.target.value = ""; if (!f) return;
       setSubiendo(true);
-      try { onCambio(await subirImagen(f, MAX)); } catch (err) { alert(err?.message || String(err)); } finally { setSubiendo(false); }
+      try { setGirada(null); onCambio(await subirImagen(f, MAX)); } catch (err) { alert(err?.message || String(err)); } finally { setSubiendo(false); }
     }} />
   </div>;
 }
@@ -243,8 +272,8 @@ export function JornalFormImpl({ inicial, todos, puedeTarifa, user, onGuardar, o
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}><span style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>Identidad escaneada</span><span style={{ fontSize: 12, color: "#8A847D" }}>va en cada solicitud de pago · foto o PDF</span></div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <CampoFoto titulo="Frente *" sub="Foto o PDF" valor={f.dniFrente} onCambio={(v) => u("dniFrente", v)} MAX={1400} accept="image/*,application/pdf" capture="environment" />
-        <CampoFoto titulo="Reverso" sub="Foto o PDF" valor={f.dniReverso} onCambio={(v) => u("dniReverso", v)} MAX={1400} accept="image/*,application/pdf" capture="environment" />
+        <CampoFoto titulo="Frente *" sub="Foto o PDF" valor={f.dniFrente} onCambio={(v) => u("dniFrente", v)} MAX={1400} accept="image/*,application/pdf" capture="environment" girable />
+        <CampoFoto titulo="Reverso" sub="Foto o PDF" valor={f.dniReverso} onCambio={(v) => u("dniReverso", v)} MAX={1400} accept="image/*,application/pdf" capture="environment" girable />
       </div>
     </div>
     <label style={{ display: "flex", flexDirection: "column", gap: 5 }}><span style={LBL}>Notas</span><textarea value={f.notas || ""} onChange={e => u("notas", e.target.value)} rows={2} style={{ ...CTRL, resize: "vertical" }} /></label>
