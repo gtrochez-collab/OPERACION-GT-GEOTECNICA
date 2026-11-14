@@ -2595,30 +2595,52 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       </div>
     </div>;
 
-    function exportAttendancePDF() {
-      const w = window.open("", "_blank");
-      if (!w) { alert("Permite popups para imprimir"); return; }
-
-      // Resumen simple (igual que en pantalla): personas asignadas + NSP +
-      // INC por proyecto. El costeo de mano de obra es reporte aparte.
-      const summary = projGroups.map((proj) => {
-        const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
+    // 14-nov-2026 (Gerson: "¿y en la asistencia tenemos este tipo de reportes
+    // nuevos?"): el reporte se baja directo como PDF (jsPDF, asistencia-reporte.js)
+    // con el estilo de jornales y horas extras. Las reglas de cada celda son las
+    // de siempre; acá solo se arma qué texto y qué color lleva.
+    async function exportAttendancePDF() {
+      const resolverProy = (e) => resolveShortHR(assignments[e.id]);
+      // Pastel por proyecto (incluye los que solo aparecen por "1*").
+      const shorts = [];
+      projGroups.forEach((p) => { if (!shorts.includes(p.short)) shorts.push(p.short); });
+      ae.forEach((e) => days.forEach((d) => { const o = getProj(e.id, d.day); const s2 = o ? resolveShortHR(o) : null; if (s2 && !shorts.includes(s2)) shorts.push(s2); }));
+      const pcDe = pastelesDe(shorts);
+      const celdaDe = (e, d) => {
+        if (dayLockReason(e, d)) return { txt: "-", ...PAL_CELDA.bloq };
+        const v = getVal(e.id, d.day);
+        const ovr = getProj(e.id, d.day);
+        const opc = ovr ? pcDe[resolveShortHR(ovr)] : null;
+        const st2 = ovr ? "*" : "";
+        let pal = null, txt = "·";
+        if (v === "TF" || v === "DT" || v === "DT2") { pal = PAL_CELDA.extra; txt = v + st2; }
+        else if (v === "1") { pal = (d.isHoliday || d.isSun) ? PAL_CELDA.descanso : PAL_CELDA.presente; txt = "1" + st2; }
+        else if (v === "0") { pal = PAL_CELDA.nsp; txt = "0"; }
+        else if (v === "INC") { pal = PAL_CELDA.inc; txt = "I" + st2; }
+        else if (v === "V") { pal = PAL_CELDA.vac; txt = "V" + st2; }
+        const c = { txt, bg: pal?.bg || null, fg: pal?.fg || null, raya: null, hora: arrivalTimes[`${e.id}-${d.day}`] || "" };
+        if (opc && v && v !== "0") { c.bg = opc.bg; c.fg = opc.tinta; c.raya = opc.base; }
+        return c;
+      };
+      const proyectos = projGroups.map((proj) => {
+        const pEmps = ae.filter((e) => resolverProy(e) === proj.short);
         let nsp = 0, inc = 0;
-        ae.forEach((e) => {
-          if (resolveShortHR(assignments[e.id]) !== proj.short) return;
-          days.forEach((d) => {
-            if (dayLockReason(e, d)) return; // dias fuera de alta/baja no cuentan
-            const v = getVal(e.id, d.day);
-            if (v === "0" && !d.isSun && !d.isHoliday) nsp++;
-            if (v === "INC") inc++;
-          });
-        });
-        return { proj, pEmps, nsp, inc };
-      });
-
-      // ── RESUMEN PARA PLANILLA (al final del reporte) ──
-      // Como las hojas de Excel que se armaban a mano (ausencias sin goce,
-      // incapacidades, vacaciones) pero automatico: quien, que dias y total.
+        pEmps.forEach((e) => days.forEach((d) => {
+          if (dayLockReason(e, d)) return;
+          const v = getVal(e.id, d.day);
+          if (v === "0" && !d.isSun && !d.isHoliday) nsp++;
+          if (v === "INC") inc++;
+        }));
+        return {
+          short: proj.short, name: proj.name, code: proj.code || "", pastel: pcDe[proj.short], nsp, inc,
+          filas: pEmps.map((e) => {
+            const st = empStats(e.id);
+            return { nombre: e.fullName, code: genEmpCode(e.fullName, e.dni), celdas: days.map((d) => celdaDe(e, d)),
+              dias: st.presentEffective !== st.present ? Number(st.presentEffective.toFixed(2)) : st.present,
+              dom: st.domTrab + st.domTrabTriple, fer: st.ferTrab, nsp: st.absent, inc: st.incap };
+          }),
+        };
+      }).filter((p) => p.filas.length);
       const resumenDe = (estado) => {
         const out = [];
         ae.forEach((e) => {
@@ -2629,159 +2651,32 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
             if (estado === "NSP") { if (v === "0" && !d.isSun && !d.isHoliday) diasE.push(d.day); }
             else if (v === estado) diasE.push(d.day);
           });
-          if (diasE.length) out.push({ e, dias: diasE, proj: resolveShortHR(assignments[e.id]) || "—" });
+          if (diasE.length) out.push({ nombre: e.fullName, code: genEmpCode(e.fullName, e.dni), proj: resolverProy(e) || "-", dias: diasE, total: diasE.length });
         });
-        return out.sort((a, b) => b.dias.length - a.dias.length);
+        return out.sort((a, b) => b.total - a.total);
       };
-      const rNsp = resumenDe("NSP"), rInc = resumenDe("INC"), rVac = resumenDe("V");
-      const resumenSection = (titulo, color, rows, vacio) => rSeccion(titulo,
-        rows.length ? rTabla({
-          columnas: [{ t: "Colaborador" }, { t: "Proyecto", ancho: "130px" }, { t: "Días (del mes)" }, { t: "Total", num: true, ancho: "60px" }],
-          filas: rows.map((r) => [
-            `<b>${escHTML(r.e.fullName)}</b> <span class="mono" style="color:${RP.texto3};font-size:8.5px">${escHTML(genEmpCode(r.e.fullName, r.e.dni))}</span>`,
-            `<span class="mono suave">${escHTML(r.proj)}</span>`,
-            `<span class="mono">${r.dias.join(", ")}</span>`,
-            `<b style="color:${color}">${r.dias.length}</b>`,
-          ]),
-        }) : `<div class="rp-nota">${vacio}</div>`,
-        rows.length ? `${rows.length} colaborador${rows.length !== 1 ? "es" : ""}` : "");
-      const resumenPlanillaHtml = `<div class="rp-salto"></div>
-        <div class="rp-titulo" style="font-size:20px">Resumen para planilla</div>
-        <div class="rp-sub">${escHTML(cc.name)} · ${escHTML(sheet.quincena)} ${escHTML(sheet.periodo)} — detalle de deducciones y días especiales</div>
-        <div class="rp-acento"></div>
-        ${resumenSection("Ausencias sin goce de sueldo (NSP)", PAL_CELDA.nsp.fg, rNsp, "Sin ausencias esta quincena — asistencia completa.")}
-        ${resumenSection("Incapacidades", PAL_CELDA.inc.fg, rInc, "Sin incapacidades esta quincena.")}
-        ${resumenSection("Vacaciones", PAL_CELDA.vac.fg, rVac, "Sin vacaciones esta quincena.")}`;
-
-      // ── Color PASTEL por proyecto (29-oct-2026, Gerson: "cada proyecto es un
-      // color, pasteles bonitos"): tiñe la cabecera de cada proyecto, su
-      // pastilla en el resumen y las celdas "1*" (días trabajados en OTRO
-      // proyecto). Sin rojos ni rosados, que se leerían como NSP. Cubre
-      // proyectos que solo aparecen vía override.
-      const projColor = {};
-      let pcDe = {};
-      {
-        const shorts = [];
-        projGroups.forEach((p) => { if (!shorts.includes(p.short)) shorts.push(p.short); });
-        ae.forEach((e) => days.forEach((d) => {
-          const o = getProj(e.id, d.day);
-          const s = o ? resolveShortHR(o) : null;
-          if (s && !shorts.includes(s)) shorts.push(s);
-        }));
-        pcDe = pastelesDe(shorts);
-        shorts.forEach((s) => { projColor[s] = pcDe[s].base; });
-      }
-
-      const dayHeaderHtml = days
-        .map((d) => {
-          const esp = d.isHoliday || d.isSun;
-          return `<th class="d" style="${esp ? `background:${RP.fondo};` : ""}"><div style="color:${esp ? RP.naranjaTexto : RP.texto3};font-size:6.5px">${d.isHoliday ? "F" : d.dow}</div><div style="color:${RP.carbon}">${d.day}</div></th>`;
-        })
-        .join("");
-
-      const celda = (bg, fg, txt, extra = "") => `<td class="d" style="background:${bg};color:${fg};${extra}">${txt}</td>`;
-      const projTablesHtml = projGroups
-        .map((proj) => {
-          const pEmps = ae.filter((e) => resolveShortHR(assignments[e.id]) === proj.short);
-          if (pEmps.length === 0) return "";
-          const rows = pEmps
-            .map((e) => {
-              const st = empStats(e.id);
-              const code = genEmpCode(e.fullName, e.dni);
-              const cells = days
-                .map((d) => {
-                  if (dayLockReason(e, d)) return celda(PAL_CELDA.bloq.bg, PAL_CELDA.bloq.fg, "—");
-                  const v = getVal(e.id, d.day);
-                  const ovr = getProj(e.id, d.day);
-                  const opc = ovr ? pcDe[resolveShortHR(ovr)] : null;
-                  const oc = opc ? opc.base : null;
-                  const st2 = ovr ? "*" : "";
-                  let p = null, txt = "·";
-                  if (v === "TF") { p = PAL_CELDA.extra; txt = "TF" + st2; }
-                  else if (v === "DT") { p = PAL_CELDA.extra; txt = "DT" + st2; }
-                  else if (v === "DT2") { p = PAL_CELDA.extra; txt = "DT2" + st2; }
-                  else if (v === "1") { p = (d.isHoliday || d.isSun) ? PAL_CELDA.descanso : null; txt = "1" + st2; }
-                  else if (v === "0") { p = PAL_CELDA.nsp; txt = "0"; }
-                  else if (v === "INC") { p = PAL_CELDA.inc; txt = "I" + st2; }
-                  else if (v === "V") { p = PAL_CELDA.vac; txt = "V" + st2; }
-                  let bg = p ? p.bg : "transparent";
-                  let fg = p ? p.fg : (v === "1" ? RP.carbon : RP.lineaFuerte);
-                  // Trabajó ese día en OTRO proyecto: tinte suave del color de
-                  // ese proyecto + rayita abajo, para leerlo de un vistazo.
-                  let extra = "";
-                  if (oc && v && v !== "0") { bg = opc.bg; fg = opc.tinta; extra = `box-shadow:inset 0 -2px 0 ${oc};`; }
-                  const arr = arrivalTimes[`${e.id}-${d.day}`];
-                  const arrivalHtml = arr ? `<div class="mono" style="font-size:5.5px;color:${RP.naranjaTexto};line-height:1;margin-top:1px">${arr}</div>` : "";
-                  return celda(bg, fg, txt + arrivalHtml, extra);
-                })
-                .join("");
-              const dom = st.domTrab + st.domTrabTriple;
-              return `<tr>
-                <td class="n"><b>${escHTML(e.fullName)}</b><br><span class="mono" style="color:${RP.texto3};font-size:7.5px">${escHTML(code)}</span></td>
-                ${cells}
-                <td class="t" style="color:${RP.verde}" title="${st.presentEffective !== st.present ? `${st.present} marcados · ${st.presentEffective.toFixed(2)} efectivos` : ""}">${st.presentEffective !== st.present ? st.presentEffective.toFixed(2) : st.present}</td>
-                <td class="t" style="color:${PAL_CELDA.extra.fg}">${dom || ""}</td>
-                <td class="t" style="color:${PAL_CELDA.extra.fg}">${st.ferTrab || ""}</td>
-                <td class="t" style="color:${PAL_CELDA.nsp.fg}">${st.absent || ""}</td>
-                <td class="t" style="color:${PAL_CELDA.inc.fg}">${st.incap || ""}</td>
-              </tr>`;
-            })
-            .join("");
-          // Cortes de pagina: nunca partir un proyecto entre paginas — la
-          // seccion (.rp-sec) no se corta: si no cabe, pasa entera a la
-          // siguiente hoja.
-          return `<div>${rSeccionProyecto(pcDe[proj.short], `${proj.short} · ${proj.name}`,
-            `<table class="asis"><thead><tr>
-                <th class="n">Colaborador</th>${dayHeaderHtml}
-                <th class="t">Días</th><th class="t">Dom</th><th class="t">Fer</th><th class="t">NSP</th><th class="t">INC</th>
-              </tr></thead><tbody>${rows}</tbody></table>`,
-            `<span class="mono">${escHTML(proj.code || "")}</span> · ${pEmps.length} persona${pEmps.length !== 1 ? "s" : ""}`)}</div>`;
-        })
-        .join("");
-
-      const conGente = summary.filter((s) => s.pEmps.length > 0);
-      const totPersonas = summary.reduce((s, x) => s + x.pEmps.length, 0);
-      const totNSP = summary.reduce((s, x) => s + x.nsp, 0);
-      const totINC = summary.reduce((s, x) => s + x.inc, 0);
-      const resumenProyHtml = rTabla({
-        columnas: [{ t: "Proyecto" }, { t: "Personas", num: true, ancho: "80px" }, { t: "NSP", num: true, ancho: "70px" }, { t: "INC", num: true, ancho: "70px" }],
-        filas: conGente.map((s) => [
-          `${rProyecto(pcDe[s.proj.short], s.proj.short)} <span class="suave">${escHTML(s.proj.name)}</span>`,
-          s.pEmps.length,
-          s.nsp > 0 ? `<b style="color:${PAL_CELDA.nsp.fg}">${s.nsp}</b>` : `<span style="color:${RP.texto3}">0</span>`,
-          s.inc > 0 ? `<b style="color:${PAL_CELDA.inc.fg}">${s.inc}</b>` : `<span style="color:${RP.texto3}">0</span>`,
-        ]),
-      });
-      const chipCelda = (p, cod, txt) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;white-space:nowrap"><span class="mono" style="background:${p ? p.bg : "#fff"};color:${p ? p.fg : RP.carbon};border:${p ? "none" : `1px solid ${RP.linea}`};border-radius:4px;padding:0 5px;font-weight:700">${cod}</span>${txt}</span>`;
-      const leyendaHtml = `<div style="break-inside:avoid;page-break-inside:avoid"><div class="rp-nota" style="line-height:2">
-          ${chipCelda(null, "1", "Presente")}${chipCelda(PAL_CELDA.descanso, "1", "domingo/feriado = descanso pagado")}${chipCelda(PAL_CELDA.nsp, "0", "NSP")}${chipCelda(PAL_CELDA.inc, "I", "Incapacidad")}${chipCelda(PAL_CELDA.vac, "V", "Vacaciones")}${chipCelda(PAL_CELDA.extra, "TF", "Feriado trabajado (×3)")}${chipCelda(PAL_CELDA.extra, "DT", "Domingo trabajado (×2)")}${chipCelda(PAL_CELDA.extra, "DT2", "Domingo triple (×3)")}${chipCelda(PAL_CELDA.bloq, "—", "bloqueado por alta/baja")}
-        </div>
-        <div class="rp-nota" style="line-height:2.2"><b>*</b> = ese día trabajó en otro proyecto (celda con el color de ese proyecto):
-          ${Object.keys(projColor).map((s) => rProyecto(pcDe[s], s)).join(" ")}
-        </div></div>`;
-
-      const cuerpo = `<style>
-          table.asis{width:100%;border-collapse:collapse;font-size:9px;table-layout:fixed}
-          .asis th.n{width:205px}.asis th.t{width:40px}
-          .asis th{font-size:7.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${RP.texto3};padding:4px 2px;border-bottom:1px solid ${RP.lineaFuerte};text-align:center}
-          .asis th.n{text-align:left;padding-left:6px}
-          .asis td{border-bottom:1px solid ${RP.linea};padding:3px 2px}
-          .asis td.d{text-align:center;font-weight:700;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-size:8.5px;border-left:1px solid #fff}
-          .asis td.n{padding:4px 6px;font-size:9.5px}
-          .asis td.t,.asis th.t{text-align:center;font-weight:700;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;padding:3px 5px}
-        </style>`
-        + rKpis([
-          { label: "Personas asignadas", valor: totPersonas },
-          { label: "Proyectos", valor: conGente.length },
-          { label: "Inasistencias (NSP)", valor: totNSP, tono: totNSP > 0 ? "rojo" : undefined },
-          { label: "Incapacidades", valor: totINC, tono: totINC > 0 ? PAL_CELDA.inc.fg : undefined },
-        ])
-        + rSeccion("Resumen por proyecto", resumenProyHtml)
-        + leyendaHtml
-        + `<div style="height:14px"></div>`
-        + projTablesHtml
-        + resumenPlanillaHtml;
-      abrirReporte(w, reporteHTML({ titulo: "Reporte de asistencia", subtitulo: `${cc.name} · Quincena ${sheet.quincena} ${sheet.periodo}`, empresa: sheet.company || co, cuerpo, horizontal: true }));
+      const enUso = proyectos.map((p) => p.short);
+      const otros = shorts.filter((s2) => !enUso.includes(s2) || ae.some((e) => days.some((d) => resolveShortHR(getProj(e.id, d.day)) === s2))).map((s2) => ({ short: s2, pastel: pcDe[s2] }));
+      try {
+        const { pdfAsistencia } = await import("./asistencia-reporte.js");
+        await pdfAsistencia({
+          empresa: sheet.company || co, nombreEmpresa: cc.name, quincena: sheet.quincena, periodo: sheet.periodo, elaboradoPor: userName || "",
+          dias: days.map((d) => ({ day: d.day, dow: d.dow, esp: !!(d.isSun || d.isHoliday), fer: !!d.isHoliday })),
+          proyectos,
+          leyenda: [
+            { cod: "1", txt: "Presente", ...PAL_CELDA.presente }, { cod: "1", txt: "Domingo/feriado (descanso pagado)", ...PAL_CELDA.descanso },
+            { cod: "0", txt: "NSP", ...PAL_CELDA.nsp }, { cod: "I", txt: "Incapacidad", ...PAL_CELDA.inc }, { cod: "V", txt: "Vacaciones", ...PAL_CELDA.vac },
+            { cod: "TF", txt: "Feriado trab. (x3)", ...PAL_CELDA.extra }, { cod: "DT", txt: "Domingo trab. (x2)", ...PAL_CELDA.extra },
+            { cod: "DT2", txt: "Domingo triple", ...PAL_CELDA.extra }, { cod: "-", txt: "Alta/baja", ...PAL_CELDA.bloq },
+          ],
+          otros,
+          planilla: [
+            { titulo: "Ausencias sin goce de sueldo (NSP)", color: PAL_CELDA.nsp.fg, vacio: "Sin ausencias esta quincena: asistencia completa.", filas: resumenDe("NSP") },
+            { titulo: "Incapacidades", color: PAL_CELDA.inc.fg, vacio: "Sin incapacidades esta quincena.", filas: resumenDe("INC") },
+            { titulo: "Vacaciones", color: PAL_CELDA.vac.fg, vacio: "Sin vacaciones esta quincena.", filas: resumenDe("V") },
+          ],
+        });
+      } catch (err) { console.error(err); alert("No se pudo generar el PDF: " + (err?.message || err)); }
     };
   };
 
