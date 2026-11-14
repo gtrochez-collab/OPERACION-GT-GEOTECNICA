@@ -373,6 +373,21 @@ export const pdfPie = (doc, { margen = 14 } = {}) => {
   }
 };
 /** Tile tipo KPI (fondo gris claro redondeado). */
+// 14-nov-2026 (Gerson: "en todos los reportes, en vez de las tres líneas de firma
+// solas en la segunda página, abajo del último cuadro que solo diga elaborado por
+// coordinador de operaciones, Lic. Gerson Trochez, sin línea para firmar").
+export const ELABORADO_POR = { nombre: "Lic. Gerson Trochez", cargo: "Coordinador de Operaciones" };
+export const textoElaborado = () => `Elaborado por: ${ELABORADO_POR.nombre} · ${ELABORADO_POR.cargo}`;
+/** Una línea "Elaborado por: …" en jsPDF. Devuelve el alto usado (mm). */
+export const pdfElaborado = (doc, x, y) => {
+  const T = PDF_TEMA;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...T.texto2);
+  const lab = latin1("Elaborado por: "); doc.text(lab, x, y);
+  const w = doc.getTextWidth(lab);
+  doc.setFont("helvetica", "normal"); doc.setTextColor(...T.carbon);
+  doc.text(latin1(`${ELABORADO_POR.nombre} · ${ELABORADO_POR.cargo}`), x + w, y);
+  return 6;
+};
 export const pdfKpi = (doc, x, y, w, h, label, valor, { tono } = {}) => {
   const T = PDF_TEMA;
   doc.setFillColor(...T.fondo); doc.roundedRect(x, y, w, h, 3, 3, "F");

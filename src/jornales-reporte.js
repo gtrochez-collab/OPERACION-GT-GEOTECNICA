@@ -19,7 +19,7 @@
 // =====================================================================
 import { safeDynamicImport } from "./lazyLoad.js";
 import { MONEDA, DOC_ID } from "./operacion.js";
-import { PDF_TEMA, RP, pdfKpi, pdfPie, cargarImagen, LOGO_EMPRESA, libroExcel, descargarExcel, fechaGenerado } from "./reporte-estilo.js";
+import { PDF_TEMA, RP, pdfKpi, pdfPie, pdfElaborado, textoElaborado, cargarImagen, LOGO_EMPRESA, libroExcel, descargarExcel, fechaGenerado } from "./reporte-estilo.js";
 import { diaCorto, fechaCorta, fechaLarga, nombreCorteLargo, fechasHeDelCorte } from "./jornales-calc.js";
 import { esFeriado } from "./holidays.js";
 
@@ -225,18 +225,11 @@ export const construirJornalesPDF = async ({ proyectos, identidades = {}, empres
     fc(T.carbon); doc.roundedRect(xT, ctx.y, wT, hObs, 3, 3, "F");
     f(6.5, "bold"); tc([200, 196, 190]); t(`TOTAL A PAGAR · ${fechaCorta(corte.pago).toUpperCase()}`, xT + 6, ctx.y + 7, { charSpace: 0.3 });
     f(20, "bold"); tc([242, 163, 107]); t(L$(totales.total), xT + 6, ctx.y + 18);
-    ctx.y += hObs + 18;
+    ctx.y += hObs + 8;
 
-    // Firmas
-    asegurar(20);
-    const firmas = [["Asistencia", p.asistenciaPor || ""], ["Elaborado por · Recursos Humanos", p.elaboradoPor || ""], ["Autorizado", ""]];
-    const fw = (CW - 30) / 3;
-    firmas.forEach(([lab, nom], i) => {
-      const fx = M + 5 + i * (fw + 10);
-      dc(T.carbon); doc.setLineWidth(0.3); doc.line(fx, ctx.y, fx + fw, ctx.y);
-      f(8, "bold"); tc(T.carbon); t(lab, fx + fw / 2, ctx.y + 4.5, { align: "center" });
-      if (nom) { f(8); tc(T.texto2); t(nom, fx + fw / 2, ctx.y + 9, { align: "center" }); }
-    });
+    // Elaborado por (sin líneas de firma)
+    asegurar(8);
+    pdfElaborado(doc, M, ctx.y);
 
     // Identidades: hoja aparte, tarjetas de 2 columnas.
     doc.addPage(); ctx.sub = `${p.nombre} · Identidades del personal`; encabezadoCont();
@@ -438,13 +431,8 @@ export const excelJornales = async ({ proyectos, empresa = "geotecnica" }) => {
     obs.value = liq.encargado ? `Favor depositar a ${liq.encargado}, quien se encargará de gestionar el pago y el cierre.${liq.observaciones ? " " + liq.observaciones : ""}` : `Sin encargado del pago indicado.${liq.observaciones ? " " + liq.observaciones : ""}`;
     obs.font = ft({ bold: true });
     const nota = ws.getCell(r + 1, 2); nota.value = "Valor de la hora extra = valor del día ÷ 8. Las horas extra del viernes del corte (tarde) se pagan en el corte siguiente."; nota.font = ft({ size: 9, color: { argb: HEX(RP.texto2) } });
-    r += 5;
-    [["Asistencia", p.asistenciaPor || ""], ["Elaborado por · Recursos Humanos", p.elaboradoPor || ""], ["Autorizado", ""]].forEach(([lab, nom], k) => {
-      const c0 = 2 + k * 7; const cell = ws.getCell(r, c0);
-      cell.border = { bottom: { style: "thin", color: { argb: HEX(RP.carbon) } } };
-      ws.getCell(r + 1, c0).value = lab; ws.getCell(r + 1, c0).font = ft({ size: 9.5, bold: true });
-      if (nom) { ws.getCell(r + 2, c0).value = nom; ws.getCell(r + 2, c0).font = ft({ size: 9, color: { argb: HEX(RP.texto2) } }); }
-    });
+    r += 3;
+    { const el = ws.getCell(r, 2); el.value = textoElaborado(); el.font = ft({ size: 9.5, bold: true, color: { argb: HEX(RP.texto2) } }); }
   });
   const c = proyectos[0].liq.corte;
   await descargarExcel(wb, `Jornales_${proyectos.length === 1 ? String(proyectos[0].short || proyectos[0].nombre).replace(/\s+/g, "_") : "todos"}_${c.ini}_al_${c.fin}.xlsx`);

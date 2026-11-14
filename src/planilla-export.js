@@ -13,7 +13,7 @@
 import { MONEDA, DOC_ID } from "./operacion.js";
 import { eventualSV } from "./planilla-sv.js";
 import { safeDynamicImport } from "./lazyLoad.js";
-import { PDF_TEMA, RP, pdfPie, pdfKpi, cargarImagen, LOGO_EMPRESA } from "./reporte-estilo.js";
+import { PDF_TEMA, RP, pdfPie, pdfKpi, cargarImagen, LOGO_EMPRESA, pdfElaborado, textoElaborado } from "./reporte-estilo.js";
 import { totalesLinea, resumenPlanilla, nombreQuincena, rangoQuincena, etiquetaCorta, mesLargo, GRUPOS_CT, METODOS_PAGO, notaAutomatica, diasMostrados, gruposPlanilla } from "./planilla-calc.js";
 
 const CARBON = PDF_TEMA.carbon, GRIS = PDF_TEMA.texto2, GRIS_FAINT = PDF_TEMA.texto3, FONDO = PDF_TEMA.fondo;
@@ -99,7 +99,7 @@ const SEC_PDF = {
 // ── El Salvador: planilla de SERVICIOS PROFESIONALES EVENTUALES (13-nov-2026)
 // La bonificación de Edy y Roberto se paga APARTE (Roberto Guerra): calcada de
 // la hoja de la Lic. Diana — N°, nombre, puesto, DUI, NIT, salario, ISR 10 %,
-// total descuentos y líquido a pagar; "Elaborado por" y "Autorizado".
+// total descuentos y líquido a pagar; "Elaborado por: Lic. Gerson Trochez" (sin líneas de firma desde el 14-nov-2026).
 // El Salvador: desde 2021 el NIT de una persona ES su DUI ("homologado"): si la
 // ficha dice "Homologado con DUI", se muestra el número de DUI.
 const nitDe = (l) => /homolog/i.test(String(l?.nit || "")) ? (l.dni || l.nit) : (l?.nit || "");
@@ -163,14 +163,8 @@ const construirEventualPDF = async ({ empresa, periodo, quincena, lines, meta = 
   celda(Lsiempre(tot.liq), 8, y + 6, "bold", NARANJA_TEXTO);
   y += 18;
   f(8.5); tc(GRIS); doc.text(latin1("Se paga aparte de la planilla de sueldos y salarios. Solo retención de ISR 10 % (sin ISSS ni AFP)."), M, y);
-  // Firmas
-  const yF = Math.max(y + 26, 175);
-  [["Elaborado por", meta.elaboradoPor || ""], ["Autorizado", ""]].forEach(([lab, nom], i) => {
-    const fx = M + 10 + i * 120;
-    doc.setDrawColor(...CARBON); doc.setLineWidth(0.3); doc.line(fx, yF, fx + 80, yF);
-    f(8.5, "bold"); tc(CARBON); doc.text(latin1(lab), fx, yF + 5);
-    if (nom) { f(8.5); tc(GRIS); doc.text(latin1(nom), fx, yF + 10); }
-  });
+  // Elaborado por (sin líneas de firma)
+  pdfElaborado(doc, M, y + 9);
   pdfPie(doc, { margen: M });
   return doc;
 };
@@ -453,15 +447,9 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     if (!conHe.length) { P.f(9); P.tc(GRIS); P.t("No hay horas extras para pagar en esta quincena.", M, ctx.y); ctx.y += 8; }
   }
 
-  // ── Firmas ──
-  asegurar(22);
-  const fw = (CW - 40) / 3;
-  [["Elaborado por", meta.elaboradoPor || ""], ["Revisado por", ""], ["Autorizado por", ""]].forEach(([lab, nom], i) => {
-    const x = M + 20 + i * fw;
-    P.dc(CARBON); doc.setLineWidth(0.3); doc.line(x + 10, ctx.y + 10, x + fw - 30, ctx.y + 10);
-    P.f(7, "bold"); P.tc(CARBON); P.t(lab, x + (fw - 20) / 2, ctx.y + 14.5, { align: "center" });
-    if (nom) { P.f(7); P.tc(GRIS); P.t(nom, x + (fw - 20) / 2, ctx.y + 18.5, { align: "center" }); }
-  });
+  // ── Elaborado por (sin líneas de firma) ──
+  asegurar(10);
+  pdfElaborado(doc, M, ctx.y + 4);
 
   // ── Pie de la casa en todas las páginas ──
   pdfPie(doc, { margen: M });
@@ -626,15 +614,9 @@ export const construirContratistasPDF = async ({ periodo, quincena, filas, total
     total: ["TOTAL A PAGAR", "", "", $(totales.suma), $(totales.retencion), $(totales.liquido), "", ""],
   });
 
-  // Firmas
-  if (ctx.y + 26 > Y_MAX) { doc.addPage(); encabezadoCont(); }
-  const yF = Math.max(ctx.y + 16, Math.min(Y_MAX - 10, ctx.y + 20));
-  [["Elaborado por", meta.elaboradoPor || ""], ["Aprobado por", ""]].forEach(([lab, nom], i) => {
-    const fx = M + 20 + i * 130;
-    doc.setDrawColor(...CARBON); doc.setLineWidth(0.3); doc.line(fx, yF, fx + 80, yF);
-    f(8.5, "bold"); tc(CARBON); doc.text(latin1(lab), fx, yF + 5);
-    if (nom) { f(8.5); tc(GRIS); doc.text(latin1(nom), fx, yF + 10); }
-  });
+  // Elaborado por (sin líneas de firma)
+  if (ctx.y + 10 > Y_MAX) { doc.addPage(); encabezadoCont(); }
+  pdfElaborado(doc, M, ctx.y + 4);
   pdfPie(doc, { margen: M });
   return doc;
 };
@@ -747,12 +729,8 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     }
     row.height = alto;
   };
-  const firmas = (hoja, r, salto = 4) => [["Elaborado por", meta.elaboradoPor || ""], ["Revisado por", ""], ["Autorizado por", ""]].forEach(([lab, nom], i) => {
-    const c = 2 + i * salto;
-    hoja.getCell(r, c).border = { bottom: { style: "thin", color: { argb: CARB } } };
-    hoja.getCell(r + 1, c).value = lab; hoja.getCell(r + 1, c).font = ft({ size: 9.5, bold: true });
-    if (nom) { hoja.getCell(r + 2, c).value = nom; hoja.getCell(r + 2, c).font = ft({ size: 9, color: { argb: GR } }); }
-  });
+  // Sin líneas de firma: solo "Elaborado por: …" (14-nov-2026, Gerson).
+  const firmas = (hoja, r) => { const c = hoja.getCell(r, 2); c.value = textoElaborado(); c.font = ft({ size: 9.5, bold: true, color: { argb: GR } }); };
   const estadoTxt = (extra = "") => `${meta.estado === "publicada" ? "Publicada" : "Borrador"} · generada el ${fechaLarga()}${meta.generadaPor ? ` por ${meta.generadaPor}` : ""}${extra} · GeoCore`;
 
   // ── SERVICIOS PROFESIONALES EVENTUALES (El Salvador, archivo propio) ──
@@ -786,12 +764,7 @@ export const construirPlanillaExcel = async ({ empresa, periodo, quincena, lines
     filaTotal(tt, UE, 9);
     r += 2;
     const nota = we.getCell(r, 2); nota.value = "Se paga aparte de la planilla de sueldos y salarios. Solo retención de ISR 10 % (sin ISSS ni AFP)."; nota.font = ft({ size: 9.5, color: { argb: GR } });
-    [["Elaborado por", meta.elaboradoPor || ""], ["Autorizado", ""]].forEach(([lab, nom], i) => {
-      const c = 2 + i * 4, rf = r + 5;
-      we.getCell(rf, c).border = { bottom: { style: "thin", color: { argb: CARB } } };
-      we.getCell(rf + 1, c).value = lab; we.getCell(rf + 1, c).font = ft({ size: 9.5, bold: true });
-      if (nom) { we.getCell(rf + 2, c).value = nom; we.getCell(rf + 2, c).font = ft({ size: 9, color: { argb: GR } }); }
-    });
+    firmas(we, r + 3);
     return wb;
   }
 

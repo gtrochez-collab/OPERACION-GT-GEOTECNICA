@@ -15,7 +15,7 @@
 // =====================================================================
 import { safeDynamicImport } from "./lazyLoad.js";
 import { MONEDA } from "./operacion.js";
-import { PDF_TEMA, pdfKpi, pdfPie, cargarImagen, LOGO_EMPRESA, latin1, pastelesDe } from "./reporte-estilo.js";
+import { PDF_TEMA, pdfKpi, pdfPie, pdfElaborado, cargarImagen, LOGO_EMPRESA, latin1, pastelesDe } from "./reporte-estilo.js";
 
 const T = PDF_TEMA;
 const nf = (n, d = 2) => (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -197,20 +197,12 @@ export const construirHorasExtrasPDF = async ({ empresa = "geotecnica", nombreEm
     tabla(g.filas, `Subtotal ${g.titulo.toLowerCase()}`, hrs, tot);
   });
 
-  // Firmas al pie del resumen
-  asegurar(26); ctx.y += 12;
-  const firmas = [["Elaborado por · Recursos Humanos", elaboradoPor], ["Revisado", ""], ["Autorizado", ""]];
-  const fw = (CW - 30) / 3;
-  firmas.forEach(([lab, nom], i) => {
-    const fx = M + 5 + i * (fw + 10);
-    dc(T.carbon); doc.setLineWidth(0.3); doc.line(fx, ctx.y, fx + fw, ctx.y);
-    f(8, "bold"); tc(T.carbon); t(lab, fx + fw / 2, ctx.y + 4.5, { align: "center" });
-    if (nom) { f(8); tc(T.texto2); t(nom, fx + fw / 2, ctx.y + 9, { align: "center" }); }
-  });
+  // Elaborado por al pie del resumen (sin líneas de firma)
+  { const yE = ctx.y - 3; if (yE > PH - 15) { nuevaHoja(); pdfElaborado(doc, M, ctx.y + 2); ctx.y += 8; } else { pdfElaborado(doc, M, yE); ctx.y = yE + 6; } }
 
 
   // ── Detalle por proyecto · para costos ── (en la misma hoja de las firmas si cabe)
-  if (ctx.y + 60 > Y_MAX) nuevaHoja(); else ctx.y += 22;
+  if (ctx.y + 60 > Y_MAX) nuevaHoja(); else ctx.y += 14;
   rotulo("Detalle por proyecto · para costos por proyecto");
   proyectos.forEach(p => {
     asegurar(36);

@@ -2774,6 +2774,7 @@ separado a propósito para que tablet y RRHH nunca compitan por una key.
   constancia (calcada del Word), las etiquetas QR, GeoSafety/GeoDrill Vault
   (ocultos) y la plantilla CSV de importar de GeoInventory. Todo reporte
   nuevo usa este módulo.
+  **14-nov-2026 — SIN LÍNEAS DE FIRMA (Gerson: "en todos los reportes, en vez de las tres líneas solas en la segunda página, abajo del cuadrito que solo diga elaborado por coordinador de operaciones, Lic. Gerson Trochez")**: `ELABORADO_POR` / `pdfElaborado(doc, x, y)` / `textoElaborado()` en reporte-estilo.js. Va pegado debajo del último cuadro (usa el espacio que queda; solo pasa de hoja si de verdad no cabe). Aplicado a horas extras, asistencia, altas y bajas, jornales (PDF y Excel), planilla (PDF y Excel), servicios eventuales y contratistas. Se quedan con su firma a propósito: el voucher ("Recibí conforme" del colaborador), el Acta de entrega y la constancia. Todo reporte nuevo termina así.
   **29-oct-2026 — HORIZONTAL, sin cortes y un PASTEL por proyecto** (Gerson:
   "cada proyecto es un color, pasteles bonitos; horizontales; que no se corte
   un proyecto a la mitad; todos los reportes así"): `reporteHTML` es apaisado

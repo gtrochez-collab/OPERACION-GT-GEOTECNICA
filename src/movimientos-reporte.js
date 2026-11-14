@@ -10,7 +10,7 @@
 // =====================================================================
 import { safeDynamicImport } from "./lazyLoad.js";
 import { MONEDA } from "./operacion.js";
-import { PDF_TEMA, pdfKpi, pdfPie, cargarImagen, LOGO_EMPRESA, latin1 } from "./reporte-estilo.js";
+import { PDF_TEMA, pdfKpi, pdfPie, pdfElaborado, cargarImagen, LOGO_EMPRESA, latin1 } from "./reporte-estilo.js";
 
 const T = PDF_TEMA;
 const nf = (n) => (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -154,16 +154,8 @@ export const construirMovimientosPDF = async ({ empresa = "geotecnica", nombreEm
   if (!altas.length && !bajas.length) { fc(T.fondo); doc.roundedRect(M, ctx.y, CW, 10, 2, 2, "F"); f(8.5); tc(T.texto2); t("Sin altas ni bajas en este período.", M + 4, ctx.y + 6.4); ctx.y += 16; }
   if (bajas.length) { f(6.8); tc(T.texto3); t("Bajas: \"Último día del colaborador en la empresa\" = hasta ese día (inclusive) se le paga; la asistencia se bloquea desde el día siguiente.", M, ctx.y); ctx.y += 6; }
 
-  // Firmas
-  asegurar(28); ctx.y += 14;
-  const firmas = [["Elaborado por · Recursos Humanos", elaboradoPor], ["Revisado", ""], ["Autorizado", ""]];
-  const fw = (CW - 30) / 3;
-  firmas.forEach(([lab, nom], i) => {
-    const fx = M + 5 + i * (fw + 10);
-    dc(T.carbon); doc.setLineWidth(0.3); doc.line(fx, ctx.y, fx + fw, ctx.y);
-    f(8, "bold"); tc(T.carbon); t(lab, fx + fw / 2, ctx.y + 4.5, { align: "center" });
-    if (nom) { f(8); tc(T.texto2); t(nom, fx + fw / 2, ctx.y + 9, { align: "center" }); }
-  });
+  // Elaborado por (sin líneas de firma)
+  { const yE = ctx.y - 3; if (yE > PH - 15) { nuevaHoja(); pdfElaborado(doc, M, ctx.y + 2); ctx.y += 8; } else { pdfElaborado(doc, M, yE); ctx.y = yE + 6; } }
   pdfPie(doc, { margen: M });
   return doc;
 };
