@@ -29,7 +29,6 @@ import { esSV, OPERACION, MONEDA } from "./operacion.js";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { Modal, Chip, C_GRIS, C_VERDE, C_AMARILLO, C_NARANJA, ORANGE, ORANGE_DARK, CHARCOAL, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
-import { abrirReporte } from "./reporte-estilo.js";
 import { USERS, ROLE_LABEL, USUARIOS_DE_BAJA } from "./users.js";
 import { admiteSolicitudes } from "./projects.js";
 import { esFeriado, nombreFeriado } from "./holidays.js";
@@ -550,15 +549,13 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
   const exportar = async (lista, tipo) => {
     const faltan = lista.flatMap(p => p.liq.filas.filter(f => !tieneIdentidad(f.ficha)).map(f => f.nombre));
     if (tipo === "pdf" && faltan.length && !confirm(`Falta la identidad escaneada de:\n\n${faltan.join("\n")}\n\nEn el PDF van a salir con «Falta escanear». ¿Generarlo igual?`)) return;
-    if (tipo === "excel") { const { excelJornales } = await safeDynamicImport(() => import("./jornales-reporte.js"), "reporte"); await excelJornales({ proyectos: lista }); return; }
-    const w = window.open("", "_blank");
-    if (!w) { alert("Permití las ventanas emergentes para generar el PDF."); return; }
-    w.document.write(`<p style="font:600 15px -apple-system,sans-serif;color:#6E6862;padding:48px">Preparando la solicitud de pago y las identidades…</p>`);
     try {
-      const { reporteJornalesHTML } = await safeDynamicImport(() => import("./jornales-reporte.js"), "reporte");
+      // 14-nov-2026: PDF y Excel con el estilo de la planilla y de contratistas (franjas de color, días pintados).
+      if (tipo === "excel") { const { excelJornales } = await safeDynamicImport(() => import("./jornales-reporte.js"), "reporte"); await excelJornales({ proyectos: lista, empresa: EMPRESA_JORNALES }); return; }
+      const { pdfJornales } = await safeDynamicImport(() => import("./jornales-reporte.js"), "reporte");
       const ids = await identidadesDe(lista.flatMap(p => p.liq.filas));
-      abrirReporte(w, reporteJornalesHTML({ proyectos: lista, identidades: ids, empresa: EMPRESA_JORNALES, lugar: LUGAR, hoy }));
-    } catch (e) { w.close(); alert("No se pudo armar el reporte: " + (e?.message || e)); }
+      await pdfJornales({ proyectos: lista, identidades: ids, empresa: EMPRESA_JORNALES, lugar: LUGAR, hoy });
+    } catch (e) { alert("No se pudo armar el reporte: " + (e?.message || e)); }
   };
   const paqueteDe = (s, proy, liqx) => ({ short: s, nombre: nombreDe(s), liq: liqx, elaboradoPor: user.nombre, asistenciaPor: proy?.asistenciaPor || "" });
 

@@ -1376,6 +1376,17 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   venir"; si falta avisa antes y sale "Falta escanear"). Verificado el 10-nov
   con datos ZZ (borrados): fichas con identidad, asistencia, mezcla con un
   guardado ajeno simultáneo, reporte, celular y rol residente.
+  **Solicitud de pago en colores (14-nov-2026, Gerson: "que sea bonita, en
+  colores, como contratistas; el Excel igual")**: `jornales-reporte.js` ya NO
+  arma HTML: `construirJornalesPDF`/`pdfJornales` (jsPDF carta apaisada, se baja
+  directo) con franjas Jornal · Asistencia del corte · Pago por días · Horas
+  extra · A pagar, cada día pintado como en la hoja de asistencia (1 verde · ½
+  ámbar · 2 naranja · 0 rojo; D/F en naranja), HE debajo del día, totales en
+  naranja, caja carbón con el total, firmas e identidades en tarjetas (imágenes
+  pasadas a JPEG ≤900 px con `aJpeg`); varios proyectos = portada con resumen.
+  `excelJornales({proyectos, empresa})`: logo, franjas, días pintados, HE por
+  fecha, fórmulas con `result` (total días = SUM, valor HE = valor día ÷ 8,
+  total = días + HE) y hoja Resumen con varios proyectos.
   **ALTAS Y BAJAS + COSTOS rediseñadas (4-nov-2026, Gerson: "Movimientos lo
   llamaría altas y bajas; el mismo estilo que los demás")**: la pestaña
   `movimientos` se rotula **"Altas y bajas"** (el id no cambió). `renderMovs`:
