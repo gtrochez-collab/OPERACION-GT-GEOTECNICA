@@ -1392,6 +1392,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   botones ⟲ ⟳ que giran la foto 90° y la REESCRIBEN en el mismo `cp-file-<id>`
   (`girarFoto`; la ficha no cambia) y un aviso ámbar cuando la foto es más alta
   que ancha. **TRASLAPES (14-nov-2026, Gerson: "que no le estemos pagando doble en dos proyectos")**: `traslapesDelCorte(proyectos)` (jornales-calc, con prueba) = la misma persona con día (o HE) en la MISMA fecha en dos proyectos del corte. "Todos los proyectos" muestra un aviso rojo con la lista y un chip rojo en la cajita de cada proyecto metido; la hoja del proyecto (con lo que se está editando) avisa "Ojo, se pagaría doble: Ricardo Saul: sáb 31 también en …" y pinta la celda con borde rojo; exportar PDF/Excel pide confirmación si hay. No bloquea: puede ser medio día en cada uno. Corte 31 oct–13 nov revisado: sin traslapes.
+  **DOMINGO TRABAJADO = DOBLE (14-nov-2026, Gerson)**: al cargar el Excel de un proyecto, un domingo trabajado va en 2 aunque el ingeniero lo haya puesto en 1 (Lacthosa: Nelson Josué dom 8; Cataleya: Jeferson Reyes dom 1). También: si la plantilla del ingeniero no suma una columna (Cataleya: HE del sáb 31), se corrige y se suma — y se explica en Observaciones.
   **Represa San José cargada el 14-nov** desde el Excel de Ester Cruz
   (6 personas, L 39,525, depositar a Ester Cruz): 4 fichas nuevas con su
   identidad leída de las fotos del Excel (Gerson las confirmó) y Edson y Emir
