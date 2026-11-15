@@ -3157,7 +3157,9 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           empresa: sheet.company || co, nombreEmpresa: cc.name, quincena: sheet.quincena, periodo: sheet.periodo, pago, hayAjuste,
           elaboradoPor: userName || "",
           proyectos: proyOrden.map(([pr, P]) => ({ short: pr, nombre: projFullName(pr), hrs: P.hrs, costo: P.costo, filas: Object.values(P.emps).sort((a, b) => b.total - a.total).map(fila) })),
-          grupos: bloques.map(([g, rows]) => ({ titulo: NOMBRE_GRUPO[g], filas: rows.map(fila) })),
+          // Monto por persona con el MISMO cálculo de la planilla (horasExtrasDe),
+          // así el total del reporte = el de la planilla de horas extras al centavo.
+          grupos: bloques.map(([g, rows]) => ({ titulo: NOMBRE_GRUPO[g], filas: rows.map(r => ({ ...fila(r), montoPlanilla: horasExtrasDe({ ...sheet, hours }, r.e.id, r.hb)?.monto })) })),
         });
       } catch (e) { console.error(e); alert("No se pudo generar el PDF: " + (e?.message || e)); }
     };
