@@ -234,7 +234,9 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     ] : [
       ["Colaboradores", String(res.personas)],
       ["Salarios ordinarios", Lsiempre(res.ordinario)],
-      ["Ingresos", Lsiempre(res.ingresos)],
+      // 14-nov-2026 (el Dr. Flores: "ingresos confunde"): es todo lo que se paga
+      // encima del ordinario — bonificaciones, domingos/feriados y bonos.
+      ["Bonificaciones y extras", Lsiempre(res.ingresos)],
       ["Deducciones", Lsiempre(res.deducciones), false, ROJO],
       ["Total a pagar", Lsiempre(res.neto), true],
     ];
@@ -242,7 +244,8 @@ export const construirPlanillaPDF = async ({ empresa, periodo, quincena, lines, 
     tiles.forEach(([lab, val, dest, col], i) => {
       const x = M + 4 + i * (tw + gap);
       P.fc(dest ? TINTE : FONDO); rr(x, y, tw, th, 4);
-      P.f(8.5, "bold"); P.tc(dest ? NARANJA_TEXTO : GRIS_FAINT); doc.text(latin1(lab.toUpperCase()), x + 7, y + 10, { charSpace: 0.5 });
+      { let fs = 8.5; P.f(fs, "bold"); while (fs > 6 && doc.getTextWidth(latin1(lab.toUpperCase())) + lab.length * 0.5 > tw - 12) { fs -= 0.25; P.f(fs, "bold"); } }
+      P.tc(dest ? NARANJA_TEXTO : GRIS_FAINT); doc.text(latin1(lab.toUpperCase()), x + 7, y + 10, { charSpace: 0.5 });
       P.f(val.length > 13 ? 20 : 24, "bold"); P.tc(dest ? NARANJA_TEXTO : (col || CARBON)); P.t(val, x + 7, y + th - 9);
     });
     y += th + 10;

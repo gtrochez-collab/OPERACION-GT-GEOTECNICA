@@ -1,5 +1,7 @@
 // =====================================================================
-// HORAS EXTRAS — Reporte para planilla (PDF jsPDF, se baja directo)
+// HORAS EXTRAS — Reporte de horas extras (PDF jsPDF, se baja directo)
+// (14-nov-2026: se titula "Reporte", como el de asistencia; "Planilla de horas
+// extras" es solo la que sale de Planilla)
 // =====================================================================
 // 14-nov-2026 (Gerson: "que las horas extra también vengan bonitas, así como
 // la solicitud de pago de jornales; un clic y se descarga el PDF, que no te
@@ -73,7 +75,7 @@ export const construirHorasExtrasPDF = async ({ empresa = "geotecnica", nombreEm
   f(7.5, "bold"); tc(T.texto3); t("GEOCORE · GRUPO GEOTECNICA", M + 11, M + 5.4, { charSpace: 0.5 });
   if (logo) { const h = subterra ? 26 : 14, w = Math.min(70, h * logo.w / logo.h); doc.addImage(logo.dataUrl, "PNG", PW - M - w, M - (subterra ? 2 : -1), w, h); }
   let y = M + 22;
-  f(18, "bold"); tc(T.carbon); t("Planilla de horas extras", M, y);
+  f(18, "bold"); tc(T.carbon); t("Reporte de horas extras", M, y);
   y += 7; f(11, "bold"); tc(T.naranjaTexto); t(`${nombreEmpresa} · quincena trabajada ${quincena} ${periodo}`, M, y);
   y += 6; f(9); tc(T.texto2); t(`Se paga en la planilla ${pago}`, M, y);
   fc(T.naranja); doc.rect(M, y + 4, 22, 1, "F");
