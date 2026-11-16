@@ -2619,7 +2619,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   nuevo | usado_bueno | usado_malo (`CONDICIONES`) en cajas, por cantidad y
   herramientas (los individuales comunes ya tienen Bueno/Regular/Malo); se
   elige al agregar (default Nuevo, se recuerda para el siguiente), chip en la
-  ficha y editable en Editar. Los artículos viejos no la traen.
+  ficha y editable en Editar. Los artículos viejos no la traen. **16-nov-2026**: también los individuales comunes (`llevaCondicion` = true para todos; caso microondas ADM-0001 de Aurea II, entregado nuevo) — su Bueno/Regular/Malo sigue siendo el estado de uso.
   **Dar salida (26-oct-2026)**: botón carbón junto a Agregar en Inicio →
   `SalidaPickerImpl` (escanear QR o buscar; solo lo que esa persona puede
   sacar) → abre la ficha con la salida ya desplegada (`accionInicial`;
