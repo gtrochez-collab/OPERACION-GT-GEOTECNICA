@@ -66,6 +66,7 @@ export const ROLE_LABEL = {
   almacenista:        "Encargado de Almacen (GeoDrill Vault)",
   almacen_visor:      "Visor de Almacen (solo lectura)",
   visor_compras:      "Visor de Compras (solo lectura)",
+  cierre_conta:       "Cierre contable (solo Accounting)",
   compras_ops:        "Compras / Operaciones",
   marcaje:            "Tablet de Marcaje (GeoClock)",
   // GeoSupply (2-oct-2026): ingenieros residentes. NO viven en USERS — se crean
@@ -78,7 +79,7 @@ export const ROLE_LABEL = {
 // administrador se agrega a mano en este archivo.
 // `operaciones` (9-nov-2026): países a los que entra el usuario (hn · sv). Sin el
 // campo = solo Honduras. Con más de uno, al entrar elige en el mapa.
-export const ROLES_ASIGNABLES = ["residente", "gerencia", "visor_compras", "recepcion", "logistica", "asistente_compras", "compras_ops", "costos", "tesoreria"];
+export const ROLES_ASIGNABLES = ["residente", "gerencia", "visor_compras", "recepcion", "logistica", "asistente_compras", "compras_ops", "costos", "tesoreria", "cierre_conta"];
 
 // Color para el avatar de cada usuario (rotativo segun el username)
 export const userColor = (username) => {

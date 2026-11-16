@@ -55,7 +55,7 @@ const MODULES = [
     icon: "🛒",
     desc: "Compras, pagos y cierre contable.",
     accent: "#8B3A3A",
-    roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion", "asistente_compras", "visor_compras", "compras_ops"],
+    roles: ["admin", "tesoreria", "gerencia", "costos", "recepcion", "asistente_compras", "visor_compras", "compras_ops", "cierre_conta"],
   },
   {
     // GeoSupply (2-oct-2026): solicitudes de material del residente →
@@ -88,7 +88,7 @@ const MODULES = [
     icon: "⚙️",
     desc: "Repuestos y mantenimiento, por máquina.",
     accent: "#7C3AED",
-    roles: ["admin", "coordinador_maquinas", "tesoreria", "gerencia", "costos", "recepcion", "visor_compras", "compras_ops"],
+    roles: ["admin", "coordinador_maquinas", "tesoreria", "gerencia", "costos", "recepcion", "visor_compras", "compras_ops", "cierre_conta"],
   },
   {
     id: "geocost",

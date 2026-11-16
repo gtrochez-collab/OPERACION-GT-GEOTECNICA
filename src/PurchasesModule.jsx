@@ -2801,7 +2801,11 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const isAnaRol = userRole === "asistente_compras";
   const isAsistenteCompras = esMaq ? isCoordinadorMaquinas : isAnaRol;
   // En GeoMachinery Arturo (compras_ops) sigue siendo SOLO LECTURA.
-  const isVisorCompras = userRole === "visor_compras" || (esMaq && userRole === "compras_ops");   // solo lectura
+  // 16-nov-2026 (Gerson): Heydee e Isaac (rol `cierre_conta`) cierran con
+  // Contabilidad el atraso de facturas — SOLO ven Accounting y Proveedores, en
+  // solo lectura (Heydee además edita proveedores: esEditoraProveedores).
+  const isCierreConta = userRole === "cierre_conta";
+  const isVisorCompras = userRole === "visor_compras" || isCierreConta || (esMaq && userRole === "compras_ops");   // solo lectura
 
   // Permisos (segregacion de funciones):
   // admin → Operaciones: crea, edita borradores, valida, envia a Tesoreria, edita proyectos.
@@ -2821,7 +2825,10 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const canPay = isTesoreria;                                                     // SOLO Carolina registra pago y cambia estado financiero
   const canViewOnly = isGerencia || isVisorCompras;                               // gerencia y visor de compras (Arturo) son read-only
   const canEditDelivery = isAdmin || isCostos || isRecepcion || isCoordinadorMaquinas;                     // subir/editar fichas de recibido
-  const canManageProviders = isAdmin || isCostos || isAsistenteCompras || isAnaRol || isRecepcion;  // CRUD de proveedores (Ana primaria, Jorge tambien para no quedar trabados)
+  // 16-nov-2026 (Gerson): de las dos de cierre contable, SOLO Heydee edita
+  // proveedores ("nos los va a actualizar"); Isaac solo los mira.
+  const esEditoraProveedores = isCierreConta && userKey === "heydee.fonseca";
+  const canManageProviders = isAdmin || isCostos || isAsistenteCompras || isAnaRol || isRecepcion || esEditoraProveedores;  // CRUD de proveedores (Ana primaria, Jorge tambien para no quedar trabados)
   const canSendToLogistics = isAdmin || isCostos || isAsistenteCompras || isAnaRol;
   // CRUD de máquinas (solo GeoMachinery; Jorge incluido para cargar máquinas)
   const canManageMachines = esMaq && (isAdmin || isCostos || isCoordinadorMaquinas || isRecepcion);           // crear orden de recogida desde compra pagada
@@ -2946,7 +2953,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // - admin/gerencia/costos → "dashboard" (vista ejecutiva)
   // - Resto → "list" (solicitudes)
   const canSeeDashboardDefault = isAdmin || isGerencia || isCostos || isVisorCompras;
-  const defaultSec = isCoordinadorMaquinas
+  const defaultSec = isCierreConta
+    ? "accounting"                 // Heydee e Isaac: solo Accounting
+    : isCoordinadorMaquinas
     ? "list"                       // Fernando arranca en Solicitudes (como antes en GeoMachinery)
     : isAsistenteCompras
     ? "ana"
@@ -8764,7 +8773,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       case "provider-new":  return <Modal title="Nuevo proveedor" onClose={() => setModal(null)} wide><ProviderFormImpl setModal={setModal} upsertProvider={upsertProvider} subirConstanciaProveedor={subirConstanciaProveedor} /></Modal>;
       case "machine-new": return esMaq ? <Modal title="Nueva máquina" onClose={() => setModal(null)}><MachineFormImpl setModal={setModal} upsertMachine={upsertMachine} /></Modal> : null;
       case "machine-edit": return esMaq ? <Modal title={`Editar máquina — ${m.d.nombre}`} onClose={() => setModal(null)}><MachineFormImpl machine={m.d} setModal={setModal} upsertMachine={upsertMachine} deleteMachine={deleteMachine} /></Modal> : null;
-      case "provider-edit": return <Modal title={`Editar proveedor — ${m.d.name}`} onClose={() => setModal(null)} wide><ProviderFormImpl provider={m.d} setModal={setModal} upsertProvider={upsertProvider} deleteProvider={deleteProvider} subirConstanciaProveedor={subirConstanciaProveedor} /></Modal>;
+      case "provider-edit": return <Modal title={`Editar proveedor — ${m.d.name}`} onClose={() => setModal(null)} wide><ProviderFormImpl provider={m.d} setModal={setModal} upsertProvider={upsertProvider} deleteProvider={esEditoraProveedores ? null : deleteProvider} subirConstanciaProveedor={subirConstanciaProveedor} /></Modal>;
       case "send-pickup":   return <Modal title={`🚛 Enviar a Logistica — ${m.d.provider}`} onClose={() => setModal(null)}><SendPickupFormImpl purchase={m.d} provider={findProviderByName(m.d.provider)} setModal={setModal} enviarAOrdenRecogida={enviarAOrdenRecogida} /></Modal>;
       case "entrega-directa": return <Modal title={`🏪 La entrega el proveedor — ${m.d.provider}`} onClose={() => setModal(null)}><EntregaDirectaFormImpl purchase={m.d} provider={findProviderByName(m.d.provider)} setModal={setModal} marcarEntregaDirecta={marcarEntregaDirecta} /></Modal>;
       default: return null;
@@ -8882,7 +8891,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // Costos de maquinaria: SOLO admin / gerencia / costos. Fernando NO la ve ni
   // exporta (pedido de Gerson 19-ago-2026).
   const canSeeCostosMaq = esMaq && (isAdmin || isGerencia || isCostos);
-  const visibleNav = isAsistenteCompras && !esMaq
+  const visibleNav = isCierreConta
+    ? allNav.filter(n => n.id === "accounting" || n.id === "providers")
+    : isAsistenteCompras && !esMaq
     ? allNav.filter(n => n.id === "ana" || n.id === "entregas" || n.id === "accounting" || n.id === "providers")
     : allNav.filter(n => {
         if (n.id === "resumen") return canSeeResumen;
@@ -8894,6 +8905,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const roleLabel = isAdmin ? "Operaciones"
     : isTesoreria ? "Tesoreria"
     : isGerencia ? "Gerencia (solo lectura)"
+    : isCierreConta ? "Cierre contable (solo lectura)"
     : isVisorCompras ? "Visor de Compras (solo lectura)"
     : userRole === "compras_ops" ? "Compras / Operaciones"
     : isCostos ? "Costos / Operaciones"
@@ -9008,7 +9020,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     {/* Usuarios read-only (gerencia, visor de compras) SOLO pueden abrir el
         modal de detalle — es de solo lectura (sin botones de mutacion). El
         resto de modales (nuevo/editar/pagar/etc.) sigue bloqueado para ellos. */}
-    {(!canViewOnly || modal?.t === "detail") && renderModal()}
+    {(!canViewOnly || modal?.t === "detail" || (canManageProviders && String(modal?.t || "").startsWith("provider"))) && renderModal()}
     {visorGlobal && <VisorArchivo archivo={visorGlobal} onClose={() => setVisorGlobal(null)} />}
     {renderPriModal()}
     {renderCxpModal()}
