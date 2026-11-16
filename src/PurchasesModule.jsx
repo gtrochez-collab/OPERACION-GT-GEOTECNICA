@@ -7197,7 +7197,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   </div>;
 
   const renderAccounting = () => {
-    const mias = cp.filter(p => esSupervisorConta || esMiaConta(p));
+    const mias = cp.filter(p => veTodasConta || esMiaConta(p));
     let nPor = 0, montoPor = 0, nListas = 0, nSinFicha = 0;
     mias.forEach(p => {
       const t = clasificarConta(p);
@@ -7228,7 +7228,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     </div>;
     const chip = (t, c) => <span key={t} style={{ padding: "3px 11px", borderRadius: 999, fontSize: 11, fontWeight: 800, color: c.color, background: c.bg }}>{t}</span>;
     return <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: 16 }}>
-      {caja("Por cerrar contable", esSupervisorConta ? "Todas las compras pagadas que falta cerrar con Contabilidad" : "Las tuyas y las que no tienen responsable",
+      {caja("Por cerrar contable", veTodasConta ? "Todas las compras pagadas que falta cerrar con Contabilidad" : "Las tuyas y las que no tienen responsable",
         nPor, `${fmtL(montoPor)} en cierre`, () => setSec("conta"), C_ULTRA,
         [nListas > 0 && chip(`${nListas} listas para cerrar`, C_VERDE), nSinFicha > 0 && chip(`${nSinFicha} sin ficha de Logística`, C_ROJO)].filter(Boolean))}
       {caja("Cerradas", "El archivo de lo que ya se entregó a Contabilidad",
@@ -7413,12 +7413,16 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // más las SIN ASIGNAR (para que nada quede invisible). Gerson y Carolina
   // ven todas, con selector por responsable.
   const esSupervisorConta = isAdmin || isTesoreria;
+  // 16-nov-2026 (Gerson): Heydee e Isaac entran de VISOR para cerrar con
+  // Contabilidad el atraso de facturas — necesitan ver TODAS las compras por
+  // cerrar y cerradas (solo miran y bajan el paquete; no cierran ni asignan).
+  const veTodasConta = esSupervisorConta || isVisorCompras;
   const esMiaConta = (z) => !z.cierreResponsable || z.cierreResponsable === userName;
 
   const renderConta = () => {
     const despachoDe = despachoDeConta;
     const clasificar = clasificarConta;
-    const paraMi = (z) => esSupervisorConta
+    const paraMi = (z) => veTodasConta
       ? (!contaResp || (contaResp === "__sin__" ? !z.cierreResponsable : z.cierreResponsable === contaResp))
       : esMiaConta(z);
     const RESP_OPCIONES = [...new Set(USERS.map(u2 => u2.label))].sort();
@@ -7530,8 +7534,9 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
           {/* Responsable del cierre: editable acá mismo (queda en la bitácora) */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
             <span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Cierra</span>
-            <select value={p.cierreResponsable || ""}
+            <select value={p.cierreResponsable || ""} disabled={canViewOnly}
               onChange={async (e) => {
+                if (canViewOnly) return;
                 const v = e.target.value;
                 const saved = addAudit({ ...p, cierreResponsable: v }, "cierre_responsable", v ? `Responsable de cierre contable: ${v}` : "Responsable de cierre contable quitado");
                 const ok = await updatePurchase(saved);
@@ -7628,7 +7633,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             <option value="">Todos los proyectos</option>
             {proyectosDisponibles.map(([n, c]) => <option key={n} value={n}>{n} ({c})</option>)}
           </select>
-          {esSupervisorConta
+          {veTodasConta
             ? <select value={contaResp} onChange={e => setContaResp(e.target.value)} style={{ ...SELECT, background: contaResp ? "rgba(232,118,45,.08)" : "var(--surface)", fontWeight: contaResp ? 700 : 400 }}>
                 <option value="">Cierra: todos</option>
                 <option value="__sin__">Cierra: sin asignar</option>
