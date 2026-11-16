@@ -283,6 +283,27 @@ export default function App() {
         const ops = operacionesDe(ses);
         if (ops.length === 1 && ops[0] !== OPERACION) { guardarOperacion(ops[0]); window.location.reload(); return; }
         setUser(ses);
+        // 16-nov-2026 (caso Heydee): la sesión guarda el rol del momento del
+        // login, así que un cambio en GeoTeam → Accesos no se veía hasta cerrar
+        // sesión. Los accesos de `gt-usuarios` se releen de la nube al cargar:
+        // desactivado → fuera; rol/nombre/ficha cambiados → se actualizan (y si
+        // cambió el rol, vuelve al panel). Sin nube, se queda como estaba.
+        if (!USERS.some(x => x.username === ses.username)) {
+          store.getCloud("gt-usuarios").then((nube) => {
+            if (!Array.isArray(nube)) return;
+            const c = nube.find(x => x && x.username === ses.username);
+            if (!c || c.activo === false) {
+              try { sessionStorage.removeItem("gt-session"); } catch {}
+              setUser(null); setActiveModule(null);
+              return;
+            }
+            const fresca = { ...ses, role: c.role, label: c.label, empId: c.empId || null, proyectos: Array.isArray(c.proyectos) ? c.proyectos : [], operaciones: Array.isArray(c.operaciones) ? c.operaciones : undefined };
+            if (JSON.stringify(fresca) === JSON.stringify(ses)) return;
+            try { sessionStorage.setItem("gt-session", JSON.stringify(fresca)); } catch {}
+            if (fresca.role !== ses.role) setActiveModule(null);
+            setUser(fresca);
+          }).catch((e) => console.warn("[sesión] no se pudo releer gt-usuarios:", e?.message || e));
+        }
       }
     } catch {}
   }, []);
