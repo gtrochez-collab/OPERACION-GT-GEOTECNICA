@@ -61,7 +61,10 @@ const Vacio = ({ children }) => <div className="gt-vidrio" style={{ padding: "44
 // usado en mal estado. Campo ADITIVO \`condicion\`; los viejos no lo traen.
 const CONDICIONES = [["nuevo", "Nuevo"], ["usado_bueno", "Usado · buen estado"], ["usado_malo", "Usado · mal estado"]];
 const condicionLabel = (k) => (CONDICIONES.find(c => c[0] === k) || [])[1] || "";
-const llevaCondicion = (tipo, categoria) => tipo !== "individual" || categoria === "herramientas_perforacion";
+// 16-nov-2026 (Gerson, caso microondas de Aurea II entregado nuevo al
+// ingeniero): TODO artículo lleva condición, también los individuales comunes
+// (su Bueno/Regular/Malo es el estado de uso; la condición dice cómo llegó).
+const llevaCondicion = () => true;
 const chipCondicion = (item) => item?.condicion ? <Chip c={item.condicion === "nuevo" ? C_VERDE : item.condicion === "usado_malo" ? C_ROJO : C_GRIS}>{condicionLabel(item.condicion)}</Chip> : null;
 const chipEstado = (item) => { const e = estadosDe(item)[item?.estado]; return <Chip c={TONO[e?.tono] || C_GRIS}>{e?.label || item?.estado || "—"}</Chip>; };
 const C_NIVEL = { llena: C_VERDE, parcial: C_AMARILLO, vacia: C_GRIS };
