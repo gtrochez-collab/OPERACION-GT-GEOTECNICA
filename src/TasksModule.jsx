@@ -153,6 +153,8 @@ export default function TasksModule({ userRole, userName, userKey, onBack, onLog
     : t));
   const quitar = (id) => guardar(tareas.filter(t => t.id !== id));
   const parchar = (id, patch) => guardar(tareas.map(t => t.id === id ? { ...t, ...patch } : t));
+  // "!" de prioridad (17-nov-2026): mismo campo que la tarjeta de la bienvenida.
+  const alternarPrioridad = (t) => parchar(t.id, { prioridad: !t.prioridad, prioridadAt: !t.prioridad ? new Date().toISOString() : null });
 
   // ── Clasificación ──
   const h = hoyYMD();
@@ -164,14 +166,17 @@ export default function TasksModule({ userRole, userName, userKey, onBack, onLog
   const atrasadas = pendientes.filter(t => t.fecha && t.fecha < h);
   const deSemana = pendientes.filter(t => t.fecha && t.fecha <= finSemana);
   const sinFecha = pendientes.filter(t => !t.fecha);
+  const prioritarias = pendientes.filter(t => t.prioridad);
 
   const VISTAS = [
     { k: "pendientes", label: "Todas", n: pendientes.length },
+    { k: "prioridad", label: "Prioridad !", n: prioritarias.length },
     { k: "hoy", label: "Hoy", n: deHoy.length },
     { k: "semana", label: "Esta semana", n: deSemana.length },
     { k: "hechas", label: "Hechas", n: hechas.length },
   ];
-  const visibles = vista === "hoy" ? deHoy
+  const visibles = vista === "prioridad" ? prioritarias
+    : vista === "hoy" ? deHoy
     : vista === "semana" ? deSemana
       : vista === "hechas" ? hechas
         : pendientes;
@@ -180,13 +185,18 @@ export default function TasksModule({ userRole, userName, userKey, onBack, onLog
   // "Sin fecha" al final — es el orden en que uno planifica.
   const grupos = (() => {
     const m = {};
-    visibles.forEach(t => { const k2 = t.fecha || "—"; (m[k2] = m[k2] || []).push(t); });
+    // En "Todas" las prioritarias van en su propio grupo arriba de todo.
+    const arriba = vista === "pendientes" ? prioritarias : [];
+    visibles.forEach(t => { if (arriba.includes(t)) return; const k2 = t.fecha || "—"; (m[k2] = m[k2] || []).push(t); });
     const keys = Object.keys(m).sort((a, b) => {
       if (a === "—") return 1;
       if (b === "—") return -1;
       return vista === "hechas" ? b.localeCompare(a) : a.localeCompare(b);
     });
-    return keys.map(k2 => ({ fecha: k2, items: m[k2] }));
+    const prioPrimero = (arr) => arr.slice().sort((a, b) => (b.prioridad && !b.done ? 1 : 0) - (a.prioridad && !a.done ? 1 : 0));
+    const porFecha = keys.map(k2 => ({ fecha: k2, items: prioPrimero(m[k2]) }));
+    const porFechaOrden = (a, b) => (a.fecha || "9999").localeCompare(b.fecha || "9999");
+    return arriba.length ? [{ fecha: "!", items: arriba.slice().sort(porFechaOrden) }, ...porFecha] : porFecha;
   })();
 
   // ── UI ──
@@ -208,8 +218,8 @@ export default function TasksModule({ userRole, userName, userKey, onBack, onLog
     return <div key={t.id} className="gt-vidrio" style={{
       padding: isMobile ? "12px 14px" : "12px 18px",
       display: "grid", gridTemplateColumns: "22px minmax(0,1fr) auto", alignItems: "center", gap: 14,
-      background: rel?.atrasada && !t.done ? C_ROJO.bg : undefined,
-      borderColor: rel?.atrasada && !t.done ? C_ROJO.borde : undefined,
+      background: rel?.atrasada && !t.done ? C_ROJO.bg : t.prioridad && !t.done ? "rgba(232,118,45,.08)" : undefined,
+      borderColor: rel?.atrasada && !t.done ? C_ROJO.borde : t.prioridad && !t.done ? "rgba(232,118,45,.28)" : undefined,
     }}>
       <input type="checkbox" checked={!!t.done} onChange={() => toggle(t.id)} aria-label={t.done ? `Marcar "${t.txt}" como pendiente` : `Marcar "${t.txt}" como hecha`}
         style={{ width: 18, height: 18, cursor: "pointer", accentColor: ORANGE_DARK }} />
@@ -222,7 +232,7 @@ export default function TasksModule({ userRole, userName, userKey, onBack, onLog
             style={{ padding: "6px 10px", border: `1px solid ${ORANGE}`, borderRadius: 9, fontSize: 14, fontFamily: "inherit", outline: "none", background: "var(--surface)", width: "100%", boxSizing: "border-box" }} />
         ) : (
           <div onClick={() => !t.done && setEditando(t.id)} title={t.done ? "" : "Click para editar"}
-            style={{ fontSize: 14.5, lineHeight: 1.35, color: t.done ? "var(--text-faint)" : "var(--text)", textDecoration: t.done ? "line-through" : "none", wordBreak: "break-word", cursor: t.done ? "default" : "text" }}>
+            style={{ fontSize: 14.5, lineHeight: 1.35, fontWeight: t.prioridad && !t.done ? 600 : 400, color: t.done ? "var(--text-faint)" : "var(--text)", textDecoration: t.done ? "line-through" : "none", wordBreak: "break-word", cursor: t.done ? "default" : "text" }}>
             {t.txt}
           </div>
         )}
@@ -231,6 +241,10 @@ export default function TasksModule({ userRole, userName, userKey, onBack, onLog
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+        {!t.done && <button onClick={() => alternarPrioridad(t)} aria-pressed={!!t.prioridad}
+          title={t.prioridad ? "Quitar prioridad" : "Marcar como prioridad"}
+          aria-label={t.prioridad ? `Quitar prioridad a "${t.txt}"` : `Marcar "${t.txt}" como prioridad`}
+          style={{ width: 30, height: 30, borderRadius: 999, border: `1.5px solid ${t.prioridad ? ORANGE : "var(--hairline)"}`, background: t.prioridad ? ORANGE : "var(--surface)", color: t.prioridad ? "#fff" : "var(--text-faint)", font: "900 14px/1 var(--display)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, boxShadow: t.prioridad ? "0 3px 10px rgba(232,118,45,.3)" : "none", transition: "background .2s, color .2s, border-color .2s" }}>!</button>}
         {/* La fecha se cambia acá mismo: un date nativo, sin modales */}
         <input type="date" value={t.fecha || ""} onChange={(e) => parchar(t.id, { fecha: e.target.value })}
           aria-label={`Fecha de "${t.txt}"`} title="Fecha para hacerla"
@@ -284,6 +298,7 @@ export default function TasksModule({ userRole, userName, userKey, onBack, onLog
         {/* Resumen */}
         <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flexWrap: "wrap" }}>
           {[
+            { v: prioritarias.length, l: "con prioridad", c: prioritarias.length ? "var(--naranja-tinta)" : undefined },
             { v: deHoy.length, l: "para hoy", c: deHoy.length ? "var(--naranja-tinta)" : undefined },
             { v: atrasadas.length, l: "atrasadas", c: atrasadas.length ? C_ROJO.color : undefined },
             { v: deSemana.length, l: "esta semana" },
@@ -335,13 +350,14 @@ export default function TasksModule({ userRole, userName, userKey, onBack, onLog
                 {vista === "hechas" ? "Todavía no marcaste ninguna como hecha."
                   : vista === "hoy" ? "Nada para hoy — día redondo."
                     : vista === "semana" ? "Nada agendado para esta semana."
+                      : vista === "prioridad" ? "Nada con prioridad. Tocá el ! de una tarea para subirla aquí."
                       : "Nada pendiente. Agregá tu primera tarea arriba."}
               </div>
             : grupos.map(g => (
               <div key={g.fecha} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 8 }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
-                  <span className="gt-label" style={{ color: g.fecha !== "—" && g.fecha < h && vista !== "hechas" ? C_ROJO.color : "var(--text-2)", fontSize: 10.5 }}>
-                    {g.fecha === "—" ? "Sin fecha" : fmtFechaLarga(g.fecha)}
+                  <span className="gt-label" style={{ color: g.fecha === "!" ? "var(--naranja-tinta)" : g.fecha !== "—" && g.fecha < h && vista !== "hechas" ? C_ROJO.color : "var(--text-2)", fontSize: 10.5 }}>
+                    {g.fecha === "!" ? "! Prioridad" : g.fecha === "—" ? "Sin fecha" : fmtFechaLarga(g.fecha)}
                   </span>
                   <span style={{ fontSize: 11, color: "var(--text-3)" }}>{g.items.length}</span>
                 </div>

@@ -1984,6 +1984,16 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   best-effort de la tarjeta. Las fechas se comparan como STRING YYYY-MM-DD con
   partes locales — `new Date("2026-09-18")` es medianoche UTC y en Honduras
   devolvía el día anterior.
+  **PRIORIDAD "!" (17-nov-2026, sugerencia del buzón vía Jonathan)**: campo
+  ADITIVO `prioridad: true` + `prioridadAt` en `gt-todos-<user>`. En la
+  tarjeta TO-DOS de la bienvenida cada pendiente trae un "!" (se asoma al
+  pasar el mouse; en pantallas táctiles se ve tenue): tocarlo lo pinta de
+  naranja con un "pop", la fila se tiñe y SUBE arriba de todo deslizándose
+  (FLIP con `el.animate`, respeta reduced-motion; `TODO_CSS` en App.jsx).
+  Orden: prioritarias (la última marcada arriba) → pendientes → hechas; el
+  título muestra el chip "! N". En Mis Tareas: botón "!" en cada fila, grupo
+  "! Prioridad" arriba de "Todas", pill "Prioridad !", cifra "con prioridad"
+  y dentro de cada fecha las prioritarias van primero.
 - `GeoSupplyModule.jsx` (**GeoSupply — Solicitudes de material, 2-oct-2026**)
   + `geosupply-calc.js` (lógica PURA, testeada: `npm test` →
   `tests/geosupply-calc.test.mjs`, node:test). Del residente a la aprobación:

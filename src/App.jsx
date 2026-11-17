@@ -860,6 +860,26 @@ function PanelCard({ m, onOpen, index = 0, animar = true, badge = 0 }) {
 // y tres tarjetas escalonadas: TO-DOS (personales, persistidos por usuario),
 // BANDEJA (pendientes reales del sistema según el rol) y VERSÍCULO DEL DÍA.
 // ═══════════════════════════════════════════════════════════════════════════
+// TO-DOS de la bienvenida: fila, "!" de prioridad y su animación.
+// El "!" apagado se asoma al pasar el mouse (en el celular siempre se ve).
+const TODO_CSS = `
+.gt-todo{display:flex;align-items:center;gap:6px;min-height:36px;padding:0 4px 0 8px;margin:0 -4px 0 -8px;border-radius:12px;border:1px solid transparent;transition:background .3s,border-color .3s}
+.gt-todo.es-prio{background:rgba(232,118,45,.09);border-color:rgba(232,118,45,.22)}
+.gt-todo-bang{width:26px;height:26px;flex-shrink:0;border-radius:999px;border:1.5px solid var(--hairline);background:transparent;color:var(--text-faint);font:900 14px/1 var(--display);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;opacity:0;transition:opacity .18s,background .25s,color .25s,border-color .25s,transform .18s}
+.gt-todo:hover .gt-todo-bang,.gt-todo-bang:focus-visible{opacity:1}
+.gt-todo-bang:hover{border-color:var(--marca-2);color:var(--marca-2);transform:scale(1.08)}
+.gt-todo-bang.on{opacity:1;background:var(--marca-2);border-color:var(--marca-2);color:#fff;box-shadow:0 3px 10px rgba(232,118,45,.35)}
+.gt-todo-bang.on:hover{color:#fff;background:#D4651F}
+.gt-todo-bang.pop{animation:gtBang .5s cubic-bezier(.34,1.56,.64,1)}
+@keyframes gtBang{0%{transform:scale(.55) rotate(-14deg)}60%{transform:scale(1.22) rotate(6deg)}100%{transform:scale(1) rotate(0)}}
+.gt-todo-x{background:none;border:none;cursor:pointer;color:var(--text-faint);font-size:17px;min-width:32px;min-height:32px;padding:0;flex-shrink:0}
+.gt-todo-x:hover{color:var(--text-2)}
+.gt-todo-cuenta{display:inline-flex;align-items:center;gap:4px;padding:3px 9px 3px 7px;border-radius:999px;background:rgba(232,118,45,.12);color:var(--naranja-tinta);font:800 11px/1 var(--sans)}
+.gt-todo-cuenta b{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:999px;background:var(--marca-2);color:#fff;font:900 10px/1 var(--display)}
+@media (hover:none){.gt-todo-bang{opacity:.55}.gt-todo-bang.on{opacity:1}}
+@media (prefers-reduced-motion:reduce){.gt-todo-bang.pop{animation:none}}
+`;
+
 function WelcomeScreen({ user, onStart, onLogout, onAbrirTareas, onCambiarOperacion = null }) {
   // fase "hero" (saludo centrado XL, que se disfrute) → fase "día" (arriba + tarjetas)
   const [fase, setFase] = useState(() => (prefiereMenosMovimiento() ? "dia" : "hero"));
@@ -908,10 +928,54 @@ function WelcomeScreen({ user, onStart, onLogout, onAbrirTareas, onCambiarOperac
     setTodosAbierto(true);   // que se vea el que acabás de agregar
   };
 
-  // Pendientes primero (sort estable: dentro de cada grupo, el orden original)
-  // — así los 5 visibles son los que faltan, no los ya tachados.
+  // PRIORIDAD "!" (17-nov-2026, sugerencia del buzón — Jonathan): cada
+  // pendiente se puede marcar con un "!" naranja y sube arriba de todo.
+  // Campo ADITIVO `prioridad: true` (+ `prioridadAt`) en gt-todos-<user>; lo
+  // lee igual Mis Tareas. Al marcarla o hecharla, la fila VIAJA a su lugar
+  // nuevo (FLIP abajo) en vez de saltar.
+  const alternarPrioridad = (id) => {
+    if (todos === null) return;
+    setRecienBang(id);
+    guardarTodos(todos.map((x) => x.id === id
+      ? { ...x, prioridad: !x.prioridad, prioridadAt: !x.prioridad ? new Date().toISOString() : null }
+      : x));
+  };
+  const [recienBang, setRecienBang] = useState(null);
+
+  // Orden: prioritarias pendientes (la más reciente marcada arriba) →
+  // pendientes → hechas. Sort estable: dentro de cada grupo, el orden
+  // original — así los 5 visibles son los que importan, no los tachados.
+  const rangoTodo = (t) => (t.done ? 2 : t.prioridad ? 0 : 1);
   const TODOS_VISIBLES = 5;
-  const todosOrden = todos ? todos.slice().sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0)) : null;
+  const todosOrden = todos ? todos.slice().sort((a, b) => {
+    const r = rangoTodo(a) - rangoTodo(b);
+    if (r) return r;
+    if (rangoTodo(a) === 0) return String(b.prioridadAt || "").localeCompare(String(a.prioridadAt || ""));
+    return 0;
+  }) : null;
+  const nPrioritarias = todos ? todos.filter((t) => !t.done && t.prioridad).length : 0;
+
+  // FLIP: antes de pintar, cada fila que cambió de lugar arranca donde
+  // estaba y se desliza a su posición nueva.
+  const filasTodoRef = useRef(new Map());
+  const posTodoRef = useRef(new Map());
+  const ordenClave = todosOrden ? todosOrden.map((t) => t.id).join("|") : "";
+  useLayoutEffect(() => {
+    const nuevas = new Map();
+    filasTodoRef.current.forEach((el, id) => { if (el) nuevas.set(id, el.getBoundingClientRect().top); });
+    if (!prefiereMenosMovimiento()) {
+      nuevas.forEach((top, id) => {
+        const antes = posTodoRef.current.get(id);
+        const el = filasTodoRef.current.get(id);
+        if (antes == null || !el || Math.abs(antes - top) < 1) return;
+        el.animate(
+          [{ transform: `translateY(${antes - top}px)` }, { transform: "translateY(0)" }],
+          { duration: 420, easing: "cubic-bezier(.32,.72,0,1)" }
+        );
+      });
+    }
+    posTodoRef.current = nuevas;
+  }, [ordenClave]);
   const todosVista = todosOrden ? (todosAbierto ? todosOrden : todosOrden.slice(0, TODOS_VISIBLES)) : null;
   const todosOcultos = todosOrden ? Math.max(0, todosOrden.length - TODOS_VISIBLES) : 0;
 
@@ -974,6 +1038,7 @@ function WelcomeScreen({ user, onStart, onLogout, onAbrirTareas, onCambiarOperac
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px,100%), 1fr))", gap: 18 }}>
           {/* TO-DOS */}
           <div className={`gt-vidrio${!esHero ? " gt-sube" : ""}`} style={{ padding: 24, display: "flex", flexDirection: "column", minHeight: 300 }}>
+            <style>{TODO_CSS}</style>
             {/* 18-sep-2026: el título abre la página completa de tareas (con
                 fechas, vistas por día/semana y las ya hechas). Acá se queda el
                 vistazo rápido de los 5 que faltan. */}
@@ -982,7 +1047,10 @@ function WelcomeScreen({ user, onStart, onLogout, onAbrirTareas, onCambiarOperac
               onMouseEnter={(e) => { e.currentTarget.querySelector(".gt-label").style.color = "var(--naranja-tinta)"; e.currentTarget.querySelector("svg").style.color = "var(--naranja-tinta)"; }}
               onMouseLeave={(e) => { e.currentTarget.querySelector(".gt-label").style.color = "var(--text-3)"; e.currentTarget.querySelector("svg").style.color = "var(--text-faint)"; }}
             >
-              <span className="gt-label" style={{ color: "var(--text-3)", transition: "color .18s" }}>To-dos</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 9 }}>
+                <span className="gt-label" style={{ color: "var(--text-3)", transition: "color .18s" }}>To-dos</span>
+                {nPrioritarias > 0 && <span className="gt-todo-cuenta" title={`${nPrioritarias} con prioridad`}><b>!</b>{nPrioritarias}</span>}
+              </span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ color: "var(--text-faint)", transition: "color .18s", flexShrink: 0 }}><path d="M5 12h14M12 5l7 7-7 7" /></svg>
             </button>
             {/* Alto TOPE de 5 filas (36px + 8 de gap): con más pendientes la
@@ -993,12 +1061,21 @@ function WelcomeScreen({ user, onStart, onLogout, onAbrirTareas, onCambiarOperac
                 : todosVista.length === 0
                   ? <div style={{ color: "var(--text-2)", fontSize: 15 }}>Nada pendiente — día redondo.</div>
                   : todosVista.map((t) => (
-                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 6, minHeight: 36 }}>
-                      <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "4px 0" }}>
+                    <div key={t.id} ref={(el) => { if (el) filasTodoRef.current.set(t.id, el); else filasTodoRef.current.delete(t.id); }}
+                      className={`gt-todo${t.prioridad && !t.done ? " es-prio" : ""}`}>
+                      <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "4px 0", minWidth: 0 }}>
                         <input type="checkbox" checked={!!t.done} onChange={() => guardarTodos(todos.map((x) => x.id === t.id ? { ...x, done: !x.done } : x))} style={{ width: 18, height: 18, cursor: "pointer", accentColor: "var(--marca-2)", flexShrink: 0 }} />
-                        <span style={{ flex: 1, fontSize: 14.5, color: t.done ? "var(--text-faint)" : "var(--text)", textDecoration: t.done ? "line-through" : "none", wordBreak: "break-word" }}>{t.txt}</span>
+                        <span style={{ flex: 1, fontSize: 14.5, color: t.done ? "var(--text-faint)" : "var(--text)", fontWeight: t.prioridad && !t.done ? 600 : 400, textDecoration: t.done ? "line-through" : "none", wordBreak: "break-word", transition: "color .25s" }}>{t.txt}</span>
                       </label>
-                      <button onClick={() => guardarTodos(todos.filter((x) => x.id !== t.id))} title="Quitar" aria-label={`Quitar "${t.txt}"`} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-faint)", fontSize: 17, minWidth: 32, minHeight: 32, padding: 0 }}>×</button>
+                      {!t.done && (
+                        <button onClick={() => alternarPrioridad(t.id)}
+                          className={`gt-todo-bang${t.prioridad ? " on" : ""}${recienBang === t.id ? " pop" : ""}`}
+                          onAnimationEnd={() => setRecienBang(null)}
+                          title={t.prioridad ? "Quitar prioridad" : "Marcar como prioridad"}
+                          aria-pressed={!!t.prioridad}
+                          aria-label={t.prioridad ? `Quitar prioridad a "${t.txt}"` : `Marcar "${t.txt}" como prioridad`}>!</button>
+                      )}
+                      <button onClick={() => guardarTodos(todos.filter((x) => x.id !== t.id))} title="Quitar" aria-label={`Quitar "${t.txt}"`} className="gt-todo-x">×</button>
                     </div>
                   ))}
             </div>
