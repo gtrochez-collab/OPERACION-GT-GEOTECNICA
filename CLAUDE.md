@@ -2170,6 +2170,31 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   clasificar en GeoCost)". Las líneas sin `partidaId` cuentan en GeoCost con la
   `partidaId` de la solicitud (`lineasValidas` las ignora → cae al fallback).
   `borradorDesdeCotizacion` ahora copia `sinReceta` a la línea.
+  **INFORME DEL BORRADOR para Christian (17-nov-2026, Gerson: "que le diga
+  la partida, un informe más completo, datos bancarios, todo, para que esté
+  seguro de lo que viene aprobado por mí y lo mande más rápido a las
+  licenciadas")**: `revisionBorrador` (a nivel de módulo en PurchasesModule)
+  arma la REVISIÓN RÁPIDA — aprobada por · cotización adjunta · el total
+  cuadra con los ítems · cuenta bancaria completa e IGUAL al maestro de
+  proveedores · cada ítem con su partida · precio contra el P.U. del
+  presupuesto (semáforo de GeoSupply; un rojo justificado por Compras no
+  cuenta como pendiente) · alcanza el disponible de la partida · **posible
+  duplicado** (mismo proyecto, proveedor y monto ±L 1 dentro de 45 días; caso
+  real MAT-2026-0679 = MAT-2026-0678 ya pagada). `BorradorSupplyFormImpl`
+  muestra arriba "N puntos por revisar" / "Todo en orden", luego Proveedor y
+  pago (banco, tipo, número, titular, "coincide con el maestro", las otras
+  cuentas del maestro con **"Usar esta"** — reescribe la cuenta del borrador y
+  quita el aviso de "sin datos bancarios"), La solicitud (quién pidió, en obra,
+  urgente, quién cotizó, comentario al aprobar, notas del residente — lee
+  sp-cotizaciones/sp-solicitudes/gt-usuarios con getCloud, solo lectura),
+  Ítems (qué es · partida solución/categoría/nombre · cantidad · P.U. · P.U.
+  del presupuesto · variación · monto, justificación de Compras) y "Partidas
+  del presupuesto que toca" (presupuesto, ya usado, disponible antes, esta
+  compra, queda/se pasa con barra). "Enviar a Tesorería" con puntos
+  pendientes pide confirmación con la lista. La lista de Borradores usa la
+  misma revisión (lee sp-cotizaciones al entrar a la vista, `cotsSupply`):
+  partida principal, banco ···últimos 4, chip "Todo en orden" / "N por
+  revisar" y cifras "todo en orden" / "con algo por revisar".
   **GeoCost**: `estadoCompraCosto` cuenta `borrador + origenSupply` como
   comprometido; al validarse sigue comprometido y al pagarse ejecutado — mismo
   registro, sin doble conteo (verificado 2-oct: $1,057.41 comprometido → tras

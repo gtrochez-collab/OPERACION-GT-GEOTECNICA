@@ -18,7 +18,7 @@ import { hoyISO, diaHN } from "./fechas.js";
 import { leerPdf, parsearCotizacion, ajusteAlTotal, lineasPresupuestoDesdeLectura, memoriaDeCompras, cambiarSolucionLineas } from "./leer-cotizacion.js";
 // GeoSupply (2-oct-2026): los borradores que nacen de una cotización aprobada
 // llevan `origenSupply`; acá solo se rotula su corte.
-import { etiquetaCorte } from "./geosupply-calc.js";
+import { etiquetaCorte, puPresupuestoUSD, semaforoVariacion } from "./geosupply-calc.js";
 import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, PDF_TEMA, pdfCabecera, pdfPie, latin1, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 // Abonos (17-oct-2026): pagos parciales con su comprobante; la solicitud se
 // cierra solo cuando la suma de abonos cubre el total. Lógica pura y probada.
@@ -2033,17 +2033,122 @@ const etiquetaFueraReceta = (purchase, presupuestos) => {
   return { txt: "fuera de la receta · sin partida (Por clasificar en GeoCost)", color: C_AMARILLO.color };
 };
 
-// ── BorradorSupplyFormImpl (2-oct-2026) — el borrador que viene de GeoSupply ──
-// Finanzas solo confirma 4 cosas: condición de pago, fecha requerida de pago,
-// "Va a" y quién cierra con conta. Todo lo demás (proveedor, monto, ítems con
-// partida, datos bancarios, cotización) ya viene de la cotización aprobada y
-// se muestra en solo lectura. "Enviar a Tesorería" = el mismo `validado` +
-// `encolarPago` del flujo normal. A NIVEL DE MÓDULO (no se remonta al tipear).
-function BorradorSupplyFormImpl({ purchase, presupuestos = [], puedeEnviar, userName, setModal, updatePurchase, addAudit, enviar, verArchivo }) {
+// ── Revisión del borrador de GeoSupply (17-nov-2026, Gerson: "que Christian
+// vea la partida presupuestaria, un informe más completo, datos bancarios,
+// todo, para que esté seguro de lo que viene aprobado por mí y lo mande más
+// rápido a las licenciadas"). PURA sobre lo que ya hay en memoria: el
+// borrador, la receta (cc-presupuestos), el maestro de proveedores y —si se
+// cargó— la cotización aprobada de GeoSupply (su `evaluacion` trae el P.U.
+// contra el presupuesto, el semáforo y la justificación de Compras). La usan
+// el informe del modal y la fila de la lista, así los dos dicen lo mismo.
+const SEM_BORR = { verde: { t: "En precio", c: C_VERDE }, amarillo: { t: "Algo arriba", c: C_AMARILLO }, rojo: { t: "Arriba", c: C_ROJO }, sin_base: { t: "Sin base", c: C_GRIS } };
+const normCuenta = (s) => String(s || "").replace(/[^0-9a-z]/gi, "").toLowerCase();
+const revisionBorrador = ({ purchase, presupuestos = [], providers = [], purchases = [], cot = null, calcDisponible = null, tasa = TASA_DEFAULT }) => {
+  const o = purchase?.origenSupply || {};
+  const pres = (presupuestos || []).find(x => x && x.projectCode === purchase?.projectCode && x.estado !== "cerrado") || null;
+  const partidaDe = (pid) => (pres?.partidas || []).find(x => x.id === pid) || null;
+  const tasaU = num(o.tasaCambioUsada) || num(tasa) || TASA_DEFAULT;
+  const descs = String(purchase?.description || "").split("\n");
+  const evLs = cot?.evaluacion?.lineas || [];
+  const filas = (purchase?.lineas || []).map((l, i) => {
+    const ev = evLs.find(e => (e.requestLineId || e.id) === l.id) || null;
+    const pa = partidaDe(l.partidaId);
+    const cant = num(l.cantidad), monto = num(l.monto);
+    const pu = ev && num(ev.puLps) > 0 ? num(ev.puLps) : (cant > 0 ? monto / cant : 0);
+    const puPresUSD = ev && ev.puPresupuestoUSD != null ? num(ev.puPresupuestoUSD) : puPresupuestoUSD(pa);
+    const fuera = !!(l.fueraPresupuesto || l.sinReceta);
+    const varPct = fuera ? null : (ev && ev.variacionPct != null ? ev.variacionPct : (puPresUSD > 0 && pu > 0 ? (pu / tasaU - puPresUSD) / puPresUSD : null));
+    const sem = fuera ? "sin_base" : (ev?.semaforo || semaforoVariacion(varPct));
+    const queEs = ev?.descripcion || String(descs[i] || "").replace(/^[\d.,]+\s*[^\s×]*\s*×\s*/, "") || l.nombre || "—";
+    const partidaTxt = pa ? [pa.solucion, pa.categoria, pa.nombre].filter(Boolean).join(" · ") : fuera ? etiquetaFueraReceta(purchase, presupuestos).txt : "Sin partida (Por clasificar en GeoCost)";
+    return { l, ev, pa, cant, monto, pu, puPresL: puPresUSD > 0 ? puPresUSD * tasaU : 0, puPresUSD, varPct, sem, queEs, partidaTxt, fuera, justificacion: ev?.justificacion || "", parcial: !!ev?.parcial };
+  });
+  const sumaLineas = filas.reduce((a, f) => a + f.monto, 0);
+  const amount = num(purchase?.amount);
+  // Impacto en cada partida: la parte del TOTAL que le toca (proporcional,
+  // como reparte GeoCost) contra lo que le quedaba sin contar esta compra.
+  const porPartida = {};
+  filas.forEach(f => {
+    const pid = f.l.partidaId || (f.fuera ? purchase.partidaId : null);
+    if (!pid) return;
+    (porPartida[pid] = porPartida[pid] || { pid, pa: partidaDe(pid), monto: 0, n: 0 });
+    porPartida[pid].monto += f.monto; porPartida[pid].n++;
+  });
+  const impacto = Object.values(porPartida).map(x => {
+    const parteL = sumaLineas > 0 ? x.monto / sumaLineas * amount : 0;
+    const parteUSD = parteL / (num(tasa) || TASA_DEFAULT);
+    const disp = calcDisponible ? calcDisponible(purchase.projectCode, x.pid, purchase.id) : null;
+    return { ...x, parteL, parteUSD, disp, quedaUSD: disp ? disp.disponibleUSD - parteUSD : null };
+  }).sort((a, b) => b.parteL - a.parteL);
+  // Proveedor del maestro y su cuenta.
+  const nombreN = (s) => String(s || "").trim().toLowerCase();
+  const prov = (providers || []).find(p => p && nombreN(p.name) === nombreN(purchase?.provider)) || null;
+  const cuentasMaestro = (prov?.bankAccounts || []).filter(b => b && String(b.number || "").trim());
+  const cuentaCompleta = !!(String(purchase?.bacAccount || "").trim() && String(purchase?.providerBank || "").trim() && String(purchase?.providerAccountHolder || "").trim());
+  const coincideMaestro = !!purchase?.bacAccount && cuentasMaestro.some(b => normCuenta(b.number) === normCuenta(purchase.bacAccount));
+  const checks = [];
+  const add = (k, ok, titulo, detalle, nivel) => checks.push({ k, nivel: nivel || (ok ? "ok" : "ojo"), titulo, detalle });
+  add("aprobada", !!o.aprobadoPor, o.aprobadoPor ? `Aprobada por ${o.aprobadoPor}` : "Sin aprobación registrada", o.aprobadoAt ? fmtDT(o.aprobadoAt) : "");
+  add("cotizacion", !!purchase?.quoteFile, purchase?.quoteFile ? `Cotización adjunta${purchase.quoteNumber ? ` · N° ${purchase.quoteNumber}` : ""}` : "Falta el PDF de la cotización", "");
+  const cuadra = !filas.length || Math.abs(sumaLineas - amount) <= 1;
+  add("cuadra", cuadra, cuadra ? "El total cuadra con los ítems" : "El total no cuadra con los ítems", cuadra ? fmtL(amount) : `Ítems ${fmtL(sumaLineas)} · total ${fmtL(amount)}`);
+  if (!cuentaCompleta) add("banco", false, "Datos bancarios incompletos", cuentasMaestro.length ? "El maestro sí tiene cuenta: usala abajo" : "El maestro tampoco tiene cuenta");
+  else if (!prov) add("banco", true, "Datos bancarios completos", "El proveedor no está en el maestro", "info");
+  else if (!coincideMaestro) add("banco", false, "La cuenta no coincide con el maestro", "Revisá cuál es la buena abajo");
+  else add("banco", true, "Cuenta bancaria igual a la del maestro", `${purchase.providerBank} · ${purchase.bacAccount}`);
+  const conPartida = filas.filter(f => f.pa || f.fuera).length;
+  if (!pres) add("partida", true, "Proyecto sin receta en GeoCost", "No hay partida que revisar", "info");
+  else add("partida", conPartida === filas.length, conPartida === filas.length ? "Cada ítem con su partida" : `${filas.length - conPartida} ítem(s) sin partida`, `${conPartida} de ${filas.length}`);
+  const nSem = (s) => filas.filter(f => f.sem === s).length;
+  const rojos = filas.filter(f => f.sem === "rojo");
+  if (pres && filas.some(f => f.sem !== "sin_base")) {
+    const det = [nSem("verde") && `${nSem("verde")} en precio`, nSem("amarillo") && `${nSem("amarillo")} algo arriba`, rojos.length && `${rojos.length} arriba${rojos.every(f => f.justificacion) ? " (justificados)" : ""}`].filter(Boolean).join(" · ");
+    add("precio", !rojos.length, rojos.length ? "Precio arriba del presupuesto" : "Precios dentro del presupuesto", det, rojos.length && rojos.every(f => f.justificacion) ? "info" : undefined);
+  }
+  const sobre = impacto.filter(x => x.quedaUSD != null && x.quedaUSD < -0.005);
+  if (pres && impacto.some(x => x.disp)) add("disponible", !sobre.length, sobre.length ? `Sobrepasa ${sobre.length === 1 ? "la partida" : `${sobre.length} partidas`}` : "Alcanza el disponible de la partida", sobre.length ? sobre.map(x => `${x.pa?.nombre || "partida"}: se pasa ${fmtUSD(-x.quedaUSD)}`).join(" · ") : "");
+  // ¿Ya existe esta compra? Mismo proyecto, mismo proveedor y el mismo monto
+  // (±L 1) en los últimos/próximos 45 días. Caso real del 17-nov-2026:
+  // MAT-2026-0679 (borrador de GeoSupply) = MAT-2026-0678, cargada a mano y
+  // pagada el mismo día — 130 bolsas de cemento, L 31,415.80.
+  const diasDe = (x) => { const t = new Date(x?.createdAt || 0).getTime(); return isFinite(t) ? t / 86400000 : 0; };
+  const gemelas = (purchases || []).filter(x => x && x.id !== purchase?.id && x.projectCode === purchase?.projectCode && nombreN(x.provider) === nombreN(purchase?.provider) && Math.abs(num(x.amount) - amount) <= 1 && Math.abs(diasDe(x) - diasDe(purchase)) <= 45 && !["rechazado", "cancelado", "anulado"].includes(x.status));
+  if (gemelas.length) checks.unshift({ k: "duplicado", nivel: "ojo", titulo: `Posible duplicado de ${gemelas.map(x => x.codigo || "otra solicitud").join(", ")}`, detalle: gemelas.map(x => `${x.codigo || ""} · ${["pagado", "finalizado"].includes(x.status) ? "ya pagada" : x.status === "validado" ? "en Tesorería" : "borrador"} · ${fmtL(x.amount)} · ${fmt(x.createdAt)}`).join(" | ") });
+  const pendientes = checks.filter(c => c.nivel === "ojo").length;
+  return { o, pres, gemelas, filas, sumaLineas, impacto, prov, cuentasMaestro, coincideMaestro, cuentaCompleta, checks, pendientes, tasaU };
+};
+
+// ── BorradorSupplyFormImpl (2-oct-2026; informe completo 17-nov-2026) ──
+// El borrador que viene de GeoSupply. Arriba la REVISIÓN RÁPIDA (aprobación,
+// cotización, total, cuenta contra el maestro, partidas, precio, disponible),
+// después proveedor y pago · la solicitud, los ítems con su partida y el P.U.
+// contra el presupuesto, y lo que le toca a cada partida. Finanzas solo
+// confirma 4 cosas (condición de pago, fecha, "Va a", cierre contable) y
+// puede tomar la cuenta del maestro si el borrador vino sin ella. "Enviar a
+// Tesorería" = el mismo `validado` + `encolarPago` del flujo normal. A NIVEL
+// DE MÓDULO (no se remonta al tipear).
+function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], purchases = [], calcDisponible, tasa, puedeEnviar, userName, setModal, updatePurchase, addAudit, enviar, verArchivo }) {
   const [f, setF] = useState({ condicionPago: purchase.condicionPago || "contado", tipoCredito: purchase.tipoCredito || "unico", fechaPagoRequerida: purchase.fechaPagoRequerida || "", destinoPago: purchase.destinoPago || ((purchase.condicionPago || "contado") === "credito" ? "cxp" : "normal"), cierreResponsable: purchase.cierreResponsable || "" });
   const [saving, setSaving] = useState(false);
+  const [sup, setSup] = useState({ cargando: true, cot: null, sols: [], usuarios: [] });
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const o = purchase.origenSupply || {};
+  // La cotización y la(s) solicitud(es) de GeoSupply: solo lectura, de la nube.
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try {
+        const [cs, ss, us] = await Promise.all([store.getCloud("sp-cotizaciones"), store.getCloud("sp-solicitudes"), store.getCloud("gt-usuarios").catch(() => null)]);
+        if (!vivo) return;
+        const cot = (Array.isArray(cs) ? cs : []).find(c => c && c.id === o.quoteId) || null;
+        const ids = new Set([o.requestId, ...((cot?.lineas || []).map(l => l.requestId))].filter(Boolean));
+        setSup({ cargando: false, cot, sols: (Array.isArray(ss) ? ss : []).filter(s => s && ids.has(s.id)), usuarios: Array.isArray(us) ? us : [] });
+      } catch { if (vivo) setSup({ cargando: false, cot: null, sols: [], usuarios: [], error: true }); }
+    })();
+    return () => { vivo = false; };
+  }, [o.quoteId, o.requestId]);
+  const rv = revisionBorrador({ purchase, presupuestos, providers, purchases, cot: sup.cot, calcDisponible, tasa });
+  const nombreDe = (un) => [...USERS, ...sup.usuarios].find(x => x && x.username === un)?.label || un || "—";
   const cambio = f.condicionPago !== (purchase.condicionPago || "contado") || f.tipoCredito !== (purchase.tipoCredito || "unico") || f.fechaPagoRequerida !== (purchase.fechaPagoRequerida || "") || f.destinoPago !== (purchase.destinoPago || "") || f.cierreResponsable !== (purchase.cierreResponsable || "");
   const armar = () => ({ ...purchase, condicionPago: f.condicionPago, tipoCredito: f.condicionPago === "credito" ? f.tipoCredito : "", fechaPagoRequerida: f.fechaPagoRequerida, destinoPago: f.destinoPago, cierreResponsable: f.cierreResponsable });
   const guardar = async () => {
@@ -2052,6 +2157,7 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], puedeEnviar, user
     finally { setSaving(false); }
   };
   const enviarAhora = async () => {
+    if (rv.pendientes && !confirm(`Hay ${rv.pendientes} ${rv.pendientes === 1 ? "punto" : "puntos"} por revisar:\n\n${rv.checks.filter(c => c.nivel === "ojo").map(c => `• ${c.titulo}${c.detalle ? ` — ${c.detalle}` : ""}`).join("\n")}\n\n¿La enviás igual a Tesorería?`)) return;
     setSaving(true);
     try {
       let rec = purchase;
@@ -2060,37 +2166,149 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], puedeEnviar, user
       if (ok) setModal(null);
     } finally { setSaving(false); }
   };
+  // El borrador nació sin cuenta (o con otra): tomar la del maestro de proveedores.
+  const usarCuenta = async (b) => {
+    if (!confirm(`¿Usar esta cuenta en ${purchase.codigo}?\n\n${b.bank || "Banco"} · ${b.type || ""} ${b.number}\nTitular: ${b.holder || "—"}`)) return;
+    setSaving(true);
+    try {
+      const rec = addAudit({ ...purchase, bacAccount: b.number || "", providerBank: b.bank || "", providerAccountType: b.type || "", providerAccountHolder: b.holder || "", providerRTN: purchase.providerRTN || rv.prov?.rtn || "", origenSupply: { ...o, avisos: (o.avisos || []).filter(a => !/datos bancarios/i.test(a)) } }, "edited", `Cuenta bancaria tomada del maestro de proveedores: ${b.bank || ""} ${b.number} (${userName})`);
+      await updatePurchase(rec);
+    } finally { setSaving(false); }
+  };
   const pill = (txt, on, onClick, c = ORANGE_DARK) => <button type="button" onClick={onClick} style={{ padding: "7px 13px", borderRadius: 999, border: on ? "none" : "1px solid rgba(44,42,40,.12)", background: on ? c : "rgba(255,255,255,.7)", color: on ? "#fff" : "#5C5853", font: "700 12px/1 inherit", cursor: "pointer" }}>{txt}</button>;
-  const cuenta = purchase.bacAccount ? `${purchase.providerBank || "Banco"} · ${purchase.providerAccountType || ""} ${purchase.bacAccount} · ${purchase.providerAccountHolder || ""}`.replace(/\s+/g, " ").trim() : null;
-  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-    <div style={{ background: C_NARANJA_CHIP.bg, border: "1px solid rgba(232,118,45,.25)", borderRadius: 12, padding: "12px 16px", fontSize: 13, display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: C_NARANJA_CHIP.color, textTransform: "uppercase", letterSpacing: 0.5 }}>Borrador de GeoSupply</div>
-      <div><b>{o.folioSolicitud || "—"}</b> · <b>{o.folioCotizacion || "—"}</b>{o.corte ? ` · ${etiquetaCorte(o.corte).titulo}` : ""}{o.urgente ? " · URGENTE" : ""} · pidió <b>{o.residente || "—"}</b> · aprobó <b>{o.aprobadoPor || "—"}</b> el {fmtDT(o.aprobadoAt)}</div>
-      {(o.avisos || []).length > 0 && <div style={{ fontSize: 12.5, color: C_AMARILLO.color, fontWeight: 700 }}>⚠ {o.avisos.join(" · ")}</div>}
+  const tel = esTel();
+  const CAJA = { background: "#fff", border: "1px solid rgba(44,42,40,.09)", borderRadius: 16, padding: tel ? 14 : "16px 18px", display: "flex", flexDirection: "column", gap: 8, minWidth: 0 };
+  const TIT = { fontSize: 10.5, fontWeight: 800, color: "#8A847D", textTransform: "uppercase", letterSpacing: ".06em" };
+  const dato = (k, v, extra) => <div style={{ display: "flex", gap: 10, fontSize: 13, alignItems: "baseline", minWidth: 0 }}><span style={{ color: "#8A847D", width: 112, flexShrink: 0, fontSize: 12 }}>{k}</span><span style={{ minWidth: 0, overflowWrap: "anywhere", color: CHARCOAL, ...extra }}>{v}</span></div>;
+  const marca = (nivel) => { const c = nivel === "ok" ? C_VERDE : nivel === "ojo" ? C_AMARILLO : C_GRIS; return <span style={{ width: 22, height: 22, borderRadius: "50%", background: c.bg, color: c.color, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900, flexShrink: 0 }}>{nivel === "ok" ? "✓" : nivel === "ojo" ? "!" : "·"}</span>; };
+  const chipSem = (fl) => { const s = SEM_BORR[fl.sem] || SEM_BORR.sin_base; const txt = fl.sem === "sin_base" ? (fl.fuera ? "Fuera de receta" : "Sin base") : `${fl.varPct >= 0 ? "+" : ""}${(fl.varPct * 100).toFixed(1)} %`; return <span title={s.t} style={{ padding: "3px 8px", borderRadius: 999, fontSize: 11, fontWeight: 800, color: s.c.color, background: s.c.bg, whiteSpace: "nowrap" }}>{txt}</span>; };
+  const solNotas = sup.sols.map(s => String(s.notas || "").trim()).filter(Boolean);
+  const detalleDe = (lid) => { for (const s of sup.sols) { const l = (s.lineas || []).find(x => x.id === lid); if (l && String(l.detalle || "").trim()) return l.detalle; } return ""; };
+  const quienCotizo = sup.cot ? (sup.cot.creadaPor ? nombreDe(sup.cot.creadaPor) : (sup.cot.audit || [])[0]?.by || "") : "";
+  const cuenta = purchase.bacAccount ? purchase : null;
+  const otrasCuentas = rv.cuentasMaestro.filter(b => normCuenta(b.number) !== normCuenta(purchase.bacAccount));
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    {/* Revisión rápida */}
+    <div style={{ ...CAJA, background: rv.pendientes ? "rgba(251,239,196,.35)" : "rgba(220,243,228,.4)", border: `1px solid ${rv.pendientes ? "rgba(138,90,0,.18)" : "rgba(23,114,67,.18)"}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ font: "800 16px/1.2 var(--display, inherit)", color: CHARCOAL }}>{rv.pendientes ? `${rv.pendientes} ${rv.pendientes === 1 ? "punto" : "puntos"} por revisar` : "Todo en orden · lista para Tesorería"}</div>
+        <span style={{ fontSize: 12, color: "#6E6862" }}>{o.folioSolicitud || "—"} · {o.folioCotizacion || "—"}{o.corte ? ` · ${etiquetaCorte(o.corte).titulo}` : ""}</span>
+        <div style={{ marginLeft: "auto", textAlign: "right" }}><div style={{ font: "800 20px/1 var(--display, inherit)", color: CHARCOAL }}>{fmtL(purchase.amount)}</div><div style={{ fontSize: 10.5, color: "#8A847D", marginTop: 3 }}>total con ISV</div></div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: tel ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: "8px 18px" }}>
+        {rv.checks.map(c => <div key={c.k} style={{ display: "flex", gap: 9, alignItems: "flex-start", minWidth: 0 }}>
+          {marca(c.nivel)}
+          <div style={{ minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL }}>{c.titulo}</div>{c.detalle && <div style={{ fontSize: 11.5, color: "#6E6862", overflowWrap: "anywhere" }}>{c.detalle}</div>}</div>
+        </div>)}
+      </div>
     </div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-      <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>Lo que viene de la cotización</div>
-        {/* 28-oct-2026, Gerson: "¿cómo va a ver Christian qué día se necesita en proyecto?" — para que gestione que el pago salga antes. */}
-        {(o.fechaRequeridaObra || o.urgente) && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "8px 12px", borderRadius: 10, background: o.urgente ? C_ROJO.bg : C_AZUL.bg }}>
-          {o.fechaRequeridaObra && <span style={{ fontSize: 13, color: CHARCOAL }}>Se necesita en obra el <b>{fmt(o.fechaRequeridaObra)}</b></span>}
-          {o.urgente && <span style={{ padding: "3px 9px", borderRadius: 999, background: "#fff", color: C_ROJO.color, fontSize: 11.5, fontWeight: 800 }}>Urgente · aprobada por {o.aprobadoPor || "el Coordinador"}</span>}
+
+    <div style={{ display: "grid", gridTemplateColumns: tel ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: 14 }}>
+      {/* Proveedor y pago */}
+      <div style={CAJA}>
+        <div style={TIT}>Proveedor y pago</div>
+        {dato("Proveedor", <b>{purchase.provider}</b>)}
+        {dato("RTN", purchase.providerRTN || rv.prov?.rtn || <span style={{ color: "#8A847D" }}>—</span>)}
+        {cuenta ? <>
+          {dato("Banco", <b>{purchase.providerBank || "—"}</b>)}
+          {dato("Tipo de cuenta", purchase.providerAccountType || "—")}
+          {dato("N° de cuenta", <b style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 13.5, letterSpacing: ".02em" }}>{purchase.bacAccount}</b>)}
+          {dato("A nombre de", purchase.providerAccountHolder || <span style={{ color: C_AMARILLO.color, fontWeight: 700 }}>Sin titular</span>)}
+          {rv.prov && dato("Maestro", rv.coincideMaestro ? <span style={{ color: C_VERDE.color, fontWeight: 700 }}>✓ Coincide con el maestro de proveedores</span> : <span style={{ color: C_AMARILLO.color, fontWeight: 700 }}>No coincide con el maestro</span>)}
+        </> : <div style={{ fontSize: 13, color: C_AMARILLO.color, fontWeight: 700 }}>Vino sin datos bancarios.</div>}
+        {puedeEnviar && otrasCuentas.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 2, padding: "10px 12px", borderRadius: 12, background: "rgba(44,42,40,.04)" }}>
+          <div style={{ fontSize: 11.5, color: "#6E6862", fontWeight: 700 }}>{cuenta ? "En el maestro de proveedores" : "El maestro de proveedores sí la tiene"}</div>
+          {otrasCuentas.map((b, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12.5, flex: 1, minWidth: 0 }}><b>{b.bank || "Banco"}</b> · {b.type || ""} <span style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{b.number}</span>{b.holder ? ` · ${b.holder}` : ""}</span>
+            <Btn small variant="ghost" disabled={saving} onClick={() => usarCuenta(b)}>Usar esta</Btn>
+          </div>)}
         </div>}
-        {o.urgente && o.justificacionUrgencia && <div style={{ fontSize: 12.5, color: "#475569" }}><span style={{ color: "#64748b" }}>Por qué es urgente</span> {o.justificacionUrgencia}</div>}
-        <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>Proyecto</span> <b>{projLabel(purchase.projectCode)}</b></div>
-        <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>Proveedor</span> <b>{purchase.provider}</b>{purchase.providerRTN ? ` · RTN ${purchase.providerRTN}` : ""}</div>
-        <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>N° cotización</span> <b>{purchase.quoteNumber || "—"}</b> {purchase.quoteFile && <button type="button" onClick={() => verArchivo(purchase.quoteFile)} style={{ background: "none", border: "none", color: "#2563EB", fontWeight: 700, cursor: "pointer", fontSize: 12.5 }}>Ver PDF</button>}</div>
-        <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>Monto</span> <b style={{ color: "#059669", fontSize: 16 }}>{fmtL(purchase.amount)}</b></div>
-        <div style={{ fontSize: 13 }}><span style={{ color: "#64748b" }}>Datos bancarios</span> {cuenta ? <b>{cuenta}</b> : <span style={{ color: C_AMARILLO.color, fontWeight: 700 }}>Proveedor sin datos bancarios en el maestro</span>}</div>
+        {rv.prov && (rv.prov.contactName || (rv.prov.phones || []).length > 0) && dato("Contacto", [rv.prov.contactName, ...(rv.prov.phones || [])].filter(Boolean).join(" · "))}
+        {rv.prov && dato("Pagos a cuenta", rv.prov.constanciaFile?.fileId ? "Tiene constancia" : <span style={{ color: "#8A847D" }}>Sin constancia en el maestro</span>)}
+        {dato("Cotización", <span>{purchase.quoteNumber ? <b>N° {purchase.quoteNumber}</b> : "Sin número"} {purchase.quoteFile && <button type="button" onClick={() => verArchivo(purchase.quoteFile)} style={{ background: "none", border: "none", color: "#1D5FAF", fontWeight: 700, cursor: "pointer", fontSize: 12.5, padding: 0, marginLeft: 6 }}>Ver PDF</button>}</span>)}
       </div>
-      <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 6 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>Ítems ({(purchase.lineas || []).length})</div>
-        {(purchase.lineas || []).map((l, i) => <div key={l.id || i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}><span>{Number(l.cantidad).toLocaleString("es-HN")} {l.unidad} × {l.nombre}{l.fueraPresupuesto ? (() => { const e = etiquetaFueraReceta(purchase, presupuestos); return <span style={{ color: e.color, fontWeight: 700 }}> · {e.txt}</span>; })() : ""}</span><b>{fmtL(l.monto)}</b></div>)}
-        {!(purchase.lineas || []).length && <div style={{ fontSize: 12.5, color: "#64748b", whiteSpace: "pre-line" }}>{purchase.description}</div>}
+      {/* La solicitud */}
+      <div style={CAJA}>
+        <div style={TIT}>La solicitud</div>
+        {dato("Proyecto", <b>{projLabel(purchase.projectCode)}</b>)}
+        {dato("Pidió", nombreDe(o.residente))}
+        {o.fechaRequeridaObra && dato("En obra el", <b>{fmt(o.fechaRequeridaObra)}</b>)}
+        {o.urgente && dato("Urgente", <span><span style={{ color: C_ROJO.color, fontWeight: 800 }}>Sí</span>{o.justificacionUrgencia ? ` · ${o.justificacionUrgencia}` : ""}</span>)}
+        {quienCotizo && dato("Cotizó", quienCotizo)}
+        {dato("Aprobó", <span><b>{o.aprobadoPor || "—"}</b>{o.aprobadoAt ? ` · ${fmtDT(o.aprobadoAt)}` : ""}</span>)}
+        {sup.cot?.comentario && dato("Al aprobar", `"${sup.cot.comentario}"`)}
+        {solNotas.map((n, i) => <div key={i}>{dato(i ? "" : "Notas", `"${n}"`, { fontStyle: "italic" })}</div>)}
+        {dato("Tasa usada", `L ${num(rv.tasaU).toFixed(2)} / $`)}
+        {sup.cargando && <div style={{ fontSize: 11.5, color: "#8A847D" }}>Cargando la cotización de GeoSupply…</div>}
+        {sup.error && <div style={{ fontSize: 11.5, color: C_AMARILLO.color }}>No pude leer GeoSupply; el P.U. se calcula con el borrador.</div>}
       </div>
     </div>
-    <div style={{ background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-      <div style={{ gridColumn: "1/-1", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>Lo que confirma Finanzas</div>
+
+    {/* Ítems con su partida y el precio contra el presupuesto */}
+    <div style={CAJA}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}><div style={TIT}>Ítems ({rv.filas.length})</div><span style={{ marginLeft: "auto", fontSize: 11.5, color: "#8A847D" }}>P.U. con ISV · presupuesto a L {num(rv.tasaU).toFixed(2)}</span></div>
+      {!tel && rv.filas.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 96px 112px 112px 86px 118px", gap: 10, fontSize: 10.5, fontWeight: 800, color: "#8A847D", textTransform: "uppercase", letterSpacing: ".04em", padding: "0 0 4px", borderBottom: "1px solid rgba(44,42,40,.08)" }}>
+        <span>Qué es · partida</span><span style={{ textAlign: "right" }}>Cantidad</span><span style={{ textAlign: "right" }}>P.U.</span><span style={{ textAlign: "right" }}>P.U. presup.</span><span style={{ textAlign: "right" }}>Precio</span><span style={{ textAlign: "right" }}>Monto</span>
+      </div>}
+      {rv.filas.map((fl, i) => {
+        const det = detalleDe(fl.l.id);
+        const cabeza = <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, overflowWrap: "anywhere" }}>{fl.queEs}</div>
+          {det && det !== fl.queEs && <div style={{ fontSize: 11.5, color: "#6E6862" }}>Pidió: {det}</div>}
+          <div style={{ fontSize: 11.5, color: fl.pa ? "#6E6862" : C_AMARILLO.color, fontWeight: fl.pa ? 500 : 700, overflowWrap: "anywhere" }}>Partida: {fl.partidaTxt}</div>
+          {fl.parcial && <div style={{ fontSize: 11.5, color: "#6E6862" }}>Compra parcial: el resto sigue pendiente en GeoSupply</div>}
+          {fl.justificacion && <div style={{ fontSize: 11.5, color: C_ROJO.color }}>Justificación de Compras: "{fl.justificacion}"</div>}
+        </div>;
+        const cantTxt = `${fl.cant.toLocaleString("es-HN", { maximumFractionDigits: 3 })} ${fl.l.unidad || ""}`.trim();
+        if (tel) return <div key={fl.l.id || i} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 0", borderTop: i ? "1px solid rgba(44,42,40,.07)" : "none" }}>
+          {cabeza}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
+            <span>{cantTxt} × {fmtL(fl.pu)}</span>{fl.puPresL > 0 && <span style={{ color: "#8A847D" }}>presup. {fmtL(fl.puPresL)}</span>}{chipSem(fl)}<b style={{ marginLeft: "auto", fontSize: 13 }}>{fmtL(fl.monto)}</b>
+          </div>
+        </div>;
+        return <div key={fl.l.id || i} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 96px 112px 112px 86px 118px", gap: 10, alignItems: "start", padding: "8px 0", borderTop: i ? "1px solid rgba(44,42,40,.07)" : "none", fontSize: 12.5 }}>
+          {cabeza}
+          <span style={{ textAlign: "right" }}>{cantTxt}</span>
+          <span style={{ textAlign: "right" }}>{fmtL(fl.pu)}</span>
+          <span style={{ textAlign: "right", color: "#6E6862" }}>{fl.puPresL > 0 ? fmtL(fl.puPresL) : "—"}</span>
+          <span style={{ textAlign: "right" }}>{chipSem(fl)}</span>
+          <b style={{ textAlign: "right" }}>{fmtL(fl.monto)}</b>
+        </div>;
+      })}
+      {!rv.filas.length && <div style={{ fontSize: 12.5, color: "#6E6862", whiteSpace: "pre-line" }}>{purchase.description}</div>}
+      {rv.filas.length > 0 && <div style={{ display: "flex", justifyContent: "flex-end", gap: 16, fontSize: 12.5, borderTop: "1px solid rgba(44,42,40,.12)", paddingTop: 8 }}>
+        <span style={{ color: "#6E6862" }}>Suma de ítems <b style={{ color: CHARCOAL }}>{fmtL(rv.sumaLineas)}</b></span>
+        <span style={{ color: "#6E6862" }}>Total a pagar <b style={{ color: CHARCOAL, fontSize: 14 }}>{fmtL(purchase.amount)}</b></span>
+      </div>}
+    </div>
+
+    {/* Lo que le toca a cada partida */}
+    {rv.impacto.length > 0 && <div style={CAJA}>
+      <div style={TIT}>Partidas del presupuesto que toca</div>
+      {rv.impacto.map(x => {
+        const pres = x.disp?.presupuestoUSD || 0, antes = x.disp ? x.disp.disponibleUSD : null;
+        const usado = x.disp ? Math.max(0, pres - antes) : 0;
+        const pctUsado = pres > 0 ? Math.min(100, usado / pres * 100) : 0, pctEsta = pres > 0 ? Math.max(0, Math.min(100 - pctUsado, x.parteUSD / pres * 100)) : 0;
+        const pasa = x.quedaUSD != null && x.quedaUSD < -0.005;
+        return <div key={x.pid} style={{ display: "flex", flexDirection: "column", gap: 5, padding: "6px 0" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, minWidth: 0, flex: 1 }}>{x.pa ? [x.pa.solucion, x.pa.categoria, x.pa.nombre].filter(Boolean).join(" · ") : "Partida"}</span>
+            <span style={{ fontSize: 12.5 }}>esta compra <b>{fmtL(x.parteL)}</b> <span style={{ color: "#8A847D" }}>≈ {fmtUSD(x.parteUSD)}</span></span>
+          </div>
+          {x.disp && pres > 0 && <div style={{ height: 7, borderRadius: 99, background: "rgba(44,42,40,.07)", overflow: "hidden", display: "flex" }}>
+            <div style={{ width: `${pctUsado}%`, background: "#8A847D" }} /><div style={{ width: `${pasa ? 100 - pctUsado : pctEsta}%`, background: pasa ? C_ROJO.color : ORANGE_DARK }} />
+          </div>}
+          {x.disp && <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11.5, color: "#6E6862" }}>
+            <span>Presupuesto {fmtUSD(pres)}</span><span>Ya usado {fmtUSD(usado)}</span><span>Disponible antes {fmtUSD(antes)}</span>
+            <span style={{ color: pasa ? C_ROJO.color : C_VERDE.color, fontWeight: 800 }}>{pasa ? `Se pasa ${fmtUSD(-x.quedaUSD)}` : `Queda ${fmtUSD(x.quedaUSD)}`}</span>
+          </div>}
+        </div>;
+      })}
+      {purchase.sobregiroJustificacion && <div style={{ fontSize: 12, color: C_ULTRA.color }}>Justificación del sobregiro: "{purchase.sobregiroJustificacion}"</div>}
+    </div>}
+
+    <div style={{ ...CAJA, display: "grid", gridTemplateColumns: tel ? "minmax(0,1fr)" : "1fr 1fr", gap: 14 }}>
+      <div style={{ ...TIT, gridColumn: "1/-1" }}>Lo que confirma Finanzas</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <label style={LABEL_CP}>Condición de pago</label>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{pill("Contado", f.condicionPago !== "credito", () => { u("condicionPago", "contado"); if (f.destinoPago === "cxp") u("destinoPago", "normal"); })}{pill("Crédito", f.condicionPago === "credito", () => { u("condicionPago", "credito"); u("destinoPago", "cxp"); })}</div>
@@ -2098,18 +2316,18 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], puedeEnviar, user
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <Input label="Fecha en que se requiere el pago" type="date" value={f.fechaPagoRequerida} onChange={e => u("fechaPagoRequerida", e.target.value)} />
-        {o.fechaRequeridaObra && <div style={{ fontSize: 11.5, color: "#64748b" }}>Viene puesta 2 días antes de que se necesite en obra ({fmt(o.fechaRequeridaObra)}). Cambiala si hace falta.</div>}
+        {o.fechaRequeridaObra && <div style={{ fontSize: 11.5, color: "#6E6862" }}>Viene 2 días antes de que se necesite en obra ({fmt(o.fechaRequeridaObra)}).</div>}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <label style={LABEL_CP}>Va a</label>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{[["normal", "Normal"], ["prioridad", "Prioridades"], ["cxp", "Cuentas por pagar"]].map(([k, l]) => pill(l, f.destinoPago === k, () => u("destinoPago", k)))}</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{[["normal", "Normal"], ["prioridad", "Prioridades"], ["cxp", "Cuentas por pagar"]].map(([k, l]) => <span key={k}>{pill(l, f.destinoPago === k, () => u("destinoPago", k))}</span>)}</div>
       </div>
       <Select label="Responsable de cierre contable" options={[...new Set([...USERS.map(u2 => u2.label), ...(f.cierreResponsable ? [f.cierreResponsable] : [])])].sort()} value={f.cierreResponsable} onChange={e => u("cierreResponsable", e.target.value)} emptyLabel="Sin asignar" />
     </div>
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
       <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cerrar</Btn>
       {puedeEnviar && <Btn variant="ghost" onClick={guardar} disabled={saving || !cambio}>Guardar cambios</Btn>}
-      {puedeEnviar && <Btn variant="success" onClick={enviarAhora} disabled={saving}>{saving ? "…" : "✓ Enviar a Tesorería"}</Btn>}
+      {puedeEnviar && <Btn variant="success" onClick={enviarAhora} disabled={saving}>{saving ? "…" : "Enviar a Tesorería"}</Btn>}
     </div>
   </div>;
 }
@@ -3082,6 +3300,16 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   //        (solicitud si son pendientes, pago si son pagadas).
   // Reemplazó el rango Desde/Hasta: nadie lo usaba y confundía.
   const [filter, setFilter] = useState({ ver: "pendientes", project: "", provider: "", mes: "" });
+  // Cotizaciones aprobadas de GeoSupply (solo lectura): la lista de
+  // "Borradores" las usa para decir lo mismo que el informe (P.U. contra el
+  // presupuesto y la justificación de Compras). Se leen al entrar a la vista.
+  const [cotsSupply, setCotsSupply] = useState([]);
+  useEffect(() => {
+    if (filter.ver !== "borradores" || esMaq) return;
+    let vivo = true;
+    store.getCloud("sp-cotizaciones").then(c => { if (vivo && Array.isArray(c)) setCotsSupply(c); }).catch(() => {});
+    return () => { vivo = false; };
+  }, [filter.ver]);
   // Estado de expansion/colapso de sub-secciones en el Kanban de Ana.
   // Keys: `${projectKey}-enlog`, `${projectKey}-cierre`, `${projectKey}-cerradas`.
   // Default: enlog y cierre abiertas (undefined → tratado como true), cerradas oculto.
@@ -8705,12 +8933,18 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const sel = lista.filter(p => borrSel.includes(p.id));
     const toggle = (id) => setBorrSel(s2 => s2.includes(id) ? s2.filter(x => x !== id) : [...s2, id]);
     const DEST = { normal: "Normal", prioridad: "Prioridades", cxp: "Cuentas por pagar" };
+    // La misma revisión del informe (sin la cotización de GeoSupply: el P.U.
+    // se compara con el del borrador), para ver de un vistazo qué está listo.
+    const revs = {};
+    lista.forEach(p => { try { revs[p.id] = revisionBorrador({ purchase: p, presupuestos, providers, purchases, cot: cotsSupply.find(c => c && c.id === p.origenSupply?.quoteId) || null, calcDisponible, tasa: tasaCC }); } catch { revs[p.id] = null; } });
+    const nListas = lista.filter(p => revs[p.id] && !revs[p.id].pendientes).length;
     const chip = (txt, c = C_GRIS, title) => <span title={title} style={{ padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 800, color: c.color, background: c.bg, whiteSpace: "nowrap" }}>{txt}</span>;
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div className="gt-vidrio" style={{ padding: "11px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
         <div><div style={{ font: "800 19px/1.15 var(--display)", color: "var(--text)" }}>{lista.length}</div><div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>borradores de GeoSupply</div></div>
         <div style={{ borderLeft: "1px solid var(--hairline)", paddingLeft: 14 }}><div style={{ font: "800 19px/1.15 var(--display)", color: "var(--naranja-tinta)" }}>{fmtL(total)}</div><div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>aprobado, aún no en Tesorería</div></div>
-        <div style={{ borderLeft: "1px solid var(--hairline)", paddingLeft: 14 }}><div style={{ font: "800 19px/1.15 var(--display)", color: "var(--text)" }}>{lista.filter(p => (p.origenSupply?.avisos || []).length).length}</div><div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>sin datos bancarios</div></div>
+        <div style={{ borderLeft: "1px solid var(--hairline)", paddingLeft: 14 }}><div style={{ font: "800 19px/1.15 var(--display)", color: C_VERDE.color }}>{nListas}</div><div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>todo en orden</div></div>
+        <div style={{ borderLeft: "1px solid var(--hairline)", paddingLeft: 14 }}><div style={{ font: "800 19px/1.15 var(--display)", color: "var(--text)" }}>{lista.length - nListas}</div><div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2, fontSize: 9 }}>con algo por revisar</div></div>
         {puedeEnviar && lista.length > 0 && <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <Btn small variant="ghost" onClick={() => setBorrSel(sel.length === lista.length ? [] : lista.map(p => p.id))}>{sel.length === lista.length ? "Quitar selección" : "Seleccionar todos"}</Btn>
           <Btn small variant="success" disabled={!sel.length} onClick={() => enviarBorradoresATesoreria(sel)}>Enviar {sel.length || ""} a Tesorería</Btn>
@@ -8734,11 +8968,16 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               <div style={{ flex: 1, minWidth: 200 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{p.provider}</div>
                 <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{(p.lineas || []).length} {(p.lineas || []).length === 1 ? "ítem" : "ítems"} · {o.folioSolicitud} · {o.folioCotizacion} · aprobó {o.aprobadoPor || "—"} {o.aprobadoAt ? fmt(o.aprobadoAt) : ""}</div>
+                {(() => { const rv = revs[p.id]; if (!rv) return null; const parts = rv.impacto.map(x => x.pa?.nombre).filter(Boolean); return <div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 2, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <span>Partida: <b>{parts.length ? parts[0] : rv.pres ? "sin partida" : "sin receta en GeoCost"}</b>{parts.length > 1 ? ` +${parts.length - 1}` : ""}</span>
+                  {p.bacAccount && <span>{p.providerBank || "Banco"} · <span style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>···{String(p.bacAccount).replace(/\s/g, "").slice(-4)}</span>{rv.prov && !rv.coincideMaestro ? <b style={{ color: C_AMARILLO.color }}> · no coincide con el maestro</b> : ""}</span>}
+                </div>; })()}
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
                   {chip((p.condicionPago || "contado") === "credito" ? `Crédito · ${p.tipoCredito === "plan" ? "plan de pagos" : "un solo pago"}` : "Contado")}
                   {chip(`Va a: ${DEST[p.destinoPago] || "Normal"}`, p.destinoPago === "prioridad" ? C_ULTRA : p.destinoPago === "cxp" ? C_AZUL : C_GRIS)}
                   {o.fechaRequeridaObra && chip(`En obra ${fmt(o.fechaRequeridaObra)}`, C_AZUL)}{chip(p.fechaPagoRequerida ? `Pago ${fmt(p.fechaPagoRequerida)}` : "Sin fecha de pago", p.fechaPagoRequerida ? C_GRIS : C_AMARILLO)}
                   {chip(p.cierreResponsable ? `Cierra ${p.cierreResponsable}` : "Cierre sin asignar", p.cierreResponsable ? C_GRIS : C_AMARILLO)}
+                  {revs[p.id] && (revs[p.id].pendientes ? chip(`${revs[p.id].pendientes} por revisar`, C_AMARILLO, revs[p.id].checks.filter(c => c.nivel === "ojo").map(c => c.titulo).join(" · ")) : chip("Todo en orden", C_VERDE))}
                   {o.urgente && chip("Urgente", C_ROJO)}
                   {avisos.map(a => chip(a, C_AMARILLO))}
                 </div>
@@ -8763,7 +9002,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
       case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
-      case "borrador-supply": return <Modal title={`${m.d.codigo} — ${m.d.provider}`} onClose={() => setModal(null)} wide><BorradorSupplyFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} presupuestos={presupuestos} puedeEnviar={canCreate} userName={userName} setModal={setModal} updatePurchase={updatePurchase} addAudit={addAudit} enviar={(p) => enviarBorradoresATesoreria([p])} verArchivo={async (ref) => { try { const full = await store.getCloud(fileKey(ref.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el archivo."); setVisorGlobal({ ...full, name: full.name || ref.name }); } catch (e) { alert("Error: " + (e?.message || e)); } }} /></Modal>;
+      case "borrador-supply": return <Modal title={`${m.d.codigo} — ${m.d.provider}`} onClose={() => setModal(null)} wide><BorradorSupplyFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} presupuestos={presupuestos} providers={providers} purchases={purchases} calcDisponible={calcDisponible} tasa={tasaCC} puedeEnviar={canCreate} userName={userName} setModal={setModal} updatePurchase={updatePurchase} addAudit={addAudit} enviar={(p) => enviarBorradoresATesoreria([p])} verArchivo={async (ref) => { try { const full = await store.getCloud(fileKey(ref.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el archivo."); setVisorGlobal({ ...full, name: full.name || ref.name }); } catch (e) { alert("Error: " + (e?.message || e)); } }} /></Modal>;
       case "corregir": return <Modal title={`Corregir proyecto / partida — ${m.d.codigo || m.d.provider}`} onClose={() => setModal(null)} wide><CorreccionFormImpl purchase={m.d} setModal={setModal} allProjects={allProjects} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} updatePurchase={updatePurchase} addAudit={addAudit} userName={userName} moduloPartida={CFG.moduloPartida} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "abono": return <Modal title={`${m.modo === "convertir" ? "Pasar a abonos" : "Registrar abono"} — ${m.d.codigo || m.d.provider}`} onClose={() => setModal({ t: "detail", d: m.d })} wide><AbonoFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} modo={m.modo} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} userName={userName} /></Modal>;
