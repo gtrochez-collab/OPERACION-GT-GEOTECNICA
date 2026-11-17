@@ -1,1056 +1,747 @@
 // =====================================================================
-// MODULO DE LOGISTICA — GEOTECNICA / SUBTERRA
+// GeoLogistics — Flota, mantenimientos, combustible, motoristas y despachos
 // =====================================================================
-// Base inicial: control de FLOTA (vehiculos).
-// Owner: Oscar (rol "logistica"). Acceso de lectura para admin.
+// REDISEÑO COMPLETO (17-nov-2026, Gerson: "se quedó con la apariencia de
+// antes; que sea un mega módulo de una empresa logística; cada carro con su
+// ficha bien hecha; consumo de combustible; motoristas de GeoTeam; despachos
+// en cajitas de vidrio como GeoShopping, no kanban; pocos textos").
 //
-// Estructura preparada para crecer:
-// - Tab Flota (implementado): CRUD vehiculos con kilometraje, estado,
-//   proyecto asignado, motorista, pendientes de reparacion.
-// - Tab Rutas/Despachos (placeholder): futuro vinculado a Compras.
-// - Tab Mantenimientos (placeholder): programar/registrar.
-// - Tab Motoristas (placeholder): registro y disponibilidad.
+// Pestañas: Dashboard · Despachos · Flota · Mantenimientos · Motoristas.
+// · Flota = carnets de vidrio por vehículo → FICHA (foto, datos, documentos,
+//   próximo servicio, rendimiento) con su historial de mantenimientos,
+//   cargas de combustible, pendientes y despachos.
+// · Combustible (NUEVO, `lg-combustible`): cargas con odómetro, galones,
+//   monto y "tanque lleno"; el rendimiento (km por galón) sale por el método
+//   de tanque lleno (logistica-calc.js, con pruebas).
+// · Motoristas = los de GeoTeam por cargo + los que se agreguen a mano
+//   (`lg-motoristas`: licencia y vencimiento).
+// · Despachos = bandeja agrupada por proyecto (filas de vidrio compactables),
+//   misma lógica de siempre: candado de ficha, subir ficha firmada, EPP.
 //
-// Storage:
-// - lg-vehicles → array de vehiculos
-// - cp-projects → compartido con Compras y RRHH (proyectos)
+// Storage: lg-vehicles · lg-maintenances · lg-combustible · lg-motoristas ·
+// lg-despachos (compartido con GeoShopping/GeoMachinery/GeoSafety) ·
+// cp-purchases / mq-purchases (fichas) · cp-projects · hr-emps5 (lectura).
+// TODA escritura: getCloud → cambio sobre lo fresco → set → verify.
 // =====================================================================
 
 import { useState, useEffect, useRef } from "react";
 import { store } from "./supabase.js";
-import { BRAND, FONT, R } from "./theme.js";
 import Logo from "./Logo.jsx";
+import { GT_CSS } from "./gt-ui.js";
 import { generateFichaPDF, restoreFiles } from "./PurchasesModule.jsx";
-// Visor de archivos en la app (10-sep-2026): la ficha se abría con window.open
-// DESPUÉS del await y el navegador bloqueaba el popup.
 import { VisorArchivo } from "./visor-archivo.jsx";
 import { hoyISO } from "./fechas.js";
-import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga, TiraMovil, HojaMovil } from "./movil.jsx";
+import { ROLE_LABEL } from "./users.js";
+import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga, TiraMovil } from "./movil.jsx";
+import { Input, Select, Textarea, Btn, Chip, Modal, C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, ORANGE, ORANGE_DARK, CHARCOAL, useIsMobile, fmtFecha } from "./geocost-ui.jsx";
+import {
+  diasEntre, rendimientoCombustible, gastoCombustiblePorMes, estadoPreventivo, ORDEN_URGENCIA, proximoKmSugerido,
+  intervaloKmDe, vencimiento, parsePendientes, quitarLinea, alertasVehiculo, listaMotoristas, urgenciaDespacho,
+  vistaDeDespacho, entregasPorMes, ultimosMeses,
+} from "./logistica-calc.js";
 
-// ── Hook responsive ──
-function useIsMobile(breakpoint = 768) {
-  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth < breakpoint : false);
-  useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < breakpoint);
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, [breakpoint]);
-  return isMobile;
-}
+const C_ROJO = { color: "#B03024", bg: "rgba(192,57,43,.10)" };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const nf0 = (n) => Math.round(Number(n) || 0).toLocaleString("es-HN");
+const nf1 = (n) => (Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const fmtL = (n) => `L ${(Number(n) || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtCorto = (n) => { const v = Number(n) || 0; return v >= 1e6 ? `L ${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `L ${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}k` : `L ${nf0(v)}`; };
+const MES_CORTO = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const mesLabel = (ym) => { const [y, m] = String(ym).split("-").map(Number); return `${MES_CORTO[m - 1] || ""} ${String(y).slice(2)}`; };
+const fechaCorta = (iso) => { if (!iso) return "—"; const [, m, d] = String(iso).slice(0, 10).split("-").map(Number); return `${d} ${MES_CORTO[m - 1] || ""}`; };
+const masDias = (iso, n) => { const [y, m, d] = String(iso).split("-").map(Number); const t = new Date(Date.UTC(y, m - 1, d + n)); return t.toISOString().slice(0, 10); };
+const leerLS = (k, def) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } };
+const escribirLS = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sin storage */ } };
 
-// ── SVG cartoon camion (perfil, mirando a la derecha) ──
-const CamionSVG = ({ height = 170 }) => (
-  <svg viewBox="0 0 220 180" xmlns="http://www.w3.org/2000/svg" style={{ height, width: "auto", display: "block" }} aria-hidden="true">
-    {/* Sombra bajo el camion */}
-    <ellipse cx="110" cy="160" rx="95" ry="6" fill="#0F172A" opacity="0.10" />
-    {/* Caja de carga (atras, mas alta que la cabina) */}
-    <rect x="18" y="52" width="118" height="82" rx="4" fill="#E8762D" stroke="#0F172A" strokeWidth="4" />
-    {/* Detalles en la caja (líneas horizontales del contenedor) */}
-    <line x1="30" y1="72" x2="126" y2="72" stroke="#0F172A" strokeWidth="2" opacity="0.55" />
-    <line x1="30" y1="94" x2="126" y2="94" stroke="#0F172A" strokeWidth="2" opacity="0.55" />
-    <line x1="30" y1="116" x2="126" y2="116" stroke="#0F172A" strokeWidth="2" opacity="0.55" />
-    {/* Ventana lateral de la caja (opcional detalle vertical) */}
-    <rect x="120" y="60" width="10" height="66" rx="1.5" fill="#0F172A" opacity="0.25" />
-    {/* Puerta trasera de la caja */}
-    <rect x="22" y="58" width="6" height="70" rx="1" fill="#B8551C" />
-    {/* Cabina (adelante, redondeada) */}
-    <path d="M 136 62 L 156 62 Q 176 62 184 82 L 196 82 Q 202 82 202 88 L 202 132 Q 202 134 200 134 L 136 134 Z"
-      fill="#2D4A6B" stroke="#0F172A" strokeWidth="4" strokeLinejoin="round" />
-    {/* Parabrisas azul claro */}
-    <path d="M 148 74 L 158 74 Q 170 74 176 88 L 176 96 Q 176 98 174 98 L 148 98 Q 146 98 146 96 L 146 76 Q 146 74 148 74 Z"
-      fill="#93C5FD" stroke="#0F172A" strokeWidth="2" opacity="0.85" />
-    {/* Ventana lateral de la cabina */}
-    <rect x="142" y="104" width="34" height="18" rx="2" fill="#93C5FD" stroke="#0F172A" strokeWidth="2" opacity="0.75" />
-    {/* Manija/detalle puerta cabina */}
-    <line x1="150" y1="126" x2="160" y2="126" stroke="#0F172A" strokeWidth="2.5" />
-    {/* Luz frontal */}
-    <circle cx="197" cy="118" r="4" fill="#FDE68A" stroke="#0F172A" strokeWidth="2" />
-    {/* Parachoques frontal */}
-    <rect x="188" y="128" width="16" height="8" rx="2" fill="#4B5563" stroke="#0F172A" strokeWidth="2" />
-    {/* Linea del techo */}
-    <line x1="140" y1="66" x2="156" y2="66" stroke="#0F172A" strokeWidth="1.5" opacity="0.4" />
-    {/* Escape (tubo saliendo de la cabina hacia arriba) */}
-    <rect x="128" y="42" width="6" height="22" rx="1.5" fill="#4B5563" stroke="#0F172A" strokeWidth="2" />
-    <ellipse cx="131" cy="42" rx="4" ry="2" fill="#1F2937" />
-    {/* Chasis */}
-    <rect x="16" y="132" width="188" height="10" rx="2" fill="#1F2937" />
-    {/* Ruedas — 2 atras (grandes) y 1 adelante (grande) */}
-    <circle cx="46" cy="146" r="16" fill="#1F2937" stroke="#0F172A" strokeWidth="3" />
-    <circle cx="46" cy="146" r="7" fill="#9CA3AF" stroke="#0F172A" strokeWidth="2" />
-    <circle cx="46" cy="146" r="2" fill="#1F2937" />
-    <circle cx="90" cy="146" r="16" fill="#1F2937" stroke="#0F172A" strokeWidth="3" />
-    <circle cx="90" cy="146" r="7" fill="#9CA3AF" stroke="#0F172A" strokeWidth="2" />
-    <circle cx="90" cy="146" r="2" fill="#1F2937" />
-    <circle cx="168" cy="146" r="16" fill="#1F2937" stroke="#0F172A" strokeWidth="3" />
-    <circle cx="168" cy="146" r="7" fill="#9CA3AF" stroke="#0F172A" strokeWidth="2" />
-    <circle cx="168" cy="146" r="2" fill="#1F2937" />
-  </svg>
-);
-
-// Helper interno: dado un purchase (con projectCode), buscar el proyecto y
-// la empresa para llamar a generateFichaPDF correctamente. Usado por los
-// cards "De compra" del Kanban para descargar la misma ficha que en Compras.
-//
-// IMPORTANTE: los archivos (cotizacion + comprobante de transferencia) viven
-// en rows separadas del store (cp-file-<fileId>) para no exceder el limite
-// de tamaño de Supabase. Las purchases que cargamos en LogisticsModule estan
-// "light" (solo refs por fileId). Antes de generar el PDF tenemos que hidratar
-// esos archivos llamando a restoreFiles, sino la ficha sale sin cotizacion ni
-// comprobante.
-const COMPANIES_MAP = {
-  subterra: { name: "Subterra Honduras" },
-  geotecnica: { name: "Geotecnica Soluciones" },
+// ── Íconos de línea (monocromos, currentColor) ──
+const ICO = {
+  dashboard: "M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 4v4h6V4z",
+  camion: "M3 6h11v9H3zM14 9h4l3 3v3h-7M7 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z",
+  llave: "M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z",
+  ruta: "M6 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM6 15V9a4 4 0 0 1 4-4h4M18 9v6a4 4 0 0 1-4 4h-4",
+  persona: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0",
+  gota: "M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z",
+  mas: "M12 5v14M5 12h14",
+  flecha: "M9 6l6 6-6 6",
+  alerta: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z",
+  check: "M5 12l5 5L20 7",
+  doc: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5",
+  camara: "M4 8h3l2-3h6l2 3h3v11H4zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z",
+  subir: "M12 16V4M7 9l5-5 5 5M4 20h16",
+  ojo: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
+  lapiz: "M4 20h4L19 9l-4-4L4 16zM14 6l4 4",
+  basura: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  licencia: "M3 6h18v12H3zM7 10h4M7 14h6M15 10h2",
+  velocimetro: "M12 14l4-4M4 18a9 9 0 1 1 16 0",
 };
+const Ico = ({ d, size = 18, color = "currentColor", sw = 1.8 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ flexShrink: 0 }}><path d={d} /></svg>;
+
+// Silueta del vehículo según el tipo (cuando no tiene foto)
+const Silueta = ({ tipo = "", size = 96, color = "#8C857D" }) => {
+  const t = String(tipo).toLowerCase();
+  const sw = 3;
+  if (t.includes("moto")) return <svg width={size} height={size * 0.62} viewBox="0 0 160 100" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="34" cy="70" r="20" /><circle cx="126" cy="70" r="20" /><path d="M34 70l26-28h34l14 28M60 42l-8-12h-12M94 42l14-14h12M76 42l-6 28h56" /></svg>;
+  if (!t.includes("pickup") && (t.includes("cami") || t.includes("cabezal"))) return <svg width={size} height={size * 0.62} viewBox="0 0 160 100" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M8 22h88v50H8zM96 38h30l22 20v14H96z" /><path d="M106 44h16l12 12h-28z" /><circle cx="32" cy="76" r="11" /><circle cx="74" cy="76" r="11" /><circle cx="126" cy="76" r="11" /></svg>;
+  return <svg width={size} height={size * 0.62} viewBox="0 0 160 100" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M8 70V52l10-4h44l16-18h38l16 18h12l8 6v16z" /><path d="M66 48l12-14h30l10 14z" /><circle cx="38" cy="72" r="12" /><circle cx="124" cy="72" r="12" /></svg>;
+};
+
+// Placa estilo Honduras (blanca, banda superior)
+const Placa = ({ plate, grande = false }) => {
+  const s = grande ? 1.35 : 1;
+  return <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", background: "#fff", border: "1.5px solid rgba(44,42,40,.75)", borderRadius: 6 * s, overflow: "hidden", boxShadow: "0 1px 0 rgba(44,42,40,.12)", minWidth: 92 * s }}>
+    <div style={{ width: "100%", background: CHARCOAL, color: "#fff", font: `700 ${6.5 * s}px/1 var(--mono)`, letterSpacing: ".3em", textAlign: "center", padding: `${2.5 * s}px 0` }}>HONDURAS</div>
+    <div style={{ font: `800 ${15 * s}px/1 var(--mono)`, letterSpacing: ".08em", color: CHARCOAL, padding: `${4 * s}px ${10 * s}px ${5 * s}px`, whiteSpace: "nowrap" }}>{plate || "—"}</div>
+  </div>;
+};
+
+// Curvas de nivel de la franja del carnet (las del login, calculadas una vez)
+const curvasDe = (W, H, N, M, seed, niveles, nivelNaranja) => {
+  const perm = (() => { const p = [...Array(256).keys()]; let sd = seed; for (let i = 255; i > 0; i--) { sd = (sd * 16807) % 2147483647; const j = sd % (i + 1); [p[i], p[j]] = [p[j], p[i]]; } const o = new Uint8Array(512); for (let i = 0; i < 512; i++) o[i] = p[i & 255]; return o; })();
+  const fade = (t) => t * t * (3 - 2 * t);
+  const n2 = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), X = xi & 255, Y = yi & 255, xf = x - xi, yf = y - yi; const h = (a, b) => perm[perm[(X + a) & 255] + ((Y + b) & 255)] / 255; const u = fade(xf), v = fade(yf); return (h(0, 0) * (1 - u) + h(1, 0) * u) * (1 - v) + (h(0, 1) * (1 - u) + h(1, 1) * u) * v; };
+  const f = (x, y) => n2(x, y) * .6 + n2(x * 2.1 + 7.3, y * 2.1 + 3.1) * .3 + n2(x * 4.4 + 1.7, y * 4.4 + 9.2) * .1;
+  const g = []; for (let j = 0; j <= M; j++) { g[j] = []; for (let i = 0; i <= N; i++) g[j][i] = f(i * 0.11, j * 0.19); }
+  const cw = W / N, ch = H / M;
+  const nivel = (lv) => {
+    let d = "";
+    const lerp = (a, b, va, vb) => (lv - va) / (vb - va || 1e-9) * (b - a) + a;
+    for (let j = 0; j < M; j++) for (let i = 0; i < N; i++) {
+      const a = g[j][i], b = g[j][i + 1], c = g[j + 1][i + 1], dd = g[j + 1][i];
+      const x0 = i * cw, x1 = (i + 1) * cw, y0 = j * ch, y1 = (j + 1) * ch;
+      const idx = (a > lv ? 8 : 0) | (b > lv ? 4 : 0) | (c > lv ? 2 : 0) | (dd > lv ? 1 : 0);
+      if (idx === 0 || idx === 15) continue;
+      const T = [lerp(x0, x1, a, b), y0], R = [x1, lerp(y0, y1, b, c)], B = [lerp(x0, x1, dd, c), y1], L = [x0, lerp(y0, y1, a, dd)];
+      const seg = { 1: [L, B], 2: [B, R], 3: [L, R], 4: [T, R], 5: [T, L, B, R], 6: [T, B], 7: [T, L], 8: [T, L], 9: [T, B], 10: [T, R, L, B], 11: [T, R], 12: [L, R], 13: [B, R], 14: [L, B] }[idx];
+      for (let k = 0; k < seg.length; k += 2) d += `M${seg[k][0].toFixed(1)} ${seg[k][1].toFixed(1)}L${seg[k + 1][0].toFixed(1)} ${seg[k + 1][1].toFixed(1)}`;
+    }
+    return d;
+  };
+  return { tenues: niveles.map(nivel).join(""), naranja: nivelNaranja != null ? nivel(nivelNaranja) : "", W, H };
+};
+const curvasFranja = curvasDe(240, 70, 56, 17, 20261117, [.34, .40, .46, .52, .58, .64], .49);
+const CURVAS_FRANJA = <svg viewBox={`0 0 ${curvasFranja.W} ${curvasFranja.H}`} preserveAspectRatio="xMidYMid slice" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+  <path d={curvasFranja.tenues} fill="none" stroke="rgba(232,118,45,.30)" strokeWidth=".7" strokeLinecap="round" />
+  <path d={curvasFranja.naranja} fill="none" stroke="rgba(232,118,45,.9)" strokeWidth="1" strokeLinecap="round" />
+</svg>;
+
+// ── Constantes ──
+const TIPOS_VEHICULO = ["Pickup / Camioneta", "Camion / Cabezal", "Motocicleta"];
+const TIPO_CORTO = { "Pickup / Camioneta": "Pickup", "Camion / Cabezal": "Camión", "Motocicleta": "Moto" };
+const ESTADOS_VEHICULO = [
+  { value: "operativo", label: "Disponible", c: C_VERDE, dot: "#3E8E5A" },
+  { value: "asignado", label: "En proyecto", c: C_AZUL, dot: "#1D5FAF" },
+  { value: "mantenimiento", label: "En mantenimiento", c: C_AMARILLO, dot: "#C99A06" },
+  { value: "reparacion", label: "En reparación", c: C_NARANJA, dot: ORANGE },
+  { value: "fuera_servicio", label: "Fuera de servicio", c: C_ROJO, dot: "#B03024" },
+];
+const estadoCfg = (v) => ESTADOS_VEHICULO.find(s => s.value === v) || ESTADOS_VEHICULO[0];
+const enTaller = (v) => v.estado === "mantenimiento" || v.estado === "reparacion";
+const PROPIETARIOS = ["Subterra Honduras", "Geotecnica Soluciones", "Alquilado", "Otro"];
+const COMBUSTIBLES = ["Diésel", "Gasolina"];
+
+const TIPOS_MANT = [
+  { value: "preventivo", label: "Preventivo", c: C_VERDE },
+  { value: "correctivo", label: "Correctivo", c: C_AMARILLO },
+  { value: "emergencia", label: "Emergencia", c: C_ROJO },
+];
+const tipoMantCfg = (v) => TIPOS_MANT.find(t => t.value === v) || TIPOS_MANT[1];
+
+const TIPOS_DESPACHO = [
+  { value: "material_compra", label: "Material de compra", corto: "Compra", defaultOrigen: "", defaultDestino: "Proyecto" },
+  { value: "material_plantel_proyecto", label: "Material: Plantel → Proyecto", corto: "Plantel → Proyecto", defaultOrigen: "Plantel", defaultDestino: "Proyecto" },
+  { value: "material_proyecto_plantel", label: "Material: Proyecto → Plantel", corto: "Proyecto → Plantel", defaultOrigen: "Proyecto", defaultDestino: "Plantel" },
+  { value: "material_proyecto_proyecto", label: "Material: Proyecto → Proyecto", corto: "Entre proyectos", defaultOrigen: "", defaultDestino: "" },
+  { value: "personal", label: "Personal", corto: "Personal", defaultOrigen: "", defaultDestino: "" },
+  { value: "equipo_maquinaria", label: "Equipo / Maquinaria", corto: "Equipo", defaultOrigen: "", defaultDestino: "" },
+  { value: "repuesto_maquinas", label: "Repuesto de máquinas", corto: "Repuesto", defaultOrigen: "", defaultDestino: "Proyecto" },
+  { value: "otro", label: "Otro", corto: "Otro", defaultOrigen: "", defaultDestino: "" },
+];
+const tipoDespCfg = (v) => TIPOS_DESPACHO.find(t => t.value === v) || TIPOS_DESPACHO[TIPOS_DESPACHO.length - 1];
+const ESTADOS_DESPACHO = [
+  { value: "pendiente", label: "Por hacer", c: C_NARANJA },
+  { value: "programado", label: "Programado", c: C_AZUL },
+  { value: "en_ruta", label: "En ruta", c: C_AMARILLO },
+  { value: "entregado", label: "Entregado", c: C_VERDE },
+  { value: "cerrado", label: "Cerrado", c: C_GRIS },
+  { value: "cancelado", label: "Cancelado", c: C_ROJO },
+];
+const estadoDespCfg = (v) => ESTADOS_DESPACHO.find(s => s.value === v) || ESTADOS_DESPACHO[0];
+const origenDespacho = (d) => d.source === "maquinas" ? { label: "GeoMachinery", c: C_GRIS } : d.source === "compra" ? { label: "GeoShopping", c: C_GRIS } : d.source === "epp" ? { label: "EPP", c: C_AMARILLO } : { label: "Interno", c: C_GRIS };
+const URG_C = { atrasado: C_ROJO, hoy: C_NARANJA, manana: C_NARANJA, pronto: C_AMARILLO, ok: C_GRIS };
+const URG_P = { vencido: { c: C_ROJO, bar: "#C0392B" }, pronto: { c: C_NARANJA, bar: ORANGE }, ok: { c: C_VERDE, bar: "#3E8E5A" }, sin_plan: { c: C_GRIS, bar: "#B8B1A8" } };
+const LICENCIAS = ["Liviana", "Pesada", "Motocicleta", "Profesional"];
+
+// Ficha de entrega de la compra (para llevar al proveedor): los archivos viven
+// en cp-file-*; restoreFiles los hidrata antes de armar el PDF.
+const COMPANIES_MAP = { subterra: { name: "Subterra Honduras" }, geotecnica: { name: "Geotecnica Soluciones" } };
 const descargarFichaCompra = async (purchase, allProjects) => {
   const proj = allProjects.find(p => p.short === purchase.projectCode) || null;
   const companyName = COMPANIES_MAP[purchase.company]?.name || "";
-  // Hidratar quoteFile / receiptFile / fichaFile cargando los dataUrl desde sus
-  // rows separadas en el store. Funciona sobre un array y devuelve un array nuevo.
   const [hydrated] = await restoreFiles([purchase]);
   await generateFichaPDF(hydrated || purchase, proj, companyName);
 };
 
-// ── Constantes ──
-const TIPOS_VEHICULO = [
-  "Pickup / Camioneta",
-  "Camion / Cabezal",
-  "Motocicleta",
-];
-
-const ESTADOS_VEHICULO = [
-  { value: "operativo", label: "✓ Operativo", color: BRAND.green, bgSoft: BRAND.greenSoft },
-  { value: "asignado", label: "🚧 En proyecto", color: BRAND.blue, bgSoft: BRAND.blueSoft },
-  { value: "mantenimiento", label: "🔧 En mantenimiento", color: BRAND.yellow, bgSoft: BRAND.yellowSoft },
-  { value: "reparacion", label: "🔨 En reparacion", color: BRAND.orange, bgSoft: BRAND.orangeBg },
-  { value: "fuera_servicio", label: "✗ Fuera de servicio", color: BRAND.red, bgSoft: BRAND.redSoft },
-];
-const estadoCfg = (v) => ESTADOS_VEHICULO.find(s => s.value === v) || ESTADOS_VEHICULO[0];
-
-const PROPIETARIOS = ["Subterra Honduras", "Geotecnica Soluciones", "Alquilado", "Otro"];
-
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-
-// ── UI HELPERS (nivel modulo) ──
-const Btn = ({ children, onClick, variant = "primary", small, style: sx, disabled, type }) => {
-  const base = {
-    padding: small ? "6px 12px" : "9px 16px",
-    border: "none",
-    borderRadius: R.sm,
-    fontSize: small ? 12 : 13,
-    fontWeight: 700,
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.5 : 1,
-    fontFamily: "inherit",
-    transition: "all .15s",
-    letterSpacing: 0.2,
-  };
-  const variants = {
-    primary: { background: BRAND.orange, color: "#fff" },
-    success: { background: BRAND.green, color: "#fff" },
-    danger: { background: BRAND.red, color: "#fff" },
-    warn: { background: BRAND.yellow, color: "#fff" },
-    ghost: { background: BRAND.beige, color: BRAND.charcoal, border: `1px solid ${BRAND.border}` },
-    dark: { background: BRAND.charcoal, color: BRAND.beige },
-  };
-  return (
-    <button type={type || "button"} onClick={disabled ? undefined : onClick} disabled={disabled} style={{ ...base, ...variants[variant], ...sx }}>
-      {children}
-    </button>
-  );
-};
-
-const Input = ({ label, hint, ...p }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-    {label && <label style={{ fontSize: 12, fontWeight: 600, color: BRAND.graphite }}>{label}</label>}
-    <input style={{ padding: "8px 12px", border: `1px solid ${BRAND.border}`, borderRadius: R.sm, fontSize: 14, outline: "none", background: BRAND.cream, fontFamily: "inherit", color: BRAND.charcoal }} {...p} />
-    {hint && <span style={{ fontSize: 10, color: BRAND.stone, fontStyle: "italic" }}>{hint}</span>}
-  </div>
-);
-
-const Textarea = ({ label, hint, ...p }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-    {label && <label style={{ fontSize: 12, fontWeight: 600, color: BRAND.graphite }}>{label}</label>}
-    <textarea style={{ padding: "8px 12px", border: `1px solid ${BRAND.border}`, borderRadius: R.sm, fontSize: 14, outline: "none", background: BRAND.cream, fontFamily: "inherit", color: BRAND.charcoal, resize: "vertical", minHeight: 70 }} {...p} />
-    {hint && <span style={{ fontSize: 10, color: BRAND.stone, fontStyle: "italic" }}>{hint}</span>}
-  </div>
-);
-
-const Select = ({ label, options, emptyLabel = "—", ...p }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-    {label && <label style={{ fontSize: 12, fontWeight: 600, color: BRAND.graphite }}>{label}</label>}
-    <select style={{ padding: "8px 12px", border: `1px solid ${BRAND.border}`, borderRadius: R.sm, fontSize: 14, background: BRAND.cream, fontFamily: "inherit", color: BRAND.charcoal }} {...p}>
-      <option value="">{emptyLabel}</option>
-      {options.map(o => <option key={typeof o === "string" ? o : o.value} value={typeof o === "string" ? o : o.value}>{typeof o === "string" ? o : o.label}</option>)}
-    </select>
-  </div>
-);
-
-const Badge = ({ children, color = BRAND.charcoal, bg }) => (
-  <span style={{ background: bg || (color + "20"), color, padding: "3px 9px", borderRadius: R.full, fontSize: 11, fontWeight: 700, display: "inline-block", letterSpacing: 0.3 }}>{children}</span>
-);
-
-const StatCard = ({ icon, label, value, color = BRAND.orange }) => (
-  <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, padding: "14px 18px", minWidth: 150, flex: 1, boxShadow: BRAND.shadowSm }}>
-    <div style={{ fontSize: 22 }}>{icon}</div>
-    <div style={{ fontSize: 24, fontWeight: 800, color, marginTop: 2 }}>{value}</div>
-    <div style={{ fontSize: 11, color: BRAND.stone, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
-  </div>
-);
-
-const Modal = ({ title, children, onClose, wide }) => (
-  <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(31,27,23,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 20 }}>
-    <div onClick={e => e.stopPropagation()} style={{ background: BRAND.cream, borderRadius: R.lg, padding: 28, maxWidth: wide ? 900 : 560, width: "100%", maxHeight: "90vh", overflow: "auto", boxShadow: BRAND.shadowLg }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, paddingBottom: 12, borderBottom: `1px solid ${BRAND.borderSoft}` }}>
-        <h3 style={{ margin: 0, fontFamily: FONT.display, fontSize: 17, color: BRAND.charcoal }}>{title}</h3>
-        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: BRAND.stone }}>×</button>
-      </div>
-      {children}
-    </div>
-  </div>
-);
-
-// ── FORM DE VEHICULO (nivel de modulo para evitar remount/typing-lock) ──
-function VehicleFormImpl({ vehicle, allProjects, setModal, saveVehicle }) {
-  const [f, setF] = useState(vehicle || {
-    plate: "",
-    type: "Pickup / Camioneta",
-    brand: "",
-    model: "",
-    year: "",
-    color: "",
-    owner: "Subterra Honduras",
-    kmActual: "",
-    estado: "operativo",
-    projectCode: "",
-    motorista: "",
-    proxMantenimientoKm: "",
-    proxMantenimientoFecha: "",
-    pendientesReparacion: "",
-    seguro: "",
-    seguroVence: "",
-    revisionVence: "",
-    notas: "",
-  });
-  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
-  const isEdit = !!vehicle;
-  const estCfg = estadoCfg(f.estado);
-
-  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-    {/* IDENTIFICACION */}
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.orange, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🪪 Identificacion</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Input label="Placa *" value={f.plate} onChange={e => u("plate", e.target.value.toUpperCase())} placeholder="Ej: PCV-1234" />
-        <Select label="Tipo de vehiculo *" options={TIPOS_VEHICULO} value={f.type} onChange={e => u("type", e.target.value)} />
-        <Select label="Propietario" options={PROPIETARIOS} value={f.owner} onChange={e => u("owner", e.target.value)} />
-        <Input label="Marca" value={f.brand} onChange={e => u("brand", e.target.value)} placeholder="Ej: Toyota" />
-        <Input label="Modelo" value={f.model} onChange={e => u("model", e.target.value)} placeholder="Ej: Hilux" />
-        <Input label="Año" type="number" value={f.year} onChange={e => u("year", e.target.value)} placeholder="Ej: 2020" />
-        <Input label="Color" value={f.color} onChange={e => u("color", e.target.value)} placeholder="Ej: Blanco" />
-        <Input label="Kilometraje actual" type="number" value={f.kmActual} onChange={e => u("kmActual", e.target.value)} placeholder="Km" />
-      </div>
-    </div>
-
-    {/* ESTADO + ASIGNACION */}
-    <div style={{ background: estCfg.bgSoft, border: `1px solid ${estCfg.color}40`, borderRadius: R.md, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: estCfg.color, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📍 Estado y asignacion actual</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Select label="Estado actual *" options={ESTADOS_VEHICULO} value={f.estado} onChange={e => u("estado", e.target.value)} emptyLabel="—" />
-        <Select label="Proyecto asignado" options={allProjects.map(p => ({ value: p.short, label: p.short + (p.name ? ` — ${p.name}` : "") }))} value={f.projectCode} onChange={e => u("projectCode", e.target.value)} emptyLabel="— Sin asignar —" />
-        <Input label="Motorista asignado" value={f.motorista} onChange={e => u("motorista", e.target.value)} placeholder="Nombre del motorista" />
-      </div>
-    </div>
-
-    {/* MANTENIMIENTO */}
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.yellow, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🔧 Programacion de mantenimiento</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Input label="Proximo mantenimiento (km)" type="number" value={f.proxMantenimientoKm} onChange={e => u("proxMantenimientoKm", e.target.value)} hint="A que kilometraje toca el siguiente servicio" />
-        <Input label="Proximo mantenimiento (fecha)" type="date" value={f.proxMantenimientoFecha} onChange={e => u("proxMantenimientoFecha", e.target.value)} hint="O cuando toca por fecha" />
-      </div>
-    </div>
-
-    {/* PENDIENTES DE REPARACION */}
-    <div style={{ background: BRAND.orangeBg, border: `1px solid ${BRAND.orange}50`, borderRadius: R.md, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.orangeDark, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🔨 Pendientes de reparacion</div>
-      <Textarea
-        value={f.pendientesReparacion}
-        onChange={e => u("pendientesReparacion", e.target.value)}
-        placeholder={"Listar todo lo que el vehiculo necesita. Ej:\n• Cambiar pastillas de freno delanteras\n• Reparar aire acondicionado\n• Cambio de aceite (atrasado)\n• Llanta delantera derecha — fuga"}
-        hint="Esta lista alimenta el panel de mantenimientos pendientes"
-      />
-    </div>
-
-    {/* DOCUMENTOS */}
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.blue, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📄 Documentos y vencimientos</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Input label="Compañia de seguro" value={f.seguro} onChange={e => u("seguro", e.target.value)} placeholder="Ej: Mapfre" />
-        <Input label="Vencimiento seguro" type="date" value={f.seguroVence} onChange={e => u("seguroVence", e.target.value)} />
-        <Input label="Vencimiento revision" type="date" value={f.revisionVence} onChange={e => u("revisionVence", e.target.value)} />
-      </div>
-    </div>
-
-    {/* NOTAS */}
-    <Textarea label="Notas generales" value={f.notas} onChange={e => u("notas", e.target.value)} placeholder="Cualquier observacion adicional" />
-
-    {/* BOTONES */}
-    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8, paddingTop: 12, borderTop: `1px solid ${BRAND.borderSoft}` }}>
-      <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-      <Btn variant="success" onClick={async () => {
-        if (!f.plate || !f.type) return alert("Placa y tipo de vehiculo son obligatorios");
-        const rec = {
-          ...f,
-          plate: f.plate.toUpperCase().trim(),
-          id: f.id || uid(),
-          kmActual: Number(f.kmActual) || 0,
-          year: Number(f.year) || null,
-          proxMantenimientoKm: Number(f.proxMantenimientoKm) || null,
-          updatedAt: new Date().toISOString(),
-          createdAt: f.createdAt || new Date().toISOString(),
-        };
-        const ok = await saveVehicle(rec, isEdit);
-        if (ok) setModal(null);
-      }}>{isEdit ? "💾 Guardar cambios" : "+ Agregar vehiculo"}</Btn>
-    </div>
-  </div>;
-}
-
-// ── DETAIL VIEW ──
-function VehicleDetailImpl({ vehicle, allProjects, setModal, deleteVehicle }) {
-  const v = vehicle;
-  const estCfg = estadoCfg(v.estado);
-  const proj = allProjects.find(p => p.short === v.projectCode);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const diasParaFecha = (iso) => {
-    if (!iso) return null;
-    const d = new Date(iso); d.setHours(0, 0, 0, 0);
-    return Math.ceil((d - today) / 86400000);
-  };
-  const fmtFecha = (iso) => iso ? new Date(iso + "T00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
-
-  const alertaCajita = (titulo, fecha) => {
-    const d = diasParaFecha(fecha);
-    if (d === null) return null;
-    let color = BRAND.green, txt = `${d}d restantes`;
-    if (d < 0) { color = BRAND.red; txt = `Vencido hace ${Math.abs(d)}d`; }
-    else if (d <= 15) { color = BRAND.red; txt = `Vence en ${d}d`; }
-    else if (d <= 45) { color = BRAND.yellow; txt = `Vence en ${d}d`; }
-    return <div style={{ background: color + "15", border: `1px solid ${color}40`, borderRadius: R.sm, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
-      <span style={{ color: BRAND.graphite, fontWeight: 600 }}>{titulo}</span>
-      <span style={{ color, fontWeight: 700 }}>{fmtFecha(fecha)} · {txt}</span>
-    </div>;
-  };
-
-  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-    {/* HEADER */}
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", paddingBottom: 12, borderBottom: `1px solid ${BRAND.borderSoft}` }}>
-      <div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-          <span style={{ fontFamily: FONT.mono, fontSize: 20, fontWeight: 800, color: BRAND.charcoal, background: BRAND.parchment, padding: "4px 12px", borderRadius: R.sm, letterSpacing: 1 }}>{v.plate}</span>
-          <Badge color={estCfg.color}>{estCfg.label}</Badge>
-        </div>
-        <div style={{ fontSize: 14, color: BRAND.graphite }}>{v.brand} {v.model} {v.year && `· ${v.year}`} {v.color && `· ${v.color}`}</div>
-        <div style={{ fontSize: 12, color: BRAND.stone, marginTop: 2 }}>{v.type} · {v.owner}</div>
-      </div>
-      <div style={{ textAlign: "right" }}>
-        <div style={{ fontSize: 28, fontWeight: 800, color: BRAND.orange, fontFamily: FONT.mono }}>{(v.kmActual || 0).toLocaleString("es-HN")}</div>
-        <div style={{ fontSize: 10, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>kilometros</div>
-      </div>
-    </div>
-
-    {/* ASIGNACION */}
-    <div style={{ background: estCfg.bgSoft, border: `1px solid ${estCfg.color}40`, borderRadius: R.md, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: estCfg.color, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📍 Asignacion actual</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 13 }}>
-        <div><span style={{ color: BRAND.stone }}>Proyecto:</span> <b>{proj ? `${proj.short} — ${proj.name}` : "Sin asignar"}</b></div>
-        <div><span style={{ color: BRAND.stone }}>Motorista:</span> <b>{v.motorista || "Sin asignar"}</b></div>
-      </div>
-    </div>
-
-    {/* PENDIENTES DE REPARACION */}
-    {v.pendientesReparacion && <div style={{ background: BRAND.orangeBg, border: `1px solid ${BRAND.orange}50`, borderRadius: R.md, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.orangeDark, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🔨 Pendientes de reparacion</div>
-      <pre style={{ margin: 0, fontFamily: "inherit", whiteSpace: "pre-wrap", fontSize: 13, color: BRAND.ink, lineHeight: 1.6 }}>{v.pendientesReparacion}</pre>
-    </div>}
-
-    {/* MANTENIMIENTO */}
-    {(v.proxMantenimientoKm || v.proxMantenimientoFecha) && <div style={{ background: BRAND.yellowSoft, border: `1px solid ${BRAND.yellow}40`, borderRadius: R.md, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.yellow, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🔧 Proximo mantenimiento</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 13 }}>
-        {v.proxMantenimientoKm && <div>
-          <span style={{ color: BRAND.stone }}>Por kilometraje:</span> <b>{Number(v.proxMantenimientoKm).toLocaleString("es-HN")} km</b>
-          {v.kmActual && <span style={{ marginLeft: 8, color: (v.proxMantenimientoKm - v.kmActual) < 500 ? BRAND.red : (v.proxMantenimientoKm - v.kmActual) < 2000 ? BRAND.yellow : BRAND.green, fontWeight: 700 }}>
-            (faltan {Math.max(0, v.proxMantenimientoKm - v.kmActual).toLocaleString("es-HN")} km)
-          </span>}
-        </div>}
-        {v.proxMantenimientoFecha && <div>
-          <span style={{ color: BRAND.stone }}>Por fecha:</span> <b>{fmtFecha(v.proxMantenimientoFecha)}</b>
-          {diasParaFecha(v.proxMantenimientoFecha) !== null && <span style={{ marginLeft: 8, color: diasParaFecha(v.proxMantenimientoFecha) < 0 ? BRAND.red : diasParaFecha(v.proxMantenimientoFecha) < 15 ? BRAND.yellow : BRAND.green, fontWeight: 700 }}>
-            ({diasParaFecha(v.proxMantenimientoFecha) < 0 ? "vencido" : `${diasParaFecha(v.proxMantenimientoFecha)}d`})
-          </span>}
-        </div>}
-      </div>
-    </div>}
-
-    {/* DOCUMENTOS */}
-    {(v.seguro || v.seguroVence || v.revisionVence) && <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.blue, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📄 Documentos</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {v.seguro && <div style={{ fontSize: 13 }}><span style={{ color: BRAND.stone }}>Seguro:</span> <b>{v.seguro}</b></div>}
-        {alertaCajita("Seguro vence", v.seguroVence)}
-        {alertaCajita("Revision vehicular vence", v.revisionVence)}
-      </div>
-    </div>}
-
-    {/* NOTAS */}
-    {v.notas && <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.stone, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>📝 Notas</div>
-      <div style={{ fontSize: 13, color: BRAND.graphite, padding: "8px 12px", background: BRAND.parchment, borderRadius: R.sm, lineHeight: 1.5 }}>{v.notas}</div>
-    </div>}
-
-    {/* TIMESTAMPS */}
-    <div style={{ fontSize: 11, color: BRAND.stone, paddingTop: 8, borderTop: `1px solid ${BRAND.borderSoft}` }}>
-      {v.createdAt && <span>Creado: {new Date(v.createdAt).toLocaleString("es-HN")}</span>}
-      {v.updatedAt && <span style={{ marginLeft: 14 }}>Modificado: {new Date(v.updatedAt).toLocaleString("es-HN")}</span>}
-    </div>
-
-    {/* ACCIONES */}
-    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 12, borderTop: `1px solid ${BRAND.borderSoft}` }}>
-      <Btn variant="ghost" onClick={() => setModal(null)}>Cerrar</Btn>
-      <Btn variant="danger" onClick={() => { if (confirm(`¿Eliminar el vehiculo ${v.plate}? Esta accion no se puede deshacer.`)) { deleteVehicle(v.id); setModal(null); } }}>🗑 Eliminar</Btn>
-      <Btn variant="primary" onClick={() => setModal({ t: "edit", d: v })}>✏️ Editar</Btn>
-    </div>
-  </div>;
-}
-
-// ── Helpers de parseo de pendientes desde el textarea de cada vehiculo ──
-// Cada linea no vacia del textarea pendientesReparacion se trata como un pendiente
-// separado. Quitamos los bullets/numeros del inicio para mostrarlos limpios.
-const parsePendientes = (text) => {
-  if (!text || typeof text !== "string") return [];
-  return text.split("\n")
-    .map((line, raw_idx) => ({ raw: line, idx: raw_idx, trimmed: line.trim() }))
-    .filter(x => x.trimmed.length > 0)
-    .map((x, visIdx) => ({
-      ...x,
-      visIdx,
-      clean: x.trimmed.replace(/^[•\-\*]+\s*/, "").replace(/^\d+[.\)]\s*/, "").trim(),
-    }));
-};
-
-// Remueve una linea especifica del textarea por su texto exacto
-const removeLine = (text, exactLine) => {
-  if (!text) return "";
-  return text.split("\n").filter(l => l !== exactLine).join("\n");
-};
-
-// ── TIPOS DE MANTENIMIENTO ──
-const TIPOS_MANTENIMIENTO = [
-  { value: "preventivo", label: "🛡 Preventivo", color: BRAND.green },
-  { value: "correctivo", label: "🔧 Correctivo", color: BRAND.yellow },
-  { value: "emergencia", label: "🚨 Emergencia", color: BRAND.red },
-];
-const tipoMantCfg = (v) => TIPOS_MANTENIMIENTO.find(t => t.value === v) || TIPOS_MANTENIMIENTO[1];
-
-// ── FORM DE MANTENIMIENTO (nivel de modulo) ──
-function MaintenanceFormImpl({ vehicle, vehicles, prefilledDescription, prefilledRawLine, setModal, saveMaintenance }) {
-  const [f, setF] = useState({
-    vehicleId: vehicle?.id || "",
-    type: "correctivo",
-    fecha: hoyISO(),
-    kmAlRealizar: vehicle?.kmActual || "",
-    description: prefilledDescription || "",
-    workshop: "",
-    cost: "",
-    proxKm: "",
-    proxFecha: "",
-    notas: "",
-    rawLineToRemove: prefilledRawLine || null, // si vino de un pendiente, lo borramos al guardar
-  });
-  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
-  const selectedVehicle = vehicles.find(x => x.id === f.vehicleId);
-  const tipoCfg = tipoMantCfg(f.type);
-
-  // Sugerencia automatica: si seleccionan vehiculo y no hay km, llenar con el actual
-  const onVehicleChange = (id) => {
-    const v = vehicles.find(x => x.id === id);
-    setF(p => ({ ...p, vehicleId: id, kmAlRealizar: v?.kmActual || p.kmAlRealizar }));
-  };
-
-  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-    {/* Vehiculo */}
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.orange, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🚛 Vehiculo</div>
-      <Select
-        label="Vehiculo *"
-        options={vehicles.map(v => ({ value: v.id, label: `${v.plate} — ${v.brand || ""} ${v.model || ""}` }))}
-        value={f.vehicleId}
-        onChange={e => onVehicleChange(e.target.value)}
-        emptyLabel="— Seleccionar —"
-      />
-    </div>
-
-    {/* Tipo + fecha + km */}
-    <div style={{ background: tipoCfg.color + "15", border: `1px solid ${tipoCfg.color}40`, borderRadius: R.md, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: tipoCfg.color, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📋 Detalle</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Select label="Tipo *" options={TIPOS_MANTENIMIENTO} value={f.type} onChange={e => u("type", e.target.value)} emptyLabel="—" />
-        <Input label="Fecha realizada *" type="date" value={f.fecha} onChange={e => u("fecha", e.target.value)} />
-        <Input label="Km al realizar" type="number" value={f.kmAlRealizar} onChange={e => u("kmAlRealizar", e.target.value)} hint={selectedVehicle ? `Actual: ${(selectedVehicle.kmActual || 0).toLocaleString("es-HN")} km` : ""} />
-      </div>
-    </div>
-
-    {/* Descripcion */}
-    <Textarea label="Que se le hizo *" value={f.description} onChange={e => u("description", e.target.value)} placeholder={"Detalle del mantenimiento. Ej:\n• Cambio de pastillas de freno\n• Cambio de aceite y filtros"} />
-
-    {/* Costos */}
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.blue, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>💰 Costo y taller</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Input label="Taller / Mecanico" value={f.workshop} onChange={e => u("workshop", e.target.value)} placeholder="Ej: Taller propio, Mecanico Roberto" />
-        <Input label="Costo (L)" type="number" step="0.01" value={f.cost} onChange={e => u("cost", e.target.value)} placeholder="0.00" />
-      </div>
-    </div>
-
-    {/* Programar el siguiente */}
-    <div style={{ background: BRAND.yellowSoft, border: `1px solid ${BRAND.yellow}40`, borderRadius: R.md, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.yellow, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🔧 Programar el proximo mantenimiento (opcional)</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" }}>
-        <Input label="Proximo a los (km)" type="number" value={f.proxKm} onChange={e => u("proxKm", e.target.value)} hint="Ej: 5000 km despues del actual" />
-        <Input label="O en fecha" type="date" value={f.proxFecha} onChange={e => u("proxFecha", e.target.value)} />
-        <Btn small variant="ghost" onClick={() => {
-          // Quick add 5000 km al km del vehiculo
-          const baseKm = Number(f.kmAlRealizar) || selectedVehicle?.kmActual || 0;
-          u("proxKm", baseKm + 5000);
-        }}>+ 5,000 km</Btn>
-      </div>
-      <div style={{ fontSize: 11, color: BRAND.stone, fontStyle: "italic", marginTop: 6 }}>Esto actualiza los campos "Proximo mantenimiento" del vehiculo automaticamente.</div>
-    </div>
-
-    {/* Notas */}
-    <Textarea label="Notas" value={f.notas} onChange={e => u("notas", e.target.value)} placeholder="Observaciones, garantia, repuestos cambiados, etc." />
-
-    {/* Aviso de pendiente que se va a borrar */}
-    {f.rawLineToRemove && <div style={{ background: BRAND.greenSoft, border: `1px solid ${BRAND.green}40`, borderRadius: R.sm, padding: "8px 12px", fontSize: 12, color: BRAND.green }}>
-      ✓ Al guardar, este pendiente se va a quitar del vehiculo: <b>{f.rawLineToRemove.trim()}</b>
-    </div>}
-
-    {/* Botones */}
-    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8, paddingTop: 12, borderTop: `1px solid ${BRAND.borderSoft}` }}>
-      <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-      <Btn variant="success" onClick={async () => {
-        if (!f.vehicleId) return alert("Selecciona un vehiculo");
-        if (!f.description.trim()) return alert("Describe que se le hizo al vehiculo");
-        if (!f.fecha) return alert("Indica la fecha en que se realizo");
-        const rec = {
-          id: uid(),
-          vehicleId: f.vehicleId,
-          type: f.type,
-          fecha: f.fecha,
-          kmAlRealizar: Number(f.kmAlRealizar) || 0,
-          description: f.description.trim(),
-          workshop: f.workshop.trim(),
-          cost: Number(f.cost) || 0,
-          proxKm: Number(f.proxKm) || null,
-          proxFecha: f.proxFecha || null,
-          notas: f.notas.trim(),
-          createdAt: new Date().toISOString(),
-        };
-        const ok = await saveMaintenance(rec, f.rawLineToRemove);
-        if (ok) setModal(null);
-      }}>💾 Registrar mantenimiento</Btn>
-    </div>
-  </div>;
-}
-
-// =====================================================================
-// DESPACHOS / RUTAS — constantes + form
-// =====================================================================
-
-const TIPOS_DESPACHO = [
-  { value: "material_compra", label: "🛒 Material de compra", color: BRAND.blue, defaultOrigen: "", defaultDestino: "Proyecto" },
-  { value: "material_plantel_proyecto", label: "📦 Material: Plantel → Proyecto", color: BRAND.orange, defaultOrigen: "Plantel", defaultDestino: "Proyecto" },
-  { value: "material_proyecto_plantel", label: "📦 Material: Proyecto → Plantel", color: BRAND.purple, defaultOrigen: "Proyecto", defaultDestino: "Plantel" },
-  { value: "material_proyecto_proyecto", label: "📦 Material: Proyecto → Proyecto", color: BRAND.yellow, defaultOrigen: "", defaultDestino: "" },
-  { value: "personal", label: "👥 Personal", color: BRAND.green, defaultOrigen: "", defaultDestino: "" },
-  { value: "equipo_maquinaria", label: "🏗️ Equipo / Maquinaria", color: BRAND.red, defaultOrigen: "", defaultDestino: "" },
-  { value: "otro", label: "🚛 Otro", color: BRAND.stone, defaultOrigen: "", defaultDestino: "" },
-];
-const tipoDespCfg = (v) => TIPOS_DESPACHO.find(t => t.value === v) || TIPOS_DESPACHO[6];
-
-const ESTADOS_DESPACHO = [
-  { value: "pendiente", label: "📌 Por hacer", color: BRAND.orange, bgSoft: BRAND.orangeBg },
-  { value: "programado", label: "📅 Programado", color: BRAND.blue, bgSoft: BRAND.blueSoft },
-  { value: "en_ruta", label: "🚛 En ruta", color: BRAND.yellow, bgSoft: BRAND.yellowSoft },
-  { value: "entregado", label: "✓ Entregado", color: BRAND.green, bgSoft: BRAND.greenSoft },
-  { value: "cerrado", label: "🔒 Cerrado", color: BRAND.stone, bgSoft: BRAND.beigeDeep },
-  { value: "cancelado", label: "✗ Cancelado", color: BRAND.red, bgSoft: BRAND.redSoft },
-];
-const estadoDespCfg = (v) => ESTADOS_DESPACHO.find(s => s.value === v) || ESTADOS_DESPACHO[0];
-
-// ── FORM DE DESPACHO (nivel de modulo) ──
-function DespachoFormImpl({ despacho, vehicles, allProjects, sourcePurchase, presetProjectCode, setModal, saveDespacho }) {
-  const [f, setF] = useState(despacho || (() => {
-    const initialTipo = sourcePurchase ? "material_compra" : "material_plantel_proyecto";
-    const initialProj = sourcePurchase?.projectCode || presetProjectCode || "";
-    const projObj = allProjects.find(p => p.short === initialProj);
-    const tipoCfg = TIPOS_DESPACHO.find(t => t.value === initialTipo);
-    return {
-      source: sourcePurchase ? "compra" : "manual",
-      sourcePurchaseId: sourcePurchase?.id || null,
-      tipo: initialTipo,
-      descripcion: sourcePurchase?.description || "",
-      origen: sourcePurchase?.provider || tipoCfg?.defaultOrigen || "",
-      destino: projObj ? `Proyecto ${projObj.short}` : (tipoCfg?.defaultDestino || ""),
-      projectCode: initialProj,
-      vehicleId: "",
-      motorista: "",
-      fechaNecesaria: "",  // deadline en proyecto (cuando se necesita ahi)
-      fechaProgramada: "",
-      estado: "pendiente",
-      notas: "",
+// Foto JPEG comprimida (≤ maxPx) — como GeoInventory
+const comprimirImagen = (file, maxPx = 900) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onerror = () => reject(new Error("No se pudo leer la foto"));
+  r.onload = () => {
+    const img = new Image();
+    img.onerror = () => reject(new Error("La foto no se pudo abrir"));
+    img.onload = () => {
+      const k = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      resolve(c.toDataURL("image/jpeg", 0.78));
     };
-  }));
-  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
-  const tipoCfg = tipoDespCfg(f.tipo);
-  const isEdit = !!despacho;
-
-  // Cuando cambia el tipo, sugerir origen/destino segun preset
-  const onTipoChange = (nuevoTipo) => {
-    const cfg = TIPOS_DESPACHO.find(t => t.value === nuevoTipo);
-    setF(p => ({
-      ...p,
-      tipo: nuevoTipo,
-      // Solo pisamos si el origen/destino actuales estan vacios o coinciden con un preset
-      origen: (!p.origen || TIPOS_DESPACHO.some(t => t.defaultOrigen === p.origen)) ? (cfg?.defaultOrigen || p.origen) : p.origen,
-      destino: (!p.destino || TIPOS_DESPACHO.some(t => t.defaultDestino === p.destino)) ? (cfg?.defaultDestino || p.destino) : p.destino,
-    }));
+    img.src = r.result;
   };
+  r.readAsDataURL(file);
+});
 
-  const selectedVehicle = vehicles.find(v => v.id === f.vehicleId);
+// Cache de fotos (vehículos y colaboradores) — cp-file-<id>
+const FOTOS = new Map();
+const Foto = ({ fileId, alt = "", style: sx, fallback = null }) => {
+  const [src, setSrc] = useState(fileId ? FOTOS.get(fileId) || null : null);
+  useEffect(() => {
+    let vivo = true;
+    if (!fileId) { setSrc(null); return; }
+    if (FOTOS.has(fileId)) { setSrc(FOTOS.get(fileId)); return; }
+    (async () => { try { const f = await store.get(`cp-file-${fileId}`); if (f?.dataUrl) { FOTOS.set(fileId, f.dataUrl); if (vivo) setSrc(f.dataUrl); } } catch { /* sin foto */ } })();
+    return () => { vivo = false; };
+  }, [fileId]);
+  if (!src) return fallback;
+  return <img src={src} alt={alt} style={{ display: "block", objectFit: "cover", ...sx }} />;
+};
+const iniciales = (n) => String(n || "").split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0]).join("").toUpperCase();
+const Avatar = ({ emp, size = 44, radio = 14 }) => <div style={{ width: size, height: size, borderRadius: radio, overflow: "hidden", background: "rgba(44,42,40,.07)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: "#6E6862", font: `800 ${size * 0.34}px/1 var(--display)` }}>
+  <Foto fileId={emp?.photo?.fileId} alt={emp?.fullName} style={{ width: size, height: size }} fallback={<span>{iniciales(emp?.fullName)}</span>} />
+</div>;
 
+// Control segmentado estilo iOS
+const Segmentado = ({ opciones, valor, onChange }) => <div style={{ display: "inline-flex", alignSelf: "flex-start", flexWrap: "wrap", gap: 2, padding: 3, borderRadius: 12, background: "rgba(44,42,40,.07)" }}>
+  {opciones.map(o => { const v = typeof o === "string" ? o : o.value; const l = typeof o === "string" ? o : o.label; const on = v === valor; return <button key={v} type="button" onClick={() => onChange(v)} style={{ padding: "7px 13px", borderRadius: 9, border: "none", background: on ? "#fff" : "transparent", boxShadow: on ? "0 1px 3px rgba(44,42,40,.14)" : "none", color: on ? CHARCOAL : "#6E6862", font: `${on ? 800 : 600} 12.5px/1 var(--sans)`, cursor: "pointer", whiteSpace: "nowrap" }}>{l}</button>; })}
+</div>;
+const Seccion = ({ titulo, children }) => <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+  <div className="gt-label" style={{ color: "var(--text-3)" }}>{titulo}</div>
+  {children}
+</div>;
+const grid = (cols, gap = 12) => ({ display: "grid", gridTemplateColumns: cols, gap });
+const Pie = ({ onCancel, onSave, txt, guardando }) => <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 14, borderTop: "1px solid rgba(44,42,40,.08)", marginTop: 4 }}>
+  <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+  <Btn onClick={onSave} disabled={guardando}>{guardando ? "Guardando…" : txt}</Btn>
+</div>;
+const useCelu = () => typeof window !== "undefined" && window.innerWidth < 768;
+
+// ═════════════════════════ FORMULARIOS (nivel de módulo) ═════════════════════════
+function VehiculoForm({ vehicle, proyectos, motoristas, onCancel, onSave }) {
+  const celu = useCelu();
+  const [f, setF] = useState(() => ({
+    plate: "", type: "Pickup / Camioneta", brand: "", model: "", year: "", color: "", owner: "Geotecnica Soluciones",
+    combustible: "Diésel", vin: "", motor: "", kmActual: "", estado: "operativo", projectCode: "", motorista: "", motoristaEmpId: "",
+    mantIntervaloKm: "", proxMantenimientoKm: "", proxMantenimientoFecha: "", pendientesReparacion: "",
+    seguro: "", seguroPoliza: "", seguroVence: "", revisionVence: "", notas: "",
+    ...(vehicle || {}),
+  }));
+  const [guardando, setGuardando] = useState(false);
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const c3 = celu ? "1fr 1fr" : "1fr 1fr 1fr";
+  const opcMot = motoristas.map(m => ({ value: m.emp.id, label: m.emp.fullName }));
+  return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+    <Seccion titulo="Identificación">
+      <Segmentado opciones={TIPOS_VEHICULO.map(t => ({ value: t, label: TIPO_CORTO[t] }))} valor={f.type} onChange={v => u("type", v)} />
+      <div style={grid(c3)}>
+        <Input label="Placa *" value={f.plate} onChange={e => u("plate", e.target.value.toUpperCase())} placeholder="HAA1234" />
+        <Input label="Marca" value={f.brand} onChange={e => u("brand", e.target.value)} placeholder="Toyota" />
+        <Input label="Modelo" value={f.model} onChange={e => u("model", e.target.value)} placeholder="Hilux" />
+        <Input label="Año" type="number" value={f.year || ""} onChange={e => u("year", e.target.value)} />
+        <Input label="Color" value={f.color} onChange={e => u("color", e.target.value)} />
+        <Select label="Propietario" options={PROPIETARIOS} value={f.owner} onChange={e => u("owner", e.target.value)} />
+        <Select label="Combustible" options={COMBUSTIBLES} value={f.combustible} onChange={e => u("combustible", e.target.value)} />
+        <Input label="VIN / chasis" value={f.vin} onChange={e => u("vin", e.target.value.toUpperCase())} />
+        <Input label="Motor" value={f.motor} onChange={e => u("motor", e.target.value.toUpperCase())} />
+      </div>
+    </Seccion>
+    <Seccion titulo="Dónde está">
+      <Segmentado opciones={ESTADOS_VEHICULO} valor={f.estado} onChange={v => u("estado", v)} />
+      <div style={grid(celu ? "1fr" : "1fr 1fr")}>
+        <Select label="Proyecto" options={proyectos.map(p => ({ value: p.short, label: p.short }))} value={f.projectCode} onChange={e => u("projectCode", e.target.value)} emptyLabel="Sin asignar" />
+        <Select label="Motorista" options={opcMot} value={f.motoristaEmpId || ""} onChange={e => { const m = motoristas.find(x => x.emp.id === e.target.value); setF(p => ({ ...p, motoristaEmpId: e.target.value, motorista: m ? m.emp.fullName : "" })); }} emptyLabel={f.motorista && !f.motoristaEmpId ? f.motorista : "Sin motorista"} />
+      </div>
+    </Seccion>
+    <Seccion titulo="Kilometraje y servicio">
+      <div style={grid(celu ? "1fr 1fr" : "1fr 1fr 1fr 1fr")}>
+        <Input label="Km actual" type="number" value={f.kmActual || ""} onChange={e => u("kmActual", e.target.value)} />
+        <Input label="Servicio cada (km)" type="number" value={f.mantIntervaloKm || ""} onChange={e => u("mantIntervaloKm", e.target.value)} placeholder="5000" />
+        <Input label="Próximo servicio (km)" type="number" value={f.proxMantenimientoKm || ""} onChange={e => u("proxMantenimientoKm", e.target.value)} />
+        <Input label="O en fecha" type="date" value={f.proxMantenimientoFecha || ""} onChange={e => u("proxMantenimientoFecha", e.target.value)} />
+      </div>
+    </Seccion>
+    <Seccion titulo="Documentos">
+      <div style={grid(celu ? "1fr 1fr" : "1fr 1fr 1fr 1fr")}>
+        <Input label="Aseguradora" value={f.seguro} onChange={e => u("seguro", e.target.value)} />
+        <Input label="Póliza" value={f.seguroPoliza} onChange={e => u("seguroPoliza", e.target.value)} />
+        <Input label="Seguro vence" type="date" value={f.seguroVence || ""} onChange={e => u("seguroVence", e.target.value)} />
+        <Input label="Revisión vence" type="date" value={f.revisionVence || ""} onChange={e => u("revisionVence", e.target.value)} />
+      </div>
+    </Seccion>
+    <Textarea label="Pendientes de reparación (uno por línea)" value={f.pendientesReparacion || ""} onChange={e => u("pendientesReparacion", e.target.value)} />
+    <Textarea label="Notas" value={f.notas || ""} onChange={e => u("notas", e.target.value)} />
+    <Pie onCancel={onCancel} guardando={guardando} txt={vehicle ? "Guardar cambios" : "Agregar vehículo"} onSave={async () => {
+      if (!String(f.plate).trim()) return alert("La placa es obligatoria.");
+      setGuardando(true);
+      const ahora = new Date().toISOString();
+      const rec = {
+        ...f, plate: String(f.plate).toUpperCase().trim(), id: f.id || uid(),
+        kmActual: Number(f.kmActual) || 0, year: Number(f.year) || null,
+        mantIntervaloKm: Number(f.mantIntervaloKm) || null,
+        proxMantenimientoKm: Number(f.proxMantenimientoKm) || null,
+        updatedAt: ahora, createdAt: f.createdAt || ahora,
+      };
+      const ok = await onSave(rec);
+      setGuardando(false);
+      if (ok) onCancel();
+    }} />
+  </div>;
+}
+
+function MantForm({ vehicle, vehicles, prefill, onCancel, onSave }) {
+  const celu = useCelu();
+  const [f, setF] = useState(() => {
+    const tipo = prefill?.tipo || "preventivo";
+    const km = vehicle?.kmActual || "";
+    return {
+      vehicleId: vehicle?.id || "", type: tipo, fecha: hoyISO(), kmAlRealizar: km,
+      description: prefill?.descripcion || "", workshop: "", cost: "",
+      proxKm: tipo === "preventivo" && vehicle ? (proximoKmSugerido(vehicle, km) || "") : "", proxFecha: "", notas: "",
+      rawLineToRemove: prefill?.rawLine || null,
+    };
+  });
+  const [guardando, setGuardando] = useState(false);
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const veh = vehicles.find(x => x.id === f.vehicleId);
+  const recalcProx = (p) => (p.type === "preventivo" && veh ? (proximoKmSugerido(veh, p.kmAlRealizar) || "") : p.proxKm);
   return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-    {/* Banner si viene de Compras */}
-    {sourcePurchase && !isEdit && <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}40`, borderRadius: R.md, padding: 12, fontSize: 12, color: BRAND.blue }}>
-      🛒 Despacho generado desde la compra: <b>{sourcePurchase.provider}</b> — {sourcePurchase.description}
-    </div>}
-
-    {/* Tipo */}
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: tipoCfg.color, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📋 Tipo de movimiento</div>
-      <Select label="Tipo *" options={TIPOS_DESPACHO} value={f.tipo} onChange={e => onTipoChange(e.target.value)} emptyLabel="—" />
+    <Segmentado opciones={TIPOS_MANT} valor={f.type} onChange={v => setF(p => { const n = { ...p, type: v }; return { ...n, proxKm: v === "preventivo" ? recalcProx(n) : p.proxKm }; })} />
+    <div style={grid(celu ? "1fr 1fr" : "2fr 1fr 1fr")}>
+      <Select label="Vehículo *" options={vehicles.map(v => ({ value: v.id, label: `${v.plate} · ${v.brand || ""} ${v.model || ""}` }))} value={f.vehicleId} onChange={e => { const v = vehicles.find(x => x.id === e.target.value); setF(p => { const n = { ...p, vehicleId: e.target.value, kmAlRealizar: v?.kmActual || p.kmAlRealizar }; return { ...n, proxKm: n.type === "preventivo" && v ? (proximoKmSugerido(v, n.kmAlRealizar) || "") : n.proxKm }; }); }} emptyLabel="Elegir" />
+      <Input label="Fecha *" type="date" value={f.fecha} onChange={e => u("fecha", e.target.value)} />
+      <Input label="Km" type="number" value={f.kmAlRealizar} onChange={e => setF(p => { const n = { ...p, kmAlRealizar: e.target.value }; return { ...n, proxKm: recalcProx(n) }; })} />
     </div>
-
-    {/* Que se mueve + proyecto */}
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.orange, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📦 Que se mueve y a qué proyecto</div>
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
-        <Textarea label="Descripcion *" value={f.descripcion} onChange={e => u("descripcion", e.target.value)} placeholder={"Ej:\n• 50 sacos de cemento\n• 4 obreros para movilizar a obra Apolo\n• Pilotadora Bauer + accesorios"} />
-        <Select label="Proyecto vinculado" options={allProjects.map(p => ({ value: p.short, label: `${p.short} — ${p.name}` }))} value={f.projectCode} onChange={e => u("projectCode", e.target.value)} emptyLabel="— Sin proyecto —" />
+    <Textarea label="Qué se le hizo *" value={f.description} onChange={e => u("description", e.target.value)} placeholder="Cambio de aceite y filtros" />
+    <div style={grid("1fr 1fr")}>
+      <Input label="Taller / mecánico" value={f.workshop} onChange={e => u("workshop", e.target.value)} />
+      <Input label="Costo (L)" type="number" step="0.01" value={f.cost} onChange={e => u("cost", e.target.value)} />
+    </div>
+    <div style={{ padding: 14, borderRadius: 16, background: "rgba(44,42,40,.04)", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="gt-label" style={{ color: "var(--text-3)" }}>Próximo servicio</div>
+      <div style={grid("1fr 1fr")}>
+        <Input label="A los (km)" hint={veh ? `cada ${nf0(intervaloKmDe(veh))} km` : ""} type="number" value={f.proxKm} onChange={e => u("proxKm", e.target.value)} />
+        <Input label="O en fecha" type="date" value={f.proxFecha} onChange={e => u("proxFecha", e.target.value)} />
       </div>
     </div>
+    <Textarea label="Notas" value={f.notas} onChange={e => u("notas", e.target.value)} />
+    {f.rawLineToRemove && <Chip c={C_VERDE} style={{ alignSelf: "flex-start", whiteSpace: "normal" }}>Se quita de pendientes: {f.rawLineToRemove.trim()}</Chip>}
+    <Pie onCancel={onCancel} guardando={guardando} txt="Registrar" onSave={async () => {
+      if (!f.vehicleId) return alert("Elegí el vehículo.");
+      if (!f.description.trim()) return alert("Escribí qué se le hizo.");
+      if (!f.fecha) return alert("Falta la fecha.");
+      setGuardando(true);
+      const ok = await onSave({
+        id: uid(), vehicleId: f.vehicleId, type: f.type, fecha: f.fecha, kmAlRealizar: Number(f.kmAlRealizar) || 0,
+        description: f.description.trim(), workshop: f.workshop.trim(), cost: Number(f.cost) || 0,
+        proxKm: Number(f.proxKm) || null, proxFecha: f.proxFecha || null, notas: f.notas.trim(), createdAt: new Date().toISOString(),
+      }, f.rawLineToRemove);
+      setGuardando(false);
+      if (ok) onCancel();
+    }} />
+  </div>;
+}
 
-    {/* Origen → Destino */}
-    <div style={{ background: tipoCfg.color + "12", border: `1px solid ${tipoCfg.color}30`, borderRadius: R.md, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: tipoCfg.color, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📍 Ruta</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 12, alignItems: "end" }}>
-        <Input label="Origen *" value={f.origen} onChange={e => u("origen", e.target.value)} placeholder="De donde sale" />
-        <div style={{ paddingBottom: 8, fontSize: 22, color: tipoCfg.color }}>→</div>
-        <Input label="Destino *" value={f.destino} onChange={e => u("destino", e.target.value)} placeholder="A donde va" />
+function CargaForm({ vehicle, vehicles, motoristas, cargas, onCancel, onSave }) {
+  const celu = useCelu();
+  const [f, setF] = useState({ vehicleId: vehicle?.id || "", fecha: hoyISO(), km: "", galones: "", monto: "", lleno: true, estacion: "", motoristaEmpId: vehicle?.motoristaEmpId || "" });
+  const [guardando, setGuardando] = useState(false);
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const veh = vehicles.find(x => x.id === f.vehicleId);
+  const ultima = cargas.filter(c => c.vehicleId === f.vehicleId).sort((a, b) => (Number(b.km) || 0) - (Number(a.km) || 0))[0];
+  const kmMin = Math.max(Number(veh?.kmActual) || 0, Number(ultima?.km) || 0);
+  const precio = Number(f.galones) > 0 && Number(f.monto) > 0 ? Number(f.monto) / Number(f.galones) : null;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={grid(celu ? "1fr" : "2fr 1fr")}>
+      <Select label="Vehículo *" options={vehicles.map(v => ({ value: v.id, label: `${v.plate} · ${v.brand || ""} ${v.model || ""}` }))} value={f.vehicleId} onChange={e => { const v = vehicles.find(x => x.id === e.target.value); setF(p => ({ ...p, vehicleId: e.target.value, motoristaEmpId: v?.motoristaEmpId || p.motoristaEmpId })); }} emptyLabel="Elegir" />
+      <Input label="Fecha *" type="date" value={f.fecha} onChange={e => u("fecha", e.target.value)} />
+    </div>
+    <div style={grid(celu ? "1fr 1fr" : "1fr 1fr 1fr")}>
+      <Input label="Odómetro (km) *" hint={kmMin ? `último ${nf0(kmMin)}` : ""} type="number" value={f.km} onChange={e => u("km", e.target.value)} />
+      <Input label="Galones *" type="number" step="0.01" value={f.galones} onChange={e => u("galones", e.target.value)} />
+      <Input label="Monto (L)" type="number" step="0.01" value={f.monto} onChange={e => u("monto", e.target.value)} />
+    </div>
+    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <Segmentado opciones={[{ value: "si", label: "Tanque lleno" }, { value: "no", label: "Carga parcial" }]} valor={f.lleno ? "si" : "no"} onChange={v => u("lleno", v === "si")} />
+      {precio && <Chip>L {precio.toFixed(2)} / galón</Chip>}
+    </div>
+    <div style={grid(celu ? "1fr" : "1fr 1fr")}>
+      <Input label="Gasolinera" value={f.estacion} onChange={e => u("estacion", e.target.value)} />
+      <Select label="Motorista" options={motoristas.map(m => ({ value: m.emp.id, label: m.emp.fullName }))} value={f.motoristaEmpId} onChange={e => u("motoristaEmpId", e.target.value)} emptyLabel="—" />
+    </div>
+    {Number(f.km) > 0 && kmMin > 0 && Number(f.km) < kmMin && <Chip c={C_AMARILLO} style={{ alignSelf: "flex-start" }}>El odómetro es menor que el último registrado ({nf0(kmMin)} km)</Chip>}
+    <Pie onCancel={onCancel} guardando={guardando} txt="Guardar carga" onSave={async () => {
+      if (!f.vehicleId) return alert("Elegí el vehículo.");
+      if (!(Number(f.km) > 0)) return alert("Poné el kilometraje del odómetro.");
+      if (!(Number(f.galones) > 0)) return alert("Poné los galones.");
+      setGuardando(true);
+      const m = motoristas.find(x => x.emp.id === f.motoristaEmpId);
+      const ok = await onSave({ id: uid(), vehicleId: f.vehicleId, fecha: f.fecha, km: Number(f.km), galones: Number(f.galones), monto: Number(f.monto) || 0, lleno: !!f.lleno, estacion: f.estacion.trim(), motoristaEmpId: f.motoristaEmpId || "", motorista: m?.emp.fullName || "", createdAt: new Date().toISOString() });
+      setGuardando(false);
+      if (ok) onCancel();
+    }} />
+  </div>;
+}
+
+function DespachoForm({ despacho, vehicles, motoristas, proyectos, presetProjectCode, onCancel, onSave, onDelete }) {
+  const celu = useCelu();
+  const [f, setF] = useState(() => despacho ? { ...despacho } : (() => {
+    const tipo = "material_plantel_proyecto"; const cfg = tipoDespCfg(tipo);
+    return { source: "manual", sourcePurchaseId: null, tipo, descripcion: "", origen: cfg.defaultOrigen, destino: presetProjectCode ? `Proyecto ${presetProjectCode}` : cfg.defaultDestino, projectCode: presetProjectCode || "", vehicleId: "", motorista: "", motoristaEmpId: "", fechaNecesaria: "", fechaProgramada: "", estado: "pendiente", notas: "" };
+  })());
+  const [guardando, setGuardando] = useState(false);
+  const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const isEdit = !!despacho;
+  const vieneDeCompra = !!f.sourcePurchaseId;
+  const onTipo = (t) => { const cfg = tipoDespCfg(t); setF(p => ({ ...p, tipo: t, origen: (!p.origen || TIPOS_DESPACHO.some(x => x.defaultOrigen === p.origen)) ? (cfg.defaultOrigen || p.origen) : p.origen, destino: (!p.destino || TIPOS_DESPACHO.some(x => x.defaultDestino === p.destino)) ? (cfg.defaultDestino || p.destino) : p.destino })); };
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    {!vieneDeCompra && <Select label="Tipo" options={TIPOS_DESPACHO.filter(t => t.value !== "material_compra" && t.value !== "repuesto_maquinas").map(t => ({ value: t.value, label: t.label }))} value={f.tipo} onChange={e => onTipo(e.target.value)} emptyLabel="—" />}
+    <div style={grid(celu ? "1fr" : "2fr 1fr")}>
+      <Textarea label="Qué se mueve *" value={f.descripcion} onChange={e => u("descripcion", e.target.value)} />
+      <Select label="Proyecto" options={proyectos.map(p => ({ value: p.short, label: p.short }))} value={f.projectCode} onChange={e => u("projectCode", e.target.value)} emptyLabel="Sin proyecto" />
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "end" }}>
+      <Input label="Origen *" value={f.origen} onChange={e => u("origen", e.target.value)} />
+      <div style={{ paddingBottom: 10, color: ORANGE }}><Ico d={ICO.flecha} size={20} /></div>
+      <Input label="Destino *" value={f.destino} onChange={e => u("destino", e.target.value)} />
+    </div>
+    <div style={grid(celu ? "1fr 1fr" : "1fr 1fr")}>
+      <Input label="Se necesita en obra" type="date" value={f.fechaNecesaria || ""} onChange={e => u("fechaNecesaria", e.target.value)} />
+      <Input label="Sale el" type="date" value={f.fechaProgramada || ""} onChange={e => u("fechaProgramada", e.target.value)} />
+    </div>
+    <div style={grid(celu ? "1fr" : "1fr 1fr")}>
+      <Select label="Vehículo" options={vehicles.filter(v => v.estado !== "fuera_servicio").map(v => ({ value: v.id, label: `${v.plate} · ${v.brand || ""} ${v.model || ""}` }))} value={f.vehicleId || ""} onChange={e => { const v = vehicles.find(x => x.id === e.target.value); setF(p => ({ ...p, vehicleId: e.target.value, ...(v?.motoristaEmpId && !p.motoristaEmpId ? { motoristaEmpId: v.motoristaEmpId, motorista: v.motorista } : {}) })); }} emptyLabel="Sin asignar" />
+      <Select label="Motorista" options={motoristas.map(m => ({ value: m.emp.id, label: m.emp.fullName }))} value={f.motoristaEmpId || ""} onChange={e => { const m = motoristas.find(x => x.emp.id === e.target.value); setF(p => ({ ...p, motoristaEmpId: e.target.value, motorista: m ? m.emp.fullName : "" })); }} emptyLabel={f.motorista && !f.motoristaEmpId ? f.motorista : "Sin asignar"} />
+    </div>
+    {isEdit && <Seccion titulo="Estado"><Segmentado opciones={ESTADOS_DESPACHO} valor={f.estado} onChange={v => u("estado", v)} /></Seccion>}
+    <Textarea label="Notas" value={f.notas || ""} onChange={e => u("notas", e.target.value)} />
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, paddingTop: 14, borderTop: "1px solid rgba(44,42,40,.08)", flexWrap: "wrap" }}>
+      <div>{isEdit && onDelete && <Btn variant="danger" small onClick={onDelete}>Eliminar</Btn>}</div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        <Btn disabled={guardando} onClick={async () => {
+          if (!f.descripcion.trim() || !String(f.origen).trim() || !String(f.destino).trim()) return alert("Falta qué se mueve, el origen o el destino.");
+          setGuardando(true);
+          const ahora = new Date().toISOString();
+          const ok = await onSave({
+            ...f, id: f.id || uid(), descripcion: f.descripcion.trim(), origen: String(f.origen).trim(), destino: String(f.destino).trim(),
+            motorista: (f.motorista || "").trim(), notas: (f.notas || "").trim(), fechaNecesaria: f.fechaNecesaria || "",
+            estado: f.estado === "pendiente" && f.vehicleId && f.fechaProgramada ? "programado" : f.estado,
+            updatedAt: ahora, createdAt: f.createdAt || ahora,
+          });
+          setGuardando(false);
+          if (ok) onCancel();
+        }}>{guardando ? "Guardando…" : isEdit ? "Guardar" : "Crear"}</Btn>
       </div>
-    </div>
-
-    {/* Deadline en proyecto */}
-    <div style={{ background: BRAND.redSoft, border: `2px solid ${BRAND.red}40`, borderRadius: R.md, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.red, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📅 Deadline — cuando se necesita en proyecto</div>
-      <Input
-        label="Fecha que se necesita en proyecto"
-        type="date"
-        value={f.fechaNecesaria}
-        onChange={e => u("fechaNecesaria", e.target.value)}
-        hint="Esta fecha sirve para que logistica priorize: las mas urgentes salen primero en el kanban"
-      />
-    </div>
-
-    {/* Vehiculo + motorista + fecha programada */}
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.blue, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🚛 Asignacion (cuando se va a hacer)</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Select
-          label="Vehiculo asignado"
-          options={vehicles.filter(v => v.estado !== "fuera_servicio").map(v => ({ value: v.id, label: `${v.plate} — ${v.brand || ""} ${v.model || ""}` }))}
-          value={f.vehicleId}
-          onChange={e => u("vehicleId", e.target.value)}
-          emptyLabel="— Sin asignar —"
-        />
-        <Input label="Motorista" value={f.motorista} onChange={e => u("motorista", e.target.value)} placeholder={selectedVehicle?.motorista || "Nombre del motorista"} />
-        <Input label="Fecha programada (cuando sale el vehiculo)" type="date" value={f.fechaProgramada} onChange={e => u("fechaProgramada", e.target.value)} />
-      </div>
-    </div>
-
-    {/* Estado (solo en edit) */}
-    {isEdit && <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.charcoal, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🚦 Estado actual</div>
-      <Select label="Estado" options={ESTADOS_DESPACHO} value={f.estado} onChange={e => u("estado", e.target.value)} emptyLabel="—" />
-    </div>}
-
-    {/* Notas */}
-    <Textarea label="Notas / Instrucciones" value={f.notas} onChange={e => u("notas", e.target.value)} placeholder="Cualquier detalle: hora, contacto en sitio, cuidados, etc." />
-
-    {/* Botones */}
-    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8, paddingTop: 12, borderTop: `1px solid ${BRAND.borderSoft}` }}>
-      <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-      <Btn variant="success" onClick={async () => {
-        if (!f.tipo || !f.descripcion.trim() || !f.origen.trim() || !f.destino.trim()) {
-          return alert("Tipo, descripcion, origen y destino son obligatorios.");
-        }
-        const rec = {
-          ...f,
-          id: f.id || uid(),
-          descripcion: f.descripcion.trim(),
-          origen: f.origen.trim(),
-          destino: f.destino.trim(),
-          motorista: f.motorista.trim(),
-          notas: f.notas.trim(),
-          fechaNecesaria: f.fechaNecesaria || "",
-          // Si tiene vehiculo + fecha programada, pasar de pendiente a programado automaticamente
-          estado: f.estado === "pendiente" && f.vehicleId && f.fechaProgramada ? "programado" : f.estado,
-          updatedAt: new Date().toISOString(),
-          createdAt: f.createdAt || new Date().toISOString(),
-        };
-        const ok = await saveDespacho(rec, isEdit);
-        if (ok) setModal(null);
-      }}>{isEdit ? "💾 Guardar cambios" : "+ Crear despacho"}</Btn>
     </div>
   </div>;
 }
 
-// ── MINI-FORM PARA PROGRAMAR UN DESPACHO (date picker + vehiculo opcional) ──
-// Sirve para 2 fuentes:
-// 1) source.kind === "compra" — crea un despacho nuevo desde una compra, programado
-// 2) source.kind === "despacho" — toma un despacho pendiente y lo programa con fecha
-function ProgramDespachoForm({ source, vehicles, setModal, saveDespacho, quickCreateFromCompra }) {
-  // Default: mañana
-  const mañana = new Date();
-  mañana.setDate(mañana.getDate() + 1);
-  const defaultDate = mañana.toISOString().slice(0, 10);
-
-  const [fecha, setFecha] = useState(defaultDate);
-  const [vehicleId, setVehicleId] = useState(source?.kind === "despacho" ? (source.despacho.vehicleId || "") : "");
-  const [motorista, setMotorista] = useState(source?.kind === "despacho" ? (source.despacho.motorista || "") : "");
-
-  const titulo = source?.kind === "compra"
-    ? `Compra: ${source.purchase.provider} → ${source.purchase.projectCode || "Proyecto"}`
-    : `Despacho: ${source.despacho.descripcion?.slice(0, 60)}`;
-
-  const selectedVeh = vehicles.find(v => v.id === vehicleId);
-
+function ProgramarForm({ despacho, vehicles, motoristas, onCancel, onSave }) {
+  const [fecha, setFecha] = useState(despacho.fechaProgramada || masDias(hoyISO(), 1));
+  const [necesaria, setNecesaria] = useState(despacho.fechaNecesaria || "");
+  const [vehicleId, setVehicleId] = useState(despacho.vehicleId || "");
+  const [motId, setMotId] = useState(despacho.motoristaEmpId || "");
+  const [guardando, setGuardando] = useState(false);
   return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-    <div style={{ background: BRAND.blueSoft, border: `1px solid ${BRAND.blue}40`, borderRadius: R.md, padding: 12, fontSize: 12, color: BRAND.blue }}>
-      {titulo}
+    <div style={{ fontSize: 13.5, color: "var(--text-2)", lineHeight: 1.45 }}>{String(despacho.descripcion || "").slice(0, 160)}</div>
+    <div style={grid("1fr 1fr")}>
+      <Input label="Sale el *" type="date" value={fecha} onChange={e => setFecha(e.target.value)} />
+      <Input label="Se necesita en obra" type="date" value={necesaria} onChange={e => setNecesaria(e.target.value)} />
     </div>
-
-    <Input
-      label="Fecha programada *"
-      type="date"
-      value={fecha}
-      onChange={e => setFecha(e.target.value)}
-      hint="Default: mañana. Cambia si va para otro dia."
-    />
-
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-      <Select
-        label="Vehiculo (opcional)"
-        options={vehicles.filter(v => v.estado !== "fuera_servicio").map(v => ({ value: v.id, label: `${v.plate} — ${v.brand || ""} ${v.model || ""}` }))}
-        value={vehicleId}
-        onChange={e => setVehicleId(e.target.value)}
-        emptyLabel="— Asignar despues —"
-      />
-      <Input
-        label="Motorista (opcional)"
-        value={motorista}
-        onChange={e => setMotorista(e.target.value)}
-        placeholder={selectedVeh?.motorista || "Nombre del motorista"}
-      />
+    <div style={grid("1fr 1fr")}>
+      <Select label="Vehículo" options={vehicles.filter(v => v.estado !== "fuera_servicio").map(v => ({ value: v.id, label: `${v.plate} · ${v.brand || ""} ${v.model || ""}` }))} value={vehicleId} onChange={e => { setVehicleId(e.target.value); const v = vehicles.find(x => x.id === e.target.value); if (v?.motoristaEmpId && !motId) setMotId(v.motoristaEmpId); }} emptyLabel="Después" />
+      <Select label="Motorista" options={motoristas.map(m => ({ value: m.emp.id, label: m.emp.fullName }))} value={motId} onChange={e => setMotId(e.target.value)} emptyLabel={despacho.motorista && !motId ? despacho.motorista : "Después"} />
     </div>
+    <Pie onCancel={onCancel} guardando={guardando} txt="Programar" onSave={async () => {
+      if (!fecha) return alert("Falta la fecha.");
+      setGuardando(true);
+      const m = motoristas.find(x => x.emp.id === motId);
+      const ok = await onSave({ ...despacho, fechaProgramada: fecha, fechaNecesaria: necesaria || despacho.fechaNecesaria || "", vehicleId: vehicleId || despacho.vehicleId || "", motoristaEmpId: motId || despacho.motoristaEmpId || "", motorista: m ? m.emp.fullName : despacho.motorista || "", estado: "programado", updatedAt: new Date().toISOString() });
+      setGuardando(false);
+      if (ok) onCancel();
+    }} />
+  </div>;
+}
 
-    <div style={{ background: BRAND.parchment, borderRadius: R.sm, padding: "8px 12px", fontSize: 11, color: BRAND.stone, fontStyle: "italic" }}>
-      💡 Vehiculo y motorista son opcionales — podes asignarlos despues desde la tab "Programados".
-    </div>
-
-    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 12, borderTop: `1px solid ${BRAND.borderSoft}` }}>
-      <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-      <Btn variant="success" onClick={async () => {
-        if (!fecha) return alert("La fecha es obligatoria");
-        if (source.kind === "compra") {
-          // Crear despacho nuevo desde la compra, estado=programado
-          // con vehiculo y motorista en una sola operacion (extras)
-          await quickCreateFromCompra(source.purchase, "programado", fecha, "", { vehicleId, motorista });
-        } else {
-          // Despacho existente → actualizar con fecha + vehiculo + motorista, estado=programado
-          const d = source.despacho;
-          const updated = {
-            ...d,
-            fechaProgramada: fecha,
-            vehicleId: vehicleId || d.vehicleId,
-            motorista: motorista || d.motorista,
-            estado: "programado",
-            updatedAt: new Date().toISOString(),
-          };
-          await saveDespacho(updated, true);
-        }
-        setModal(null);
-      }}>📅 Programar</Btn>
+function MotoristaForm({ mot, emps, vehicles, extras, onCancel, onSave }) {
+  const nuevo = !mot;
+  const [q, setQ] = useState("");
+  const [empId, setEmpId] = useState(mot?.emp.id || "");
+  const d = mot?.datos || {};
+  const [lic, setLic] = useState({ licenciaNumero: d.licenciaNumero || "", licenciaTipo: d.licenciaTipo || "", licenciaVence: d.licenciaVence || "" });
+  const actual = vehicles.find(v => v.motoristaEmpId === empId);
+  const [vehId, setVehId] = useState(actual?.id || "");
+  const [guardando, setGuardando] = useState(false);
+  const ya = new Set((extras || []).filter(x => x.agregado).map(x => x.empId));
+  const candidatos = emps.filter(e => e.status !== "inactive" && !ya.has(e.id) && !/motorista|chofer|conductor/i.test(e.position || ""))
+    .filter(e => !q.trim() || `${e.fullName} ${e.position} ${e.dni}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8);
+  const emp = emps.find(e => e.id === empId);
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    {nuevo && !emp && <>
+      <Input label="Buscar en GeoTeam" value={q} onChange={e => setQ(e.target.value)} placeholder="Nombre, cargo o identidad" autoFocus />
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {candidatos.map(e => <button key={e.id} type="button" onClick={() => setEmpId(e.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: 10, borderRadius: 14, border: "1px solid rgba(44,42,40,.08)", background: "#fff", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+          <Avatar emp={e} size={36} radio={11} />
+          <div style={{ minWidth: 0 }}><div style={{ font: "700 13.5px/1.2 var(--sans)", color: CHARCOAL }}>{e.fullName}</div><div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{e.position || "—"}</div></div>
+        </button>)}
+      </div>
+    </>}
+    {emp && <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <Avatar emp={emp} size={52} radio={16} />
+      <div style={{ flex: 1 }}><div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>{emp.fullName}</div><div style={{ fontSize: 12, color: "var(--text-3)" }}>{emp.position} · {emp.phone || "sin teléfono"}</div></div>
+      {nuevo && <Btn small variant="ghost" onClick={() => setEmpId("")}>Cambiar</Btn>}
+    </div>}
+    {emp && <>
+      <Seccion titulo="Licencia">
+        <div style={grid("1fr 1fr 1fr")}>
+          <Input label="Número" value={lic.licenciaNumero} onChange={e => setLic(p => ({ ...p, licenciaNumero: e.target.value }))} />
+          <Select label="Tipo" options={LICENCIAS} value={lic.licenciaTipo} onChange={e => setLic(p => ({ ...p, licenciaTipo: e.target.value }))} />
+          <Input label="Vence" type="date" value={lic.licenciaVence} onChange={e => setLic(p => ({ ...p, licenciaVence: e.target.value }))} />
+        </div>
+      </Seccion>
+      <Select label="Vehículo asignado" options={vehicles.map(v => ({ value: v.id, label: `${v.plate} · ${v.brand || ""} ${v.model || ""}` }))} value={vehId} onChange={e => setVehId(e.target.value)} emptyLabel="Ninguno" />
+    </>}
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, paddingTop: 14, borderTop: "1px solid rgba(44,42,40,.08)", flexWrap: "wrap" }}>
+      <div>{!nuevo && <Btn small variant="danger" onClick={async () => { if (!confirm(`¿Quitar a ${emp.fullName} de la lista de motoristas? (No se toca su ficha de GeoTeam.)`)) return; setGuardando(true); const ok = await onSave({ empId, quitar: true, porCargo: mot.porCargo }); setGuardando(false); if (ok) onCancel(); }}>Quitar de motoristas</Btn>}</div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn variant="ghost" onClick={onCancel}>Cancelar</Btn>
+        <Btn disabled={!emp || guardando} onClick={async () => { setGuardando(true); const ok = await onSave({ empId, ...lic, vehId, vehAntes: actual?.id || "", agregado: nuevo ? true : undefined }); setGuardando(false); if (ok) onCancel(); }}>{guardando ? "Guardando…" : nuevo ? "Agregar" : "Guardar"}</Btn>
+      </div>
     </div>
   </div>;
 }
 
-// =====================================================================
-// MODULO PRINCIPAL
-// =====================================================================
+// ═════════════════════════════ MÓDULO ═════════════════════════════
 export default function LogisticsModule({ userRole, userName, onBack, onLogout }) {
   const isAdmin = userRole === "admin";
-  const isLogistica = userRole === "logistica";
-  const isRecepcion = userRole === "recepcion";
-  const canEdit = isAdmin || isLogistica || isRecepcion;
-
+  const canEdit = isAdmin || userRole === "logistica" || userRole === "recepcion";
   const isMobile = useIsMobile();
-  const [filtrosMovil, setFiltrosMovil] = useState(false);
-  const [vehicles, setVehicles] = useState([]);
-  const [maintenances, setMaintenances] = useState([]);
-  // ── GUARDIA ANTI-PISADA DEL AUTO-REFRESH (20-ago-2026) ──────────────────
-  // El bug de "se confirma pero la tarjeta sigue ahí / se va a la segunda":
-  // los diálogos nativos (confirm/prompt/alert) le quitan el foco a la
-  // ventana; al cerrarse se dispara el evento `focus`, que corre el
-  // auto-refresh EN PARALELO con el guardado. Ese refresh lee la nube de
-  // ANTES del save y pisa el estado local con la foto vieja — el dato sí se
-  // guardó, pero la pantalla mostraba lo anterior. Regla: toda mutación
-  // local estampa `lastLocalMutAtRef`; el refresh se salta si hubo una
-  // mutación hace menos de 8 s (para cuando el save termina, ya pasó).
+  const hoy = hoyISO();
+
+  // ── Guardia anti-pisada del auto-refresh (20-ago-2026): los diálogos
+  // nativos disparan `focus` y el refresh leía la nube de ANTES del guardado.
   const lastLocalMutAtRef = useRef(0);
   const [despachos, _setDespachosRaw] = useState([]);
   const setDespachos = (v) => { lastLocalMutAtRef.current = Date.now(); _setDespachosRaw(v); };
-  const [purchases, setPurchases] = useState([]); // shared con Compras
-  const [visorFicha, setVisorFicha] = useState(null); // ficha firmada en el visor de la app (10-sep-2026)
-  // Compras de GeoMachinery (mq-purchases): los despachos source "maquinas"
-  // enlazan acá — sin esto el botón de subir ficha no aparecía para máquinas
-  // y el candado de "entregado sin ficha" los dejaba sin salida (19-ago-2026).
+  const [vehicles, setVehicles] = useState([]);
+  const [maintenances, setMaintenances] = useState([]);
+  const [cargas, setCargas] = useState([]);
+  const [motExtras, setMotExtras] = useState([]);
+  const [emps, setEmps] = useState([]);
+  const [purchases, setPurchases] = useState([]);
   const [mqPurchases, setMqPurchases] = useState([]);
   const [customProjects, setCustomProjects] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [modal, setModal] = useState(null);
-  const [sec, setSec] = useState("flota");
-  const [filter, setFilter] = useState({ estado: "", projectCode: "", type: "", q: "" });
-  const [mantSubSec, setMantSubSec] = useState("pendientes"); // pendientes | programados | historial
-  const [mantFilter, setMantFilter] = useState({ vehicleId: "", type: "", from: "", to: "" });
-  const [despSubSec, setDespSubSec] = useState("por_hacer"); // por_hacer | programados | historial
-  const [despFilter, setDespFilter] = useState({ projectCode: "", tipo: "", vehicleId: "", q: "" });
-  const [expandedHistKanban, setExpandedHistKanban] = useState({}); // { projectKey: true } para mostrar entregados de esa col
-  const [expandedProgKanban, setExpandedProgKanban] = useState({}); // { projectKey: true } para mostrar programados/en ruta de esa col
-  const [uploadingFichaId, setUploadingFichaId] = useState(null); // id del despacho cuya ficha se esta subiendo ahora
+  const [visorFicha, setVisorFicha] = useState(null);
+  const [uploadingFichaId, setUploadingFichaId] = useState(null);
 
-  // ── Carga inicial ──
+  const [sec, _setSec] = useState(() => { try { return sessionStorage.getItem("gt-lg-sec") || "dashboard"; } catch { return "dashboard"; } });
+  const setSec = (s) => { _setSec(s); setFichaId(null); try { sessionStorage.setItem("gt-lg-sec", s); } catch { /* */ } };
+  const [fichaId, setFichaId] = useState(null);
+  const [fichaTab, setFichaTab] = useState("mant");
+  const [flota, setFlota] = useState({ q: "", estado: "", tipo: "" });
+  const [mantSub, setMantSub] = useState("programa");
+  const [mantFil, setMantFil] = useState({ vehicleId: "", type: "", mes: "" });
+  const [despVista, setDespVista] = useState("por_hacer");
+  const [despQ, setDespQ] = useState("");
+  const [despProy, setDespProy] = useState("");
+  const [despMes, setDespMes] = useState(hoy.slice(0, 7));
+  const [despAbiertos, setDespAbiertos] = useState(() => leerLS("gt-lg-abiertos", {}));
+  const [motQ, setMotQ] = useState("");
+  const [anim, setAnim] = useState(false);
+
+  // ── Carga ──
   useEffect(() => {
     (async () => {
-      const [v, m, d, p, cps, mqp] = await Promise.all([
-        store.get("lg-vehicles"),
-        store.get("lg-maintenances"),
-        store.get("lg-despachos"),
-        store.get("cp-purchases"),
-        store.get("cp-projects"),
-        store.get("mq-purchases"),
+      const [v, m, c, mx, d, p, cps, mqp, e] = await Promise.all([
+        store.get("lg-vehicles"), store.get("lg-maintenances"), store.get("lg-combustible"), store.get("lg-motoristas"),
+        store.get("lg-despachos"), store.get("cp-purchases"), store.get("cp-projects"), store.get("mq-purchases"), store.get("hr-emps5"),
       ]);
       if (Array.isArray(v)) setVehicles(v);
       if (Array.isArray(m)) setMaintenances(m);
-      if (Array.isArray(d)) setDespachos(d);
+      if (Array.isArray(c)) setCargas(c);
+      if (Array.isArray(mx)) setMotExtras(mx);
+      if (Array.isArray(d)) _setDespachosRaw(d);
       if (Array.isArray(p)) setPurchases(p);
       if (Array.isArray(cps)) setCustomProjects(cps);
       if (Array.isArray(mqp)) setMqPurchases(mqp);
+      if (Array.isArray(e)) setEmps(e);
       setLoaded(true);
     })();
   }, []);
 
-  // Auto-refresh al volver a la pestaña — si Ana envio una orden mientras
-  // Oscar tenia la app abierta en otra tab, al volver Oscar ve el cambio sin
-  // recargar manualmente. Mucho mas barato que polling.
+  // Refresh al volver a la pestaña (Ana manda órdenes mientras Óscar la tiene abierta)
   useEffect(() => {
-    const refreshFromCloud = async () => {
-      if (Date.now() - lastLocalMutAtRef.current < 8000) { console.log("[refresh] omitido: guardado local reciente"); return; }
+    const refresh = async () => {
+      if (Date.now() - lastLocalMutAtRef.current < 8000) return;
       try {
-        const [d, p, mqp] = await Promise.all([
-          store.get("lg-despachos"),
-          store.get("cp-purchases"),
-          store.get("mq-purchases"),
-        ]);
-        if (Date.now() - lastLocalMutAtRef.current < 8000) { console.log("[refresh] descartado post-fetch: guardado en curso"); return; }
+        const [d, p, mqp] = await Promise.all([store.get("lg-despachos"), store.get("cp-purchases"), store.get("mq-purchases")]);
+        if (Date.now() - lastLocalMutAtRef.current < 8000) return;
         if (Array.isArray(d)) _setDespachosRaw(d);
         if (Array.isArray(p)) setPurchases(p);
         if (Array.isArray(mqp)) setMqPurchases(mqp);
-      } catch (e) {
-        console.warn("Auto-refresh fallo:", e?.message || e);
-      }
+      } catch (err) { console.warn("Auto-refresh falló:", err?.message || err); }
     };
-    const onFocus = () => refreshFromCloud();
-    const onVisChange = () => { if (document.visibilityState === "visible") refreshFromCloud(); };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisChange);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisChange);
-    };
+    const onVis = () => { if (document.visibilityState === "visible") refresh(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", onVis);
+    return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVis); };
   }, []);
 
-  // ── Helpers ──
-  const allProjects = customProjects.filter(p => !p.hidden && !p.deleted);
+  // Animación de los gráficos al entrar al Dashboard
+  useEffect(() => {
+    if (sec !== "dashboard" || !loaded) return;
+    setAnim(false);
+    let r2; const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setAnim(true)); });
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
+  }, [sec, loaded]);
 
-  const saveVehicle = async (rec, isEdit) => {
-    // Validar duplicado de placa (solo si es nuevo o si cambio la placa)
-    const exists = vehicles.find(x => x.plate === rec.plate && x.id !== rec.id);
-    if (exists) {
-      alert(`Ya existe un vehiculo con placa "${rec.plate}". Usa una placa distinta.`);
-      return false;
-    }
-    const next = isEdit
-      ? vehicles.map(x => x.id === rec.id ? rec : x)
-      : [...vehicles, rec];
-    setVehicles(next);
-    const ok = await store.set("lg-vehicles", next);
-    if (!ok) {
-      alert("⚠️ Vehiculo guardado en este dispositivo pero NO se sincronizo a la nube. Cuando recuperes conexion, volve a guardar.");
-    }
-    return true; // siempre cerramos el modal — quedo en local minimo
+  const allProjects = customProjects.filter(p => !p.hidden && !p.deleted).slice().sort((a, b) => String(a.short).localeCompare(String(b.short), "es", { sensitivity: "base", numeric: true }));
+  const motoristas = listaMotoristas(emps, motExtras);
+  const compraDe = (d) => d?.sourcePurchaseId ? (purchases.find(p => p.id === d.sourcePurchaseId) || mqPurchases.find(p => p.id === d.sourcePurchaseId) || null) : null;
+  const vehDe = (id) => vehicles.find(v => v.id === id);
+
+  // ── Guardado robusto de listas propias: getCloud → cambio → set → verify ──
+  const guardarLista = async (key, setter, mutator) => {
+    let nube;
+    try { nube = await store.getCloud(key); }
+    catch { alert("No hay conexión con la nube. No se guardó nada; intentá de nuevo en un momento."); return null; }
+    const next = mutator(Array.isArray(nube) ? nube : []);
+    const ok = await store.set(key, next);
+    if (!ok) { alert("No se pudo guardar en la nube. Intentá de nuevo."); return null; }
+    try {
+      const ver = await store.getCloud(key);
+      if (Array.isArray(ver)) {
+        const ids = new Set(ver.map(x => x?.id || x?.empId));
+        const faltan = next.filter(x => (x?.id || x?.empId) && !ids.has(x.id || x.empId));
+        if (faltan.length) alert("Se guardó, pero la nube no lo confirma todavía. Recargá la página y revisá.");
+        setter(ver); return ver;
+      }
+    } catch { /* el set ya confirmó */ }
+    setter(next); return next;
   };
 
-  const deleteVehicle = async (id) => {
-    const next = vehicles.filter(v => v.id !== id);
-    setVehicles(next);
-    await store.set("lg-vehicles", next);
+  const saveVehicle = async (rec) => {
+    const dup = vehicles.find(x => x.plate === rec.plate && x.id !== rec.id && rec.plate !== "-" && rec.plate !== "SIN PLACAS");
+    if (dup) { alert(`Ya existe un vehículo con placa ${rec.plate}.`); return false; }
+    const r = await guardarLista("lg-vehicles", setVehicles, (base) => base.some(x => x.id === rec.id) ? base.map(x => x.id === rec.id ? { ...x, ...rec } : x) : [...base, rec]);
+    return !!r;
   };
+  const patchVehicle = async (id, patch) => !!(await guardarLista("lg-vehicles", setVehicles, (base) => base.map(x => x.id === id ? { ...x, ...(typeof patch === "function" ? patch(x) : patch), updatedAt: new Date().toISOString() } : x)));
+  const deleteVehicle = async (id) => !!(await guardarLista("lg-vehicles", setVehicles, (base) => base.filter(x => x.id !== id)));
 
-  // Registra un mantenimiento y actualiza el vehiculo correspondiente:
-  // - Actualiza kmActual del vehiculo al maximo entre actual y kmAlRealizar.
-  // - Actualiza proxMantenimientoKm/Fecha si se programo un siguiente.
-  // - Si vino de un pendiente especifico (rawLineToRemove), lo quita del textarea.
-  const saveMaintenance = async (rec, rawLineToRemove) => {
-    const vehicle = vehicles.find(v => v.id === rec.vehicleId);
-    if (!vehicle) {
-      alert("No se encontro el vehiculo. Refresca la pagina e intenta de nuevo.");
-      return false;
+  const saveMaintenance = async (rec, rawLine) => {
+    const r = await guardarLista("lg-maintenances", setMaintenances, (base) => [...base, rec]);
+    if (!r) return false;
+    await patchVehicle(rec.vehicleId, (v) => ({
+      kmActual: Math.max(Number(v.kmActual) || 0, Number(rec.kmAlRealizar) || 0),
+      pendientesReparacion: rawLine ? quitarLinea(v.pendientesReparacion, rawLine) : v.pendientesReparacion,
+      proxMantenimientoKm: rec.proxKm != null ? rec.proxKm : v.proxMantenimientoKm,
+      proxMantenimientoFecha: rec.proxFecha || v.proxMantenimientoFecha,
+      ...(rec.type === "preventivo" ? { ultimoServicioKm: Number(rec.kmAlRealizar) || null, ultimoServicioFecha: rec.fecha } : {}),
+    }));
+    return true;
+  };
+  const deleteMaintenance = async (id) => { await guardarLista("lg-maintenances", setMaintenances, (base) => base.filter(m => m.id !== id)); };
+
+  const saveCarga = async (rec) => {
+    const r = await guardarLista("lg-combustible", setCargas, (base) => [...base, rec]);
+    if (!r) return false;
+    const v = vehDe(rec.vehicleId);
+    if (v && rec.km > (Number(v.kmActual) || 0)) await patchVehicle(v.id, (x) => ({ kmActual: Math.max(Number(x.kmActual) || 0, rec.km) }));
+    return true;
+  };
+  const deleteCarga = async (id) => { await guardarLista("lg-combustible", setCargas, (base) => base.filter(c => c.id !== id)); };
+
+  const saveMotorista = async ({ empId, quitar, porCargo, vehId, vehAntes, agregado, ...lic }) => {
+    const r = await guardarLista("lg-motoristas", setMotExtras, (base) => {
+      const prev = base.find(x => x.empId === empId) || { empId };
+      const nuevo = quitar
+        ? { ...prev, agregado: false, quitado: !!porCargo, updatedAt: new Date().toISOString() }
+        : { ...prev, ...lic, ...(agregado ? { agregado: true } : {}), quitado: false, updatedAt: new Date().toISOString(), updatedBy: userName || "" };
+      return base.some(x => x.empId === empId) ? base.map(x => x.empId === empId ? nuevo : x) : [...base, nuevo];
+    });
+    if (!r) return false;
+    if (!quitar && vehId !== undefined && vehId !== vehAntes) {
+      const emp = emps.find(e => e.id === empId);
+      await guardarLista("lg-vehicles", setVehicles, (base) => base.map(v => {
+        if (v.id === vehId) return { ...v, motoristaEmpId: empId, motorista: emp?.fullName || v.motorista, updatedAt: new Date().toISOString() };
+        if (v.id === vehAntes) return { ...v, motoristaEmpId: "", motorista: "", updatedAt: new Date().toISOString() };
+        return v;
+      }));
     }
-
-    // 1) Guardar el mantenimiento
-    const nextMaintenances = [...maintenances, rec];
-    setMaintenances(nextMaintenances);
-    await store.set("lg-maintenances", nextMaintenances);
-
-    // 2) Actualizar el vehiculo
-    const nuevoKm = Math.max(Number(vehicle.kmActual) || 0, Number(rec.kmAlRealizar) || 0);
-    let pendientesActualizados = vehicle.pendientesReparacion || "";
-    if (rawLineToRemove) {
-      pendientesActualizados = removeLine(pendientesActualizados, rawLineToRemove);
-    }
-    const vehiculoActualizado = {
-      ...vehicle,
-      kmActual: nuevoKm,
-      pendientesReparacion: pendientesActualizados,
-      // Solo sobreescribir si se programo uno nuevo
-      proxMantenimientoKm: rec.proxKm != null ? rec.proxKm : vehicle.proxMantenimientoKm,
-      proxMantenimientoFecha: rec.proxFecha || vehicle.proxMantenimientoFecha,
-      updatedAt: new Date().toISOString(),
-    };
-    const nextVehicles = vehicles.map(v => v.id === vehicle.id ? vehiculoActualizado : v);
-    setVehicles(nextVehicles);
-    await store.set("lg-vehicles", nextVehicles);
-
     return true;
   };
 
-  const deleteMaintenance = async (id) => {
-    const next = maintenances.filter(m => m.id !== id);
-    setMaintenances(next);
-    await store.set("lg-maintenances", next);
-  };
-
-  // ── Despachos ──
-  // HELPER de save robusto con merge contra cloud (evita race conditions entre
-  // Oscar/Jorge/Ana editando al mismo tiempo desde Macs distintas).
-  //
-  // mutator: funcion (cloudArr) => newArr — recibe el array MAS RECIENTE del cloud
-  // mergeado con cambios locales pendientes, y devuelve el array final a guardar.
-  //
-  // Aplica:
-  //   1) PRE-FETCH cloud
-  //   2) Detecta deleted-by-local (en previousLocal pero no en next local)
-  //   3) Merge: cloud + localOnly (sin los deleted), luego pasa al mutator
-  //   4) Save lg-despachos
-  //   5) Verifica re-fetch
-  const saveDespachosWithMerge = async (mutator, opts = {}) => {
-    const label = opts.label || "saveDespachosWithMerge";
-    const tStart = Date.now();
-    console.group(`[${label}] ${new Date().toISOString()}`);
+  const subirFotoVehiculo = async (v, file) => {
+    if (!file) return;
     try {
-      const cloudPrevio = await store.get("lg-despachos");
-      const cloudArr = Array.isArray(cloudPrevio) ? cloudPrevio : [];
-      console.log("☁️ Cloud:", cloudArr.length, "| Local previo:", despachos.length);
-
-      // Detectar lo que se borro intencionalmente respecto al state previo
-      // (para que el merge no lo resucite). Solo aplica cuando opts.deletedIds
-      // viene del caller — para deletes explicitos.
-      const deletedIds = new Set(opts.deletedIds || []);
-      // Base = cloud (autoritativo) + cualquier local-only que NO este borrado
-      const cloudIds = new Set(cloudArr.map(d => d.id));
-      const localOnly = despachos.filter(d => !cloudIds.has(d.id) && !deletedIds.has(d.id));
-      // Filtrar del cloud los IDs borrados intencionalmente
-      const cloudVigente = cloudArr.filter(d => !deletedIds.has(d.id));
-      const baseMerged = [...cloudVigente, ...localOnly];
-
-      // Aplicar mutacion del caller
-      const next = mutator(baseMerged);
-      console.log("🔀 Merged + mutado:", next.length, "despachos");
-
-      setDespachos(next);
-      const ok = await store.set("lg-despachos", next);
-      console.log("☁️ Save →", ok ? "OK" : "FAIL");
-
-      let verifiedOk = ok;
-      if (ok) {
-        try {
-          const verify = await store.get("lg-despachos");
-          const verifyArr = Array.isArray(verify) ? verify : [];
-          if (verifyArr.length !== next.length) {
-            console.warn(`⚠️ Verify length mismatch: enviado ${next.length}, cloud devolvio ${verifyArr.length}`);
-          }
-        } catch (e) {
-          console.warn("⚠️ Verify fallo:", e?.message || e);
-        }
-      }
-      console.log(`⏱ ${label} en ${Date.now() - tStart}ms`);
-      return ok && verifiedOk;
-    } finally {
-      console.groupEnd();
-    }
+      const dataUrl = await comprimirImagen(file);
+      const fileId = uid();
+      const ok = await store.set(`cp-file-${fileId}`, { name: file.name, type: "image/jpeg", size: Math.round(dataUrl.length * 0.75), dataUrl });
+      if (!ok) { alert("No se pudo subir la foto. Intentá de nuevo."); return; }
+      FOTOS.set(fileId, dataUrl);
+      await patchVehicle(v.id, { foto: { fileId, name: file.name } });
+    } catch (e) { alert(e?.message || "No se pudo subir la foto."); }
   };
 
-  const saveDespacho = async (rec, isEdit) => {
-    // Upsert por id (replace si existe, append si no) — el flag isEdit es solo informativo.
-    // El modal es OTRO camino a entregado/cerrado: mismo candado de ficha.
-    if (rec.estado === "entregado" || rec.estado === "cerrado") {
-      const antes = despachos.find(x => x.id === rec.id);
-      if ((!antes || (antes.estado !== "entregado" && antes.estado !== "cerrado")) && await fichaBloqueaEntrega(rec)) return false;
-    }
-    // El modal de edicion tambien puede dejarlo entregado/cerrado: estampar
-    // fechaEjecutada (cuenta en "Entregados hoy") igual que updateDespachoEstado.
-    const rec2 = (rec.estado === "entregado" || rec.estado === "cerrado") && !rec.fechaEjecutada
-      ? { ...rec, fechaEjecutada: hoyISO() } : rec;
-    const ok = await saveDespachosWithMerge((base) => {
-      const existe = base.find(d => d.id === rec2.id);
-      return existe ? base.map(d => d.id === rec2.id ? rec2 : d) : [...base, rec2];
-    }, { label: `saveDespacho ${isEdit ? "edit" : "new"} ${rec2.id}` });
-    if (!ok) alert("⚠️ Despacho guardado localmente pero no se sincronizo a la nube. Cuando recuperes conexion, volve a guardar.");
-    // Guardar desde el modal es OTRO camino a entregado/cerrado — sin esto la
-    // requisicion EPP de origen nunca se cerraria sola (hallazgo de review).
-    if (rec2.estado === "entregado" || rec2.estado === "cerrado") await syncEppReq(rec2.id);
+  // ── Despachos: guardado con merge contra la nube (key compartida) ──
+  const saveDespachosWithMerge = async (mutator, opts = {}) => {
+    let cloudArr;
+    try { const c = await store.getCloud("lg-despachos"); cloudArr = Array.isArray(c) ? c : []; }
+    catch { alert("No hay conexión con la nube. No se guardó nada; intentá de nuevo."); return false; }
+    const deletedIds = new Set(opts.deletedIds || []);
+    const cloudIds = new Set(cloudArr.map(d => d.id));
+    const localOnly = despachos.filter(d => !cloudIds.has(d.id) && !deletedIds.has(d.id) && d.createdAt && Date.now() - new Date(d.createdAt).getTime() < 60000);
+    const next = mutator([...cloudArr.filter(d => !deletedIds.has(d.id)), ...localOnly]);
+    setDespachos(next);
+    const ok = await store.set("lg-despachos", next);
+    if (!ok) { alert("No se pudo guardar en la nube. Intentá de nuevo."); return false; }
+    try {
+      const ver = await store.getCloud("lg-despachos");
+      if (Array.isArray(ver)) {
+        const ids = new Set(ver.map(d => d.id));
+        if (next.some(d => !ids.has(d.id))) alert("Se guardó, pero la nube no lo confirma todavía. Recargá la página y revisá.");
+      }
+    } catch { /* best effort */ }
+    return true;
+  };
+
+  // REGLA (19-ago-2026): un despacho de COMPRA no se marca entregado/cerrado
+  // sin la ficha de recibido firmada (o la compra cerrada sin ficha / en conta).
+  const fichaBloqueaEntrega = async (d) => {
+    if (!d || !d.sourcePurchaseId) return false;
+    if (d.source !== "compra" && d.source !== "maquinas") return false;
+    const key = d.source === "maquinas" ? "mq-purchases" : "cp-purchases";
+    let arr = key === "cp-purchases" ? (purchases.length ? purchases : null) : (mqPurchases.length ? mqPurchases : null);
+    if (!arr) { try { arr = await store.getCloud(key); } catch { arr = null; } }
+    if (!Array.isArray(arr)) { alert("No se pudo verificar la ficha de recibido (la nube no respondió). Reintentá en un momento."); return true; }
+    const compra = arr.find(x => x && x.id === d.sourcePurchaseId);
+    if (!compra) return false;
+    const tieneFicha = !!compra.delivery?.fichaFile?.fileId;
+    const cerradaSinFicha = compra.deliveryStatus === "cerrado";
+    const cerradaConta = !!(compra.conta?.fileId || compra.conta?.facturaFile?.fileId || compra.conta?.legacy);
+    if (tieneFicha || cerradaSinFicha || cerradaConta) return false;
+    alert(`Falta la FICHA DE RECIBIDO firmada.\n\n${compra.provider || ""} — ${(compra.description || "").slice(0, 80)}\n\nSubí primero la ficha que trajo el motorista ("Subir ficha") y después marcá la entrega. Sin ficha, la compra queda trabada en el cierre contable.`);
     return true;
   };
 
@@ -1085,33 +776,15 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     } catch { /* sin nube no hay sync */ }
   };
 
-  // REGLA (19-ago-2026, pedido de Gerson): un despacho que viene de una
-  // COMPRA no se marca "entregado" (ni "cerrado") si la ficha de recibido
-  // firmada no está subida. El motorista vuelve con la ficha — subirla es
-  // obligación de Logística; sin eso, la compra queda trabada en el cierre
-  // contable de Ana/Fernando marcada "SIN FICHA de Logística".
-  const fichaBloqueaEntrega = async (d) => {
-    if (!d || !d.sourcePurchaseId) return false;                 // manuales / EPP: no aplica
-    if (d.source !== "compra" && d.source !== "maquinas") return false;
-    const key = d.source === "maquinas" ? "mq-purchases" : "cp-purchases";
-    let arr = key === "cp-purchases"
-      ? (Array.isArray(purchases) && purchases.length ? purchases : null)
-      : (Array.isArray(mqPurchases) && mqPurchases.length ? mqPurchases : null);
-    if (!arr) { try { arr = await store.getCloud(key); } catch { arr = null; } }
-    if (!Array.isArray(arr)) {
-      alert("⚠️ No se pudo verificar la ficha de recibido (la nube no respondió). Reintentá en un momento.");
-      return true;
+  const saveDespacho = async (rec) => {
+    if (rec.estado === "entregado" || rec.estado === "cerrado") {
+      const antes = despachos.find(x => x.id === rec.id);
+      if ((!antes || (antes.estado !== "entregado" && antes.estado !== "cerrado")) && await fichaBloqueaEntrega(rec)) return false;
     }
-    const compra = arr.find(x => x && x.id === d.sourcePurchaseId);
-    if (!compra) return false;                                    // compra borrada: no trabar
-    const tieneFicha = !!compra.delivery?.fichaFile?.fileId;
-    const cerradaSinFicha = compra.deliveryStatus === "cerrado";  // servicios/renta
-    // Cerrada contablemente (con factura, con paquete, o rezagada del flujo
-    // viejo cerrada a mano): ya no tiene sentido exigir la ficha — el
-    // despacho quedaría trabado para siempre pidiendo un papel que no existe.
-    const cerradaConta = !!(compra.conta?.fileId || compra.conta?.facturaFile?.fileId || compra.conta?.legacy);
-    if (tieneFicha || cerradaSinFicha || cerradaConta) return false;
-    alert(`🚫 NO se puede marcar como entregado: falta la FICHA DE RECIBIDO firmada.\n\n${compra.provider || ""} — ${(compra.description || "").slice(0, 80)}\n\nSubí primero la ficha que trajo el motorista con el botón naranja "📎 Subir ficha firmada" de esta misma tarjeta, y después marcá la entrega. Es la regla del cierre contable: sin ficha, la compra queda trabada como "SIN FICHA de Logística".`);
+    const rec2 = (rec.estado === "entregado" || rec.estado === "cerrado") && !rec.fechaEjecutada ? { ...rec, fechaEjecutada: hoyISO() } : rec;
+    const ok = await saveDespachosWithMerge((base) => base.some(d => d.id === rec2.id) ? base.map(d => d.id === rec2.id ? rec2 : d) : [...base, rec2]);
+    if (!ok) return false;
+    if (rec2.estado === "entregado" || rec2.estado === "cerrado" || rec2.estado === "cancelado") await syncEppReq(rec2.id);
     return true;
   };
 
@@ -1121,80 +794,19 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       if (await fichaBloqueaEntrega(d)) return;
     }
     await saveDespachosWithMerge((base) => base.map(d => d.id === id ? {
-      ...d,
-      estado: nuevoEstado,
+      ...d, estado: nuevoEstado,
       fechaEjecutada: (nuevoEstado === "entregado" || nuevoEstado === "cerrado") ? (d.fechaEjecutada || hoyISO()) : d.fechaEjecutada,
       updatedAt: new Date().toISOString(),
-    } : d), { label: `updateEstado ${id}->${nuevoEstado}` });
-    // "cancelado" tambien re-evalua (fix review): si el hermano cancelado era
-    // el ultimo abierto y los demas ya estaban entregados, la req EPP cierra.
+    } : d));
     if (nuevoEstado === "entregado" || nuevoEstado === "cerrado" || nuevoEstado === "cancelado") await syncEppReq(id);
   };
 
   const deleteDespacho = async (id) => {
-    await saveDespachosWithMerge((base) => base.filter(d => d.id !== id), {
-      label: `deleteDespacho ${id}`,
-      deletedIds: [id],
-    });
-    // Si el despacho borrado era de una req EPP, re-evaluar a sus hermanos
-    // (fix review): borrar el ultimo abierto con los demas ya entregados
-    // debe cerrar la requisicion en GeoSafety igual que cancelarlo.
     const reqIdEpp = despachos.find((d) => d.id === id)?.sourceEppReqId;
+    await saveDespachosWithMerge((base) => base.filter(d => d.id !== id), { deletedIds: [id] });
     if (reqIdEpp) await syncEppReqPorReq(reqIdEpp);
   };
 
-  // Quick action: crear un despacho desde una compra con un estado especifico
-  // (ej: "entregado" para marcar como ya hecho sin pasar por el form completo)
-  // Opciones adicionales: vehicleId, motorista, fechaNecesaria (utiles al programar)
-  const quickCreateFromCompra = async (purchase, estado, fechaProg = "", fechaEjec = "", extras = {}) => {
-    const proj = allProjects.find(p => p.short === purchase.projectCode);
-    const rec = {
-      id: uid(),
-      source: "compra",
-      sourcePurchaseId: purchase.id,
-      tipo: "material_compra",
-      descripcion: purchase.description || "",
-      origen: purchase.provider || "",
-      destino: proj ? `Proyecto ${proj.short}` : (purchase.projectCode || "Proyecto"),
-      projectCode: purchase.projectCode || "",
-      vehicleId: extras.vehicleId || "",
-      motorista: extras.motorista || "",
-      fechaNecesaria: extras.fechaNecesaria || "",
-      fechaProgramada: fechaProg || "",
-      fechaEjecutada: fechaEjec || (estado === "entregado" || estado === "cerrado" ? hoyISO() : ""),
-      estado,
-      notas: extras.notas || "",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    await saveDespachosWithMerge((base) => [...base, rec], { label: `quickCreateFromCompra ${rec.id}` });
-    return rec;
-  };
-
-  // Actualizar un campo puntual de un despacho (ej: fechaNecesaria inline desde el card)
-  const updateDespachoField = async (id, field, value) => {
-    await saveDespachosWithMerge((base) => base.map(d => d.id === id ? { ...d, [field]: value, updatedAt: new Date().toISOString() } : d), {
-      label: `updateField ${id}.${field}`,
-    });
-  };
-
-  // Set fechaNecesaria en una compra (sin despacho aun) — crea un despacho hidden
-  // con estado=pendiente para que la deadline persista. La compra ya no aparece en
-  // la lista de comprasPendientes (porque ya tiene sourcePurchaseId), y el despacho
-  // aparece en su lugar como card pendiente con la fechaNecesaria visible.
-  const setFechaNecesariaCompra = async (purchase, fechaNecesaria) => {
-    if (!fechaNecesaria) return;
-    await quickCreateFromCompra(purchase, "pendiente", "", "", { fechaNecesaria });
-  };
-
-  // ── Subir Ficha Firmada (Jorge desde Logistica) ──────────────────────────
-  // Jorge sube el PDF/imagen de la ficha firmada por el residente en obra.
-  // Esto:
-  //   1) Sube el archivo a cp-file-<uuid> (mismo formato que Compras)
-  //   2) Actualiza la compra original: delivery.fichaFile + deliveryStatus = "ficha_adjunta"
-  //   3) Guarda cp-purchases para que Ana vea la ficha firmada en su sub-seccion
-  //      "Listas para cierre contable"
-  // Limite duro: 2 MB (mismo que en Compras).
   const fileKeyCompra = (fileId) => `cp-file-${fileId}`;
   const uploadFichaFirmada = async (despacho, fileObj) => {
     if (!despacho?.sourcePurchaseId) {
@@ -1376,1551 +988,611 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     }
   };
 
-  // ── Filtros ──
-  const filtered = vehicles.filter(v => {
-    if (filter.estado && v.estado !== filter.estado) return false;
-    if (filter.projectCode && v.projectCode !== filter.projectCode) return false;
-    if (filter.type && v.type !== filter.type) return false;
-    if (filter.q) {
-      const q = filter.q.toLowerCase();
-      const hay = [v.plate, v.brand, v.model, v.motorista, v.notas].filter(Boolean).join(" ").toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
-
-  // ── Stats ──
-  const stats = {
+  // ═══════════════════════════ CÁLCULOS COMUNES ═══════════════════════════
+  const alertasFlota = vehicles.map(v => ({ v, a: alertasVehiculo(v, hoy) })).filter(x => x.a.length);
+  const rendDe = (vid) => rendimientoCombustible(cargas.filter(c => c.vehicleId === vid));
+  const statsFlota = {
     total: vehicles.length,
-    operativos: vehicles.filter(v => v.estado === "operativo").length,
-    asignados: vehicles.filter(v => v.estado === "asignado").length,
-    mantenimiento: vehicles.filter(v => v.estado === "mantenimiento").length,
-    reparacion: vehicles.filter(v => v.estado === "reparacion").length,
-    fueraServicio: vehicles.filter(v => v.estado === "fuera_servicio").length,
-    pendientes: vehicles.filter(v => v.pendientesReparacion && v.pendientesReparacion.trim().length > 0).length,
+    disponibles: vehicles.filter(v => v.estado === "operativo").length,
+    proyecto: vehicles.filter(v => v.estado === "asignado").length,
+    taller: vehicles.filter(enTaller).length,
+    fuera: vehicles.filter(v => v.estado === "fuera_servicio").length,
   };
-
-  const fmtFecha = (iso) => iso ? new Date(iso + "T00:00").toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const diasParaFecha = (iso) => {
-    if (!iso) return null;
-    const d = new Date(iso); d.setHours(0, 0, 0, 0);
-    return Math.ceil((d - today) / 86400000);
+  const despAbiertos_ = despachos.filter(d => d.estado === "pendiente" || d.estado === "programado" || d.estado === "en_ruta");
+  const statsDesp = {
+    porHacer: despachos.filter(d => d.estado === "pendiente").length,
+    programados: despachos.filter(d => d.estado === "programado").length,
+    enRuta: despachos.filter(d => d.estado === "en_ruta").length,
+    atrasados: despAbiertos_.filter(d => urgenciaDespacho(d, hoy)?.nivel === "atrasado").length,
+    hoy: despachos.filter(d => (d.estado === "entregado" || d.estado === "cerrado") && d.fechaEjecutada === hoy).length,
   };
+  const sinFichaDe = (d) => { const c = compraDe(d); return !!(c && (d.source === "compra" || d.source === "maquinas") && !c.delivery?.fichaFile?.fileId && c.deliveryStatus !== "cerrado" && !(c.conta?.fileId || c.conta?.facturaFile?.fileId || c.conta?.legacy)); };
 
-  // ── NAV ──
-  const nav = [
-    { id: "flota", label: "Flota", icon: "🚛" },
-    { id: "mantenimientos", label: "Mantenimientos", icon: "🔧" },
-    { id: "rutas", label: "Rutas / Despachos", icon: "🛣️" },
-    { id: "motoristas", label: "Motoristas", icon: "👤", soon: true },
-  ];
+  // ═══════════════════════════ PIEZAS DE UI ═══════════════════════════
+  const tile = (v, l, c, onClick) => <div key={l} className={`gt-vidrio${onClick ? " gt-vidrio-hover" : ""}`} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick} style={{ padding: isMobile ? "12px 14px" : "14px 18px", cursor: onClick ? "pointer" : "default", minWidth: 0 }}>
+    <div style={{ font: `800 ${isMobile ? 22 : 26}px/1 var(--display)`, color: c || CHARCOAL, letterSpacing: "-.02em" }}>{v}</div>
+    <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 7, fontSize: 9.5 }}>{l}</div>
+  </div>;
+  const tiles = (items) => isMobile ? <TiraMovil items={items.map(([v, l, c]) => ({ v, l, c }))} /> : <div style={{ display: "grid", gridTemplateColumns: `repeat(${items.length}, minmax(0,1fr))`, gap: 12 }}>{items.map(([v, l, c, fn]) => tile(v, l, c, fn))}</div>;
+  const pills = (opts, val, set) => <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{opts.map(([k, l, n]) => { const on = k === val; return <button key={k} type="button" onClick={() => set(k)} aria-pressed={on} style={{ padding: "7px 14px", borderRadius: 999, border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.1)", background: on ? ORANGE_DARK : "rgba(255,255,255,.8)", color: on ? "#fff" : "var(--text-2)", font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap", display: "inline-flex", gap: 7, alignItems: "center" }}>{l}{n != null && <span style={{ opacity: on ? .85 : .55, fontSize: 11 }}>{n}</span>}</button>; })}</div>;
+  const buscador = (val, set, ph) => <div style={{ position: "relative", flex: "1 1 220px", minWidth: 0 }}>
+    <input value={val} onChange={e => set(e.target.value)} placeholder={ph} style={{ width: "100%", boxSizing: "border-box", height: 40, padding: "0 14px 0 36px", borderRadius: 12, border: "1px solid rgba(44,42,40,.1)", background: "rgba(255,255,255,.85)", fontSize: 14, fontFamily: "inherit", outline: "none", color: CHARCOAL }} />
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8C857D" strokeWidth="2" strokeLinecap="round" style={{ position: "absolute", left: 12, top: 12 }} aria-hidden><circle cx="11" cy="11" r="7" /><path d="M20 20l-4-4" /></svg>
+  </div>;
+  const selChico = (val, set, opts, vacio) => <select value={val} onChange={e => set(e.target.value)} style={{ height: 40, padding: "0 12px", borderRadius: 12, border: "1px solid rgba(44,42,40,.1)", background: "rgba(255,255,255,.85)", fontSize: 13.5, fontFamily: "inherit", color: CHARCOAL, maxWidth: 260 }}>
+    <option value="">{vacio}</option>{opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+  </select>;
+  const cajaTitulo = (t, extra) => <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}><div className="gt-label" style={{ color: "var(--text-3)" }}>{t}</div>{extra}</div>;
+  const vacio = (txt) => <div className="gt-vidrio" style={{ padding: "34px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>{txt}</div>;
+  const linkBtn = (txt, fn, color) => <button type="button" onClick={(e) => { e.stopPropagation(); fn(); }} style={{ background: "none", border: "none", padding: "4px 0", color: color || "var(--text-3)", font: "700 12px/1 var(--sans)", cursor: "pointer" }}>{txt}</button>;
+  const abrirFicha = (v, tab = "mant") => { _setSec("flota"); try { sessionStorage.setItem("gt-lg-sec", "flota"); } catch { /* */ } setFichaTab(tab); setFichaId(v.id); };
 
-  if (!loaded) return <PantallaCarga titulo={"GeoLogistics"} />;
-
-  // ── RENDER FLOTA ──
-  // CELULAR (3-nov-2026): cifras en una fila, buscador + hoja de filtros y
-  // una lista de vehículos (antes: 6 cajas con emojis, 4 filtros a lo ancho
-  // y una tabla de 11 columnas).
-  const renderFlotaMovil = () => {
-    const activos = (filter.estado ? 1 : 0) + (filter.projectCode ? 1 : 0) + (filter.type ? 1 : 0);
-    const selM = { width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", padding: "0 12px", fontFamily: "inherit", color: BRAND.charcoal };
-    return <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <TiraMovil items={[
-        { v: stats.total, l: "vehículos" },
-        { v: stats.operativos, l: "operativos", c: "#177243" },
-        { v: stats.asignados, l: "en proyecto" },
-        stats.mantenimiento > 0 && { v: stats.mantenimiento, l: "mantenimiento", c: "#8A5A00" },
-        stats.reparacion > 0 && { v: stats.reparacion, l: "reparación", c: "#C75F1F" },
-        stats.fueraServicio > 0 && { v: stats.fueraServicio, l: "fuera de servicio", c: "#B03024" },
-      ]} />
-      <div style={{ display: "flex", gap: 8 }}>
-        <input value={filter.q} onChange={e => setFilter(f => ({ ...f, q: e.target.value }))} placeholder="Placa, marca o motorista" style={{ flex: 1, minWidth: 0, height: 42, padding: "0 14px", border: "none", borderRadius: 12, background: "#EDECEA", fontFamily: "inherit", color: BRAND.charcoal, outline: "none" }} />
-        <button type="button" onClick={() => setFiltrosMovil(true)} style={{ flexShrink: 0, height: 42, padding: "0 14px", borderRadius: 12, border: "none", background: activos ? "rgba(232,118,45,.14)" : "#EDECEA", color: activos ? "#A94E16" : BRAND.charcoal, font: "700 14px/1 var(--sans, inherit)", cursor: "pointer" }}>Filtros{activos ? ` · ${activos}` : ""}</button>
-      </div>
-      <HojaMovil abierta={filtrosMovil} onClose={() => setFiltrosMovil(false)} titulo="Filtros">
-        <div className="gm-encab" style={{ marginTop: 4 }}>Estado</div>
-        <select value={filter.estado} onChange={e => setFilter(f => ({ ...f, estado: e.target.value }))} style={selM}><option value="">Todos</option>{ESTADOS_VEHICULO.map(o => <option key={o.value || o} value={o.value || o}>{o.label || o}</option>)}</select>
-        <div className="gm-encab">Proyecto</div>
-        <select value={filter.projectCode} onChange={e => setFilter(f => ({ ...f, projectCode: e.target.value }))} style={selM}><option value="">Todos</option>{allProjects.map(p => <option key={p.short} value={p.short}>{p.short}</option>)}</select>
-        <div className="gm-encab">Tipo</div>
-        <select value={filter.type} onChange={e => setFilter(f => ({ ...f, type: e.target.value }))} style={selM}><option value="">Todos</option>{TIPOS_VEHICULO.map(o => <option key={o.value || o} value={o.value || o}>{o.label || o}</option>)}</select>
-        {activos > 0 && <button type="button" onClick={() => setFilter(f => ({ ...f, estado: "", projectCode: "", type: "" }))} style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", color: "#B03024", font: "700 15px/1 var(--sans, inherit)" }}>Limpiar filtros</button>}
-      </HojaMovil>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 13, color: "#8A847D" }}>{filtered.length} vehículos{stats.pendientes > 0 ? ` · ${stats.pendientes} con reparaciones pendientes` : ""}</span>
-        {canEdit && <button type="button" onClick={() => setModal({ t: "new" })} style={{ border: "none", background: "transparent", color: "#C75F1F", font: "700 14.5px/1 var(--sans, inherit)", cursor: "pointer" }}>+ Nuevo</button>}
-      </div>
-      {filtered.length === 0 ? <div className="gm-grupo" style={{ padding: 18, fontSize: 13.5, color: "#8A847D", textAlign: "center" }}>{vehicles.length === 0 ? "Aún no hay vehículos registrados." : "No hay vehículos con esos filtros."}</div>
-        : <div className="gm-grupo">{filtered.slice().sort((a, b) => (a.plate || "").localeCompare(b.plate || "")).map(v => {
-          const ec = estadoCfg(v.estado);
-          const tienePend = v.pendientesReparacion && v.pendientesReparacion.trim().length > 0;
-          return <button key={v.id} type="button" className="gm-item" onClick={() => setModal({ t: "detail", d: v })} style={{ alignItems: "flex-start", paddingTop: 11, paddingBottom: 11 }}>
-            <span style={{ width: 34, height: 34, borderRadius: 10, background: ec.bgSoft || "rgba(44,42,40,.06)", color: ec.color, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, font: "800 10px/1 var(--sans, inherit)" }}>{String(v.type || "").slice(0, 3).toUpperCase()}</span>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}><span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 14.5, color: BRAND.charcoal }}>{v.plate}</span><span style={{ fontSize: 13, color: "#5C5853", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{v.brand} {v.model}</span></span>
-              <span style={{ display: "block", fontSize: 12.5, color: "#8A847D", marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{[v.projectCode, v.motorista].filter(Boolean).join(" · ") || "Sin asignar"}{tienePend ? " · reparación pendiente" : ""}</span>
-            </span>
-            <span style={{ flexShrink: 0, padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 800, color: ec.color, background: ec.bgSoft || "rgba(44,42,40,.06)", whiteSpace: "nowrap" }}>{String(ec.label || "").replace(/^[^A-Za-zÁÉÍÓÚáéíóúÑñ]+/, "")}</span>
-          </button>;
-        })}</div>}
+  // Barras verticales simples (animadas)
+  const barras = (datos, { alto = 150, fmt = (x) => x, apiladas = null } = {}) => {
+    const max = Math.max(1, ...datos.map(d => apiladas ? apiladas.reduce((s, k) => s + (d[k] || 0), 0) : d.v));
+    return <div style={{ display: "flex", alignItems: "flex-end", gap: 10, height: alto + 34 }}>
+      {datos.map((d, i) => {
+        const total = apiladas ? apiladas.reduce((s, k) => s + (d[k] || 0), 0) : d.v;
+        return <div key={d.k} title={`${d.l}: ${fmt(total)}`} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+          <div style={{ font: "700 10.5px/1 var(--sans)", color: total ? CHARCOAL : "var(--text-faint)", whiteSpace: "nowrap" }}>{total ? fmt(total) : ""}</div>
+          <div style={{ width: "100%", maxWidth: 38, height: alto, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+            {(apiladas || ["v"]).slice().reverse().map((k, j) => { const val = apiladas ? d[k] || 0 : d.v; const col = apiladas ? (k === apiladas[0] ? CHARCOAL : ORANGE) : (i === datos.length - 1 ? ORANGE : CHARCOAL); return <div key={k} style={{ height: anim ? `${val / max * 100}%` : "0%", background: col, borderRadius: j === 0 ? "7px 7px 0 0" : 0, transition: `height 1.2s cubic-bezier(.22,1,.36,1) ${i * 70}ms` }} />; })}
+          </div>
+          <div style={{ fontSize: 10.5, color: "var(--text-3)", whiteSpace: "nowrap" }}>{d.l}</div>
+        </div>;
+      })}
     </div>;
   };
-  const renderFlota = () => isMobile ? renderFlotaMovil() : <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-    {/* Stats */}
-    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-      <StatCard icon="🚛" label="Total" value={stats.total} color={BRAND.charcoal} />
-      <StatCard icon="✓" label="Operativos" value={stats.operativos} color={BRAND.green} />
-      <StatCard icon="🚧" label="En proyecto" value={stats.asignados} color={BRAND.blue} />
-      <StatCard icon="🔧" label="Mantenimiento" value={stats.mantenimiento} color={BRAND.yellow} />
-      <StatCard icon="🔨" label="Reparacion" value={stats.reparacion} color={BRAND.orange} />
-      <StatCard icon="✗" label="Fuera servicio" value={stats.fueraServicio} color={BRAND.red} />
-    </div>
-
-    {/* Alertas */}
-    {stats.pendientes > 0 && <div style={{ background: BRAND.orangeBg, border: `1px solid ${BRAND.orange}50`, borderLeft: `4px solid ${BRAND.orange}`, borderRadius: R.md, padding: 14, fontSize: 13, color: BRAND.orangeDark }}>
-      🔨 Hay <b>{stats.pendientes} vehiculo(s)</b> con pendientes de reparacion registrados. Click en cualquier fila para ver el detalle.
-    </div>}
-
-    {/* Filtros + accion */}
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", flexWrap: "wrap", gap: 12 }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap" }}>
-        <Input label="Buscar" value={filter.q} onChange={e => setFilter(s => ({ ...s, q: e.target.value }))} placeholder="placa, marca, motorista..." />
-        <Select label="Estado" options={ESTADOS_VEHICULO} value={filter.estado} onChange={e => setFilter(s => ({ ...s, estado: e.target.value }))} emptyLabel="Todos" />
-        <Select label="Proyecto" options={allProjects.map(p => ({ value: p.short, label: p.short }))} value={filter.projectCode} onChange={e => setFilter(s => ({ ...s, projectCode: e.target.value }))} emptyLabel="Todos" />
-        <Select label="Tipo" options={TIPOS_VEHICULO} value={filter.type} onChange={e => setFilter(s => ({ ...s, type: e.target.value }))} emptyLabel="Todos" />
-        {(filter.estado || filter.projectCode || filter.type || filter.q) && <Btn small variant="ghost" onClick={() => setFilter({ estado: "", projectCode: "", type: "", q: "" })}>Limpiar</Btn>}
+  const dona = (segs, { size = 150, centro, sub } = {}) => {
+    const total = segs.reduce((s, x) => s + x.v, 0) || 1;
+    const r = 52, C = 2 * Math.PI * r; let acc = 0;
+    return <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <svg viewBox="0 0 140 140" width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx="70" cy="70" r={r} fill="none" stroke="rgba(44,42,40,.06)" strokeWidth="16" />
+        {segs.filter(s => s.v > 0).map((s) => { const len = s.v / total * C; const el = <circle key={s.l} cx="70" cy="70" r={r} fill="none" stroke={s.color} strokeWidth="16" style={{ strokeDasharray: `${anim ? Math.max(0, len - 2) : 0} ${C}`, strokeDashoffset: -acc, transition: "stroke-dasharray 1.4s cubic-bezier(.22,1,.36,1)" }}><title>{`${s.l}: ${s.v}`}</title></circle>; acc += len; return el; })}
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ font: "800 26px/1 var(--display)", color: CHARCOAL }}>{centro}</div>
+        {sub && <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 4 }}>{sub}</div>}
       </div>
-      {canEdit && <Btn variant="primary" onClick={() => setModal({ t: "new" })}>+ Nuevo vehiculo</Btn>}
-    </div>
+    </div>;
+  };
 
-    {/* Tabla */}
-    {filtered.length === 0
-      ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
-          {vehicles.length === 0
-            ? "Aun no hay vehiculos registrados. Click en + Nuevo vehiculo para empezar a cargar la flota."
-            : "No hay vehiculos que cumplan los filtros."}
-        </div>
-      : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ background: BRAND.beigeDeep, borderBottom: `1px solid ${BRAND.border}` }}>
-                <th style={th}>Placa</th>
-                <th style={th}>Tipo</th>
-                <th style={th}>Marca / Modelo</th>
-                <th style={th}>Km</th>
-                <th style={th}>Estado</th>
-                <th style={th}>Proyecto</th>
-                <th style={th}>Motorista</th>
-                <th style={th}>Prox. Mant.</th>
-                <th style={th}>Seguro</th>
-                <th style={th}>Pendientes</th>
-                {canEdit && <th style={th}>Acciones</th>}
-              </tr></thead>
-              <tbody>
-                {filtered.sort((a, b) => (a.plate || "").localeCompare(b.plate || "")).map(v => {
-                  const ec = estadoCfg(v.estado);
-                  const proj = allProjects.find(p => p.short === v.projectCode);
-                  const dSeg = diasParaFecha(v.seguroVence);
-                  const kmFalta = v.proxMantenimientoKm && v.kmActual ? (v.proxMantenimientoKm - v.kmActual) : null;
-                  const tienePend = v.pendientesReparacion && v.pendientesReparacion.trim().length > 0;
-                  return <tr key={v.id} onClick={() => setModal({ t: "detail", d: v })} style={{ borderBottom: `1px solid ${BRAND.borderSoft}`, cursor: "pointer" }}>
-                    <td style={{ ...td, fontFamily: FONT.mono, fontWeight: 800, color: BRAND.charcoal }}>{v.plate}</td>
-                    <td style={{ ...td, fontSize: 11, color: BRAND.graphite }}>{v.type}</td>
-                    <td style={td}>{v.brand} {v.model} {v.year && <span style={{ color: BRAND.stone }}>· {v.year}</span>}</td>
-                    <td style={{ ...td, textAlign: "right", fontFamily: FONT.mono }}>{(v.kmActual || 0).toLocaleString("es-HN")}</td>
-                    <td style={td}><Badge color={ec.color} bg={ec.bgSoft}>{ec.label}</Badge></td>
-                    <td style={td}>{proj ? <Badge color={BRAND.blue}>{proj.short}</Badge> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
-                    <td style={td}>{v.motorista || <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
-                    <td style={td}>
-                      {v.proxMantenimientoKm && kmFalta !== null && <div style={{ fontSize: 11, color: kmFalta < 500 ? BRAND.red : kmFalta < 2000 ? BRAND.yellow : BRAND.green, fontWeight: 600 }}>
-                        {kmFalta < 0 ? `Atrasado ${Math.abs(kmFalta).toLocaleString("es-HN")} km` : `${kmFalta.toLocaleString("es-HN")} km`}
-                      </div>}
-                      {v.proxMantenimientoFecha && <div style={{ fontSize: 10, color: BRAND.stone }}>{fmtFecha(v.proxMantenimientoFecha)}</div>}
-                      {!v.proxMantenimientoKm && !v.proxMantenimientoFecha && <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}
-                    </td>
-                    <td style={td}>
-                      {v.seguroVence ? <span style={{ color: dSeg < 0 ? BRAND.red : dSeg < 30 ? BRAND.yellow : BRAND.green, fontSize: 11, fontWeight: 600 }}>
-                        {dSeg < 0 ? `Vencido ${Math.abs(dSeg)}d` : `${dSeg}d`}
-                      </span> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}
-                    </td>
-                    <td style={td}>{tienePend ? <Badge color={BRAND.orange}>🔨 SI</Badge> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
-                    {canEdit && <td style={{ ...td, textAlign: "right" }} onClick={e => e.stopPropagation()}>
-                      <Btn small variant="ghost" onClick={() => setModal({ t: "edit", d: v })}>✏️</Btn>
-                    </td>}
-                  </tr>;
-                })}
-              </tbody>
-            </table>
+  // ═══════════════════════════ DASHBOARD ═══════════════════════════
+  const renderDashboard = () => {
+    const meses = ultimosMeses(hoy, 6);
+    const ent = entregasPorMes(despachos);
+    const comb = gastoCombustiblePorMes(cargas);
+    const mant = {}; maintenances.forEach(m => { const k = String(m.fecha || "").slice(0, 7); mant[k] = (mant[k] || 0) + (Number(m.cost) || 0); });
+    const urgentes = despAbiertos_.map(d => ({ d, u: urgenciaDespacho(d, hoy) })).sort((a, b) => (a.u ? a.u.dias : 999) - (b.u ? b.u.dias : 999)).slice(0, 5);
+    const rend = vehicles.map(v => ({ v, r: rendDe(v.id) })).filter(x => x.r.kmPorGal).sort((a, b) => b.r.kmPorGal - a.r.kmPorGal);
+    const segEstados = ESTADOS_VEHICULO.map(e => ({ l: e.label, v: vehicles.filter(v => (v.estado || "operativo") === e.value).length, color: { operativo: "#3E8E5A", asignado: CHARCOAL, mantenimiento: "#C99A06", reparacion: ORANGE, fuera_servicio: "#C0392B" }[e.value] }));
+    const caja = (children, extra = {}) => <div className="gt-vidrio" style={{ padding: isMobile ? 16 : 20, minWidth: 0, display: "flex", flexDirection: "column", ...extra }}>{children}</div>;
+    const nivelC = { vencido: C_ROJO, pronto: C_NARANJA, pend: C_GRIS };
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {tiles([
+        [statsFlota.total, "vehículos"],
+        [statsFlota.disponibles, "disponibles", "#177243", () => { setSec("flota"); setFlota(f => ({ ...f, estado: "operativo" })); }],
+        [statsFlota.proyecto, "en proyecto", undefined, () => { setSec("flota"); setFlota(f => ({ ...f, estado: "asignado" })); }],
+        [statsFlota.taller + statsFlota.fuera, "en taller o fuera", statsFlota.taller + statsFlota.fuera ? ORANGE_DARK : undefined, () => { setSec("flota"); setFlota(f => ({ ...f, estado: "taller" })); }],
+        [statsDesp.porHacer + statsDesp.programados + statsDesp.enRuta, "despachos abiertos", undefined, () => setSec("rutas")],
+      ])}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.2fr) minmax(0,1fr) minmax(0,.9fr)", gap: 14 }}>
+        {caja(<>
+          {cajaTitulo("Despachos", <button type="button" onClick={() => setSec("rutas")} style={{ background: "none", border: "none", color: "var(--naranja-texto-chico)", font: "700 12px/1 var(--sans)", cursor: "pointer" }}>Ver todos →</button>)}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8, marginBottom: 14 }}>
+            {[[statsDesp.porHacer, "por hacer", ORANGE_DARK], [statsDesp.programados + statsDesp.enRuta, "en camino"], [statsDesp.atrasados, "atrasados", statsDesp.atrasados ? "#B03024" : undefined], [statsDesp.hoy, "hoy", "#177243"]].map(([v, l, c]) => <div key={l} style={{ padding: "10px 8px", borderRadius: 14, background: "rgba(44,42,40,.04)", textAlign: "center" }}><div style={{ font: "800 21px/1 var(--display)", color: c || CHARCOAL }}>{v}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 5 }}>{l}</div></div>)}
           </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {urgentes.length === 0 && <div style={{ fontSize: 13, color: "var(--text-3)" }}>Nada pendiente.</div>}
+            {urgentes.map(({ d, u }) => <button key={d.id} type="button" onClick={() => { setSec("rutas"); setDespVista(vistaDeDespacho(d)); setDespAbiertos(a => { const n = { ...a, [d.projectCode || "__sin__"]: true }; escribirLS("gt-lg-abiertos", n); return n; }); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 12, border: "none", background: "rgba(255,255,255,.6)", cursor: "pointer", textAlign: "left", fontFamily: "inherit", minWidth: 0 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: u?.nivel === "atrasado" ? "#C0392B" : u && (u.nivel === "hoy" || u.nivel === "manana") ? ORANGE : "#B8B1A8", flexShrink: 0 }} />
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.descripcion}</span>
+              <span style={{ fontSize: 11, color: "var(--text-3)", flexShrink: 0 }}>{d.projectCode}</span>
+              {u && <Chip c={URG_C[u.nivel]} style={{ fontSize: 10.5, padding: "3px 8px" }}>{u.txt}</Chip>}
+            </button>)}
+          </div>
+        </>)}
+        {caja(<>
+          {cajaTitulo("Alertas de la flota", <span style={{ font: "800 13px/1 var(--sans)", color: alertasFlota.length ? ORANGE_DARK : "var(--text-3)" }}>{alertasFlota.length}</span>)}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 290, overflowY: "auto", scrollbarWidth: "thin" }}>
+            {alertasFlota.length === 0 && <div style={{ fontSize: 13, color: "var(--text-3)" }}>Todo en orden.</div>}
+            {alertasFlota.sort((a, b) => (a.a.some(x => x.nivel === "vencido") ? 0 : 1) - (b.a.some(x => x.nivel === "vencido") ? 0 : 1)).map(({ v, a }) => <button key={v.id} type="button" onClick={() => abrirFicha(v, a[0].tipo === "pend" ? "pend" : "mant")} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 12, border: "none", background: "rgba(255,255,255,.6)", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+              <span style={{ font: "800 11.5px/1 var(--mono)", color: CHARCOAL, minWidth: 74 }}>{v.plate}</span>
+              <span style={{ display: "flex", gap: 5, flexWrap: "wrap", flex: 1 }}>{a.map((x, i) => <Chip key={i} c={nivelC[x.nivel]} style={{ fontSize: 10.5, padding: "3px 8px" }}>{x.txt}</Chip>)}</span>
+            </button>)}
+          </div>
+        </>)}
+        {caja(<>
+          {cajaTitulo("La flota hoy")}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+            {dona(segEstados, { centro: vehicles.length, sub: "vehículos" })}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+              {segEstados.filter(s => s.v).map(s => <div key={s.l} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: s.color }} /><span style={{ flex: 1, color: "var(--text-2)" }}>{s.l}</span><b style={{ color: CHARCOAL }}>{s.v}</b></div>)}
+            </div>
+          </div>
+        </>)}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(3, minmax(0,1fr))", gap: 14 }}>
+        {caja(<>{cajaTitulo("Entregas por mes")}{barras(meses.map(k => ({ k, l: mesLabel(k), v: ent[k] || 0 })))}</>)}
+        {caja(<>{cajaTitulo("Gasto de la flota", <span style={{ display: "flex", gap: 10, fontSize: 10.5, color: "var(--text-3)" }}><span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: CHARCOAL, marginRight: 4 }} />taller</span><span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: ORANGE, marginRight: 4 }} />combustible</span></span>)}{meses.some(k => (mant[k] || 0) + (comb[k] || 0) > 0) ? barras(meses.map(k => ({ k, l: mesLabel(k), mant: mant[k] || 0, comb: comb[k] || 0 })), { apiladas: ["mant", "comb"], fmt: fmtCorto }) : <div style={{ fontSize: 13, color: "var(--text-3)", lineHeight: 1.5 }}>Sale con el costo de los mantenimientos y las cargas de combustible.</div>}</>)}
+        {caja(<>
+          {cajaTitulo("Rendimiento · km por galón")}
+          {rend.length === 0 ? <div style={{ fontSize: 13, color: "var(--text-3)", lineHeight: 1.5 }}>Sale solo cuando un vehículo tiene dos cargas con el tanque lleno.<div style={{ marginTop: 12 }}>{canEdit && <Btn small onClick={() => setModal({ t: "carga" })}>Cargar combustible</Btn>}</div></div>
+            : <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>{rend.slice(0, 7).map(({ v, r }) => { const max = rend[0].r.kmPorGal; return <button key={v.id} type="button" onClick={() => abrirFicha(v, "comb")} style={{ display: "grid", gridTemplateColumns: "74px minmax(0,1fr) 44px", gap: 8, alignItems: "center", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit" }}>
+              <span style={{ font: "800 11.5px/1 var(--mono)", color: CHARCOAL, textAlign: "left" }}>{v.plate}</span>
+              <span style={{ height: 8, borderRadius: 99, background: "rgba(44,42,40,.06)", overflow: "hidden" }}><span style={{ display: "block", height: "100%", width: anim ? `${r.kmPorGal / max * 100}%` : "0%", background: ORANGE, borderRadius: 99, transition: "width 1.2s cubic-bezier(.22,1,.36,1)" }} /></span>
+              <span style={{ font: "800 12.5px/1 var(--sans)", color: CHARCOAL, textAlign: "right" }}>{nf1(r.kmPorGal)}</span>
+            </button>; })}</div>}
+        </>)}
+      </div>
+    </div>;
+  };
+
+  // ═══════════════════════════ FLOTA ═══════════════════════════
+  const carnet = (v) => {
+    const e = estadoCfg(v.estado);
+    const al = alertasVehiculo(v, hoy);
+    const mot = v.motoristaEmpId ? emps.find(x => x.id === v.motoristaEmpId) : null;
+    return <div key={v.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => abrirFicha(v)} onKeyDown={ev => { if (ev.key === "Enter") abrirFicha(v); }} style={{ padding: 0, overflow: "hidden", cursor: "pointer", display: "flex", flexDirection: "column" }}>
+      <div style={{ position: "relative", height: 58, background: "linear-gradient(135deg,#2C2A28 0%,#3A3633 100%)", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        {CURVAS_FRANJA}
+        <span style={{ position: "relative", font: "700 9px/1 var(--mono)", letterSpacing: ".16em", color: "rgba(255,255,255,.85)", textTransform: "uppercase" }}>{String(v.owner || "").replace(" Soluciones", "").replace(" Honduras", "")}</span>
+        <span style={{ position: "relative", font: "700 10px/1 var(--sans)", padding: "4px 9px", borderRadius: 999, background: "rgba(255,255,255,.14)", color: "#fff" }}>{TIPO_CORTO[v.type] || v.type}</span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "center", marginTop: -30, position: "relative" }}>
+        <div style={{ width: isMobile ? 122 : 150, height: isMobile ? 72 : 88, borderRadius: 18, background: "#fff", boxShadow: "0 6px 18px rgba(44,42,40,.16)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", border: "3px solid #fff" }}>
+          <Foto fileId={v.foto?.fileId} alt={v.plate} style={{ width: isMobile ? 122 : 150, height: isMobile ? 72 : 88 }} fallback={<Silueta tipo={v.type} size={isMobile ? 76 : 92} />} />
+        </div>
+      </div>
+      <div style={{ padding: "12px 14px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 7, flex: 1 }}>
+        <Placa plate={v.plate} />
+        <div style={{ font: "800 14.5px/1.2 var(--display)", color: CHARCOAL, textAlign: "center" }}>{[v.brand, v.model].filter(Boolean).join(" ") || "—"}{v.year ? <span style={{ fontWeight: 600, color: "var(--text-3)" }}> · {v.year}</span> : null}</div>
+        <div style={{ fontSize: 11.5, color: "var(--text-3)", textAlign: "center", minHeight: 14 }}>{mot ? mot.fullName.split(" ").slice(0, 2).join(" ") : v.motorista || (v.projectCode || "")}</div>
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", paddingTop: 9, borderTop: "1px solid rgba(44,42,40,.07)", gap: 8 }}>
+          <span style={{ font: "700 11px/1 var(--mono)", color: "var(--text-2)" }}>{v.kmActual ? `${nf0(v.kmActual)} km` : "— km"}</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, font: "600 11px/1 var(--sans)", color: "var(--text-2)" }}>
+            {al.some(x => x.nivel === "vencido") && <span title={al.map(x => x.txt).join(" · ")} style={{ width: 16, height: 16, borderRadius: "50%", background: "#C0392B", color: "#fff", font: "900 10px/16px var(--display)", textAlign: "center" }}>!</span>}
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: e.dot }} />{e.label}
+          </span>
+        </div>
+      </div>
+    </div>;
+  };
+
+  const renderFlota = () => {
+    if (fichaId) { const v = vehDe(fichaId); if (v) return renderFicha(v); }
+    const q = flota.q.trim().toLowerCase();
+    const lista = vehicles.filter(v => {
+      if (flota.estado === "taller" ? !(enTaller(v) || v.estado === "fuera_servicio") : flota.estado && (v.estado || "operativo") !== flota.estado) return false;
+      if (flota.tipo && v.type !== flota.tipo) return false;
+      if (q && ![v.plate, v.brand, v.model, v.motorista, v.projectCode, v.color].filter(Boolean).join(" ").toLowerCase().includes(q)) return false;
+      return true;
+    }).sort((a, b) => String(a.plate).localeCompare(String(b.plate)));
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {tiles([[statsFlota.total, "vehículos"], [statsFlota.disponibles, "disponibles", "#177243"], [statsFlota.proyecto, "en proyecto"], [statsFlota.taller, "en taller", statsFlota.taller ? ORANGE_DARK : undefined], [statsFlota.fuera, "fuera de servicio", statsFlota.fuera ? "#B03024" : undefined]])}
+      <div className="gt-vidrio" style={{ padding: "12px 14px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        {buscador(flota.q, (x) => setFlota(f => ({ ...f, q: x })), "Placa, marca, motorista…")}
+        {pills([["", "Todos", vehicles.length], ["operativo", "Disponibles"], ["asignado", "En proyecto"], ["taller", "Taller / fuera"]], flota.estado, (x) => setFlota(f => ({ ...f, estado: x })))}
+        {selChico(flota.tipo, (x) => setFlota(f => ({ ...f, tipo: x })), TIPOS_VEHICULO.map(t => ({ value: t, label: TIPO_CORTO[t] })), "Todo tipo")}
+        {canEdit && <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+          <Btn variant="ghost" onClick={() => setModal({ t: "carga" })}><Ico d={ICO.gota} size={15} />Combustible</Btn>
+          <Btn onClick={() => setModal({ t: "veh" })}><Ico d={ICO.mas} size={15} />Vehículo</Btn>
         </div>}
-  </div>;
-
-  // ── RENDER MANTENIMIENTOS ──
-  const renderMantenimientos = () => {
-    // 1) PENDIENTES: agregar todos los pendientes de todos los vehiculos en una sola lista
-    const pendientesGlobal = [];
-    vehicles.forEach(v => {
-      const items = parsePendientes(v.pendientesReparacion);
-      items.forEach(p => pendientesGlobal.push({ vehicle: v, pendiente: p }));
-    });
-
-    // 2) PROGRAMADOS / VENCIDOS: vehiculos con proxMantenimiento por km o fecha
-    const programados = vehicles
-      .map(v => {
-        const kmFalta = (v.proxMantenimientoKm && v.kmActual) ? (v.proxMantenimientoKm - v.kmActual) : null;
-        const diasFalta = v.proxMantenimientoFecha ? diasParaFecha(v.proxMantenimientoFecha) : null;
-        // Hay algo programado si tiene km o fecha
-        if (kmFalta === null && diasFalta === null) return null;
-        // Calcular urgencia: el peor de los dos
-        let urgencia = "ok";
-        if (kmFalta !== null) {
-          if (kmFalta < 0) urgencia = "vencido";
-          else if (kmFalta < 500) urgencia = "critico";
-          else if (kmFalta < 2000) urgencia = "advertencia";
-        }
-        if (diasFalta !== null) {
-          if (diasFalta < 0) urgencia = "vencido";
-          else if (diasFalta < 7 && urgencia === "ok") urgencia = "critico";
-          else if (diasFalta < 30 && urgencia === "ok") urgencia = "advertencia";
-        }
-        return { vehicle: v, kmFalta, diasFalta, urgencia };
-      })
-      .filter(Boolean)
-      .sort((a, b) => {
-        const order = { vencido: 0, critico: 1, advertencia: 2, ok: 3 };
-        return order[a.urgencia] - order[b.urgencia];
-      });
-
-    // 3) HISTORIAL: con filtros
-    let historial = [...maintenances];
-    if (mantFilter.vehicleId) historial = historial.filter(m => m.vehicleId === mantFilter.vehicleId);
-    if (mantFilter.type) historial = historial.filter(m => m.type === mantFilter.type);
-    if (mantFilter.from) historial = historial.filter(m => m.fecha >= mantFilter.from);
-    if (mantFilter.to) historial = historial.filter(m => m.fecha <= mantFilter.to);
-    historial.sort((a, b) => b.fecha.localeCompare(a.fecha));
-
-    // Stats
-    const ahora = new Date(); ahora.setHours(0, 0, 0, 0);
-    const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
-    const costoMes = maintenances
-      .filter(m => new Date(m.fecha + "T00:00") >= inicioMes)
-      .reduce((s, m) => s + (Number(m.cost) || 0), 0);
-    const costoTotal = maintenances.reduce((s, m) => s + (Number(m.cost) || 0), 0);
-    const vencidos = programados.filter(p => p.urgencia === "vencido").length;
-    const criticos = programados.filter(p => p.urgencia === "critico").length;
-
-    return <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {/* Stats */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <StatCard icon="🔨" label="Pendientes" value={pendientesGlobal.length} color={pendientesGlobal.length > 0 ? BRAND.orange : BRAND.stone} />
-        <StatCard icon="❌" label="Mant. vencidos" value={vencidos} color={vencidos > 0 ? BRAND.red : BRAND.stone} />
-        <StatCard icon="🔥" label="Mant. criticos" value={criticos} color={criticos > 0 ? BRAND.orange : BRAND.stone} />
-        <StatCard icon="📜" label="Total historial" value={maintenances.length} color={BRAND.blue} />
-        <StatCard icon="💰" label="Costo este mes" value={"L " + costoMes.toLocaleString("es-HN", { minimumFractionDigits: 2 })} color={BRAND.green} />
-        <StatCard icon="📊" label="Costo total" value={"L " + costoTotal.toLocaleString("es-HN", { minimumFractionDigits: 2 })} color={BRAND.charcoal} />
       </div>
+      {lista.length === 0 ? vacio("Ningún vehículo con esos filtros.") :
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0,1fr))" : "repeat(auto-fill, minmax(232px, 1fr))", gap: isMobile ? 10 : 14 }}>{lista.map(carnet)}</div>}
+    </div>;
+  };
 
-      {/* Sub-tabs + boton */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 6, background: BRAND.parchment, padding: 4, borderRadius: R.md, border: `1px solid ${BRAND.borderSoft}` }}>
-          {[
-            { id: "pendientes", label: `🔨 Pendientes (${pendientesGlobal.length})` },
-            { id: "programados", label: `🔧 Programados (${programados.length})` },
-            { id: "historial", label: `📜 Historial (${maintenances.length})` },
-          ].map(t => (
-            <button
-              key={t.id}
-              onClick={() => setMantSubSec(t.id)}
-              style={{
-                background: mantSubSec === t.id ? BRAND.orange : "transparent",
-                color: mantSubSec === t.id ? "#fff" : BRAND.graphite,
-                border: "none",
-                padding: "6px 14px",
-                borderRadius: R.sm,
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >{t.label}</button>
-          ))}
+  // ── FICHA DEL VEHÍCULO ──
+  const renderFicha = (v) => {
+    const e = estadoCfg(v.estado);
+    const mot = v.motoristaEmpId ? emps.find(x => x.id === v.motoristaEmpId) : null;
+    const prev = estadoPreventivo(v, hoy);
+    const r = rendDe(v.id);
+    const mants = maintenances.filter(m => m.vehicleId === v.id).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+    const cargasV = cargas.filter(c => c.vehicleId === v.id).sort((a, b) => (Number(b.km) || 0) - (Number(a.km) || 0));
+    const pend = parsePendientes(v.pendientesReparacion);
+    const despV = despachos.filter(d => d.vehicleId === v.id).sort((a, b) => String(b.fechaEjecutada || b.fechaProgramada || b.createdAt).localeCompare(String(a.fechaEjecutada || a.fechaProgramada || a.createdAt)));
+    const anio = hoy.slice(0, 4);
+    const gastoAnio = mants.filter(m => String(m.fecha).startsWith(anio)).reduce((s, m) => s + (Number(m.cost) || 0), 0) + cargasV.filter(c => String(c.fecha).startsWith(anio)).reduce((s, c) => s + (Number(c.monto) || 0), 0);
+    const seg = vencimiento(v.seguroVence, hoy), rev = vencimiento(v.revisionVence, hoy);
+    const chipVence = (x) => !x ? null : <Chip c={x.nivel === "vencido" ? C_ROJO : x.nivel === "pronto" ? C_NARANJA : C_VERDE} style={{ fontSize: 10.5, padding: "3px 8px" }}>{x.nivel === "vencido" ? "Vencido" : `${x.dias} d`}</Chip>;
+    const dato = (l, val, extra) => <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 0", borderTop: "1px solid rgba(44,42,40,.06)", fontSize: 13 }}><span style={{ color: "var(--text-3)" }}>{l}</span><span style={{ color: CHARCOAL, fontWeight: 600, textAlign: "right", display: "inline-flex", gap: 6, alignItems: "center" }}>{val || "—"}{extra}</span></div>;
+    const kpi = (l, val, sub, c) => <div className="gt-vidrio" style={{ padding: "14px 16px", minWidth: 0 }}>
+      <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9.5 }}>{l}</div>
+      <div style={{ font: "800 22px/1.1 var(--display)", color: c || CHARCOAL, marginTop: 8, letterSpacing: "-.02em" }}>{val}</div>
+      {sub && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 5 }}>{sub}</div>}
+    </div>;
+    const TABS = [["mant", "Mantenimientos", mants.length], ["comb", "Combustible", cargasV.length], ["pend", "Pendientes", pend.length], ["desp", "Despachos", despV.length]];
+    const fila = (children, key, extra = {}) => <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 14, background: "rgba(255,255,255,.65)", border: "1px solid rgba(44,42,40,.06)", ...extra }}>{children}</div>;
+    let cuerpo;
+    if (fichaTab === "mant") cuerpo = <>
+      {canEdit && <div style={{ display: "flex", justifyContent: "flex-end" }}><Btn small onClick={() => setModal({ t: "mant", vehicleId: v.id })}><Ico d={ICO.mas} size={14} />Registrar</Btn></div>}
+      {mants.length === 0 ? <div style={{ fontSize: 13, color: "var(--text-3)", padding: 10 }}>Sin mantenimientos registrados.</div> : mants.map(m => { const t = tipoMantCfg(m.type); return fila(<>
+        <div style={{ width: 54, textAlign: "center", flexShrink: 0 }}><div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>{fechaCorta(m.fecha).split(" ")[0]}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{fechaCorta(m.fecha).split(" ")[1]} {String(m.fecha).slice(2, 4)}</div></div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}><Chip c={t.c} style={{ fontSize: 10.5, padding: "3px 8px" }}>{t.label}</Chip>{m.kmAlRealizar ? <span style={{ font: "600 11px/1 var(--mono)", color: "var(--text-3)" }}>{nf0(m.kmAlRealizar)} km</span> : null}{m.workshop && <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>· {m.workshop}</span>}</div>
+          <div style={{ fontSize: 13.5, color: CHARCOAL, whiteSpace: "pre-line" }}>{m.description}</div>
         </div>
-        {canEdit && <Btn variant="primary" onClick={() => setModal({ t: "maint-new" })}>+ Registrar mantenimiento</Btn>}
+        <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 13.5px/1 var(--sans)", color: CHARCOAL }}>{m.cost ? fmtL(m.cost) : "—"}</div>{isAdmin && <div style={{ marginTop: 6 }}>{linkBtn("Borrar", () => { if (confirm("¿Borrar este mantenimiento?")) deleteMaintenance(m.id); }, "#B03024")}</div>}</div>
+      </>, m.id); })}
+    </>;
+    else if (fichaTab === "comb") cuerpo = <>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(4,minmax(0,1fr))", gap: 10 }}>
+        {[[r.kmPorGal ? nf1(r.kmPorGal) : "—", "km por galón"], [r.galPor100 ? nf1(r.galPor100) : "—", "galones / 100 km"], [r.costoKm ? `L ${r.costoKm.toFixed(2)}` : "—", "costo por km"], [cargasV.length, "cargas"]].map(([val, l]) => <div key={l} style={{ padding: "12px 14px", borderRadius: 14, background: "rgba(44,42,40,.04)" }}><div style={{ font: "800 19px/1 var(--display)", color: CHARCOAL }}>{val}</div><div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 5 }}>{l}</div></div>)}
       </div>
-
-      {/* PENDIENTES */}
-      {mantSubSec === "pendientes" && (
-        pendientesGlobal.length === 0
-          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
-              {vehicles.length === 0
-                ? "Aun no hay vehiculos cargados. Anda a la pestaña Flota para empezar."
-                : "✓ No hay pendientes de reparacion registrados en ningun vehiculo. Agregalos desde la ficha de cada vehiculo en la pestaña Flota."}
-            </div>
-          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead><tr style={{ background: BRAND.beigeDeep, borderBottom: `1px solid ${BRAND.border}` }}>
-                    <th style={th}>Vehiculo</th>
-                    <th style={th}>Pendiente</th>
-                    <th style={th}>Estado vehiculo</th>
-                    {canEdit && <th style={th}>Accion</th>}
-                  </tr></thead>
-                  <tbody>
-                    {pendientesGlobal.map((item, i) => {
-                      const v = item.vehicle;
-                      const ec = estadoCfg(v.estado);
-                      return <tr key={`${v.id}-${i}`} style={{ borderBottom: `1px solid ${BRAND.borderSoft}` }}>
-                        <td style={{ ...td, fontFamily: FONT.mono, fontWeight: 800, color: BRAND.charcoal }}>
-                          {v.plate}
-                          <div style={{ fontFamily: FONT.body, fontSize: 11, color: BRAND.stone, fontWeight: 400 }}>{v.brand} {v.model}</div>
-                        </td>
-                        <td style={{ ...td, color: BRAND.ink }}>{item.pendiente.clean}</td>
-                        <td style={td}><Badge color={ec.color} bg={ec.bgSoft}>{ec.label}</Badge></td>
-                        {canEdit && <td style={{ ...td, textAlign: "right" }}>
-                          <Btn small variant="success" onClick={() => setModal({ t: "maint-new", vehicleId: v.id, prefilledDesc: item.pendiente.clean, rawLine: item.pendiente.raw })}>✓ Marcar hecho</Btn>
-                        </td>}
-                      </tr>;
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-      )}
-
-      {/* PROGRAMADOS */}
-      {mantSubSec === "programados" && (
-        programados.length === 0
-          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
-              Aun no hay mantenimientos programados. Desde la ficha de cada vehiculo podes definir cuando toca el proximo (por km o fecha).
-            </div>
-          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead><tr style={{ background: BRAND.beigeDeep, borderBottom: `1px solid ${BRAND.border}` }}>
-                    <th style={th}>Vehiculo</th>
-                    <th style={th}>Km actual</th>
-                    <th style={th}>Prox. mant. (km)</th>
-                    <th style={th}>Faltan km</th>
-                    <th style={th}>Prox. mant. (fecha)</th>
-                    <th style={th}>Faltan dias</th>
-                    <th style={th}>Urgencia</th>
-                    {canEdit && <th style={th}>Accion</th>}
-                  </tr></thead>
-                  <tbody>
-                    {programados.map(item => {
-                      const v = item.vehicle;
-                      const colorByUrg = { vencido: BRAND.red, critico: BRAND.red, advertencia: BRAND.yellow, ok: BRAND.green };
-                      const labelByUrg = { vencido: "❌ VENCIDO", critico: "🔥 CRITICO", advertencia: "⏰ Pronto", ok: "✓ OK" };
-                      const c = colorByUrg[item.urgencia];
-                      return <tr key={v.id} style={{ borderBottom: `1px solid ${BRAND.borderSoft}`, background: item.urgencia === "vencido" ? BRAND.redSoft : item.urgencia === "critico" ? BRAND.orangeBg : "transparent" }}>
-                        <td style={{ ...td, fontFamily: FONT.mono, fontWeight: 800 }}>
-                          {v.plate}
-                          <div style={{ fontFamily: FONT.body, fontSize: 11, color: BRAND.stone, fontWeight: 400 }}>{v.brand} {v.model}</div>
-                        </td>
-                        <td style={{ ...td, textAlign: "right", fontFamily: FONT.mono }}>{(v.kmActual || 0).toLocaleString("es-HN")}</td>
-                        <td style={{ ...td, textAlign: "right", fontFamily: FONT.mono }}>{v.proxMantenimientoKm ? Number(v.proxMantenimientoKm).toLocaleString("es-HN") : "—"}</td>
-                        <td style={{ ...td, textAlign: "right", color: c, fontWeight: 700 }}>{item.kmFalta !== null ? (item.kmFalta < 0 ? `Atrasado ${Math.abs(item.kmFalta).toLocaleString("es-HN")}` : item.kmFalta.toLocaleString("es-HN")) : "—"}</td>
-                        <td style={td}>{v.proxMantenimientoFecha ? fmtFecha(v.proxMantenimientoFecha) : "—"}</td>
-                        <td style={{ ...td, color: c, fontWeight: 700 }}>{item.diasFalta !== null ? (item.diasFalta < 0 ? `Vencido ${Math.abs(item.diasFalta)}d` : `${item.diasFalta}d`) : "—"}</td>
-                        <td style={td}><Badge color={c}>{labelByUrg[item.urgencia]}</Badge></td>
-                        {canEdit && <td style={{ ...td, textAlign: "right" }}>
-                          <Btn small variant="success" onClick={() => setModal({ t: "maint-new", vehicleId: v.id })}>✓ Realizar</Btn>
-                        </td>}
-                      </tr>;
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-      )}
-
-      {/* HISTORIAL */}
-      {mantSubSec === "historial" && <>
-        <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap", padding: 12, background: BRAND.parchment, borderRadius: R.md }}>
-          <Select label="Vehiculo" options={vehicles.map(v => ({ value: v.id, label: v.plate }))} value={mantFilter.vehicleId} onChange={e => setMantFilter(s => ({ ...s, vehicleId: e.target.value }))} emptyLabel="Todos" />
-          <Select label="Tipo" options={TIPOS_MANTENIMIENTO} value={mantFilter.type} onChange={e => setMantFilter(s => ({ ...s, type: e.target.value }))} emptyLabel="Todos" />
-          <Input label="Desde" type="date" value={mantFilter.from} onChange={e => setMantFilter(s => ({ ...s, from: e.target.value }))} />
-          <Input label="Hasta" type="date" value={mantFilter.to} onChange={e => setMantFilter(s => ({ ...s, to: e.target.value }))} />
-          {(mantFilter.vehicleId || mantFilter.type || mantFilter.from || mantFilter.to) && <Btn small variant="ghost" onClick={() => setMantFilter({ vehicleId: "", type: "", from: "", to: "" })}>Limpiar</Btn>}
+      {r.tramos.length > 1 && <div style={{ padding: "10px 4px 0" }}><div className="gt-label" style={{ color: "var(--text-3)", marginBottom: 10 }}>km por galón en cada tanque</div>{barras(r.tramos.slice(-8).map((t, i) => ({ k: `${t.hasta}-${i}`, l: fechaCorta(t.fecha), v: Math.round(t.kmPorGal * 10) / 10 })), { alto: 90 })}</div>}
+      {canEdit && <div style={{ display: "flex", justifyContent: "flex-end" }}><Btn small onClick={() => setModal({ t: "carga", vehicleId: v.id })}><Ico d={ICO.gota} size={14} />Cargar combustible</Btn></div>}
+      {cargasV.length === 0 ? <div style={{ fontSize: 13, color: "var(--text-3)", padding: 10 }}>Sin cargas. El rendimiento sale con dos cargas de tanque lleno.</div> : cargasV.map(c => fila(<>
+        <div style={{ width: 54, textAlign: "center", flexShrink: 0 }}><div style={{ font: "800 15px/1 var(--display)", color: CHARCOAL }}>{fechaCorta(c.fecha).split(" ")[0]}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{fechaCorta(c.fecha).split(" ")[1]}</div></div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ font: "700 13.5px/1.2 var(--sans)", color: CHARCOAL }}>{nf1(c.galones)} gal <span style={{ font: "600 11.5px/1 var(--mono)", color: "var(--text-3)", marginLeft: 6 }}>{nf0(c.km)} km</span></div>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3 }}>{[c.lleno !== false ? "Tanque lleno" : "Parcial", c.estacion, c.motorista].filter(Boolean).join(" · ")}</div>
         </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 13.5px/1 var(--sans)", color: CHARCOAL }}>{c.monto ? fmtL(c.monto) : "—"}</div>{canEdit && <div style={{ marginTop: 6 }}>{linkBtn("Borrar", () => { if (confirm("¿Borrar esta carga?")) deleteCarga(c.id); }, "#B03024")}</div>}</div>
+      </>, c.id))}
+    </>;
+    else if (fichaTab === "pend") cuerpo = <>
+      {pend.length === 0 ? <div style={{ fontSize: 13, color: "var(--text-3)", padding: 10 }}>Sin pendientes.</div> : pend.map(p => fila(<>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE, flexShrink: 0 }} />
+        <div style={{ flex: 1, fontSize: 13.5, color: CHARCOAL }}>{p.clean}</div>
+        {canEdit && <Btn small variant="success" onClick={() => setModal({ t: "mant", vehicleId: v.id, prefill: { tipo: "correctivo", descripcion: p.clean, rawLine: p.raw } })}><Ico d={ICO.check} size={14} />Resuelto</Btn>}
+      </>, p.idx))}
+      {canEdit && <form onSubmit={async (ev) => { ev.preventDefault(); const inp = ev.currentTarget.elements.nuevo; const t = inp.value.trim(); if (!t) return; inp.value = ""; await patchVehicle(v.id, (x) => ({ pendientesReparacion: [x.pendientesReparacion, t].filter(s => String(s || "").trim()).join("\n") })); }} style={{ display: "flex", gap: 8 }}>
+        <input name="nuevo" placeholder="Agregar pendiente…" style={{ flex: 1, height: 40, padding: "0 14px", borderRadius: 12, border: "1px solid rgba(44,42,40,.1)", background: "rgba(255,255,255,.85)", fontSize: 14, fontFamily: "inherit", outline: "none" }} />
+        <Btn type="submit" variant="ghost">Agregar</Btn>
+      </form>}
+    </>;
+    else cuerpo = despV.length === 0 ? <div style={{ fontSize: 13, color: "var(--text-3)", padding: 10 }}>Este vehículo no tiene despachos.</div> : despV.slice(0, 40).map(d => { const es = estadoDespCfg(d.estado); return fila(<>
+      <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13.5, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.descripcion}</div><div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3 }}>{d.origen} → {d.destino}{d.motorista ? ` · ${d.motorista}` : ""}</div></div>
+      <div style={{ textAlign: "right", flexShrink: 0 }}><Chip c={es.c} style={{ fontSize: 10.5, padding: "3px 8px" }}>{es.label}</Chip><div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>{fechaCorta(d.fechaEjecutada || d.fechaProgramada)}</div></div>
+    </>, d.id); });
 
-        {historial.length === 0
-          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
-              {maintenances.length === 0
-                ? "Aun no hay mantenimientos registrados. Cuando registres uno desde Pendientes o Programados, va a aparecer aqui."
-                : "No hay mantenimientos que cumplan los filtros."}
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button type="button" className="gt-circulo" onClick={() => setFichaId(null)} aria-label="Volver a la flota" style={{ width: 36, height: 36, fontSize: 15 }}>←</button>
+        <span style={{ font: "700 13px/1 var(--sans)", color: "var(--text-3)" }}>Flota</span><Ico d={ICO.flecha} size={13} color="rgba(44,42,40,.35)" /><span style={{ font: "800 13px/1 var(--sans)", color: CHARCOAL }}>{v.plate}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "330px minmax(0,1fr)", gap: 14, alignItems: "start" }}>
+        {/* Columna izquierda: el carnet grande + datos */}
+        <div className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ position: "relative", height: 74, background: "linear-gradient(135deg,#2C2A28 0%,#3A3633 100%)", padding: "12px 16px", display: "flex", justifyContent: "space-between" }}>
+            {CURVAS_FRANJA}
+            <span style={{ position: "relative", font: "700 9.5px/1 var(--mono)", letterSpacing: ".16em", color: "rgba(255,255,255,.85)", textTransform: "uppercase" }}>{v.owner}</span>
+            <span style={{ position: "relative", alignSelf: "flex-start", font: "700 10.5px/1 var(--sans)", padding: "5px 10px", borderRadius: 999, background: "rgba(255,255,255,.14)", color: "#fff" }}>{TIPO_CORTO[v.type] || v.type}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "center", marginTop: -40, position: "relative" }}>
+            <label style={{ position: "relative", width: 250, height: 150, borderRadius: 22, background: "#fff", boxShadow: "0 8px 22px rgba(44,42,40,.18)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", border: "4px solid #fff", cursor: canEdit ? "pointer" : "default" }} title={canEdit ? "Cambiar foto" : ""}>
+              <Foto fileId={v.foto?.fileId} alt={v.plate} style={{ width: 250, height: 150 }} fallback={<Silueta tipo={v.type} size={150} />} />
+              {canEdit && <span style={{ position: "absolute", right: 8, bottom: 8, width: 32, height: 32, borderRadius: "50%", background: "rgba(44,42,40,.72)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Ico d={ICO.camara} size={16} /></span>}
+              {canEdit && <input type="file" accept="image/*" style={{ display: "none" }} onChange={async (ev) => { const fl = ev.target.files?.[0]; ev.target.value = ""; await subirFotoVehiculo(v, fl); }} />}
+            </label>
+          </div>
+          <div style={{ padding: "14px 18px 18px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+            <Placa plate={v.plate} grande />
+            <div style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL, textAlign: "center" }}>{[v.brand, v.model].filter(Boolean).join(" ")}{v.year ? <span style={{ fontWeight: 600, color: "var(--text-3)" }}> · {v.year}</span> : null}</div>
+            <Chip c={e.c}>{e.label}</Chip>
+            <div style={{ width: "100%", marginTop: 6 }}>
+              {dato("Proyecto", v.projectCode)}
+              {dato("Motorista", mot ? mot.fullName : v.motorista)}
+              {dato("Color", v.color)}
+              {dato("Combustible", v.combustible)}
+              {v.vin && dato("VIN / chasis", v.vin)}
+              {v.motor && dato("Motor", v.motor)}
+              {dato("Seguro", v.seguro, chipVence(seg))}
+              {v.seguroPoliza && dato("Póliza", v.seguroPoliza)}
+              {dato("Revisión", v.revisionVence ? fmtFecha(v.revisionVence) : "", chipVence(rev))}
+              {v.notas && <div style={{ fontSize: 12.5, color: "var(--text-2)", padding: "10px 0 0", borderTop: "1px solid rgba(44,42,40,.06)", whiteSpace: "pre-line" }}>{v.notas}</div>}
             </div>
-          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead><tr style={{ background: BRAND.beigeDeep, borderBottom: `1px solid ${BRAND.border}` }}>
-                    <th style={th}>Fecha</th>
-                    <th style={th}>Vehiculo</th>
-                    <th style={th}>Tipo</th>
-                    <th style={th}>Descripcion</th>
-                    <th style={th}>Km</th>
-                    <th style={th}>Taller</th>
-                    <th style={th}>Costo</th>
-                    {canEdit && <th style={th}>Accion</th>}
-                  </tr></thead>
-                  <tbody>
-                    {historial.map(m => {
-                      const v = vehicles.find(x => x.id === m.vehicleId);
-                      const t = tipoMantCfg(m.type);
-                      return <tr key={m.id} style={{ borderBottom: `1px solid ${BRAND.borderSoft}` }}>
-                        <td style={td}>{fmtFecha(m.fecha)}</td>
-                        <td style={{ ...td, fontFamily: FONT.mono, fontWeight: 700 }}>{v?.plate || "—"}</td>
-                        <td style={td}><Badge color={t.color}>{t.label}</Badge></td>
-                        <td style={{ ...td, maxWidth: 360 }}>{m.description}</td>
-                        <td style={{ ...td, textAlign: "right", fontFamily: FONT.mono }}>{(m.kmAlRealizar || 0).toLocaleString("es-HN")}</td>
-                        <td style={td}>{m.workshop || "—"}</td>
-                        <td style={{ ...td, textAlign: "right", color: BRAND.green, fontWeight: 700 }}>{m.cost > 0 ? "L " + Number(m.cost).toLocaleString("es-HN", { minimumFractionDigits: 2 }) : "—"}</td>
-                        {canEdit && <td style={{ ...td, textAlign: "right" }}>
-                          <Btn small variant="ghost" onClick={() => { if (confirm("¿Eliminar este registro de mantenimiento?")) deleteMaintenance(m.id); }}>🗑</Btn>
-                        </td>}
-                      </tr>;
-                    })}
-                  </tbody>
-                  {historial.length > 0 && <tfoot>
-                    <tr style={{ background: BRAND.beigeDeep, fontWeight: 700 }}>
-                      <td colSpan={6} style={{ ...td, textAlign: "right" }}>Total filtrado:</td>
-                      <td style={{ ...td, textAlign: "right", color: BRAND.green }}>L {historial.reduce((s, m) => s + (Number(m.cost) || 0), 0).toLocaleString("es-HN", { minimumFractionDigits: 2 })}</td>
-                      {canEdit && <td></td>}
-                    </tr>
-                  </tfoot>}
-                </table>
-              </div>
+            {canEdit && <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", justifyContent: "center" }}>
+              <Btn small variant="ghost" onClick={() => setModal({ t: "veh", d: v })}><Ico d={ICO.lapiz} size={14} />Editar</Btn>
+              {isAdmin && <Btn small variant="danger" onClick={async () => { if (!confirm(`¿Eliminar el vehículo ${v.plate}? No se puede deshacer.`)) return; if (await deleteVehicle(v.id)) setFichaId(null); }}>Eliminar</Btn>}
             </div>}
+          </div>
+        </div>
+        {/* Columna derecha */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(4,minmax(0,1fr))", gap: 12 }}>
+            {kpi("Kilometraje", v.kmActual ? nf0(v.kmActual) : "—", canEdit ? <button type="button" onClick={async () => { const n = prompt("Kilometraje actual del odómetro:", v.kmActual || ""); if (n == null) return; const k = Number(String(n).replace(/[^\d.]/g, "")); if (!(k > 0)) return; await patchVehicle(v.id, { kmActual: k }); }} style={{ background: "none", border: "none", padding: 0, color: "var(--naranja-texto-chico)", font: "700 11.5px/1 var(--sans)", cursor: "pointer" }}>Actualizar</button> : "km")}
+            <div className="gt-vidrio" style={{ padding: "14px 16px", minWidth: 0 }}>
+              <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9.5 }}>Próximo servicio</div>
+              <div style={{ font: "800 20px/1.1 var(--display)", color: URG_P[prev.urgencia].c.color, marginTop: 8 }}>{prev.urgencia === "sin_plan" ? "Sin plan" : prev.kmFalta !== null ? (prev.kmFalta < 0 ? `+${nf0(-prev.kmFalta)} km` : `${nf0(prev.kmFalta)} km`) : `${prev.diasFalta} d`}</div>
+              {prev.pct !== null && <div style={{ height: 6, borderRadius: 99, background: "rgba(44,42,40,.07)", marginTop: 8, overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.min(100, prev.pct * 100)}%`, background: URG_P[prev.urgencia].bar, borderRadius: 99 }} /></div>}
+              <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 5 }}>{prev.urgencia === "vencido" ? "atrasado" : prev.urgencia === "sin_plan" ? "cargá el próximo km" : v.proxMantenimientoKm ? `a los ${nf0(v.proxMantenimientoKm)}` : fmtFecha(v.proxMantenimientoFecha)}</div>
+            </div>
+            {kpi("Rendimiento", r.kmPorGal ? nf1(r.kmPorGal) : "—", "km por galón")}
+            {kpi(`Gasto ${anio}`, fmtCorto(gastoAnio), "taller + combustible")}
+          </div>
+          <div className="gt-vidrio" style={{ padding: isMobile ? 14 : 18, display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+            {pills(TABS, fichaTab, setFichaTab)}
+            {cuerpo}
+          </div>
+        </div>
+      </div>
+    </div>;
+  };
+
+  // ═══════════════════════════ MANTENIMIENTOS ═══════════════════════════
+  const renderMant = () => {
+    const prog = vehicles.map(v => ({ v, p: estadoPreventivo(v, hoy) })).sort((a, b) => ORDEN_URGENCIA[a.p.urgencia] - ORDEN_URGENCIA[b.p.urgencia] || (a.p.kmFalta ?? 1e9) - (b.p.kmFalta ?? 1e9));
+    const pendV = vehicles.map(v => ({ v, items: parsePendientes(v.pendientesReparacion) })).filter(x => x.items.length);
+    const nPend = pendV.reduce((s, x) => s + x.items.length, 0);
+    const mes = hoy.slice(0, 7), anio = hoy.slice(0, 4);
+    const gMes = maintenances.filter(m => String(m.fecha).startsWith(mes)).reduce((s, m) => s + (Number(m.cost) || 0), 0);
+    const gAnio = maintenances.filter(m => String(m.fecha).startsWith(anio)).reduce((s, m) => s + (Number(m.cost) || 0), 0);
+    const vencidos = prog.filter(x => x.p.urgencia === "vencido").length, pronto = prog.filter(x => x.p.urgencia === "pronto").length;
+    let hist = maintenances.slice();
+    if (mantFil.vehicleId) hist = hist.filter(m => m.vehicleId === mantFil.vehicleId);
+    if (mantFil.type) hist = hist.filter(m => m.type === mantFil.type);
+    if (mantFil.mes) hist = hist.filter(m => String(m.fecha).startsWith(mantFil.mes));
+    hist.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+    const mesesHist = [...new Set(maintenances.map(m => String(m.fecha).slice(0, 7)))].sort().reverse();
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {tiles([[vencidos, "servicios atrasados", vencidos ? "#B03024" : undefined, () => setMantSub("programa")], [pronto, "servicios próximos", pronto ? ORANGE_DARK : undefined, () => setMantSub("programa")], [nPend, "pendientes de reparación", undefined, () => setMantSub("pend")], [fmtCorto(gMes), "gasto del mes"], [fmtCorto(gAnio), `gasto ${anio}`]])}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        {pills([["programa", "Programa preventivo", prog.filter(x => x.p.urgencia !== "sin_plan").length], ["pend", "Pendientes", nPend], ["hist", "Historial", maintenances.length]], mantSub, setMantSub)}
+        {canEdit && <div style={{ marginLeft: "auto" }}><Btn onClick={() => setModal({ t: "mant" })}><Ico d={ICO.mas} size={15} />Registrar mantenimiento</Btn></div>}
+      </div>
+      {mantSub === "programa" && <div className="gt-vidrio" style={{ padding: isMobile ? 8 : 10, display: "flex", flexDirection: "column", gap: 4 }}>
+        {prog.map(({ v, p }) => <div key={v.id} role="button" tabIndex={0} onClick={() => abrirFicha(v, "mant")} style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) auto" : "110px minmax(0,1.1fr) minmax(0,1.4fr) 130px auto", gap: 14, alignItems: "center", padding: "11px 12px", borderRadius: 14, cursor: "pointer", background: p.urgencia === "vencido" ? "rgba(192,57,43,.05)" : "transparent" }}>
+          {!isMobile && <Placa plate={v.plate} />}
+          <div style={{ minWidth: 0 }}>{isMobile && <div style={{ font: "800 12px/1 var(--mono)", color: CHARCOAL, marginBottom: 4 }}>{v.plate}</div>}<div style={{ font: "700 13.5px/1.2 var(--sans)", color: CHARCOAL }}>{[v.brand, v.model].filter(Boolean).join(" ")}</div><div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3 }}>{v.kmActual ? `${nf0(v.kmActual)} km` : "sin km"} · cada {nf0(intervaloKmDe(v))} km</div></div>
+          {!isMobile && <div style={{ height: 8, borderRadius: 99, background: "rgba(44,42,40,.07)", overflow: "hidden" }}>{p.pct !== null && <div style={{ height: "100%", width: `${Math.min(100, p.pct * 100)}%`, background: URG_P[p.urgencia].bar, borderRadius: 99 }} />}</div>}
+          <div style={{ textAlign: isMobile ? "right" : "left" }}><Chip c={URG_P[p.urgencia].c} style={{ fontSize: 11 }}>{p.urgencia === "sin_plan" ? "Sin plan" : p.kmFalta !== null ? (p.kmFalta < 0 ? `Atrasado ${nf0(-p.kmFalta)} km` : `Faltan ${nf0(p.kmFalta)} km`) : p.diasFalta < 0 ? `Atrasado ${-p.diasFalta} d` : `En ${p.diasFalta} d`}</Chip></div>
+          {!isMobile && <div onClick={e => e.stopPropagation()}>{canEdit && <Btn small variant={p.urgencia === "vencido" ? "primary" : "ghost"} onClick={() => setModal({ t: "mant", vehicleId: v.id, prefill: { tipo: "preventivo" } })}>Registrar servicio</Btn>}</div>}
+        </div>)}
+      </div>}
+      {mantSub === "pend" && (pendV.length === 0 ? vacio("Ningún vehículo tiene pendientes de reparación.") : <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(340px, 1fr))", gap: 12 }}>
+        {pendV.map(({ v, items }) => <div key={v.id} className="gt-vidrio" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div role="button" tabIndex={0} onClick={() => abrirFicha(v, "pend")} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 4 }}><Placa plate={v.plate} /><div style={{ minWidth: 0 }}><div style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>{[v.brand, v.model].filter(Boolean).join(" ")}</div><div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{estadoCfg(v.estado).label}</div></div></div>
+          {items.map(p => <div key={p.idx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 12, background: "rgba(255,255,255,.65)" }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: ORANGE, flexShrink: 0 }} />
+            <span style={{ flex: 1, fontSize: 13, color: CHARCOAL }}>{p.clean}</span>
+            {canEdit && <Btn small variant="success" onClick={() => setModal({ t: "mant", vehicleId: v.id, prefill: { tipo: "correctivo", descripcion: p.clean, rawLine: p.raw } })}>Resuelto</Btn>}
+          </div>)}
+        </div>)}
+      </div>)}
+      {mantSub === "hist" && <>
+        <div className="gt-vidrio" style={{ padding: "12px 14px", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          {selChico(mantFil.vehicleId, (x) => setMantFil(f => ({ ...f, vehicleId: x })), vehicles.map(v => ({ value: v.id, label: v.plate })), "Todos los vehículos")}
+          {selChico(mantFil.type, (x) => setMantFil(f => ({ ...f, type: x })), TIPOS_MANT.map(t => ({ value: t.value, label: t.label })), "Todo tipo")}
+          {selChico(mantFil.mes, (x) => setMantFil(f => ({ ...f, mes: x })), mesesHist.map(m => ({ value: m, label: mesLabel(m) })), "Todos los meses")}
+          <span style={{ marginLeft: "auto", font: "800 14px/1 var(--sans)", color: CHARCOAL }}>{fmtL(hist.reduce((s, m) => s + (Number(m.cost) || 0), 0))}</span>
+        </div>
+        {hist.length === 0 ? vacio("Sin mantenimientos con esos filtros.") : <div className="gt-vidrio" style={{ padding: 8, display: "flex", flexDirection: "column", gap: 2 }}>
+          {hist.map(m => { const v = vehDe(m.vehicleId); const t = tipoMantCfg(m.type); return <div key={m.id} role="button" tabIndex={0} onClick={() => v && abrirFicha(v, "mant")} style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) auto" : "70px 90px 110px minmax(0,1fr) 130px", gap: 12, alignItems: "center", padding: "10px 12px", borderRadius: 12, cursor: "pointer" }}>
+            {!isMobile && <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>{fechaCorta(m.fecha)}</span>}
+            {!isMobile && <span style={{ font: "800 12px/1 var(--mono)", color: CHARCOAL }}>{v?.plate || "—"}</span>}
+            {!isMobile && <Chip c={t.c} style={{ fontSize: 10.5, justifySelf: "start" }}>{t.label}</Chip>}
+            <div style={{ minWidth: 0 }}>{isMobile && <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 3 }}>{fechaCorta(m.fecha)} · <b style={{ color: CHARCOAL }}>{v?.plate}</b> · {t.label}</div>}<div style={{ fontSize: 13, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.description}</div>{m.workshop && <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>{m.workshop}</div>}</div>
+            <span style={{ font: "800 13px/1 var(--sans)", color: CHARCOAL, textAlign: "right" }}>{m.cost ? fmtL(m.cost) : "—"}</span>
+          </div>; })}
+        </div>}
       </>}
     </div>;
   };
 
-  // ── RENDER RUTAS / DESPACHOS ──
-  const renderRutas = () => {
-    // CAMBIO jun-2026: Logistica ya NO muestra automaticamente las compras pagadas.
-    // Ahora Ana Vasquez (asistente de compras) coordina con el proveedor y CREA la
-    // orden de recogida desde el modulo de Compras. La orden cae aca como un
-    // despacho normal con sourcePurchaseId. Esto evita que Oscar reciba ordenes
-    // sin coordinar y sin saber cuando puede ir a retirar.
-    const comprasPendientes = []; // ya no se muestran auto — Ana las libera manualmente
+  // ═══════════════════════════ MOTORISTAS ═══════════════════════════
+  const renderMotoristas = () => {
+    const mesAct = hoy.slice(0, 7);
+    const q = motQ.trim().toLowerCase();
+    const lista = motoristas.filter(m => !q || `${m.emp.fullName} ${m.emp.position} ${m.emp.dni}`.toLowerCase().includes(q));
+    const conVeh = motoristas.filter(m => vehicles.some(v => v.motoristaEmpId === m.emp.id)).length;
+    const licPronto = motoristas.filter(m => { const x = vencimiento(m.datos?.licenciaVence, hoy, 45); return x && x.nivel !== "ok"; }).length;
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {tiles([[motoristas.length, "motoristas"], [conVeh, "con vehículo"], [motoristas.length - conVeh, "sin vehículo"], [licPronto, "licencias por vencer", licPronto ? ORANGE_DARK : undefined]])}
+      <div className="gt-vidrio" style={{ padding: "12px 14px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        {buscador(motQ, setMotQ, "Buscar motorista…")}
+        {canEdit && <div style={{ marginLeft: "auto" }}><Btn onClick={() => setModal({ t: "mot" })}><Ico d={ICO.mas} size={15} />Agregar de GeoTeam</Btn></div>}
+      </div>
+      {lista.length === 0 ? vacio("No hay motoristas. En GeoTeam, los colaboradores con cargo Motorista salen solos aquí.") :
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>
+          {lista.map(m => {
+            const vs = vehicles.filter(v => v.motoristaEmpId === m.emp.id);
+            const lic = vencimiento(m.datos?.licenciaVence, hoy, 45);
+            const nDesp = despachos.filter(d => (d.motoristaEmpId === m.emp.id || (d.motorista && d.motorista === m.emp.fullName)) && String(d.fechaEjecutada || "").startsWith(mesAct)).length;
+            return <div key={m.emp.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => canEdit && setModal({ t: "mot", m })} style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12, cursor: canEdit ? "pointer" : "default" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <Avatar emp={m.emp} size={54} radio={17} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{m.emp.fullName}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 3 }}>{m.emp.position}{m.emp.phone ? ` · ${m.emp.phone}` : ""}</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                {vs.length ? vs.map(v => <span key={v.id} onClick={(e) => { e.stopPropagation(); abrirFicha(v); }}><Placa plate={v.plate} /></span>) : <Chip>Sin vehículo</Chip>}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, paddingTop: 10, borderTop: "1px solid rgba(44,42,40,.07)" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-2)" }}><Ico d={ICO.licencia} size={15} color="#8C857D" />{m.datos?.licenciaTipo || "Licencia"}{lic ? <Chip c={lic.nivel === "vencido" ? C_ROJO : lic.nivel === "pronto" ? C_NARANJA : C_VERDE} style={{ fontSize: 10.5, padding: "3px 8px" }}>{lic.nivel === "vencido" ? "Vencida" : `vence ${fmtFecha(m.datos.licenciaVence)}`}</Chip> : <span style={{ color: "var(--text-faint)" }}>sin dato</span>}</span>
+                <span style={{ fontSize: 12, color: "var(--text-3)" }}><b style={{ color: CHARCOAL }}>{nDesp}</b> entregas este mes</span>
+              </div>
+            </div>;
+          })}
+        </div>}
+    </div>;
+  };
 
-    // Filtrar despachos
-    let despFiltered = despachos.filter(d => {
-      if (despFilter.projectCode && d.projectCode !== despFilter.projectCode) return false;
-      if (despFilter.tipo && d.tipo !== despFilter.tipo) return false;
-      if (despFilter.vehicleId && d.vehicleId !== despFilter.vehicleId) return false;
-      if (despFilter.q) {
-        const q = despFilter.q.toLowerCase();
-        const hay = [d.descripcion, d.origen, d.destino, d.motorista, d.notas].filter(Boolean).join(" ").toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
+  // ═══════════════════════════ DESPACHOS (bandeja por proyecto) ═══════════════════════════
+  const subirFichaInput = (d, children) => {
+    const sube = uploadingFichaId === d.id, alguno = uploadingFichaId !== null;
+    return <label onClick={e => e.stopPropagation()} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 999, background: sube ? "#A39C92" : ORANGE, color: "#fff", font: "700 12.5px/1 var(--sans)", cursor: alguno ? "not-allowed" : "pointer", opacity: alguno && !sube ? .5 : 1, whiteSpace: "nowrap", boxShadow: "0 4px 12px rgba(232,118,45,.25)" }}>
+      <Ico d={ICO.subir} size={14} />{sube ? "Subiendo…" : children}
+      <input type="file" accept=".pdf,image/*" disabled={alguno} style={{ display: "none" }} onChange={async (ev) => { const f = ev.target.files?.[0]; ev.target.value = ""; if (!f) return; setUploadingFichaId(d.id); try { const ok = await uploadFichaFirmada(d, f); if (ok) alert("Ficha firmada subida y enlazada a la compra."); } finally { setUploadingFichaId(null); } }} />
+    </label>;
+  };
+  const verFicha = async (compra) => {
+    try { const ref = compra.delivery.fichaFile; const full = await store.get(`cp-file-${ref.fileId}`); if (!full?.dataUrl) return alert("No se pudo cargar el archivo desde la nube."); setVisorFicha({ ...full, name: full.name || ref.name }); }
+    catch (err) { alert("Error abriendo la ficha: " + (err?.message || err)); }
+  };
+  const tarjetaDespacho = (d) => {
+    const compra = compraDe(d);
+    const u = d.estado === "pendiente" || d.estado === "programado" || d.estado === "en_ruta" ? urgenciaDespacho(d, hoy) : null;
+    const v = vehDe(d.vehicleId);
+    const es = estadoDespCfg(d.estado);
+    const org = origenDespacho(d);
+    const faltaFicha = sinFichaDe(d);
+    const entregado = d.estado === "entregado" || d.estado === "cerrado";
+    const fondo = "rgba(255,255,255,.78)";
+    let principal = null;
+    if (canEdit) {
+      if (d.estado === "pendiente") principal = <Btn small onClick={() => setModal({ t: "prog", d })}>Programar</Btn>;
+      else if (d.estado === "programado") principal = <Btn small variant="dark" onClick={() => updateDespachoEstado(d.id, "en_ruta")}>Salió en ruta</Btn>;
+      else if (d.estado === "en_ruta") principal = faltaFicha ? subirFichaInput(d, "Subir ficha") : <Btn small variant="success" onClick={() => { if (confirm("¿Marcar como ENTREGADO?")) updateDespachoEstado(d.id, "entregado"); }}><Ico d={ICO.check} size={14} />Entregado</Btn>;
+      else if (entregado && faltaFicha) principal = subirFichaInput(d, "Subir ficha");
+    }
+    return <div key={d.id} role="button" tabIndex={0} onClick={() => canEdit && setModal({ t: "desp", d })} style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 10 : 16, alignItems: isMobile ? "stretch" : "center", padding: "13px 15px", borderRadius: 16, background: fondo, border: "1px solid rgba(44,42,40,.07)", cursor: canEdit ? "pointer" : "default" }}>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {compra?.codigo && <span style={{ font: "700 11px/1 var(--mono)", color: "var(--text-2)" }}>{compra.codigo}</span>}
+          <Chip c={org.c} style={{ fontSize: 10.5, padding: "3px 8px" }}>{d.source === "manual" ? tipoDespCfg(d.tipo).corto : org.label}</Chip>
+          {d.estado !== "pendiente" && <Chip c={es.c} style={{ fontSize: 10.5, padding: "3px 8px" }}>{es.label}{(d.estado === "programado" || d.estado === "en_ruta") && d.fechaProgramada ? ` · ${fechaCorta(d.fechaProgramada)}` : entregado && d.fechaEjecutada ? ` · ${fechaCorta(d.fechaEjecutada)}` : ""}</Chip>}
+          {u && <Chip c={URG_C[u.nivel]} style={{ fontSize: 10.5, padding: "3px 8px" }}>{u.nivel === "atrasado" || u.nivel === "hoy" || u.nivel === "manana" ? u.txt : `En obra ${fechaCorta(d.fechaNecesaria)}`}</Chip>}
+          {entregado && compra && (faltaFicha ? <Chip c={C_ROJO} style={{ fontSize: 10.5, padding: "3px 8px" }}>Sin ficha</Chip> : compra.delivery?.fichaFile?.fileId ? <Chip c={C_VERDE} style={{ fontSize: 10.5, padding: "3px 8px" }}>Ficha subida</Chip> : null)}
+        </div>
+        <div style={{ font: "700 14px/1.35 var(--sans)", color: CHARCOAL, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", textDecoration: entregado ? "none" : "none" }}>{d.descripcion}</div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: "var(--text-3)" }}>
+          <span>{d.origen} <span style={{ color: ORANGE }}>→</span> {d.destino}</span>
+          {(v || d.motorista) && <span style={{ display: "inline-flex", gap: 5, alignItems: "center" }}><Ico d={ICO.camion} size={13} />{[v?.plate, d.motorista].filter(Boolean).join(" · ")}</span>}
+          {d.pickupInfo?.contactoProveedor && <span>Contacto: {d.pickupInfo.contactoProveedor}</span>}
+        </div>
+      </div>
+      <div onClick={e => e.stopPropagation()} style={{ display: "flex", flexDirection: isMobile ? "row" : "column", alignItems: isMobile ? "center" : "flex-end", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+        {principal}
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          {compra && linkBtn("Ficha de entrega", async () => { try { await descargarFichaCompra(compra, allProjects); } catch (err) { if (!err?.isStaleChunk) alert("No se pudo generar la ficha: " + (err?.message || err)); } })}
+          {compra?.delivery?.fichaFile?.fileId && linkBtn("Ver ficha firmada", () => verFicha(compra), "#177243")}
+          {canEdit && !entregado && compra && faltaFicha && d.estado !== "en_ruta" && linkBtn("Subir ficha", () => document.getElementById(`lg-ficha-${d.id}`)?.click(), "var(--naranja-texto-chico)")}
+          {canEdit && d.estado === "programado" && linkBtn("Entregado", () => { if (confirm("¿Marcar como ENTREGADO?")) updateDespachoEstado(d.id, "entregado"); }, "#177243")}
+        </div>
+        {canEdit && !entregado && compra && faltaFicha && d.estado !== "en_ruta" && <input id={`lg-ficha-${d.id}`} type="file" accept=".pdf,image/*" style={{ display: "none" }} onChange={async (ev) => { const f = ev.target.files?.[0]; ev.target.value = ""; if (!f) return; setUploadingFichaId(d.id); try { const ok = await uploadFichaFirmada(d, f); if (ok) alert("Ficha firmada subida y enlazada a la compra."); } finally { setUploadingFichaId(null); } }} />}
+      </div>
+    </div>;
+  };
+
+  const renderRutas = () => {
+    const q = despQ.trim().toLowerCase();
+    const enVista = despachos.filter(d => {
+      const vi = vistaDeDespacho(d);
+      if (despVista === "sin_ficha") { if (!((d.estado === "entregado" || d.estado === "cerrado") && sinFichaDe(d))) return false; }
+      else if (vi !== despVista) return false;
+      if (despVista === "entregados" && despMes && !String(d.fechaEjecutada || "").startsWith(despMes)) return false;
+      if (despProy && (d.projectCode || "__sin__") !== despProy) return false;
+      if (q) { const c = compraDe(d); if (![d.descripcion, d.origen, d.destino, d.motorista, d.notas, d.projectCode, c?.codigo, c?.provider].filter(Boolean).join(" ").toLowerCase().includes(q)) return false; }
       return true;
     });
-
-    // Agrupar despachos por sub-tab
-    const enPorHacer = despFiltered.filter(d => d.estado === "pendiente");
-    const enProgramados = despFiltered.filter(d => d.estado === "programado" || d.estado === "en_ruta");
-    const enHistorial = despFiltered.filter(d => d.estado === "entregado" || d.estado === "cerrado" || d.estado === "cancelado");
-
-    // Stats
-    const totalPorHacer = despachos.filter(d => d.estado === "pendiente").length + comprasPendientes.length;
-    const totalProgramados = despachos.filter(d => d.estado === "programado").length;
-    const totalEnRuta = despachos.filter(d => d.estado === "en_ruta").length;
-    const hoy = hoyISO();
-    const entregadosHoy = despachos.filter(d => d.estado === "entregado" && d.fechaEjecutada === hoy).length;
-
-    // Despacho row (tabla compartida entre sub-tabs)
-    const renderDespachoRow = (d) => {
-      const v = vehicles.find(x => x.id === d.vehicleId);
-      const proj = allProjects.find(p => p.short === d.projectCode);
-      const tCfg = tipoDespCfg(d.tipo);
-      const eCfg = estadoDespCfg(d.estado);
-      return <tr key={d.id} onClick={() => setModal({ t: "desp-edit", d })} style={{ borderBottom: `1px solid ${BRAND.borderSoft}`, cursor: "pointer", background: d.source === "compra" ? BRAND.blueSoft + "40" : d.source === "epp" ? "rgba(180,83,9,0.07)" : "transparent" }}>
-        <td style={td}><Badge color={tCfg.color}>{tCfg.label}</Badge></td>
-        <td style={{ ...td, maxWidth: 280 }}>
-          <div style={{ fontSize: 13, color: BRAND.ink }}>{d.descripcion}</div>
-          {d.source === "compra" && <div style={{ fontSize: 10, color: BRAND.blue, fontStyle: "italic", marginTop: 2 }}>🛒 Desde Compras</div>}
-          {d.source === "epp" && <div style={{ fontSize: 10, color: "#B45309", fontStyle: "italic", marginTop: 2 }}>🦺 EPP · GeoSafety{d.sourceEppReqNumero ? ` · ${d.sourceEppReqNumero}` : ""} — recoger en oficina administración</div>}
-        </td>
-        <td style={td}><b>{d.origen}</b> → <b>{d.destino}</b></td>
-        <td style={td}>{proj ? <Badge color={BRAND.blue}>{proj.short}</Badge> : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
-        <td style={td}>{v ? <div><div style={{ fontFamily: FONT.mono, fontWeight: 700, fontSize: 12 }}>{v.plate}</div><div style={{ fontSize: 10, color: BRAND.stone }}>{d.motorista || "—"}</div></div> : <span style={{ color: BRAND.stone, fontSize: 11 }}>Sin asignar</span>}</td>
-        <td style={td}>{d.fechaProgramada ? fmtFecha(d.fechaProgramada) : <span style={{ color: BRAND.stone, fontSize: 11 }}>—</span>}</td>
-        <td style={td}><Badge color={eCfg.color} bg={eCfg.bgSoft}>{eCfg.label}</Badge></td>
-        {canEdit && <td style={{ ...td, textAlign: "right" }} onClick={e => e.stopPropagation()}>
-          <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-            {/* Quick estado transitions */}
-            {d.estado === "pendiente" && d.vehicleId && d.fechaProgramada && <Btn small variant="primary" onClick={() => updateDespachoEstado(d.id, "programado")}>📅 Programar</Btn>}
-            {d.estado === "programado" && <Btn small variant="warn" onClick={() => updateDespachoEstado(d.id, "en_ruta")}>🚛 En ruta</Btn>}
-            {d.estado === "en_ruta" && <Btn small variant="success" onClick={() => updateDespachoEstado(d.id, "entregado")}>✓ Entregado</Btn>}
-            {d.estado === "entregado" && <Btn small variant="dark" onClick={() => updateDespachoEstado(d.id, "cerrado")}>🔒 Cerrar</Btn>}
-            <Btn small variant="ghost" onClick={() => setModal({ t: "desp-edit", d })}>✏️</Btn>
+    const nSinFicha = despachos.filter(d => (d.estado === "entregado" || d.estado === "cerrado") && sinFichaDe(d)).length;
+    const nEnt = despachos.filter(d => vistaDeDespacho(d) === "entregados" && (!despMes || String(d.fechaEjecutada || "").startsWith(despMes))).length;
+    const grupos = {};
+    enVista.forEach(d => { const k = d.projectCode || "__sin__"; (grupos[k] = grupos[k] || []).push(d); });
+    const urgMin = (arr) => Math.min(...arr.map(d => urgenciaDespacho(d, hoy)?.dias ?? 999));
+    const claves = Object.keys(grupos).sort((a, b) => {
+      if (despVista === "entregados" || despVista === "sin_ficha") return grupos[b].length - grupos[a].length || a.localeCompare(b);
+      return urgMin(grupos[a]) - urgMin(grupos[b]) || grupos[b].length - grupos[a].length || a.localeCompare(b);
+    });
+    claves.forEach(k => grupos[k].sort((a, b) => despVista === "entregados" || despVista === "sin_ficha" ? String(b.fechaEjecutada || "").localeCompare(String(a.fechaEjecutada || "")) : (urgenciaDespacho(a, hoy)?.dias ?? 999) - (urgenciaDespacho(b, hoy)?.dias ?? 999)));
+    const forzarAbierto = !!despProy || !!q || claves.length === 1;
+    const abierto = (k) => forzarAbierto || !!despAbiertos[k];
+    const toggle = (k) => setDespAbiertos(a => { const n = { ...a, [k]: !a[k] }; escribirLS("gt-lg-abiertos", n); return n; });
+    const todos = (val) => { const n = {}; claves.forEach(k => { n[k] = val; }); setDespAbiertos(n); escribirLS("gt-lg-abiertos", n); };
+    const mesesEnt = [...new Set(despachos.filter(d => d.fechaEjecutada).map(d => String(d.fechaEjecutada).slice(0, 7)))].sort().reverse();
+    const proyOpts = [...new Set(despachos.filter(d => vistaDeDespacho(d) === despVista || despVista === "sin_ficha").map(d => d.projectCode || "__sin__"))].sort().map(k => ({ value: k, label: k === "__sin__" ? "Sin proyecto" : k }));
+    return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {tiles([[statsDesp.porHacer, "por hacer", statsDesp.porHacer ? ORANGE_DARK : undefined, () => setDespVista("por_hacer")], [statsDesp.programados, "programados", undefined, () => setDespVista("en_camino")], [statsDesp.enRuta, "en ruta", undefined, () => setDespVista("en_camino")], [statsDesp.atrasados, "atrasados", statsDesp.atrasados ? "#B03024" : undefined], [statsDesp.hoy, "entregados hoy", "#177243", () => { setDespVista("entregados"); setDespMes(hoy.slice(0, 7)); }]])}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        {pills([["por_hacer", "Por hacer", statsDesp.porHacer], ["en_camino", "En camino", statsDesp.programados + statsDesp.enRuta], ["entregados", "Entregados", nEnt], ...(nSinFicha ? [["sin_ficha", "Sin ficha", nSinFicha]] : [])], despVista, (x) => { setDespVista(x); setDespProy(""); })}
+        {canEdit && <div style={{ marginLeft: "auto" }}><Btn onClick={() => setModal({ t: "desp" })}><Ico d={ICO.mas} size={15} />Nuevo movimiento</Btn></div>}
+      </div>
+      <div className="gt-vidrio" style={{ padding: "12px 14px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        {buscador(despQ, setDespQ, "Código, proveedor, qué se mueve…")}
+        {selChico(despProy, setDespProy, proyOpts, "Todos los proyectos")}
+        {despVista === "entregados" && selChico(despMes, setDespMes, mesesEnt.map(m => ({ value: m, label: mesLabel(m) })), "Todos los meses")}
+        {claves.length > 1 && !forzarAbierto && <Btn small variant="ghost" onClick={() => todos(!claves.every(k => despAbiertos[k]))}>{claves.every(k => despAbiertos[k]) ? "Compactar todo" : "Expandir todo"}</Btn>}
+        {(despQ || despProy) && <Btn small variant="ghost" onClick={() => { setDespQ(""); setDespProy(""); }}>Limpiar</Btn>}
+      </div>
+      {claves.length === 0 ? vacio(despVista === "por_hacer" ? "Nada por hacer. Cuando Ana o Fernando coordinen una compra, cae aquí." : "Nada en esta vista.") : claves.map(k => {
+        const arr = grupos[k];
+        const proj = allProjects.find(p => p.short === k);
+        const atr = arr.filter(d => urgenciaDespacho(d, hoy)?.nivel === "atrasado" && vistaDeDespacho(d) !== "entregados").length;
+        const sf = arr.filter(d => (d.estado === "entregado" || d.estado === "cerrado") && sinFichaDe(d)).length;
+        const ab = abierto(k);
+        return <div key={k} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} aria-expanded={ab} onClick={() => !forzarAbierto && toggle(k)} onKeyDown={e => { if (e.key === "Enter" && !forzarAbierto) toggle(k); }} style={{ padding: isMobile ? "12px 14px" : "14px 18px", display: "flex", alignItems: "center", gap: 14, cursor: forzarAbierto ? "default" : "pointer" }}>
+            <div style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: ORANGE_DARK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO.ruta} size={20} /></div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ font: `800 ${isMobile ? 15 : 16.5}px/1.15 var(--display)`, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k === "__sin__" ? "Sin proyecto" : k}</div>
+              {proj?.name && proj.name !== k && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{proj.name}</div>}
+            </div>
+            {atr > 0 && <Chip c={C_ROJO} title={`${atr} atrasado${atr === 1 ? "" : "s"}`}>{isMobile ? `${atr} !` : `${atr} atrasado${atr === 1 ? "" : "s"}`}</Chip>}
+            {sf > 0 && !isMobile && <Chip c={C_ROJO}>{sf} sin ficha</Chip>}
+            <span style={{ minWidth: 34, height: 30, padding: "0 10px", borderRadius: 999, background: "rgba(44,42,40,.06)", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "800 13px/1 var(--sans)", color: CHARCOAL }}>{arr.length}</span>
+            {!forzarAbierto && <span style={{ display: "inline-flex", transform: ab ? "rotate(90deg)" : "none", transition: "transform .2s" }}><Ico d={ICO.flecha} size={18} color="#8C857D" /></span>}
           </div>
-        </td>}
-      </tr>;
-    };
-
-    const tableHeaders = <thead><tr style={{ background: BRAND.beigeDeep, borderBottom: `1px solid ${BRAND.border}` }}>
-      <th style={th}>Tipo</th>
-      <th style={th}>Descripcion</th>
-      <th style={th}>Ruta</th>
-      <th style={th}>Proyecto</th>
-      <th style={th}>Vehiculo / Motorista</th>
-      <th style={th}>Fecha prog.</th>
-      <th style={th}>Estado</th>
-      {canEdit && <th style={th}>Acciones</th>}
-    </tr></thead>;
-
-    let cabeceraRutasMovil = null;
-    // CELULAR (3-nov-2026): cifras en una fila, pestañas como píldoras y los
-    // filtros en una hoja (antes llenaban la pantalla antes del primer despacho).
-    if (isMobile) {
-      const activos = (despFilter.projectCode ? 1 : 0) + (despFilter.tipo ? 1 : 0) + (despFilter.vehicleId ? 1 : 0);
-      const selM = { width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", padding: "0 12px", fontFamily: "inherit", color: BRAND.charcoal };
-      const seg = (txt, on, onClick) => <button key={txt} type="button" onClick={onClick} style={{ flex: "0 0 auto", padding: "8px 13px", borderRadius: 999, border: "none", background: on ? "#2C2A28" : "#fff", color: on ? "#fff" : "#2C2A28", font: `${on ? 700 : 600} 13.5px/1 var(--sans, Inter, sans-serif)`, boxShadow: on ? "none" : "0 1px 2px rgba(44,42,40,.06)", cursor: "pointer", whiteSpace: "nowrap" }}>{txt}</button>;
-      cabeceraRutasMovil = <>
-        <TiraMovil items={[
-          { v: totalPorHacer, l: "por hacer", c: totalPorHacer > 0 ? "#C75F1F" : undefined },
-          { v: totalProgramados, l: "programados" },
-          { v: totalEnRuta, l: "en ruta" },
-          { v: entregadosHoy, l: "entregados hoy", c: "#177243" },
-        ]} />
-        <div className="gm-scroll-x">
-          {seg(`Por hacer · ${enPorHacer.length}`, despSubSec === "por_hacer", () => setDespSubSec("por_hacer"))}
-          {seg(`En ruta · ${enProgramados.length}`, despSubSec === "programados", () => setDespSubSec("programados"))}
-          {seg(`Historial · ${enHistorial.length}`, despSubSec === "historial", () => setDespSubSec("historial"))}
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input value={despFilter.q} onChange={e => setDespFilter(f => ({ ...f, q: e.target.value }))} placeholder="Buscar despacho" style={{ flex: 1, minWidth: 0, height: 42, padding: "0 14px", border: "none", borderRadius: 12, background: "#EDECEA", fontFamily: "inherit", color: BRAND.charcoal, outline: "none" }} />
-          <button type="button" onClick={() => setFiltrosMovil(true)} style={{ flexShrink: 0, height: 42, padding: "0 14px", borderRadius: 12, border: "none", background: activos ? "rgba(232,118,45,.14)" : "#EDECEA", color: activos ? "#A94E16" : BRAND.charcoal, font: "700 14px/1 var(--sans, Inter, sans-serif)", cursor: "pointer" }}>Filtros{activos ? ` · ${activos}` : ""}</button>
-        </div>
-        {canEdit && <button type="button" onClick={() => setModal({ t: "desp-new" })} style={{ height: 44, borderRadius: 12, border: "none", background: "#E8762D", color: "#fff", font: "800 15px/1 var(--sans, Inter, sans-serif)", cursor: "pointer" }}>+ Nuevo movimiento</button>}
-        <HojaMovil abierta={filtrosMovil} onClose={() => setFiltrosMovil(false)} titulo="Filtros">
-          <div className="gm-encab" style={{ marginTop: 4 }}>Proyecto</div>
-          <select value={despFilter.projectCode} onChange={e => setDespFilter(f => ({ ...f, projectCode: e.target.value }))} style={selM}><option value="">Todos</option>{allProjects.map(p => <option key={p.short} value={p.short}>{p.short}</option>)}</select>
-          <div className="gm-encab">Tipo</div>
-          <select value={despFilter.tipo} onChange={e => setDespFilter(f => ({ ...f, tipo: e.target.value }))} style={selM}><option value="">Todos</option>{TIPOS_DESPACHO.map(o => <option key={o.value || o} value={o.value || o}>{String(o.label || o).replace(/^[^A-Za-zÁÉÍÓÚáéíóúÑñ]+/, "")}</option>)}</select>
-          <div className="gm-encab">Vehículo</div>
-          <select value={despFilter.vehicleId} onChange={e => setDespFilter(f => ({ ...f, vehicleId: e.target.value }))} style={selM}><option value="">Todos</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.plate}</option>)}</select>
-          {activos > 0 && <button type="button" onClick={() => setDespFilter(f => ({ ...f, projectCode: "", tipo: "", vehicleId: "" }))} style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 12, border: "none", background: "#fff", color: "#B03024", font: "700 15px/1 var(--sans, Inter, sans-serif)" }}>Limpiar filtros</button>}
-        </HojaMovil>
-      </>;
-    }
-    return <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 18 }}>
-      {cabeceraRutasMovil}
-      {!isMobile && <>
-      {/* Stats */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <StatCard icon="📌" label="Por hacer" value={totalPorHacer} color={totalPorHacer > 0 ? BRAND.orange : BRAND.stone} />
-        <StatCard icon="📅" label="Programados" value={totalProgramados} color={BRAND.blue} />
-        <StatCard icon="🚛" label="En ruta" value={totalEnRuta} color={BRAND.yellow} />
-        <StatCard icon="✓" label="Entregados hoy" value={entregadosHoy} color={BRAND.green} />
-      </div>
-
-      {/* Sub-tabs + boton */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 6, background: BRAND.parchment, padding: 4, borderRadius: R.md, border: `1px solid ${BRAND.borderSoft}` }}>
-          {[
-            { id: "por_hacer", label: `📌 Por hacer (${enPorHacer.length})` },
-            { id: "programados", label: `🚛 Programados / En ruta (${enProgramados.length})` },
-            { id: "historial", label: `📜 Historial (${enHistorial.length})` },
-          ].map(t => (
-            <button
-              key={t.id}
-              onClick={() => setDespSubSec(t.id)}
-              style={{
-                background: despSubSec === t.id ? BRAND.orange : "transparent",
-                color: despSubSec === t.id ? "#fff" : BRAND.graphite,
-                border: "none",
-                padding: "6px 14px",
-                borderRadius: R.sm,
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >{t.label}</button>
-          ))}
-        </div>
-        {canEdit && <Btn variant="primary" onClick={() => setModal({ t: "desp-new" })}>+ Nuevo movimiento</Btn>}
-      </div>
-
-      {/* Filtros */}
-      <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap", padding: 12, background: BRAND.parchment, borderRadius: R.md }}>
-        <Input label="Buscar" value={despFilter.q} onChange={e => setDespFilter(s => ({ ...s, q: e.target.value }))} placeholder="descripcion, origen, destino..." />
-        <Select label="Proyecto" options={allProjects.map(p => ({ value: p.short, label: p.short }))} value={despFilter.projectCode} onChange={e => setDespFilter(s => ({ ...s, projectCode: e.target.value }))} emptyLabel="Todos" />
-        <Select label="Tipo" options={TIPOS_DESPACHO} value={despFilter.tipo} onChange={e => setDespFilter(s => ({ ...s, tipo: e.target.value }))} emptyLabel="Todos" />
-        <Select label="Vehiculo" options={vehicles.map(v => ({ value: v.id, label: v.plate }))} value={despFilter.vehicleId} onChange={e => setDespFilter(s => ({ ...s, vehicleId: e.target.value }))} emptyLabel="Todos" />
-        {(despFilter.q || despFilter.projectCode || despFilter.tipo || despFilter.vehicleId) && <Btn small variant="ghost" onClick={() => setDespFilter({ projectCode: "", tipo: "", vehicleId: "", q: "" })}>Limpiar</Btn>}
-      </div>
-      </>}
-
-      {/* KANBAN por proyecto — Por hacer */}
-      {despSubSec === "por_hacer" && (() => {
-        // Aplicar filtros tambien a las compras pendientes (q + projectCode)
-        const comprasFiltered = comprasPendientes.filter(p => {
-          if (despFilter.projectCode && p.projectCode !== despFilter.projectCode) return false;
-          if (despFilter.q) {
-            const q = despFilter.q.toLowerCase();
-            const hay = [p.provider, p.description].filter(Boolean).join(" ").toLowerCase();
-            if (!hay.includes(q)) return false;
-          }
-          return true;
-        });
-
-        // Agrupar todo por proyecto: pendientes (compras + despachos) +
-        // programados/en ruta + entregados historicos. Todo dentro de la misma
-        // columna del kanban con secciones colapsables.
-        const grupos = {};
-        const ensure = (key) => { if (!grupos[key]) grupos[key] = { compras: [], despachos: [], programados: [], entregados: [] }; };
-        comprasFiltered.forEach(p => {
-          const key = p.projectCode || "__sin__";
-          ensure(key);
-          grupos[key].compras.push(p);
-        });
-        enPorHacer.forEach(d => {
-          const key = d.projectCode || "__sin__";
-          ensure(key);
-          grupos[key].despachos.push(d);
-        });
-        // Programados / En ruta por proyecto — en la misma columna, no en otra tab.
-        // Pedido por el usuario: que vea todo el flujo del proyecto en un solo vistazo.
-        enProgramados.forEach(d => {
-          const key = d.projectCode || "__sin__";
-          ensure(key);
-          grupos[key].programados.push(d);
-        });
-        // Entregados historicos por proyecto (los que ya se entregaron, para visibilidad
-        // del historial de cada proyecto sin tener que ir a la tab "Historial").
-        enHistorial.forEach(d => {
-          if (d.estado !== "entregado" && d.estado !== "cerrado") return; // cancelados no
-          const key = d.projectCode || "__sin__";
-          ensure(key);
-          grupos[key].entregados.push(d);
-        });
-
-        // Si hay un filtro de proyecto activo, mostrar solo ese (y "Sin proyecto" si tambien matchea)
-        // Si no, mostrar TODOS los proyectos con items + un boton para agregar columna vacia
-        let projKeysFiltered = Object.keys(grupos);
-        // Si NO hay filtro de proyecto, ademas mostrar todos los proyectos activos aunque no tengan items
-        // (asi siempre tiene una columna para empezar una orden nueva en cualquier proyecto)
-        if (!despFilter.projectCode) {
-          allProjects.forEach(p => {
-            ensure(p.short); // <— usar ensure() para incluir entregados:[] (sin esto crashea)
-            if (!projKeysFiltered.includes(p.short)) projKeysFiltered.push(p.short);
-          });
-        }
-
-        // Ordenar: proyectos con items pendientes primero, despues los vacios, "Sin proyecto" al final
-        const projKeys = projKeysFiltered.sort((a, b) => {
-          if (a === "__sin__") return 1;
-          if (b === "__sin__") return -1;
-          const aHas = (grupos[a]?.compras.length || 0) + (grupos[a]?.despachos.length || 0);
-          const bHas = (grupos[b]?.compras.length || 0) + (grupos[b]?.despachos.length || 0);
-          if (aHas !== bHas) return bHas - aHas;
-          return a.localeCompare(b);
-        });
-        // Si una columna no tiene pendientes pero SI tiene entregados, igual la mostramos
-        // (para que se vea el historial del proyecto). Ya estaba incluida arriba via allProjects.
-
-        if (projKeys.length === 0) {
-          return <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
-            No hay proyectos. Agrega proyectos desde el modulo de Compras → Proyectos.
-          </div>;
-        }
-
-        // Estilo de boton chip para quick actions en cards
-        const chipBtn = (bg, color) => ({
-          background: bg,
-          color,
-          border: "none",
-          padding: "4px 8px",
-          borderRadius: R.sm,
-          fontSize: 10,
-          fontWeight: 700,
-          cursor: "pointer",
-          fontFamily: "inherit",
-          flex: 1,
-          minWidth: 0,
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        });
-
-        // Card de COMPRA esperando transporte
-        const renderCardCompra = (p) => (
-          <div
-            key={`c-${p.id}`}
-            onClick={() => canEdit && setModal({ t: "desp-new", sourcePurchase: p })}
-            style={{
-              background: BRAND.cream,
-              border: `1px solid ${BRAND.blue}40`,
-              borderLeft: `3px solid ${BRAND.blue}`,
-              borderRadius: R.sm,
-              padding: "10px 12px",
-              cursor: canEdit ? "pointer" : "default",
-              transition: "all 0.15s",
-            }}
-            onMouseEnter={e => canEdit && (e.currentTarget.style.boxShadow = BRAND.shadowSm)}
-            onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-              <Badge color={BRAND.blue}>🛒 De compra</Badge>
-              <span style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700 }}>{p.status === "finalizado" ? "✓ Pagado" : "💰 Pagado"}</span>
-            </div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4 }}>{p.provider}</div>
-            <div style={{ fontSize: 11, color: BRAND.graphite, marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>
-
-            {/* Deadline en proyecto — editable inline. Crea un despacho hidden al asignar fecha */}
-            {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
-              <label style={{ fontSize: 9, color: BRAND.red, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>📅 Necesaria en proyecto</label>
-              <input
-                type="date"
-                value=""
-                onChange={async (e) => {
-                  if (!e.target.value) return;
-                  await setFechaNecesariaCompra(p, e.target.value);
-                }}
-                style={{
-                  width: "100%",
-                  marginTop: 4,
-                  padding: "5px 8px",
-                  border: `1px solid ${BRAND.red}50`,
-                  borderRadius: R.sm,
-                  fontSize: 11,
-                  fontFamily: "inherit",
-                  background: BRAND.cream,
-                  color: BRAND.charcoal,
-                }}
-              />
-            </div>}
-
-            {/* Boton de descarga de ficha — para llevar al proveedor con el comprobante de transferencia */}
-            <div onClick={e => e.stopPropagation()} style={{ marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
-              <button
-                onClick={async () => {
-                  try {
-                    await descargarFichaCompra(p, allProjects);
-                  } catch (err) {
-                    if (!err?.isStaleChunk) alert("No se pudo generar la ficha: " + (err?.message || err));
-                  }
-                }}
-                style={{
-                  width: "100%",
-                  background: BRAND.charcoal,
-                  color: BRAND.beige,
-                  border: "none",
-                  padding: "8px 10px",
-                  borderRadius: R.sm,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  letterSpacing: 0.3,
-                }}
-                title="Descarga la Ficha de Entrega con cotizacion + comprobante de transferencia para llevar al proveedor"
-              >📄 Descargar Ficha de Entrega</button>
-              <div style={{ fontSize: 9, color: BRAND.stone, fontStyle: "italic", marginTop: 4, textAlign: "center", lineHeight: 1.3 }}>
-                Incluye la cotizacion + comprobante de transferencia para retirar con el proveedor
-              </div>
-            </div>
-
-            {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8 }}>
-              <label style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Cambiar estado</label>
-              <select
-                value="pendiente"
-                onChange={async (e) => {
-                  const val = e.target.value;
-                  if (val === "programado") {
-                    setModal({ t: "desp-program", source: { kind: "compra", purchase: p } });
-                  } else if (val === "entregado") {
-                    if (!confirm(`Marcar como YA ENTREGADO la compra de ${p.provider}?`)) return;
-                    await quickCreateFromCompra(p, "entregado", "", hoyISO());
-                  }
-                  // si vuelven a "pendiente" no se hace nada (ya esta pendiente)
-                }}
-                style={{
-                  width: "100%",
-                  marginTop: 4,
-                  padding: "6px 10px",
-                  border: `1px solid ${BRAND.borderHard}`,
-                  borderRadius: R.sm,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  background: BRAND.cream,
-                  color: BRAND.charcoal,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                <option value="pendiente">📌 Pendiente</option>
-                <option value="programado">📅 Programar...</option>
-                <option value="entregado">✓ Marcar entregado</option>
-              </select>
-            </div>}
-          </div>
-        );
-
-        // Card de DESPACHO pendiente
-        const renderCardDespacho = (d) => {
-          const tCfg = tipoDespCfg(d.tipo);
-          const v = vehicles.find(x => x.id === d.vehicleId);
-          // Si el despacho vino de una compra, buscar el purchase original
-          // para poder descargar la Ficha de Entrega (cotizacion + comprobante).
-          const sourcePurchase = d.sourcePurchaseId ? (purchases.find(p => p.id === d.sourcePurchaseId) || mqPurchases.find(p => p.id === d.sourcePurchaseId)) : null;
-          return (
-            <div
-              key={`d-${d.id}`}
-              onClick={() => canEdit && setModal({ t: "desp-edit", d })}
-              style={{
-                background: BRAND.cream,
-                border: `1px solid ${tCfg.color}40`,
-                borderLeft: `3px solid ${tCfg.color}`,
-                borderRadius: R.sm,
-                padding: "10px 12px",
-                cursor: canEdit ? "pointer" : "default",
-                transition: "all 0.15s",
-              }}
-              onMouseEnter={e => canEdit && (e.currentTarget.style.boxShadow = BRAND.shadowSm)}
-              onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <Badge color={tCfg.color}>{tCfg.label}</Badge>
-                {d.fechaProgramada && <span style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700 }}>🚛 {fmtFecha(d.fechaProgramada)}</span>}
-              </div>
-              {d.fechaNecesaria && (() => {
-                const dias = diasParaFecha(d.fechaNecesaria);
-                const cBg = dias < 0 ? BRAND.red : dias <= 1 ? BRAND.red : dias <= 3 ? BRAND.orange : dias <= 7 ? BRAND.yellow : BRAND.green;
-                const txt = dias < 0 ? `ATRASADO ${Math.abs(dias)}d` : dias === 0 ? "HOY" : dias === 1 ? "MAÑANA" : `en ${dias}d`;
-                return <div style={{ background: cBg + "20", border: `1px solid ${cBg}50`, borderRadius: R.sm, padding: "3px 8px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 10, color: cBg, fontWeight: 800 }}>📅 Necesaria: {fmtFecha(d.fechaNecesaria)}</span>
-                  <span style={{ fontSize: 9, color: cBg, fontWeight: 800 }}>{txt}</span>
-                </div>;
-              })()}
-              <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4, lineHeight: 1.3 }}>{d.descripcion}</div>
-              {d.source === "epp" && <div style={{ fontSize: 9.5, color: "#B45309", fontWeight: 800, marginTop: 3 }}>🦺 EPP · GeoSafety{d.sourceEppReqNumero ? ` · ${d.sourceEppReqNumero}` : ""} — recoger en oficina administración</div>}
-              <div style={{ fontSize: 10, color: BRAND.stone, marginTop: 4 }}>
-                <b>{d.origen}</b> → <b>{d.destino}</b>
-              </div>
-              {(v || d.motorista) && <div style={{ fontSize: 10, color: BRAND.graphite, marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
-                🚛 {v?.plate || "Sin vehiculo"} · {d.motorista || "Sin motorista"}
-              </div>}
-
-              {/* Ficha de Entrega — disponible para CUALQUIER despacho que vino de una compra
-                  (pendiente o programado), no solo cards "🛒 De compra" sin despacho. */}
-              {sourcePurchase && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
-                <button
-                  onClick={async () => {
-                    try {
-                      await descargarFichaCompra(sourcePurchase, allProjects);
-                    } catch (err) {
-                      alert("No se pudo generar la ficha: " + (err?.message || err));
-                    }
-                  }}
-                  style={{
-                    width: "100%",
-                    background: BRAND.charcoal,
-                    color: BRAND.beige,
-                    border: "none",
-                    padding: "7px 10px",
-                    borderRadius: R.sm,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    letterSpacing: 0.3,
-                  }}
-                  title={`Ficha de Entrega original — ${sourcePurchase.provider}`}
-                >📄 Descargar Ficha de Entrega</button>
-              </div>}
-
-              {/* Fecha necesaria — editable inline. Para que vos pongas el deadline o lo cambies. */}
-              {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
-                <label style={{ fontSize: 9, color: BRAND.red, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>📅 Necesaria en proyecto</label>
-                <input
-                  type="date"
-                  value={d.fechaNecesaria || ""}
-                  onChange={(e) => updateDespachoField(d.id, "fechaNecesaria", e.target.value)}
-                  style={{
-                    width: "100%",
-                    marginTop: 4,
-                    padding: "5px 8px",
-                    border: `1px solid ${d.fechaNecesaria ? BRAND.red : BRAND.borderHard}`,
-                    borderRadius: R.sm,
-                    fontSize: 11,
-                    fontFamily: "inherit",
-                    background: d.fechaNecesaria ? BRAND.redSoft : BRAND.cream,
-                    color: BRAND.charcoal,
-                  }}
-                />
-              </div>}
-
-              {/* SUBIR FICHA FIRMADA — en la card del kanban, donde Logística
-                  trabaja (19-ago-2026). Antes solo estaba en la card de
-                  "Entregados", así que Oscar no tenía cómo subirla ANTES de
-                  marcar entregado — y el candado se lo impedía. Sin ficha no
-                  se puede cerrar: el aviso lo dice y el botón está acá mismo. */}
-              {canEdit && sourcePurchase && !sourcePurchase.delivery?.fichaFile && (() => {
-                const isUploading = uploadingFichaId === d.id;
-                const anyUploading = uploadingFichaId !== null;
-                return <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.orange}50` }}>
-                  <label style={{ display: "block", fontSize: 9, color: BRAND.orange, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
-                    📎 Ficha de recibido (obligatoria)
-                  </label>
-                  <input
-                    type="file"
-                    accept=".pdf,image/*"
-                    id={`kf-ficha-${d.id}`}
-                    style={{ display: "none" }}
-                    disabled={anyUploading}
-                    onChange={async (e) => {
-                      const f = e.target.files?.[0];
-                      if (!f) { e.target.value = ""; return; }
-                      setUploadingFichaId(d.id);
-                      try {
-                        const ok = await uploadFichaFirmada(d, f);
-                        if (ok) alert("✓ Ficha firmada subida y enlazada a la compra.\n\nYa podés marcar el despacho como ENTREGADO.");
-                      } finally {
-                        setUploadingFichaId(null);
-                        e.target.value = "";
-                      }
-                    }}
-                  />
-                  <label
-                    htmlFor={anyUploading ? undefined : `kf-ficha-${d.id}`}
-                    style={{
-                      display: "block", width: "100%",
-                      background: isUploading ? BRAND.stone : BRAND.orange,
-                      color: "#fff", border: "none", padding: "8px 10px", borderRadius: R.sm,
-                      fontSize: 11, fontWeight: 800, cursor: anyUploading ? "not-allowed" : "pointer",
-                      fontFamily: "inherit", textAlign: "center", boxSizing: "border-box",
-                      opacity: anyUploading && !isUploading ? 0.5 : 1,
-                    }}
-                    title="Subí la ficha que el residente firmó en obra. Sin esto no se puede marcar entregado."
-                  >{isUploading ? "⏳ Subiendo ficha…" : "📎 Subir ficha firmada"}</label>
-                  <div style={{ fontSize: 9, color: BRAND.red, marginTop: 4, fontWeight: 700 }}>
-                    ⚠ Sin la ficha firmada NO se puede marcar como entregado.
-                  </div>
-                </div>;
-              })()}
-
-              {/* Ficha ya subida: constancia visible */}
-              {sourcePurchase?.delivery?.fichaFile && <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.borderSoft}`, fontSize: 10, color: BRAND.green, fontWeight: 800 }}>
-                ✓ Ficha de recibido subida — {sourcePurchase.delivery.fichaFile.name}
-              </div>}
-
-              {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.borderSoft}` }}>
-                <label style={{ fontSize: 9, color: BRAND.stone, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Cambiar estado</label>
-                <select
-                  // en_ruta lo mostramos como "programado" en el dropdown (estados unificados a pedido del usuario).
-                  value={d.estado === "en_ruta" ? "programado" : d.estado}
-                  onChange={async (e) => {
-                    const val = e.target.value;
-                    if (val === d.estado) return;
-                    if (val === "programado") {
-                      // Si ya estaba en programado/en_ruta y se eligio "Programar" otra vez, no hacer nada
-                      if (d.estado === "programado" || d.estado === "en_ruta") return;
-                      setModal({ t: "desp-program", source: { kind: "despacho", despacho: d } });
-                    } else if (val === "entregado") {
-                      if (!confirm("¿Marcar este movimiento como YA ENTREGADO?")) return;
-                      await updateDespachoEstado(d.id, "entregado");
-                    } else if (val === "cancelado") {
-                      if (!confirm("¿Cancelar este movimiento?")) return;
-                      await updateDespachoEstado(d.id, "cancelado");
-                    } else {
-                      await updateDespachoEstado(d.id, val);
-                    }
-                  }}
-                  style={{
-                    width: "100%",
-                    marginTop: 4,
-                    padding: "6px 10px",
-                    border: `1px solid ${BRAND.borderHard}`,
-                    borderRadius: R.sm,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    background: BRAND.cream,
-                    color: BRAND.charcoal,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                >
-                  <option value="pendiente">📌 Pendiente</option>
-                  <option value="programado">📅 Programar / En ruta</option>
-                  <option value="entregado">✓ Marcar entregado</option>
-                  <option value="cancelado">✗ Cancelar</option>
-                </select>
-              </div>}
-            </div>
-          );
-        };
-
-        // Card de DESPACHO entregado/cerrado — MISMA estructura que pendiente pero
-        // con strikethrough en texto + fondo verde soft + ficha descargable si viene de compra.
-        const renderCardEntregado = (d) => {
-          const tCfg = tipoDespCfg(d.tipo);
-          const v = vehicles.find(x => x.id === d.vehicleId);
-          const sourcePurchase = d.sourcePurchaseId ? (purchases.find(p => p.id === d.sourcePurchaseId) || mqPurchases.find(p => p.id === d.sourcePurchaseId)) : null;
-          const strikeStyle = { textDecoration: "line-through", textDecorationColor: BRAND.green, textDecorationThickness: "2px" };
-          return (
-            <div
-              key={`e-${d.id}`}
-              onClick={() => canEdit && setModal({ t: "desp-edit", d })}
-              style={{
-                background: BRAND.greenSoft,
-                border: `1px solid ${BRAND.green}50`,
-                borderLeft: `3px solid ${BRAND.green}`,
-                borderRadius: R.sm,
-                padding: "10px 12px",
-                cursor: canEdit ? "pointer" : "default",
-                transition: "all 0.15s",
-              }}
-              onMouseEnter={e => canEdit && (e.currentTarget.style.boxShadow = BRAND.shadowSm)}
-              onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <Badge color={BRAND.green}>✓ {d.estado === "cerrado" ? "Cerrado" : "Entregado"}</Badge>
-                {d.fechaEjecutada && <span style={{ fontSize: 9, color: BRAND.green, fontWeight: 700 }}>📅 {fmtFecha(d.fechaEjecutada)}</span>}
-              </div>
-              {sourcePurchase && <div style={{ fontSize: 10, color: BRAND.blue, marginBottom: 4 }}>🛒 De compra · {sourcePurchase.provider}</div>}
-              {d.source === "epp" && <div style={{ fontSize: 10, color: "#B45309", fontWeight: 800, marginBottom: 4 }}>🦺 EPP · GeoSafety{d.sourceEppReqNumero ? ` · ${d.sourceEppReqNumero}` : ""}</div>}
-              <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.charcoal, marginTop: 4, lineHeight: 1.3, ...strikeStyle }}>{d.descripcion}</div>
-              <div style={{ fontSize: 10, color: BRAND.stone, marginTop: 4, ...strikeStyle }}>
-                <b>{d.origen}</b> → <b>{d.destino}</b>
-              </div>
-              {(v || d.motorista) && <div style={{ fontSize: 10, color: BRAND.graphite, marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${BRAND.green}30` }}>
-                🚛 {v?.plate || "Sin vehiculo"} · {d.motorista || "Sin motorista"}
-              </div>}
-
-              {/* Boton descargar ficha si viene de compra — aun en entregados es util tener acceso */}
-              {sourcePurchase && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.green}30` }}>
-                <button
-                  onClick={async () => {
-                    try {
-                      await descargarFichaCompra(sourcePurchase, allProjects);
-                    } catch (err) {
-                      alert("No se pudo generar la ficha: " + (err?.message || err));
-                    }
-                  }}
-                  style={{
-                    width: "100%",
-                    background: BRAND.charcoal,
-                    color: BRAND.beige,
-                    border: "none",
-                    padding: "6px 10px",
-                    borderRadius: R.sm,
-                    fontSize: 10,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                  title="Re-descargar la Ficha de Entrega en blanco (para reimprimir si la perdio el motorista)"
-                >🖨 Imprimir Ficha en Blanco</button>
-              </div>}
-
-              {/* SUBIR FICHA FIRMADA (Jorge) — solo si viene de compra y aun no se subio */}
-              {sourcePurchase && !sourcePurchase.delivery?.fichaFile && (() => {
-                const isUploading = uploadingFichaId === d.id;
-                const anyUploading = uploadingFichaId !== null;
-                return <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.orange}50` }}>
-                <label style={{ display: "block", fontSize: 9, color: BRAND.orange, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
-                  📎 Subir ficha firmada
-                </label>
-                <input
-                  type="file"
-                  accept=".pdf,image/*"
-                  id={`ficha-firmada-${d.id}`}
-                  style={{ display: "none" }}
-                  disabled={anyUploading}
-                  onChange={async (e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) { e.target.value = ""; return; }
-                    setUploadingFichaId(d.id);
-                    try {
-                      const ok = await uploadFichaFirmada(d, f);
-                      if (ok) {
-                        alert("✓ Ficha firmada subida y enlazada a la compra.\nAna ya puede verla en su sub-seccion 'Listas para cierre contable'.");
-                      }
-                    } finally {
-                      setUploadingFichaId(null);
-                      e.target.value = "";
-                    }
-                  }}
-                />
-                <label
-                  htmlFor={anyUploading ? undefined : `ficha-firmada-${d.id}`}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    background: isUploading ? BRAND.stone : BRAND.orange,
-                    color: "#fff",
-                    border: "none",
-                    padding: "8px 10px",
-                    borderRadius: R.sm,
-                    fontSize: 11,
-                    fontWeight: 800,
-                    cursor: anyUploading ? "not-allowed" : "pointer",
-                    fontFamily: "inherit",
-                    textAlign: "center",
-                    boxSizing: "border-box",
-                    opacity: anyUploading && !isUploading ? 0.5 : 1,
-                    animation: isUploading ? "logisticsFichaPulse 1.2s ease-in-out infinite" : "none",
-                  }}
-                  title={isUploading ? "Subiendo ficha, espera..." : "Sube el PDF/foto de la ficha que el residente firmo en obra"}
-                >{isUploading ? "⏳ Subiendo ficha… no cierres esta ventana" : "📎 Subir ficha firmada"}</label>
-                <style>{`@keyframes logisticsFichaPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }`}</style>
-                <div style={{ fontSize: 9, color: BRAND.stone, marginTop: 4, fontStyle: "italic" }}>
-                  {isUploading
-                    ? "Subiendo a la nube con reintentos automaticos. Puede tomar hasta 30s si la conexion esta lenta."
-                    : "Al subir, se enlaza automaticamente a la compra y Ana podra cerrar contable."}
-                </div>
-              </div>;
-              })()}
-
-              {/* FICHA YA SUBIDA — mostrar estado verde + boton ver */}
-              {sourcePurchase?.delivery?.fichaFile && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.green}50`, background: BRAND.greenSoft, borderRadius: R.sm, padding: 8 }}>
-                <div style={{ fontSize: 10, color: BRAND.green, fontWeight: 800, marginBottom: 4 }}>
-                  ✓ Ficha firmada adjunta
-                </div>
-                <div style={{ fontSize: 10, color: BRAND.graphite, marginBottom: 6, wordBreak: "break-word" }}>
-                  {sourcePurchase.delivery.fichaFile.name}
-                </div>
-                <button
-                  onClick={async () => {
-                    // Cargar el archivo y mostrarlo en el visor de la app
-                    // (10-sep-2026: el window.open DESPUÉS del await lo
-                    // bloqueaba el navegador y el botón "no hacía nada").
-                    try {
-                      const ref = sourcePurchase.delivery.fichaFile;
-                      const full = await store.get(`cp-file-${ref.fileId}`);
-                      if (!full?.dataUrl) {
-                        alert("No se pudo cargar el archivo desde la nube.");
-                        return;
-                      }
-                      setVisorFicha({ ...full, name: full.name || ref.name });
-                    } catch (err) {
-                      alert("Error abriendo ficha: " + (err?.message || err));
-                    }
-                  }}
-                  style={{
-                    width: "100%",
-                    background: BRAND.green,
-                    color: "#fff",
-                    border: "none",
-                    padding: "6px 10px",
-                    borderRadius: R.sm,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                >👁 Ver ficha firmada</button>
-              </div>}
-
-              {/* Dropdown para revertir si fue un error marcar entregado */}
-              {canEdit && <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, paddingTop: 6, borderTop: `1px dashed ${BRAND.green}30` }}>
-                <label style={{ fontSize: 9, color: BRAND.green, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Cambiar estado</label>
-                <select
-                  value={d.estado}
-                  onChange={async (e) => {
-                    const val = e.target.value;
-                    if (val === d.estado) return;
-                    if (val === "pendiente" || val === "programado") {
-                      if (!confirm("¿Revertir a " + (val === "pendiente" ? "pendiente" : "programado") + "?")) return;
-                    }
-                    await updateDespachoEstado(d.id, val);
-                  }}
-                  style={{
-                    width: "100%",
-                    marginTop: 4,
-                    padding: "5px 8px",
-                    border: `1px solid ${BRAND.green}50`,
-                    borderRadius: R.sm,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    background: BRAND.cream,
-                    color: BRAND.charcoal,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                >
-                  <option value="entregado">✓ Entregado</option>
-                  <option value="cerrado">🔒 Cerrado</option>
-                  <option value="pendiente">📌 Revertir a pendiente</option>
-                  <option value="programado">📅 Revertir a programado</option>
-                </select>
-              </div>}
-            </div>
-          );
-        };
-
-        return <div style={{ display: "flex", gap: 14, overflowX: "auto", padding: "4px 4px 12px 4px" }}>
-          {projKeys.map(key => {
-            const raw = grupos[key] || {};
-            const items = {
-              compras: raw.compras || [],
-              despachos: raw.despachos || [],
-              programados: raw.programados || [],
-              entregados: raw.entregados || [],
-            };
-            const proj = allProjects.find(p => p.short === key);
-            const total = items.compras.length + items.despachos.length;
-            const totalProg = items.programados.length;
-            const totalHist = items.entregados.length;
-            const progExpanded = expandedProgKanban[key] !== false; // default expandido (queremos que se vea)
-            const isEmpty = total === 0;
-            const isExpanded = expandedHistKanban[key] === true;
-            const headerColor = key === "__sin__" ? BRAND.stone : BRAND.blue;
-            return (
-              <div key={key} style={{
-                minWidth: 280,
-                maxWidth: 320,
-                flex: "0 0 auto",
-                background: isEmpty ? BRAND.beigeLight : BRAND.parchment,
-                borderRadius: R.md,
-                padding: 12,
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-                border: `1px solid ${BRAND.borderSoft}`,
-                opacity: isEmpty && totalProg === 0 && totalHist === 0 ? 0.7 : 1,
-              }}>
-                <div style={{ borderBottom: `2px solid ${headerColor}`, paddingBottom: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ fontWeight: 800, fontSize: 13, color: BRAND.charcoal, fontFamily: FONT.mono, letterSpacing: 0.5 }}>
-                      {key === "__sin__" ? "SIN PROYECTO" : key}
-                    </div>
-                    <Badge color={total > 0 ? BRAND.orange : BRAND.stone}>{total}</Badge>
-                  </div>
-                  {proj && <div style={{ fontSize: 10, color: BRAND.stone, marginTop: 3, lineHeight: 1.3 }}>{proj.name}</div>}
-                  {canEdit && <Btn small variant={total > 0 ? "primary" : "ghost"} onClick={() => setModal({ t: "desp-new", presetProjectCode: key === "__sin__" ? "" : key })} style={{ marginTop: 8, width: "100%", padding: "6px 10px" }}>
-                    + Nueva orden
-                  </Btn>}
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 560, overflowY: "auto" }}>
-                  {/* Cards mezcladas y ordenadas: las con fechaNecesaria mas urgente arriba.
-                      Compras sin despacho (sin fechaNecesaria) van al final. */}
-                  {(() => {
-                    const mezclado = [
-                      ...items.compras.map(p => ({ kind: "compra", data: p, sortKey: "9999-12-30" })), // sin fecha → al final
-                      ...items.despachos.map(d => ({ kind: "despacho", data: d, sortKey: d.fechaNecesaria || d.fechaProgramada || "9999-12-31" })),
-                    ];
-                    mezclado.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-                    return mezclado.map(item =>
-                      item.kind === "compra" ? renderCardCompra(item.data) : renderCardDespacho(item.data)
-                    );
-                  })()}
-                  {isEmpty && totalProg === 0 && totalHist === 0 && <div style={{ fontSize: 11, color: BRAND.stone, fontStyle: "italic", textAlign: "center", padding: "20px 4px" }}>
-                    Sin movimientos pendientes
-                  </div>}
-
-                  {/* Seccion colapsable de Programados / En ruta — entre pendientes y entregados */}
-                  {totalProg > 0 && <>
-                    <button
-                      onClick={() => setExpandedProgKanban(s => ({ ...s, [key]: !(s[key] !== false) }))}
-                      style={{
-                        marginTop: total > 0 ? 12 : 0,
-                        padding: "8px 10px",
-                        background: BRAND.blueSoft,
-                        border: `1px solid ${BRAND.blue}40`,
-                        borderRadius: R.sm,
-                        color: BRAND.blue,
-                        fontSize: 11,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span>📅 Programados / En ruta ({totalProg})</span>
-                      <span style={{ fontSize: 10 }}>{progExpanded ? "▾ ocultar" : "▸ mostrar"}</span>
-                    </button>
-                    {progExpanded && <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
-                      {items.programados
-                        .sort((a, b) => (a.fechaProgramada || "9999").localeCompare(b.fechaProgramada || "9999"))
-                        .map(renderCardDespacho)}
-                    </div>}
-                  </>}
-
-                  {/* Seccion colapsable de Entregados (historial del proyecto) */}
-                  {totalHist > 0 && <>
-                    <button
-                      onClick={() => setExpandedHistKanban(s => ({ ...s, [key]: !s[key] }))}
-                      style={{
-                        marginTop: total > 0 ? 12 : 0,
-                        padding: "8px 10px",
-                        background: BRAND.greenSoft,
-                        border: `1px solid ${BRAND.green}40`,
-                        borderRadius: R.sm,
-                        color: BRAND.green,
-                        fontSize: 11,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span>📜 Entregados ({totalHist})</span>
-                      <span style={{ fontSize: 10 }}>{isExpanded ? "▾ ocultar" : "▸ mostrar"}</span>
-                    </button>
-                    {isExpanded && <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingLeft: 4 }}>
-                      {items.entregados
-                        .sort((a, b) => (b.fechaEjecutada || b.updatedAt || "").localeCompare(a.fechaEjecutada || a.updatedAt || ""))
-                        .map(renderCardEntregado)}
-                    </div>}
-                  </>}
-                </div>
-              </div>
-            );
-          })}
+          {ab && <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingLeft: isMobile ? 0 : 14 }}>{arr.slice(0, 150).map(tarjetaDespacho)}</div>}
         </div>;
-      })()}
-
-      {despSubSec === "programados" && (
-        enProgramados.length === 0
-          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
-              No hay despachos programados ni en ruta que cumplan los filtros.
-            </div>
-          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  {tableHeaders}
-                  <tbody>{enProgramados.sort((a, b) => (a.fechaProgramada || "9999").localeCompare(b.fechaProgramada || "9999")).map(renderDespachoRow)}</tbody>
-                </table>
-              </div>
-            </div>
-      )}
-
-      {despSubSec === "historial" && (
-        enHistorial.length === 0
-          ? <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 40, textAlign: "center", color: BRAND.stone }}>
-              {despachos.length === 0
-                ? "Aun no hay despachos en historial. Cuando se entreguen o cierren los despachos, van a aparecer aqui."
-                : "No hay registros en el historial que cumplan los filtros."}
-            </div>
-          : <div style={{ background: BRAND.cream, border: `1px solid ${BRAND.borderSoft}`, borderRadius: R.lg, overflow: "hidden", boxShadow: BRAND.shadowSm }}>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  {tableHeaders}
-                  <tbody>{enHistorial.sort((a, b) => (b.fechaEjecutada || b.updatedAt || "").localeCompare(a.fechaEjecutada || a.updatedAt || "")).map(renderDespachoRow)}</tbody>
-                </table>
-              </div>
-            </div>
-      )}
+      })}
     </div>;
   };
 
-  // ── RENDER PLACEHOLDER ──
-  const renderPlaceholder = (label, desc) => <div style={{ background: BRAND.parchment, border: `1px dashed ${BRAND.border}`, borderRadius: R.lg, padding: 60, textAlign: "center" }}>
-    <div style={{ fontSize: 48, marginBottom: 14 }}>🚧</div>
-    <div style={{ fontSize: 18, fontWeight: 800, color: BRAND.charcoal, marginBottom: 6 }}>{label} — proximamente</div>
-    <div style={{ fontSize: 13, color: BRAND.stone, maxWidth: 500, margin: "0 auto" }}>{desc}</div>
-  </div>;
-
-  const renderSec = () => {
-    if (sec === "flota") return renderFlota();
-    if (sec === "mantenimientos") return renderMantenimientos();
-    if (sec === "rutas") return renderRutas();
-    if (sec === "motoristas") return renderPlaceholder("Motoristas", "Registro del personal de manejo con disponibilidad, licencia y vehiculos asignados.");
-    return null;
-  };
-
-  // ── MODAL SWITCH ──
+  // ═══════════════════════════ MODALES ═══════════════════════════
+  const cerrar = () => setModal(null);
   const renderModal = () => {
     if (!modal) return null;
-    if (modal.t === "new") return <Modal title="Nuevo vehiculo" onClose={() => setModal(null)} wide><VehicleFormImpl allProjects={allProjects} setModal={setModal} saveVehicle={saveVehicle} /></Modal>;
-    if (modal.t === "edit") return <Modal title={`Editar vehiculo — ${modal.d.plate}`} onClose={() => setModal(null)} wide><VehicleFormImpl vehicle={modal.d} allProjects={allProjects} setModal={setModal} saveVehicle={saveVehicle} /></Modal>;
-    if (modal.t === "detail") return <Modal title={`Vehiculo — ${modal.d.plate}`} onClose={() => setModal(null)} wide><VehicleDetailImpl vehicle={modal.d} allProjects={allProjects} setModal={setModal} deleteVehicle={deleteVehicle} /></Modal>;
-    if (modal.t === "maint-new") {
-      const v = modal.vehicleId ? vehicles.find(x => x.id === modal.vehicleId) : null;
-      return <Modal title="Registrar mantenimiento" onClose={() => setModal(null)} wide>
-        <MaintenanceFormImpl
-          vehicle={v}
-          vehicles={vehicles}
-          prefilledDescription={modal.prefilledDesc || ""}
-          prefilledRawLine={modal.rawLine || null}
-          setModal={setModal}
-          saveMaintenance={saveMaintenance}
-        />
-      </Modal>;
-    }
-    if (modal.t === "desp-new") return <Modal title="Nuevo movimiento / despacho" onClose={() => setModal(null)} wide>
-      <DespachoFormImpl
-        vehicles={vehicles}
-        allProjects={allProjects}
-        sourcePurchase={modal.sourcePurchase || null}
-        presetProjectCode={modal.presetProjectCode || null}
-        setModal={setModal}
-        saveDespacho={saveDespacho}
-      />
-    </Modal>;
-    if (modal.t === "desp-edit") return <Modal title={`Editar despacho — ${modal.d.descripcion?.slice(0, 50) || ""}`} onClose={() => setModal(null)} wide>
-      <DespachoFormImpl
-        despacho={modal.d}
-        vehicles={vehicles}
-        allProjects={allProjects}
-        setModal={setModal}
-        saveDespacho={saveDespacho}
-      />
-      <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${BRAND.borderSoft}`, textAlign: "right" }}>
-        {canEdit && <Btn small variant="danger" onClick={() => { if (confirm("¿Eliminar este despacho?")) { deleteDespacho(modal.d.id); setModal(null); } }}>🗑 Eliminar despacho</Btn>}
-      </div>
-    </Modal>;
-    if (modal.t === "desp-program") return <Modal title="📅 Programar despacho" onClose={() => setModal(null)}>
-      <ProgramDespachoForm
-        source={modal.source}
-        vehicles={vehicles}
-        setModal={setModal}
-        saveDespacho={saveDespacho}
-        quickCreateFromCompra={quickCreateFromCompra}
-      />
-    </Modal>;
+    if (modal.t === "veh") return <Modal title={modal.d ? `Editar ${modal.d.plate}` : "Nuevo vehículo"} onClose={cerrar} wide fondoCierra={false}><VehiculoForm vehicle={modal.d} proyectos={allProjects} motoristas={motoristas} onCancel={cerrar} onSave={saveVehicle} /></Modal>;
+    if (modal.t === "mant") { const v = modal.vehicleId ? vehDe(modal.vehicleId) : null; return <Modal title="Registrar mantenimiento" onClose={cerrar} wide fondoCierra={false}><MantForm vehicle={v} vehicles={vehicles} prefill={modal.prefill} onCancel={cerrar} onSave={saveMaintenance} /></Modal>; }
+    if (modal.t === "carga") { const v = modal.vehicleId ? vehDe(modal.vehicleId) : null; return <Modal title="Cargar combustible" onClose={cerrar} fondoCierra={false}><CargaForm vehicle={v} vehicles={vehicles} motoristas={motoristas} cargas={cargas} onCancel={cerrar} onSave={saveCarga} /></Modal>; }
+    if (modal.t === "desp") return <Modal title={modal.d ? "Editar despacho" : "Nuevo movimiento"} onClose={cerrar} wide fondoCierra={false}><DespachoForm despacho={modal.d} vehicles={vehicles} motoristas={motoristas} proyectos={allProjects} presetProjectCode={modal.preset} onCancel={cerrar} onSave={saveDespacho} onDelete={modal.d && canEdit ? async () => { if (!confirm("¿Eliminar este despacho?")) return; await deleteDespacho(modal.d.id); cerrar(); } : null} /></Modal>;
+    if (modal.t === "prog") return <Modal title="Programar despacho" onClose={cerrar}><ProgramarForm despacho={modal.d} vehicles={vehicles} motoristas={motoristas} onCancel={cerrar} onSave={saveDespacho} /></Modal>;
+    if (modal.t === "mot") return <Modal title={modal.m ? "Motorista" : "Agregar motorista"} onClose={cerrar}><MotoristaForm mot={modal.m} emps={emps} vehicles={vehicles} extras={motExtras} onCancel={cerrar} onSave={saveMotorista} /></Modal>;
     return null;
   };
 
-  // ── LAYOUT ──
-  const LOGISTICS_ACCENT = "#2D4A6B";
-  const roleLabel = isAdmin ? "Admin" : isLogistica ? "Logistica" : isRecepcion ? "Recepcion" : (userRole || "");
-  const logoUrl = `${import.meta.env.BASE_URL}brand/logo-color.png`;
-
-  return <div style={{ display: "flex", flexDirection: "column", minHeight: "100dvh", height: "100dvh", fontFamily: FONT.body, background: isMobile ? "#F9F9F8" : BRAND.beige, color: BRAND.charcoal }}>
-    {/* CELULAR (3-nov-2026): barra de app + menú lateral (movil.jsx). */}
+  // ═══════════════════════════ LAYOUT ═══════════════════════════
+  const nav = [
+    { id: "dashboard", label: "Dashboard" },
+    { id: "rutas", label: "Despachos" },
+    { id: "flota", label: "Flota" },
+    { id: "mant", label: "Mantenimientos" },
+    { id: "motoristas", label: "Motoristas" },
+  ];
+  if (!loaded) return <PantallaCarga titulo="GeoLogistics" />;
+  const secOk = nav.some(n => n.id === sec) ? sec : "dashboard";
+  const rol = canEdit ? (ROLE_LABEL[userRole] || userRole) : "Solo lectura";
+  return <div className="gt-root gt-entra-modulo" style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "var(--bg)", position: "relative", overflow: "hidden" }}>
+    <style>{GT_CSS}</style>
+    <div className="gt-brillo gt-brillo-a" aria-hidden />
+    <div className="gt-brillo gt-brillo-b" aria-hidden />
     {isMobile && <>
       <style>{MOVIL_CSS}</style>
-      <BarraMovil titulo="GeoLogistics" icono={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 7h11v9H3z" /><path d="M14 10h4l3 3v3h-7" /><circle cx="7" cy="17.5" r="1.6" /><circle cx="17" cy="17.5" r="1.6" /></svg>} usuario={userName} rol={roleLabel} onLogout={onLogout} />
-      <BarraInferior tituloMas="GeoLogistics" secciones={nav.filter(n => !n.soon)} activa={sec} onElegir={setSec} />
+      <BarraMovil titulo="GeoLogistics" icono={<Ico d={ICO.camion} size={18} />} usuario={userName} rol={rol} onLogout={onLogout} />
+      <BarraInferior tituloMas="GeoLogistics" secciones={nav} activa={secOk} onElegir={setSec} principales={["dashboard", "rutas", "flota"]} />
     </>}
     {!isMobile && <>
-    {/* HERO — logo Geotecnica + titulo + ilustracion cartoon de camion */}
-    <div style={{
-      position: "relative",
-      minHeight: isMobile ? 120 : 180,
-      flexShrink: 0,
-      background: "linear-gradient(135deg, #EAF0F5 0%, #F1F4F8 100%)",
-      borderBottom: `1px solid ${BRAND.borderSoft}`,
-      padding: isMobile ? "14px 16px" : "24px 32px",
-      overflow: "hidden",
-      display: "flex",
-      alignItems: "center",
-    }}>
-      {/* Botones arriba-derecha */}
-      <div style={{ position: "absolute", top: isMobile ? 8 : 14, right: isMobile ? 12 : 24, display: "flex", gap: 8, zIndex: 3 }}>
-        {onBack && <button onClick={onBack} style={{ background: "#fff", border: `1px solid ${BRAND.border}`, borderRadius: 8, color: BRAND.charcoal, padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>← Volver al panel</button>}
-        {onLogout && <button onClick={onLogout} style={{ background: "#fff", border: "1px solid #E5B4A9", borderRadius: 8, color: "#B23A26", padding: isMobile ? "5px 9px" : "7px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 3px rgba(15,23,42,0.06)" }}>Cerrar sesion</button>}
-      </div>
-
-      {/* Row principal */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        gap: isMobile ? 12 : 28,
-        width: "100%",
-      }}>
-        {/* IZQUIERDA — logo Geotecnica */}
-        <div style={{ flexShrink: 0, width: isMobile ? 90 : 200, display: "flex", alignItems: "center", justifyContent: isMobile ? "flex-start" : "center" }}>
-          <img
-            src={logoUrl}
-            alt="Geotecnica Soluciones"
-            style={{ height: isMobile ? 40 : 65, width: "auto", objectFit: "contain", display: "block" }}
-          />
+      <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+          {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
+          <Logo size={34} />
+          <div title="GeoLogistics" style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO.camion} size={22} /></div>
+          <div style={{ font: "800 15px/1 var(--display)", color: "var(--text)" }}>GeoLogistics</div>
         </div>
-
-        {/* CENTRO — texto */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-          <div style={{ fontSize: isMobile ? 10 : 11, letterSpacing: 2, color: BRAND.orangeDark || "#C75F1F", fontWeight: 700, textTransform: "uppercase" }}>Grupo Geotecnica</div>
-          <h1 style={{ margin: 0, fontSize: isMobile ? 18 : 28, fontWeight: 800, color: BRAND.charcoal, letterSpacing: -0.5, lineHeight: 1.15 }}>
-            GeoLogistics — Flota y Despachos
-          </h1>
-          {!isMobile && <div style={{ fontSize: 13, color: BRAND.stone, fontWeight: 500 }}>
-            Vehiculos, rutas, mantenimientos
-          </div>}
-          {isMobile && userName && (
-            <div style={{ marginTop: 4, display: "inline-flex", background: BRAND.beigeLight || BRAND.beige, border: `1px solid ${BRAND.border}`, borderRadius: 6, padding: "3px 8px", alignSelf: "flex-start", fontSize: 10, color: BRAND.charcoal, fontWeight: 700 }}>
-              {userName} · {roleLabel}
-            </div>
-          )}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
+          <div style={{ textAlign: "right" }}><div style={{ font: "600 13px/1.3 var(--sans)", color: "var(--text)" }}>{userName || "Usuario"}</div><div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2 }}>{rol}</div></div>
+          {onLogout && <button onClick={onLogout} title="Cerrar sesión" style={{ minHeight: 36, padding: "8px 14px", borderRadius: 999, border: "1px solid rgba(192,57,43,.25)", background: "rgba(192,57,43,.06)", color: "#B03024", font: "700 12px/1 var(--sans)", cursor: "pointer" }}>Cerrar sesión</button>}
         </div>
-
-        {/* DERECHA — ilustracion de camion (solo desktop) */}
-        {!isMobile && (
-          <div style={{ flexShrink: 0, display: "flex", alignItems: "flex-end", justifyContent: "center", height: 180, marginRight: 8 }}>
-            <CamionSVG height={170} />
-          </div>
-        )}
-
-        {/* Badge del usuario en desktop */}
-        {!isMobile && (
-          <div style={{ background: BRAND.beigeLight || BRAND.beige, border: `1px solid ${BRAND.border}`, borderRadius: 10, padding: "8px 14px", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
-            <div style={{ fontSize: 13, color: BRAND.charcoal, fontWeight: 700, letterSpacing: 0.2 }}>{userName || "Usuario"}</div>
-            <div style={{ fontSize: 11, color: BRAND.orangeDark || "#C75F1F", fontWeight: 600 }}>{roleLabel}</div>
-          </div>
-        )}
       </div>
-    </div>
-
-    {/* TOPNAV horizontal */}
-    <div style={{
-      display: "flex",
-      background: BRAND.cream,
-      borderBottom: `1px solid ${BRAND.border}`,
-      overflowX: "auto",
-      whiteSpace: "nowrap",
-      flexShrink: 0,
-      paddingLeft: isMobile ? 8 : 24,
-      scrollbarWidth: "thin",
-    }}>
-      {nav.map(n => {
-        const active = sec === n.id;
-        return <button
-          key={n.id}
-          onClick={() => !n.soon && setSec(n.id)}
-          disabled={n.soon}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: isMobile ? "12px 16px" : "14px 22px",
-            background: "transparent",
-            border: "none",
-            borderBottom: active ? `3px solid ${LOGISTICS_ACCENT}` : "3px solid transparent",
-            color: n.soon ? BRAND.stone : (active ? BRAND.charcoal : BRAND.stone),
-            cursor: n.soon ? "not-allowed" : "pointer",
-            fontSize: 14,
-            fontWeight: active ? 700 : 500,
-            fontFamily: "inherit",
-            transition: "all .15s",
-            whiteSpace: "nowrap",
-            marginBottom: -1,
-            opacity: n.soon ? 0.55 : 1,
-          }}
-          onMouseEnter={e => { if (!active && !n.soon) e.currentTarget.style.color = BRAND.charcoal; }}
-          onMouseLeave={e => { if (!active && !n.soon) e.currentTarget.style.color = BRAND.stone; }}
-        >
-          <span style={{ fontSize: 16 }}>{n.icon}</span>
-          <span>{n.label}{n.soon && <span style={{ marginLeft: 6, fontSize: 9, fontStyle: "italic", color: BRAND.stone }}>(pronto)</span>}</span>
-        </button>;
-      })}
-    </div>
-
+      <div style={{ position: "relative", zIndex: 2, display: "flex", borderBottom: "1px solid rgba(44,42,40,.08)", overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0, paddingLeft: 20, scrollbarWidth: "none" }}>
+        {nav.map(x => { const active = secOk === x.id; const badge = x.id === "rutas" ? statsDesp.atrasados : x.id === "mant" ? vehicles.filter(v => estadoPreventivo(v, hoy).urgencia === "vencido").length : 0; return <button key={x.id} onClick={() => setSec(x.id)} style={{ padding: "14px 18px", background: "transparent", border: "none", boxShadow: active ? `inset 0 -2px 0 ${ORANGE}` : "none", color: active ? "var(--naranja-tinta)" : "var(--text-3)", font: `${active ? 800 : 600} 13px/1 var(--sans)`, cursor: "pointer", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 7 }}>{x.label}{badge > 0 && <span style={{ minWidth: 18, height: 18, padding: "0 5px", borderRadius: 99, background: "#C0392B", color: "#fff", font: "800 10.5px/18px var(--sans)", textAlign: "center", boxSizing: "border-box" }}>{badge}</span>}</button>; })}
+      </div>
     </>}
-    {/* CONTENIDO */}
-    <div style={{ flex: 1, overflow: "auto", background: isMobile ? "#F9F9F8" : BRAND.beige }}>
-      <div style={{ padding: isMobile ? "12px 14px 24px" : "20px 32px" }}>
-        {isMobile && <TituloMovil>{(nav.find(n => n.id === sec) || {}).label}</TituloMovil>}
-        {renderSec()}
+    <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
+      <div style={{ padding: isMobile ? "10px 12px 24px" : "18px 32px 32px", maxWidth: 1500, margin: "0 auto" }}>
+        {isMobile && !fichaId && <TituloMovil>{(nav.find(n => n.id === secOk) || {}).label}</TituloMovil>}
+        {secOk === "dashboard" ? renderDashboard() : secOk === "rutas" ? renderRutas() : secOk === "flota" ? renderFlota() : secOk === "mant" ? renderMant() : renderMotoristas()}
       </div>
     </div>
-
     {renderModal()}
     {visorFicha && <VisorArchivo archivo={visorFicha} onClose={() => setVisorFicha(null)} />}
   </div>;
 }
-
-// Estilos de tabla
-const th = { padding: "10px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: BRAND.graphite, textTransform: "uppercase", letterSpacing: 0.5 };
-const td = { padding: "10px 12px", color: BRAND.ink };

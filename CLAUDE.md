@@ -80,7 +80,7 @@ oculta con hideSalary).
 ## Comandos
 - `npm run dev` — dev server (puerto 5173). Usar preview_start con launch.json, no Bash.
 - `npm run build` — SIEMPRE compilar antes de commit (es la red de seguridad).
-- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs`, `tests/planilla-calc.test.mjs`, `tests/abonos.test.mjs`, `tests/rrhh-solicitudes.test.mjs`, `tests/geoclock-calc.test.mjs`, `tests/reporte-estilo.test.mjs` y `tests/jornales-calc.test.mjs`.
+- `npm test` — pruebas Node (node:test) de la lógica pura: `tests/geosupply-calc.test.mjs`, `tests/geocost-maq.test.mjs`, `tests/leer-cotizacion.test.mjs`, `tests/geoinventory-calc.test.mjs`, `tests/planilla-calc.test.mjs`, `tests/abonos.test.mjs`, `tests/rrhh-solicitudes.test.mjs`, `tests/geoclock-calc.test.mjs`, `tests/reporte-estilo.test.mjs`, `tests/jornales-calc.test.mjs` y `tests/logistica-calc.test.mjs`.
 - Deploy: `git push origin main` dispara `.github/workflows/deploy.yml` → gh-pages.
   URL: https://gtrochez-collab.github.io/OPERACION-GT-GEOTECNICA/
 - Verificar deploy: `gh run list` + grep del texto nuevo en el bundle publicado.
@@ -1576,6 +1576,50 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   "Asistencias históricas sin cuadrilla" (la rearma desde los assignments de la
   hoja). Una quincena nueva siembra copiando la cuadrilla más reciente.
 - `LogisticsModule.jsx` (GeoLogistics) — flota y despachos (kanban Oscar/Jorge).
+  **REDISEÑO COMPLETO (17-nov-2026, Gerson: "un mega módulo de logística;
+  cada carro con su ficha; consumo de combustible; motoristas de GeoTeam;
+  despachos en cajitas de vidrio como GeoShopping, no kanban; pocos textos")**:
+  estética GeoCore (GT_CSS, vidrio, encabezado como GeoInventory, sin emojis).
+  Pestañas Dashboard · Despachos · Flota · Mantenimientos · Motoristas (badge
+  rojo en Despachos = atrasados, en Mantenimientos = servicios vencidos).
+  Lógica PURA nueva en `src/logistica-calc.js` (`tests/logistica-calc.test.mjs`):
+  rendimiento por TANQUE LLENO (km recorridos entre dos cargas llenas ÷ galones
+  cargados en medio; lo de antes del primer lleno no cuenta) → km/galón,
+  galones/100 km y costo por km; `estadoPreventivo` (vencido/pronto ≤15 % del
+  intervalo o ≤15 d/ok/sin_plan); vencimientos; `listaMotoristas`;
+  `urgenciaDespacho`. **Dashboard**: 5 cifras, Despachos (por hacer, en camino,
+  atrasados, hoy + los 5 más urgentes), Alertas de la flota (servicio, seguro,
+  revisión, pendientes → abren la ficha), dona de la flota por estado,
+  entregas por mes, gasto de la flota (taller carbón + combustible naranja) y
+  ranking de km por galón. **Flota** = carnets de vidrio (franja carbón con
+  curvas, foto o silueta por tipo, placa estilo Honduras, km, estado, "!" si
+  algo está vencido) → **FICHA** a página completa: carnet grande (foto que se
+  cambia tocándola, comprimida a `cp-file-*`, campo `foto {fileId}`), datos y
+  documentos con chips de vencimiento, cifras (km con "Actualizar", próximo
+  servicio con barra, rendimiento, gasto del año) y pestañas Mantenimientos ·
+  Combustible · Pendientes (con "Resuelto" → registra el correctivo y quita la
+  línea) · Despachos del vehículo. Campos ADITIVOS del vehículo: `foto`,
+  `motoristaEmpId`, `combustible`, `vin`, `motor`, `seguroPoliza`,
+  `mantIntervaloKm` (default 5,000), `ultimoServicioKm/Fecha`. **Combustible**
+  (key NUEVA `lg-combustible` `[{id, vehicleId, fecha, km, galones, monto,
+  lleno, estacion, motoristaEmpId, motorista}]`; sube el km del vehículo).
+  **Mantenimientos**: Programa preventivo (fila por vehículo con barra hacia el
+  próximo servicio, ordenado por urgencia; registrar un PREVENTIVO sugiere el
+  próximo = km + intervalo) · Pendientes (por vehículo) · Historial (filtros
+  vehículo/tipo/mes + total). **Motoristas** = los de GeoTeam con cargo
+  Motorista/Chofer/Conductor (activos) + los agregados a mano; key NUEVA
+  `lg-motoristas` `[{empId, agregado, quitado, licenciaNumero, licenciaTipo,
+  licenciaVence}]` (no toca hr-emps5); tarjeta con foto de GeoTeam, vehículo
+  asignado, licencia y entregas del mes. **Despachos** = bandeja como Por
+  coordinar: pills Por hacer · En camino · Entregados (por mes) · Sin ficha,
+  buscador (código MAT/MAQ, proveedor…), grupos COMPACTABLES por proyecto
+  (`gt-lg-abiertos` en localStorage; el más urgente arriba) y tarjeta-fila con
+  el siguiente paso como botón (Programar → Salió en ruta → Entregado; si falta
+  la ficha de compra el botón es "Subir ficha"), Ficha de entrega, Ver ficha
+  firmada. Se conservaron TAL CUAL: candado de ficha (`fichaBloqueaEntrega`),
+  `uploadFichaFirmada`, sync EPP, guardia anti-pisada del refresh. TODA
+  escritura ahora va getCloud → cambio sobre lo fresco → set → verify
+  (`guardarLista`; antes vehículos y mantenimientos escribían la foto local).
   **Botón de ficha en el KANBAN (19-ago-2026)**: el bloque de subir ficha
   firmada vivía SOLO en la card de "Entregados" (`renderCardEntregado`), así
   que Oscar no tenía cómo subirla antes de marcar entregado y el candado lo
@@ -2691,6 +2735,8 @@ logística; vínculo: `sourcePurchaseId`), `hr-emps5`, `hr-atts2`, `hr-cuad`,
 `hr-he` (horas extras), `hr-pays`, `hr-contracts`, etc. Jornales (nov 2026):
 `hr-jornaleros` (fichas), `hr-jornal-<sábado de inicio del corte>` (asistencia) y
 `hr-jornal-responsables` ({short: [username]}).
+GeoLogistics (nov 2026): `lg-vehicles`, `lg-maintenances`, `lg-combustible`
+(cargas de combustible), `lg-motoristas` (licencias / agregados a mano).
 `gt-todos-<username>` (tareas personales — las comparten la tarjeta TO-DOS de
 la bienvenida y el módulo Mis Tareas; nadie ve las de otro).
 `gt-usuarios` (accesos creados desde GeoTeam → Accesos; el login los lee con
