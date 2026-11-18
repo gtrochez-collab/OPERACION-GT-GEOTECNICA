@@ -51,6 +51,7 @@ const MODULES = [
   },
   {
     id: "compras-operaciones",
+    operaciones: ["hn", "sv"],   // (18-nov-2026) también en El Salvador, en dólares
     name: "GeoShopping",
     icon: "🛒",
     desc: "Compras, pagos y cierre contable.",
@@ -64,6 +65,7 @@ const MODULES = [
     // entran acá y a Mis Tareas — nunca a GeoShopping (pagos, bancos).
     // Finanzas (costos/compras_ops/tesoreria) y gerencia entran a MIRAR.
     id: "geosupply",
+    operaciones: ["hn", "sv"],   // (18-nov-2026) también en El Salvador, en dólares
     name: "GeoSupply",
     icon: "📦",
     desc: "Solicitudes de material: del residente a la aprobación.",
@@ -92,6 +94,7 @@ const MODULES = [
   },
   {
     id: "geocost",
+    operaciones: ["hn", "sv"],   // (18-nov-2026) también en El Salvador, en dólares
     name: "GeoCost",
     icon: "📊",
     desc: "Presupuesto vs. gasto real, por proyecto.",

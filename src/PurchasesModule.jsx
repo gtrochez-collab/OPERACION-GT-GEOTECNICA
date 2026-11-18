@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
+import Logo from "./Logo.jsx";
 import { store } from "./supabase.js";
+import { MONEDA, esSV, TASA_FIJA, IMPUESTO, FACTOR_IMP, IMP_TXT, ID_FISCAL, MONEDA_NOMBRE } from "./operacion.js";
 import { GT_CSS } from "./gt-ui.js";
 import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga, TiraMovil, HojaMovil } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, admiteSolicitudes } from "./projects.js";
@@ -19,7 +21,7 @@ import { leerPdf, parsearCotizacion, ajusteAlTotal, lineasPresupuestoDesdeLectur
 // GeoSupply (2-oct-2026): los borradores que nacen de una cotización aprobada
 // llevan `origenSupply`; acá solo se rotula su corte.
 import { etiquetaCorte, puPresupuestoUSD, semaforoVariacion } from "./geosupply-calc.js";
-import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, PDF_TEMA, pdfCabecera, pdfPie, latin1, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
+import { reporteHTML, descargarReporteDirecto, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, PDF_TEMA, pdfCabecera, pdfPie, latin1, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 // Abonos (17-oct-2026): pagos parciales con su comprobante; la solicitud se
 // cierra solo cuando la suma de abonos cubre el total. Lógica pura y probada.
 import { abonosVigentes, todosLosAbonos, tieneAbonos, totalAbonado, saldoDe, esAbonoParcial, porPagarDe, validarAbono, estadoTrasAbonos, cierreServicioAlPagar, unirAbonos, nubeTraeAbonosNuevos, usaPagosParciales, pagoSolicitadoDe, esperandoPedidoDePago, aPagarAhoraDe, validarPagoSolicitado, solicitadoTrasAbono } from "./abonos.js";
@@ -45,14 +47,20 @@ function useIsMobile(breakpoint = 768) {
 }
 
 // ── Constantes ──
-const COMPANIES = {
+// El Salvador (18-nov-2026): una sola empresa, Subterra El Salvador.
+const COMPANIES = esSV ? {
+  subterra:   { name: "Subterra El Salvador",  color: "#2C5F5D", accent: "#1F4644" },
+} : {
   geotecnica: { name: "Geotecnica Soluciones", color: ORANGE, accent: ORANGE_DARK },
   subterra:   { name: "Subterra Honduras",     color: "#2C5F5D", accent: "#1F4644" },
 };
+const EMPRESA_DEFAULT = esSV ? "subterra" : "geotecnica";
 // Lista canonica unificada con RRHH y Operations CC (src/projects.js).
 const PROJECTS = CANONICAL_PROJECTS;
 const UNITS = ["Unidad", "Bolsa", "Caja", "Rollo", "Galon", "Litro", "Kg", "Quintal", "Metro", "m2", "m3", "Par", "Set", "Servicio", "Global", "Viaje", "Hora"];
-const PAYMENT_METHODS = ["Transferencia BAC", "Transferencia Banco Atlantida", "Transferencia Ficohsa", "Cheque", "Efectivo", "Tarjeta corporativa", "Otro"];
+const PAYMENT_METHODS = esSV
+  ? ["Transferencia Banco Agrícola", "Transferencia BAC", "Transferencia Banco Cuscatlán", "Transferencia Davivienda", "Cheque", "Efectivo", "Tarjeta corporativa", "Otro"]
+  : ["Transferencia BAC", "Transferencia Banco Atlantida", "Transferencia Ficohsa", "Cheque", "Efectivo", "Tarjeta corporativa", "Otro"];
 
 // Estados del proceso de Operaciones
 // Semáforo de estados (3-sep-2026, pedido de Gerson: "juguemos más con los
@@ -326,7 +334,7 @@ export const restoreFiles = async (lightPurchases) => {
 // día antes en Honduras (28-oct-2026: el borrador decía "Pago 31 oct" y la fecha era 1 nov).
 const fmt = d => d ? new Date(d).toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric", ...(/^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? { timeZone: "UTC" } : {}) }) : "—";
 const fmtDT = d => d ? new Date(d).toLocaleString("es-HN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
-const fmtL = n => (n != null && n !== "") ? `L ${Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2 })}` : "L 0.00";
+const fmtL = n => (n != null && n !== "") ? `${MONEDA} ${Number(n).toLocaleString("es-HN", { minimumFractionDigits: 2 })}` : `${MONEDA} 0.00`;
 const fmtMB = b => b ? (b / 1024 / 1024).toFixed(2) + " MB" : "—";
 const projLabel = s => { const p = PROJECTS.find(x => x.short === s); return p ? `${p.short} — ${p.name}` : s; };
 
@@ -1318,7 +1326,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
     return !enOps && partidaSel ? [...opcionesCC, { group: "Actual", options: [{ value: partidaSel.id, label: partidaSel.nombre || "(sin nombre)" }] }] : opcionesCC;
   })();
   const sinElegiblesCC = !!presConPartidas && opcionesCC.length === 0 && !partidaSel;
-  const tasaCC = num(tasa) || TASA_DEFAULT;
+  const tasaCC = TASA_FIJA || num(tasa) || TASA_DEFAULT;
   // Al editar, la propia compra se excluye del usado (si no se contaría dos veces).
   const dispCC = partidaSel && calcDisponible ? calcDisponible(f.projectCode, f.partidaId, purchase?.id) : null;
   const montoUSD = hnlToUsd(num(f.amount), tasaCC);
@@ -1341,7 +1349,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   // ISV (12-oct-2026, Gerson: "a todas las compras automáticamente se les debe
   // sumar el 15%"): los montos de las líneas van SIN ISV y el total = suma ×
   // 1.15. Se puede desmarcar (exentas). Las solicitudes viejas no lo traen.
-  const factorIsv = (p) => lineasLibres && (p.sumarIsv ?? !purchase) ? 1.15 : 1;
+  const factorIsv = (p) => lineasLibres && (p.sumarIsv ?? !purchase) ? FACTOR_IMP : 1;
   const sumarIsv = factorIsv(f) > 1;
   const [leyendo, setLeyendo] = useState(false);
   const [lectura, setLectura] = useState(null);
@@ -1361,7 +1369,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
   const toggleIsv = (v) => setF(p => {
     const suma = r2((Array.isArray(p.lineas) ? p.lineas : []).filter(conContenido).reduce((a, l) => a + num(l.monto), 0));
     const seguia = !p.amount || Math.abs(num(p.amount) - r2(suma * factorIsv(p))) < 0.005;
-    return { ...p, sumarIsv: v, amount: seguia && suma > 0 ? String(r2(suma * (v ? 1.15 : 1))) : p.amount };
+    return { ...p, sumarIsv: v, amount: seguia && suma > 0 ? String(r2(suma * (v ? FACTOR_IMP : 1))) : p.amount };
   });
   // ── LEER LA COTIZACIÓN (PDF con texto) → líneas, N°, proveedor, total ──
   const esPdf = (fd) => !!fd && /pdf/i.test(`${fd.type || ""} ${fd.name || ""}`);
@@ -1398,8 +1406,8 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
         if (lineasMValidas.length && !confirm(`Ya hay ${lineasMValidas.length} línea(s) escritas.\n\n¿Reemplazarlas con las ${r.items.length} que leí de la cotización?`)) return;
         const ls = r.items.map(it => ({ id: uid(), cantidad: String(it.cantidad), unidad: it.unidad, nombre: it.nombre, monto: String(it.monto), pu: num(it.cantidad) > 0 ? String(Math.round(it.monto / num(it.cantidad) * 10000) / 10000) : "" }));
         const suma = r2(r.items.reduce((a, it) => a + it.monto, 0));
-        setF(p => ({ ...comunesLectura(p, r, pv, fd), lineas: ls, sumarIsv: true, amount: String(r2(suma * 1.15)) }));
-        const calc = r2(suma * 1.15);
+        setF(p => ({ ...comunesLectura(p, r, pv, fd), lineas: ls, sumarIsv: true, amount: String(r2(suma * FACTOR_IMP)) }));
+        const calc = r2(suma * FACTOR_IMP);
         setLectura({ ...base, modo: "maq", suma, calc, total: r.total, cuadra: r.total != null ? Math.abs(r.total - calc) <= 1 : null, sinIsvEnCot: r.total != null && Math.abs(r.total - suma) <= 1 });
         return;
       }
@@ -1436,10 +1444,10 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
     </label>
     {esPdf(f.quoteFile) && f.quoteFile.dataUrl && !leyendo && <button type="button" onClick={() => leerCotizacion(f.quoteFile)} style={{ background: "none", border: "none", color: ORANGE_DARK, fontSize: 12, fontWeight: 800, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>Leer la que ya está adjunta</button>}
   </div>;
-  const textoAjuste = (aj) => aj.modo === "isv" ? <>Monto total con ISV <b>{fmtL(aj.total)}</b> ✓ cuadra con la cotización</>
-    : aj.modo === "exenta" ? <>La cotización no cobra ISV · monto total <b>{fmtL(aj.total)}</b></>
+  const textoAjuste = (aj) => aj.modo === "isv" ? <>Monto total con {IMPUESTO.nombre} <b>{fmtL(aj.total)}</b> ✓ cuadra con la cotización</>
+    : aj.modo === "exenta" ? <>La cotización no cobra {IMPUESTO.nombre} · monto total <b>{fmtL(aj.total)}</b></>
     : aj.modo === "proporcional" ? <>Monto total <b>{fmtL(aj.total)}</b> tal cual la cotización (trae descuento o ítems exentos)</>
-    : aj.modo === "no_cuadra" ? <><b>La cotización dice {fmtL(aj.total)}, pero los renglones suman {fmtL(aj.suma)} + ISV = {fmtL(aj.calculado)}: revisá si falta alguno</b></>
+    : aj.modo === "no_cuadra" ? <><b>La cotización dice {fmtL(aj.total)}, pero los renglones suman {fmtL(aj.suma)} + {IMPUESTO.nombre} = {fmtL(aj.calculado)}: revisá si falta alguno</b></>
     : <>No encontré el total: lo calculé con el 15 % (<b>{fmtL(aj.total)}</b>)</>;
   const avisoLectura = lectura && (lectura.error
     ? <div style={{ fontSize: 12.5, color: C_AMARILLO.color, background: C_AMARILLO.bg, borderRadius: 10, padding: "9px 12px", fontWeight: 600 }}>{lectura.error}</div>
@@ -1452,8 +1460,8 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
       return <div style={{ fontSize: 12.5, color: bien ? C_VERDE.color : C_AMARILLO.color, background: bien ? C_VERDE.bg : C_AMARILLO.bg, borderRadius: 10, padding: "9px 12px", lineHeight: 1.55 }}>
         <b>Leí {lectura.n} {maq ? (lectura.n === 1 ? "línea" : "líneas") : (lectura.n === 1 ? "renglón" : "renglones")}</b>{lectura.proveedor ? <> de <b>{lectura.proveedor}</b></> : ""}{lectura.numero ? <> · cotización <b>{lectura.numero}</b></> : ""}.
         {maq && <>
-          {" "}Suma {fmtL(lectura.suma)} + ISV 15 % = <b>{fmtL(lectura.calc)}</b>
-          {lectura.total != null && (lectura.cuadra ? <> · la cotización dice {fmtL(lectura.total)} ✓ cuadra</> : lectura.sinIsvEnCot ? <> · la cotización dice {fmtL(lectura.total)} (no le cobra ISV: si es exenta, desmarcá "Sumar ISV")</> : <> · <b>la cotización dice {fmtL(lectura.total)}: revisá las líneas</b></>)}
+          {" "}Suma {fmtL(lectura.suma)} + {IMP_TXT} = <b>{fmtL(lectura.calc)}</b>
+          {lectura.total != null && (lectura.cuadra ? <> · la cotización dice {fmtL(lectura.total)} ✓ cuadra</> : lectura.sinIsvEnCot ? <> · la cotización dice {fmtL(lectura.total)} (no le cobra {IMPUESTO.nombre}: si es exenta, desmarcá "Sumar {IMPUESTO.nombre}")</> : <> · <b>la cotización dice {fmtL(lectura.total)}: revisá las líneas</b></>)}
         </>}
         {lectura.modo === "items" && <> {sinItem ? <>Encontré <b>{conItem} de {leidas.length}</b></> : <>Los <b>{leidas.length}</b> tienen su ítem</>} en el presupuesto{lectura.recordados ? <> ({lectura.recordados} por compras anteriores)</> : ""}.{lectura.solucion && <> Solución{" "}
           <select value={lectura.solucion} onChange={e => { const sl = e.target.value; setF(p => ({ ...p, lineas: cambiarSolucionLineas(Array.isArray(p.lineas) ? p.lineas : [], presConPartidas, sl, { modulo: moduloPartida }) })); setLectura(l => ({ ...l, solucion: sl })); }}
@@ -1461,7 +1469,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             {[...new Set((presConPartidas?.partidas || []).map(x => String(x.solucion || "").trim()).filter(Boolean))].map(x => <option key={x} value={x}>{x}</option>)}
           </select>{" "}(si es otra, cambiala y muevo los ítems).</>}{sinItem > 0 && <> <b>{sinItem} no {sinItem === 1 ? "lo encontré" : "los encontré"}</b>: {sinItem === 1 ? "quedó" : "quedaron"} en amarillo sin ítem — elegí de qué ítem del presupuesto sale la plata (y "Es otro material" si hace falta) o quitalo.</>}</>}
         {!maq && <> {textoAjuste(lectura.ajuste || {})}</>}
-        {lectura.isvEnLinea && <> · los precios venían con ISV incluido, los dejé sin ISV</>}
+        {lectura.isvEnLinea && <> · los precios venían con {IMPUESTO.nombre} incluido, los dejé sin {IMPUESTO.nombre}</>}
         {lectura.descuento && <> · traía descuento por línea, ya está aplicado</>}
         {lectura.proveedorOtro && <> · ojo: la cotización parece de <b>{lectura.proveedorOtro}</b></>}
         <div style={{ fontSize: 11.5, opacity: .85, marginTop: 2 }}>{maq ? "Revisá cada línea y corregí lo que haga falta antes de aprobar." : lectura.modo === "items" ? "Revisá que cada ítem sea el correcto: debajo de cada uno dice qué traía la cotización." : "Revisá el texto y el monto antes de aprobar."}</div>
@@ -1616,7 +1624,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
     {/* minmax(0,1fr): con "1fr" los nombres largos de proyecto (UTH SPS…) estiraban
         la columna y el form se salía del modal por la derecha (12-oct-2026). */}
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 14 }}>
-      <Select label="Empresa" options={[{ value: "subterra", label: "Subterra Honduras" }, { value: "geotecnica", label: "Geotecnica Soluciones" }]} value={f.company} onChange={e => u("company", e.target.value)} />
+      <Select label="Empresa" options={Object.entries(COMPANIES).map(([value, c]) => ({ value, label: c.name }))} value={f.company} onChange={e => u("company", e.target.value)} />
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "flex", justifyContent: "space-between" }}>
           <span>Proyecto</span>
@@ -1687,7 +1695,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           options={machines.slice().sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "")).map(m => ({ value: m.id, label: `${m.tipo === "compresor" ? "Compresor" : "Máquina"} — ${m.nombre}` }))}
           emptyLabel="— Sin vincular —" value={f.machineId || ""} onChange={e => u("machineId", e.target.value)} />
       </div>}
-      <Input label="Monto total (Lempiras)" type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
+      <Input label={`Monto total (${MONEDA_NOMBRE})`} type="number" step="0.01" value={f.amount} onChange={e => u("amount", e.target.value)} placeholder="0.00" />
       {/* CONTADO o CRÉDITO (21-sep-2026, pedido de Gerson): las compras
           grandes muchas veces vienen a crédito, y esas las CALENDARIZA
           Christian en la pestaña "Cuentas por pagar". Acá solo se marca la
@@ -1775,7 +1783,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
           })}
         </div>
         {f.pagoSolicitado && <div style={{ background: C_NARANJA_CHIP.bg, border: "1px solid rgba(232,118,45,.28)", borderRadius: 10, padding: 12, display: "grid", gridTemplateColumns: "minmax(160px, 220px) minmax(0,1fr)", gap: 12, alignItems: "end" }}>
-          <Input label="Se pide pagar ahora (L)" type="number" min="0" step="0.01" value={f.pagoSolicitado.monto ?? ""} onChange={e => setF(p => ({ ...p, pagoSolicitado: { ...p.pagoSolicitado, monto: e.target.value } }))} />
+          <Input label={`Se pide pagar ahora (${MONEDA})`} type="number" min="0" step="0.01" value={f.pagoSolicitado.monto ?? ""} onChange={e => setF(p => ({ ...p, pagoSolicitado: { ...p.pagoSolicitado, monto: e.target.value } }))} />
           <Input label="Nota para la Lic. (opcional)" value={f.pagoSolicitado.nota || ""} onChange={e => setF(p => ({ ...p, pagoSolicitado: { ...p.pagoSolicitado, nota: e.target.value } }))} placeholder="Ej. primer abono acordado con el proveedor" />
           <div style={{ gridColumn: "1/-1", fontSize: 12, color: "#A94E16", lineHeight: 1.5 }}>
             {num(f.amount) > 0 && num(f.pagoSolicitado.monto) > 0
@@ -1826,7 +1834,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             {/* 1) La partida del presupuesto (una sola para toda la compra) */}
             {esMaqForm && presConPartidas && !sinElegiblesCC && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <Select label="Partida del presupuesto *" options={opcionesSelectCC} value={f.partidaId || ""} onChange={e => u("partidaId", e.target.value)} emptyLabel="— Elegí la partida —" />
-              {dispCC && <div style={{ fontSize: 12, color: "#64748b" }}>Disponible en la partida: <b style={{ color: dispCC.disponibleUSD < 0 ? C_ROJO.color : "#0f172a" }}>{fmtUSD(dispCC.disponibleUSD)}</b> · ≈ {fmtL(dispCC.disponibleUSD * tasaCC)}</div>}
+              {dispCC && <div style={{ fontSize: 12, color: "#64748b" }}>Disponible en la partida: <b style={{ color: dispCC.disponibleUSD < 0 ? C_ROJO.color : "#0f172a" }}>{fmtUSD(dispCC.disponibleUSD)}</b>{esSV ? "" : <> · ≈ {fmtL(dispCC.disponibleUSD * tasaCC)}</>}</div>}
               {sobregiroCC > 0 && <div style={{ background: "rgba(232,118,45,.10)", border: "1px solid rgba(232,118,45,.35)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, color: "#A94E16" }}>Sobrepasa la partida en {fmtUSD(sobregiroCC)}</div>
                 <Textarea label="Justificación del sobregiro *" value={f.sobregiroJustificacion || ""} onChange={e => u("sobregiroJustificacion", e.target.value)} placeholder="Por qué se aprueba igual" />
@@ -1841,7 +1849,7 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
                 <label style={LABEL_CP}>{esMaqForm ? "La cotización, línea por línea *" : "Qué se está comprando, ítem por ítem *"}</label>
-                <span style={{ fontSize: 11.5, color: "#64748b" }}>{sumarIsv ? "Precios unitarios SIN ISV (el 15 % se suma al total)" : "Precios unitarios tal cual la cotización"}</span>
+                <span style={{ fontSize: 11.5, color: "#64748b" }}>{sumarIsv ? `Precios unitarios SIN ${IMPUESTO.nombre} (el ${Math.round(IMPUESTO.pct * 100)} % se suma al total)` : "Precios unitarios tal cual la cotización"}</span>
               </div>
               <datalist id="maq-unidades">{UNIDADES.map(x => <option key={x} value={x} />)}</datalist>
               {lineasM.length > 0 && !esTel() && <div style={{ display: "grid", gridTemplateColumns: "76px 100px minmax(0,1fr) 110px 110px 28px", gap: 6, fontSize: 10.5, fontWeight: 800, color: "#94A3B8", textTransform: "uppercase", letterSpacing: .4, padding: "0 2px" }}>
@@ -1861,12 +1869,12 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
                 <button type="button" onClick={() => setLineasM([...lineasM, { id: uid(), cantidad: "", unidad: "", nombre: "", pu: "", monto: "" }])} style={{ background: "#fff", border: `1px dashed ${ORANGE}`, color: ORANGE_DARK, borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>+ Agregar línea</button>
                 {lineasMValidas.length > 0 && <div style={{ fontSize: 12.5, color: "#475569", textAlign: "right" }}>
                   Subtotal <b style={{ color: "#0f172a" }}>{fmtL(sumaM)}</b>
-                  {sumarIsv && <> · ISV 15 % <b style={{ color: "#0f172a" }}>{fmtL(r2(r2(sumaM * 1.15) - sumaM))}</b> · Total <b style={{ color: "#0f172a" }}>{fmtL(r2(sumaM * 1.15))}</b></>}
-                  {num(f.amount) > 0 && Math.abs(num(f.amount) - r2(sumaM * (sumarIsv ? 1.15 : 1))) >= 0.005 && <div style={{ color: "#A94E16", fontWeight: 700 }}>El monto total dice {fmtL(f.amount)} (la diferencia se reparte entre las líneas)</div>}
+                  {sumarIsv && <> · {IMP_TXT} <b style={{ color: "#0f172a" }}>{fmtL(r2(r2(sumaM * FACTOR_IMP) - sumaM))}</b> · Total <b style={{ color: "#0f172a" }}>{fmtL(r2(sumaM * FACTOR_IMP))}</b></>}
+                  {num(f.amount) > 0 && Math.abs(num(f.amount) - r2(sumaM * (sumarIsv ? FACTOR_IMP : 1))) >= 0.005 && <div style={{ color: "#A94E16", fontWeight: 700 }}>El monto total dice {fmtL(f.amount)} (la diferencia se reparte entre las líneas)</div>}
                 </div>}
               </div>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#475569", cursor: "pointer", alignSelf: "flex-start" }}>
-                <input type="checkbox" checked={sumarIsv} onChange={e => toggleIsv(e.target.checked)} /> Sumar ISV 15 % al total (desmarcá solo si la compra es exenta)
+                <input type="checkbox" checked={sumarIsv} onChange={e => toggleIsv(e.target.checked)} /> Sumar {IMP_TXT} al total (desmarcá solo si la compra es exenta)
               </label>
             </div>
             <Textarea label="Detalle adicional (opcional)" value={extraForm || ""} onChange={e => u("detalleExtra", e.target.value)} placeholder={esMaqForm ? "Para qué máquina, horómetro, garantía, algo que la cotización diga distinto…" : "Para qué es, marca, medida exacta, algo que la cotización diga distinto…"} />
@@ -1915,10 +1923,10 @@ function PurchaseFormImpl({ purchase, co, userName, setModal, getProject, allPro
             Al guardar la solicitud, <b>{nombre}</b> queda registrado en la base de proveedores — disponible en GeoShopping y en GeoMachinery.
           </div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <Input label="Banco" value={f.providerBank || ""} onChange={e => u("providerBank", e.target.value)} placeholder="Ej: BAC, Banpais, Atlantida" />
+            <Input label="Banco" value={f.providerBank || ""} onChange={e => u("providerBank", e.target.value)} placeholder={esSV ? "Ej: Banco Agrícola, BAC, Cuscatlán" : "Ej: BAC, Banpais, Atlantida"} />
             <Input label="Tipo de cuenta" value={f.providerAccountType || ""} onChange={e => u("providerAccountType", e.target.value)} placeholder="Ahorro / Cheques" />
             <Input label="Titular de la cuenta" value={f.providerAccountHolder || ""} onChange={e => u("providerAccountHolder", e.target.value)} placeholder="Nombre del titular" />
-            <Input label="RTN" value={f.providerRTN || ""} onChange={e => u("providerRTN", e.target.value)} placeholder="0801-1990-12345" />
+            <Input label={ID_FISCAL} value={f.providerRTN || ""} onChange={e => u("providerRTN", e.target.value)} placeholder={esSV ? "0614-010190-101-2" : "0801-1990-12345"} />
             <div style={{ gridColumn: "1/-1" }}>
               <Input label="Numero de cuenta" value={f.bacAccount} onChange={e => u("bacAccount", e.target.value)} placeholder="Ej: 10-251-000123" />
             </div>
@@ -2076,7 +2084,7 @@ const revisionBorrador = ({ purchase, presupuestos = [], providers = [], purchas
   });
   const impacto = Object.values(porPartida).map(x => {
     const parteL = sumaLineas > 0 ? x.monto / sumaLineas * amount : 0;
-    const parteUSD = parteL / (num(tasa) || TASA_DEFAULT);
+    const parteUSD = parteL / (TASA_FIJA || num(tasa) || TASA_DEFAULT);
     const disp = calcDisponible ? calcDisponible(purchase.projectCode, x.pid, purchase.id) : null;
     return { ...x, parteL, parteUSD, disp, quedaUSD: disp ? disp.disponibleUSD - parteUSD : null };
   }).sort((a, b) => b.parteL - a.parteL);
@@ -2193,7 +2201,7 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], p
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ font: "800 16px/1.2 var(--display, inherit)", color: CHARCOAL }}>{rv.pendientes ? `${rv.pendientes} ${rv.pendientes === 1 ? "punto" : "puntos"} por revisar` : "Todo en orden · lista para Tesorería"}</div>
         <span style={{ fontSize: 12, color: "#6E6862" }}>{o.folioSolicitud || "—"} · {o.folioCotizacion || "—"}{o.corte ? ` · ${etiquetaCorte(o.corte).titulo}` : ""}</span>
-        <div style={{ marginLeft: "auto", textAlign: "right" }}><div style={{ font: "800 20px/1 var(--display, inherit)", color: CHARCOAL }}>{fmtL(purchase.amount)}</div><div style={{ fontSize: 10.5, color: "#8A847D", marginTop: 3 }}>total con ISV</div></div>
+        <div style={{ marginLeft: "auto", textAlign: "right" }}><div style={{ font: "800 20px/1 var(--display, inherit)", color: CHARCOAL }}>{fmtL(purchase.amount)}</div><div style={{ fontSize: 10.5, color: "#8A847D", marginTop: 3 }}>total con {IMPUESTO.nombre}</div></div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: tel ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: "8px 18px" }}>
         {rv.checks.map(c => <div key={c.k} style={{ display: "flex", gap: 9, alignItems: "flex-start", minWidth: 0 }}>
@@ -2208,7 +2216,7 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], p
       <div style={CAJA}>
         <div style={TIT}>Proveedor y pago</div>
         {dato("Proveedor", <b>{purchase.provider}</b>)}
-        {dato("RTN", purchase.providerRTN || rv.prov?.rtn || <span style={{ color: "#8A847D" }}>—</span>)}
+        {dato(ID_FISCAL, purchase.providerRTN || rv.prov?.rtn || <span style={{ color: "#8A847D" }}>—</span>)}
         {cuenta ? <>
           {dato("Banco", <b>{purchase.providerBank || "—"}</b>)}
           {dato("Tipo de cuenta", purchase.providerAccountType || "—")}
@@ -2238,7 +2246,7 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], p
         {dato("Aprobó", <span><b>{o.aprobadoPor || "—"}</b>{o.aprobadoAt ? ` · ${fmtDT(o.aprobadoAt)}` : ""}</span>)}
         {sup.cot?.comentario && dato("Al aprobar", `"${sup.cot.comentario}"`)}
         {solNotas.map((n, i) => <div key={i}>{dato(i ? "" : "Notas", `"${n}"`, { fontStyle: "italic" })}</div>)}
-        {dato("Tasa usada", `L ${num(rv.tasaU).toFixed(2)} / $`)}
+        {!esSV && dato("Tasa usada", `L ${num(rv.tasaU).toFixed(2)} / $`)}
         {sup.cargando && <div style={{ fontSize: 11.5, color: "#8A847D" }}>Cargando la cotización de GeoSupply…</div>}
         {sup.error && <div style={{ fontSize: 11.5, color: C_AMARILLO.color }}>No pude leer GeoSupply; el P.U. se calcula con el borrador.</div>}
       </div>
@@ -2246,7 +2254,7 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], p
 
     {/* Ítems con su partida y el precio contra el presupuesto */}
     <div style={CAJA}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}><div style={TIT}>Ítems ({rv.filas.length})</div><span style={{ marginLeft: "auto", fontSize: 11.5, color: "#8A847D" }}>P.U. con ISV · presupuesto a L {num(rv.tasaU).toFixed(2)}</span></div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}><div style={TIT}>Ítems ({rv.filas.length})</div><span style={{ marginLeft: "auto", fontSize: 11.5, color: "#8A847D" }}>P.U. con {IMPUESTO.nombre}{esSV ? "" : ` · presupuesto a L ${num(rv.tasaU).toFixed(2)}`}</span></div>
       {!tel && rv.filas.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 96px 112px 112px 86px 118px", gap: 10, fontSize: 10.5, fontWeight: 800, color: "#8A847D", textTransform: "uppercase", letterSpacing: ".04em", padding: "0 0 4px", borderBottom: "1px solid rgba(44,42,40,.08)" }}>
         <span>Qué es · partida</span><span style={{ textAlign: "right" }}>Cantidad</span><span style={{ textAlign: "right" }}>P.U.</span><span style={{ textAlign: "right" }}>P.U. presup.</span><span style={{ textAlign: "right" }}>Precio</span><span style={{ textAlign: "right" }}>Monto</span>
       </div>}
@@ -2586,7 +2594,7 @@ function AbonoFormImpl({ purchase, modo = "nuevo", setModal, addAudit, updatePur
     </div>}
 
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 14 }}>
-      <Input label={convertir ? "Monto pagado con ese pago (L)" : "Monto del abono (L)"} type="number" min="0" step="0.01" value={f.monto} onChange={e => u("monto", e.target.value)} />
+      <Input label={convertir ? `Monto pagado con ese pago (${MONEDA})` : `Monto del abono (${MONEDA})`} type="number" min="0" step="0.01" value={f.monto} onChange={e => u("monto", e.target.value)} />
       <Input label="Fecha del abono" type="date" value={f.fecha} onChange={e => u("fecha", e.target.value)} />
       <Select label="Método" options={PAYMENT_METHODS} value={f.metodo} onChange={e => u("metodo", e.target.value)} />
     </div>
@@ -2672,7 +2680,7 @@ function PedirPagoFormImpl({ purchase, setModal, addAudit, updatePurchase, userN
       </div>)}
     </div>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: 14 }}>
-      <Input label="Se pide pagar ahora (L)" type="number" min="0" step="0.01" value={f.monto} onChange={e => u("monto", e.target.value)} />
+      <Input label={`Se pide pagar ahora (${MONEDA})`} type="number" min="0" step="0.01" value={f.monto} onChange={e => u("monto", e.target.value)} />
       <Input label="Fecha en que se requiere (opcional)" type="date" value={f.fecha} onChange={e => u("fecha", e.target.value)} />
     </div>
     {falta > 0 && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: -6 }}>
@@ -2729,7 +2737,7 @@ function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider, 
     {/* Datos generales */}
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
       <Input label="Nombre del proveedor *" value={f.name} onChange={e => u("name", e.target.value)} placeholder="Razon social o nombre comercial" />
-      <Input label="RTN" value={f.rtn || ""} onChange={e => u("rtn", e.target.value)} placeholder="0801-1990-12345" />
+      <Input label={ID_FISCAL} value={f.rtn || ""} onChange={e => u("rtn", e.target.value)} placeholder={esSV ? "0614-010190-101-2" : "0801-1990-12345"} />
       <Input label="Persona de contacto" value={f.contactName} onChange={e => u("contactName", e.target.value)} placeholder="Ej: Ing. Juan Perez" />
       <Input label="Email" value={f.contactEmail} onChange={e => u("contactEmail", e.target.value)} placeholder="contacto@proveedor.com" />
     </div>
@@ -2764,7 +2772,7 @@ function ProviderFormImpl({ provider, setModal, upsertProvider, deleteProvider, 
               {(f.bankAccounts.length > 1) && <Btn small variant="danger" onClick={() => removeBank(i)}>× Eliminar</Btn>}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Input label="Banco" value={b.bank} onChange={e => setBank(i, "bank", e.target.value)} placeholder="Ej: BAC, Ficohsa, Atlantida" />
+              <Input label="Banco" value={b.bank} onChange={e => setBank(i, "bank", e.target.value)} placeholder={esSV ? "Ej: Banco Agrícola, BAC, Cuscatlán" : "Ej: BAC, Ficohsa, Atlantida"} />
               <Input label="Tipo de cuenta" value={b.type} onChange={e => setBank(i, "type", e.target.value)} placeholder="Ahorro / Cheques" />
               <Input label="Titular de la cuenta" value={b.holder} onChange={e => setBank(i, "holder", e.target.value)} placeholder="Nombre del titular" />
               <Input label="Numero de cuenta" value={b.number} onChange={e => setBank(i, "number", e.target.value)} placeholder="Ej: 10-251-000123" />
@@ -3061,7 +3069,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   // de compras solo miran.
   const canEditPri = isAdmin || isCostos || isTesoreria;
 
-  const [co, setCo] = useState("geotecnica");
+  const [co, setCo] = useState(EMPRESA_DEFAULT);
   // ── GUARDIA ANTI-PISADA DEL AUTO-REFRESH (20-ago-2026) ──────────────────
   // El bug de "se confirma pero la tarjeta sigue ahí / se va a la segunda":
   // los diálogos nativos (confirm/prompt/alert) le quitan el foco a la
@@ -3138,7 +3146,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
   const [ccConfig, setCcConfig] = useState(null);
   const [otraPurchasesCC, setOtraPurchasesCC] = useState([]);
   const [movilizacionesCC, setMovilizacionesCC] = useState([]);
-  const tasaCC = num(ccConfig?.tasa) || TASA_DEFAULT;
+  const tasaCC = TASA_FIJA || num(ccConfig?.tasa) || TASA_DEFAULT;
   // Disponible de una partida a la tasa vigente. `excluirId` = la compra que
   // se está editando (si no, se contaría dos veces). Sin MO ni máquinas de
   // GeoTeam acá: el form solo necesita compras/máquinas/movilizaciones.
@@ -4630,7 +4638,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const PW = 210, PH = 297, M = 16, CW = PW - 2 * M;
       const T = PDF_TEMA;
-      const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 });
+      const fL = (n) => MONEDA + " " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2 });
       const tc = (c) => doc.setTextColor(...c);
       const fs = (n, st) => doc.setFont("helvetica", st || "normal").setFontSize(n);
       const tx = (t, x, yy, op) => doc.text(latin1(t), x, yy, op);
@@ -4652,7 +4660,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       ];
       filas.push(
         ["Proveedor", pu.provider || "—"],
-        ["RTN del proveedor", prov?.rtn || pu.providerRTN || "—"],
+        [`${ID_FISCAL} del proveedor`, prov?.rtn || pu.providerRTN || "—"],
         ["Descripción", pu.description || "—"],
         ["Monto", fL(pu.amount)],
         ["N° de cotización", pu.quoteNumber || "—"],
@@ -5201,7 +5209,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               <div><div style={{ fontSize: 10, color: "#92400E" }}>Banco</div><div style={{ fontWeight: 600 }}>{p.providerBank || "—"}</div></div>
               <div><div style={{ fontSize: 10, color: "#92400E" }}>Tipo de cuenta</div><div style={{ fontWeight: 600 }}>{p.providerAccountType || "—"}</div></div>
               <div><div style={{ fontSize: 10, color: "#92400E" }}>Titular</div><div style={{ fontWeight: 600 }}>{p.providerAccountHolder || "—"}</div></div>
-              <div><div style={{ fontSize: 10, color: "#92400E" }}>RTN</div><div style={{ fontWeight: 600 }}>{p.providerRTN || "—"}</div></div>
+              <div><div style={{ fontSize: 10, color: "#92400E" }}>{ID_FISCAL}</div><div style={{ fontWeight: 600 }}>{p.providerRTN || "—"}</div></div>
               <div style={{ gridColumn: "span 2" }}><div style={{ fontSize: 10, color: "#92400E" }}>Numero de cuenta</div><div style={{ fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace" }}>{p.bacAccount || "—"}</div></div>
             </div>
           </div>
@@ -5688,7 +5696,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const [yy, mmn] = mesEjec.split("-").map(Number);
     const mesNombreRaw = new Date(yy, mmn - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
     const mesTitulo = mesNombreRaw.charAt(0).toUpperCase() + mesNombreRaw.slice(1);
-    const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fL = (n) => MONEDA + " " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const esc = (t) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const TAG = { geotecnica: "GEO", subterra: "SUB" };
     const { delMes, proy, maq, porEmp, nombreMaq } = datosCostosMes(mesEjec);
@@ -5696,8 +5704,6 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const rowsProy = Object.values(proy).sort((a, b) => b.total - a.total);
     const rowsMaq = Object.entries(maq).map(([k, v]) => ({ key: k, nombre: nombreMaq(k), ...v })).sort((a, b) => b.total - a.total);
     const totalG = rowsProy.reduce((sm, r) => sm + r.total, 0);
-    const w = window.open("", "_blank");
-    if (!w) return alert("Permití pop-ups para generar el PDF.");
     // Estilo único de reportes (26-oct-2026): src/reporte-estilo.js
     const top = rowsProy.slice(0, 7), otros = rowsProy.slice(7);
     const totOtros = otros.reduce((sm, r) => sm + r.total, 0);
@@ -5740,7 +5746,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       + bloques
       + rTabla({ columnas: [{ t: "" }, { t: "", num: true }], filas: [], total: [`Gasto total en maquinaria del grupo · ${mesTitulo}`, fL(totalG)] })
       + `<div class="rp-nota" style="margin-top:14px">Solicitudes de repuestos y mantenimiento con pago realizado y fecha de pago en ${esc(mesTitulo)}, de ambas empresas, agrupadas por el proyecto de la solicitud y la máquina vinculada. No incluye materiales de construcción (ver GeoShopping). Preparado por ${esc(userName || "Operaciones")} · GeoMachinery.</div>`;
-    abrirReporte(w, reporteHTML({ titulo: "Costo de maquinaria", subtitulo: `Reporte ejecutivo mensual · ${mesTitulo} · repuestos y mantenimiento`, cuerpo }));
+    descargarReporteDirecto(reporteHTML({ titulo: "Costo de maquinaria", subtitulo: `Reporte ejecutivo mensual · ${mesTitulo} · repuestos y mantenimiento`, cuerpo }));
   };
 
   const renderCostosMaq = () => {
@@ -5922,7 +5928,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
             {inc && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: C_AMARILLO.color, background: C_AMARILLO.bg, whiteSpace: "nowrap" }}>Datos incompletos</span>}
             {p.constanciaFile?.fileId && <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10, fontWeight: 800, color: C_VERDE.color, background: C_VERDE.bg, whiteSpace: "nowrap" }} title="Tiene subida la constancia de pagos a cuenta">Constancia</span>}
           </div>
-          {p.rtn && <div style={{ font: "600 11px/1.3 var(--mono, ui-monospace)", color: "var(--text-3)", marginTop: 3 }}>RTN {p.rtn}</div>}
+          {p.rtn && <div style={{ font: "600 11px/1.3 var(--mono, ui-monospace)", color: "var(--text-3)", marginTop: 3 }}>{ID_FISCAL} {p.rtn}</div>}
         </div>
         {/* Contacto */}
         <div style={{ minWidth: 0, fontSize: 11.5, color: "var(--text-2)", display: "flex", flexDirection: "column", gap: 2 }}>
@@ -5970,7 +5976,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
         {pill("Todos", !provFiltro, () => setProvFiltro(""))}
         {pill(`Datos incompletos (${nIncompletos})`, provFiltro === "incompletos", () => setProvFiltro(provFiltro === "incompletos" ? "" : "incompletos"))}
         {pill(`Con constancia (${nConstancia})`, provFiltro === "constancia", () => setProvFiltro(provFiltro === "constancia" ? "" : "constancia"))}
-        <input value={provQ} onChange={e => setProvQ(e.target.value)} placeholder="Buscar por nombre, RTN, contacto o banco…"
+        <input value={provQ} onChange={e => setProvQ(e.target.value)} placeholder={`Buscar por nombre, ${ID_FISCAL}, contacto o banco…`}
           style={{ flex: "1 1 240px", minWidth: 180, marginLeft: isMobile ? 0 : "auto", padding: "6px 11px", border: "1px solid var(--hairline)", borderRadius: 10, fontSize: 12.5, fontFamily: "inherit", outline: "none", background: "var(--surface)" }} />
         {(provQ || provFiltro) && <Btn small variant="ghost" onClick={() => { setProvQ(""); setProvFiltro(""); }}>Limpiar</Btn>}
         {canManageProviders && <button onClick={() => setModal({ t: "provider-new" })}
@@ -6035,7 +6041,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       ...(otrosGasto > 0 ? [{ key: "_otros", label: "Otros", count: otrosGasto, color: "#D8D3CC" }] : []),
     ];
     const donutTotal = donutCats.reduce((s, c) => s + c.count, 0);
-    const shortL = (v) => v >= 1e6 ? `L ${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `L ${Math.round(v / 1e3)}k` : `L ${Math.round(v)}`;
+    const shortL = (v) => v >= 1e6 ? `${MONEDA} ${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `${MONEDA} ${Math.round(v / 1e3)}k` : `${MONEDA} ${Math.round(v)}`;
     const donutR = 58, donutInner = 40;
     const donutCircum = 2 * Math.PI * donutR;
     let accAngle = 0;
@@ -6436,7 +6442,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     const [yy, mmn] = mesEjec.split("-").map(Number);
     const mesNombreRaw = new Date(yy, mmn - 1, 1).toLocaleDateString("es-HN", { month: "long", year: "numeric" });
     const mesTitulo = mesNombreRaw.charAt(0).toUpperCase() + mesNombreRaw.slice(1);
-    const fL = (n) => "L " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fL = (n) => MONEDA + " " + Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const esc = (t) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const TAG = { geotecnica: "GEO", subterra: "SUB" };
     const delMes = purchases.filter(x => (x.status === "pagado" || x.status === "finalizado") && String(x.paidAt || "").slice(0, 7) === mesEjec);
@@ -6455,8 +6461,6 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     });
     const rowsG = Object.values(proy).map(r => ({ ...r, items: r.items.sort((a, b) => String(a.paidAt || "").localeCompare(String(b.paidAt || ""))) })).sort((a, b) => b.total - a.total);
     const totalG = rowsG.reduce((sm, r) => sm + r.total, 0);
-    const w = window.open("", "_blank");
-    if (!w) return alert("Permití pop-ups para generar el PDF.");
     // Estilo único de reportes (26-oct-2026): src/reporte-estilo.js
     const top = rowsG.slice(0, 7), otros = rowsG.slice(7);
     const pcP = pastelesDe(rowsG.map(r => r.short));
@@ -6490,7 +6494,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       + `<div class="rp-salto"></div>` + bloques
       + rTabla({ columnas: [{ t: "" }, { t: "", num: true }], filas: [], total: [`Gasto total en materiales · ${mesTitulo}`, fL(totalG)] })
       + `<div class="rp-nota" style="margin-top:14px">Compras pagadas (pagado o finalizado) con fecha de pago en ${esc(mesTitulo)}, de ambas empresas, por el monto de la solicitud aprobada. No incluye repuestos de maquinaria (ver GeoMachinery). Preparado por ${esc(userName || "Operaciones")}.</div>`;
-    abrirReporte(w, reporteHTML({ titulo: "Costo de materiales", subtitulo: `Reporte ejecutivo mensual · ${mesTitulo}`, cuerpo }));
+    descargarReporteDirecto(reporteHTML({ titulo: "Costo de materiales", subtitulo: `Reporte ejecutivo mensual · ${mesTitulo}`, cuerpo }));
   };
 
   const renderCostos = () => {
@@ -8984,7 +8988,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 15, fontWeight: 800, color: CHARCOAL }}>{fmtL(p.amount)}</div>
-                <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 3 }}>con ISV</div>
+                <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 3 }}>con {IMPUESTO.nombre}</div>
               </div>
               {puedeEnviar && <Btn small variant="success" onClick={e => { e.stopPropagation(); enviarBorradoresATesoreria([p]); }}>Enviar a Tesorería</Btn>}
             </div>;
@@ -9178,7 +9182,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
         {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
-        <img src={logoUrl} alt="Geotecnica Soluciones" style={{ height: isMobile ? 28 : 34, width: "auto", display: "block" }} />
+        <Logo size={isMobile ? 28 : 34} />
         {/* El dibujito del carrito identifica el módulo (1-sep: "en vez de
             que diga GeoShopping"). El nombre queda en el title/aria. */}
         <div title={esMaq ? "GeoMachinery — Repuestos & Tesorería" : "GeoShopping — Compras & Tesorería"} aria-label={CFG.nombre} style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>

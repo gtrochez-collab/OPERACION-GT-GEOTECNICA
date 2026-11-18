@@ -24,6 +24,7 @@
 //                      tasaCambioUsada, purchaseId, audit[]}
 //   sp-config         CONFIG_DEFAULT con lo que Gerson edite encima.
 import { TZ_HN } from "./fechas.js";
+import { esSV, MONEDA, IMPUESTO, FACTOR_IMP } from "./operacion.js";
 import { num, hnlToUsd, textoVarilla } from "./geocost-calc.js";
 
 const round2 = (x) => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
@@ -41,7 +42,7 @@ export const CONFIG_DEFAULT = {
   },
   semaforo: { verde: 0.03, amarillo: 0.10 },       // ≤3 % verde · ≤10 % amarillo · >10 % rojo
   toleranciaTotalL: 1,                             // la suma de ítems vs el total de la cotización
-  isv: 0.15,
+  isv: IMPUESTO.pct,
   cierrePorProyecto: {},                           // { [projectCode]: "Nombre de quien cierra con conta" }
 };
 
@@ -543,7 +544,7 @@ export const semaforoVariacion = (pct, cfg) => {
 const PESO_SEM = { sin_base: 0, verde: 1, amarillo: 2, rojo: 3 };
 export const peorSemaforo = (lista) => lista.reduce((peor, s) => (PESO_SEM[s] > PESO_SEM[peor] ? s : peor), "verde");
 
-export const MSG_ISV = "Si la cotización trae el ISV solo al final, multiplicá cada precio unitario por 1.15.";
+export const MSG_ISV = `Si la cotización trae el ${IMPUESTO.nombre} solo al final, multiplicá cada precio unitario por ${FACTOR_IMP.toFixed(2)}.`;
 
 /**
  * Evalúa una cotización completa: por línea (subtotal, P.U. en USD, variación
@@ -572,7 +573,7 @@ export const evaluarCotizacion = ({ cotizacion, tasa, cfg, partidaDe = () => nul
   if (!ls.length) errores.push("La cotización no tiene ítems.");
   if (!cotizacion?.pdfFile) errores.push("Adjuntá el PDF de la cotización.");
   const total = num(cotizacion?.totalDeclarado);
-  if (!(total > 0)) errores.push("Ingresá el total de la cotización (con ISV).");
+  if (!(total > 0)) errores.push(`Ingresá el total de la cotización (con ${IMPUESTO.nombre}).`);
   ls.forEach((l, i) => {
     const n = l.descripcion || `ítem ${i + 1}`;
     if (!(l.cantidad > 0)) errores.push(`${n}: la cantidad debe ser mayor que 0.`);
@@ -586,7 +587,7 @@ export const evaluarCotizacion = ({ cotizacion, tasa, cfg, partidaDe = () => nul
   const suma = round2(ls.reduce((s, l) => s + l.subtotal, 0));
   const diferencia = round2(suma - total);
   const cuadra = total > 0 && Math.abs(diferencia) <= num(c.toleranciaTotalL);
-  if (total > 0 && ls.length && !cuadra) errores.push(`La suma de los ítems (L ${suma.toLocaleString("es-HN", { minimumFractionDigits: 2 })}) no cuadra con el total (L ${total.toLocaleString("es-HN", { minimumFractionDigits: 2 })}). ${MSG_ISV}`);
+  if (total > 0 && ls.length && !cuadra) errores.push(`La suma de los ítems (${MONEDA} ${suma.toLocaleString("es-HN", { minimumFractionDigits: 2 })}) no cuadra con el total (${MONEDA} ${total.toLocaleString("es-HN", { minimumFractionDigits: 2 })}). ${MSG_ISV}`);
   const peor = peorSemaforo(ls.map(l => l.semaforo));
   return { lineas: ls, suma, total, diferencia, cuadra, errores, ok: errores.length === 0, peor, todasVerdes: ls.length > 0 && ls.every(l => l.semaforo === "verde" || l.semaforo === "sin_base") };
 };
@@ -659,7 +660,7 @@ export const borradorDesdeCotizacion = ({ cotizacion, evaluacion, solicitud, pro
   const purchase = {
     id,
     codigo,
-    company: proyecto?.company || "geotecnica",
+    company: esSV ? "subterra" : (proyecto?.company || "geotecnica"),
     projectCode: solicitud?.projectCode || cotizacion.projectCode,
     provider: cotizacion.provider || proveedor?.name || "",
     providerRTN: proveedor?.rtn || "",

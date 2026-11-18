@@ -16,7 +16,9 @@
 //  · Estética Apple/vidrio del rediseño: GT_CSS + gt-*, sin emojis.
 // ═══════════════════════════════════════════════════════════════════════════
 import { useState, useEffect, useMemo, useRef } from "react";
+import Logo from "./Logo.jsx";
 import { store } from "./supabase.js";
+import { esSV, TASA_FIJA } from "./operacion.js";
 import { GT_CSS } from "./gt-ui.js";
 import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga } from "./movil.jsx";
 import {
@@ -239,7 +241,8 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   const lastLocalMutAtRef = useRef(0);
   const stamp = () => { lastLocalMutAtRef.current = Date.now(); };
 
-  const tasa = num(config?.tasa) || TASA_DEFAULT;
+  // El Salvador (18-nov-2026): compras y presupuesto en dólares → tasa fija 1.
+  const tasa = TASA_FIJA || num(config?.tasa) || TASA_DEFAULT;
 
   // Aplica lo que llegó de la nube al estado. `estricto` = carga inicial:
   // las 4 keys base tienen que venir; en el refresh se toma lo que haya.
@@ -660,7 +663,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
       <table style={{ width: "100%", borderCollapse: "collapse", minWidth: compacta ? 620 : 760 }}>
         <thead><tr>
           <th style={TH}>Fecha</th><th style={TH}>Fuente</th><th style={TH}>Ref</th><th style={TH}>Descripción</th>
-          <th style={TH}>Partida</th><th style={TH}>Estado</th><th style={{ ...TH, textAlign: "right" }}>L</th><th style={{ ...TH, textAlign: "right" }}>$</th>
+          <th style={TH}>Partida</th><th style={TH}>Estado</th>{!esSV && <th style={{ ...TH, textAlign: "right" }}>L</th>}<th style={{ ...TH, textAlign: "right" }}>$</th>
         </tr></thead>
         <tbody>{movs.map(m => {
           const reclasificable = puedeReclasificar && (m.fuente === "compras" || m.fuente === "maquinas") && m.sourceKey && !m.dividida;
@@ -691,7 +694,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
               {divisible && <div>{linkItems(m.dividida ? "Editar ítems" : "Dividir en ítems")}</div>}
             </td>
             <td style={TD}><Chip c={est}>{est.label}</Chip></td>
-            <td style={{ ...TD, ...MONO, textAlign: "right" }}>{fmtL(m.montoHNL)}</td>
+            {!esSV && <td style={{ ...TD, ...MONO, textAlign: "right" }}>{fmtL(m.montoHNL)}</td>}
             <td style={{ ...TD, ...MONO, textAlign: "right", fontWeight: 700, color: "var(--text)" }}>{fmtUSD(m.montoUSD)}</td>
           </tr>;
         })}</tbody>
@@ -1167,7 +1170,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 10, marginTop: 4 }}>
           <div>
             <div style={{ font: "800 20px/1 var(--display)", letterSpacing: "-.02em", color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{fmtL(total)}</div>
-            <div style={{ ...MONO, fontSize: 11.5, color: "var(--text-3)", marginTop: 4 }}>{fmtUSD(hnlToUsd(total, tasa))}</div>
+            {!esSV && <div style={{ ...MONO, fontSize: 11.5, color: "var(--text-3)", marginTop: 4 }}>{fmtUSD(hnlToUsd(total, tasa))}</div>}
           </div>
           {aQuien && <div style={{ textAlign: "right", fontSize: 11.5, color: "var(--text-3)", minWidth: 0 }}>{aQuienLabel}<br /><b style={{ color: "var(--text-2)" }}>{truncar(aQuien, 28)}</b></div>}
         </div>
@@ -1312,14 +1315,14 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: isMobile ? "wrap" : "nowrap" }}>
       <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
         {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
-        <img src={logoUrl} alt="Geotecnica Soluciones" style={{ height: isMobile ? 28 : 34, width: "auto", display: "block" }} />
+        <Logo size={isMobile ? 28 : 34} />
         {!isMobile && <div title="GeoCost — Central de costos" aria-label="GeoCost" style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <IconoGeoCost />
         </div>}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 14, flexShrink: 0, marginLeft: "auto" }}>
         {!hrOk && <Chip c={C_AMARILLO} title="No se pudieron leer asistencia/HE de GeoTeam: la mano de obra no se está sumando">MO no disponible</Chip>}
-        <button className="cc-tasa" onClick={() => setModal({ t: "tasa" })} title={puedeTasa ? "Cambiar la tasa de cambio" : "Tasa de cambio vigente"}>{isMobile ? tasa.toFixed(2) : `L ${tasa.toFixed(2)} / $`}</button>
+        {!esSV && <button className="cc-tasa" onClick={() => setModal({ t: "tasa" })} title={puedeTasa ? "Cambiar la tasa de cambio" : "Tasa de cambio vigente"}>{isMobile ? tasa.toFixed(2) : `L ${tasa.toFixed(2)} / $`}</button>}
         {!isMobile && <div style={{ textAlign: "right" }}>
           <div style={{ font: "600 13px/1.3 var(--sans)", color: "var(--text)" }}>{userName || "Usuario"}</div>
           <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 2 }}>{roleLabel}</div>
@@ -1344,7 +1347,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
     </>}
     {/* CONTENIDO */}
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
-      <div style={{ padding: isMobile ? "8px 14px 20px" : "12px 32px 28px" }}>{isMobile && <TituloMovil derecha={<button className="cc-tasa" onClick={() => setModal({ t: "tasa" })} title={puedeTasa ? "Cambiar la tasa de cambio" : "Tasa de cambio vigente"}>L {tasa.toFixed(2)} / $</button>}>{(NAV.find(n => n.id === sec) || {}).label}</TituloMovil>}{
+      <div style={{ padding: isMobile ? "8px 14px 20px" : "12px 32px 28px" }}>{isMobile && <TituloMovil derecha={esSV ? null : <button className="cc-tasa" onClick={() => setModal({ t: "tasa" })} title={puedeTasa ? "Cambiar la tasa de cambio" : "Tasa de cambio vigente"}>L {tasa.toFixed(2)} / $</button>}>{(NAV.find(n => n.id === sec) || {}).label}</TituloMovil>}{
         sec === "dashboard" ? renderDashboard()
           : sec === "proyectos" ? renderProyectos()
           : renderMovilizaciones()

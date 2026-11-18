@@ -77,3 +77,16 @@ export const operacionesDe = (u) => {
   const ops = Array.isArray(u?.operaciones) ? u.operaciones.filter(x => IDS.has(x)) : [];
   return ops.length ? ops : [OPERACION_DEFAULT];
 };
+
+// ── Compras y costos por país (18-nov-2026, Gerson: "habilitar GeoShopping,
+// GeoCost y GeoSupply para El Salvador; allá todo es en dólares") ──────────
+/** Impuesto de las compras: ISV 15 % en Honduras, IVA 13 % en El Salvador. */
+export const IMPUESTO = esSV ? { nombre: "IVA", pct: 0.13 } : { nombre: "ISV", pct: 0.15 };
+export const FACTOR_IMP = 1 + IMPUESTO.pct;
+/** "ISV 15 %" / "IVA 13 %" */
+export const IMP_TXT = `${IMPUESTO.nombre} ${Math.round(IMPUESTO.pct * 100)} %`;
+/** Identificación tributaria del proveedor: RTN en Honduras, NIT en El Salvador. */
+export const ID_FISCAL = esSV ? "NIT" : "RTN";
+export const MONEDA_NOMBRE = esSV ? "Dólares" : "Lempiras";
+/** El Salvador compra en la misma moneda del presupuesto (USD): tasa fija 1. */
+export const TASA_FIJA = esSV ? 1 : null;

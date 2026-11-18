@@ -1,4 +1,5 @@
 import { esSV, MONEDA } from "./operacion.js";
+import { deduccionesSV, ISSS_PCT, ISSS_TOPE_Q, AFP_PCT } from "./planilla-sv.js";
 // =====================================================================
 // HUB DE RRHH — lógica PURA (20-oct-2026, pedido de Gerson)
 // =====================================================================
@@ -262,16 +263,32 @@ export function lempirasEnLetras(monto) {
 }
 const MESES_L = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 /** "2025-07-02" → "dos (02) de julio de dos mil veinticinco (2025)" */
-export const fechaEnLetras = (iso) => { const [y, m, d] = partes(iso); return `${numeroALetras(d)} (${String(d).padStart(2, "0")}) de ${MESES_L[m - 1]} de ${numeroALetras(y)} (${y})`; };
+export const fechaEnLetras = (iso) => { const [y, m, d] = partes(iso); return `${numeroALetras(d, { apocope: false })} (${String(d).padStart(2, "0")}) de ${MESES_L[m - 1]} de ${numeroALetras(y)} (${y})`; };
 /** "2026-10-07" → "siete (07) días del mes de octubre del año dos mil veintiséis (2026)" */
 export const fechaCierreEnLetras = (iso) => { const [y, m, d] = partes(iso); return `${numeroALetras(d)} (${String(d).padStart(2, "0")}) día${d === 1 ? "" : "s"} del mes de ${MESES_L[m - 1]} del año ${numeroALetras(y)} (${y})`; };
-const L = (n) => `L. ${r2(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const L = (n) => `${esSV ? "US$" : "L."} ${r2(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const NOMBRE_DED = { ihss: "Instituto Hondureño de Seguridad Social (IHSS)", rap: "Régimen de Aportaciones Privadas (RAP)", isss: "Instituto Salvadoreño del Seguro Social (ISSS)", afp: "Sistema de Ahorro para Pensiones (AFP)", isr: "Impuesto sobre la Renta" };
 const MODALIDAD = { permanent: "contrato por tiempo indefinido", temporary: "contrato por tiempo determinado (por obra)", honorarios: "contrato por servicios profesionales (honorarios)" };
 
 /** Deducciones de ley mensuales que se muestran en la constancia. */
 export function deduccionesConstancia(emp) {
   const filas = [];
   const ct = emp.contractType;
+  // El Salvador (18-nov-2026, Gerson: "las constancias de Subterra SV vienen en
+  // lempiras"): ISSS 3 % (tope $30 al mes), AFP 7.25 % y renta — el mes = dos
+  // quincenas con las mismas reglas de la planilla SV (planilla-sv.js).
+  if (esSV) {
+    if (ct !== "permanent" && ct !== "temporary") return filas;
+    const sal = Number(emp.salary) || 0;
+    const q = deduccionesSV(sal / 2, { sinIsss: !!emp.sinIsss, sinAfp: !!emp.sinAfp, sinIsr: !!emp.sinIsr });
+    const isss = emp.sinIsss ? 0 : r2(Math.min(sal * ISSS_PCT, ISSS_TOPE_Q * 2));
+    const afp = emp.sinAfp ? 0 : r2(sal * AFP_PCT);
+    const isr = r2(q.isrX * 2);
+    if (isss > 0) filas.push({ k: "isss", label: "(−) ISSS", monto: isss });
+    if (afp > 0) filas.push({ k: "afp", label: "(−) AFP", monto: afp });
+    if (isr > 0) filas.push({ k: "isr", label: "(−) Impuesto sobre la renta", monto: isr });
+    return filas;
+  }
   if ((ct === "permanent" || ct === "temporary") && !emp.sinIhss) filas.push({ k: "ihss", label: "(−) IHSS", monto: IHSS_CUOTA });
   if (emp.company === "geotecnica" && ct === "permanent" && !emp.sinRap) { const rap = r2(Math.max(0, (Number(emp.salary) || 0) - RAP_TECHO) * RAP_PCT); if (rap > 0) filas.push({ k: "rap", label: "(−) RAP", monto: rap }); }
   return filas;
@@ -279,7 +296,7 @@ export function deduccionesConstancia(emp) {
 
 // Un párrafo es una lista de runs [texto, negrita?]. tabla = [{label, monto, negrita?}].
 export function constanciaDoc(emp, { tipo = "trabajo", hoy }) {
-  const emp2 = EMPRESAS[emp.company] || EMPRESAS.geotecnica;
+  const emp2 = EMPRESAS[emp.company] || EMPRESAS.geotecnica || EMPRESAS.subterra;
   const nombre = String(emp.fullName || "").toUpperCase();
   const articulo = emp.sexo === "femenino" ? "la señora" : emp.sexo === "masculino" ? "el señor" : "";
   const identificado = emp.sexo === "femenino" ? "identificada" : "identificado";
@@ -287,16 +304,16 @@ export function constanciaDoc(emp, { tipo = "trabajo", hoy }) {
   const ded = conSalario ? deduccionesConstancia(emp) : [];
   const salario = Number(emp.salary) || 0;
   const neto = r2(salario - ded.reduce((t, d) => t + d.monto, 0));
-  const p1 = [["Por la presente se "], ["HACE CONSTAR", true], [` que ${articulo ? articulo + " " : ""}`], [nombre, true], [`, ${identificado} con el número de identidad `], [emp.dni || "—", true], [", labora para la empresa "], [emp2.legal, true], [" desde el "], [fechaEnLetras(emp.startDate || hoy), true], [", permaneciendo activo a la fecha."]];
+  const p1 = [["Por la presente se "], ["HACE CONSTAR", true], [` que ${articulo ? articulo + " " : ""}`], [nombre, true], [esSV ? `, ${identificado} con Documento Único de Identidad (DUI) número ` : `, ${identificado} con el número de identidad `], [emp.dni || "—", true], [", labora para la empresa "], [emp2.legal, true], [" desde el "], [fechaEnLetras(emp.startDate || hoy), true], [", permaneciendo activo a la fecha."]];
   const p2 = [["Actualmente ocupa el cargo de "], [emp.position || "—", true], [`, bajo la modalidad de ${MODALIDAD[emp.contractType] || "contrato por tiempo indefinido"}`]];
   if (conSalario) {
     p2.push([", devengando un salario mensual de "], [lempirasEnLetras(salario), true]);
-    if (ded.length) p2.push([`. A su salario se le aplica${ded.length === 1 ? " únicamente" : "n"} la${ded.length === 1 ? "" : "s"} deducci${ded.length === 1 ? "ón" : "ones"} de ley correspondiente${ded.length === 1 ? "" : "s"} al ${ded.map(d => d.k === "ihss" ? "Instituto Hondureño de Seguridad Social (IHSS)" : "Régimen de Aportaciones Privadas (RAP)").join(" y al ")}, conforme al siguiente detalle:`]);
+    if (ded.length) p2.push([`. A su salario se le aplica${ded.length === 1 ? " únicamente" : "n"} la${ded.length === 1 ? "" : "s"} deducci${ded.length === 1 ? "ón" : "ones"} de ley correspondiente${ded.length === 1 ? "" : "s"} al ${ded.map(d => NOMBRE_DED[d.k] || d.k).reduce((t, x, i, a) => i === 0 ? x : t + (i === a.length - 1 ? " y al " : ", al ") + x, "")}, conforme al siguiente detalle:`]);
     else p2.push(["."]);
   } else p2.push(["."]);
   const tabla = conSalario && ded.length ? [{ label: "Salario mensual", monto: L(salario) }, ...ded.map(d => ({ label: d.label, monto: L(d.monto) })), { label: "Salario neto mensual", monto: L(neto), negrita: true }] : null;
-  const cierre = [["Se extiende la presente constancia en la ciudad de Tegucigalpa, M.D.C., a los "], [fechaCierreEnLetras(hoy), true], [", para los fines que el interesado estime convenientes."]];
-  return { empresa: emp.company || "geotecnica", logo: emp2.logo, titulo: "CONSTANCIA DE TRABAJO", parrafos: [p1, p2], tabla, cierre, firma: ["Lic. Gerson Trochez", "Coordinador de Operaciones", emp2.legal] };
+  const cierre = [[esSV ? "Se extiende la presente constancia en la ciudad de San Salvador, a los " : "Se extiende la presente constancia en la ciudad de Tegucigalpa, M.D.C., a los "], [fechaCierreEnLetras(hoy), true], [", para los fines que el interesado estime convenientes."]];
+  return { empresa: emp.company || (esSV ? "subterra" : "geotecnica"), logo: emp2.logo, titulo: "CONSTANCIA DE TRABAJO", parrafos: [p1, p2], tabla, cierre, firma: ["Lic. Gerson Trochez", "Coordinador de Operaciones", emp2.legal] };
 }
 const runsATexto = (runs) => runs.map(r => r[0]).join("");
 /** Texto plano del doc (para hr-cons y búsquedas). */

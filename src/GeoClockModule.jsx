@@ -34,7 +34,8 @@ import { GT_CSS } from "./gt-ui.js";
 import { MOVIL_CSS, BarraMovil, BarraInferior, PantallaCarga, TiraMovil, HojaMovil } from "./movil.jsx";
 import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion } from "./geoclock-calc.js";
 import { vincularEmpleado, KEY_VINCULOS } from "./rrhh-solicitudes.js";
-import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, RP, escHTML, fmtNum, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
+import { libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
+import { pdfRegistros } from "./registros-reporte.js";
 
 // Rediseño GeoCore (23-oct-2026): vidrio, paleta carbón/naranja/gris, sin
 // emojis. La tablet toma una FOTO automática al registrar (anti "marcar por
@@ -1292,45 +1293,51 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
             await descargarExcel(wb, `GeoClock_registros_${regDesde}_a_${regHasta}.xlsx`);
           } catch (e) { alert("No se pudo generar el Excel: " + (e?.message || e)); }
         };
-        // ── PDF: reporte HTML con el estilo único (window.open síncrono en el click) ──
-        const imprimirPDF = () => {
+        // ── PDF (18-nov-2026): jsPDF con el estilo nuevo, se baja directo ──
+        const imprimirPDF = async () => {
           if (!rows.length) return alert("No hay registros en el filtro actual para imprimir.");
-          const w = window.open("", "_blank");
-          if (!w) return alert("Permití las ventanas emergentes para imprimir.");
-          const noMarco = rChip("No marcó", "rojo");
-          let cuerpo = rKpis([
-            { label: "Registros", valor: fmtNum(rows.length - totAusentes) },
-            { label: "No marcaron", valor: fmtNum(totAusentes), tono: totAusentes ? "rojo" : undefined },
-            { label: "Horas laboradas", valor: fmtHoras(totNetas) },
-            { label: "Llegadas tarde", valor: fmtNum(totTardes), tono: totTardes ? "naranja" : undefined },
-            { label: "Proyectos", valor: fmtNum(Object.keys(grupos).length) },
-          ]);
-          const pcGc = pastelesDe(Object.keys(grupos).sort());
-          Object.keys(grupos).sort().forEach(proy => {
-            const rs = grupos[proy];
-            const sub = rs.reduce((s, r) => s + (r.netas || 0), 0);
-            const filas = rs.map(r => {
-              const justifs = [r.ent && r.ent.manual ? `Entrada manual por ${r.ent.editadoPor}: ${r.ent.justificacion || ""}` : "", r.sal && r.sal.manual ? `Salida manual por ${r.sal.editadoPor}: ${r.sal.justificacion || ""}` : "", (r.sal && r.sal.comentario) || ""].filter(Boolean).join(" | ");
-              const tarde = r.ent && r.ent.tarde ? (() => { const d = decisionDe(r.ent); const tono = d ? (d.estado === "aprobada" ? "verde" : "rojo") : "naranja"; const t = d ? (d.estado === "aprobada" ? "justificada" : "se descuenta") : "pendiente"; return " " + rChip(`+${minTardeMk(r.ent)} min ${t}`, tono); })() : "";
-              return [
-                `<span class="mono">${escHTML(fmtDiaCorto(r.fecha))} ${r.fecha.slice(0, 4)}</span>`,
-                `<b>${escHTML(r.emp.fullName)}</b>`,
-                r.ent ? `<span class="mono">${escHTML(r.ent.hora)}</span>${r.ent.manual ? ` <span style="color:${RP.texto3}">manual</span>` : ""}${tarde}` : (r.cerrado ? noMarco : r.ausente ? rChip("Sin marcar", "naranja") : "—"),
-                r.sal ? `<span class="mono">${escHTML(r.sal.hora)}</span>${r.sal.manual ? ` <span style="color:${RP.texto3}">manual</span>` : ""}` : (r.cerrado ? noMarco : "—"),
-                justifs ? `<span style="font-size:9.5px;color:${RP.texto2}">${escHTML(justifs)}</span>` : "",
-                r.brutas != null ? fmtHoras(r.brutas) : "—",
-                r.brutas != null ? (r.almuerzo ? "1h 00m" : "—") : "—",
-                r.netas != null ? `<b>${fmtHoras(r.netas)}</b>` : `<span style="color:${RP.texto3}">${escHTML(r.estado || "—")}</span>`,
-              ];
-            });
-            cuerpo += rSeccionProyecto(pcGc[proy], proy, rTabla({
-              columnas: [{ t: "Fecha", ancho: "86px" }, { t: "Colaborador" }, { t: "Entrada" }, { t: "Salida", ancho: "70px" }, { t: "Comentario" }, { t: "Brutas", num: true, ancho: "64px" }, { t: "Almuerzo", num: true, ancho: "64px" }, { t: "Laboradas", num: true, ancho: "72px" }],
-              filas,
-              total: ["", `${rs.length} registro(s)`, "", "", "", "", "", fmtHoras(sub)],
-            }), `${rs.length} registro(s) · ${fmtHoras(sub)} laboradas`);
+          if ((regErr.length || truncado) && !confirm("El reporte puede estar INCOMPLETO (" + (regErr.length ? `no se pudieron cargar: ${regErr.join(", ")}` : `el rango se cortó en ${truncado}`) + ").\n\n¿Generarlo igual?")) return;
+          const notaHora = (mk) => mk.manual ? "manual" : mk.marcaPropia ? "celular" : (mk.historial || []).length ? "editada" : "";
+          const tardeDe = (mk) => {
+            if (!mk || !mk.tarde) return null;
+            const d = decisionDe(mk);
+            const tono = d ? (d.estado === "aprobada" ? "verde" : "rojo") : "naranja";
+            const txt = d ? (d.estado === "aprobada" ? "justificada" : "se descuenta") : "pendiente";
+            return { txt: `+${minTardeMk(mk)} min · ${txt}`, tono };
+          };
+          const estadoPdf = (r) => {
+            if (r.netas != null) return { txt: "Completo", tono: "verde" };
+            if (r.estado === "en curso") return { txt: "En jornada", tono: "gris" };
+            if (r.ausente && !r.cerrado) return { txt: "Sin marcar", tono: "naranja" };
+            if (r.ausente) return { txt: "No se presentó", tono: "rojo" };
+            if (r.ent && !r.sal && r.cerrado) return { txt: "Sin salida", tono: "naranja" };
+            if (!r.ent && r.sal) return { txt: "Sin entrada", tono: "naranja" };
+            return { txt: r.estado && r.estado !== "—" ? r.estado.charAt(0).toUpperCase() + r.estado.slice(1) : "—", tono: "gris" };
+          };
+          const fila = (r) => ({
+            fecha: r.fecha, dia: fmtDiaCorto(r.fecha), nombre: r.emp.fullName, ausente: !!r.ausente,
+            empresa: (COMPANIES[r.emp.company] || {}).name || r.emp.company || "",
+            ent: r.ent ? { hora: r.ent.hora, nota: notaHora(r.ent), tarde: tardeDe(r.ent) } : null,
+            entFalta: !r.ent && !r.ausente && r.cerrado ? { txt: "No marcó", tono: "rojo" } : null,
+            sal: r.sal ? { hora: r.sal.hora, nota: notaHora(r.sal) } : null,
+            salFalta: !r.sal && !r.ausente && r.cerrado ? { txt: "No marcó", tono: "rojo" } : null,
+            netas: r.netas, brutas: r.brutas, almuerzo: r.almuerzo, estado: estadoPdf(r),
+            notas: [r.ent && r.ent.manual ? `Entrada manual por ${r.ent.editadoPor}: ${r.ent.justificacion || ""}` : "", r.sal && r.sal.manual ? `Salida manual por ${r.sal.editadoPor}: ${r.sal.justificacion || ""}` : "", (r.sal && r.sal.comentario) || "", r.ent && r.ent.tarde && r.ent.explicacion ? `Tarde: ${r.ent.explicacion}` : ""].filter(Boolean).join(" · "),
           });
-          cuerpo += `<div class="rp-nota">El total descuenta 1 h de almuerzo cuando la jornada cruza el mediodía (12:00 – 13:00).</div>`;
-          abrirReporte(w, reporteHTML({ titulo: "Entradas y salidas", subtitulo: `GeoClock · ${filtrosTxt}`, cuerpo, horizontal: true }));
+          const personaEmp = regPersona ? emps.find(e => e.id === regPersona) : null;
+          const cos = [...new Set(rows.map(r => r.emp.company).filter(Boolean))];
+          const [yd, md, dd] = regDesde.split("-").map(Number), [yh, mh, dh] = regHasta.split("-").map(Number);
+          const rango = regDesde === regHasta ? `${dd} de ${MESES[md - 1]} de ${yd}`
+            : `${dd} ${MESES[md - 1].slice(0, 3)}${yd !== yh ? ` ${yd}` : ""} - ${dh} ${MESES[mh - 1].slice(0, 3)} ${yh}`;
+          try {
+            await pdfRegistros({
+              empresa: (personaEmp && personaEmp.company) || (cos.length === 1 ? cos[0] : "geotecnica"),
+              titulo: "Reporte de marcajes", rango, filtros: filtrosTxt, persona: personaEmp ? personaEmp.fullName : "",
+              varios: regDesde !== regHasta, desde: regDesde, hasta: regHasta,
+              kpis: { registros: rows.length - totAusentes, ausentes: totAusentes, horas: totNetas, tardes: totTardes },
+              proyectos: Object.keys(grupos).sort().map(short => ({ short, filas: grupos[short].map(fila) })),
+            });
+          } catch (e) { alert("No se pudo generar el PDF: " + (e?.message || e)); }
         };
         const varios = regDesde !== regHasta;
         const btnR = (label, onClick, lleno) => <button type="button" onClick={onClick} style={{ minHeight: 36, padding: "7px 14px", borderRadius: 999, border: lleno ? "1px solid transparent" : "1px solid rgba(44,42,40,.14)", background: lleno ? ORANGE_DARK : "rgba(255,255,255,.75)", color: lleno ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap" }}>{label}</button>;

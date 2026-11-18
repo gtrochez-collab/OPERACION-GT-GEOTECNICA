@@ -11,6 +11,7 @@
 // de la casa, KPIs en tiles grises, tablas con líneas finas, UN acento naranja.
 // ═══════════════════════════════════════════════════════════════════════════
 import { safeDynamicImport } from "./lazyLoad.js";
+import { MONEDA, esSV } from "./operacion.js";
 import { PDF_TEMA, pdfCabecera, pdfPie, pdfKpi } from "./reporte-estilo.js";
 
 // ── Paleta (RGB para jsPDF) — la del estilo único ──
@@ -59,7 +60,7 @@ export const latin1 = (s) => String(s ?? "")
 const nf = (n, d = 2) => (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const conSigno = (pref, n, d) => `${n < 0 ? "-" : ""}${pref} ${nf(Math.abs(n), d)}`;
 export const fmtUSD = (n) => conSigno("$", Number(n) || 0, 2);
-export const fmtL = (n) => conSigno("L", Number(n) || 0, 2);
+export const fmtL = (n) => conSigno(MONEDA, Number(n) || 0, 2);
 const fmtCant = (c) => Number.isInteger(c) ? nf(c, 0) : nf(c, 2);
 const fmtPct = (p) => `${Math.round((Number(p) || 0) * 100)} %`;
 
@@ -394,7 +395,7 @@ const dibujarPortada = (ctx, { pres, proyecto, R, tasa, machines, userName }) =>
   const sub = [codigo, cliente].filter(Boolean).join("  ·  ");
   if (sub) { P.f(10, "bold"); P.tc(CARBON); P.t(sub, M, ctx.y); ctx.y += 5.5; }
   P.f(9); P.tc(GRIS);
-  P.t(`Generado el ${fechaLarga()}${userName ? ` por ${userName}` : ""}  ·  Tasa: L ${nf(tasa)} / $`, M, ctx.y);
+  P.t(`Generado el ${fechaLarga()}${userName ? ` por ${userName}` : ""}${esSV ? "" : `  ·  Tasa: L ${nf(tasa)} / $`}`, M, ctx.y);
   ctx.y += 5;
   const maqs = maquinasDeFicha(ficha, machines);
   if (maqs.length) { P.t(recortar(P, `Maquinaria: ${maqs.join(", ")}`, CW), M, ctx.y); ctx.y += 5; }
@@ -406,7 +407,7 @@ const dibujarPortada = (ctx, { pres, proyecto, R, tasa, machines, userName }) =>
     const x = M + i * (kw + 4);
     P.fc(FONDO); rr(P, x, ctx.y, kw, kh, 3);
     pdfKpi(doc, x, ctx.y, kw, 16.5, l, fmtUSD(v), { tono: l === "Disponible" && v < 0 ? "rojo" : l === "Ejecutado" ? "verde" : undefined });
-    P.f(7.5); P.tc(GRIS_SUAVE); P.t(fmtL(v * tasa), x + 4, ctx.y + 18.5);
+    if (!esSV) { P.f(7.5); P.tc(GRIS_SUAVE); P.t(fmtL(v * tasa), x + 4, ctx.y + 18.5); }
   });
   ctx.y += kh + 9;
 
@@ -536,7 +537,8 @@ const paginaMovimientos = (ctx, { pres, movs, tasa }) => {
   if (!lista.length) return;
 
   const DEF = [["Fecha", 17, "left"], ["Fuente", 18, "left"], ["Ref", 23, "left"], ["Descripción", 40, "left"],
-    ["Partida", 26, "left"], ["Estado", 18, "left"], ["L", 19, "right"], ["$", 17, "right"]];
+    ["Partida", 26, "left"], ["Estado", 18, "left"], ...(esSV ? [] : [["L", 19, "right"]]), ["$", 17, "right"]];
+  const iL = esSV ? -1 : 6, iU = esSV ? 6 : 7;   // El Salvador: todo es USD, sin columna en L
   const esc = CW / DEF.reduce((s, c) => s + c[1], 0);
   const cols = []; let x = M;
   DEF.forEach(([t, w, a]) => { cols.push({ t, x, w: w * esc, a }); x += w * esc; });
@@ -579,8 +581,8 @@ const paginaMovimientos = (ctx, { pres, movs, tasa }) => {
     celda(4, nomP || "Por clasificar", yb, { color: nomP ? CARBON : NARANJA_TEXTO, bold: !nomP });
     const ejecutado = m.estado === "ejecutado";
     celda(5, ejecutado ? (m.enCurso ? "En curso" : "Ejecutado") : "Comprometido", yb, { color: ejecutado ? (m.enCurso ? NARANJA_TEXTO : VERDE) : GRIS, ajuste: "encoger" });
-    celda(6, nf(hnl), yb);
-    celda(7, nf(usd), yb, { bold: true });
+    if (iL >= 0) celda(iL, nf(hnl), yb);
+    celda(iU, nf(usd), yb, { bold: true });
     ctx.y += h;
     P.dc(LINEA); P.lw(0.2); doc.line(M, ctx.y, M + CW, ctx.y);
   });
@@ -589,8 +591,8 @@ const paginaMovimientos = (ctx, { pres, movs, tasa }) => {
   P.dc(CARBON); P.lw(0.45); doc.line(M, ctx.y + 0.5, M + CW, ctx.y + 0.5);
   const yb = ctx.y + 5.5;
   celda(0, `Total · ${lista.length} movimiento${lista.length === 1 ? "" : "s"}`, yb, { fs: 7.5, bold: true, ajuste: "no" });
-  celda(6, nf(totL), yb, { fs: 7.5, bold: true });
-  celda(7, nf(totUSD), yb, { fs: 7.5, bold: true });
+  if (iL >= 0) celda(iL, nf(totL), yb, { fs: 7.5, bold: true });
+  celda(iU, nf(totUSD), yb, { fs: 7.5, bold: true });
   ctx.y += h + 2;
 };
 

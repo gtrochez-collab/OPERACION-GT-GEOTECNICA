@@ -6,6 +6,7 @@
 // texto, paleta blanco/gris/naranja/carbón + semáforo suave.
 // ═══════════════════════════════════════════════════════════════════════════
 import { useState, useEffect } from "react";
+import { MONEDA } from "./operacion.js";
 
 export const ORANGE = "#E8762D";
 export const ORANGE_DARK = "#C75F1F";
@@ -36,10 +37,10 @@ export const prefiereMenosMovimiento = () => {
 const nf2 = (n) => Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const nf0 = (n) => Number(n || 0).toLocaleString("es-HN", { maximumFractionDigits: 0 });
 export const fmtUSD = (n) => `$ ${nf2(n)}`;
-export const fmtL = (n) => `L ${nf2(n)}`;
+export const fmtL = (n) => `${MONEDA} ${nf2(n)}`;
 // Versión corta para tarjetas: $ 175,075 (sin decimales)
 export const fmtUSD0 = (n) => `$ ${nf0(n)}`;
-export const fmtL0 = (n) => `L ${nf0(n)}`;
+export const fmtL0 = (n) => `${MONEDA} ${nf0(n)}`;
 export const fmtPct = (p) => `${Math.round((Number(p) || 0) * 100)} %`;
 // Fechas "YYYY-MM-DD" o ISO → "9 sep 2026". Las fechas PURAS se formatean en
 // UTC para que no corran un día: 'YYYY-MM-DD' y también los ISO de medianoche

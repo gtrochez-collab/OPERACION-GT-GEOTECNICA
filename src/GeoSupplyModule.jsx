@@ -28,12 +28,14 @@
 // `cp-file-<id>` (el MISMO prefijo de GeoShopping) para que el borrador los
 // abra con su FileSlot y el paquete de cierre los adjunte sin más.
 import { useState, useEffect, useRef, useMemo } from "react";
+import Logo from "./Logo.jsx";
 import { store } from "./supabase.js";
 import { GT_CSS } from "./gt-ui.js";
 import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga } from "./movil.jsx";
 import { PROJECTS as CANONICAL_PROJECTS, admiteSolicitudes } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 import { hoyISO } from "./fechas.js";
+import { MONEDA, TASA_FIJA, IMPUESTO, FACTOR_IMP } from "./operacion.js";
 import { num, UNIDADES, TASA_DEFAULT, movimientosCompras, VARILLAS, LARGOS_VARILLA, esPartidaVarillaPorPeso, cantidadDeVarilla, pesoLanceKg, nombreVarilla, kgPorUnidad } from "./geocost-calc.js";
 import { Input, Select, Textarea, Btn, Chip, Modal, C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, fmtL, fmtUSD, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
@@ -513,7 +515,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
   // Un renglón que no reconocí solo → Ana dice a cuál de lo pedido corresponde.
   const asignar = (item, lid) => {
     const c = candidatas.find(x => x.l.id === lid); if (!c) return;
-    const ln = lineaSupplyDe(item, c, lectura?.ajuste?.factor || 1.15);
+    const ln = lineaSupplyDe(item, c, lectura?.ajuste?.factor || FACTOR_IMP);
     setF(p => ({ ...p, lineas: [...p.lineas.filter(x => x.requestLineId !== lid), ln] }));
     setLectura(l => l ? { ...l, sinPareja: (l.sinPareja || []).filter(x => x !== item) } : l);
   };
@@ -541,7 +543,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
         <Btn small disabled={leyendo} onClick={() => usarTraida(ref)}>{f.pdfFile?.fileId === ref.fileId ? "En uso" : esPdfF(ref) ? "Usar y leer" : "Usar esta"}</Btn>
       </div>)}
     </div>}
-    <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>Proyecto <b>{nombreProy(f.projectCode)}</b> · una cotización = un proveedor. Los precios van <b>con ISV</b>, tal cual cuadran con el total.</div>
+    <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>Proyecto <b>{nombreProy(f.projectCode)}</b> · una cotización = un proveedor. Los precios van <b>con {IMPUESTO.nombre}</b>, tal cual cuadran con el total.</div>
     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: `1px dashed ${ORANGE}`, background: "rgba(232,118,45,.05)", borderRadius: 14, padding: "10px 12px" }}>
       <div style={{ flex: 1, minWidth: 220, fontSize: 12.5, color: "var(--text-2)" }}><b style={{ color: CHARCOAL }}>Leer la cotización</b> · subí el PDF y lleno los precios, el total, el N° y el proveedor. Vos solo revisás.</div>
       <label style={{ display: "inline-flex", alignItems: "center", padding: "8px 14px", borderRadius: 999, background: "#C75F1F", color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: leyendo || subiendo ? "wait" : "pointer", opacity: leyendo || subiendo ? .7 : 1 }}>
@@ -559,12 +561,12 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
         return <div style={{ fontSize: 12.5, color: bien ? C_VERDE.color : C_AMARILLO.color, background: bien ? C_VERDE.bg : C_AMARILLO.bg, borderRadius: 12, padding: "10px 12px", lineHeight: 1.55, display: "flex", flexDirection: "column", gap: 6 }}>
           <div>
             <b>Leí {lectura.n} {lectura.n === 1 ? "renglón" : "renglones"}</b>{lectura.proveedor ? <> de <b>{lectura.proveedor}</b></> : ""}{lectura.numero ? <> · cotización <b>{lectura.numero}</b></> : ""} · <b>{f.lineas.filter(x => x.leido).length}</b> {f.lineas.filter(x => x.leido).length === 1 ? "coincide" : "coinciden"} con lo pedido.
-            {" "}{aj.modo === "isv" ? <>Les sumé el ISV a los precios · total {fmtL(aj.total)} ✓</>
-              : aj.modo === "exenta" ? <>La cotización no cobra ISV: dejé los precios tal cual · total {fmtL(aj.total)}</>
+            {" "}{aj.modo === "isv" ? <>Les sumé el {IMPUESTO.nombre} a los precios · total {fmtL(aj.total)} ✓</>
+              : aj.modo === "exenta" ? <>La cotización no cobra {IMPUESTO.nombre}: dejé los precios tal cual · total {fmtL(aj.total)}</>
               : aj.modo === "proporcional" ? <>El total ({fmtL(aj.total)}) no es la suma + 15 % (descuento o ítems exentos): lo repartí en los precios para que cuadre</>
-              : aj.modo === "no_cuadra" ? <><b>La cotización dice {fmtL(aj.total)}, pero los renglones suman {fmtL(aj.suma)} + ISV = {fmtL(aj.calculado)}: revisá si falta alguno</b></>
+              : aj.modo === "no_cuadra" ? <><b>La cotización dice {fmtL(aj.total)}, pero los renglones suman {fmtL(aj.suma)} + {IMPUESTO.nombre} = {fmtL(aj.calculado)}: revisá si falta alguno</b></>
               : <>No encontré el total: lo calculé con el 15 % ({fmtL(aj.total)})</>}
-            {lectura.isvEnLinea && <> · los precios ya traían ISV</>}{lectura.descuento && <> · traía descuento por línea, ya está aplicado</>}
+            {lectura.isvEnLinea && <> · los precios ya traían {IMPUESTO.nombre}</>}{lectura.descuento && <> · traía descuento por línea, ya está aplicado</>}
             {lectura.proveedorOtro && <> · ojo: la cotización parece de <b>{lectura.proveedorOtro}</b></>}
           </div>
           {(lectura.sinPareja || []).length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -616,13 +618,13 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
             {inc && e && chipSem(e.semaforo)}
           </div>
           {inc && fl?.leido && <div style={{ fontSize: 11, color: fl.leido.score != null && fl.leido.score < 0.5 ? C_AMARILLO.color : "var(--text-3)", marginTop: -3, paddingLeft: 26 }}>
-            En la cotización: <b>{fmtCant(fl.leido.cantidad)} {fl.leido.unidad} × {fl.leido.nombre}</b> · {fmtL(fl.leido.monto)} sin ISV{fl.leido.score != null && fl.leido.score < 0.5 ? " · revisá que sea lo mismo" : ""}
+            En la cotización: <b>{fmtCant(fl.leido.cantidad)} {fl.leido.unidad} × {fl.leido.nombre}</b> · {fmtL(fl.leido.monto)} sin {IMPUESTO.nombre}{fl.leido.score != null && fl.leido.score < 0.5 ? " · revisá que sea lo mismo" : ""}
             {fl.leido.convertido && <> · <b style={{ color: CHARCOAL }}>= {fmtCant(fl.leido.convertido.cantidad)} {c.l.unidad}</b> (cada uno trae {fmtCant(fl.leido.convertido.factor)} {fl.leido.convertido.unidad})</>}
           </div>}
           {inc && fl && c.l.varilla && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "110px 1fr 140px 1fr", gap: 8, alignItems: "center" }}>
             <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>Lances</div><input type="number" min="0" step="1" value={fl.lances ?? ""} onChange={ev2 => uVar(c, "lances", ev2.target.value)} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
             <div style={{ fontSize: 11.5, color: fl.parcial ? C_AMARILLO.color : "var(--text-3)", fontWeight: fl.parcial ? 700 : 500 }}>{nombreVarilla(c.l.varilla)} = {num(fl.cantidad).toLocaleString("es-HN", { maximumFractionDigits: 3 })} {c.l.unidad}{fl.parcial ? " · parcial" : ""}</div>
-            <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>P.U. por lance, con ISV (L)</div><input type="number" min="0" step="any" value={fl.puLance ?? ""} onChange={ev2 => uVar(c, "puLance", ev2.target.value)} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
+            <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>P.U. por lance, con {IMPUESTO.nombre} ({MONEDA})</div><input type="number" min="0" step="any" value={fl.puLance ?? ""} onChange={ev2 => uVar(c, "puLance", ev2.target.value)} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
             <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.5 }}>
               <div>Subtotal <b>{fmtL(e?.subtotal)}</b>{num(fl.puLps) > 0 ? ` · ${fmtL(fl.puLps)} / ${c.l.unidad}` : ""}</div>
               {e && e.semaforo !== "sin_base" && <div style={{ color: SEM[e.semaforo].c.color, fontWeight: 700 }}>{fmtPct(e.variacionPct)} vs presupuesto ({fmtUSD(e.puUSD)} vs {fmtUSD(e.puPresupuestoUSD)} / {c.l.unidad})</div>}
@@ -632,7 +634,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
           {inc && fl && !c.l.varilla && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "110px 1fr 140px 1fr", gap: 8, alignItems: "center" }}>
             <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>Cantidad</div><input type="number" min="0" step="any" value={fl.cantidad} onChange={ev2 => { const v = ev2.target.value; uL(c.l.id, "cantidad", v); uL(c.l.id, "parcial", num(v) < c.pendiente - 0.0001); }} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
             <div style={{ fontSize: 11.5, color: fl.parcial ? C_AMARILLO.color : "var(--text-3)", fontWeight: fl.parcial ? 700 : 500 }}>{fl.parcial ? `Parcial: quedan ${fmtCant(c.pendiente - num(fl.cantidad))} ${c.l.unidad} para otra cotización` : `${c.l.unidad} (completo)`}</div>
-            <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>P.U. con ISV (L)</div><input type="number" min="0" step="any" value={fl.puLps} onChange={ev2 => uL(c.l.id, "puLps", ev2.target.value)} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
+            <div><div style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 700 }}>P.U. con {IMPUESTO.nombre} ({MONEDA})</div><input type="number" min="0" step="any" value={fl.puLps} onChange={ev2 => uL(c.l.id, "puLps", ev2.target.value)} style={{ ...CTRL, width: "100%", textAlign: "right", fontWeight: 700 }} /></div>
             <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.5 }}>
               <div>Subtotal <b>{fmtL(e?.subtotal)}</b></div>
               {e && e.semaforo !== "sin_base" && <div style={{ color: SEM[e.semaforo].c.color, fontWeight: 700 }}>{fmtPct(e.variacionPct)} vs presupuesto ({fmtUSD(e.puUSD)} vs {fmtUSD(e.puPresupuestoUSD)})</div>}
@@ -648,7 +650,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
 
     {/* Total + PDF */}
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12, alignItems: "end" }}>
-      <Input label="Total de la cotización, con ISV (L) *" type="number" min="0" step="any" value={f.totalDeclarado} onChange={e => u("totalDeclarado", e.target.value)} />
+      <Input label={`Total de la cotización, con ${IMPUESTO.nombre} (${MONEDA}) *`} type="number" min="0" step="any" value={f.totalDeclarado} onChange={e => u("totalDeclarado", e.target.value)} />
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         <label style={{ fontSize: 11, fontWeight: 700, color: "#6E6862" }}>Suma de los ítems</label>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 38 }}><b style={{ fontSize: 15 }}>{fmtL(ev.suma)}</b>{sumaChip}</div>
@@ -666,9 +668,9 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
     {!ev.cuadra && ev.total > 0 && ev.lineas.length > 0 && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_ROJO.bg, color: C_ROJO.color, fontSize: 12.5 }}>
       {(lectura?.sinPareja || []).length > 0
         ? <>La suma no cuadra porque la cotización trae {lectura.sinPareja.length === 1 ? "un renglón que no es" : `${lectura.sinPareja.length} renglones que no son`} de esta solicitud ({fmtL(lectura.sinPareja.reduce((a, it) => a + it.monto, 0) * (lectura.ajuste?.factor || 1.15))} con ISV). <b>Pedile al proveedor la cotización solo con lo pedido</b>, o asignalo arriba si es lo mismo con otro nombre.</>
-        : <>La suma de los ítems no cuadra con el total. Si la cotización trae el ISV solo al final, <b>multiplicá cada precio unitario por 1.15</b>.</>}
+        : <>La suma de los ítems no cuadra con el total. Si la cotización trae el {IMPUESTO.nombre} solo al final, <b>multiplicá cada precio unitario por {FACTOR_IMP.toFixed(2)}</b>.</>}
     </div>}
-    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text-2)" }}><input type="checkbox" checked={f.incluyeISV !== false} onChange={e => u("incluyeISV", e.target.checked)} /> La cotización incluye ISV (informativo para contabilidad; no cambia la comparación)</label>
+    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text-2)" }}><input type="checkbox" checked={f.incluyeISV !== false} onChange={e => u("incluyeISV", e.target.checked)} /> La cotización incluye {IMPUESTO.nombre} (informativo para contabilidad; no cambia la comparación)</label>
 
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
       <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Btn>
@@ -717,7 +719,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const [visor, setVisor] = useState(null);
   const [ocupado, setOcupado] = useState(false);
   const cfg = configEfectiva(spConfig);
-  const tasa = num(ccConfig?.tasa) || TASA_DEFAULT;
+  const tasa = TASA_FIJA || num(ccConfig?.tasa) || TASA_DEFAULT;
 
   const [ahora, setAhora] = useState(() => new Date());
   useEffect(() => { const t = setInterval(() => setAhora(new Date()), 30000); return () => clearInterval(t); }, []);
@@ -1634,7 +1636,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
               <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{(q.lineas || []).length} {(q.lineas || []).length === 1 ? "ítem" : "ítems"} · {s?.folio || "—"} · {q.numeroProveedor ? `cot. ${q.numeroProveedor} · ` : ""}{q.estado === "aprobada" ? `→ ${q.purchaseCodigo || "borrador"} · ${fmtDT(q.aprobadoAt)}` : fmtDT(q.updatedAt)}</div>
               {q.comentario && (q.estado === "devuelta" || q.estado === "rechazada") && <div style={{ fontSize: 12, color: C_AMARILLO.color, fontStyle: "italic" }}>"{q.comentario}"</div>}
             </div>
-            {!esResidente && <div style={{ textAlign: "right" }}><div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL }}>{fmtL(q.totalDeclarado)}</div><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 3 }}>con ISV</div></div>}
+            {!esResidente && <div style={{ textAlign: "right" }}><div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL }}>{fmtL(q.totalDeclarado)}</div><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 3 }}>con {IMPUESTO.nombre}</div></div>}
           </div>;
         })}
     </div>;
@@ -1864,7 +1866,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         <span style={{ fontSize: 13, color: "var(--text-2)" }}><b>{q.provider}</b> · {nombreProy(q.projectCode)} · {s?.folio} · pidió {quien(s?.residente)}{q.numeroProveedor ? ` · cot. ${q.numeroProveedor}` : ""}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
           {q.pdfFile ? <Btn small variant="info" onClick={() => verArchivo(q.pdfFile)}>Ver PDF</Btn> : <Chip c={C_ROJO}>Sin PDF</Chip>}
-          <div style={{ textAlign: "right" }}><div style={{ fontSize: 18, fontWeight: 800, color: CHARCOAL }}>{fmtL(q.totalDeclarado)}</div><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>total con ISV · {ev.cuadra ? "cuadra" : `dif. ${fmtL(ev.diferencia)}`}</div></div>
+          <div style={{ textAlign: "right" }}><div style={{ fontSize: 18, fontWeight: 800, color: CHARCOAL }}>{fmtL(q.totalDeclarado)}</div><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>total con {IMPUESTO.nombre} · {ev.cuadra ? "cuadra" : `dif. ${fmtL(ev.diferencia)}`}</div></div>
         </div>
       </div>
       {/* Lo que escribió el residente (6-nov-2026): sin esto el Coordinador
@@ -2036,14 +2038,14 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
           <Input label="Verde hasta (%)" type="number" step="0.5" min="0" value={Math.round(Number(draft.semaforo.verde) * 1000) / 10} onChange={e => setCfgDraft({ ...draft, semaforo: { ...draft.semaforo, verde: Number(e.target.value) / 100 } })} />
           <Input label="Amarillo hasta (%)" type="number" step="0.5" min="0" value={Math.round(Number(draft.semaforo.amarillo) * 1000) / 10} onChange={e => setCfgDraft({ ...draft, semaforo: { ...draft.semaforo, amarillo: Number(e.target.value) / 100 } })} />
-          <Input label="Tolerancia del total (L)" type="number" step="0.5" min="0" value={draft.toleranciaTotalL} onChange={e => setCfgDraft({ ...draft, toleranciaTotalL: e.target.value })} />
+          <Input label={`Tolerancia del total (${MONEDA})`} type="number" step="0.5" min="0" value={draft.toleranciaTotalL} onChange={e => setCfgDraft({ ...draft, toleranciaTotalL: e.target.value })} />
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Chip c={C_VERDE}>≤ {Math.round(Number(draft.semaforo.verde) * 1000) / 10} % verde</Chip>
           <Chip c={C_AMARILLO}>≤ {Math.round(Number(draft.semaforo.amarillo) * 1000) / 10} % amarillo</Chip>
           <Chip c={C_ROJO}>más: rojo, justificación obligatoria</Chip>
         </div>
-        <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Tasa de cambio actual: <b>L {tasa.toFixed(2)} / $</b> (se edita en GeoCost; al aprobar se guarda la tasa usada).</div>
+        {!TASA_FIJA && <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Tasa de cambio actual: <b>L {tasa.toFixed(2)} / $</b> (se edita en GeoCost; al aprobar se guarda la tasa usada).</div>}
       </div>
       <div className="gt-vidrio" style={{ padding: 22, display: "flex", flexDirection: "column", gap: 10 }}>
         <div className="gt-label" style={{ color: "var(--text-3)" }}>Cierra con contabilidad, por proyecto</div>
@@ -2201,7 +2203,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     <div style={{ position: "relative", zIndex: 2, flexShrink: 0, borderBottom: "1px solid rgba(44,42,40,.08)", padding: isMobile ? "10px 12px" : "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, minWidth: 0 }}>
         {onBack && <button className="gt-circulo" onClick={onBack} title="Volver al panel" aria-label="Volver al panel" style={{ width: 40, height: 40, fontSize: 17 }}>←</button>}
-        <img src={logoUrl} alt="Geotecnica Soluciones" style={{ height: isMobile ? 28 : 34, width: "auto", display: "block" }} />
+        <Logo size={isMobile ? 28 : 34} />
         <div title="GeoSupply — Solicitudes de material" aria-label="GeoSupply" style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(232,118,45,.12)", color: "var(--naranja-tinta)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><IconoSupply /></div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>

@@ -10,7 +10,7 @@ import { hoyISO } from "./fechas.js";
 // encabezado, Dashboard, KPI's y Empleados).
 import { GT_CSS } from "./gt-ui.js";
 import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga } from "./movil.jsx";
-import { reporteHTML, abrirReporte, rKpis, rSeccion, rSeccionProyecto, rProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, escHTML, fmtLps, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
+import { reporteHTML, descargarReporteDirecto, rKpis, rSeccion, rSeccionProyecto, rProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, escHTML, fmtLps, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES, USUARIOS_DE_BAJA } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
 // Planilla (16-oct-2026): lógica pura + PDF/Excel.
@@ -3647,8 +3647,6 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     };
 
     const exportCostosPDF = () => {
-      const w = window.open("", "_blank");
-      if (!w) { alert("Permite popups para imprimir"); return; }
       const fL = fmtLps;
       const he = (n, txt) => n > 0 ? `<span style="color:${RP.naranjaTexto}">${txt}</span>` : `<span style="color:${RP.texto3}">—</span>`;
       const pcMO = pastelesDe(rows.map(r => r.short));
@@ -3673,7 +3671,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         + `<div class="rp-nota" style="margin-top:14px;line-height:1.6">Metodología: costo diario = (salario + bonificación mensual) ÷ 30; costo = costo diario × días pagados atribuidos al proyecto según cuadrilla y reasignaciones diarias (1*). Domingos/feriados de descanso pagan 1 día; domingo trabajado (DT) ×2, domingo triple (DT2) y feriado trabajado (TF) ×3; incapacidad (INC) paga 1 día; NSP no paga.
           Horas extras: hora base = salario ÷ 30 ÷ 8 · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2. Las HE mostradas corresponden a las trabajadas en ${prevQLabel}, pagadas en esta quincena (pago quincena vencida).
           No incluye cargas patronales. Fuente: asistencia ${sheet.quincena} ${sheet.periodo}${sheet.lastSaved ? ` (guardada ${fmt(sheet.lastSaved.slice(0, 10))})` : ""}.</div>`;
-      abrirReporte(w, reporteHTML({ titulo: "Costo de mano de obra", subtitulo: `${cc.name} · Quincena ${sheet.quincena} ${sheet.periodo}`, empresa: sheet.company || co, cuerpo }));
+      descargarReporteDirecto(reporteHTML({ titulo: "Costo de mano de obra", subtitulo: `${cc.name} · Quincena ${sheet.quincena} ${sheet.periodo}`, empresa: sheet.company || co, cuerpo }));
     };
 
     // ══════════ REPORTE EJECUTIVO MENSUAL GLOBALIZADO (ago 2026) ══════════
@@ -3740,8 +3738,6 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
       const heHrsG = rowsG.reduce((s, r) => s + r.heHrs, 0);
       const costoDiasG = totalG - heCostoG;
       const personasG = new Set([...porEmp.geotecnica.personas, ...porEmp.subterra.personas]).size;
-      const w = window.open("", "_blank");
-      if (!w) { alert("Permite popups para generar el PDF"); return; }
       // Estilo único de reportes (26-oct-2026): src/reporte-estilo.js
       // Empresas: Geotecnica en carbón, Subterra en naranja (como Compras).
       const COLOR_EMP = { geotecnica: RP.carbon, subterra: RP.naranja };
@@ -3815,7 +3811,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         + `<div class="rp-nota" style="margin-top:14px;line-height:1.6"><b>Metodología:</b> costo diario = (salario + bonificación mensual) ÷ 30 × días pagados. Domingo/feriado de descanso paga 1; DT ×2, DT2/TF ×3; INC/V pagan 1; NSP no paga.
           Horas extras: hora base = salario ÷ 30 ÷ 8 · 4-7pm ×1.25 · 7-10pm ×1.50 · 10pm-12am ×1.75 · domingo ×2 (pago quincena vencida: en ${esc(mesTitulo)} se desembolsan las HE de 2Q ${mesAnt} y las de 1Q ${mesEjec}).
           No incluye cargas patronales. Preparado por ${esc(userName || "Operaciones")}.</div>`;
-      abrirReporte(w, reporteHTML({ titulo: "Costo de mano de obra", subtitulo: `Reporte ejecutivo mensual · ${mesTitulo} · ambas empresas`, cuerpo, horizontal: true }));
+      descargarReporteDirecto(reporteHTML({ titulo: "Costo de mano de obra", subtitulo: `Reporte ejecutivo mensual · ${mesTitulo} · ambas empresas`, cuerpo, horizontal: true }));
     };
 
     // ── Vista (rediseño GeoCore 4-nov-2026): vidrio, carbón/naranja/gris ──

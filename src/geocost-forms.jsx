@@ -18,6 +18,7 @@ import {
   num, hnlToUsd, usdToHnl, montoPartida, partidasParaModulo, PLANTILLA_VILLA_SAN_MIGUEL,
 } from "./geocost-calc.js";
 import { hoyISO } from "./fechas.js";
+import { MONEDA, esSV } from "./operacion.js";
 
 // ── Estados de una movilización (flujo de colores igual a GeoShopping) ──
 export const ESTADOS_MOV = {
@@ -286,7 +287,7 @@ export function PresupuestoForm({ pres, proyectos = [], machines = [], tasa = TA
         <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 12, flexWrap: "wrap", paddingTop: 8, borderTop: "1px solid rgba(44,42,40,.08)" }}>
           <Label>Total</Label>
           <span style={{ font: "800 22px/1 var(--display)", letterSpacing: "-.01em" }}>{fmtUSD(total)}</span>
-          <span style={{ fontSize: 12, color: "#6E6862", ...MONO }}>{fmtL(usdToHnl(total, tasa))} · L {Number(tasa).toFixed(2)} / $</span>
+          {!esSV && <span style={{ fontSize: 12, color: "#6E6862", ...MONO }}>{fmtL(usdToHnl(total, tasa))} · L {Number(tasa).toFixed(2)} / $</span>}
         </div>
         {multiSol && solucionesUsadas.length > 0 && <div style={{ display: "flex", justifyContent: "flex-end", gap: 14, flexWrap: "wrap", fontSize: 12, color: "#5C5853" }}>
           {solucionesUsadas.map(sol => <span key={sol}>{sol}: <b style={MONO}>{fmtUSD(partidas.filter(r => String(r.solucion || "").trim() === sol).reduce((a, r) => a + montoFila(r), 0))}</b></span>)}
@@ -492,7 +493,7 @@ export function MovilizacionForm({ mov, presupuestos = [], proyectosNombre, prov
       {/* Con proveedor: quién, cuánto (el hint muestra el equivalente en $) y la cotización */}
       {esProv && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.6fr) 170px minmax(0,1fr)", gap: 10 }}>
         <Input label="Proveedor *" list="gc-proveedores" autoComplete="off" value={f.proveedor} onChange={e => elegirProveedor(e.target.value)} placeholder="Transportes …" disabled={bloqueada} />
-        <Input label="Monto L *" hint={montoProv > 0 ? `${fmtUSD(hnlToUsd(montoProv, tasa))} · L ${Number(tasa).toFixed(2)} / $` : undefined} type="number" min="0" step="any" inputMode="decimal" value={f.monto} onChange={e => u("monto", e.target.value)} placeholder="0.00" style={MONO} disabled={bloqueada} />
+        <Input label={`Monto ${MONEDA} *`} hint={montoProv > 0 && !esSV ? `${fmtUSD(hnlToUsd(montoProv, tasa))} · L ${Number(tasa).toFixed(2)} / $` : undefined} type="number" min="0" step="any" inputMode="decimal" value={f.monto} onChange={e => u("monto", e.target.value)} placeholder="0.00" style={MONO} disabled={bloqueada} />
         <Input label="N° de cotización" value={f.cotizacion} onChange={e => u("cotizacion", e.target.value)} placeholder="Opcional" disabled={bloqueada} />
       </div>}
 
@@ -502,7 +503,7 @@ export function MovilizacionForm({ mov, presupuestos = [], proyectosNombre, prov
           <span style={LBL}>Renglones</span>
           {!bloqueada && <Btn variant="ghost" small onClick={agregarR}><Ico d={ICO.mas} size={13} /> Renglón</Btn>}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: COLS_R, gap: 8, padding: "0 2px" }}><Label>Concepto</Label><Label>Monto L</Label><span /></div>
+        <div style={{ display: "grid", gridTemplateColumns: COLS_R, gap: 8, padding: "0 2px" }}><Label>Concepto</Label><Label>Monto {MONEDA}</Label><span /></div>
         {f.renglones.map(r => <div key={r.id} style={{ display: "grid", gridTemplateColumns: COLS_R, gap: 8, alignItems: "center" }}>
           <Input value={r.concepto} onChange={e => uR(r.id, "concepto", e.target.value)} placeholder="Concepto" style={CELDA} disabled={bloqueada} />
           <Input type="number" min="0" step="any" inputMode="decimal" value={r.monto} onChange={e => uR(r.id, "monto", e.target.value)} placeholder="0.00" style={{ ...CELDA, ...MONO }} disabled={bloqueada} />
@@ -511,7 +512,7 @@ export function MovilizacionForm({ mov, presupuestos = [], proyectosNombre, prov
         <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 12, flexWrap: "wrap", paddingTop: 8, borderTop: "1px solid rgba(44,42,40,.08)" }}>
           <Label>Total</Label>
           <span style={{ font: "800 22px/1 var(--display)", letterSpacing: "-.01em" }}>{fmtL(total)}</span>
-          <span style={{ fontSize: 12, color: "#6E6862", ...MONO }}>{fmtUSD(hnlToUsd(total, tasa))} · L {Number(tasa).toFixed(2)} / $</span>
+          {!esSV && <span style={{ fontSize: 12, color: "#6E6862", ...MONO }}>{fmtUSD(hnlToUsd(total, tasa))} · L {Number(tasa).toFixed(2)} / $</span>}
         </div>
       </div>}
 
@@ -619,7 +620,7 @@ export function MovilizacionDetalle({ mov, pres, tasa = TASA_DEFAULT, perms = {}
           <Label>Total</Label>
           <span style={{ display: "inline-flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <span style={{ font: "800 20px/1 var(--display)", letterSpacing: "-.01em" }}>{fmtL(total)}</span>
-            <span style={{ fontSize: 12, color: "#6E6862", ...MONO }}>{fmtUSD(hnlToUsd(total, tasa))}</span>
+            {!esSV && <span style={{ fontSize: 12, color: "#6E6862", ...MONO }}>{fmtUSD(hnlToUsd(total, tasa))}</span>}
           </span>
         </div>
       </div>

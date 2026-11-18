@@ -17,6 +17,7 @@
 // `parsearCotizacion` es PURA (filas → resultado) y se prueba con Node:
 // tests/leer-cotizacion.test.mjs. `leerPdf` es la parte del navegador.
 
+import { FACTOR_IMP } from "./operacion.js";
 import { esPartidaVarillaPorPeso, cantidadDeVarilla, pesoLanceKg, kgPorUnidad, partidasParaModulo, nombreVarilla } from "./geocost-calc.js";
 
 const sinAcentos = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -114,7 +115,7 @@ const RUIDO = /^(disponible|nacional|importado|agotado|existencia|stock|en|tiend
 
 // ── Etiquetas de totales ──
 const NUM_TRAS = String.raw`\s*(?:\(\s*\d{1,2}(?:\.\d+)?\s*%\s*\))?\s*:?\s*(?:\|\s*)?(?::\s*)?(?:\|\s*)?(?:L\.?|Lps\.?|\$)?\s*(?:\|\s*)?(?:L\.?|Lps\.?|\$)?\s*([\d,]+(?:\.\d{1,4})?)`;
-const RE_SUB = new RegExp(String.raw`(?:sub\s*-?\s*total(?:\s*neto)?|monto\s+bruto|total\s+gravado|importe\s+gravado|total\s+sin\s+isv|valor\s+bruto)` + NUM_TRAS, "i");
+const RE_SUB = new RegExp(String.raw`(?:sub\s*-?\s*total(?:\s*neto)?|monto\s+bruto|total\s+gravado|importe\s+gravado|total\s+sin\s+(?:isv|iva)|valor\s+bruto)` + NUM_TRAS, "i");
 const RE_DESC = new RegExp(String.raw`(?:monto\s+)?descuento` + NUM_TRAS, "i");
 const RE_ISV = new RegExp(String.raw`(?:monto\s+(?:del?\s+)?impuesto|impuesto(?:\s+sobre\s+ventas)?|imp\.?\s*s\s*\/\s*v|i\.?\s*s\.?\s*v\.?|iva)` + NUM_TRAS, "i");
 const RE_TOT = new RegExp(String.raw`(?:total\s+a\s+pagar|monto\s+neto|total\s+general|gran\s+total|total\s+neto|total\s+lps\.?|(?<![a-z])total)` + NUM_TRAS, "i");
@@ -153,7 +154,7 @@ export const parsearCotizacion = (filasIn, { providers = [], nuestros = ["geo st
     // Ítem = cantidad (q) × precio (p) que da un número de más a la derecha:
     //   · el total de la línea (lo normal: CEMCOL, ECOMETAL);
     //   · o el subtotal, y después viene descuento → total neto (REASA);
-    //   · o el total CON ISV incluido = q × p × 1.15 (Larach).
+    //   · o el total CON ISV incluido = q × p × FACTOR_IMP (Larach).
     if (!esTotal && nums.length >= 3) {
       const tol = (x) => Math.max(0.06, Math.abs(x) * 0.004);
       const last = nums[nums.length - 1];
@@ -175,7 +176,7 @@ export const parsearCotizacion = (filasIn, { providers = [], nuestros = ["geo st
               item = { q, p: monto / q, t: monto, iq: nums[ii].i, ip: nums[jj].i, desc: monto < S ? r2(S - monto) : 0 };
               break busca;
             }
-            if (kk === nums.length - 1 && Math.abs(base * 1.15 - S) <= Math.max(0.6, S * 0.004)) {
+            if (kk === nums.length - 1 && Math.abs(base * FACTOR_IMP - S) <= Math.max(0.6, S * 0.004)) {
               item = { q, p, t: r2(base), iq: nums[ii].i, ip: nums[jj].i, isvEnLinea: true };
               break busca;
             }
@@ -412,30 +413,30 @@ const esVarillaTexto = (t) => /varilla|hierro|corrugad/i.test(sinAcentos(t));
 /**
  * Cómo se pasa de los montos de los renglones (sin ISV) al TOTAL de la
  * cotización. `factor` multiplica cada monto:
- *   · "isv"          total = suma × 1.15 (lo normal)
+ *   · "isv"          total = suma × FACTOR_IMP (lo normal)
  *   · "exenta"       total = suma (no cobra ISV: arena, grava…)
  *   · "proporcional" otra relación razonable (descuento global, mezcla de
  *                    exentos y gravados): se reparte parejo para que cuadre
  *   · "no_cuadra"    la cotización dice otra cosa (falta un renglón o se leyó
- *                    mal): se usa 1.15 y el total de la cotización, y se avisa
- *   · "sin_total"    no se encontró el total: suma × 1.15
+ *                    mal): se usa FACTOR_IMP y el total de la cotización, y se avisa
+ *   · "sin_total"    no se encontró el total: suma × FACTOR_IMP
  */
 export const ajusteAlTotal = (r) => {
   const suma = r2(r?.suma || 0), total = r?.total;
-  if (!(suma > 0)) return { factor: 1.15, total: null, modo: "sin_total", suma };
+  if (!(suma > 0)) return { factor: FACTOR_IMP, total: null, modo: "sin_total", suma };
   const tol = Math.max(1, suma * 0.002);
   if (total != null && total > 0) {
-    if (Math.abs(total - suma * 1.15) <= tol) return { factor: 1.15, total, modo: "isv", suma };
+    if (Math.abs(total - suma * FACTOR_IMP) <= tol) return { factor: FACTOR_IMP, total, modo: "isv", suma };
     if (Math.abs(total - suma) <= tol) return { factor: 1, total, modo: "exenta", suma };
     const ratio = total / suma;
     if (ratio >= 0.85 && ratio <= 1.2) return { factor: ratio, total, modo: "proporcional", suma };
-    return { factor: 1.15, total, modo: "no_cuadra", suma, calculado: r2(suma * 1.15) };
+    return { factor: FACTOR_IMP, total, modo: "no_cuadra", suma, calculado: r2(suma * FACTOR_IMP) };
   }
-  return { factor: 1.15, total: r2(suma * 1.15), modo: "sin_total", suma };
+  return { factor: FACTOR_IMP, total: r2(suma * FACTOR_IMP), modo: "sin_total", suma };
 };
 
 /** Una línea de la cotización de GeoSupply a partir de un renglón leído y lo pedido (`c` = {sol, l, pendiente}). */
-export const lineaSupplyDe = (item, c, factor = 1.15, score = null) => {
+export const lineaSupplyDe = (item, c, factor = FACTOR_IMP, score = null) => {
   const { sol, l, pendiente } = c;
   const montoIsv = item.monto * factor;
   const conv = l.varilla ? { factor: 1 } : cantidadEnUnidad(item, l.unidad);

@@ -12,9 +12,12 @@
 // Mano de obra = fórmula EXACTA de calcCostoMO de GeoTeam (port fiel abajo).
 // =====================================================================
 import { PROJECTS, resolveShort } from "./projects.js";
+import { TASA_FIJA } from "./operacion.js";
 import { esFeriadoQuincena } from "./holidays.js";
 
-export const TASA_DEFAULT = 27;
+// El Salvador (18-nov-2026): compra en dólares, igual que el presupuesto → la
+// tasa es 1 SIEMPRE (TASA_FIJA), aunque alguien guarde otra en cc-config@sv.
+export const TASA_DEFAULT = TASA_FIJA || 27;
 export const CATEGORIAS = ["Generales", "Materiales", "Personal", "Equipos", "Servicios subcontratados", "Otros"];
 export const MODULOS_PARTIDA = {
   compras: "Compras (GeoShopping)",
@@ -86,8 +89,8 @@ export const num = (x) => {
   return Number.isFinite(n) ? n : 0;
 };
 const round2 = (x) => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
-export const hnlToUsd = (hnl, tasa) => { const t = num(tasa); return t > 0 ? num(hnl) / t : 0; };
-export const usdToHnl = (usd, tasa) => num(usd) * num(tasa);
+export const hnlToUsd = (hnl, tasa) => { const t = TASA_FIJA || num(tasa); return t > 0 ? num(hnl) / t : 0; };
+export const usdToHnl = (usd, tasa) => num(usd) * (TASA_FIJA || num(tasa));
 
 // ── Partidas / presupuesto ───────────────────────────────────────────
 // monto = cantidad × pu (2 dec) cuando ambos son > 0; si no, el monto

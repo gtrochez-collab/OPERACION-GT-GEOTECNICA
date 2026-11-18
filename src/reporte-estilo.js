@@ -232,7 +232,8 @@ export const descargarReportePDF = async (w) => {
     body.setAttribute("style", `${estiloPrevio};width:${anchoPx}px;padding:0;margin:0`);
     const np = d.querySelector(".np"); if (np) np.style.display = "none";
     w.scrollTo(0, 0);
-    await new Promise(r => w.requestAnimationFrame(() => w.requestAnimationFrame(r)));
+    // (con tope: en un iframe oculto el navegador puede frenar los cuadros)
+    await Promise.race([new Promise(r => w.requestAnimationFrame(() => w.requestAnimationFrame(r))), new Promise(r => setTimeout(r, 150))]);
     const base = body.getBoundingClientRect().top;
     const y = (el) => el.getBoundingClientRect().top - base;
     const yFin = (el) => el.getBoundingClientRect().bottom - base;
@@ -274,6 +275,44 @@ export const descargarReportePDF = async (w) => {
     const np = d.querySelector(".np"); if (np) np.style.display = "";
     if (boton) { boton.textContent = textoBoton; boton.disabled = false; }
     w.__generandoPDF = false;
+  }
+};
+
+/**
+ * 18-nov-2026 (Gerson: "todos los reportes, que de una se descarguen, no me
+ * lleven a otra pantalla"): arma el reporte HTML en un iframe INVISIBLE de la
+ * misma página y baja el PDF con `descargarReportePDF`, sin abrir pestaña.
+ * Mientras tanto sale una pastilla "Generando PDF…" abajo al centro.
+ */
+let generandoDirecto = false;
+export const descargarReporteDirecto = async (html) => {
+  if (generandoDirecto) return false;
+  generandoDirecto = true;
+  const pill = document.createElement("div");
+  pill.textContent = "Generando PDF…";
+  pill.setAttribute("role", "status");
+  pill.style.cssText = "position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:10001;padding:11px 20px;border-radius:999px;background:rgba(44,42,40,.92);color:#fff;font:700 13px/1 'Plus Jakarta Sans',system-ui,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.18);pointer-events:none";
+  const fr = document.createElement("iframe");
+  fr.setAttribute("aria-hidden", "true"); fr.tabIndex = -1;
+  // Dentro de la pantalla pero transparente y detrás: fuera de la vista el
+  // navegador puede dejar de dibujar el iframe y html2canvas no tendría qué copiar.
+  fr.style.cssText = "position:fixed;left:0;top:0;width:1300px;height:900px;border:0;opacity:0;pointer-events:none;z-index:-1";
+  try {
+    document.body.appendChild(pill);
+    document.body.appendChild(fr);
+    const w = fr.contentWindow, d = w.document;
+    d.open(); d.write(html); d.close();
+    await new Promise(r => { if (d.readyState === "complete") r(); else { w.addEventListener("load", r, { once: true }); setTimeout(r, 4000); } });
+    try { await Promise.race([d.fonts?.ready, new Promise(r => setTimeout(r, 3000))]); } catch {}
+    await descargarReportePDF(w);
+    return true;
+  } catch (e) {
+    console.error(e); alert("No se pudo generar el PDF: " + (e?.message || e));
+    return false;
+  } finally {
+    setTimeout(() => { fr.remove(); }, 800);
+    pill.remove();
+    generandoDirecto = false;
   }
 };
 

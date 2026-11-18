@@ -19,6 +19,7 @@
 // "Dividir en ítems" de GeoCost. Vive a NIVEL DE MÓDULO (regla de la casa).
 // ═══════════════════════════════════════════════════════════════════════════
 import { useState } from "react";
+import { MONEDA, IMPUESTO, esSV } from "./operacion.js";
 import { num, hnlToUsd, partidasParaModulo, repartirLineas, lineasValidas, CATEGORIAS, VARILLAS, LARGOS_VARILLA, esPartidaVarillaPorPeso, cantidadDeVarilla, pesoLanceKg, textoVarilla } from "./geocost-calc.js";
 const solDe = (p) => String(p?.solucion || "").trim();
 
@@ -29,7 +30,7 @@ const C_ULTRA = { color: "#A94E16", bg: "rgba(232,118,45,.10)", borde: "rgba(232
 const uidL = () => "l" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const r2 = (x) => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
 const nf2 = (n) => Number(n || 0).toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fL = (n) => `L ${nf2(n)}`;
+const fL = (n) => `${MONEDA} ${nf2(n)}`;
 const fU = (n) => `$ ${nf2(n)}`;
 
 // Partidas que se pueden comprar desde Solicitudes (módulo compras + libre +
@@ -190,7 +191,7 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
 
     {(lineas || []).length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {!isMobile && <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 120px 140px 28px", gap: 8, fontSize: 10.5, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", letterSpacing: .4, padding: "0 2px" }}>
-        <span>Ítem</span><span>Cantidad</span><span>Monto (L)</span><span />
+        <span>Ítem</span><span>Cantidad</span><span>Monto ({MONEDA})</span><span />
       </div>}
       {(lineas || []).map(l => {
         const p = byId.get(l.partidaId);
@@ -228,7 +229,7 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
           </div>}
           <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", paddingLeft: 2 }}>
             {disp && <div style={{ fontSize: 11, fontWeight: 600, color: num(disp.disponibleUSD) >= 0 ? C_VERDE.color : C_AMARILLO.color }}>
-              {multi && <span style={{ color: "#64748b" }}>{sl} · </span>}Disponible en el presupuesto: {fU(disp.disponibleUSD)} · {fL(num(disp.disponibleUSD) * num(tasa))}
+              {multi && <span style={{ color: "#64748b" }}>{sl} · </span>}Disponible en el presupuesto: {fU(disp.disponibleUSD)}{esSV ? "" : <> · {fL(num(disp.disponibleUSD) * num(tasa))}</>}
               {pp?.sobregiroUSD > 0 && <span style={{ color: C_ULTRA.color, fontWeight: 800 }}> — esta compra lo pasa por {fU(pp.sobregiroUSD)}</span>}
             </div>}
             {l.partidaId && <button type="button" onClick={() => onChange((lineas || []).map(x => x.id === l.id ? (x.real ? { ...x, real: false } : { ...x, real: true, realUnidad: x.realUnidad ?? (p?.unidad || "") }) : x))}
@@ -280,7 +281,7 @@ export function LineasPresupuesto({ pres, lineas, onChange, montoTotal, tasa, di
       {ev.suma > 0 && <span style={{ marginLeft: "auto", fontSize: 12.5, color: "#475569" }}>Suma de ítems: <b style={{ color: "#0f172a" }}>{fL(ev.suma)}</b></span>}
     </div>
     {ev.suma > 0 && num(montoTotal) > 0 && Math.abs(dif) > 0.5 && (dif > 0
-      ? <div style={{ fontSize: 11.5, color: "#64748b", lineHeight: 1.45 }}>La diferencia con el monto total ({fL(dif)} — ISV, flete…) se reparte proporcional entre los ítems.</div>
+      ? <div style={{ fontSize: 11.5, color: "#64748b", lineHeight: 1.45 }}>La diferencia con el monto total ({fL(dif)} — {IMPUESTO.nombre}, flete…) se reparte proporcional entre los ítems.</div>
       : <div style={{ fontSize: 11.5, color: C_AMARILLO.color, background: C_AMARILLO.bg, borderRadius: 8, padding: "7px 10px", fontWeight: 700 }}>Los ítems suman {fL(-dif)} más que el monto total — revisá.</div>)}
   </div>;
 }
