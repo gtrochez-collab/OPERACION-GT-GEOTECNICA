@@ -2196,6 +2196,30 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   misma revisión (lee sp-cotizaciones al entrar a la vista, `cotsSupply`):
   partida principal, banco ···últimos 4, chip "Todo en orden" / "N por
   revisar" y cifras "todo en orden" / "con algo por revisar".
+  **Ítems en grande + datos bancarios editables (19-nov-2026, Gerson: "que
+  el ingeniero que pide, el almacén que recibe y compras miremos lo mismo,
+  más grande y fácil de leer; y que Christian pueda editar y ver los datos
+  bancarios más fácil")**: en GeoSupply todo ítem pedido se ve IGUAL en Mis
+  solicitudes (detalle), Almacén, Compras y Alertas: `CantidadGrande` (a nivel
+  de módulo: la cantidad a 24 px con su unidad en una cajita a la izquierda,
+  "de N" si se pide menos de lo pedido) + el nombre a 16.5 px con la partida
+  debajo (`filaLinea` y las tarjetas de `renderDetalle`). La cabecera de cada
+  solicitud (`porSolicitud`) dice quién pidió en grande y "Lo necesita en obra
+  · lunes, 23 de noviembre" a la derecha; las notas van en su cajita blanca.
+  En el form del ingeniero "Lo que pedís" va a 15.5 px y la cantidad a 17 px.
+  En el celular el nombre queda AL LADO de la cantidad (`flex: 1 1 0`).
+  GeoShopping → `BorradorSupplyFormImpl`: caja **"Datos para la
+  transferencia"** a todo lo ancho debajo de la revisión rápida (banco, tipo,
+  número de cuenta a 22 px mono, a nombre de, RTN/NIT y monto, con **Copiar**
+  —el monto se copia sin "L"—, chip "Igual al maestro" / "Distinta") y
+  **"Editar datos bancarios"** (`puedeEnviar`): banco con sugerencias, tipo
+  Ahorro/Cheques/Corriente, número, titular, ID fiscal y la casilla "Guardarla
+  también en el maestro de proveedores" (default sí: `guardarEnMaestro` sobre
+  cp-providers FRESCO — actualiza la cuenta si el número ya está, si no la
+  agrega, o crea el proveedor — + verify; prop `setProviders`). Audit
+  "Finanzas corrigió los datos bancarios". "Usar esta" de las otras cuentas
+  del maestro sigue ahí. La caja Proveedor quedó con RTN, contacto, constancia
+  y cotización.
   **GeoCost**: `estadoCompraCosto` cuenta `borrador + origenSupply` como
   comprometido; al validarse sigue comprometido y al pagarse ejecutado — mismo
   registro, sin doble conteo (verificado 2-oct: $1,057.41 comprometido → tras

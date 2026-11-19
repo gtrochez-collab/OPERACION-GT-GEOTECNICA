@@ -2135,10 +2135,14 @@ const revisionBorrador = ({ purchase, presupuestos = [], providers = [], purchas
 // puede tomar la cuenta del maestro si el borrador vino sin ella. "Enviar a
 // Tesorería" = el mismo `validado` + `encolarPago` del flujo normal. A NIVEL
 // DE MÓDULO (no se remonta al tipear).
-function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], purchases = [], calcDisponible, tasa, puedeEnviar, userName, setModal, updatePurchase, addAudit, enviar, verArchivo }) {
+function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], purchases = [], calcDisponible, tasa, puedeEnviar, userName, setModal, updatePurchase, addAudit, enviar, verArchivo, setProviders }) {
   const [f, setF] = useState({ condicionPago: purchase.condicionPago || "contado", tipoCredito: purchase.tipoCredito || "unico", fechaPagoRequerida: purchase.fechaPagoRequerida || "", destinoPago: purchase.destinoPago || ((purchase.condicionPago || "contado") === "credito" ? "cxp" : "normal"), cierreResponsable: purchase.cierreResponsable || "" });
   const [saving, setSaving] = useState(false);
   const [sup, setSup] = useState({ cargando: true, cot: null, sols: [], usuarios: [] });
+  // Datos bancarios editables (19-nov-2026, Gerson: "que Christian pueda
+  // editar y ver los datos bancarios más fácil").
+  const [editBanco, setEditBanco] = useState(null);
+  const [copiado, setCopiado] = useState("");
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const o = purchase.origenSupply || {};
   // La cotización y la(s) solicitud(es) de GeoSupply: solo lectura, de la nube.
@@ -2183,6 +2187,55 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], p
       await updatePurchase(rec);
     } finally { setSaving(false); }
   };
+  // Guarda la cuenta en el maestro de proveedores (cp-providers) sobre la
+  // nube FRESCA: si el número ya está, lo actualiza; si no, lo agrega. Si el
+  // proveedor no existe en el maestro, lo crea con esa cuenta.
+  const guardarEnMaestro = async (e) => {
+    try {
+      const nube = await store.getCloud("cp-providers");
+      if (!Array.isArray(nube)) return false;
+      const nN = (x) => String(x || "").trim().toLowerCase();
+      const cuentaN = { bank: e.bank.trim(), type: e.type.trim(), number: e.number.trim(), holder: e.holder.trim() };
+      const i = nube.findIndex(p => p && nN(p.name) === nN(purchase.provider));
+      const ahora = new Date().toISOString();
+      let next, idProv;
+      if (i >= 0) {
+        const p = nube[i]; idProv = p.id;
+        const cs = (p.bankAccounts || []).filter(Boolean);
+        const j = cs.findIndex(b => normCuenta(b.number) === normCuenta(cuentaN.number));
+        const nuevas = j >= 0 ? cs.map((b, k) => k === j ? { ...b, ...cuentaN } : b) : [...cs, cuentaN];
+        next = nube.map((x, k) => k === i ? { ...p, bankAccounts: nuevas, rtn: p.rtn || e.rtn.trim(), updatedAt: ahora } : x);
+      } else {
+        idProv = uid();
+        next = [...nube, { id: idProv, name: String(purchase.provider || "").trim(), rtn: e.rtn.trim(), bankAccounts: [cuentaN], phones: [], autoImported: false, createdAt: ahora, updatedAt: ahora }];
+      }
+      if (!(await store.set("cp-providers", next))) return false;
+      const v = await store.getCloud("cp-providers");
+      const vp = Array.isArray(v) && v.find(x => x && x.id === idProv);
+      if (!vp || !(vp.bankAccounts || []).some(b => normCuenta(b.number) === normCuenta(cuentaN.number))) return false;
+      if (setProviders) setProviders(v);
+      return true;
+    } catch { return false; }
+  };
+  const abrirEditBanco = () => setEditBanco({ bank: purchase.providerBank || "", type: purchase.providerAccountType || "", number: purchase.bacAccount || "", holder: purchase.providerAccountHolder || purchase.provider || "", rtn: purchase.providerRTN || rv.prov?.rtn || "", maestro: true });
+  const guardarBanco = async () => {
+    const e = editBanco;
+    if (!String(e.bank).trim()) return alert("Escribí el banco.");
+    if (!String(e.number).trim()) return alert("Escribí el número de cuenta.");
+    if (!String(e.holder).trim()) return alert("Escribí a nombre de quién está la cuenta.");
+    setSaving(true);
+    try {
+      const rec = addAudit({ ...purchase, providerBank: e.bank.trim(), providerAccountType: e.type.trim(), bacAccount: e.number.trim(), providerAccountHolder: e.holder.trim(), providerRTN: e.rtn.trim(), origenSupply: { ...o, avisos: (o.avisos || []).filter(a => !/datos bancarios/i.test(a)) } }, "edited", `Finanzas corrigió los datos bancarios: ${e.bank.trim()} ${e.number.trim()} (${userName})`);
+      const ok = await updatePurchase(rec);
+      if (!ok) return;
+      if (e.maestro && !(await guardarEnMaestro(e))) alert("La solicitud quedó corregida, pero no pude actualizar el maestro de proveedores. Hacelo desde la pestaña Proveedores.");
+      setEditBanco(null);
+    } finally { setSaving(false); }
+  };
+  const copiar = async (k, v) => {
+    try { await navigator.clipboard.writeText(String(v || "")); setCopiado(k); setTimeout(() => setCopiado(c => c === k ? "" : c), 1600); }
+    catch { prompt("Copiá el dato:", String(v || "")); }
+  };
   const pill = (txt, on, onClick, c = ORANGE_DARK) => <button type="button" onClick={onClick} style={{ padding: "7px 13px", borderRadius: 999, border: on ? "none" : "1px solid rgba(44,42,40,.12)", background: on ? c : "rgba(255,255,255,.7)", color: on ? "#fff" : "#5C5853", font: "700 12px/1 inherit", cursor: "pointer" }}>{txt}</button>;
   const tel = esTel();
   const CAJA = { background: "#fff", border: "1px solid rgba(44,42,40,.09)", borderRadius: 16, padding: tel ? 14 : "16px 18px", display: "flex", flexDirection: "column", gap: 8, minWidth: 0 };
@@ -2211,26 +2264,63 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], p
       </div>
     </div>
 
+    {/* DATOS PARA LA TRANSFERENCIA (19-nov-2026): grandes, con copiar y editables. */}
+    <div style={{ ...CAJA, gap: 12, border: cuenta ? "1px solid rgba(44,42,40,.09)" : "1px solid rgba(138,90,0,.3)", background: cuenta ? "#fff" : "rgba(251,239,196,.3)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={TIT}>Datos para la transferencia</div>
+        {cuenta && rv.prov && !editBanco && <span style={{ padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 800, color: rv.coincideMaestro ? C_VERDE.color : C_AMARILLO.color, background: rv.coincideMaestro ? C_VERDE.bg : C_AMARILLO.bg }}>{rv.coincideMaestro ? "✓ Igual al maestro de proveedores" : "Distinta al maestro de proveedores"}</span>}
+        {puedeEnviar && !editBanco && <div style={{ marginLeft: "auto" }}><Btn small variant={cuenta ? "ghost" : "primary"} disabled={saving} onClick={abrirEditBanco}>{cuenta ? "Editar datos bancarios" : "Agregar la cuenta"}</Btn></div>}
+      </div>
+      {editBanco ? <div style={{ display: "grid", gridTemplateColumns: tel ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: 12 }}>
+        <Input label="Banco *" list="borr-bancos" value={editBanco.bank} onChange={e => setEditBanco(p => ({ ...p, bank: e.target.value }))} placeholder={esSV ? "Ej: Banco Agrícola" : "Ej: BAC, Ficohsa, Atlántida"} style={{ fontSize: 15 }} />
+        <datalist id="borr-bancos">{(esSV ? ["Banco Agrícola", "BAC", "Banco Cuscatlán", "Davivienda", "Banco de América Central", "Banco Promerica", "Banco Hipotecario"] : ["BAC", "Ficohsa", "Atlántida", "Banpaís", "Banco de Occidente", "Davivienda", "Banrural", "Lafise", "Promerica", "Banco Azteca", "Cuscatlán"]).map(b => <option key={b} value={b} />)}</datalist>
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          <label style={LABEL_CP}>Tipo de cuenta</label>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{["Ahorro", "Cheques", "Corriente"].map(t => <span key={t}>{pill(t, String(editBanco.type).toLowerCase() === t.toLowerCase(), () => setEditBanco(p => ({ ...p, type: t })), CHARCOAL)}</span>)}</div>
+        </div>
+        <div style={{ gridColumn: "1/-1" }}><Input label="Número de cuenta *" value={editBanco.number} onChange={e => setEditBanco(p => ({ ...p, number: e.target.value }))} placeholder="Ej: 730123456" style={{ fontSize: 19, fontWeight: 800, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: ".04em" }} /></div>
+        <Input label="A nombre de *" value={editBanco.holder} onChange={e => setEditBanco(p => ({ ...p, holder: e.target.value }))} style={{ fontSize: 15 }} />
+        <Input label={ID_FISCAL} value={editBanco.rtn} onChange={e => setEditBanco(p => ({ ...p, rtn: e.target.value }))} style={{ fontSize: 15 }} />
+        <label style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: CHARCOAL, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!editBanco.maestro} onChange={e => setEditBanco(p => ({ ...p, maestro: e.target.checked }))} style={{ width: 16, height: 16, accentColor: ORANGE }} />
+          Guardarla también en el maestro de proveedores (la próxima compra ya viene con esta cuenta)
+        </label>
+        <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Btn small variant="ghost" disabled={saving} onClick={() => setEditBanco(null)}>Cancelar</Btn>
+          <Btn small variant="success" disabled={saving} onClick={guardarBanco}>{saving ? "Guardando…" : "Guardar datos bancarios"}</Btn>
+        </div>
+      </div> : cuenta ? (() => {
+        const campo = (k, label, v, { mono, grande, copiable, span, copia } = {}) => <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0, gridColumn: span && !tel ? `span ${span}` : undefined, padding: "10px 12px", borderRadius: 12, background: "rgba(44,42,40,.035)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: "#8A847D", textTransform: "uppercase", letterSpacing: ".06em" }}>{label}</span>
+            {copiable && v && <button type="button" onClick={() => copiar(k, copia ?? v)} style={{ marginLeft: "auto", background: copiado === k ? C_VERDE.bg : "#fff", color: copiado === k ? C_VERDE.color : CHARCOAL, border: "1px solid rgba(44,42,40,.12)", borderRadius: 999, padding: "3px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{copiado === k ? "Copiado ✓" : "Copiar"}</button>}
+          </div>
+          <div style={{ fontSize: grande ? 22 : 16, fontWeight: 800, color: v ? CHARCOAL : C_AMARILLO.color, fontFamily: mono ? "ui-monospace, Menlo, monospace" : undefined, letterSpacing: mono ? ".03em" : undefined, overflowWrap: "anywhere", lineHeight: 1.2 }}>{v || "Falta"}</div>
+        </div>;
+        return <div style={{ display: "grid", gridTemplateColumns: tel ? "minmax(0,1fr)" : "repeat(4, minmax(0,1fr))", gap: 8 }}>
+          {campo("banco", "Banco", purchase.providerBank)}
+          {campo("tipo", "Tipo de cuenta", purchase.providerAccountType)}
+          {campo("cuenta", "Número de cuenta", purchase.bacAccount, { mono: true, grande: true, copiable: true, span: 2 })}
+          {campo("titular", "A nombre de", purchase.providerAccountHolder, { copiable: true, span: 2 })}
+          {campo("rtn", ID_FISCAL, purchase.providerRTN || rv.prov?.rtn, { mono: true, copiable: true })}
+          {campo("monto", "Monto a pagar", fmtL(purchase.amount), { copiable: true, copia: num(purchase.amount).toFixed(2) })}
+        </div>;
+      })() : <div style={{ fontSize: 14, color: C_AMARILLO.color, fontWeight: 700 }}>Vino sin datos bancarios.{puedeEnviar ? " Agregá la cuenta o usá una del maestro." : ""}</div>}
+      {puedeEnviar && !editBanco && otrasCuentas.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px", borderRadius: 12, background: "rgba(44,42,40,.04)" }}>
+        <div style={{ fontSize: 11.5, color: "#6E6862", fontWeight: 700 }}>{cuenta ? "Otras cuentas en el maestro de proveedores" : "El maestro de proveedores sí la tiene"}</div>
+        {otrasCuentas.map((b, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, flex: 1, minWidth: 0 }}><b>{b.bank || "Banco"}</b> · {b.type || ""} <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700 }}>{b.number}</span>{b.holder ? ` · ${b.holder}` : ""}</span>
+          <Btn small variant="ghost" disabled={saving} onClick={() => usarCuenta(b)}>Usar esta</Btn>
+        </div>)}
+      </div>}
+    </div>
+
     <div style={{ display: "grid", gridTemplateColumns: tel ? "minmax(0,1fr)" : "repeat(2, minmax(0,1fr))", gap: 14 }}>
-      {/* Proveedor y pago */}
+      {/* Proveedor */}
       <div style={CAJA}>
-        <div style={TIT}>Proveedor y pago</div>
+        <div style={TIT}>Proveedor</div>
         {dato("Proveedor", <b>{purchase.provider}</b>)}
         {dato(ID_FISCAL, purchase.providerRTN || rv.prov?.rtn || <span style={{ color: "#8A847D" }}>—</span>)}
-        {cuenta ? <>
-          {dato("Banco", <b>{purchase.providerBank || "—"}</b>)}
-          {dato("Tipo de cuenta", purchase.providerAccountType || "—")}
-          {dato("N° de cuenta", <b style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 13.5, letterSpacing: ".02em" }}>{purchase.bacAccount}</b>)}
-          {dato("A nombre de", purchase.providerAccountHolder || <span style={{ color: C_AMARILLO.color, fontWeight: 700 }}>Sin titular</span>)}
-          {rv.prov && dato("Maestro", rv.coincideMaestro ? <span style={{ color: C_VERDE.color, fontWeight: 700 }}>✓ Coincide con el maestro de proveedores</span> : <span style={{ color: C_AMARILLO.color, fontWeight: 700 }}>No coincide con el maestro</span>)}
-        </> : <div style={{ fontSize: 13, color: C_AMARILLO.color, fontWeight: 700 }}>Vino sin datos bancarios.</div>}
-        {puedeEnviar && otrasCuentas.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 2, padding: "10px 12px", borderRadius: 12, background: "rgba(44,42,40,.04)" }}>
-          <div style={{ fontSize: 11.5, color: "#6E6862", fontWeight: 700 }}>{cuenta ? "En el maestro de proveedores" : "El maestro de proveedores sí la tiene"}</div>
-          {otrasCuentas.map((b, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12.5, flex: 1, minWidth: 0 }}><b>{b.bank || "Banco"}</b> · {b.type || ""} <span style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{b.number}</span>{b.holder ? ` · ${b.holder}` : ""}</span>
-            <Btn small variant="ghost" disabled={saving} onClick={() => usarCuenta(b)}>Usar esta</Btn>
-          </div>)}
-        </div>}
         {rv.prov && (rv.prov.contactName || (rv.prov.phones || []).length > 0) && dato("Contacto", [rv.prov.contactName, ...(rv.prov.phones || [])].filter(Boolean).join(" · "))}
         {rv.prov && dato("Pagos a cuenta", rv.prov.constanciaFile?.fileId ? "Tiene constancia" : <span style={{ color: "#8A847D" }}>Sin constancia en el maestro</span>)}
         {dato("Cotización", <span>{purchase.quoteNumber ? <b>N° {purchase.quoteNumber}</b> : "Sin número"} {purchase.quoteFile && <button type="button" onClick={() => verArchivo(purchase.quoteFile)} style={{ background: "none", border: "none", color: "#1D5FAF", fontWeight: 700, cursor: "pointer", fontSize: 12.5, padding: 0, marginLeft: 6 }}>Ver PDF</button>}</span>)}
@@ -9006,7 +9096,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
       case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
-      case "borrador-supply": return <Modal title={`${m.d.codigo} — ${m.d.provider}`} onClose={() => setModal(null)} wide><BorradorSupplyFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} presupuestos={presupuestos} providers={providers} purchases={purchases} calcDisponible={calcDisponible} tasa={tasaCC} puedeEnviar={canCreate} userName={userName} setModal={setModal} updatePurchase={updatePurchase} addAudit={addAudit} enviar={(p) => enviarBorradoresATesoreria([p])} verArchivo={async (ref) => { try { const full = await store.getCloud(fileKey(ref.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el archivo."); setVisorGlobal({ ...full, name: full.name || ref.name }); } catch (e) { alert("Error: " + (e?.message || e)); } }} /></Modal>;
+      case "borrador-supply": return <Modal title={`${m.d.codigo} — ${m.d.provider}`} onClose={() => setModal(null)} wide><BorradorSupplyFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} presupuestos={presupuestos} providers={providers} purchases={purchases} calcDisponible={calcDisponible} tasa={tasaCC} puedeEnviar={canCreate} userName={userName} setModal={setModal} updatePurchase={updatePurchase} addAudit={addAudit} enviar={(p) => enviarBorradoresATesoreria([p])} verArchivo={async (ref) => { try { const full = await store.getCloud(fileKey(ref.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el archivo."); setVisorGlobal({ ...full, name: full.name || ref.name }); } catch (e) { alert("Error: " + (e?.message || e)); } }} setProviders={setProviders} /></Modal>;
       case "corregir": return <Modal title={`Corregir proyecto / partida — ${m.d.codigo || m.d.provider}`} onClose={() => setModal(null)} wide><CorreccionFormImpl purchase={m.d} setModal={setModal} allProjects={allProjects} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} updatePurchase={updatePurchase} addAudit={addAudit} userName={userName} moduloPartida={CFG.moduloPartida} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "abono": return <Modal title={`${m.modo === "convertir" ? "Pasar a abonos" : "Registrar abono"} — ${m.d.codigo || m.d.provider}`} onClose={() => setModal({ t: "detail", d: m.d })} wide><AbonoFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} modo={m.modo} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} userName={userName} /></Modal>;

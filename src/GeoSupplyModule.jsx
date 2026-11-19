@@ -92,14 +92,27 @@ const Vacio = ({ children }) => <div className="gt-vidrio" style={{ padding: "44
 const chipEstado = (mapa, k) => { const e = mapa[k]; return <Chip c={TONO[e?.tono] || C_GRIS}>{e?.label || k}</Chip>; };
 const chipSem = (s) => <Chip c={SEM[s]?.c || C_GRIS}>{SEM[s]?.label || s}</Chip>;
 
+// LA CANTIDAD EN GRANDE (19-nov-2026, Gerson: "que el ingeniero que pide, el
+// almacén que recibe y compras miremos lo mismo, más grande y fácil de leer").
+// Todo ítem pedido se ve igual en Mis solicitudes, Almacén, Compras y Alertas:
+// la cantidad en una cajita a la izquierda y el nombre grande al lado.
+function CantidadGrande({ cant, unidad, de, tono }) {
+  const t = tono || { bg: "rgba(44,42,40,.055)", color: CHARCOAL };
+  return <div style={{ width: 82, flexShrink: 0, alignSelf: "stretch", minHeight: 58, padding: "8px 6px", borderRadius: 14, background: t.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
+    <div style={{ font: "800 24px/1 var(--display)", color: t.color, letterSpacing: "-.02em" }}>{fmtCant(cant)}</div>
+    <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-2)", marginTop: 5, lineHeight: 1.15, overflowWrap: "anywhere" }}>{unidad || "—"}</div>
+    {de != null && <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 3 }}>de {fmtCant(de)}</div>}
+  </div>;
+}
+
 // Grupo compactable por proyecto (mismo patrón de Por coordinar en GeoShopping).
 function Grupo({ titulo, sub, abierto, onToggle, derecha, children, alerta }) {
   return <div className="gt-vidrio" style={{ overflow: "hidden", background: alerta ? C_NARANJA.bg : undefined }}>
     <div role="button" tabIndex={0} onClick={onToggle} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", flexWrap: "wrap" }}>
       <span aria-hidden style={{ width: 22, color: "var(--text-3)", display: "inline-block", transition: "transform .2s", transform: abierto ? "rotate(90deg)" : "none" }}>›</span>
       <div style={{ flex: 1, minWidth: 160 }}>
-        <div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL }}>{titulo}</div>
-        {sub && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 2 }}>{sub}</div>}
+        <div style={{ fontSize: 15.5, fontWeight: 800, color: CHARCOAL }}>{titulo}</div>
+        {sub && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>{sub}</div>}
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }} onClick={e => e.stopPropagation()}>{derecha}</div>
     </div>
@@ -340,9 +353,9 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, catalogo = [
       {f.lineas.map(l => {
         const s = saldoLinea(l);
         const ex = excede(l);
-        return <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 14, background: l.fueraPresupuesto && !sinReceta ? C_AMARILLO.bg : ex ? C_NARANJA.bg : "rgba(255,255,255,.75)", border: "1px solid rgba(44,42,40,.08)", flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 180 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{l.descripcion}</div>
+        return <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 16, background: l.fueraPresupuesto && !sinReceta ? C_AMARILLO.bg : ex ? C_NARANJA.bg : "#fff", border: "1px solid rgba(44,42,40,.09)", boxShadow: "0 1px 2px rgba(44,42,40,.04)", flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+            <div style={{ fontSize: 15.5, fontWeight: 800, color: CHARCOAL, lineHeight: 1.3 }}>{l.descripcion}</div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 3 }}>
               {l.fueraPresupuesto ? (sinReceta ? null : <Chip c={C_AMARILLO}>Fuera de presupuesto</Chip>) : <span style={{ fontSize: 11, color: "var(--text-3)" }}>{[l.solucion, l.categoria].filter(Boolean).join(" · ")}</span>}
               {s && !s.sinCantidad && <span style={{ fontSize: 11, color: ex ? C_ROJO.color : "var(--text-3)", fontWeight: ex ? 800 : 500 }}>saldo {fmtCant(s.saldo)} {l.unidad}</span>}
@@ -363,8 +376,8 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, catalogo = [
               <span style={{ fontSize: 11.5, color: "var(--text-2)", minWidth: 70 }}>{num(l.cantidad) > 0 ? `= ${num(l.cantidad).toLocaleString("es-HN", { maximumFractionDigits: 3 })} ${l.unidad}` : l.varilla.n ? `${pesoLanceKg(l.varilla.n, l.varilla.largo || 9)} kg c/u` : ""}</span>
             </div>
             : <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <input type="number" min="0" step="any" value={l.cantidad} onChange={e => uLinea(l.id, "cantidad", e.target.value)} placeholder="Cant." style={{ ...CTRL, width: 90, textAlign: "right", fontWeight: 700 }} />
-              <span style={{ fontSize: 12, color: "var(--text-2)", minWidth: 40 }}>{l.unidad || ""}</span>
+              <input type="number" min="0" step="any" value={l.cantidad} onChange={e => uLinea(l.id, "cantidad", e.target.value)} placeholder="Cant." style={{ ...CTRL, width: 104, padding: "10px 12px", textAlign: "right", fontWeight: 800, fontSize: 17 }} />
+              <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text-2)", minWidth: 44 }}>{l.unidad || ""}</span>
             </div>}
           <button type="button" onClick={() => quitar(l.id)} title="Quitar" style={{ background: "none", border: "none", color: "var(--text-3)", fontSize: 16, cursor: "pointer" }}>✕</button>
         </div>;
@@ -1293,30 +1306,34 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const filaLinea = ({ s, l, ef, derecha, extra, enSolicitud }) => {
     const al = alertasDeLinea(l, s);
     const sd = l.partidaId ? saldoDe(s.projectCode, l.partidaId, s.id) : null;
-    return <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: l.prioridad ? C_NARANJA.bg : "rgba(255,255,255,.75)", border: l.prioridad ? `1.5px solid ${ORANGE}` : "1px solid rgba(44,42,40,.07)", flexWrap: "wrap" }}>
-      <div style={{ flex: 1, minWidth: 200 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {l.prioridad && <span title={`Prioridad: la marcó ${l.prioridad.por || "el Coordinador"}${l.prioridad.at ? ` el ${fmtDT(l.prioridad.at)}` : ""}`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: 999, background: ORANGE, color: "#fff", fontSize: 13, fontWeight: 900 }}>!</span>}
-          {!enSolicitud && <span style={{ fontFamily: "var(--mono)", fontSize: 11, fontWeight: 700, color: "var(--text-3)" }}>{s.folio}</span>}
-          <span style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{queEs(l)}</span>
-          {String(l.detalle || "").trim() && <span style={{ fontSize: 11, color: "var(--text-3)" }}>· {l.descripcion}</span>}
-          <span style={{ fontSize: 13, color: "var(--text-2)" }}>· <b>{fmtCant(ef?.estado === "por_cotizar" ? pendienteDeCompra(l.estado === "revision_almacen" ? { ...l, aCotizar: l.cantidad } : l) : l.cantidad)}</b> {l.unidad}</span>
+    const cant = ef?.estado === "por_cotizar" ? pendienteDeCompra(l.estado === "revision_almacen" ? { ...l, aCotizar: l.cantidad } : l) : num(l.cantidad);
+    const partidaTxt = String(l.detalle || "").trim() ? l.descripcion : "";
+    const ubic = [l.solucion, l.categoria].filter(Boolean).join(" · ");
+    return <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: isMobile ? 10 : "12px 14px", borderRadius: 16, background: l.prioridad ? C_NARANJA.bg : "#fff", border: l.prioridad ? `1.5px solid ${ORANGE}` : "1px solid rgba(44,42,40,.08)", boxShadow: "0 1px 2px rgba(44,42,40,.04)", flexWrap: "wrap" }}>
+      <CantidadGrande cant={cant} unidad={l.unidad} de={Math.abs(cant - num(l.cantidad)) > 0.0001 ? num(l.cantidad) : null} />
+      <div style={{ flex: isMobile ? "1 1 0" : "1 1 200px", minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+          {l.prioridad && <span title={`Prioridad: la marcó ${l.prioridad.por || "el Coordinador"}${l.prioridad.at ? ` el ${fmtDT(l.prioridad.at)}` : ""}`} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, flexShrink: 0, marginTop: 1, borderRadius: 999, background: ORANGE, color: "#fff", fontSize: 13, fontWeight: 900 }}>!</span>}
+          <div style={{ fontSize: isMobile ? 15.5 : 16.5, fontWeight: 800, color: CHARCOAL, lineHeight: 1.3, overflowWrap: "anywhere" }}>{queEs(l)}</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-          {!enSolicitud && <span style={{ fontSize: 11, color: "var(--text-3)" }}>pidió {quien(s.residente)} · requerido <b>{fmtDiaCorto(s.fechaRequeridaObra)}</b>{s.corte && !esPedidoPlantel(s) ? ` · ${etiquetaCorte(s.corte).titulo}` : ""}</span>}
-          {l.solucion && enSolicitud && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{l.solucion}{l.categoria ? ` · ${l.categoria}` : ""}</span>}
-          {al.map(a => <Chip key={a} c={a === "urgente" ? C_ROJO : C_AMARILLO}>{ALERTAS[a]}{a === "excede_saldo" && sd ? ` · saldo ${fmtCant(sd.saldo)}` : ""}</Chip>)}
-          {ef?.sinRevisionAlmacen && <Chip c={C_AMARILLO}>Sin revisión de almacén</Chip>}
-          {ef?.plazoAlmacenVencido && <Chip c={C_AMARILLO}>Almacén no ha revisado · plazo vencido</Chip>}
-          {chipCorteLinea(s, l)}
-          {(s.cotizacionesAdjuntas || []).length > 0 && <Chip c={C_AZUL}>Trae cotización</Chip>}
-          {l.plantel && num(l.enviadoPlantel) > 0 && <Chip c={C_VERDE}>Enviado {fmtCant(l.enviadoPlantel)} de {fmtCant(l.cantidad)}</Chip>}
-          {(l.fueraPresupuesto || l.plantel) && l.justificacion && <span style={{ fontSize: 11, color: "var(--text-2)", fontStyle: "italic" }}>"{l.justificacion}"</span>}
-          {s.urgente && s.justificacionUrgencia && al.includes("urgente") && <span style={{ fontSize: 11, color: "var(--text-2)", fontStyle: "italic" }}>"{s.justificacionUrgencia}"</span>}
-        </div>
+        {(partidaTxt || (ubic && enSolicitud)) && <div style={{ fontSize: 12.5, color: "var(--text-2)", lineHeight: 1.35 }}>{partidaTxt ? <>Partida: {partidaTxt}</> : ubic}</div>}
+        {!enSolicitud && <div style={{ fontSize: 12.5, color: "var(--text-2)" }}><span style={{ fontFamily: "var(--mono)", fontSize: 11.5, fontWeight: 700, color: "var(--text-3)" }}>{s.folio}</span> · pidió <b>{quien(s.residente)}</b> · para el <b>{fmtDiaCorto(s.fechaRequeridaObra)}</b>{s.corte && !esPedidoPlantel(s) ? ` · ${etiquetaCorte(s.corte).titulo}` : ""}</div>}
+        {(l.fueraPresupuesto || l.plantel) && l.justificacion && <div style={{ fontSize: 12.5, color: "var(--text-2)", fontStyle: "italic" }}>"{l.justificacion}"</div>}
+        {s.urgente && s.justificacionUrgencia && al.includes("urgente") && <div style={{ fontSize: 12.5, color: C_ROJO.color, fontStyle: "italic" }}>"{s.justificacionUrgencia}"</div>}
+        {(() => {
+          const chips = [
+            ...al.map(a => <Chip key={a} c={a === "urgente" ? C_ROJO : C_AMARILLO}>{ALERTAS[a]}{a === "excede_saldo" && sd ? ` · saldo ${fmtCant(sd.saldo)}` : ""}</Chip>),
+            ef?.sinRevisionAlmacen && <Chip key="sra" c={C_AMARILLO}>Sin revisión de almacén</Chip>,
+            ef?.plazoAlmacenVencido && <Chip key="pav" c={C_AMARILLO}>Almacén no ha revisado · plazo vencido</Chip>,
+            chipCorteLinea(s, l),
+            !enSolicitud && (s.cotizacionesAdjuntas || []).length > 0 && <Chip key="tc" c={C_AZUL}>Trae cotización</Chip>,
+            l.plantel && num(l.enviadoPlantel) > 0 && <Chip key="env" c={C_VERDE}>Enviado {fmtCant(l.enviadoPlantel)} de {fmtCant(l.cantidad)}</Chip>,
+          ].filter(Boolean);
+          return chips.length ? <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>{chips}</div> : null;
+        })()}
         {extra}
       </div>
-      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>{derecha}</div>
+      {derecha && <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", ...(isMobile ? { width: "100%" } : {}) }}>{derecha}</div>}
     </div>;
   };
   // Agrupa [{s,l,ef}] por proyecto, con orden por fecha requerida.
@@ -1334,15 +1351,21 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const porSolicitud = (items, fila) => {
     const m = new Map();
     items.forEach(x => { if (!m.has(x.s.id)) m.set(x.s.id, { s: x.s, items: [] }); m.get(x.s.id).items.push(x); });
-    return [...m.values()].map(({ s, items: xs }) => <div key={s.id} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 10, borderRadius: 16, background: "rgba(44,42,40,.035)", border: "1px solid rgba(44,42,40,.06)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "2px 4px" }}>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 800, color: CHARCOAL }}>{s.folio}</span>
-        <span style={{ fontSize: 12.5, color: "var(--text-2)", flex: 1, minWidth: 180 }}>pidió <b>{quien(s.residente)}</b> · requerido <b>{fmtDiaCorto(s.fechaRequeridaObra)}</b>{s.corte && !esPedidoPlantel(s) ? ` · ${etiquetaCorte(s.corte).titulo}` : ""} · {xs.length} {xs.length === 1 ? "ítem" : "ítems"}</span>
+    return [...m.values()].map(({ s, items: xs }) => <div key={s.id} style={{ display: "flex", flexDirection: "column", gap: 8, padding: isMobile ? 8 : 12, borderRadius: 18, background: "rgba(44,42,40,.04)", border: "1px solid rgba(44,42,40,.06)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "2px 4px" }}>
+        <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: CHARCOAL }}>{quien(s.residente)} <span style={{ fontFamily: "var(--mono)", fontSize: 11.5, fontWeight: 700, color: "var(--text-3)", marginLeft: 4 }}>{s.folio}</span></div>
+          <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 2 }}>{xs.length} {xs.length === 1 ? "ítem" : "ítems"}{s.corte && !esPedidoPlantel(s) ? ` · ${etiquetaCorte(s.corte).titulo}` : ""}{s.fechaEnvio ? ` · enviada ${fmtDT(s.fechaEnvio)}` : ""}</div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>Lo necesita en obra</div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: s.urgente ? C_ROJO.color : CHARCOAL, marginTop: 3 }}>{s.fechaRequeridaObra ? fmtDiaLargo(s.fechaRequeridaObra) : "—"}</div>
+        </div>
         {s.urgente && <Chip c={C_ROJO}>Urgente</Chip>}
         {(s.cotizacionesAdjuntas || []).length > 0 && <Chip c={C_AZUL}>Trae cotización</Chip>}
         <Btn small variant="ghost" onClick={() => setModal({ t: "detalle", id: s.id })}>Ver solicitud</Btn>
       </div>
-      {s.notas && <div style={{ fontSize: 12.5, color: "var(--text-2)", padding: "0 4px" }}><b>Notas:</b> {s.notas}</div>}
+      {s.notas && <div style={{ fontSize: 13.5, color: CHARCOAL, padding: "9px 12px", borderRadius: 12, background: "#fff", border: "1px solid rgba(44,42,40,.07)", lineHeight: 1.4 }}><span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginRight: 8 }}>Notas</span>{s.notas}</div>}
       {xs.map(x => fila({ ...x, enSolicitud: true }))}
     </div>);
   };
@@ -1760,7 +1783,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         {[["Requerido en obra", s.fechaRequeridaObra ? fmtDiaLargo(s.fechaRequeridaObra) : "—"], ["Enviada", s.fechaEnvio ? fmtDT(s.fechaEnvio) : "—"], plantel ? ["Enviado", `${fmtCant((s.lineas || []).filter(l => l.estado !== "rechazada").reduce((a, l) => a + num(l.enviadoPlantel), 0))} de ${fmtCant((s.lineas || []).filter(l => l.estado !== "rechazada").reduce((a, l) => a + num(l.cantidad), 0))}`] : ["Llegada estimada", lleg ? `${fmtDiaCorto(lleg.desde)} – ${fmtDiaCorto(lleg.hasta)}` : "—"], ["Ítems", `${(s.lineas || []).length}`]].map(([l, v]) => <div key={l} style={{ padding: "10px 12px", borderRadius: 12, background: "rgba(44,42,40,.04)" }}><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>{l}</div><div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, marginTop: 4 }}>{v}</div></div>)}
       </div>
       {s.urgente && s.justificacionUrgencia && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_ROJO.bg, color: C_ROJO.color, fontSize: 12.5 }}><b>Urgente:</b> {s.justificacionUrgencia}</div>}
-      {s.notas && <div style={{ fontSize: 12.5, color: "var(--text-2)" }}><b>Notas:</b> {s.notas}</div>}
+      {s.notas && <div style={{ fontSize: 13.5, color: CHARCOAL, padding: "10px 14px", borderRadius: 12, background: "rgba(44,42,40,.04)", lineHeight: 1.4 }}><span className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginRight: 8 }}>Notas</span>{s.notas}</div>}
       {s.corteAjustado && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12.5 }}>Se envió fuera de hora (le tocaba el <b>{etiquetaCorte(s.corteAjustado.de).titulo}</b>). <b>{s.corteAjustado.por}</b> la pasó al <b>{etiquetaCorte(s.corte).titulo}</b>{s.corteAjustado.motivo ? ` — ${s.corteAjustado.motivo}` : ""}.</div>}
       {esCoordinador && !sim && s.corte && !plantel && s.estado !== "borrador" && s.estado !== "cancelada" && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5, color: "var(--text-2)" }}>
         <b>Corte:</b> {etiquetaCorte(s.corte).titulo}
@@ -1769,17 +1792,20 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       {(s.cotizacionesAdjuntas || []).length > 0 && <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5, color: "var(--text-2)" }}><b>Cotización que trajo:</b>{s.cotizacionesAdjuntas.map(r => <Btn key={r.fileId} small variant="info" onClick={() => verArchivo(r)}>{(r.name || "Ver").slice(0, 28)}</Btn>)}</div>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div className="gt-label" style={{ color: "var(--text-3)" }}>Dónde va cada ítem</div>
+        <div className="gt-label" style={{ color: "var(--text-3)" }}>Lo que se pidió · {(s.lineas || []).length} {(s.lineas || []).length === 1 ? "ítem" : "ítems"} · y dónde va cada uno</div>
         {(s.lineas || []).map(l => {
           const ef = estadoEfectivoLinea(l, s, cfg, ahora);
           const pu = purchaseDeLinea(l);
           const paso = pasoDeLinea({ ...l, estado: ef.estado === "por_cotizar" && l.estado === "revision_almacen" ? "por_cotizar" : l.estado }, s, pu, entregaDe(pu));
           const al = alertasDeLinea(l, s);
-          return <div key={l.id} style={{ padding: "12px 14px", borderRadius: 14, background: l.estado === "rechazada" ? C_ROJO.bg : "rgba(255,255,255,.75)", border: "1px solid rgba(44,42,40,.08)", display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL }}>{queEs(l)} <span style={{ fontWeight: 600, color: "var(--text-2)" }}>· {fmtCant(l.cantidad)} {l.unidad}</span>{String(l.detalle || "").trim() ? <span style={{ fontWeight: 500, color: "var(--text-3)", fontSize: 12 }}> · {l.descripcion}</span> : null}</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+          return <div key={l.id} style={{ padding: isMobile ? 10 : "12px 14px", borderRadius: 16, background: l.estado === "rechazada" ? C_ROJO.bg : "#fff", border: "1px solid rgba(44,42,40,.08)", boxShadow: "0 1px 2px rgba(44,42,40,.04)", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+              <CantidadGrande cant={l.cantidad} unidad={l.unidad} tono={l.estado === "rechazada" ? { bg: "rgba(255,255,255,.6)", color: C_ROJO.color } : undefined} />
+              <div style={{ flex: isMobile ? "1 1 0" : "1 1 200px", minWidth: 0 }}>
+                <div style={{ fontSize: isMobile ? 15.5 : 16.5, fontWeight: 800, color: CHARCOAL, lineHeight: 1.3, overflowWrap: "anywhere" }}>{queEs(l)}</div>
+                {(String(l.detalle || "").trim() || l.solucion || l.categoria) && <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 3 }}>{String(l.detalle || "").trim() ? `Partida: ${l.descripcion}` : [l.solucion, l.categoria].filter(Boolean).join(" · ")}</div>}
+                {(l.fueraPresupuesto || l.plantel) && l.justificacion && <div style={{ fontSize: 12.5, color: "var(--text-2)", fontStyle: "italic", marginTop: 3 }}>"{l.justificacion}"</div>}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
                   {paso.etapa === "entregado" ? <Chip c={C_VERDE}>Entregado en tu proyecto</Chip>
                     : paso.etapa === "pagado" ? <Chip c={C_AZUL}>Pagado · en camino</Chip>
                     : paso.etapa === "pendiente_pago" ? <Chip c={C_GRIS}>Pendiente de pago</Chip>
