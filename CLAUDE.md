@@ -2220,6 +2220,28 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   "Finanzas corrigió los datos bancarios". "Usar esta" de las otras cuentas
   del maestro sigue ahí. La caja Proveedor quedó con RTN, contacto, constancia
   y cotización.
+  **DEVOLVER A COMPRAS desde el borrador (23-nov-2026, Gerson: "que
+  Christian pueda regresar los borradores con justificación hasta Ana, ej.
+  si identificó un proveedor más barato; que no se queden acumulados")**:
+  botón rojo "Devolver a Compras" en `BorradorSupplyFormImpl` (`puedeEnviar`,
+  solo GeoShopping) → caja con motivos rápidos (proveedor más barato, precio
+  arriba del presupuesto, cotización vencida, otro proveedor) + texto
+  obligatorio (≥ 5). `devolverBorradorACompras` (PurchasesModule), cada paso
+  sobre la nube fresca e IDEMPOTENTE: (0) aborta si el borrador ya no es
+  borrador; (1) la cotización `aprobada` → `devuelta` con `devueltaPor:
+  "finanzas"`, `comentario` = motivo, `purchaseId/purchaseCodigo` null y
+  `devolucionesFinanzas [{purchaseId, codigo, provider, monto, por, at,
+  motivo}]`; (2) `revertirCompraEnSolicitud` (geosupply-calc, acción de línea
+  nueva `revertir_compra`: resta lo que esa cotización compró → `por_cotizar`,
+  audit `devuelta_finanzas` con lineaId + purchaseId para no restar dos
+  veces); (3) quita el borrador de cp-purchases (nunca llegó a Tesorería;
+  GeoCost deja de contarlo). El PDF de la cotización NO se borra. Ana la ve en
+  GeoSupply → Compras, caja "Devueltas · volver a cotizar" con "Finanzas ·
+  Lic. Christian Gallo: …" (las del Coordinador dicen "Coordinador:";
+  `devueltaPor` se limpia al reenviar), la corrige y la reenvía; el
+  Coordinador la aprueba otra vez (su ventana muestra "Finanzas la devolvió…")
+  y nace un borrador NUEVO: `aprobarCotizacion` ignora los de
+  `borradoresDevueltos(cot)`. Probado el 23-nov con datos ZZ (borrados).
   **GeoCost**: `estadoCompraCosto` cuenta `borrador + origenSupply` como
   comprometido; al validarse sigue comprometido y al pagarse ejecutado — mismo
   registro, sin doble conteo (verificado 2-oct: $1,057.41 comprometido → tras

@@ -6,6 +6,7 @@ import {
   saldoDePartida, semaforoVariacion, evaluarCotizacion, siguienteFolio, aplicarAccionLinea,
   estadoCabecera, estadoInicialLinea, estadoEfectivoLinea, destinoSugerido, borradorDesdeCotizacion,
   partesHN, puedeCancelar, contarPendientes, configEfectiva, pendienteDeCompra, siguienteCodigoCompra, fueraDeCorte, metricasDashboard,
+  revertirCompraEnSolicitud, borradoresDevueltos,
 } from "../src/geosupply-calc.js";
 
 // Honduras es UTC-6 sin horario de verano: 12:00 HN = 18:00Z.
@@ -420,4 +421,33 @@ test("partida genérica exige decir qué es; queEs prefiere el detalle", () => {
   assert.equal(esPartidaGenerica({ nombre: "Cemento GU", unidad: "Bolsa" }), false);
   assert.equal(queEs({ descripcion: "Bodega / Letrina / Atenciones / EPP/ Etc.", detalle: " Microondas para el personal " }), "Microondas para el personal");
   assert.equal(queEs({ descripcion: "Tubo PVC 4\"" }), "Tubo PVC 4\"");
+});
+
+test("Finanzas devuelve el borrador a Compras: lo comprado vuelve a por cotizar, una sola vez", () => {
+  // Cotización que compró 10 tubos de la línea A (de 10) y 4 de la línea B (de 10; las otras 6 siguen por cotizar).
+  let sol = { id: "S1", estado: "en_proceso", lineas: [
+    { id: "A", descripcion: "Tubo", cantidad: 10, aCotizar: 10, despachadoAlmacen: 0, cantidadComprada: 0, quoteIds: ["Q1"], estado: "cotizada" },
+    { id: "B", descripcion: "Codo", cantidad: 10, aCotizar: 10, despachadoAlmacen: 0, cantidadComprada: 0, quoteIds: ["Q1"], estado: "cotizada" },
+  ], audit: [] };
+  const cot = { id: "Q1", requestId: "S1", lineas: [{ requestId: "S1", requestLineId: "A", cantidad: 10 }, { requestId: "S1", requestLineId: "B", cantidad: 4 }] };
+  sol = { ...sol, lineas: sol.lineas.map(l => aplicarAccionLinea(l, "aprobar_cot", { quoteId: "Q1", cantidad: l.id === "A" ? 10 : 4 }).linea) };
+  assert.equal(sol.lineas[0].estado, "comprada");
+  assert.equal(sol.lineas[1].estado, "por_cotizar");
+  sol = { ...sol, estado: estadoCabecera(sol) };
+  const r = revertirCompraEnSolicitud(sol, cot, { purchaseId: "P1", entrada: (l) => ({ by: "Christian", note: l.descripcion }) });
+  assert.equal(r.lineas[0].estado, "por_cotizar");
+  assert.equal(r.lineas[0].cantidadComprada, 0);
+  assert.equal(pendienteDeCompra(r.lineas[0]), 10);
+  assert.equal(r.lineas[1].cantidadComprada, 0);
+  assert.equal(pendienteDeCompra(r.lineas[1]), 10);
+  assert.equal(r.audit.filter(a => a.action === "devuelta_finanzas").length, 2);
+  // Reintentar no vuelve a restar
+  assert.equal(revertirCompraEnSolicitud(r, cot, { purchaseId: "P1" }), null);
+  // Compras la vuelve a cotizar y se aprueba de nuevo → otro borrador, se puede devolver otra vez
+  let s3 = { ...r, lineas: r.lineas.map(l => aplicarAccionLinea(aplicarAccionLinea(l, "cotizar", { quoteId: "Q1" }).linea, "aprobar_cot", { quoteId: "Q1", cantidad: l.id === "A" ? 10 : 4 }).linea) };
+  const r2 = revertirCompraEnSolicitud(s3, cot, { purchaseId: "P2" });
+  assert.equal(r2.lineas[0].estado, "por_cotizar");
+  assert.deepEqual([...borradoresDevueltos({ devolucionesFinanzas: [{ purchaseId: "P1" }, { purchaseId: "P2" }] })], ["P1", "P2"]);
+  // No resta más de lo comprado
+  assert.equal(aplicarAccionLinea({ estado: "comprada", cantidadComprada: 2 }, "revertir_compra", { cantidad: 5 }).ok, false);
 });

@@ -48,7 +48,7 @@ import {
   estadoInicialLinea, alertasDeLinea, ALERTAS, puedeCancelar, aplicarAccionLinea, pendienteDeCompra, saldoDePartida, partidasPedibles,
   puPresupuestoUSD, evaluarCotizacion, siguienteFolio, siguienteCodigoCompra, borradorDesdeCotizacion, fueraDeCorte, metricasDashboard,
   LINEA_TERMINAL, esPedidoPlantel, pendientePlantel, ymdSumar, partesHN, enviadaEnCorte, round2, corteAnterior, corteSiguiente, corteDeLinea, postergarLinea,
-  LINEA_POSTERGABLE, marcarPrioridad, ajusteCorteLinea, esPartidaGenerica, queEs } from "./geosupply-calc.js";
+  LINEA_POSTERGABLE, marcarPrioridad, ajusteCorteLinea, esPartidaGenerica, queEs, borradoresDevueltos } from "./geosupply-calc.js";
 
 const ORANGE = "#E8762D";
 const ORANGE_DARK = "#C75F1F";
@@ -1078,7 +1078,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   // ── Compras: cotizaciones ──
   const guardarCotizacion = async (f, ev, enviar) => {
     const ahoraISO = new Date().toISOString();
-    const marcar = (q) => enviar ? { ...q, estado: "enviada", enviadaAt: ahoraISO, evaluacion: { lineas: ev.lineas, suma: ev.suma, peor: ev.peor, todasVerdes: ev.todasVerdes }, audit: [...(q.audit || []), auditEntry("enviada", "Enviada a aprobación del Coordinador")] } : q;
+    const marcar = (q) => enviar ? { ...q, estado: "enviada", enviadaAt: ahoraISO, evaluacion: { lineas: ev.lineas, suma: ev.suma, peor: ev.peor, todasVerdes: ev.todasVerdes }, audit: [...(q.audit || []), auditEntry("enviada", "Enviada a aprobación del Coordinador")], devueltaPor: null } : q;
     let rec;
     if (f.id) {
       rec = await actualizarCotizacion(f.id, (q) => {
@@ -1156,7 +1156,9 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       ev.lineas = ev.lineas.map(l => { const ls = lineaSolDe(l.requestLineId); const pa = ls ? partidaDe(cot.projectCode, ls.partidaId) : null; return { ...l, id: l.requestLineId, partidaId: ls?.partidaId || null, ...(ls?.varilla ? { varilla: { ...ls.varilla, lances: l.lances != null ? num(l.lances) : ls.varilla.lances } } : {}), categoria: pa?.categoria || "", nombrePartida: pa?.nombre || ls?.descripcion || "", unidadPartida: pa?.unidad || ls?.unidad || "", solucion: pa?.solucion || "", fueraPresupuesto: !!ls?.fueraPresupuesto }; });
       const ahoraISO = new Date().toISOString();
       // 1) El BORRADOR en GeoShopping (idempotente: si ya existe uno de esta cotización, no se duplica).
-      let purchase = purs.find(p => p.origenSupply?.quoteId === cot.id);
+      const devueltos = borradoresDevueltos(cot);   // los que Finanzas ya devolvió no se reusan
+      const deEsta = (p) => p.origenSupply?.quoteId === cot.id && !devueltos.has(p.id);
+      let purchase = purs.find(deEsta);
       if (!purchase) {
         const proveedor = provs.find(p => p.id === cot.providerId) || provs.find(p => p.name === cot.provider) || null;
         const armado = borradorDesdeCotizacion({ cotizacion: cot, evaluacion: ev, solicitud: sol, proveedor, proyecto: proyectoDe(cot.projectCode), aprobadoPor: userName, tasa: tasaC, cfg, hoy: hoyISO(), ahoraISO, id: uid(), codigo: siguienteCodigoCompra(purs, new Date(ahoraISO).getFullYear(), sim ? "SIM" : "MAT") });
@@ -1164,7 +1166,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         // Releer cp-purchases JUSTO antes de escribir (la foto de arriba tiene
         // varios segundos): un pago de Tesorería en el medio se perdería.
         const frescoP = await store.getCloud(K.pur); const basePur = Array.isArray(frescoP) ? frescoP : [];
-        if (basePur.some(p => p.origenSupply?.quoteId === cot.id)) { purchase = basePur.find(p => p.origenSupply?.quoteId === cot.id); }
+        if (basePur.some(deEsta)) { purchase = basePur.find(deEsta); }
         else {
           if (basePur.some(p => p.codigo === purchase.codigo)) purchase = { ...purchase, codigo: siguienteCodigoCompra(basePur, new Date(ahoraISO).getFullYear(), sim ? "SIM" : "MAT") };
           marcarMutacion();
@@ -1217,7 +1219,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   };
   const devolverCotizacion = async (q, comentario) => {
     if (String(comentario || "").trim().length < 3) return alert("Escribí qué tiene que corregir Compras.");
-    const rec = await actualizarCotizacion(q.id, (c) => c.estado === "enviada" ? { ...c, estado: "devuelta", comentario, audit: [...(c.audit || []), auditEntry("devuelta", `Devuelta a Compras: ${comentario}`)] } : (alert("Ya no está por aprobar."), null));
+    const rec = await actualizarCotizacion(q.id, (c) => c.estado === "enviada" ? { ...c, estado: "devuelta", comentario, devueltaPor: "coordinador", audit: [...(c.audit || []), auditEntry("devuelta", `Devuelta a Compras: ${comentario}`)] } : (alert("Ya no está por aprobar."), null));
     if (!rec) return false;
     const porSol = {}; rec.lineas.forEach(l => { (porSol[l.requestId] = porSol[l.requestId] || []).push(l.requestLineId); });
     for (const [solId, ids] of Object.entries(porSol)) await accionLineas(solId, ids, "devolver_cot", { quoteId: rec.id }, `${rec.folio} devuelta a Compras`);
@@ -1592,14 +1594,14 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         {stat(items.length, "ítems por cotizar", { c: items.length ? ORANGE_DARK : undefined })}
         {items.some(x => x.l.prioridad) && stat(visibles.filter(x => x.l.prioridad).length, "con prioridad !", { c: ORANGE_DARK })}
         {stat(grupos.length, "proyectos")}
-        {stat(devueltas.length, "devueltas por el Coord.", { c: devueltas.length ? C_AMARILLO.color : undefined, onClick: () => { setCotVista("devuelta"); setSec("cotizaciones"); } })}
+        {stat(devueltas.length, "devueltas", { c: devueltas.length ? C_AMARILLO.color : undefined, onClick: () => { setCotVista("devuelta"); setSec("cotizaciones"); } })}
         {stat(borr.length, "cotizaciones en borrador", { onClick: () => { setCotVista("borrador"); setSec("cotizaciones"); } })}
       </div>
       {devueltas.length > 0 && <div className="gt-vidrio" style={{ padding: "12px 16px", borderLeft: `3px solid ${C_AMARILLO.color}`, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div className="gt-label" style={{ color: C_AMARILLO.color }}>Devueltas por el Coordinador</div>
+        <div className="gt-label" style={{ color: C_AMARILLO.color }}>Devueltas · volver a cotizar</div>
         {devueltas.map(q => <div key={q.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700 }}>{q.folio}</span><b style={{ fontSize: 13 }}>{q.provider}</b><span style={{ fontSize: 12, color: "var(--text-2)" }}>{nombreProy(q.projectCode)}</span>
-          <span style={{ fontSize: 12.5, color: C_AMARILLO.color, fontStyle: "italic", flex: 1 }}>"{q.comentario}"</span>
+          <span style={{ fontSize: 12.5, color: C_AMARILLO.color, flex: 1 }}><b style={{ fontStyle: "normal" }}>{q.devueltaPor === "finanzas" ? `Finanzas${q.devolucionesFinanzas?.length ? ` · ${q.devolucionesFinanzas[q.devolucionesFinanzas.length - 1].por}` : ""}` : "Coordinador"}:</b> <i>"{q.comentario}"</i></span>
           {puede && <Btn small onClick={() => setModal({ t: "cotizacion", q })}>Corregir</Btn>}
         </div>)}
       </div>}
@@ -1657,7 +1659,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
             <div style={{ flex: 1, minWidth: 180 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{q.provider} <span style={{ fontWeight: 500, color: "var(--text-3)" }}>· {nombreProy(q.projectCode)}</span></div>
               <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{(q.lineas || []).length} {(q.lineas || []).length === 1 ? "ítem" : "ítems"} · {s?.folio || "—"} · {q.numeroProveedor ? `cot. ${q.numeroProveedor} · ` : ""}{q.estado === "aprobada" ? `→ ${q.purchaseCodigo || "borrador"} · ${fmtDT(q.aprobadoAt)}` : fmtDT(q.updatedAt)}</div>
-              {q.comentario && (q.estado === "devuelta" || q.estado === "rechazada") && <div style={{ fontSize: 12, color: C_AMARILLO.color, fontStyle: "italic" }}>"{q.comentario}"</div>}
+              {q.comentario && (q.estado === "devuelta" || q.estado === "rechazada") && <div style={{ fontSize: 12, color: C_AMARILLO.color }}>{q.estado === "devuelta" && q.devueltaPor === "finanzas" && <b>Devuelta por Finanzas: </b>}<i>"{q.comentario}"</i></div>}
             </div>
             {!esResidente && <div style={{ textAlign: "right" }}><div style={{ fontSize: 14, fontWeight: 800, color: CHARCOAL }}>{fmtL(q.totalDeclarado)}</div><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9, marginTop: 3 }}>con {IMPUESTO.nombre}</div></div>}
           </div>;
@@ -1898,6 +1900,8 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       {/* Lo que escribió el residente (6-nov-2026): sin esto el Coordinador
           solo veía la partida ("Bodega / Atenciones / EPP…") y no qué era. */}
       {(() => { const sols = [...new Set((q.lineas || []).map(l => l.requestId).filter(Boolean))].map(id => solicitudes.find(x => x.id === id)).filter(x => x && String(x.notas || "").trim()); return sols.length ? <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AZUL.bg, color: C_AZUL.color, fontSize: 12.5, display: "flex", flexDirection: "column", gap: 2 }}>{sols.map(x => <div key={x.id}><b>{sols.length > 1 ? `${x.folio} · ` : ""}Notas de {quien(x.residente)}:</b> {x.notas}</div>)}</div> : null; })()}
+      {/* Finanzas la devolvió antes (23-nov-2026): el Coordinador ve por qué y qué había. */}
+      {(q.devolucionesFinanzas || []).length > 0 && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12.5, display: "flex", flexDirection: "column", gap: 2 }}>{q.devolucionesFinanzas.map((d, i) => <div key={i}><b>Finanzas la devolvió</b> · {d.por} · {fmtDT(d.at)}{d.codigo ? ` · era ${d.codigo}` : ""}{d.provider ? ` (${d.provider}, ${fmtL(d.monto)})` : ""}: "{d.motivo}"</div>)}</div>}
       {prov && !(prov.bankAccounts || []).length && <div style={{ padding: "8px 12px", borderRadius: 10, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12 }}>Proveedor sin datos bancarios en el maestro: el borrador se crea con la advertencia para Finanzas.</div>}
       {!prov && <div style={{ padding: "8px 12px", borderRadius: 10, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 12 }}>Proveedor nuevo: al aprobar se crea en el maestro sin datos bancarios.</div>}
       {/* Tres columnas: pedido · cotizado · presupuesto */}

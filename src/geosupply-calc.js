@@ -408,6 +408,7 @@ const DESDE = {
   quitar_cotizacion: ["cotizada"],
   aprobar_cot:     ["cotizada"],
   devolver_cot:    ["cotizada"],
+  revertir_compra: ["comprada", "cotizada", "por_cotizar"],
   resolver:        ["pendiente_coord", "revision_almacen", "por_cotizar"],
 };
 export const aplicarAccionLinea = (l, accion, payload = {}) => {
@@ -464,6 +465,14 @@ export const aplicarAccionLinea = (l, accion, payload = {}) => {
       const quoteIds = (l.quoteIds || []).filter(x => x !== payload.quoteId);
       return { ok: true, linea: { ...l, quoteIds, estado: quoteIds.length ? "cotizada" : "por_cotizar" } };
     }
+    case "revertir_compra": {
+      // Finanzas devolvió a Compras el borrador de una cotización ya aprobada:
+      // lo que esa cotización había comprado vuelve a quedar por cotizar.
+      const q = num(payload.cantidad);
+      if (!(q > 0) || q > num(l.cantidadComprada) + 0.0001) return { ok: false, error: `No se puede devolver ${q}: solo hay ${num(l.cantidadComprada)} comprado.` };
+      const quoteIds = (l.quoteIds || []).filter(x => x !== payload.quoteId);
+      return { ok: true, linea: { ...l, cantidadComprada: round2(Math.max(0, num(l.cantidadComprada) - q)), quoteIds, estado: quoteIds.length ? "cotizada" : "por_cotizar" } };
+    }
     case "resolver": {
       if ((l.quoteIds || []).length) return { ok: false, error: "Ese ítem ya está en una cotización: quitalo de la cotización primero." };
       const nota = String(payload.nota || "").trim();
@@ -474,6 +483,35 @@ export const aplicarAccionLinea = (l, accion, payload = {}) => {
       return { ok: false, error: "Acción no implementada" };
   }
 };
+
+// ── Finanzas devuelve a Compras un borrador de GeoSupply (23-nov-2026) ──────
+// Gerson: "que Christian pueda regresar los borradores con justificación hasta
+// Ana, por ejemplo si identificó un proveedor más barato". Revierte, en UNA
+// solicitud, lo que la cotización `cot` había comprado. IDEMPOTENTE: cada
+// línea revertida deja en la bitácora una entrada `devuelta_finanzas` con su
+// lineaId y el purchaseId del borrador; si ya está, no se vuelve a restar.
+// `entrada(l, nueva)` arma la entrada de bitácora (quién/cuándo los pone el
+// módulo). Devuelve la solicitud nueva o null si no había nada que revertir.
+export const revertirCompraEnSolicitud = (sol, cot, { purchaseId, entrada }) => {
+  if (!sol || !cot) return null;
+  let lineas = sol.lineas || [];
+  const aud = [];
+  (cot.lineas || []).filter(cl => (cl.requestId || cot.requestId) === sol.id).forEach(cl => {
+    const ya = (sol.audit || []).some(a => a && a.action === "devuelta_finanzas" && a.lineaId === cl.requestLineId && a.purchaseId === purchaseId);
+    if (ya) return;
+    const l = lineas.find(x => x.id === cl.requestLineId); if (!l) return;
+    const r = aplicarAccionLinea(l, "revertir_compra", { cantidad: num(cl.cantidad), quoteId: cot.id });
+    if (!r.ok) return;
+    lineas = lineas.map(x => x.id === l.id ? r.linea : x);
+    aud.push({ ...(entrada ? entrada(l, r.linea) : {}), action: "devuelta_finanzas", lineaId: l.id, purchaseId, de: l.estado, a: r.linea.estado });
+  });
+  if (!aud.length) return null;
+  const s2 = { ...sol, lineas, audit: [...(sol.audit || []), ...aud] };
+  return { ...s2, estado: estadoCabecera(s2) };
+};
+// Borradores de GeoShopping que Finanzas ya devolvió de esta cotización (no
+// se reusan al volver a aprobarla: se crea uno nuevo con lo que cotice Compras).
+export const borradoresDevueltos = (cot) => new Set((cot?.devolucionesFinanzas || []).map(d => d.purchaseId).filter(Boolean));
 
 // ── Saldo en cantidad de una partida de la receta ──────────────────────────
 // saldo = presupuestada − comprada (ítems de cp-purchases que consumen) −

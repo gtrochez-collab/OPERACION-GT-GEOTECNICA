@@ -20,7 +20,7 @@ import { hoyISO, diaHN } from "./fechas.js";
 import { leerPdf, parsearCotizacion, ajusteAlTotal, lineasPresupuestoDesdeLectura, memoriaDeCompras, cambiarSolucionLineas } from "./leer-cotizacion.js";
 // GeoSupply (2-oct-2026): los borradores que nacen de una cotización aprobada
 // llevan `origenSupply`; acá solo se rotula su corte.
-import { etiquetaCorte, puPresupuestoUSD, semaforoVariacion } from "./geosupply-calc.js";
+import { etiquetaCorte, puPresupuestoUSD, semaforoVariacion, revertirCompraEnSolicitud } from "./geosupply-calc.js";
 import { reporteHTML, descargarReporteDirecto, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, PDF_TEMA, pdfCabecera, pdfPie, latin1, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 // Abonos (17-oct-2026): pagos parciales con su comprobante; la solicitud se
 // cierra solo cuando la suma de abonos cubre el total. Lógica pura y probada.
@@ -2135,7 +2135,9 @@ const revisionBorrador = ({ purchase, presupuestos = [], providers = [], purchas
 // puede tomar la cuenta del maestro si el borrador vino sin ella. "Enviar a
 // Tesorería" = el mismo `validado` + `encolarPago` del flujo normal. A NIVEL
 // DE MÓDULO (no se remonta al tipear).
-function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], purchases = [], calcDisponible, tasa, puedeEnviar, userName, setModal, updatePurchase, addAudit, enviar, verArchivo, setProviders }) {
+function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], purchases = [], calcDisponible, tasa, puedeEnviar, userName, setModal, updatePurchase, addAudit, enviar, devolver, verArchivo, setProviders }) {
+  // Devolver a Compras (23-nov-2026): null = cerrado; si no, el motivo que se escribe.
+  const [dev, setDev] = useState(null);
   const [f, setF] = useState({ condicionPago: purchase.condicionPago || "contado", tipoCredito: purchase.tipoCredito || "unico", fechaPagoRequerida: purchase.fechaPagoRequerida || "", destinoPago: purchase.destinoPago || ((purchase.condicionPago || "contado") === "credito" ? "cxp" : "normal"), cierreResponsable: purchase.cierreResponsable || "" });
   const [saving, setSaving] = useState(false);
   const [sup, setSup] = useState({ cargando: true, cot: null, sols: [], usuarios: [] });
@@ -2422,8 +2424,19 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], p
       </div>
       <Select label="Responsable de cierre contable" options={[...new Set([...USERS.map(u2 => u2.label), ...(f.cierreResponsable ? [f.cierreResponsable] : [])])].sort()} value={f.cierreResponsable} onChange={e => u("cierreResponsable", e.target.value)} emptyLabel="Sin asignar" />
     </div>
+    {dev !== null && <div style={{ ...CAJA, borderLeft: `3px solid ${C_AMARILLO.color}`, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={TIT}>Devolver a Compras</div>
+      <div style={{ fontSize: 13, color: "#6E6862" }}>Vuelve a Ana para cotizar otra vez. Sale de Borradores y, cuando la reenvíe, el Coordinador la aprueba de nuevo.</div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{["Hay un proveedor más barato", "Precio arriba del presupuesto", "La cotización está vencida", "Hay que cotizar con otro proveedor"].map(t => <span key={t}>{pill(t, dev === t, () => setDev(t))}</span>)}</div>
+      <Textarea label="¿Por qué la devolvés? (Ana lo va a ver)" value={dev} onChange={e => setDev(e.target.value)} placeholder="Ej. Ferretería X la tiene a L 380 el rollo; cotizala con ellos" style={{ minHeight: 64 }} autoFocus />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+        <Btn variant="ghost" onClick={() => setDev(null)} disabled={saving}>Cancelar</Btn>
+        <Btn variant="danger" disabled={saving || dev.trim().length < 5} onClick={async () => { setSaving(true); const ok = await devolver(purchase, dev); setSaving(false); if (ok) setModal(null); }}>{saving ? "…" : "Devolver a Compras"}</Btn>
+      </div>
+    </div>}
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
       <Btn variant="ghost" onClick={() => setModal(null)} disabled={saving}>Cerrar</Btn>
+      {puedeEnviar && devolver && dev === null && <Btn variant="danger" onClick={() => setDev("")} disabled={saving}>Devolver a Compras</Btn>}
       {puedeEnviar && <Btn variant="ghost" onClick={guardar} disabled={saving || !cambio}>Guardar cambios</Btn>}
       {puedeEnviar && <Btn variant="success" onClick={enviarAhora} disabled={saving}>{saving ? "…" : "Enviar a Tesorería"}</Btn>}
     </div>
@@ -9012,6 +9025,81 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
     alert(`✓ ${enviadas.length} enviada${enviadas.length === 1 ? "" : "s"} a Tesorería como 'Pendiente Lic. Carolina'.${dondes.length ? "\n\n" + dondes.join("\n") : ""}`);
     return true;
   };
+  // ── Devolver a Compras (23-nov-2026, Gerson: "que Christian pueda regresar
+  // los borradores con justificación hasta Ana, por ejemplo si identificó un
+  // proveedor más barato; que no se queden acumulados"). Tres pasos, cada uno
+  // sobre la nube FRESCA e idempotente (si algo falla, se reintenta sin
+  // duplicar): 1) la cotización vuelve a "devuelta" con el motivo (Ana la ve
+  // en GeoSupply para cotizar con otro proveedor; al reenviarla la aprueba el
+  // Coordinador de nuevo); 2) lo que había comprado vuelve a "por cotizar" en
+  // la(s) solicitud(es); 3) el borrador sale de GeoShopping (nunca llegó a
+  // Tesorería; GeoCost deja de contarlo como comprometido). El PDF de la
+  // cotización NO se borra: sigue siendo de la cotización.
+  const devolverBorradorACompras = async (p, motivo) => {
+    motivo = String(motivo || "").trim();
+    if (motivo.length < 5) { alert("Escribí por qué la devolvés (Ana lo va a ver)."); return false; }
+    const quoteId = p.origenSupply?.quoteId;
+    if (!quoteId) { alert("Este borrador no tiene la cotización de GeoSupply."); return false; }
+    const at = new Date().toISOString();
+    const entradaAudit = (action, note, extra = {}) => ({ action, by: userName, role: userRole, at, note, ...extra });
+    try {
+      // 0) El borrador sigue siendo borrador (si ya se envió a Tesorería, no).
+      const cp = await store.getCloud(CFG.key);
+      if (!Array.isArray(cp)) { alert("No pude leer GeoShopping de la nube. No se devolvió nada."); return false; }
+      const actual = cp.find(z => z && z.id === p.id);
+      if (!actual) { alert("Ese borrador ya no está (alguien más lo trabajó). Se refresca la vista."); setPurchases(cp); return false; }
+      if (actual.status !== "borrador") { alert("Ya se envió a Tesorería: no se puede devolver desde acá."); setPurchases(cp); return false; }
+
+      // 1) La cotización → devuelta.
+      const cs = await store.getCloud("sp-cotizaciones");
+      const cots = Array.isArray(cs) ? cs : null;
+      if (!cots) { alert("No pude leer las cotizaciones de GeoSupply. No se devolvió nada."); return false; }
+      let cot = cots.find(c => c && c.id === quoteId);
+      if (!cot) { alert("No encontré la cotización en GeoSupply. No se devolvió nada."); return false; }
+      const yaDevuelta = (cot.devolucionesFinanzas || []).some(d => d.purchaseId === p.id);
+      if (!yaDevuelta) {
+        if (cot.estado !== "aprobada") { alert(`La cotización ${cot.folio} está "${cot.estado}", no aprobada. No se devolvió nada.`); return false; }
+        const reg = { purchaseId: p.id, codigo: p.codigo || "", provider: p.provider || "", monto: Number(p.amount) || 0, por: userName, at, motivo };
+        cot = { ...cot, estado: "devuelta", devueltaPor: "finanzas", comentario: motivo, purchaseId: null, purchaseCodigo: null, devolucionesFinanzas: [...(cot.devolucionesFinanzas || []), reg], audit: [...(cot.audit || []), entradaAudit("devuelta_finanzas", `Finanzas devolvió ${p.codigo || "el borrador"} a Compras: ${motivo}`, { purchaseId: p.id })], updatedAt: at };
+        const okC = await store.set("sp-cotizaciones", cots.map(c => c && c.id === quoteId ? cot : c));
+        const backC = okC ? await store.getCloud("sp-cotizaciones") : null;
+        if (!Array.isArray(backC) || !backC.some(c => c && c.id === quoteId && c.updatedAt === at)) { alert("No se pudo guardar la devolución en GeoSupply. Reintentá."); return false; }
+      }
+
+      // 2) Las solicitudes: lo comprado vuelve a "por cotizar".
+      const ss = await store.getCloud("sp-solicitudes");
+      if (!Array.isArray(ss)) { alert(`${cot.folio} ya quedó devuelta, pero no pude leer las solicitudes. Volvé a darle "Devolver": no se duplica.`); return false; }
+      const solIds = [...new Set((cot.lineas || []).map(cl => cl.requestId || cot.requestId).filter(Boolean))];
+      const nuevas = {};
+      solIds.forEach(sid => {
+        const s0 = ss.find(x => x && x.id === sid); if (!s0) return;
+        const r = revertirCompraEnSolicitud(s0, cot, { purchaseId: p.id, entrada: (l, nl) => entradaAudit("devuelta_finanzas", `${l.descripcion}: Finanzas devolvió ${p.codigo || "el borrador"} — vuelve a cotizarse (${motivo})`) });
+        if (r) nuevas[sid] = { ...r, updatedAt: at };
+      });
+      if (Object.keys(nuevas).length) {
+        const okS = await store.set("sp-solicitudes", ss.map(x => x && nuevas[x.id] ? nuevas[x.id] : x));
+        const backS = okS ? await store.getCloud("sp-solicitudes") : null;
+        if (!Array.isArray(backS) || Object.keys(nuevas).some(id => !backS.some(x => x && x.id === id && x.updatedAt === at))) { alert(`${cot.folio} ya quedó devuelta, pero no se pudieron regresar los ítems de la solicitud. Volvé a darle "Devolver": no se duplica.`); return false; }
+      }
+
+      // 3) El borrador sale de GeoShopping.
+      const cp2 = await store.getCloud(CFG.key);
+      if (!Array.isArray(cp2)) { alert("La cotización ya volvió a Compras, pero no pude quitar el borrador. Volvé a darle \"Devolver\"."); return false; }
+      const sigue = cp2.find(z => z && z.id === p.id);
+      if (sigue && sigue.status !== "borrador") { alert("Alguien lo envió a Tesorería mientras lo devolvías. Revisalo con Gerson."); setPurchases(cp2); return false; }
+      const next = cp2.filter(z => z && z.id !== p.id);
+      if (next.length !== cp2.length) {
+        const ok = await store.set(CFG.key, next);
+        let verificado = false;
+        try { const back = await store.getCloud(CFG.key); verificado = Array.isArray(back) && !back.some(z => z && z.id === p.id); } catch { verificado = false; }
+        if (!ok || !verificado) { alert("La cotización ya volvió a Compras, pero no pude quitar el borrador. Volvé a darle \"Devolver\": no se duplica."); return false; }
+      }
+      setPurchases(next);
+      setBorrSel(prev => prev.filter(id => id !== p.id));
+      alert(`Listo: ${p.codigo || "el borrador"} se devolvió a Compras.\n\nAna la ve en GeoSupply → Compras, "Devueltas", con tu motivo. Cuando la vuelva a cotizar, el Coordinador la aprueba y te llega otra vez como borrador.`);
+      return true;
+    } catch (e) { console.warn("[borradores] devolver", e); alert("Sin conexión con la nube. Reintentá: no se duplica."); return false; }
+  };
   const renderBorradoresSupply = (lista) => {
     const puedeEnviar = canCreate;
     const grupos = (() => {
@@ -9096,7 +9184,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
       case "new": return <Modal title="Nueva solicitud de compra" onClose={() => setModal(null)} wide><PurchaseFormImpl co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
       case "edit": return <Modal title={`Editar solicitud — ${m.d.provider}`} onClose={() => setModal(null)} wide><PurchaseFormImpl purchase={m.d} co={co} userName={userName} setModal={setModal} getProject={getProject} allProjects={allProjects} purchases={purchases} providers={providers} addAudit={addAudit} saveOrAlert={saveOrAlert} upsertProvider={upsertProvider} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} encolarPago={encolarPago} prefijo={CFG.prefijo} moduloPartida={CFG.moduloPartida} machines={esMaq ? machines : null} /></Modal>;
       case "detail": return <Modal title={`Solicitud: ${m.d.provider} — ${m.d.projectCode}`} onClose={() => setModal(null)} wide><DetailView purchase={m.d} /></Modal>;
-      case "borrador-supply": return <Modal title={`${m.d.codigo} — ${m.d.provider}`} onClose={() => setModal(null)} wide><BorradorSupplyFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} presupuestos={presupuestos} providers={providers} purchases={purchases} calcDisponible={calcDisponible} tasa={tasaCC} puedeEnviar={canCreate} userName={userName} setModal={setModal} updatePurchase={updatePurchase} addAudit={addAudit} enviar={(p) => enviarBorradoresATesoreria([p])} verArchivo={async (ref) => { try { const full = await store.getCloud(fileKey(ref.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el archivo."); setVisorGlobal({ ...full, name: full.name || ref.name }); } catch (e) { alert("Error: " + (e?.message || e)); } }} setProviders={setProviders} /></Modal>;
+      case "borrador-supply": return <Modal title={`${m.d.codigo} — ${m.d.provider}`} onClose={() => setModal(null)} wide><BorradorSupplyFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} presupuestos={presupuestos} providers={providers} purchases={purchases} calcDisponible={calcDisponible} tasa={tasaCC} puedeEnviar={canCreate} userName={userName} setModal={setModal} updatePurchase={updatePurchase} addAudit={addAudit} enviar={(p) => enviarBorradoresATesoreria([p])} devolver={esMaq ? null : devolverBorradorACompras} verArchivo={async (ref) => { try { const full = await store.getCloud(fileKey(ref.fileId)); if (!full?.dataUrl) return alert("No se pudo cargar el archivo."); setVisorGlobal({ ...full, name: full.name || ref.name }); } catch (e) { alert("Error: " + (e?.message || e)); } }} setProviders={setProviders} /></Modal>;
       case "corregir": return <Modal title={`Corregir proyecto / partida — ${m.d.codigo || m.d.provider}`} onClose={() => setModal(null)} wide><CorreccionFormImpl purchase={m.d} setModal={setModal} allProjects={allProjects} presupuestos={presupuestos} tasa={tasaCC} calcDisponible={calcDisponible} updatePurchase={updatePurchase} addAudit={addAudit} userName={userName} moduloPartida={CFG.moduloPartida} /></Modal>;
       case "pay": return <Modal title={`Registrar pago — ${m.d.provider}`} onClose={() => setModal(null)} wide><PaymentFormImpl purchase={m.d} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} /></Modal>;
       case "abono": return <Modal title={`${m.modo === "convertir" ? "Pasar a abonos" : "Registrar abono"} — ${m.d.codigo || m.d.provider}`} onClose={() => setModal({ t: "detail", d: m.d })} wide><AbonoFormImpl purchase={purchases.find(x => x.id === m.d.id) || m.d} modo={m.modo} setModal={setModal} addAudit={addAudit} updatePurchase={updatePurchase} userName={userName} /></Modal>;
