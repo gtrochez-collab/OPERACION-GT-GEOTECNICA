@@ -4052,7 +4052,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const maxProy = Math.max(1, ...Object.values(st.proy));
     // Asistencia de HOY (GeoClock): marcajes del día en la quincena actual.
     const qHoy = getQuincena(hoy);
-    const marksHoy = (gcMarks[`${qHoy.periodo}|${qHoy.quincena}`] || []).filter(mk => mk && mk.company === co && mk.fecha === hoy);
+    const marksHoy = (gcMarks[`${qHoy.periodo}|${qHoy.quincena}`] || []).filter(mk => mk && !mk.jornal && mk.company === co && mk.fecha === hoy);
     const entradasHoy = marksHoy.filter(mk => mk.tipo === "entrada");
     const tardesHoy = entradasHoy.filter(mk => mk.tarde);
     const sinMarcarHoy = Math.max(0, activos.length - entradasHoy.length);
@@ -5073,7 +5073,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     const hoy = hoyTegus();
     const marcasTardeCo = Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.tarde);
     const nPend = marcasTardeCo.filter(mk => !(gcTardies || []).some(t => t && t.markId === mk.id && (t.estado === "aprobada" || t.estado === "denegada"))).length;
-    const entradasHoy = Object.values(gcMarks).flat().filter(mk => mk && mk.company === co && mk.tipo === "entrada" && mk.fecha === hoy).length;
+    const entradasHoy = Object.values(gcMarks).flat().filter(mk => mk && !mk.jornal && mk.company === co && mk.tipo === "entrada" && mk.fecha === hoy).length;
     const ult = ca.slice().sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`))[0];
     const ultHe = che.filter(h => Object.keys(h.hours || {}).length).sort((a, b) => `${b.periodo}-${b.quincena}`.localeCompare(`${a.periodo}-${a.quincena}`))[0];
     const tHe = ultHe ? heTotalsOf(ultHe) : null;

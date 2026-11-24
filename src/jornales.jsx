@@ -477,6 +477,8 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
   // computadora se entra a la hoja del corte (formato de la hoja de asistencia).
   const [vista, setVista] = useState(() => esRRHH && !isMobile ? "resumen" : isMobile ? "dia" : "corte");
   const [docs, setDocs] = useState({ corte: null, previo: null, error: "", cargando: true });
+  // Marcajes de los jornales en la tablet (GeoClock, 24-nov-2026): {jornalId: {fecha: {ent, sal, proyecto}}}.
+  const [gcJ, setGcJ] = useState({});
   const [base, setBase] = useState(proyectoVacio());
   const [local, setLocalRaw] = useState(proyectoVacio());
   const [recuperado, setRecuperado] = useState(false);
@@ -506,6 +508,19 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
     try {
       const [a, b] = await Promise.all([store.getCloud(keyCorteJornal(c.id)), store.getCloud(keyCorteJornal(corteAnterior(c).id))]);
       setDocs({ corte: a || { corte: c.id, proyectos: {} }, previo: b || { proyectos: {} }, error: "", cargando: false });
+      // Marcajes de la tablet de las quincenas que toca el corte (best-effort).
+      try {
+        const keys = [...new Set(diasDelCorte(c).map(f => `gc-marks-${f.slice(0, 7)}-${+f.slice(8, 10) <= 15 ? "1Q" : "2Q"}`))];
+        const arrs = await Promise.all(keys.map(k => store.getCloud(k).catch(() => [])));
+        const m = {};
+        arrs.flat().forEach(mk => {
+          if (!mk || !mk.jornal || !mk.empId || mk.fecha < c.ini || mk.fecha > c.fin) return;
+          const d = ((m[mk.empId] = m[mk.empId] || {})[mk.fecha] = m[mk.empId][mk.fecha] || {});
+          if (mk.tipo === "entrada" && (!d.ent || (mk.min || 0) < (d.ent.min || 0))) { d.ent = mk; d.proyecto = mk.proyecto || ""; }
+          if (mk.tipo === "salida" && (!d.sal || (mk.min || 0) > (d.sal.min || 0))) d.sal = mk;
+        });
+        setGcJ(m);
+      } catch { setGcJ({}); }
     } catch { setDocs({ corte: null, previo: null, error: "No se pudo leer la nube. Revisá la señal y tocá ↻.", cargando: false }); }
   }, []);
   useEffect(() => { cargarCorte(corte); setFecha(hoy >= corte.ini && hoy <= corte.fin ? hoy : corte.ini); }, [corte.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -535,6 +550,24 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
     if (faltan.length) agregar(faltan);
   }, [short, jornaleros, base, docs.corte]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Regla del "1" (igual que GeoTeam): la ENTRADA marcada en la tablet pone el día en 1
+  // en la hoja de SU proyecto, solo si la celda está vacía. Queda en el borrador hasta
+  // "Guardar" (el ingeniero o RRHH lo confirman). Una vez por celda: si alguien la limpia
+  // a mano, no vuelve a aparecer.
+  const sembradosRef = useRef(new Set());
+  useEffect(() => {
+    if (!editable || !short || !docs.corte || recuperado) return;
+    const pon = [];
+    (local.jornaleros || []).forEach(id => Object.entries(gcJ[id] || {}).forEach(([f, d]) => {
+      const k = `${corte.id}|${short}|${id}|${f}`;
+      if (!d.ent || f > hoy || sembradosRef.current.has(k)) return;
+      if (d.proyecto && d.proyecto !== short) return;
+      if (!d.proyecto && ficha(id)?.proyecto !== short) return;
+      sembradosRef.current.add(k);
+      if (local.dias?.[id]?.[f] === undefined) pon.push([id, f]);
+    }));
+    if (pon.length) setLocal(p => { let d = p.dias; pon.forEach(([id, f]) => { if (d?.[id]?.[f] === undefined) d = ponerCelda(d, id, f, 1); }); return { ...p, dias: d }; });
+  }, [gcJ, local.jornaleros, short, docs.corte, editable, recuperado]); // eslint-disable-line react-hooks/exhaustive-deps
   const sucio = cambiosEntre(base, local);
   const setLocal = (fn) => setLocalRaw(prev => { const nx = typeof fn === "function" ? fn(prev) : fn; ponerDraft(draftKey(corte.id, short), { base, local: nx, at: new Date().toISOString() }); return nx; });
   const salir = (fn) => { if (sucio && !confirm("Tenés cambios sin guardar en este proyecto. Quedan guardados en este equipo, pero todavía no en la nube. ¿Salir igual?")) return; fn(); };
@@ -800,7 +833,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
       <div className="gt-vidrio" style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
         <div>
           <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>Corte {nombreCorte(corte)} · Jornales</div>
-          <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>Tocá una celda para cambiarla (1 → ½ → 2 → 0). Click derecho: horas extra de ese día. Las horas del viernes {+viernesFin.slice(8)} (→) se pagan en el próximo corte.</div>
+          <div style={{ fontSize: 12, color: "#6E6862", marginTop: 3 }}>Tocá una celda para cambiarla (1 → ½ → 2 → 0). Click derecho: horas extra de ese día. Las horas del viernes {+viernesFin.slice(8)} (→) se pagan en el próximo corte.{(local.jornaleros || []).some(id => gcJ[id]) ? " El puntito = marcó en la tablet (pasá el mouse para ver la hora); su entrada pone el día en 1." : ""}</div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
           {[["1", "Día", PAL.presente], ["½", "Medio día", PAL.medio], ["2", "Doble", PAL.extra], ["0", "No vino", PAL.nsp], ["+h", "Horas extra", PAL.extra]].map(([k, l, c]) => <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6E6862" }}><span style={{ minWidth: 22, textAlign: "center", padding: "2px 6px", borderRadius: 6, background: c.bg, color: c.fg, fontWeight: 800, fontSize: 10.5 }}>{k}</span>{l}</span>)}
@@ -843,11 +876,14 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
                   if (f.soloHePrevia) return <td key={d.fecha} style={{ ...TD_H, border: "1px solid rgba(44,42,40,.06)" }} />;
                   const v = local.dias?.[f.id]?.[d.fecha], h = num(local.he?.[f.id]?.[d.fecha]);
                   const k = `${f.id}|${d.fecha}`, abierto = celdaHe === k, pc = color(v, d);
-                  return <td key={d.fecha} title={d.isHoliday ? d.holidayName : "Click derecho: horas extra"}
+                  const gm = gcJ[f.id]?.[d.fecha];
+                  const tabletTxt = gm ? `Tablet: ${gm.ent ? `entró ${gm.ent.hora}` : "sin entrada"}${gm.sal ? ` · salió ${gm.sal.hora}` : ""}` : "";
+                  return <td key={d.fecha} title={[d.isHoliday ? d.holidayName : "", tabletTxt, "Click derecho: horas extra"].filter(Boolean).join("\n")}
                     onClick={() => { if (!editable) return; if (isMobile) setModal({ t: "celda", id: f.id, fecha: d.fecha }); else ponerDia(f.id, d.fecha, sig(v)); }}
                     onContextMenu={(ev) => { ev.preventDefault(); if (editable) setCeldaHe(abierto ? null : k); }}
                     style={{ ...TD_H, textAlign: "center", cursor: editable ? "pointer" : "default", background: pc ? pc.bg : "transparent", color: pc ? pc.fg : "#2C2A28", fontWeight: 700, userSelect: "none", minWidth: 32, border: "1px solid rgba(44,42,40,.06)", boxShadow: choqueEn.has(k) ? "inset 0 0 0 2px #B03024" : undefined, position: "relative", fontSize: 11.5 }}>
                     {v === undefined ? <span style={{ color: "#D8D4CE" }}>·</span> : Number(v) === 0.5 ? "½" : String(v)}
+                    {gm?.ent && <span aria-hidden style={{ position: "absolute", top: 2, right: 2, width: 4, height: 4, borderRadius: "50%", background: gm.sal ? "#1D5FAF" : "#2E8B57" }} />}
                     {h > 0 && <div style={{ fontSize: 8, color: d.fecha === viernesFin ? "#A39C92" : "#A94E16", lineHeight: 1, fontWeight: 800, marginTop: 1 }}>+{fmtN(h)}h{d.fecha === viernesFin ? "→" : ""}</div>}
                     {abierto && <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #CBD5E1", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.15)", zIndex: 10, minWidth: 170, padding: 8, textAlign: "left" }} onClick={ev => ev.stopPropagation()}>
                       <div style={{ fontSize: 10.5, color: "#64748b", marginBottom: 6, fontWeight: 600 }}>Horas extra · {d.dow} {d.day}{d.fecha === viernesFin ? " · van al próximo corte" : ""}</div>

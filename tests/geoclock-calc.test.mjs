@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion } from "../src/geoclock-calc.js";
+import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion, sedeDeJornal, jornalesDeTablet } from "../src/geoclock-calc.js";
 
 const tabletAdmin = { username: "marcaje", ubicacion: "ADMINISTRACIÓN", ubicaciones: ["ADMINISTRACIÓN", "PLANTEL"] };
 const tabletOscar = { username: "oscarpaz", ubicacion: "PLANTEL" };
@@ -34,4 +34,23 @@ test("sin cuadrilla que coincida: administrativos → ADMINISTRACIÓN, el resto 
 test("nombre corto", () => {
   assert.equal(nombreUbicacion("ADMINISTRACIÓN"), "Administración");
   assert.equal(nombreUbicacion("PLANTEL"), "Plantel");
+});
+
+test("jornales: el plantel (PLAN-TALLER) marca en la tablet del plantel", () => {
+  assert.equal(sedeDeJornal(tabletOscar, "PLAN-TALLER"), "PLANTEL");
+  assert.equal(sedeDeJornal(tabletAdmin, "PLAN-TALLER"), "PLANTEL");
+  assert.equal(sedeDeJornal(tabletAdmin, "PLANTEL-OFICINA"), "PLANTEL");
+  assert.equal(sedeDeJornal(tabletOscar, "TORRE ADOBE"), "");
+  assert.equal(sedeDeJornal({ ubicacion: "TORRE ADOBE" }, "TORRE ADOBE"), "TORRE ADOBE");
+  assert.equal(sedeDeJornal(tabletOscar, ""), "");
+});
+
+test("jornales de la tablet: activos de un proyecto que ella cubre; sin ubicaciones, todos", () => {
+  const js = [
+    { id: "a", fullName: "A", proyecto: "PLAN-TALLER", status: "active" },
+    { id: "b", fullName: "B", proyecto: "PLAN-TALLER", status: "inactive" },
+    { id: "c", fullName: "C", proyecto: "CATALEYA- RETENCIONES MIXTAS", status: "active" },
+  ];
+  assert.deepEqual(jornalesDeTablet(tabletOscar, js).map(j => j.id), ["a"]);
+  assert.deepEqual(jornalesDeTablet({}, js).map(j => j.id), ["a", "c"]);
 });

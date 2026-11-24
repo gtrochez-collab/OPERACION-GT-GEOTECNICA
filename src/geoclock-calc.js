@@ -43,3 +43,26 @@ export function ubicacionDeMarcaje(tablet, emp, asignacion = "") {
 
 /** Texto corto para mostrar en la tablet: "Plantel", "Administración". */
 export const nombreUbicacion = (u) => { const t = String(u || ""); return t ? t.charAt(0) + t.slice(1).toLowerCase() : ""; };
+
+// ── JORNALES en la tablet (24-nov-2026, Gerson: "que los jornales puedan
+// marcar entrada y salida en la tablet; para el plantel por ahora, y a futuro
+// todos los proyectos con su tablet") ──
+// El jornal no tiene cuadrilla: su sede sale del PROYECTO de su ficha
+// (hr-jornaleros). PLAN-TALLER / PLANTEL / PLANTEL-OFICINA marcan en la
+// tablet del PLANTEL; un proyecto con tablet propia (ubicacion = su short)
+// marca en la suya.
+/** Ubicación de la tablet donde marca un jornal de `proyecto`, o "" si esa tablet no lo cubre. */
+export function sedeDeJornal(tablet, proyecto) {
+  const ubs = ubicacionesDeTablet(tablet);
+  let p = sinAcentos(proyecto);
+  if (!p || !ubs.length) return "";
+  if (p.startsWith("PLAN")) p += " PLANTEL";
+  return ubs.find(u => p.includes(sinAcentos(u))) || "";
+}
+/** Jornales que salen en la lista de la tablet: activos y de un proyecto que ella cubre.
+ *  Sin ubicaciones (la compu de RRHH) salen todos los activos. */
+export function jornalesDeTablet(tablet, jornaleros = []) {
+  const activos = (jornaleros || []).filter(j => j && j.id && j.status !== "inactive" && j.fullName);
+  if (!ubicacionesDeTablet(tablet).length) return activos;
+  return activos.filter(j => sedeDeJornal(tablet, j.proyecto));
+}

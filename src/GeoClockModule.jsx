@@ -32,7 +32,9 @@ import { esFeriadoQuincena } from "./holidays.js";
 import { HORARIOS, horarioDe, TOLERANCIA_MIN, gcMarkKey, minTardeDe } from "./HRModule.jsx";
 import { GT_CSS } from "./gt-ui.js";
 import { MOVIL_CSS, BarraMovil, BarraInferior, PantallaCarga, TiraMovil, HojaMovil } from "./movil.jsx";
-import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion } from "./geoclock-calc.js";
+import { ubicacionDeMarcaje, ubicacionesDeTablet, nombreUbicacion, sedeDeJornal, jornalesDeTablet } from "./geoclock-calc.js";
+import { KEY_JORNALEROS } from "./jornales-calc.js";
+import { esSV } from "./operacion.js";
 import { vincularEmpleado, KEY_VINCULOS } from "./rrhh-solicitudes.js";
 import { libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 import { pdfRegistros } from "./registros-reporte.js";
@@ -303,6 +305,10 @@ const pedirGPS = () => new Promise((res) => {
 
 export default function GeoClockModule({ userRole = "admin", userName, userKey, userEmpId, onBack, onLogout, volverA = null }) {
   const [emps, setEmps] = useState([]);
+  // JORNALES (24-nov-2026, Gerson: "que los jornales puedan marcar entrada y
+  // salida en la tablet"): fichas de hr-jornaleros. No tienen cuadrilla ni
+  // llegada tarde (se pagan al día); su sede sale del proyecto de su ficha.
+  const [jornaleros, setJornaleros] = useState([]);
   const [cuads, setCuads] = useState([]);
   const [marks, setMarks] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -362,6 +368,13 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
   const [filtroUbic, setFiltroUbic] = useState("");   // búsqueda: pill de ubicación
   const [letra, setLetra] = useState("");             // búsqueda: índice A–Z
   const idleTimer = useRef(null);
+  // Un jornal visto como "persona" del reloj (mismos campos que una ficha de GeoTeam).
+  const personasJornal = useMemo(() => (jornaleros || []).filter(j => j && j.id && j.fullName).map(j => ({
+    ...j, company: j.company || (esSV ? "subterra" : "geotecnica"), position: j.position || "Jornal",
+    department: "Jornales", project: j.proyecto || "", esJornal: true, status: j.status === "inactive" ? "inactive" : "active",
+  })), [jornaleros]);
+  // Todos los que pueden tener marcajes: fichas de GeoTeam + jornales.
+  const personas = useMemo(() => [...emps, ...personasJornal], [emps, personasJornal]);
 
   // Reloj en vivo (1 tick por segundo, zona Tegucigalpa)
   useEffect(() => {
@@ -381,6 +394,8 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
       ]);
       if (Array.isArray(e)) setEmps(e);
       if (Array.isArray(cq)) setCuads(cq);
+      // Jornales: best-effort (si la nube no responde, se queda con lo que había).
+      try { const jn = await store.getCloud(KEY_JORNALEROS); if (Array.isArray(jn)) setJornaleros(jn); } catch { /* sin jornales */ }
       if (marcaPropia) { try { const v = await store.getCloud(KEY_VINCULOS); if (v && typeof v === "object") setVinculos(v); } catch { /* por nombre */ } }
       setMarks(Array.isArray(mk) ? mk : []);
       setLoadErr(!Array.isArray(e) || e.length === 0);
@@ -438,7 +453,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
   useEffect(() => {
     const faltan = [];
     const vistos = new Set();
-    for (const e of emps) {
+    for (const e of personas) {
       const fid = e.status === "active" ? e.photo?.fileId : null;
       if (fid && !fotos[fid] && !vistos.has(fid)) { vistos.add(fid); faltan.push(fid); }
     }
@@ -456,7 +471,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
       });
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [emps]);
+  }, [personas]);
   // Vista Registros: carga los marcajes de TODAS las quincenas que cubre el
   // rango elegido (lectura directa a nube para ver lo último; si una key
   // falla se queda con lo que hubiera en cache de la sesión).
@@ -517,7 +532,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
       [...new Set(delDia.map(mk => mk.empId))].forEach(eid => {
         // Empleado borrado de hr-emps5: sus horas NO pueden desaparecer del
         // reporte — el mark trae nombre y empresa, se arma una ficha sintética.
-        const emp = emps.find(e => e.id === eid)
+        const emp = personas.find(e => e.id === eid)
           || { id: eid, fullName: `${(delDia.find(mk => mk.empId === eid) || {}).empNombre || "(desconocido)"} (baja)`, company: (delDia.find(mk => mk.empId === eid) || {}).company || "", project: "", status: "inactive" };
         if (regPersona && eid !== regPersona) return;
         const entradas = delDia.filter(mk => mk.empId === eid && mk.tipo === "entrada").sort((a, b) => (a.min || 0) - (b.min || 0));
@@ -561,7 +576,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
       const cerradoDia = fecha < hoyF;
       if (fecha <= hoyF && delDia.some(mk => mk && mk.tipo === "entrada")) {
         const marcaron = new Set(delDia.map(mk => mk.empId));
-        emps.forEach(e => {
+        personas.forEach(e => {
           if (e.status !== "active" || marcaron.has(e.id)) return;
           if (e.noMarca) return;   // no requiere marcaje: no es un ausente
           if (regPersona && e.id !== regPersona) return;
@@ -583,7 +598,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
     const totAusentes = rows.filter(r => r.ausente).length;
     return { rows, grupos, proyOpciones, totNetas, totTardes, totAusentes, truncado };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [regMarks, regDesde, regHasta, regPersona, regProy, emps, cuads, now.fecha]);
+  }, [regMarks, regDesde, regHasta, regPersona, regProy, personas, cuads, now.fecha]);
 
   useEffect(() => { const f = () => setAncho(window.innerWidth); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
 
@@ -595,7 +610,9 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
 
   // Los que no requieren marcaje (jefaturas) no salen en el reloj: no tienen
   // por qué marcar y solo estorbaban en la búsqueda.
-  const activos = emps.filter(e => e.status === "active" && !e.noMarca);
+  // + los jornales del proyecto que cubre esta tablet (PLAN-TALLER en el plantel).
+  const jornalesAqui = useMemo(() => { const ids = new Set(jornalesDeTablet(tabletDe(userName), jornaleros).map(j => j.id)); return personasJornal.filter(j => ids.has(j.id)); }, [jornaleros, personasJornal, userName]);
+  const activos = [...emps.filter(e => e.status === "active" && !e.noMarca), ...(soloMio ? [] : jornalesAqui)];
   const resultados = (search.trim().length >= 1
     ? activos.filter(e => normaliza(e.fullName).includes(normaliza(search)))
     : activos
@@ -608,10 +625,10 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
 
   // Candado de cuadrilla: sin distribución de la quincena ACTUAL para la
   // empresa del colaborador, no hay marcaje.
-  const cuadrillaOk = (emp) => cuads.some(c => c && c.company === emp.company && c.periodo === q.periodo && c.quincena === q.quincena);
+  const cuadrillaOk = (emp) => !!emp?.esJornal || cuads.some(c => c && c.company === emp.company && c.periodo === q.periodo && c.quincena === q.quincena);
   // Proyecto asignado en la cuadrilla de esta quincena (para la ubicación del marcaje).
   const asignacionDe = (emp) => { const c = cuads.find(x => x && x.company === emp.company && x.periodo === q.periodo && x.quincena === q.quincena); return (c?.assignments || {})[emp.id] || ""; };
-  const ubicacionDe = (emp) => ubicacionDeMarcaje(tabletDe(userName), emp, asignacionDe(emp));
+  const ubicacionDe = (emp) => emp?.esJornal ? sedeDeJornal(tabletDe(userName), emp.proyecto) : ubicacionDeMarcaje(tabletDe(userName), emp, asignacionDe(emp));
   const yo = marcaPropia ? vincularEmpleado({ username: userKey, label: userName, empId: userEmpId }, emps, vinculos).emp : null;
   // Solo "Mi marcaje" (Fernando): al cargar entra directo a su pantalla.
   useEffect(() => {
@@ -619,7 +636,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soloMio, loaded, yo?.id]);
 
-  const selEmp = sel ? emps.find(e => e.id === sel.id) || sel : null;
+  const selEmp = sel ? personas.find(e => e.id === sel.id) || sel : null;
   const horario = selEmp ? horarioDe(selEmp) : HORARIOS.plantel;
   const entradaMin = selEmp ? minDe(horario.entrada) : minDe("7:00");
   // Atraso EFECTIVO: se cuenta desde que vence la tolerancia, no desde la
@@ -629,7 +646,8 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
   // Domingos y feriados NO tienen "llegada tarde": son días pagados por ley
   // (trabajarlos es DT/TF, decidido por RRHH) — el reloj solo deja constancia.
   const esDomFer = now.dow === 0 || esFeriadoQuincena(q.periodo, Number(now.fecha.slice(8, 10)));
-  const esTarde = tipoAccion === "entrada" && !esDomFer && now.min > entradaMin + TOLERANCIA_MIN;
+  // Los jornales se pagan al día: no tienen llegada tarde (la hora queda igual en el marcaje).
+  const esTarde = tipoAccion === "entrada" && !esDomFer && !selEmp?.esJornal && now.min > entradaMin + TOLERANCIA_MIN;
 
   const seleccionar = async (e) => {
     setSel(e); setView("person"); setExplicacion(""); setTieneFirma(false); setComentSalida("");
@@ -668,7 +686,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
     try {
       const t = ahoraTegus(); // re-lee la hora al confirmar (no la del render)
       const tDomFer = t.dow === 0 || esFeriadoQuincena(t.fecha.slice(0, 7), Number(t.fecha.slice(8, 10)));
-      const tarde = tipoAccion === "entrada" && !tDomFer && t.min > entradaMin + TOLERANCIA_MIN;
+      const tarde = tipoAccion === "entrada" && !tDomFer && !selEmp.esJornal && t.min > entradaMin + TOLERANCIA_MIN;
       // Borde de la tolerancia: si entre el render y el click se cruzó el
       // límite (7:10:59 → 7:11), la validación del render dejó pasar una
       // tardanza SIN explicación. Se re-valida con la hora fresca.
@@ -736,7 +754,9 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
         // La ubicación la decide la PERSONA (cuadrilla o departamento), no
         // la tablet: la de la pared cubre administración y plantel. Desde su
         // propia cuenta (Mi marcaje) queda "SU DISPOSITIVO" + el GPS.
-        ubicacion: propio ? "SU DISPOSITIVO" : ubicacionDeMarcaje(tabletDe(userName), selEmp, asignacionDe(selEmp)),
+        ubicacion: propio ? "SU DISPOSITIVO" : ubicacionDe(selEmp),
+        // Jornal: lo lee la hoja de jornales (la entrada pone el día en 1).
+        ...(selEmp.esJornal ? { jornal: true, proyecto: selEmp.proyecto || "" } : {}),
         ...(propio ? { marcaPropia: true, gps: gps || null, sinGps: !gps } : {}),
         ts: nowIso,
         createdAt: nowIso,
@@ -775,7 +795,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
   const puedeCorregir = userRole === "admin" || userRole === "coordinador" || userRole === "tesoreria" || userRole === "asistente_compras";
   const guardarMarcaManual = async () => {
     if (corrSaving || !corr) return;
-    const emp = emps.find(e => e.id === corr.empId);
+    const emp = personas.find(e => e.id === corr.empId);
     if (!emp) return alert("Elegí al colaborador.");
     const hoyF = ahoraTegus().fecha;
     if (!corr.fecha || corr.fecha > hoyF) return alert("La fecha no puede ser futura.");
@@ -801,6 +821,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
         // justificación de RRHH, no un marcaje del colaborador.
         tarde: false, minTarde: 0, horarioEntrada: horarioDe(emp).entrada,
         explicacion: "", comentario: "",
+        ...(emp.esJornal ? { jornal: true, proyecto: emp.proyecto || "" } : {}),
         manual: true, justificacion: String(corr.justif).trim(), editadoPor: userName || "RRHH",
         historial: [{ accion: `${corr.tipo} colocada MANUALMENTE (el colaborador no marcó)`, por: userName || "RRHH", justificacion: String(corr.justif).trim(), fecha: hoyF, at: nowIso }],
         firmaId: null, registradoPor: userName || "RRHH", ts: nowIso, createdAt: nowIso,
@@ -847,7 +868,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
   // la hora de entrada en vez de desde el fin de la tolerancia).
   const minTardeMk = (mk) => {
     if (!mk || !mk.tarde) return 0;
-    const emp = emps.find(e => e.id === mk.empId);
+    const emp = personas.find(e => e.id === mk.empId);
     return minTardeDe(mk.hora, mk.horarioEntrada || horarioDe(emp).entrada);
   };
   // Estado visual de una entrada tarde: verde si RRHH la aprobó (justificada,
@@ -904,7 +925,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
       catch { setDetSaving(false); return alert("Sin conexión con la nube — no se guardó nada. Reintentá."); }
       const actual = cloudArr.find(x => x && x.id === mk.id);
       if (!actual) { setDetSaving(false); return alert("Ese marcaje ya no existe en la nube (alguien lo borró). Cerrá y volvé a abrir Registros."); }
-      const emp = emps.find(e => e.id === mk.empId);
+      const emp = personas.find(e => e.id === mk.empId);
       const horarioEnt = actual.horarioEntrada || horarioDe(emp).entrada;
       const esDomFer = (() => {
         const d = new Date(`${mk.fecha}T12:00:00`);
@@ -912,7 +933,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
       })();
       const minNuevo = nh * 60 + nm;
       // Una marca MANUAL nunca genera tardanza (la colocó RRHH, no el reloj).
-      const tardeNuevo = actual.tipo === "entrada" && !actual.manual && !esDomFer
+      const tardeNuevo = actual.tipo === "entrada" && !actual.manual && !actual.jornal && !esDomFer
         && minNuevo > (minDe(horarioEnt) + TOLERANCIA_MIN);
       const acciones = [];
       if (cambioHora) acciones.push(`hora ${actual.tipo} corregida: ${actual.hora} → ${nuevaHora}`);
@@ -1048,7 +1069,8 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
       {view === "search" && !modoPropio && (() => {
         const dos = ancho >= 1000;
         const nEnt = marksHoy.filter(mk => mk.tipo === "entrada").length, nSal = marksHoy.filter(mk => mk.tipo === "salida").length, nTarde = marksHoy.filter(mk => mk.tipo === "entrada" && mk.tarde).length;
-        const lista = resultados.filter(e => (!filtroUbic || ubicacionDe(e) === filtroUbic) && (!letra || normaliza(e.fullName).startsWith(normaliza(letra))));
+        const hayJornales = resultados.some(e => e.esJornal);
+        const lista = resultados.filter(e => (!filtroUbic || (filtroUbic === "__jornales__" ? e.esJornal : ubicacionDe(e) === filtroUbic)) && (!letra || normaliza(e.fullName).startsWith(normaliza(letra))));
         const letras = [...new Set(resultados.map(e => normaliza(e.fullName).charAt(0).toUpperCase()))].filter(Boolean).sort();
         const nombreCortoF = (n) => { const p = String(n || "").trim().split(/\s+/); return p.length >= 3 ? `${p[0]} ${p[2]}` : p.join(" "); };
         const pillF = (label, on, onClick, key) => <button key={key} type="button" onClick={onClick} style={{ minHeight: 34, padding: "6px 13px", borderRadius: 999, border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: on ? ORANGE_DARK : "rgba(255,255,255,.75)", color: on ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{label}</button>;
@@ -1096,7 +1118,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Escribí tu nombre…" autoFocus
               style={{ width: "100%", boxSizing: "border-box", padding: "14px 18px", fontSize: 18, borderRadius: 16, border: `1.5px solid ${search ? ORANGE : "rgba(44,42,40,.12)"}`, outline: "none", background: "rgba(255,255,255,.85)", fontFamily: "inherit", color: CHARCOAL }} />
             {!search && <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              {ubicsTablet.length > 1 && <div style={{ display: "flex", gap: 6 }}>{pillF("Todos", !filtroUbic, () => setFiltroUbic(""), "t")}{ubicsTablet.map(u => pillF(nombreUbicacion(u), filtroUbic === u, () => setFiltroUbic(filtroUbic === u ? "" : u), u))}</div>}
+              {(ubicsTablet.length > 1 || hayJornales) && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{pillF("Todos", !filtroUbic, () => setFiltroUbic(""), "t")}{ubicsTablet.length > 1 && ubicsTablet.map(u => pillF(nombreUbicacion(u), filtroUbic === u, () => setFiltroUbic(filtroUbic === u ? "" : u), u))}{hayJornales && pillF("Jornales", filtroUbic === "__jornales__", () => setFiltroUbic(filtroUbic === "__jornales__" ? "" : "__jornales__"), "j")}</div>}
               <div style={{ display: "flex", gap: 2, flexWrap: "wrap", marginLeft: "auto" }}>{letras.map(l => <button key={l} type="button" onClick={() => setLetra(letra === l ? "" : l)} style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: letra === l ? ORANGE_DARK : "transparent", color: letra === l ? "#fff" : STONE, font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{l}</button>)}</div>
             </div>}
             {/* Personas SIN caja (23-oct-2026, Gerson: "demasiados cuadritos, me
@@ -1148,7 +1170,9 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
               <div style={{ font: "800 21px/1.15 var(--display)", color: CHARCOAL, letterSpacing: "-.01em" }}>{selEmp.fullName}</div>
               <div style={{ fontSize: 13, color: STONE, marginTop: 4 }}>{selEmp.position || "—"} · {co.name}</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(44,42,40,.06)", color: STONE, fontSize: 11.5, fontWeight: 700 }}>Horario {horario.entrada} – {horario.salida || "?"} · tolerancia hasta {limite}</span>
+                {selEmp.esJornal
+                  ? <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(44,42,40,.06)", color: STONE, fontSize: 11.5, fontWeight: 700 }}>Jornal{selEmp.proyecto ? ` · ${selEmp.proyecto}` : ""}</span>
+                  : <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(44,42,40,.06)", color: STONE, fontSize: 11.5, fontWeight: 700 }}>Horario {horario.entrada} – {horario.salida || "?"} · tolerancia hasta {limite}</span>}
                 {ubic && <span style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(232,118,45,.14)", color: "#A94E16", fontSize: 11.5, fontWeight: 700 }}>Marcás en {nombreUbicacion(ubic)}</span>}
                 {!ubic && modoPropio && <span title="Se guarda tu ubicación GPS como evidencia (si el celular da permiso)" style={{ padding: "4px 10px", borderRadius: 999, background: "rgba(232,118,45,.14)", color: "#A94E16", fontSize: 11.5, fontWeight: 700 }}>Desde tu celular · con ubicación</span>}
               </div>
@@ -1182,7 +1206,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
               <textarea value={explicacion} onChange={e => setExplicacion(e.target.value)} rows={2} placeholder="Ej: se accidentó el bus, cita médica, tráfico en la salida al sur…"
                 style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(44,42,40,.14)", fontSize: 14, fontFamily: "inherit", resize: "vertical", outline: "none", background: "rgba(255,255,255,.85)" }} />
             </div>}
-            {tipoAccion === "entrada" && !esTarde && <div style={{ fontSize: 13, color: GREEN, fontWeight: 700, padding: "0 4px" }}>Vas a tiempo: son las {now.hora} y tu tolerancia va hasta las {limite}.</div>}
+            {tipoAccion === "entrada" && !esTarde && !selEmp.esJornal && <div style={{ fontSize: 13, color: GREEN, fontWeight: 700, padding: "0 4px" }}>Vas a tiempo: son las {now.hora} y tu tolerancia va hasta las {limite}.</div>}
 
             {tipoAccion === "salida" && <div className="gt-vidrio" style={{ padding: "12px 16px" }}>
               <div style={{ fontWeight: 700, fontSize: 13.5, color: CHARCOAL }}>¿Algún comentario? <span style={{ fontWeight: 500, fontSize: 12, color: STONE }}>(opcional) · ej. "salgo del plantel a proyecto"</span></div>
@@ -1260,7 +1284,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
         // = + - @ ya no se evalúa como fórmula (el apóstrofe del CSV sobraba).
         const filtrosTxt = [
           `${fmtDiaCorto(regDesde)} ${regDesde.slice(0, 4)}${regDesde !== regHasta ? ` a ${fmtDiaCorto(regHasta)} ${regHasta.slice(0, 4)}` : ""}`,
-          regPersona ? ((emps.find(e => e.id === regPersona) || {}).fullName || "") : "Todos los colaboradores",
+          regPersona ? ((personas.find(e => e.id === regPersona) || {}).fullName || "") : "Todos los colaboradores",
           regProy || "Todos los proyectos",
         ].join(" · ");
         const estadoTardanza = (mk) => { const d = decisionDe(mk); return d ? (d.estado === "aprobada" ? "Justificada (aprobada)" : "Se descuenta (denegada)") : "Pendiente de decision"; };
@@ -1324,7 +1348,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
             netas: r.netas, brutas: r.brutas, almuerzo: r.almuerzo, estado: estadoPdf(r),
             notas: [r.ent && r.ent.manual ? `Entrada manual por ${r.ent.editadoPor}: ${r.ent.justificacion || ""}` : "", r.sal && r.sal.manual ? `Salida manual por ${r.sal.editadoPor}: ${r.sal.justificacion || ""}` : "", (r.sal && r.sal.comentario) || "", r.ent && r.ent.tarde && r.ent.explicacion ? `Tarde: ${r.ent.explicacion}` : ""].filter(Boolean).join(" · "),
           });
-          const personaEmp = regPersona ? emps.find(e => e.id === regPersona) : null;
+          const personaEmp = regPersona ? personas.find(e => e.id === regPersona) : null;
           const cos = [...new Set(rows.map(r => r.emp.company).filter(Boolean))];
           const [yd, md, dd] = regDesde.split("-").map(Number), [yh, mh, dh] = regHasta.split("-").map(Number);
           const rango = regDesde === regHasta ? `${dd} de ${MESES[md - 1]} de ${yd}`
@@ -1422,7 +1446,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
           <div className="gm-grupo">
             {rs.map(r => {
               const st = r.ent && r.ent.tarde ? estiloTarde(r.ent) : null;
-              const ef = (r.emp && emps.find(x => x.id === r.emp.id)) || r.emp;
+              const ef = (r.emp && personas.find(x => x.id === r.emp.id)) || r.emp;
               return <div key={`${r.emp.id}-${r.fecha}`} className="gm-item" style={{ cursor: "default", minHeight: 60, alignItems: "center" }}>
                 {fotos[ef?.photo?.fileId] ? <img src={fotos[ef.photo.fileId]} alt="" style={{ width: 38, height: 38, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} /> : <span style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(44,42,40,.07)", color: STONE, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{iniciales(r.emp.fullName)}</span>}
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -1499,7 +1523,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
               </div>
               {rs.map(r => {
                 const st = r.ent && r.ent.tarde ? estiloTarde(r.ent) : null;
-                const ef = (r.emp && emps.find(x => x.id === r.emp.id)) || r.emp;
+                const ef = (r.emp && personas.find(x => x.id === r.emp.id)) || r.emp;
                 return <div key={`${r.emp.id}-${r.fecha}`} style={{ display: "grid", gridTemplateColumns: COLS, gap: 10, alignItems: "center", padding: "9px 18px", borderTop: "1px solid rgba(44,42,40,.05)" }}>
                   {varios && <span style={{ fontSize: 12.5, color: STONE }}>{fmtDiaCorto(r.fecha)}</span>}
                   <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
@@ -1564,7 +1588,7 @@ export default function GeoClockModule({ userRole = "admin", userName, userKey, 
           {/* ── DETALLE DE UN MARCAJE: datos, firma, historial y edición ── */}
           {det && (() => {
             const mk = det.mk;
-            const emp = emps.find(e => e.id === mk.empId);
+            const emp = personas.find(e => e.id === mk.empId);
             const dec = decisionDe(mk);
             const st = mk.tarde ? estiloTarde(mk) : null;
             const hist = Array.isArray(mk.historial) ? mk.historial : [];
