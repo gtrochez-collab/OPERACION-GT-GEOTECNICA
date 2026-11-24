@@ -435,16 +435,16 @@ export const keyMovimientos = (iso) => `inv-mov-${String(iso || new Date().toISO
 //   · Residentes y los demás: sin acceso.
 export const permisosDe = (role) => {
   // SUMINISTRO A OBRA (24-nov-2026): el residente maneja SOLO su proyecto
-  // (inventario inicial, recibir, contar); Planificación (Neftalí) ve todos
-  // los proyectos y puede contar o recibir en cualquiera de ellos.
-  if (role === "residente" || role === "planificacion") {
+  // (inventario inicial, recibir, contar). Planificación (Neftalí) SOLO MIRA
+  // todo el inventario (24-nov-2026, Gerson: "que pueda ver solo ver inventario").
+  if (role === "residente") {
     return { ver: true, cargar: true, mover: true, asignar: false, estado: true, imprimir: true, editar: true, importar: false,
       ajustar: false, eliminar: false, ubicaciones: false, config: false, contar: true,
-      alcance: role === "residente" ? "propias" : "proyectos", soloLoSuyo: role === "residente" };
+      alcance: "propias", soloLoSuyo: true };
   }
   const full = role === "admin" || role === "tesoreria";
   const carga = full || role === "logistica" || role === "asistente_compras";
-  const ver = carga || ["costos", "compras_ops", "gerencia", "visor_compras", "almacenista", "almacen_visor"].includes(role);
+  const ver = carga || ["costos", "compras_ops", "gerencia", "visor_compras", "almacenista", "almacen_visor", "planificacion"].includes(role);
   return {
     ver, cargar: carga, mover: carga, asignar: carga, estado: carga, imprimir: carga, editar: carga, importar: carga,
     ajustar: full, eliminar: full, ubicaciones: full || role === "asistente_compras", config: full, contar: carga,

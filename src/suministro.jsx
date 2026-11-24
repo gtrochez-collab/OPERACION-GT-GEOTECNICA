@@ -16,7 +16,7 @@ import { USERS } from "./users.js";
 import { UNIDADES } from "./geocost-calc.js";
 import { conteoAlDia, ultimoDiaConteo, esConsumible } from "./geoinventory-calc.js";
 import {
-  KEY_PROGRAMACIONES, KEY_PROYECTOS_ACTIVOS, DIAS_ROJO, DIAS_META, num, sumarDias, lunesDe, diasDeSemana, diaCorto, fechaCorta,
+  KEY_PROGRAMACIONES, KEY_PROG_HIST, KEY_PROYECTOS_ACTIVOS, DIAS_ROJO, DIAS_META, num, sumarDias, lunesDe, diasDeSemana, diaCorto, fechaCorta,
   semanasDe, cantidadDia, totalSemana, totalMaterial, programacionVigente, siguienteNumero, ponerCantidad, itemDeMaterial, coberturaProyecto, sinAcentos, resumenDias,
 } from "./suministro-calc.js";
 import { saldoDePartida, partidasPedibles } from "./geosupply-calc.js";
@@ -71,7 +71,20 @@ export function useSuministro() {
     let nube;
     try { nube = await store.getCloud(KEY_PROGRAMACIONES); } catch { alert("No hay conexión con la nube: no se guardó. Probá otra vez."); return false; }
     const lista = Array.isArray(nube) ? nube : [];
-    const next = lista.some(p => p.id === prog.id) ? lista.map(p => p.id === prog.id ? prog : p) : [...lista, prog];
+    // RESPALDO: si ya había una versión guardada de esta programación, se copia
+    // a sp-programaciones-hist ANTES de pisarla. Si el respaldo no se puede
+    // confirmar, NO se guarda el cambio (nunca se pierde lo publicado).
+    const previa = lista.find(p => p.id === prog.id);
+    if (previa && previa.updatedAt) {
+      const resp = { id: uid(), progId: prog.id, projectCode: previa.projectCode, numero: previa.numero, reemplazadaAt: prog.updatedAt || new Date().toISOString(), reemplazadaPor: prog.updatedBy || "", version: previa };
+      try {
+        const h = await store.getCloud(KEY_PROG_HIST);
+        const okH = await store.set(KEY_PROG_HIST, [...(Array.isArray(h) ? h : []), resp]);
+        const vh = okH ? await store.getCloud(KEY_PROG_HIST) : null;
+        if (!(Array.isArray(vh) && vh.some(x => x.id === resp.id))) throw new Error("sin verificar");
+      } catch { alert("No pude guardar el respaldo de la versión anterior: no se guardó el cambio. Probá otra vez."); return false; }
+    }
+    const next = previa ? lista.map(p => p.id === prog.id ? prog : p) : [...lista, prog];
     const ok = await store.set(KEY_PROGRAMACIONES, next);
     if (!ok) { alert("La nube no aceptó el guardado. Probá otra vez."); return false; }
     try {
@@ -155,8 +168,17 @@ function ElegirProyecto({ opciones, activos, onElegir, onClose }) {
   </div>;
 }
 
-function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, isMobile, receta, onVolver }) {
+function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, isMobile, receta, onVolver, respaldo = null }) {
   const [p, setP] = useState(inicial);
+  // Respaldos de esta programación (versiones anteriores que se pisaron al guardar)
+  const [respaldos, setRespaldos] = useState([]);
+  const [verResp, setVerResp] = useState(false);
+  const [viendo, setViendo] = useState(null);
+  const cargarResp = useCallback(async () => {
+    if (respaldo || inicial._nueva) return;
+    try { const h = await store.getCloud(KEY_PROG_HIST); setRespaldos((Array.isArray(h) ? h : []).filter(x => x.progId === inicial.id).sort((a, b) => String(b.reemplazadaAt).localeCompare(String(a.reemplazadaAt)))); } catch { /* best effort */ }
+  }, [inicial.id, inicial._nueva, respaldo]);
+  useEffect(() => { cargarResp(); }, [cargarResp]);
   const [sucio, setSucio] = useState(!!inicial._nueva);
   const [guardando, setGuardando] = useState(false);
   const [nuevoMat, setNuevoMat] = useState({ nombre: "", unidad: "" });
@@ -192,7 +214,7 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
       const at = new Date().toISOString();
       const { _nueva, ...limpio } = p;
       const conItems = { ...limpio, semanas: semanasDe(p), materiales: p.materiales.map(m => ({ ...m, itemId: itemDeMaterial(S.items, m)?.id || m.itemId || "" })), updatedAt: at, updatedBy: user.nombre };
-      if (await S.guardarProg(conItems)) { setP(conItems); setSucio(false); }
+      if (await S.guardarProg(conItems)) { setP(conItems); setSucio(false); cargarResp(); }
     } finally { setGuardando(false); }
   };
   const salir = () => { if (sucio && !confirm("Tenés cambios sin guardar. ¿Salir igual?")) return; onVolver(); };
@@ -204,13 +226,25 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
     finally { setGenerando(false); }
   };
   const nombre = nombreDe(proyectos, p.projectCode);
+  const restaurar = (r) => {
+    if (!confirm(`¿Volver a la versión que guardó ${r.version.updatedBy || r.version.creadaPor} el ${fmtDT(r.version.updatedAt)}? La de ahora queda también en respaldos al guardar.`)) return;
+    const v = r.version;
+    setP(x => ({ ...x, materiales: (v.materiales || []).map(m => ({ ...m })), semanas: [...(v.semanas || [])], dias: JSON.parse(JSON.stringify(v.dias || {})), nota: v.nota || "" }));
+    setSucio(true); setViendo(null); setVerResp(false);
+  };
+  if (viendo) return <EditorProgramacion prog={viendo.version} S={S} user={user} proyectos={proyectos} puedeEditar={false} isMobile={isMobile} receta={receta} respaldo={{ ...viendo, onRestaurar: puedeEditar ? () => restaurar(viendo) : null }} onVolver={() => setViendo(null)} />;
   return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    {respaldo && <div style={{ padding: "10px 14px", borderRadius: 14, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      <span style={{ flex: 1, minWidth: 220 }}>Respaldo · así estaba antes de que {respaldo.reemplazadaPor || "alguien"} la cambiara el {fmtDT(respaldo.reemplazadaAt)}. Solo lectura.</span>
+      {respaldo.onRestaurar && <Btn small onClick={respaldo.onRestaurar}>Volver a esta versión</Btn>}
+    </div>}
     <div className="gt-vidrio" style={{ padding: isMobile ? 12 : 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
       <button type="button" className="gt-circulo" onClick={salir} aria-label="Atrás" style={{ width: 36, height: 36, fontSize: 15 }}>←</button>
       <div style={{ flex: 1, minWidth: 200 }}>
         <div style={{ font: "800 17px/1.2 var(--display)", color: CHARCOAL }}>{p.projectCode} · {tituloProg(p)}</div>
         <div style={{ fontSize: 12, color: "#8A847D", marginTop: 3 }}>{nombre ? `${nombre} · ` : ""}{p.updatedAt ? `guardada por ${p.updatedBy} · ${fmtDT(p.updatedAt)}` : "sin guardar"}</div>
       </div>
+      {respaldos.length > 0 && <Btn variant="ghost" onClick={() => setVerResp(true)}>Respaldos ({respaldos.length})</Btn>}
       <Btn variant="ghost" disabled={generando} onClick={pdf}>{generando ? "Armando PDF…" : "PDF"}</Btn>
       {editable && <Btn disabled={!sucio || guardando} onClick={guardar}>{guardando ? "Guardando…" : sucio ? "Guardar" : "Guardado"}</Btn>}
     </div>
@@ -264,6 +298,19 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
     <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 11.5, fontWeight: 700, color: "#6E6862" }}>Nota
       <textarea value={p.nota || ""} disabled={!editable} onChange={e => up(x => ({ ...x, nota: e.target.value }))} rows={2} placeholder="Ej. sale del Look Ahead del 23 nov; el cemento lo pone el cliente…" style={{ ...CTRL, resize: "vertical" }} />
     </label>
+    {verResp && <Modal title={`Respaldos · ${tituloProg(p)}`} onClose={() => setVerResp(false)}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 12.5, color: "#6E6862" }}>Cada vez que alguien cambia esta programación, la versión de antes queda guardada acá.</div>
+        {respaldos.map(r => <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 12, background: "rgba(44,42,40,.04)", flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL }}>Guardada por {r.version.updatedBy || r.version.creadaPor} · {fmtDT(r.version.updatedAt)}</div>
+            <div style={{ fontSize: 11.5, color: "#8A847D", marginTop: 2 }}>La cambió {r.reemplazadaPor || "—"} · {fmtDT(r.reemplazadaAt)} · {(r.version.materiales || []).map(m => `${fmtN(totalMaterial(r.version, m.id))} ${m.unidad} ${m.nombre}`).join(" · ")}</div>
+          </div>
+          <Btn small variant="ghost" onClick={() => { setViendo(r); setVerResp(false); }}>Ver</Btn>
+          {editable && <Btn small onClick={() => restaurar(r)}>Volver a esta</Btn>}
+        </div>)}
+      </div>
+    </Modal>}
   </div>;
 }
 

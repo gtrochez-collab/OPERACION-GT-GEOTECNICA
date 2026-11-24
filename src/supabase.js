@@ -51,6 +51,7 @@ const SKIP_LOCAL_PREFIXES = [
   'hr-jornal',      // Jornales (10-nov-2026): hr-jornaleros y hr-jornal-<corte> SOLO se leen con getCloud
   'sp-solicitudes', // GeoSupply (26-oct-2026): SOLO se leen con getCloud; sin cache no hay re-sync posible
   'sp-cotizaciones',
+  'sp-programaciones-hist', // respaldos de programaciones (24-nov-2026): solo getCloud
   'chat-channel-',  // mensajes de canales (cloud es source of truth)
   'chat-dm-',       // mensajes directos (cloud es source of truth)
   // GeoClock (ago 2026): las firmas pesan ~10KB c/u y se acumulan (2 marcajes

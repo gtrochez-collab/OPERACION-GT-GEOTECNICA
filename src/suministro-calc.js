@@ -24,6 +24,11 @@
 import { esConsumible, compromisosDe, disponibleEn } from "./geoinventory-calc.js";
 
 export const KEY_PROGRAMACIONES = "sp-programaciones";
+// Respaldos (24-nov-2026, Gerson: "que quede siempre respaldo por si llega a
+// cambiar una ya publicada"): antes de pisar una programación guardada, la
+// versión anterior se copia acá. [{id, progId, projectCode, numero,
+// reemplazadaAt, reemplazadaPor, version: <la programación tal cual estaba>}]
+export const KEY_PROG_HIST = "sp-programaciones-hist";
 // Proyectos activos que elige Gerson (GeoInventory → Proyectos → Elegir activos).
 // {shorts: [short], updatedAt, updatedBy}. Vacío = todos se ven como antes.
 export const KEY_PROYECTOS_ACTIVOS = "gt-proyectos-activos";

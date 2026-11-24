@@ -103,7 +103,7 @@ const MODULES = [
     // Christian (costos) y Carolina (tesoreria) reclasifican y acreditan
     // movilizaciones; gerencia solo lectura. 16-sep-2026: Arturo (compras_ops)
     // entra SOLO para cargar/editar presupuestos de proyecto (ver GeoCostModule).
-    roles: ["admin", "costos", "tesoreria", "gerencia", "compras_ops", "planificacion"],
+    roles: ["admin", "costos", "tesoreria", "gerencia", "compras_ops"],
   },
   {
     id: "geosafety",

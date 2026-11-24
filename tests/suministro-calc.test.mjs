@@ -80,7 +80,9 @@ test("conteo obligatorio: lunes y jueves", () => {
 test("permisos: el residente solo lo suyo y sin ajustar; planificación en todos los proyectos", () => {
   const r = permisosDe("residente");
   assert.equal(r.alcance, "propias"); assert.equal(r.soloLoSuyo, true); assert.equal(r.ajustar, false); assert.equal(r.contar, true);
-  assert.equal(permisosDe("planificacion").alcance, "proyectos");
+  assert.equal(permisosDe("planificacion").ver, true);
+  assert.equal(permisosDe("planificacion").cargar, false);
+  assert.equal(permisosDe("planificacion").contar, false);
   assert.equal(permisosDe("costos").contar, false);
 });
 
