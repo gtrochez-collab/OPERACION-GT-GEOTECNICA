@@ -121,6 +121,9 @@ test("San Miguel: obra 200 + almacén 270 → la obra cubre el miércoles, el al
   assert.equal(d["2026-11-26"].estado, "almacen");
   assert.equal(d["2026-11-27"].estado, "falta"); assert.equal(d["2026-11-27"].falta, 30);
   assert.equal(d["2026-11-28"].falta, 260);
+  // En almacén quedarían: mié 270 (lo cubre la obra) · jue 230 · vie 0
+  assert.deepEqual(["2026-11-25", "2026-11-26", "2026-11-27"].map(x => d[x].almQueda), [270, 230, 0]);
+  assert.equal(d["2026-11-25"].obraQueda, 0);
   const prog = { projectCode: "VILLA SAN MIGUEL", numero: 1, materiales: [{ id: "m1", nombre: "Cemento HE", unidad: "Bolsa" }], dias: Object.fromEntries(Object.entries(porDia).map(([f, n]) => [f, { m1: n }])) };
   const r = coberturaProyecto({ short: "VILLA SAN MIGUEL", prog, items: [it], hoy: "2026-11-24" });
   const f = r.filas[0];

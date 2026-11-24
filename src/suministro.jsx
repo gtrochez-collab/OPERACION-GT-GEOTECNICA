@@ -37,8 +37,9 @@ export const COB_DIA = {
   almacen: { bg: "rgba(31,79,140,.12)", color: "#1F4F8C", txt: "Lo cubre el almacén · hay que mandarlo" },
   falta: { bg: "rgba(192,57,43,.14)", color: "#B03024", txt: "No alcanza · hay que comprar" },
 };
+const COB_CORTO = { obra: "obra", almacen: "almacén", falta: "falta" };
+const leyendaChica = () => <div style={{ display: "flex", gap: 10, fontSize: 10.5, color: "#8A847D" }}>{Object.entries(COB_DIA).map(([k, c]) => <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: c.bg, boxShadow: `inset 0 0 0 1px ${c.color}33` }} />{COB_CORTO[k]}</span>)}</div>;
 const diaTxt = (iso) => iso ? `${diaCorto(iso).toLowerCase()} ${+iso.slice(8)}` : "";
-const leyendaCob = () => <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11.5, color: "#6E6862" }}>{Object.entries(COB_DIA).map(([k, c]) => <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 14, height: 14, borderRadius: 4, background: c.bg, boxShadow: `inset 0 0 0 1px ${c.color}33` }} />{c.txt}</span>)}</div>;
 const normU = (u) => sinAcentos(u).replace(/[^a-z0-9]/g, "").replace(/s$/, "");
 /** Partida de la receta del material: presupuesto, lo comprado y lo que queda (en cantidad). */
 export const recetaDeMaterial = (receta, short, m, pendiente) => {
@@ -224,28 +225,29 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
         <datalist id="sum-unidades">{UNIDADES.map(u => <option key={u} value={u} />)}</datalist>
       </label>
       <Btn variant="dark" onClick={agregarMat}>+ Material</Btn>
-      <div style={{ flexBasis: "100%", fontSize: 11.5, color: "#8A847D" }}>Usá el mismo nombre que tiene en el inventario del proyecto (ej. "Cemento GU"): así se cruza solo con lo que cuenta el residente.</div>
     </div>}
 
-    {(p.materiales || []).length > 0 && <ResumenCobertura p={p} cob={cob} hoy={hoy} isMobile={isMobile} />}
     {(p.materiales || []).length === 0 ? <div className="gt-vidrio" style={{ padding: "30px 20px", textAlign: "center", color: "#8A847D", fontSize: 13.5 }}>Agregá los materiales que se programan (cemento, arena, grava…).</div>
       : semanas.map((lunes, si) => { const dias = diasDeSemana(lunes); return <div key={lunes} className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid rgba(44,42,40,.07)" }}>
           <span style={{ font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>Semana {si + 1}</span><span style={{ fontSize: 12, color: "#8A847D" }}>{fechaCorta(lunes)} – {fechaCorta(dias[5])}</span>
+          {si === 0 && <div style={{ marginLeft: 10 }}>{leyendaChica()}</div>}
           {editable && semanas.length > 1 && <button type="button" onClick={() => quitarSemana(lunes)} style={{ marginLeft: "auto", border: "none", background: "none", color: C_ROJO.color, font: "700 11.5px/1 var(--sans)", cursor: "pointer" }}>Quitar semana</button>}
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr><th style={{ ...TH, minWidth: 150 }}>Material</th>{dias.map(f => <th key={f} style={{ ...TH, textAlign: "center", color: f === hoyISO() ? ORANGE_DARK : TH.color }}>{diaCorto(f)} {+f.slice(8)}</th>)}<th style={{ ...TH, textAlign: "right" }}>Total semana</th></tr></thead>
             <tbody>{p.materiales.map(m => <tr key={m.id}>
-              <td style={{ ...TD, fontWeight: 700, minWidth: 190 }}>{m.nombre} <span style={{ color: "#8A847D", fontWeight: 500 }}>({m.unidad})</span>{editable && si === 0 && <button type="button" onClick={() => quitarMat(m.id)} title="Quitar material" style={{ marginLeft: 6, border: "none", background: "none", color: "#B5AFA6", cursor: "pointer", fontSize: 13 }}>✕</button>}
-                {si === 0 && <LineaCobertura f={cob[m.id]} hoy={hoy} />}
-                {si === 0 && <LineaReceta r={recetaDeMaterial(receta, p.projectCode, m, pendienteDe(m.id))} partidas={partidasRec} editable={editable} valor={m.partidaId || ""} onElegir={(v) => up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, partidaId: v } : y) }))} />}
+              <td style={{ ...TD, fontWeight: 700, minWidth: 170, padding: "6px 10px" }}>{m.nombre} <span style={{ color: "#8A847D", fontWeight: 500 }}>({m.unidad})</span>{editable && si === 0 && <button type="button" onClick={() => quitarMat(m.id)} title="Quitar material" style={{ marginLeft: 4, border: "none", background: "none", color: "#B5AFA6", cursor: "pointer", fontSize: 12 }}>✕</button>}
+                <ExistenciaMat f={cob[m.id]} />
+                {si === 0 && <RecetaChica r={recetaDeMaterial(receta, p.projectCode, m, pendienteDe(m.id))} partidas={partidasRec} editable={editable} valor={m.partidaId || ""} onElegir={(v) => up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, partidaId: v } : y) }))} />}
               </td>
               {dias.map(f => { const e = cob[m.id]?.dias?.[f]; const c = e ? COB_DIA[e.estado] : null; return <td key={f} title={e ? `${c.txt}${e.falta ? ` · faltan ${fmtN(e.falta)} ${m.unidad} ese día` : ""}` : ""} style={{ ...TD, textAlign: "center", padding: "4px 4px" }}>
-                {editable ? <input type="number" inputMode="decimal" min="0" step="any" value={cantidadDia(p, f, m.id) || ""} onChange={e => up(x => ({ ...x, dias: ponerCantidad(x.dias, f, m.id, e.target.value) }))} style={{ ...CTRL, width: isMobile ? 64 : 76, textAlign: "center", padding: "7px 4px", fontFamily: "var(--mono)", fontWeight: 700, ...(c ? { background: c.bg, color: c.color, borderColor: `${c.color}40` } : {}) }} />
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                {editable ? <input type="number" inputMode="decimal" min="0" step="any" value={cantidadDia(p, f, m.id) || ""} onChange={e => up(x => ({ ...x, dias: ponerCantidad(x.dias, f, m.id, e.target.value) }))} style={{ ...CTRL, width: isMobile ? 58 : 64, textAlign: "center", padding: "6px 3px", fontFamily: "var(--mono)", fontWeight: 700, ...(c ? { background: c.bg, color: c.color, borderColor: `${c.color}40` } : {}) }} />
                   : <span style={{ display: "inline-block", minWidth: 50, padding: "6px 4px", borderRadius: 8, fontFamily: "var(--mono)", fontWeight: 700, ...(c ? { background: c.bg, color: c.color } : {}) }}>{cantidadDia(p, f, m.id) ? fmtN(cantidadDia(p, f, m.id)) : ""}</span>}
-                {e?.estado === "falta" && e.falta < cantidadDia(p, f, m.id) && <div style={{ fontSize: 10, color: COB_DIA.falta.color, fontWeight: 700, marginTop: 2 }}>faltan {fmtN(e.falta)}</div>}
+                <QuedaAlmacen e={e} />
+                </div>
               </td>; })}
               <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 800 }}>{fmtN(totalSemana(p, lunes, m.id))}</td>
             </tr>)}</tbody>
@@ -267,18 +269,35 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
 
 
 // ── Piezas de cobertura (a nivel de módulo) ──
-function LineaCobertura({ f, hoy }) {
+// Debajo del material: solo cuánto hay en obra y en almacén (24-nov-2026,
+// Gerson: "en obra hay tantos, en almacén tantos, ya, solo eso").
+function ExistenciaMat({ f }) {
   if (!f) return null;
-  if (!f.enInventario) return <div style={{ fontSize: 11, color: "#8A847D", fontWeight: 500, marginTop: 3 }}>No está en GeoInventory (ni en obra ni en almacén)</div>;
-  const r = resumenDias(f.dias, f.porDia);
-  const a = f.almacen || {};
-  return <div style={{ fontSize: 11, fontWeight: 500, marginTop: 3, lineHeight: 1.45, color: "#6E6862" }}>
-    <div>Obra <b style={{ color: CHARCOAL }}>{fmtN(f.stock)}</b> · almacén <b style={{ color: CHARCOAL }}>{fmtN(a.total)}</b>{a.apartado ? ` (${fmtN(a.apartado)} apartadas para aquí)` : ""}{a.comprometidoOtros ? <span title="Comprometidas para otros proyectos: no cuentan"> · {fmtN(a.comprometidoOtros)} de otros</span> : ""}</div>
-    {r.hayProgramacion && <div>
-      <span style={{ color: COB_DIA.obra.color, fontWeight: 700 }}>{r.obraHasta ? `obra hasta ${diaTxt(r.obraHasta)}` : "la obra no cubre ni el primer día"}</span>
-      {r.totalHasta && r.totalHasta !== r.obraHasta && <span style={{ color: COB_DIA.almacen.color, fontWeight: 700 }}> · con almacén hasta {diaTxt(r.totalHasta)}</span>}
-      {r.faltaDesde && <span style={{ color: COB_DIA.falta.color, fontWeight: 700 }}> · falta desde {diaTxt(r.faltaDesde)}</span>}
-    </div>}
+  if (!f.enInventario) return <div style={{ fontSize: 10.5, color: "#A9A39B", fontWeight: 500, marginTop: 2 }}>no está en GeoInventory</div>;
+  return <div style={{ fontSize: 11, fontWeight: 500, marginTop: 2, color: "#6E6862" }}>En obra <b style={{ color: CHARCOAL }}>{fmtN(f.stock)}</b> · en almacén <b style={{ color: CHARCOAL }}>{fmtN(f.almacen?.total)}</b></div>;
+}
+
+// Al lado de la cajita del día: lo que quedaría en almacén después de ese día
+// (o lo que falta, en rojo).
+function QuedaAlmacen({ e }) {
+  if (!e) return <span style={{ width: 40 }} />;
+  const falta = e.estado === "falta";
+  return <span style={{ width: 40, textAlign: "left", lineHeight: 1.1 }}>
+    <span style={{ display: "block", fontSize: 9, fontWeight: 600, color: falta ? COB_DIA.falta.color : "#A9A39B" }}>{falta ? "faltan" : "almacén"}</span>
+    <span style={{ display: "block", fontSize: 11.5, fontWeight: 800, fontFamily: "var(--mono)", color: falta ? COB_DIA.falta.color : COB_DIA.almacen.color }}>{fmtN(falta ? e.falta : e.almQueda)}</span>
+  </span>;
+}
+
+// Partida de la receta en chiquito: un select discreto; solo avisa si la
+// programación pide más de lo que queda en la receta.
+function RecetaChica({ r, partidas, editable, valor, onElegir }) {
+  if (!editable && !r) return null;
+  return <div style={{ marginTop: 2 }}>
+    {editable && partidas.length > 0 && <select value={valor} onChange={e => onElegir(e.target.value)} title={r && r.misma && !r.sinCantidad ? `Receta: presupuesto ${fmtN(r.presupuestada)} · comprado ${fmtN(r.comprada)} · quedan ${fmtN(r.saldo)} ${r.partida.unidad}` : "Partida del presupuesto (receta) de donde sale este material"} style={{ border: "none", background: "transparent", padding: 0, font: "500 10.5px/1.3 var(--sans)", color: "#A9A39B", maxWidth: 200, cursor: "pointer" }}>
+      <option value="">receta…</option>
+      {partidas.map(x => <option key={x.id} value={x.id}>{x.solucion ? `${x.solucion} · ` : ""}{x.nombre}{x.unidad ? ` (${x.unidad})` : ""}</option>)}
+    </select>}
+    {r && r.misma && !r.sinCantidad && <span style={{ fontSize: 10.5, fontWeight: 600, color: r.pasa > 0 ? C_ROJO.color : "#8A847D", marginLeft: editable ? 6 : 0 }}>quedan {fmtN(r.saldo)}{r.pasa > 0 ? ` · se pasa ${fmtN(r.pasa)}` : ""}</span>}
   </div>;
 }
 
@@ -294,34 +313,6 @@ function LineaReceta({ r, partidas, editable, valor, onElegir }) {
       {r.sinCantidad ? "la partida no trae cantidad" : !r.misma ? `${fmtN(r.presupuestada)} ${r.partida.unidad} presupuestados · unidad distinta, no se compara` : <>presupuesto <b>{fmtN(r.presupuestada)}</b> · comprado {fmtN(r.comprada)}{r.enSolicitudes ? ` · pedido ${fmtN(r.enSolicitudes)}` : ""} · <b>quedan {fmtN(r.saldo)}</b> {r.partida.unidad}</>}
       {r.pasa > 0 && <div style={{ fontWeight: 700 }}>La programación pide {fmtN(r.pasa)} más de lo que queda en la receta</div>}
     </div>}
-  </div>;
-}
-
-function ResumenCobertura({ p, cob, hoy, isMobile }) {
-  const filas = (p.materiales || []).map(m => ({ m, f: cob[m.id] })).filter(x => x.f);
-  return <div className="gt-vidrio" style={{ padding: isMobile ? 12 : 16, display: "flex", flexDirection: "column", gap: 10 }}>
-    <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-      <span style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>¿Hasta cuándo estamos cubiertos?</span>
-      <span style={{ fontSize: 11.5, color: "#8A847D" }}>desde hoy {diaTxt(hoy)}, con lo que hay en obra y en almacén (lo comprometido para otro proyecto no cuenta)</span>
-    </div>
-    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(260px, 1fr))", gap: 8 }}>
-      {filas.map(({ m, f }) => {
-        const r = resumenDias(f.dias, f.porDia);
-        const tono = !f.enInventario ? C_GRIS : !r.hayProgramacion ? C_GRIS : r.faltaDesde ? (f.semaforo === "rojo" ? C_ROJO : C_AMARILLO) : C_VERDE;
-        return <div key={m.id} style={{ borderRadius: 14, padding: "10px 12px", background: "rgba(255,255,255,.7)", boxShadow: `inset 3px 0 0 ${tono.color}`, display: "flex", flexDirection: "column", gap: 4 }}>
-          <div style={{ fontWeight: 800, fontSize: 13.5, color: CHARCOAL }}>{m.nombre} <span style={{ color: "#8A847D", fontWeight: 500, fontSize: 12 }}>({m.unidad})</span></div>
-          {!f.enInventario ? <div style={{ fontSize: 12, color: "#8A847D" }}>No está en GeoInventory: no se puede calcular.</div>
-            : !r.hayProgramacion ? <div style={{ fontSize: 12, color: "#8A847D" }}>Sin cantidades desde hoy.</div>
-            : <>
-              <div style={{ fontSize: 12.5, color: COB_DIA.obra.color, fontWeight: 700 }}>{r.obraHasta ? `La obra cubre hasta el ${diaTxt(r.obraHasta)}` : `En obra no alcanza ni para el ${diaTxt(r.primero)}`} <span style={{ fontWeight: 500, color: "#6E6862" }}>· hay {fmtN(f.stock)}</span></div>
-              {r.mandar > 0 && <div style={{ fontSize: 12.5, color: COB_DIA.almacen.color, fontWeight: 700 }}>Con el almacén, hasta el {diaTxt(r.totalHasta)} <span style={{ fontWeight: 500, color: "#6E6862" }}>· mandar {fmtN(r.mandar)}{(() => { const d = Object.keys(f.dias).sort().find(x => f.dias[x].estado !== "obra"); return d ? ` antes del ${diaTxt(d)}` : ""; })()}</span></div>}
-              {r.faltaDesde ? <div style={{ fontSize: 12.5, color: COB_DIA.falta.color, fontWeight: 800 }}>Falta desde el {diaTxt(r.faltaDesde)} · {fmtN(r.faltaTotal)} {m.unidad} por conseguir</div>
-                : <div style={{ fontSize: 12.5, color: C_VERDE.color, fontWeight: 700 }}>Cubre toda la programación</div>}
-            </>}
-        </div>;
-      })}
-    </div>
-    {leyendaCob()}
   </div>;
 }
 
@@ -396,7 +387,7 @@ export function CoberturaVista({ proyectos = [], isMobile, onIrPlanificacion, re
             <tbody>{d.filas.map(f => { const sm = SEMA[f.semaforo]; const r = resumenDias(f.dias, f.porDia); const sinP = f.semaforo === "sin_programa" || f.semaforo === "sin_dato"; const mat = d.prog?.materiales?.find(m => m.id === f.matId); const rec = mat ? recetaDeMaterial(receta, d.short, mat, Object.entries(f.porDia || {}).filter(([x]) => x >= hoy).reduce((a, [, n]) => a + num(n), 0)) : null; return <tr key={f.key}>
               <td style={{ ...TD, paddingLeft: 18, fontWeight: 700 }}><span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: sinP ? "#D8D2C8" : sm.c.color, marginRight: 8 }} />{f.nombre}{!f.enInventario && <div style={{ fontSize: 11, color: C_ROJO.color, fontWeight: 600, marginLeft: 17 }}>no está en el inventario</div>}{rec && <div style={{ marginLeft: 17 }}><LineaReceta r={rec} partidas={[]} /></div>}</td>
               <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 800 }}>{fmtN(f.stock)} <span style={{ fontFamily: "var(--sans)", fontWeight: 500, color: "#8A847D", fontSize: 11.5 }}>{f.unidad}</span></td>
-              <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 700 }} title={f.almacen?.comprometidoOtros ? `${fmtN(f.almacen.comprometidoOtros)} más están comprometidas para otros proyectos` : ""}>{fmtN(f.almacen?.total)}{f.almacen?.comprometidoOtros ? <div style={{ fontFamily: "var(--sans)", fontSize: 10.5, fontWeight: 600, color: ORANGE_DARK }}>+{fmtN(f.almacen.comprometidoOtros)} de otros</div> : null}</td>
+              <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 700 }} title={f.almacen?.comprometidoOtros ? `${fmtN(f.almacen.comprometidoOtros)} más están comprometidas para otros proyectos` : ""}>{fmtN(f.almacen?.total)}</td>
               <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)" }}>{sinP ? "—" : fmtN(f.programado7)}</td>
               <td style={{ ...TD, color: sinP ? "#8A847D" : COB_DIA.obra.color, fontWeight: 700, whiteSpace: "nowrap" }}>{sinP ? (f.semaforo === "sin_dato" ? "—" : "Sin programación") : r.obraHasta ? (f.obra?.cubreTodo ? "Todo" : `hasta ${diaTxt(r.obraHasta)}`) : <span style={{ color: COB_DIA.falta.color }}>ni el {diaTxt(r.primero)}</span>}</td>
               <td style={{ ...TD, color: sinP ? "#8A847D" : sm.c.color, fontWeight: 700, whiteSpace: "nowrap" }}>{sinP ? "—" : f.cubreTodo ? "Toda la programación" : r.totalHasta ? `hasta ${diaTxt(r.totalHasta)} · falta el ${diaTxt(r.faltaDesde)}` : `falta desde el ${diaTxt(r.faltaDesde)}`}{!sinP && r.mandar > 0 && <div style={{ fontSize: 10.5, fontWeight: 600, color: COB_DIA.almacen.color }}>mandar {fmtN(r.mandar)} del almacén</div>}</td>

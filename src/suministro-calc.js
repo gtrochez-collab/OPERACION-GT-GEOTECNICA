@@ -116,9 +116,11 @@ export const estadoPorDia = ({ obra = 0, almacen = 0, porDia = {}, hoy }) => {
   const out = {}; let acum = 0;
   Object.keys(porDia || {}).filter(f => f >= hoy && num(porDia[f]) > 0).sort().forEach(f => {
     const q = num(porDia[f]); const antes = acum; acum = r2(acum + q);
-    if (acum <= num(obra) + 1e-9) out[f] = { estado: "obra", falta: 0 };
-    else if (acum <= num(obra) + num(almacen) + 1e-9) out[f] = { estado: "almacen", falta: 0 };
-    else out[f] = { estado: "falta", falta: r2(Math.min(q, acum - num(obra) - num(almacen))), cubierto: r2(Math.max(0, num(obra) + num(almacen) - antes)) };
+    // Lo que quedaría en obra y en almacén después de ese día (se gasta primero la obra).
+    const queda = { obraQueda: r2(Math.max(0, num(obra) - acum)), almQueda: r2(Math.max(0, num(almacen) - Math.max(0, acum - num(obra)))) };
+    if (acum <= num(obra) + 1e-9) out[f] = { estado: "obra", falta: 0, ...queda };
+    else if (acum <= num(obra) + num(almacen) + 1e-9) out[f] = { estado: "almacen", falta: 0, ...queda };
+    else out[f] = { estado: "falta", falta: r2(Math.min(q, acum - num(obra) - num(almacen))), cubierto: r2(Math.max(0, num(obra) + num(almacen) - antes)), ...queda };
   });
   return out;
 };
