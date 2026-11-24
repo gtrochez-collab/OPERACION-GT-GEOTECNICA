@@ -204,6 +204,16 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
     up(x => ({ ...x, materiales: [...(x.materiales || []), { id: uid(), nombre, unidad }] }));
     setNuevoMat({ nombre: "", unidad: "" });
   };
+  // Cambiar el nombre (24-nov-2026: "Cemento" de Aurea es Cemento GU, no el HE
+  // de San Miguel). Al renombrar se suelta del artículo de GeoInventory que
+  // tuviera amarrado; al guardar se vuelve a buscar con el nombre nuevo.
+  const renombrarMat = (m) => {
+    const nombre = (prompt("Nombre del material (ej. Cemento GU):", m.nombre) || "").trim();
+    if (!nombre) return;
+    if ((p.materiales || []).some(x => x.id !== m.id && sinAcentos(x.nombre) === sinAcentos(nombre))) { alert("Ya hay otro material con ese nombre."); return; }
+    const unidad = (prompt("Unidad (Bolsa, m3, Barril…):", m.unidad || "") || "").trim() || m.unidad;
+    up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, nombre, unidad, itemId: "" } : y) }));
+  };
   const quitarMat = (id) => { if (!confirm("¿Quitar este material y sus cantidades de la programación?")) return; up(x => { const dias = {}; Object.entries(x.dias || {}).forEach(([f, d]) => { const n = { ...d }; delete n[id]; if (Object.keys(n).length) dias[f] = n; }); return { ...x, materiales: x.materiales.filter(m => m.id !== id), dias }; }); };
   const agregarSemana = () => up(x => { const ult = semanasDe(x).pop() || lunesDe(hoyISO()); return { ...x, semanas: [...new Set([...(x.semanas || []), sumarDias(ult, 7)])] }; });
   const quitarSemana = (lunes) => { const tiene = diasDeSemana(lunes).some(f => p.dias?.[f]); if (tiene && !confirm("Esta semana tiene cantidades. ¿Quitarla igual?")) return; up(x => { const dias = { ...(x.dias || {}) }; diasDeSemana(lunes).forEach(f => delete dias[f]); return { ...x, semanas: (x.semanas || []).filter(l => l !== lunes), dias }; }); };
@@ -272,7 +282,7 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr><th style={{ ...TH, minWidth: 150 }}>Material</th>{dias.map(f => <th key={f} style={{ ...TH, textAlign: "center", color: f === hoyISO() ? ORANGE_DARK : TH.color }}>{diaCorto(f)} {+f.slice(8)}</th>)}<th style={{ ...TH, textAlign: "right" }}>Total semana</th></tr></thead>
             <tbody>{p.materiales.map(m => <tr key={m.id}>
-              <td style={{ ...TD, fontWeight: 700, minWidth: 170, padding: "6px 10px" }}>{m.nombre} <span style={{ color: "#8A847D", fontWeight: 500 }}>({m.unidad})</span>{editable && si === 0 && <button type="button" onClick={() => quitarMat(m.id)} title="Quitar material" style={{ marginLeft: 4, border: "none", background: "none", color: "#B5AFA6", cursor: "pointer", fontSize: 12 }}>✕</button>}
+              <td style={{ ...TD, fontWeight: 700, minWidth: 170, padding: "6px 10px" }}>{editable ? <button type="button" title="Cambiar el nombre o la unidad" onClick={() => renombrarMat(m)} style={{ border: "none", background: "none", padding: 0, font: "inherit", color: "inherit", cursor: "pointer", textAlign: "left" }}>{m.nombre}</button> : m.nombre} <span style={{ color: "#8A847D", fontWeight: 500 }}>({m.unidad})</span>{editable && si === 0 && <button type="button" onClick={() => quitarMat(m.id)} title="Quitar material" style={{ marginLeft: 4, border: "none", background: "none", color: "#B5AFA6", cursor: "pointer", fontSize: 12 }}>✕</button>}
                 <ExistenciaMat f={cob[m.id]} />
                 {si === 0 && <RecetaChica r={recetaDeMaterial(receta, p.projectCode, m, pendienteDe(m.id))} partidas={partidasRec} editable={editable} valor={m.partidaId || ""} onElegir={(v) => up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, partidaId: v } : y) }))} />}
               </td>

@@ -144,3 +144,10 @@ test("resumenDias: San Miguel → obra hasta mié 25, almacén hasta jue 26, fal
   assert.equal(r.faltaTotal, 290);   // 30 del viernes + 260 del sábado
   assert.equal(r.mandar, 270);       // 40 del jueves + 230 que sí alcanzan el viernes
 });
+
+test("itemDeMaterial: una palabra genérica no se amarra (Cemento ≠ Cemento HE Argos)", () => {
+  const items = [{ id: "he", nombre: "Cemento HE Argos", tipo: "cantidad", categoria: "materiales", unidad: "Bolsa", stock: { almacen: 10 } }];
+  assert.equal(itemDeMaterial(items, { nombre: "Cemento" }), null);
+  assert.equal(itemDeMaterial(items, { nombre: "Cemento GU" }), null);
+  assert.equal(itemDeMaterial(items, { nombre: "Cemento HE" })?.id, "he");
+});

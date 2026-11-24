@@ -91,10 +91,12 @@ export const itemDeMaterial = (items, mat) => {
   const exacto = vivos.find(i => sinAcentos(i.nombre) === n);
   if (exacto) return exacto;
   // "Cemento HE" ↔ "Cemento HE Argos": todas las palabras de uno están en el
-  // otro. Solo si hay UN candidato (con dos, no se adivina).
+  // otro. Solo si hay UN candidato (con dos, no se adivina) y el nombre corto
+  // trae al menos DOS palabras: "Cemento" a secas no dice cuál (24-nov-2026,
+  // Aurea usa Cemento GU y se estaba amarrando al HE Argos de San Miguel).
   const pal = (t) => sinAcentos(t).replace(/[^a-z0-9/". ]/g, " ").split(/\s+/).filter(Boolean);
   const a = pal(mat.nombre);
-  const cand = vivos.filter(i => { const b = pal(i.nombre); const [chico, grande] = a.length <= b.length ? [a, b] : [b, a]; return chico.length > 0 && chico.every(w => grande.includes(w)); });
+  const cand = vivos.filter(i => { const b = pal(i.nombre); const [chico, grande] = a.length <= b.length ? [a, b] : [b, a]; return chico.length >= 2 && chico.every(w => grande.includes(w)); });
   return cand.length === 1 ? cand[0] : null;
 };
 export const stockEnProyecto = (item, short) => num(item?.stock?.[idUbicProyecto(short)]);
