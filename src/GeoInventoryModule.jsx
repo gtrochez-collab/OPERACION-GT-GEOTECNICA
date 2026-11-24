@@ -36,8 +36,10 @@ import {
   permisosDe, resumenInventario, buscarItems, UNIDADES, num, plantillaCSV, parseTabla, prepararImportacion,
   esCaja, PREFIJO_CAJA, prefijoDe, CONTENIDOS_CAJA, MARCAS_CAJA, TAMANOS_CAJA, tamanoLabel, nombreCaja, nivelCaja, estantesDe, nombreEstante, textoEstante, resumenCajas,
   PREFIJO_UBIC, PREFIJO_EST, MUEBLES, muebleLabel, codigoNivel, nivelesDe, resolverCodigo, posicionDe, itemsEnUbicacion, itemsEnEstante, itemsEnNivel, itemsSinEstante, resumenDe, movimientosDe,
-  manejaUbicacion,
+  manejaUbicacion, esConsumible, conteoAlDia, ultimoDiaConteo,
 } from "./geoinventory-calc.js";
+import { KEY_PROYECTOS_ACTIVOS } from "./suministro-calc.js";
+import { hoyISO } from "./fechas.js";
 import { generarEtiquetas, generarEtiquetasPDF, qrDataUrl, urlDeFicha } from "./geoinventory-etiquetas.js";
 
 const ORANGE = "#E8762D";
@@ -777,6 +779,39 @@ function EscanerImpl({ onCodigo, onClose }) {
   </div>;
 }
 
+// ── CONTAR consumibles (24-nov-2026, Suministro a obra) ──
+// El residente escribe cuánto le queda de cada consumible de su proyecto
+// (lunes y jueves obligatorio; mejor al final de cada día). Lo que deje en
+// blanco no se toca; escribir la misma cantidad también cuenta como conteo.
+function ConteoImpl({ ubicacion, consumibles, ocupado, onGuardar, onAgregar, onClose, isMobile }) {
+  const [v, setV] = useState({});
+  const listos = Object.entries(v).filter(([, x]) => String(x).trim() !== "" && Number.isFinite(Number(x)) && Number(x) >= 0);
+  const hoy = hoyISO();
+  return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.5 }}>Escribí cuánto queda <b>ahora</b> en {ubicacion.nombre}. Lo que dejes en blanco no se cambia. Lunes y jueves es obligatorio.</div>
+    {consumibles.length === 0 && <Vacio>Todavía no hay consumibles en este proyecto. Tocá "Agregar material" para cargar el inventario inicial.</Vacio>}
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {consumibles.map(it => { const c = it.conteos?.[ubicacion.id]; const al = c && conteoAlDia(String(c.at).slice(0, 10), hoy); return <div key={it.id} className="gt-vidrio" style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 12 }}>
+        <Foto foto={it.foto} size={44} radius={11} categoria={it.categoria} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14.5, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: isMobile ? "normal" : "nowrap" }}>{it.nombre}</div>
+          <div style={{ fontSize: 11.5, color: al ? C_VERDE.color : "var(--text-3)", marginTop: 2 }}>Sistema: {fmtN(stockEn(it, ubicacion.id))} {it.unidad} · {c ? `contado ${fmtDT(c.at)}` : "nunca contado"}</div>
+        </div>
+        <input type="number" inputMode="decimal" min="0" step="any" value={v[it.id] ?? ""} onChange={e => setV(p => ({ ...p, [it.id]: e.target.value }))} placeholder="Hay"
+          style={{ ...CTRL, width: isMobile ? 92 : 120, textAlign: "right", fontSize: 18, fontWeight: 800, fontFamily: "var(--mono)" }} />
+        <span style={{ width: 52, fontSize: 12, color: "var(--text-3)" }}>{it.unidad}</span>
+      </div>; })}
+    </div>
+    <div style={{ display: "flex", gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
+      {onAgregar ? <Btn variant="ghost" onClick={onAgregar}>+ Agregar material</Btn> : <span />}
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn variant="ghost" onClick={onClose}>Cerrar</Btn>
+        <Btn disabled={ocupado || listos.length === 0} onClick={() => onGuardar(listos.map(([id, x]) => ({ id, nuevo: Number(x) })))}>{ocupado ? "Guardando…" : `Guardar conteo${listos.length ? ` (${listos.length})` : ""}`}</Btn>
+      </div>
+    </div>
+  </div>;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 export default function GeoInventoryModule({ userRole, userName, userKey, onBack, onLogout }) {
   const isMobile = useIsMobile(760);
@@ -799,6 +834,12 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   const [emps, setEmps] = useState([]);
   const [maquinas, setMaquinas] = useState([]);
   const [usuariosNube, setUsuariosNube] = useState([]);
+  // Suministro a obra (24-nov-2026): responsables de cada proyecto (los de
+  // jornales en GeoTeam) y los proyectos activos que elige Gerson.
+  const [respProy, setRespProy] = useState({});
+  const [activosProy, setActivosProy] = useState(null);   // {shorts, updatedAt, updatedBy} | null
+  const [eligiendoActivos, setEligiendoActivos] = useState(null);   // Set de shorts mientras elige
+  const [verTerminados, setVerTerminados] = useState(false);
   const [movs, setMovs] = useState([]);
   const [mesesMov, setMesesMov] = useState(() => { const d = new Date(); const a = new Date(d.getFullYear(), d.getMonth() - 1, 1); return [keyMovimientos(d.toISOString()), keyMovimientos(a.toISOString())]; });
   const [ocupado, setOcupado] = useState(false);
@@ -823,7 +864,9 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
 
   const cargar = async () => {
     try {
-      const [it, ub, cp, em, mq, us, ...mv] = await Promise.all([store.getCloud(K_ITEMS), store.getCloud(K_UBIC), store.getCloud("cp-projects"), store.getCloud("hr-emps5"), store.getCloud("mq-machines"), store.getCloud("gt-usuarios"), ...mesesMov.map(k => store.getCloud(k))]);
+      const [it, ub, cp, em, mq, us, rp, ac, ...mv] = await Promise.all([store.getCloud(K_ITEMS), store.getCloud(K_UBIC), store.getCloud("cp-projects"), store.getCloud("hr-emps5"), store.getCloud("mq-machines"), store.getCloud("gt-usuarios"), store.getCloud("hr-jornal-responsables").catch(() => null), store.getCloud(KEY_PROYECTOS_ACTIVOS).catch(() => null), ...mesesMov.map(k => store.getCloud(k))]);
+      if (rp && typeof rp === "object") setRespProy(rp);
+      setActivosProy(ac && Array.isArray(ac.shorts) ? ac : null);
       setItems(Array.isArray(it) ? it : []); setUbicGuardadas(Array.isArray(ub) ? ub : []); setCustomProjects(Array.isArray(cp) ? cp : []);
       setEmps((Array.isArray(em) ? em : []).filter(e => e && e.status !== "inactive").sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "es")));
       setMaquinas((Array.isArray(mq) ? mq : []).map(m => ({ id: m.id, nombre: m.nombre || m.name || "", tipo: m.tipo || "" })).filter(m => m.nombre).sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { numeric: true })));
@@ -857,13 +900,23 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   const ubicaciones = ubicacionesDe({ guardadas: ubicGuardadas, proyectos });
   // Dónde puede MANIPULAR este usuario (Óscar: Almacén Central + donde es responsable)
   const nombresAyudantes = (u2) => { const a = (u2.ayudantes || []).map(un => usuarios.find(x => x.username === un)?.label || un); return a.length ? ` · también ${a.join(", ")}` : ""; };
-  const editables = new Set(perms.alcance === "propias" ? ubicaciones.filter(u2 => u2.id === "almacen" || manejaUbicacion(u2, userKey)).map(u2 => u2.id) : ubicaciones.map(u2 => u2.id));
-  const puedeEn = (ubId) => !!perms.cargar && (perms.alcance !== "propias" || editables.has(ubId));
+  // Responsable de un proyecto = el de su ubicación (y ayudantes) o el de sus jornales en GeoTeam.
+  const esResponsableProy = (u2) => u2.tipo === "proyecto" && (respProy[u2.projectCode || u2.nombre] || []).includes(userKey);
+  const editables = new Set(
+    perms.alcance === "propias" ? ubicaciones.filter(u2 => (u2.id === "almacen" && !perms.soloLoSuyo) || manejaUbicacion(u2, userKey) || esResponsableProy(u2)).map(u2 => u2.id)
+      : perms.alcance === "proyectos" ? ubicaciones.filter(u2 => u2.tipo === "proyecto").map(u2 => u2.id)
+      : ubicaciones.map(u2 => u2.id));
+  const puedeEn = (ubId) => !!perms.cargar && (perms.alcance === "todo" || editables.has(ubId));
+  // El residente SOLO ve su(s) proyecto(s).
+  const misProyectosUbic = ubicaciones.filter(u2 => editables.has(u2.id));
   const ubicacionesMias = ubicaciones.filter(u2 => puedeEn(u2.id));
   const estantes = estantesDe(ubicGuardadas);
   // Inicio = navegación por ubicaciones (14-oct-2026): ubicación › estante/rack › nivel
   const [ruta, setRutaRaw] = useState({});                 // {ubic, est, niv}
   const setRuta = (r) => { setRutaRaw(r || {}); try { document.getElementById("inv-scroll")?.scrollTo({ top: 0 }); } catch {} };
+  // El residente con UN solo proyecto entra directo a él.
+  const unicoProy = perms.soloLoSuyo && misProyectosUbic.length === 1 ? misProyectosUbic[0].id : "";
+  useEffect(() => { if (loaded && unicoProy && !ruta.ubic) setRutaRaw({ ubic: unicoProy }); }, [loaded, unicoProy, ruta.ubic]);
   // Grupos plegables de Inicio (14-oct-2026: "permitime minimizar proyectos,
   // oficinas y almacén"). Preferencia de pantalla → localStorage.
   const [cerrados, setCerradosRaw] = useState(() => { try { return JSON.parse(localStorage.getItem("gt-inv-grupos-cerrados") || "[]"); } catch { return []; } });
@@ -875,7 +928,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   const vivos = items.filter(i => i && !i.eliminado);
   const resumen = resumenInventario(items);
   const esSoloLectura = !perms.cargar;
-  const nav = [
+  const nav = perms.soloLoSuyo ? [{ id: "inicio", label: "Mi proyecto" }, { id: "agregar", label: "Agregar" }, { id: "movimientos", label: "Movimientos" }] : [
     { id: "inicio", label: "Inicio" },
     ...(perms.cargar ? [{ id: "agregar", label: "Agregar" }] : []),
     { id: "buscar", label: "Buscar" },
@@ -991,6 +1044,21 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     if (item.tipo === "individual" && (f.categoria === "herramientas_perforacion") !== esHerramienta(item)) cambios.estado = estadoInicial(f.categoria);
     const ok = await accionSobre(item, { accion: "editar", cambios });
     if (ok) setModal({ t: "ficha", id: item.id });
+  };
+  const guardarConteo = async (ubicacionId, filas) => {
+    const at = new Date().toISOString();
+    const r = await guardarItems((arr) => {
+      const movsN = [], ids = []; let next = arr;
+      for (const f of filas) {
+        const cur = next.find(x => x.id === f.id); if (!cur) continue;
+        const rr = aplicarMovimiento(cur, { accion: "conteo", en: ubicacionId, nuevo: f.nuevo }, { ...quien(), at, id: uid() });
+        if (rr.error) { alert(`${cur.nombre}: ${rr.error}`); return null; }
+        const rec = { ...rr.item, updatedAt: at };
+        next = next.map(x => x.id === rec.id ? rec : x); ids.push(rec.id); movsN.push(rr.mov);
+      }
+      return { arr: next, ids, movs: movsN, resultado: `Conteo guardado · ${ids.length} material${ids.length === 1 ? "" : "es"}` };
+    });
+    if (r) setModal(null);
   };
   const eliminarArticulo = async (item) => {
     if (!confirm(`¿Eliminar ${item.codigo} · ${item.nombre}?\n\nDeja de verse en el inventario (queda en el historial quién lo eliminó).`)) return;
@@ -1220,15 +1288,36 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     <span style={{ display: "inline-flex", transform: ab ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .2s" }}><Ico d={ICO.flecha} size={18} color="#8C857D" /></span>
   </div>; };
   const abierto = (k) => !cerrados.includes(k) || !!qUbic;
+  const guardarActivos = async (set) => {
+    const next = { shorts: [...set].sort(), updatedAt: new Date().toISOString(), updatedBy: userName };
+    setOcupado(true);
+    try {
+      const ok = await store.set(KEY_PROYECTOS_ACTIVOS, next);
+      const back = ok ? await store.getCloud(KEY_PROYECTOS_ACTIVOS) : null;
+      if (!back || back.updatedAt !== next.updatedAt) { alert("No se pudo confirmar el guardado. Revisá la señal y probá otra vez."); return; }
+      setActivosProy(back); setEligiendoActivos(null);
+    } catch (e) { alert("No se guardó: " + (e?.message || e)); } finally { setOcupado(false); }
+  };
   const renderInicio = () => {
     if (ruta.ubic) return renderUbicacionVista();
+    if (perms.soloLoSuyo) {
+      return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {misProyectosUbic.length === 0 ? <Vacio>Todavía no tenés un proyecto asignado. Pedile a Gerson que te asigne el tuyo.</Vacio>
+          : <>{cabeceraGrupo({ clave: "mias", titulo: "Tus proyectos", n: misProyectosUbic.length, icono: ICO.proyecto, sub: "Contá lo que te queda lunes y jueves" })}{grilla(misProyectosUbic.map(u2 => tarjetaUbicacion(u2, { destacada: true })))}</>}
+      </div>;
+    }
     const mias = ubicaciones.filter(u2 => manejaUbicacion(u2, userKey));
     // 26-oct-2026 (Gerson): las tuyas van arriba Y también en su grupo, así el
     // Vault sale en "Almacén y bodegas" aunque seas su responsable.
     const noMia = () => true;
     const fijas = ubicaciones.filter(u2 => ["almacen", "vault", "taller"].includes(u2.tipo) && noMia(u2));
     const oficinas = ubicaciones.filter(u2 => u2.tipo === "oficina" && noMia(u2));
-    const proys = ubicaciones.filter(u2 => u2.tipo === "proyecto" && noMia(u2));
+    const proysTodos = ubicaciones.filter(u2 => u2.tipo === "proyecto" && noMia(u2));
+    // Proyectos ACTIVOS (24-nov-2026, Gerson: "hay un montón que ya terminamos;
+    // déjame a mí poner cuáles son los activos"). Sin lista elegida, se ven todos.
+    const listaActivos = activosProy?.shorts?.length ? new Set(activosProy.shorts) : null;
+    const proys = eligiendoActivos ? proysTodos : listaActivos ? proysTodos.filter(u2 => listaActivos.has(u2.projectCode || u2.nombre)) : proysTodos;
+    const terminados = !eligiendoActivos && listaActivos ? proysTodos.filter(u2 => !listaActivos.has(u2.projectCode || u2.nombre)) : [];
     const proysCon = proys.filter(u2 => itemsEnUbicacion(vivos, u2.id).length > 0 || estantesDe(ubicGuardadas, u2.id).length > 0);
     const proysSin = proys.filter(u2 => !proysCon.includes(u2));
     const filtroU = (l) => qUbic.trim() ? l.filter(u2 => `${u2.nombre} ${u2.nombreLargo || ""} ${u2.codigo || ""}`.toLowerCase().includes(qUbic.toLowerCase())) : l;
@@ -1252,8 +1341,19 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       {filtroU(fijas).length > 0 && <>{cabeceraGrupo({ clave: "fijas", titulo: "Almacén y bodegas", n: filtroU(fijas).length, icono: ICO.bodega, sub: resumenTxt(resumenDe(fijas.flatMap(u2 => itemsEnUbicacion(vivos, u2.id)))) || fijas.map(u2 => u2.nombre).join(" · ") })}{abierto("fijas") && grilla(filtroU(fijas).map(u2 => tarjetaUbicacion(u2)))}</>}
       {(filtroU(oficinas).length > 0 || (perms.ubicaciones && !qUbic)) && <>{cabeceraGrupo({ clave: "oficinas", titulo: "Oficinas de plantel", n: filtroU(oficinas).length, icono: ICO.oficina, sub: oficinas.length ? resumenTxt(resumenDe(oficinas.flatMap(u2 => itemsEnUbicacion(vivos, u2.id)))) || "Sin inventario todavía" : "Todavía no hay oficinas", extra: perms.ubicaciones && <Btn small variant="ghost" onClick={() => setModal({ t: "ubicacion", u: null })}>+ Nueva oficina</Btn> })}
         {abierto("oficinas") && (filtroU(oficinas).length ? grilla(filtroU(oficinas).map(u2 => tarjetaUbicacion(u2))) : <div style={{ fontSize: 12.5, color: "var(--text-3)", paddingLeft: 4 }}>Creá la primera con + Nueva oficina: cada una sale con su código QR para pegar afuera.</div>)}</>}
-      {filtroU(proys).length > 0 && <>{cabeceraGrupo({ clave: "proyectos", titulo: "Proyectos", n: filtroU(proys).length, icono: ICO.proyecto, sub: proysCon.length ? `${proysCon.length} con inventario` : "Ninguno con inventario todavía" })}
-        {abierto("proyectos") && grilla([...filtroU(proysCon), ...filtroU(proysSin)].map(u2 => tarjetaUbicacion(u2)))}</>}
+      {(filtroU(proys).length > 0 || eligiendoActivos) && <>{cabeceraGrupo({ clave: "proyectos", titulo: eligiendoActivos ? "Elegí los proyectos activos" : listaActivos ? "Proyectos activos" : "Proyectos", n: eligiendoActivos ? eligiendoActivos.size : filtroU(proys).length, icono: ICO.proyecto,
+          sub: eligiendoActivos ? "Tocá cada proyecto para prenderlo o apagarlo" : proysCon.length ? `${proysCon.length} con inventario` : "Ninguno con inventario todavía",
+          extra: perms.config && (eligiendoActivos
+            ? <span style={{ display: "inline-flex", gap: 6 }}><Btn small variant="ghost" onClick={() => setEligiendoActivos(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => guardarActivos(eligiendoActivos)}>Guardar ({eligiendoActivos.size})</Btn></span>
+            : <Btn small variant="ghost" onClick={() => setEligiendoActivos(new Set(listaActivos ? [...listaActivos] : []))}>Elegir activos</Btn>) })}
+        {eligiendoActivos ? grilla(proysTodos.map(u2 => { const k = u2.projectCode || u2.nombre; const on = eligiendoActivos.has(k); return <button key={u2.id} type="button" onClick={() => setEligiendoActivos(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; })}
+            className="gt-vidrio" style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer", textAlign: "left", fontFamily: "inherit", border: on ? `1.5px solid ${ORANGE}` : "1px solid transparent", background: on ? "rgba(232,118,45,.08)" : undefined }}>
+            <span style={{ width: 24, height: 24, borderRadius: 8, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", background: on ? ORANGE_DARK : "rgba(44,42,40,.08)", color: "#fff", fontWeight: 900, fontSize: 14 }}>{on ? "✓" : ""}</span>
+            <span style={{ minWidth: 0 }}><span style={{ display: "block", font: "800 14px/1.2 var(--display)", color: CHARCOAL }}>{u2.nombre}</span>{u2.nombreLargo && u2.nombreLargo !== u2.nombre && <span style={{ display: "block", fontSize: 11.5, color: "var(--text-3)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u2.nombreLargo}</span>}</span>
+          </button>; }))
+          : abierto("proyectos") && grilla([...filtroU(proysCon), ...filtroU(proysSin)].map(u2 => tarjetaUbicacion(u2)))}
+        {terminados.length > 0 && !qUbic && <button type="button" onClick={() => setVerTerminados(v => !v)} style={{ alignSelf: "flex-start", background: "none", border: "none", color: "var(--text-3)", font: "700 12.5px/1 var(--sans)", cursor: "pointer", padding: "6px 4px" }}>{verTerminados ? "Ocultar terminados" : `Ver terminados (${terminados.length})`}</button>}
+        {(verTerminados || qUbic) && terminados.length > 0 && grilla(filtroU(terminados).map(u2 => tarjetaUbicacion(u2)))}</>}
     </div>;
   };
   // ── Dentro de una ubicación ──
@@ -1267,19 +1367,28 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     const r = resumenDe(aqui);
     const resp = usuarios.find(x => x.username === u2.responsable);
     const movsAqui = movimientosDe(movs, u2.id).sort((a, b) => String(b.at).localeCompare(String(a.at)));
-    const porCat = CATEGORIAS.map(c => [c, sueltos.filter(i => i.categoria === c.id)]).filter(([, l]) => l.length);
+    // Proyecto (24-nov-2026, Suministro a obra): CONSUMIBLES (lo que se gasta,
+    // con su conteo) separados de EQUIPO Y HERRAMIENTAS (lo que se devuelve).
+    const esProy = u2.tipo === "proyecto";
+    // (un consumible contado en 0 sigue saliendo: "me quedé sin cemento" es justo lo que importa)
+    const consumibles = esProy ? [...sueltos.filter(esConsumible), ...vivos.filter(i => esConsumible(i) && !stockEn(i, u2.id) && i.conteos?.[u2.id])] : [];
+    const equipo = esProy ? sueltos.filter(i => !esConsumible(i)) : sueltos;
+    const porCat = CATEGORIAS.map(c => [c, equipo.filter(i => i.categoria === c.id)]).filter(([, l]) => l.length);
+    const hoyInv = hoyISO();
+    const ultimoC = consumibles.map(i => i.conteos?.[u2.id]?.at || "").filter(Boolean).sort().pop() || "";
+    const conteoOk = ultimoC && conteoAlDia(String(ultimoC).slice(0, 10), hoyInv);
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {migas([["Ubicaciones", () => setRuta({})], [u2.nombre]])}
       <div className="gt-vidrio" style={{ padding: isMobile ? 14 : 18, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ width: 54, height: 54, borderRadius: 16, background: "rgba(232,118,45,.12)", color: ORANGE_DARK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ico d={ICO_UBIC[u2.tipo] || ICO.ubicaciones} size={27} /></div>
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ font: "800 21px/1.15 var(--display)", color: CHARCOAL }}>{u2.nombre}</div>
-          <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4 }}>{subUbic(u2)} · {resp ? `responsable ${resp.label}` : "sin responsable"}{nombresAyudantes(u2)}{r.articulos ? ` · ${resumenTxt(r)}` : ""}</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4 }}>{subUbic(u2)} · {resp ? `responsable ${resp.label}` : esProy && (respProy[u2.projectCode || u2.nombre] || []).length ? `residente ${(respProy[u2.projectCode || u2.nombre] || []).map(un => usuarios.find(x => x.username === un)?.label || un).join(", ")}` : "sin responsable"}{nombresAyudantes(u2)}{r.articulos ? ` · ${resumenTxt(r)}` : ""}</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {(u2.codigo || puedeEn(u2.id)) && chipCodigo(u2.codigo || "Generar QR", () => verQRUbicacion(u2))}
           {puedeEn(u2.id) && <Btn small onClick={() => agregarAqui(u2.id, { tipo: u2.tipo === "vault" ? "caja" : undefined })}><Ico d={ICO.agregar} size={14} /> Agregar aquí</Btn>}
-          {puedeEn(u2.id) && <Btn small variant="ghost" onClick={() => setModal({ t: "estante", e: null, ubicacionId: u2.id })}>+ Estante / rack</Btn>}
+          {puedeEn(u2.id) && !perms.soloLoSuyo && <Btn small variant="ghost" onClick={() => setModal({ t: "estante", e: null, ubicacionId: u2.id })}>+ Estante / rack</Btn>}
           {perms.cargar && !puedeEn(u2.id) && <Chip c={C_GRIS} style={{ fontSize: 11.5 }}>Solo lectura</Chip>}
           {perms.ubicaciones && <Btn small variant="ghost" onClick={() => setModal({ t: "ubicacion", u: u2 })}>Responsable</Btn>}
         </div>
@@ -1298,8 +1407,24 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
           </div>
         </div>; }))}
       </>}
-      {tituloGrupo(ests.length ? `Fuera de estante · ${sueltos.length}` : `Inventario · ${aqui.length}`, perms.imprimir && sueltos.length > 0 && <Btn small variant="ghost" onClick={() => etiquetas(sueltos, u2.nombre)}><Ico d={ICO.imprimir} size={13} /> Etiquetas ({sueltos.length})</Btn>)}
-      {sueltos.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{ests.length ? "Todo está en sus estantes." : puedeEn(u2.id) ? "Vacío. Tocá Agregar aquí y empezá con la foto." : "Vacío."}</div>
+      {esProy && <div className="gt-vidrio" style={{ padding: isMobile ? 14 : 16, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>Consumibles · {consumibles.length}</div>
+            <div style={{ fontSize: 12, color: conteoOk ? C_VERDE.color : ultimoC ? C_ROJO.color : "var(--text-3)", marginTop: 3, fontWeight: 600 }}>{ultimoC ? `Último conteo ${fmtDT(ultimoC)}${conteoOk ? " · al día" : ` · toca contar (${ultimoDiaConteo(hoyInv) === hoyInv ? "hoy" : "desde el " + ultimoDiaConteo(hoyInv).slice(8) + "/" + ultimoDiaConteo(hoyInv).slice(5, 7)})`}` : "Todavía no se ha contado · lunes y jueves es obligatorio"}</div>
+          </div>
+          {perms.contar && puedeEn(u2.id) && <Btn onClick={() => setModal({ t: "conteo", ubic: u2.id })}>Contar lo que queda</Btn>}
+          {puedeEn(u2.id) && <Btn variant="ghost" onClick={() => agregarAqui(u2.id, { tipo: "cantidad" })}>+ Material</Btn>}
+        </div>
+        {consumibles.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{puedeEn(u2.id) ? "Cargá el inventario inicial con + Material (cemento, aditivo, arena, grava…)." : "Sin consumibles todavía."}</div>
+          : <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(300px, 1fr))", gap: 8 }}>{consumibles.map(it => { const c = it.conteos?.[u2.id]; return <div key={it.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => setModal({ t: "ficha", id: it.id })} onKeyDown={e => { if (e.key === "Enter") setModal({ t: "ficha", id: it.id }); }} style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
+            <Foto foto={it.foto} size={44} radius={11} categoria={it.categoria} />
+            <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.nombre}</div><div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>{c ? `contado ${fmtDT(c.at)}${c.byName ? ` · ${String(c.byName).split(" ")[0]}` : ""}` : "sin contar"}</div></div>
+            <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 22px/1 var(--display)", color: CHARCOAL }}>{fmtN(stockEn(it, u2.id))}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{it.unidad}</div></div>
+          </div>; })}</div>}
+      </div>}
+      {tituloGrupo(esProy ? `Equipo y herramientas · ${equipo.length}` : ests.length ? `Fuera de estante · ${sueltos.length}` : `Inventario · ${aqui.length}`, perms.imprimir && equipo.length > 0 && <Btn small variant="ghost" onClick={() => etiquetas(equipo, u2.nombre)}><Ico d={ICO.imprimir} size={13} /> Etiquetas ({equipo.length})</Btn>)}
+      {equipo.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{esProy ? "Sin equipo ni herramientas aquí." : ests.length ? "Todo está en sus estantes." : puedeEn(u2.id) ? "Vacío. Tocá Agregar aquí y empezá con la foto." : "Vacío."}</div>
         : porCat.map(([c, l]) => <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "#6E6862" }}><Ico d={ICO[c.id]} size={14} />{c.label} · {l.length}</div>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(340px, 1fr))", gap: 8 }}>{l.map(it => filaItem(it, { mostrarUbic: false }))}</div>
@@ -1457,12 +1582,12 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     </div>;
   };
   const renderMovimientos = () => {
-    const lista = (movUbic ? movimientosDe(movs, movUbic) : [...movs]).filter(m => !movQ || `${m.codigo} ${m.nombre} ${m.byName} ${m.motivo || ""}`.toLowerCase().includes(movQ.toLowerCase())).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    const lista = (movUbic ? movimientosDe(movs, movUbic) : [...movs]).filter(m => !perms.soloLoSuyo || [m.a, m.de, m.en].some(x => x && editables.has(x))).filter(m => !movQ || `${m.codigo} ${m.nombre} ${m.byName} ${m.motivo || ""}`.toLowerCase().includes(movQ.toLowerCase())).sort((a, b) => String(b.at).localeCompare(String(a.at)));
     const porDia = {}; lista.forEach(m => { const d = diaDe(m.at); (porDia[d] = porDia[d] || []).push(m); });
     const cargarMesAnterior = async () => { const ultimo = mesesMov[mesesMov.length - 1]; const [y, mo] = ultimo.replace("inv-mov-", "").split("-").map(Number); const prev = keyMovimientos(new Date(y, mo - 2, 1).toISOString()); setMesesMov(p => [...p, prev]); try { const c = await store.getCloud(prev); setMovs(p => [...p, ...(Array.isArray(c) ? c : [])]); } catch {} };
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div className="gt-vidrio" style={{ padding: isMobile ? 10 : 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <select value={movUbic} onChange={e => setMovUbic(e.target.value)} style={{ ...CTRL, width: "auto", minHeight: 44, borderRadius: 999, maxWidth: 260, fontWeight: 700 }}><option value="">Todas las ubicaciones</option>{ubicaciones.map(u2 => <option key={u2.id} value={u2.id}>{u2.nombre}</option>)}</select>
+        <select value={movUbic} onChange={e => setMovUbic(e.target.value)} style={{ ...CTRL, width: "auto", minHeight: 44, borderRadius: 999, maxWidth: 260, fontWeight: 700 }}><option value="">{perms.soloLoSuyo ? "Mis proyectos" : "Todas las ubicaciones"}</option>{(perms.soloLoSuyo ? misProyectosUbic : ubicaciones).map(u2 => <option key={u2.id} value={u2.id}>{u2.nombre}</option>)}</select>
         <Buscador value={movQ} onChange={setMovQ} placeholder="Buscar por artículo, código o persona" /><span style={{ fontSize: 12, color: "var(--text-3)", whiteSpace: "nowrap" }}>{lista.length}</span>
       </div>
       {lista.length === 0 && <Vacio>Sin movimientos todavía.</Vacio>}
@@ -1485,6 +1610,8 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
     if (m.t === "editar") { const it = items.find(i => i.id === m.id); if (!it) return null; return <Modal title={`Editar ${it.codigo}`} onClose={() => setModal({ t: "ficha", id: it.id })}><EditarFormImpl item={it} ocupado={ocupado} isMobile={isMobile} onSave={(f) => editarArticulo(it, f)} onClose={() => setModal({ t: "ficha", id: it.id })} /></Modal>; }
     if (m.t === "ubicacion") return <Modal title={m.u ? `${m.u.nombre}` : "Nueva oficina"} onClose={() => setModal(null)}><UbicacionFormImpl ubicacion={m.u} usuarios={usuarios} ocupado={ocupado} onSave={(f) => guardarUbicacion(m.u, f)} onClose={() => setModal(null)} /></Modal>;
     if (m.t === "importar") return <Modal title="Importar desde Excel" onClose={() => setModal(null)} wide><ImportarFormImpl ubicaciones={ubicacionesMias} ubicFija={ubicFija} emps={emps} ocupado={ocupado} onImportar={importar} onClose={() => setModal(null)} /></Modal>;
+    if (m.t === "conteo") { const u2 = ubicaciones.find(x => x.id === m.ubic); if (!u2) return null; const cons = itemsEnUbicacion(vivos, u2.id).filter(esConsumible).concat(vivos.filter(i => esConsumible(i) && !stockEn(i, u2.id) && i.conteos?.[u2.id])).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es"));
+      return <Modal title={`Contar · ${u2.nombre}`} onClose={() => setModal(null)} wide><ConteoImpl ubicacion={u2} consumibles={cons} ocupado={ocupado} isMobile={isMobile} onClose={() => setModal(null)} onAgregar={puedeEn(u2.id) ? () => { setModal(null); agregarAqui(u2.id, { tipo: "cantidad" }); } : null} onGuardar={(filas) => guardarConteo(u2.id, filas)} /></Modal>; }
     if (m.t === "salida") return <Modal title="Dar salida" onClose={() => setModal(null)} wide><SalidaPickerImpl items={items} ubicaciones={ubicaciones} puedeEn={puedeEn} isMobile={isMobile} onEscanear={() => setModal({ t: "escanear", salida: true })} onElegir={(it) => setModal({ t: "ficha", id: it.id, accion: it.tipo === "individual" ? "mover" : "salida" })} /></Modal>;
     if (m.t === "escanear") return <Modal title="Escanear" onClose={() => setModal(null)}><EscanerImpl onCodigo={(c) => { if (m.salida) { const it = items.find(i => !i.eliminado && String(i.codigo).toUpperCase() === String(c).toUpperCase()); if (it) return setModal({ t: "ficha", id: it.id, accion: it.tipo === "individual" ? "mover" : "salida" }); } setModal(null); abrirCodigo(c); }} onClose={() => setModal(null)} /></Modal>;
     if (m.t === "estante") return <Modal title={m.e ? `Editar ${m.e.nombre}` : "Nuevo estante / rack"} onClose={() => setModal(null)}><EstanteFormImpl estante={m.e} ubicacionNombre={nombreUbicacion(ubicaciones, m.ubicacionId)} ocupado={ocupado} onSave={(f) => guardarEstante(m.e, m.ubicacionId, f)} onClose={() => setModal(null)} /></Modal>;

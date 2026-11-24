@@ -40,6 +40,7 @@ import { num, UNIDADES, TASA_DEFAULT, movimientosCompras, VARILLAS, LARGOS_VARIL
 import { Input, Select, Textarea, Btn, Chip, Modal, C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, fmtL, fmtUSD, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
 import Geolito from "./geolito.jsx";
+import { PlanificacionVista, CoberturaVista } from "./suministro.jsx";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { leerPdf, parsearCotizacion, lineasSupplyDesdeLectura, lineaSupplyDe, memoriaDeCompras } from "./leer-cotizacion.js";
 import {
@@ -67,9 +68,10 @@ const rolSupply = (userRole) => (
     : userRole === "asistente_compras" ? "compras"
     : (userRole === "costos" || userRole === "compras_ops" || userRole === "tesoreria") ? "finanzas"
     : userRole === "gerencia" ? "gerencia"
+    : userRole === "planificacion" ? "planificacion"
     : null
 );
-const ROL_LABEL = { coordinador: "Coordinador de Operaciones", residente: "Ingeniero Residente", almacen: "Almacén", compras: "Compras", finanzas: "Finanzas (solo lectura)", gerencia: "Gerencia (solo lectura)" };
+const ROL_LABEL = { coordinador: "Coordinador de Operaciones", residente: "Ingeniero Residente", almacen: "Almacén", compras: "Compras", finanzas: "Finanzas (solo lectura)", gerencia: "Gerencia (solo lectura)", planificacion: "Planificación (PMO)" };
 
 const fmtHora = (hhmm) => {
   const [h, m] = String(hhmm || "").split(":").map(Number);
@@ -713,7 +715,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const kRef = useRef(K); kRef.current = K;
   const esCoordinador = rol === "coordinador";
   const esResidente = rol === "residente";
-  const soloLectura = rol === "finanzas" || rol === "gerencia";
+  const soloLectura = rol === "finanzas" || rol === "gerencia" || rol === "planificacion";
 
   // ── Datos ──
   const [loaded, setLoaded] = useState(false);
@@ -1252,12 +1254,13 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const [dashCorte, setDashCorte] = useState("todos");
 
   const NAV = {
-    coordinador: [{ id: "hoy", label: "Hoy" }, { id: "alertas", label: "Alertas" }, { id: "solicitudes", label: "Solicitudes" }, { id: "cotizaciones", label: "Cotizaciones" }, { id: "almacen", label: "Almacén" }, { id: "compras", label: "Compras" }, { id: "dashboard", label: "Dashboard" }, { id: "config", label: "Configuración" }],
+    coordinador: [{ id: "hoy", label: "Hoy" }, { id: "cobertura", label: "Cobertura" }, { id: "planificacion", label: "Planificación" }, { id: "alertas", label: "Alertas" }, { id: "solicitudes", label: "Solicitudes" }, { id: "cotizaciones", label: "Cotizaciones" }, { id: "almacen", label: "Almacén" }, { id: "compras", label: "Compras" }, { id: "dashboard", label: "Dashboard" }, { id: "config", label: "Configuración" }],
     residente:   [{ id: "solicitudes", label: "Mis solicitudes" }],
-    almacen:     [{ id: "almacen", label: "Almacén" }, { id: "solicitudes", label: "Solicitudes" }],
-    compras:     [{ id: "compras", label: "Por cotizar" }, { id: "cotizaciones", label: "Cotizaciones" }, { id: "solicitudes", label: "Solicitudes" }],
-    finanzas:    [{ id: "hoy", label: "Hoy" }, { id: "solicitudes", label: "Solicitudes" }, { id: "cotizaciones", label: "Cotizaciones" }, { id: "dashboard", label: "Dashboard" }],
-    gerencia:    [{ id: "hoy", label: "Hoy" }, { id: "solicitudes", label: "Solicitudes" }, { id: "cotizaciones", label: "Cotizaciones" }, { id: "dashboard", label: "Dashboard" }],
+    almacen:     [{ id: "almacen", label: "Almacén" }, { id: "cobertura", label: "Cobertura" }, { id: "solicitudes", label: "Solicitudes" }],
+    compras:     [{ id: "compras", label: "Por cotizar" }, { id: "cobertura", label: "Cobertura" }, { id: "cotizaciones", label: "Cotizaciones" }, { id: "solicitudes", label: "Solicitudes" }],
+    planificacion: [{ id: "cobertura", label: "Cobertura" }, { id: "planificacion", label: "Planificación" }, { id: "solicitudes", label: "Solicitudes" }, { id: "cotizaciones", label: "Cotizaciones" }],
+    finanzas:    [{ id: "hoy", label: "Hoy" }, { id: "cobertura", label: "Cobertura" }, { id: "solicitudes", label: "Solicitudes" }, { id: "cotizaciones", label: "Cotizaciones" }, { id: "dashboard", label: "Dashboard" }],
+    gerencia:    [{ id: "hoy", label: "Hoy" }, { id: "cobertura", label: "Cobertura" }, { id: "solicitudes", label: "Solicitudes" }, { id: "cotizaciones", label: "Cotizaciones" }, { id: "dashboard", label: "Dashboard" }],
   };
   const nav = NAV[rol] || [];
 
@@ -2257,7 +2260,9 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>
         {isMobile && <TituloMovil>{(nav.find(x => x.id === secOk) || {}).label}</TituloMovil>}
-        {secOk === "hoy" ? renderHoy() : secOk === "alertas" ? renderAlertas() : secOk === "almacen" ? renderAlmacen() : secOk === "compras" ? renderCompras() : secOk === "cotizaciones" ? renderCotizaciones() : secOk === "dashboard" ? renderDashboard() : secOk === "config" ? renderConfig() : renderSolicitudes()}
+        {secOk === "cobertura" ? <CoberturaVista proyectos={proyectos} isMobile={isMobile} onIrPlanificacion={nav.some(x => x.id === "planificacion") ? () => setSec("planificacion") : null} />
+          : secOk === "planificacion" ? <PlanificacionVista proyectos={proyectos} isMobile={isMobile} user={{ username: userKey, nombre: userName }} puedeEditar={rolReal === "coordinador" || rolReal === "planificacion"} />
+          : secOk === "hoy" ? renderHoy() : secOk === "alertas" ? renderAlertas() : secOk === "almacen" ? renderAlmacen() : secOk === "compras" ? renderCompras() : secOk === "cotizaciones" ? renderCotizaciones() : secOk === "dashboard" ? renderDashboard() : secOk === "config" ? renderConfig() : renderSolicitudes()}
       </div>
     </div>
     <Geolito cfg={cfg} nombre={userName} />

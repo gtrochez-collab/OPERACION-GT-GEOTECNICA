@@ -47,7 +47,7 @@ const MODULES = [
     // Hub de RRHH (20-oct-2026): TODOS los usuarios entran (menos la tablet de
     // marcaje). Los que no son de RRHH ven SOLO su portal "Mi RRHH" (su
     // asistencia de GeoClock y sus solicitudes); el recorte vive en HRModule.
-    roles: ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica", "gerencia", "coordinador", "coordinador_maquinas", "compras_ops", "residente", "visor_compras", "almacenista", "almacen_visor"],
+    roles: ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica", "gerencia", "coordinador", "coordinador_maquinas", "compras_ops", "residente", "visor_compras", "almacenista", "almacen_visor", "planificacion"],
   },
   {
     id: "compras-operaciones",
@@ -70,7 +70,7 @@ const MODULES = [
     icon: "📦",
     desc: "Solicitudes de material: del residente a la aprobación.",
     accent: "#C75F1F",
-    roles: ["admin", "residente", "logistica", "asistente_compras", "costos", "compras_ops", "tesoreria", "gerencia"],
+    roles: ["admin", "residente", "logistica", "asistente_compras", "costos", "compras_ops", "tesoreria", "gerencia", "planificacion"],
   },
   {
     // GeoInventory (13-oct-2026): inventario, ubicaciones y herramientas.
@@ -103,7 +103,7 @@ const MODULES = [
     // Christian (costos) y Carolina (tesoreria) reclasifican y acreditan
     // movilizaciones; gerencia solo lectura. 16-sep-2026: Arturo (compras_ops)
     // entra SOLO para cargar/editar presupuestos de proyecto (ver GeoCostModule).
-    roles: ["admin", "costos", "tesoreria", "gerencia", "compras_ops"],
+    roles: ["admin", "costos", "tesoreria", "gerencia", "compras_ops", "planificacion"],
   },
   {
     id: "geosafety",
@@ -162,7 +162,7 @@ const MODULES = [
     icon: "✅",
     desc: "Organizá tus pendientes con fecha.",
     accent: "#C75F1F",
-    roles: [...new Set([...USERS.map(u => u.role), "residente"])].filter(r => r !== "marcaje"),
+    roles: [...new Set([...USERS.map(u => u.role), "residente", "planificacion"])].filter(r => r !== "marcaje"),
   },
 ];
 

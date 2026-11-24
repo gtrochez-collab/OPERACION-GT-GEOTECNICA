@@ -229,7 +229,23 @@ export const ACCIONES = {
   asignar: "Asignación",
   editar:  "Editado",
   eliminar: "Eliminado",
+  conteo:  "Conteo",
 };
+// ── SUMINISTRO A OBRA (24-nov-2026, Gerson) ──
+// Consumibles = lo que se gasta y se mide por cantidad (cemento, aditivo,
+// arena, grava, varilla…): los artículos "por cantidad". Equipo y herramientas
+// = lo que se devuelve (individuales y cajas).
+// (las impresoras o sillas cargadas "por cantidad" NO son consumibles: solo materiales e insumos)
+export const CATEGORIAS_CONSUMIBLES = ["materiales", "insumos_perforacion"];
+export const esConsumible = (item) => item?.tipo === "cantidad" && (!item.categoria || CATEGORIAS_CONSUMIBLES.includes(item.categoria));
+// El residente cuenta lo que le queda; lunes y jueves son obligatorios.
+const DIA_MS_INV = 86400000;
+const dowISO = (iso) => new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10))).getUTCDay();
+const restarDias = (iso, n) => new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) - n * DIA_MS_INV).toISOString().slice(0, 10);
+/** El último lunes o jueves que ya llegó (hoy incluido): el conteo obligatorio más reciente. */
+export const ultimoDiaConteo = (hoy) => { for (let i = 0; i < 7; i++) { const d = restarDias(hoy, i); const w = dowISO(d); if (w === 1 || w === 4) return d; } return hoy; };
+/** ¿El conteo de esta fecha (YYYY-MM-DD) cubre el último día obligatorio? */
+export const conteoAlDia = (fechaConteo, hoy) => !!fechaConteo && fechaConteo >= ultimoDiaConteo(hoy);
 export const aplicarMovimiento = (item, m, { by = "", byName = "", at = new Date().toISOString(), id = "" } = {}) => {
   if (!item) return { error: "No existe el artículo." };
   const base = { id: id || `${at}-${Math.random().toString(36).slice(2, 7)}`, at, by, byName, itemId: item.id, codigo: item.codigo, nombre: item.nombre, accion: m.accion, motivo: String(m.motivo || "").trim() };
@@ -258,6 +274,17 @@ export const aplicarMovimiento = (item, m, { by = "", byName = "", at = new Date
       if (nuevo === antes) return { error: "La cantidad es la misma." };
       stock[m.en] = nuevo; if (nuevo <= 0) delete stock[m.en];
       return { item: { ...item, stock }, mov: { ...base, en: m.en, cantidad: r2(nuevo - antes), antes, despues: nuevo } };
+    }
+    // CONTEO del residente: "hay N". Se registra aunque sea la misma cantidad
+    // (contar y confirmar también cuenta) y queda la fecha del último conteo.
+    if (m.accion === "conteo") {
+      if (!m.en) return { error: "Elegí la ubicación." };
+      if (m.nuevo === "" || m.nuevo == null || !Number.isFinite(Number(m.nuevo))) return { error: "Escribí cuánto hay." };
+      const antes = num(stock[m.en]), nuevo = r2(num(m.nuevo));
+      if (nuevo < 0) return { error: "La cantidad no puede ser negativa." };
+      stock[m.en] = nuevo; if (nuevo <= 0) delete stock[m.en];
+      const conteos = { ...(item.conteos || {}), [m.en]: { at, by, byName, cantidad: nuevo } };
+      return { item: { ...item, stock, conteos }, mov: { ...base, en: m.en, cantidad: r2(nuevo - antes), antes, despues: nuevo } };
     }
     if (m.accion === "ubicar") {
       if (!m.en) return { error: "Elegí la ubicación." };
@@ -343,6 +370,7 @@ export const textoMovimiento = (m, ubicaciones = []) => {
     case "salida": return `−${c}${m.contenido ? `${m.contenido.toLowerCase()}${num(m.cantidad) === 1 ? "" : "s"} ` : ""}de ${u(m.de)}${m.a ? ` → ${u(m.a)}` : ""}${m.entregadoNombre ? ` → ${m.entregadoNombre}` : ""}`;
     case "mover": return m.aEstante || m.deEstante ? `${u(m.de)}${m.deNivel ? ` (nivel ${m.deNivel})` : ""} → ${u(m.a)}${m.aNivel ? ` (nivel ${m.aNivel})` : ""}` : `${u(m.de)} → ${u(m.a)}`;
     case "ubicar": return `${u(m.en)} · ${m.aEstante ? `a nivel ${m.aNivel}` : "fuera de estante"}`;
+    case "conteo": return `Contado: hay ${num(m.despues).toLocaleString("es-HN")} en ${u(m.en)}${num(m.cantidad) ? ` (${num(m.cantidad) > 0 ? "+" : "−"}${Math.abs(num(m.cantidad)).toLocaleString("es-HN")})` : " · sin cambio"}`;
     case "ajuste": return `${num(m.antes).toLocaleString("es-HN")} → ${num(m.despues).toLocaleString("es-HN")} en ${u(m.en)}`;
     case "estado": return `${m.estadoDe || "—"} → ${m.estadoA}${m.maquinaNombre ? ` (${m.maquinaNombre})` : ""}`;
     case "asignar": return m.asignadoA ? `Asignado a ${m.asignadoNombre}` : `Devuelto por ${m.asignadoDeNombre || "—"}`;
@@ -363,19 +391,27 @@ export const keyMovimientos = (iso) => `inv-mov-${String(iso || new Date().toISO
 //   · Christian (costos), Arturo (compras_ops), gerencia y visores: solo ver.
 //   · Residentes y los demás: sin acceso.
 export const permisosDe = (role) => {
+  // SUMINISTRO A OBRA (24-nov-2026): el residente maneja SOLO su proyecto
+  // (inventario inicial, recibir, contar); Planificación (Neftalí) ve todos
+  // los proyectos y puede contar o recibir en cualquiera de ellos.
+  if (role === "residente" || role === "planificacion") {
+    return { ver: true, cargar: true, mover: true, asignar: false, estado: true, imprimir: true, editar: true, importar: false,
+      ajustar: false, eliminar: false, ubicaciones: false, config: false, contar: true,
+      alcance: role === "residente" ? "propias" : "proyectos", soloLoSuyo: role === "residente" };
+  }
   const full = role === "admin" || role === "tesoreria";
   const carga = full || role === "logistica" || role === "asistente_compras";
   const ver = carga || ["costos", "compras_ops", "gerencia", "visor_compras", "almacenista", "almacen_visor"].includes(role);
   return {
     ver, cargar: carga, mover: carga, asignar: carga, estado: carga, imprimir: carga, editar: carga, importar: carga,
-    ajustar: full, eliminar: full, ubicaciones: full || role === "asistente_compras", config: full,
+    ajustar: full, eliminar: full, ubicaciones: full || role === "asistente_compras", config: full, contar: carga,
     // 14-oct-2026 (Gerson): Óscar VE el inventario de todos los proyectos y
     // ubicaciones pero solo MANIPULA lo suyo (Almacén Central + donde sea
     // responsable). Sí da salida del Almacén hacia un proyecto.
     alcance: role === "logistica" ? "propias" : "todo",
   };
 };
-export const ROLES_INVENTARIO = ["admin", "tesoreria", "logistica", "asistente_compras", "costos", "compras_ops", "gerencia", "visor_compras"];
+export const ROLES_INVENTARIO = ["admin", "tesoreria", "logistica", "asistente_compras", "costos", "compras_ops", "gerencia", "visor_compras", "residente", "planificacion"];
 
 // ── Resumen del inicio ──
 export const resumenInventario = (items) => {

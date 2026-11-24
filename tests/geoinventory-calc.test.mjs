@@ -82,12 +82,13 @@ test("buscar y resumen", () => {
   assert.equal(r.articulos, 3); assert.equal(r.herramientas, 1); assert.equal(r.enOperacion, 1); assert.equal(r.asignados, 1);
 });
 
-test("permisos: Gerson/Carolina todo, Óscar sin ajustar, Ana crea oficinas, Christian solo ve, residente nada", () => {
+test("permisos: Gerson/Carolina todo, Óscar sin ajustar, Ana crea oficinas, Christian solo ve, residente solo su proyecto (24-nov-2026), visor sin acceso", () => {
   assert.ok(permisosDe("admin").ajustar && permisosDe("tesoreria").eliminar);
   const o = permisosDe("logistica"); assert.ok(o.cargar && o.mover && o.imprimir && o.asignar && !o.ajustar && !o.ubicaciones);
   const a = permisosDe("asistente_compras"); assert.ok(a.cargar && a.ubicaciones && !a.ajustar && !a.config);
   const c = permisosDe("costos"); assert.ok(c.ver && !c.cargar);
-  assert.ok(!permisosDe("residente").ver);
+  const r = permisosDe("residente"); assert.ok(r.ver && r.contar && r.soloLoSuyo && !r.ajustar && !r.eliminar);
+  assert.ok(!permisosDe("recepcion").ver);
 });
 
 test("importar desde Excel: CSV y pegado con tabs", () => {

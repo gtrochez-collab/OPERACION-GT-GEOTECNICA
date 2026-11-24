@@ -201,7 +201,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
   const puedeCrearMov = isAdmin;
   const puedeRecibirMov = isTesoreria || isAdmin;
   const puedeAcreditarMov = isTesoreria || isAdmin;
-  const roleLabel = isAdmin ? "Operaciones" : isTesoreria ? "Tesorería" : isCostos ? "Costos / Operaciones" : isGerencia ? "Gerencia (solo lectura)" : isComprasOps ? "Compras / Operaciones" : userRole;
+  const roleLabel = isAdmin ? "Operaciones" : isTesoreria ? "Tesorería" : isCostos ? "Costos / Operaciones" : isGerencia ? "Gerencia (solo lectura)" : isComprasOps ? "Compras / Operaciones" : userRole === "planificacion" ? "Planificación (solo lectura)" : userRole;
 
   // ── Datos ──
   const [loaded, setLoaded] = useState(false);
