@@ -1213,7 +1213,9 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
   const textoPosicion = (it, ubId) => { const p = posicionDe(it, ubId); const n = nombreEstanteDe(p.estanteId); return n ? `${n} · Nivel ${p.nivel}` : ""; };
 
   // ── Piezas de lista ──
-  const filaItem = (it, { mostrarUbic = true } = {}) => {
+  // `en` (24-nov-2026): dentro de una ubicación se muestra lo que hay AHÍ, no el
+  // total de todas (salían 600 bolsas en el Almacén después de mandar 200 a VSM).
+  const filaItem = (it, { mostrarUbic = true, en = "" } = {}) => {
     const enU = ubicacionesConStock(it);
     return <div key={it.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => setModal({ t: "ficha", id: it.id })} onKeyDown={e => { if (e.key === "Enter") setModal({ t: "ficha", id: it.id }); }} style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
       <Foto foto={it.foto} size={52} radius={12} categoria={it.categoria} />
@@ -1226,7 +1228,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
         <div style={{ fontSize: 14.5, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.tipo === "caja" ? `Caja · ${it.nombre}` : it.nombre}</div>
         {mostrarUbic && <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.tipo === "caja" ? [nombreUbicacion(ubicaciones, it.ubicacionId), textoEstante(estantes, it)].filter(Boolean).join(" · ") : enU.length ? enU.map(x => [nombreUbicacion(ubicaciones, x.id), it.tipo === "cantidad" ? fmtN(x.cantidad) : "", textoPosicion(it, x.id)].filter(Boolean).join(" · ")).join(" | ") : "Sin existencias"}{it.maquinaNombre ? ` · en ${it.maquinaNombre}` : ""}</div>}
       </div>
-      {it.tipo === "cantidad" && <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 18px/1 var(--display)", color: CHARCOAL }}>{fmtN(stockDe(it))}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{it.unidad}</div></div>}
+      {it.tipo === "cantidad" && <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 18px/1 var(--display)", color: CHARCOAL }}>{fmtN(en ? stockEn(it, en) : stockDe(it))}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{it.unidad}{en && stockDe(it) !== stockEn(it, en) ? ` · ${fmtN(stockDe(it))} en total` : ""}</div></div>}
       {it.tipo === "caja" && <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 18px/1 var(--display)", color: C_NIVEL[nivelCaja(it.caja)].color }}>{fmtN(it.caja?.cantidad)}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{String(it.caja?.contenido || "").toLowerCase()}s</div></div>}
     </div>;
   };
@@ -1427,7 +1429,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       {equipo.length === 0 ? <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{esProy ? "Sin equipo ni herramientas aquí." : ests.length ? "Todo está en sus estantes." : puedeEn(u2.id) ? "Vacío. Tocá Agregar aquí y empezá con la foto." : "Vacío."}</div>
         : porCat.map(([c, l]) => <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "#6E6862" }}><Ico d={ICO[c.id]} size={14} />{c.label} · {l.length}</div>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(340px, 1fr))", gap: 8 }}>{l.map(it => filaItem(it, { mostrarUbic: false }))}</div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(340px, 1fr))", gap: 8 }}>{l.map(it => filaItem(it, { mostrarUbic: false, en: u2.id }))}</div>
         </div>)}
       {movsAqui.length > 0 && <div className="gt-vidrio" style={{ padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}><div className="gt-label" style={{ color: "var(--text-3)" }}>Movimientos de aquí</div><button type="button" onClick={() => { setMovUbic(u2.id); setSec("movimientos"); }} style={{ background: "none", border: "none", color: ORANGE_DARK, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Ver todos →</button></div>
@@ -1490,7 +1492,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{niveles.map(x => pillBtn(`Nivel ${x}`, x === n, () => setRuta({ ubic: u2.id, est: e.id, niv: x }), { key: x, c: "#6E6862" }))}</div>
       {l.length === 0 && <Vacio>Nivel vacío.{puedeEn(u2.id) ? " Tocá Agregar aquí: la ubicación, el estante y el nivel ya van puestos." : ""}</Vacio>}
       {cajas.length > 0 && grilla(cajas.map(tarjetaCaja))}
-      {otros.length > 0 && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(340px, 1fr))", gap: 8 }}>{otros.map(it => filaItem(it, { mostrarUbic: false }))}</div>}
+      {otros.length > 0 && <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(340px, 1fr))", gap: 8 }}>{otros.map(it => filaItem(it, { mostrarUbic: false, en: u2.id }))}</div>}
     </div>;
   };
   const renderAgregar = () => <AgregarFormImpl ubicaciones={ubicacionesMias} ubicFija={ubicFija} setUbicFija={setUbicFija} items={vivos} emps={emps} estantes={estantes} onNuevoEstante={perms.cargar ? nuevoEstante : null} ocupado={ocupado} isMobile={isMobile} dosColumnas={anchoGrande} ultimo={ultimo} setUltimo={setUltimo}
