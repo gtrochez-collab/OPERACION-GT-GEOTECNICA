@@ -230,7 +230,19 @@ export const ACCIONES = {
   editar:  "Editado",
   eliminar: "Eliminado",
   conteo:  "Conteo",
+  comprometer: "Comprometido",
+  liberar: "Compromiso liberado",
 };
+// ── COMPROMETIDO (24-nov-2026, Gerson: "de las 400 del plantel, 130 ya son de
+// la Ing. Melissa en Torre Adobe; no quiero poner que se le mandaron, quiero
+// que salgan comprometidas: en stock solo quedan 270 para San Miguel") ──
+// `item.compromisos = [{id, de, para, cantidad, nota, por, porNombre, at}]`:
+// cantidad apartada EN una ubicación (de) PARA otra (para, ej. proy:TORRE ADOBE).
+// No mueve stock: la salida hacia `para` lo va consumiendo sola.
+export const compromisosDe = (item, de) => (item?.compromisos || []).filter(c => c && num(c.cantidad) > 0 && (!de || c.de === de));
+export const comprometidoEn = (item, de, { excepto = "" } = {}) => r2(compromisosDe(item, de).filter(c => !excepto || c.para !== excepto).reduce((a, c) => a + num(c.cantidad), 0));
+/** Lo que se puede usar libremente en una ubicación: existencias − comprometido. */
+export const disponibleEn = (item, de) => r2(Math.max(0, num(item?.stock?.[de]) - comprometidoEn(item, de)));
 // ── SUMINISTRO A OBRA (24-nov-2026, Gerson) ──
 // Consumibles = lo que se gasta y se mide por cantidad (cemento, aditivo,
 // arena, grava, varilla…): los artículos "por cantidad". Equipo y herramientas
@@ -263,9 +275,38 @@ export const aplicarMovimiento = (item, m, { by = "", byName = "", at = new Date
       if (!m.de) return { error: "Elegí de qué ubicación sale." };
       const antes = num(stock[m.de]);
       if (q > antes + 1e-9) return { error: `Solo hay ${antes} en esa ubicación.` };
+      // Lo comprometido para OTRO destino no se toca; lo de este destino se consume.
+      const ajeno = comprometidoEn(item, m.de, { excepto: m.a || "" });
+      if (antes - q < ajeno - 1e-9) return { error: `Hay ${ajeno.toLocaleString("es-HN")} comprometidas para otro proyecto: de esta ubicación solo podés sacar ${r2(Math.max(0, antes - ajeno)).toLocaleString("es-HN")}${m.a ? "" : " (o elegí hacia dónde va, si es para el proyecto del compromiso)"}. Si cambió el plan, liberá el compromiso primero.` };
       stock[m.de] = r2(antes - q); if (stock[m.de] <= 0) delete stock[m.de];
       if (m.a) stock[m.a] = r2(num(stock[m.a]) + q);
-      return { item: { ...item, stock }, mov: { ...base, de: m.de, a: m.a || "", cantidad: q, antes, despues: num(stock[m.de]), ...(m.entregadoA ? { entregadoA: m.entregadoA, entregadoNombre: m.entregadoNombre || "" } : {}) } };
+      let compromisos = item.compromisos, liberado = 0;
+      if (m.a && compromisosDe(item, m.de).some(c => c.para === m.a)) {
+        let resta = q;
+        compromisos = (item.compromisos || []).map(c => { if (c.de !== m.de || c.para !== m.a || resta <= 0) return c; const usa = Math.min(resta, num(c.cantidad)); resta = r2(resta - usa); liberado = r2(liberado + usa); return { ...c, cantidad: r2(num(c.cantidad) - usa) }; }).filter(c => num(c.cantidad) > 0);
+      }
+      return { item: { ...item, stock, ...(liberado ? { compromisos } : {}) }, mov: { ...base, de: m.de, a: m.a || "", cantidad: q, antes, despues: num(stock[m.de]), ...(liberado ? { deCompromiso: liberado } : {}), ...(m.entregadoA ? { entregadoA: m.entregadoA, entregadoNombre: m.entregadoNombre || "" } : {}) } };
+    }
+    if (m.accion === "comprometer") {
+      if (!(q > 0)) return { error: "La cantidad debe ser mayor que 0." };
+      if (!m.de) return { error: "Elegí de qué ubicación se aparta." };
+      if (!m.para) return { error: "Elegí para qué proyecto queda comprometido." };
+      if (m.para === m.de) return { error: "Tiene que ser para otra ubicación." };
+      const disp = disponibleEn(item, m.de);
+      if (q > disp + 1e-9) return { error: `Solo hay ${disp.toLocaleString("es-HN")} libres en esa ubicación.` };
+      const lista = [...(item.compromisos || [])];
+      const i = lista.findIndex(c => c.de === m.de && c.para === m.para);
+      const nota = String(m.motivo || "").trim();
+      if (i >= 0) lista[i] = { ...lista[i], cantidad: r2(num(lista[i].cantidad) + q), at, por: by, porNombre: byName, ...(nota ? { nota } : {}) };
+      else lista.push({ id: base.id, de: m.de, para: m.para, cantidad: q, nota, por: by, porNombre: byName, at });
+      return { item: { ...item, compromisos: lista }, mov: { ...base, de: m.de, a: m.para, cantidad: q } };
+    }
+    if (m.accion === "liberar") {
+      const c = (item.compromisos || []).find(x => x.de === m.de && x.para === m.para);
+      if (!c) return { error: "Ese compromiso ya no existe." };
+      const suelta = q > 0 ? Math.min(q, num(c.cantidad)) : num(c.cantidad);
+      const compromisos = (item.compromisos || []).map(x => x === c ? { ...x, cantidad: r2(num(x.cantidad) - suelta) } : x).filter(x => num(x.cantidad) > 0);
+      return { item: { ...item, compromisos }, mov: { ...base, de: m.de, a: m.para, cantidad: r2(suelta) } };
     }
     if (m.accion === "ajuste") {
       if (!m.en) return { error: "Elegí la ubicación." };
@@ -367,9 +408,11 @@ export const textoMovimiento = (m, ubicaciones = []) => {
   switch (m.accion) {
     case "crear": return m.a ? `Creado en ${u(m.a)}${m.cantidad > 1 ? ` · ${c}` : ""}` : "Creado";
     case "entrada": return `+${c}→ ${u(m.a)}`;
-    case "salida": return `−${c}${m.contenido ? `${m.contenido.toLowerCase()}${num(m.cantidad) === 1 ? "" : "s"} ` : ""}de ${u(m.de)}${m.a ? ` → ${u(m.a)}` : ""}${m.entregadoNombre ? ` → ${m.entregadoNombre}` : ""}`;
+    case "salida": return `−${c}${m.contenido ? `${m.contenido.toLowerCase()}${num(m.cantidad) === 1 ? "" : "s"} ` : ""}de ${u(m.de)}${m.a ? ` → ${u(m.a)}` : ""}${m.entregadoNombre ? ` → ${m.entregadoNombre}` : ""}${m.deCompromiso ? ` · ${num(m.deCompromiso).toLocaleString("es-HN")} eran del compromiso` : ""}`;
     case "mover": return m.aEstante || m.deEstante ? `${u(m.de)}${m.deNivel ? ` (nivel ${m.deNivel})` : ""} → ${u(m.a)}${m.aNivel ? ` (nivel ${m.aNivel})` : ""}` : `${u(m.de)} → ${u(m.a)}`;
     case "ubicar": return `${u(m.en)} · ${m.aEstante ? `a nivel ${m.aNivel}` : "fuera de estante"}`;
+    case "comprometer": return `${c}apartadas en ${u(m.de)} para ${u(m.a)}`;
+    case "liberar": return `${c}liberadas en ${u(m.de)} (eran para ${u(m.a)})`;
     case "conteo": return `Contado: hay ${num(m.despues).toLocaleString("es-HN")} en ${u(m.en)}${num(m.cantidad) ? ` (${num(m.cantidad) > 0 ? "+" : "−"}${Math.abs(num(m.cantidad)).toLocaleString("es-HN")})` : " · sin cambio"}`;
     case "ajuste": return `${num(m.antes).toLocaleString("es-HN")} → ${num(m.despues).toLocaleString("es-HN")} en ${u(m.en)}`;
     case "estado": return `${m.estadoDe || "—"} → ${m.estadoA}${m.maquinaNombre ? ` (${m.maquinaNombre})` : ""}`;

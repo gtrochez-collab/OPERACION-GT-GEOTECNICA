@@ -36,7 +36,7 @@ import {
   permisosDe, resumenInventario, buscarItems, UNIDADES, num, plantillaCSV, parseTabla, prepararImportacion,
   esCaja, PREFIJO_CAJA, prefijoDe, CONTENIDOS_CAJA, MARCAS_CAJA, TAMANOS_CAJA, tamanoLabel, nombreCaja, nivelCaja, estantesDe, nombreEstante, textoEstante, resumenCajas,
   PREFIJO_UBIC, PREFIJO_EST, MUEBLES, muebleLabel, codigoNivel, nivelesDe, resolverCodigo, posicionDe, itemsEnUbicacion, itemsEnEstante, itemsEnNivel, itemsSinEstante, resumenDe, movimientosDe,
-  manejaUbicacion, esConsumible, conteoAlDia, ultimoDiaConteo,
+  manejaUbicacion, esConsumible, conteoAlDia, ultimoDiaConteo, compromisosDe, comprometidoEn, disponibleEn,
 } from "./geoinventory-calc.js";
 import { KEY_PROYECTOS_ACTIVOS } from "./suministro-calc.js";
 import { hoyISO } from "./fechas.js";
@@ -551,9 +551,17 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms: permsBa
         {(item.marca || item.modelo || item.serie) && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{[item.marca, item.modelo, item.serie ? `S/N ${item.serie}` : ""].filter(Boolean).join(" · ")}</div>}
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {enUbic.length === 0 && <div style={{ fontSize: 13, color: C_ROJO.color, fontWeight: 700 }}>Sin existencias en ninguna ubicación</div>}
-          {enUbic.map(x => <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, flexWrap: "wrap" }}><Ico d={ICO.ubicaciones} size={15} color={ORANGE_DARK} /><b>{nombreUbicacion(ubicaciones, x.id)}</b>{item.tipo === "cantidad" && <span style={{ color: "var(--text-2)" }}>· {fmtN(x.cantidad)} {item.unidad}</span>}{!caja && textoPos(x.id) && <span style={{ color: "var(--text-2)" }}>· {textoPos(x.id)}</span>}{item.estante && !textoPos(x.id) && <span style={{ color: "var(--text-3)" }}>· estante {item.estante}</span>}</div>)}
+          {enUbic.map(x => <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, flexWrap: "wrap" }}><Ico d={ICO.ubicaciones} size={15} color={ORANGE_DARK} /><b>{nombreUbicacion(ubicaciones, x.id)}</b>{item.tipo === "cantidad" && <span style={{ color: "var(--text-2)" }}>· {fmtN(x.cantidad)} {item.unidad}</span>}{item.tipo === "cantidad" && comprometidoEn(item, x.id) > 0 && <span style={{ color: ORANGE_DARK, fontWeight: 700 }}>· {fmtN(disponibleEn(item, x.id))} libres</span>}{!caja && textoPos(x.id) && <span style={{ color: "var(--text-2)" }}>· {textoPos(x.id)}</span>}{item.estante && !textoPos(x.id) && <span style={{ color: "var(--text-3)" }}>· estante {item.estante}</span>}</div>)}
           {item.tipo === "individual" && <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}><Ico d={ICO.persona} size={15} color={item.asignadoA ? C_AZUL.color : "rgba(44,42,40,.3)"} />{item.asignadoA ? <b>{item.asignadoNombre}</b> : <span style={{ color: "var(--text-3)" }}>Sin asignar</span>}</div>}
         </div>
+        {compromisosDe(item).length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 10px", borderRadius: 12, background: "rgba(232,118,45,.07)" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 800, color: ORANGE_DARK, letterSpacing: ".04em" }}>COMPROMETIDO · APARTADO, TODAVÍA NO HA SALIDO</div>
+          {compromisosDe(item).map(c => <div key={c.id || c.de + c.para} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, flexWrap: "wrap" }}>
+            <b style={{ fontFamily: "var(--mono)" }}>{fmtN(c.cantidad)}</b><span>{item.unidad} en {nombreUbicacion(ubicaciones, c.de)} para <b>{nombreUbicacion(ubicaciones, c.para)}</b></span>
+            <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{c.porNombre ? `· ${String(c.porNombre).split(" ").slice(0, 3).join(" ")}` : ""}{c.nota ? ` · ${c.nota}` : ""}</span>
+            {puedeEn(c.de) && permsBase.cargar && <button type="button" disabled={ocupado} onClick={() => { if (confirm(`¿Liberar ${fmtN(c.cantidad)} ${item.unidad} comprometidas para ${nombreUbicacion(ubicaciones, c.para)}? Vuelven a quedar libres.`)) ejecutar({ accion: "liberar", de: c.de, para: c.para }); }} style={{ marginLeft: "auto", border: "none", background: "none", color: C_ROJO.color, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Liberar</button>}
+          </div>)}
+        </div>}
         {item.notas && <div style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "pre-line" }}>{item.notas}</div>}
       </div>
       <button type="button" onClick={() => setVerQr(v => !v)} title="QR de esta ficha" style={{ width: 64, height: 64, borderRadius: 14, border: "1px solid rgba(44,42,40,.1)", background: "#fff", padding: 6, cursor: "pointer", flexShrink: 0 }}>{qr ? <img src={qr} alt="QR" style={{ width: "100%", height: "100%" }} /> : <Ico d={ICO.qr} size={28} color="rgba(44,42,40,.4)" />}</button>
@@ -573,6 +581,7 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms: permsBa
     {soloMirar && <div style={{ fontSize: 12.5, color: "var(--text-3)", background: "rgba(44,42,40,.05)", borderRadius: 12, padding: "8px 12px" }}>Está en {enUbic.map(x => nombreUbicacion(ubicaciones, x.id)).join(", ") || "otra ubicación"}: lo podés ver, pero lo maneja su responsable.</div>}
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       {btnAccion({ id: "salida", label: caja ? "Salida de la caja" : "Salida", icono: ICO.movimientos, c: ORANGE_DARK, show: (caja ? perms.cargar : item.tipo === "cantidad" && perms.cargar && salidaDesde.length > 0) })}
+      {btnAccion({ id: "comprometer", label: "Comprometer", icono: ICO.ubicaciones, c: ORANGE_DARK, show: item.tipo === "cantidad" && perms.cargar && salidaDesde.length > 0 })}
       {btnAccion({ id: "entrada", label: caja ? "Rellenar" : "Entrada", icono: ICO.agregar, c: C_VERDE.color, show: (item.tipo === "cantidad" || caja) && perms.cargar })}
       {btnAccion({ id: "mover", label: "Mover", icono: ICO.ubicaciones, c: ORANGE_DARK, show: (item.tipo === "individual" || caja) && perms.mover })}
       {btnAccion({ id: "ubicar", label: "Ubicar en estante", icono: ICO.estante, c: ORANGE_DARK, show: ubicConEstantes.length > 0 && perms.mover })}
@@ -590,11 +599,19 @@ function FichaImpl({ item, ubicaciones, emps, maquinas, estantes, perms: permsBa
     </>)}
     {accion === "salida" && cajaUI(<>
       {!caja && <><div style={LBL}>Sale de</div>{selUbic(f.de, v => u("de", v), undefined, true)}</>}
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad || ""} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{caja ? String(item.caja?.contenido || "").toLowerCase() + "s" : item.unidad}</b><span style={{ fontSize: 12, color: "var(--text-3)" }}>{caja ? `quedan ${fmtN(item.caja?.cantidad)}` : `hay ${fmtN(stockEn(item, f.de))}`}</span></div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad || ""} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{caja ? String(item.caja?.contenido || "").toLowerCase() + "s" : item.unidad}</b><span style={{ fontSize: 12, color: "var(--text-3)" }}>{caja ? `quedan ${fmtN(item.caja?.cantidad)}` : comprometidoEn(item, f.de) > 0 ? `hay ${fmtN(stockEn(item, f.de))} · ${fmtN(disponibleEn(item, f.de))} libres` : `hay ${fmtN(stockEn(item, f.de))}`}</span></div>
       <div style={LBL}>{caja ? "Para qué proyecto / a dónde van" : "Hacia (opcional: si va a otra ubicación, entra allá)"}</div>{selUbic(f.a || "", v => u("a", v), f.de)}
       <div style={LBL}>Entregado a (opcional)</div><BuscaEmpleado emps={emps} value={f.entregadoA || ""} onChange={(id, nombre) => setF(p => ({ ...p, entregadoA: id, entregadoNombre: nombre }))} />
       <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Nota (opcional)" style={CTRL} />
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado} onClick={() => ejecutar({ accion: "salida", de: caja ? item.ubicacionId : f.de, a: f.a, cantidad: f.cantidad, motivo: f.motivo, entregadoA: f.entregadoA, entregadoNombre: f.entregadoNombre })}>Registrar salida</Btn></div>
+    </>)}
+    {accion === "comprometer" && cajaUI(<>
+      <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>Aparta una cantidad para un proyecto sin sacarla todavía: sigue en el inventario, pero ya no cuenta como libre. Cuando le des salida hacia ese proyecto, se descuenta sola del compromiso.</div>
+      <div style={LBL}>Apartado en</div>{selUbic(f.de, v => u("de", v), undefined, true)}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="number" inputMode="decimal" min="0" step="any" value={f.cantidad || ""} onChange={e => u("cantidad", e.target.value)} placeholder="Cantidad" style={{ ...CTRL, fontSize: 18, fontWeight: 800, textAlign: "right" }} autoFocus /><b>{item.unidad}</b><span style={{ fontSize: 12, color: "var(--text-3)" }}>libres {fmtN(disponibleEn(item, f.de))}</span></div>
+      <div style={LBL}>Para</div>{selUbic(f.a || "", v => u("a", v), f.de)}
+      <input value={f.motivo || ""} onChange={e => u("motivo", e.target.value)} placeholder="Nota (opcional) · ej. para la Ing. Melissa" style={CTRL} />
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><Btn small variant="ghost" onClick={() => setAccion(null)}>Cancelar</Btn><Btn small disabled={ocupado || !f.a} onClick={() => ejecutar({ accion: "comprometer", de: f.de, para: f.a, cantidad: f.cantidad, motivo: f.motivo })}>Comprometer</Btn></div>
     </>)}
     {accion === "mover" && cajaUI(<>
       <div style={LBL}>Ubicación</div>{selUbic(f.a || item.ubicacionId, v => setF(p => ({ ...p, a: v, estanteId: undefined, nivel: undefined })))}
@@ -1228,7 +1245,7 @@ export default function GeoInventoryModule({ userRole, userName, userKey, onBack
         <div style={{ fontSize: 14.5, fontWeight: 700, color: CHARCOAL, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.tipo === "caja" ? `Caja · ${it.nombre}` : it.nombre}</div>
         {mostrarUbic && <div style={{ fontSize: 11.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.tipo === "caja" ? [nombreUbicacion(ubicaciones, it.ubicacionId), textoEstante(estantes, it)].filter(Boolean).join(" · ") : enU.length ? enU.map(x => [nombreUbicacion(ubicaciones, x.id), it.tipo === "cantidad" ? fmtN(x.cantidad) : "", textoPosicion(it, x.id)].filter(Boolean).join(" · ")).join(" | ") : "Sin existencias"}{it.maquinaNombre ? ` · en ${it.maquinaNombre}` : ""}</div>}
       </div>
-      {it.tipo === "cantidad" && <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 18px/1 var(--display)", color: CHARCOAL }}>{fmtN(en ? stockEn(it, en) : stockDe(it))}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{it.unidad}{en && stockDe(it) !== stockEn(it, en) ? ` · ${fmtN(stockDe(it))} en total` : ""}</div></div>}
+      {it.tipo === "cantidad" && <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 18px/1 var(--display)", color: CHARCOAL }}>{fmtN(en ? stockEn(it, en) : stockDe(it))}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{it.unidad}{en && stockDe(it) !== stockEn(it, en) ? ` · ${fmtN(stockDe(it))} en total` : ""}</div>{en && comprometidoEn(it, en) > 0 && <div style={{ fontSize: 10.5, color: ORANGE_DARK, fontWeight: 700, marginTop: 2 }}>{fmtN(comprometidoEn(it, en))} comprometidas · {fmtN(disponibleEn(it, en))} libres</div>}</div>}
       {it.tipo === "caja" && <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 18px/1 var(--display)", color: C_NIVEL[nivelCaja(it.caja)].color }}>{fmtN(it.caja?.cantidad)}</div><div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3 }}>{String(it.caja?.contenido || "").toLowerCase()}s</div></div>}
     </div>;
   };

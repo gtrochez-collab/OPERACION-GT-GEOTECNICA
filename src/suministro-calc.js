@@ -15,11 +15,13 @@
 //     consumible en la ubicación `proy:<short>` + su último conteo.
 //   · COBERTURA (GeoSupply → Cobertura): stock vs programación → para cuántos
 //     días alcanza, semáforo (rojo < 3 días · ámbar < 7 · verde) y cuánto
-//     falta para cubrir una semana.
+//     falta para cubrir una semana. El semáforo mira OBRA + ALMACÉN (lo libre
+//     y lo comprometido para el proyecto): rojo = hay que COMPRAR; si la obra
+//     sola no alcanza pero el almacén sí, toca MANDAR del almacén.
 // Sin React ni store: se prueba con `npm test` (tests/suministro-calc.test.mjs).
 // =====================================================================
 
-import { esConsumible } from "./geoinventory-calc.js";
+import { esConsumible, compromisosDe, disponibleEn } from "./geoinventory-calc.js";
 
 export const KEY_PROGRAMACIONES = "sp-programaciones";
 // Proyectos activos que elige Gerson (GeoInventory → Proyectos → Elegir activos).
@@ -80,9 +82,62 @@ export const itemDeMaterial = (items, mat) => {
   const vivos = (items || []).filter(i => i && !i.eliminado && esConsumible(i));
   if (mat?.itemId) { const x = vivos.find(i => i.id === mat.itemId); if (x) return x; }
   const n = sinAcentos(mat?.nombre);
-  return n ? vivos.find(i => sinAcentos(i.nombre) === n) || null : null;
+  if (!n) return null;
+  const exacto = vivos.find(i => sinAcentos(i.nombre) === n);
+  if (exacto) return exacto;
+  // "Cemento HE" ↔ "Cemento HE Argos": todas las palabras de uno están en el
+  // otro. Solo si hay UN candidato (con dos, no se adivina).
+  const pal = (t) => sinAcentos(t).replace(/[^a-z0-9/". ]/g, " ").split(/\s+/).filter(Boolean);
+  const a = pal(mat.nombre);
+  const cand = vivos.filter(i => { const b = pal(i.nombre); const [chico, grande] = a.length <= b.length ? [a, b] : [b, a]; return chico.length > 0 && chico.every(w => grande.includes(w)); });
+  return cand.length === 1 ? cand[0] : null;
 };
 export const stockEnProyecto = (item, short) => num(item?.stock?.[idUbicProyecto(short)]);
+/**
+ * Lo que hay en ALMACÉN (todas las ubicaciones que no son proyectos) para este
+ * proyecto: lo libre + lo que ya está comprometido PARA él. Lo comprometido
+ * para otro proyecto no cuenta (24-nov-2026: 400 en el plantel, 130 de Torre
+ * Adobe → para San Miguel hay 270).
+ */
+export const almacenParaProyecto = (item, short) => {
+  const destino = idUbicProyecto(short);
+  let libre = 0, apartado = 0, comprometidoOtros = 0;
+  Object.keys(item?.stock || {}).filter(k => !k.startsWith("proy:")).forEach(de => {
+    libre += disponibleEn(item, de);
+    compromisosDe(item, de).forEach(c => { if (c.para === destino) apartado += num(c.cantidad); else comprometidoOtros += num(c.cantidad); });
+  });
+  return { libre: r2(libre), apartado: r2(apartado), comprometidoOtros: r2(comprometidoOtros), total: r2(libre + apartado) };
+};
+/**
+ * Día por día: con qué se cubre lo programado desde hoy.
+ * → {fecha: {estado "obra" | "almacen" | "falta", falta}} (falta = lo que no alcanza ESE día).
+ */
+export const estadoPorDia = ({ obra = 0, almacen = 0, porDia = {}, hoy }) => {
+  const out = {}; let acum = 0;
+  Object.keys(porDia || {}).filter(f => f >= hoy && num(porDia[f]) > 0).sort().forEach(f => {
+    const q = num(porDia[f]); const antes = acum; acum = r2(acum + q);
+    if (acum <= num(obra) + 1e-9) out[f] = { estado: "obra", falta: 0 };
+    else if (acum <= num(obra) + num(almacen) + 1e-9) out[f] = { estado: "almacen", falta: 0 };
+    else out[f] = { estado: "falta", falta: r2(Math.min(q, acum - num(obra) - num(almacen))), cubierto: r2(Math.max(0, num(obra) + num(almacen) - antes)) };
+  });
+  return out;
+};
+/**
+ * Resumen de `estadoPorDia`: hasta qué día cubre la obra, hasta cuál con el
+ * almacén, desde cuándo falta, cuánto falta en toda la programación y cuánto
+ * hay que MANDAR del almacén (lo programado de los días que cubre el almacén).
+ */
+export const resumenDias = (dias = {}, porDia = {}) => {
+  const fs = Object.keys(dias || {}).sort();
+  const obraHasta = fs.filter(f => dias[f].estado === "obra").pop() || null;
+  const totalHasta = fs.filter(f => dias[f].estado !== "falta").pop() || null;
+  const faltaDesde = fs.find(f => dias[f].estado === "falta") || null;
+  const faltaTotal = r2(fs.reduce((a, f) => a + num(dias[f].falta), 0));
+  const mandar = r2(fs.reduce((a, f) => a + (dias[f].estado === "almacen" ? num(porDia[f]) : dias[f].estado === "falta" ? num(dias[f].cubierto) : 0), 0));
+  return { primero: fs[0] || null, obraHasta, totalHasta, faltaDesde, faltaTotal, mandar, hayProgramacion: fs.length > 0 };
+};
+/** Día anterior a `fecha` (el último que sí queda cubierto). */
+export const cubreHasta = (cob, hoy) => !cob || cob.semaforo === "sin_programa" ? null : cob.cubreTodo ? "todo" : cob.faltaDesde && cob.faltaDesde > hoy ? sumarDias(cob.faltaDesde, -1) : null;
 export const conteoEnProyecto = (item, short) => item?.conteos?.[idUbicProyecto(short)] || null;
 
 // ── Cobertura ──
@@ -125,12 +180,18 @@ export function coberturaProyecto({ short, prog = null, items = [], hoy }) {
     if (it) usados.add(it.id);
     const porDia = {}; Object.entries(prog.dias || {}).forEach(([f, d]) => { if (num(d?.[m.id]) > 0) porDia[f] = num(d[m.id]); });
     const stock = it ? stockEnProyecto(it, short) : 0;
-    filas.push({ key: m.id, nombre: m.nombre || it?.nombre || "", unidad: m.unidad || it?.unidad || "", item: it, enInventario: !!it, stock, conteo: it ? conteoEnProyecto(it, short) : null, programadoTotal: totalMaterial(prog, m.id), ...coberturaMaterial({ stock, porDia, hoy }) });
+    const alm = it ? almacenParaProyecto(it, short) : { libre: 0, apartado: 0, comprometidoOtros: 0, total: 0 };
+    const obra = coberturaMaterial({ stock, porDia, hoy });
+    const total = coberturaMaterial({ stock: stock + alm.total, porDia, hoy });
+    filas.push({ key: m.id, matId: m.id, nombre: m.nombre || it?.nombre || "", unidad: m.unidad || it?.unidad || "", partidaId: m.partidaId || "", item: it, enInventario: !!it, stock, almacen: alm, conteo: it ? conteoEnProyecto(it, short) : null, programadoTotal: totalMaterial(prog, m.id), porDia,
+      // Sin artículo en el inventario no se sabe cuánto hay: no se pinta nada (no es "falta").
+      obra, dias: it ? estadoPorDia({ obra: stock, almacen: alm.total, porDia, hoy }) : {}, ...total, ...(it ? {} : { semaforo: "sin_dato" }) });
   });
   (items || []).filter(i => i && !i.eliminado && esConsumible(i) && !usados.has(i.id) && (num(i.stock?.[ubic]) > 0 || i.conteos?.[ubic])).forEach(it => {
-    filas.push({ key: it.id, nombre: it.nombre, unidad: it.unidad || "", item: it, enInventario: true, stock: stockEnProyecto(it, short), conteo: conteoEnProyecto(it, short), programadoTotal: 0, ...coberturaMaterial({ stock: stockEnProyecto(it, short), porDia: {}, hoy }) });
+    const alm = almacenParaProyecto(it, short);
+    filas.push({ key: it.id, nombre: it.nombre, unidad: it.unidad || "", item: it, enInventario: true, stock: stockEnProyecto(it, short), almacen: alm, conteo: conteoEnProyecto(it, short), programadoTotal: 0, porDia: {}, obra: coberturaMaterial({ stock: 0, porDia: {}, hoy }), dias: {}, ...coberturaMaterial({ stock: stockEnProyecto(it, short), porDia: {}, hoy }) });
   });
-  const ORDEN = { rojo: 0, ambar: 1, verde: 2, sin_programa: 3 };
+  const ORDEN = { rojo: 0, ambar: 1, verde: 2, sin_dato: 3, sin_programa: 4 };
   filas.sort((a, b) => (ORDEN[a.semaforo] ?? 9) - (ORDEN[b.semaforo] ?? 9) || String(a.nombre).localeCompare(String(b.nombre), "es"));
   const ultimoConteo = filas.map(f => f.conteo?.at || "").filter(Boolean).sort().pop() || "";
   const peor = filas.find(f => f.semaforo === "rojo") ? "rojo" : filas.find(f => f.semaforo === "ambar") ? "ambar" : filas.find(f => f.semaforo === "verde") ? "verde" : "sin_programa";

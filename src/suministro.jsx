@@ -17,18 +17,38 @@ import { UNIDADES } from "./geocost-calc.js";
 import { conteoAlDia, ultimoDiaConteo, esConsumible } from "./geoinventory-calc.js";
 import {
   KEY_PROGRAMACIONES, KEY_PROYECTOS_ACTIVOS, DIAS_ROJO, DIAS_META, num, sumarDias, lunesDe, diasDeSemana, diaCorto, fechaCorta,
-  semanasDe, cantidadDia, totalSemana, totalMaterial, programacionVigente, siguienteNumero, ponerCantidad, itemDeMaterial, coberturaProyecto, sinAcentos,
+  semanasDe, cantidadDia, totalSemana, totalMaterial, programacionVigente, siguienteNumero, ponerCantidad, itemDeMaterial, coberturaProyecto, sinAcentos, resumenDias,
 } from "./suministro-calc.js";
+import { saldoDePartida, partidasPedibles } from "./geosupply-calc.js";
+import { pdfSuministro } from "./suministro-reporte.js";
 
 const CHARCOAL = "#2C2A28";
 const ORANGE_DARK = "#C75F1F";
 const C_ROJO = { color: "#B03024", bg: "rgba(192,57,43,.08)" };
-const SEMA = { rojo: { c: C_ROJO, txt: "Rojo" }, ambar: { c: C_AMARILLO, txt: "Ámbar" }, verde: { c: C_VERDE, txt: "Verde" }, sin_programa: { c: C_GRIS, txt: "Sin programación" } };
+const SEMA = { rojo: { c: C_ROJO, txt: "Rojo" }, ambar: { c: C_AMARILLO, txt: "Ámbar" }, verde: { c: C_VERDE, txt: "Verde" }, sin_programa: { c: C_GRIS, txt: "Sin programación" }, sin_dato: { c: C_GRIS, txt: "No está en el inventario" } };
 const fmtN = (n) => num(n).toLocaleString("es-HN", { maximumFractionDigits: 2 });
 const fmtDT = (iso) => iso ? new Date(iso).toLocaleString("es-HN", { timeZone: "America/Tegucigalpa", weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 const CTRL = { padding: "8px 10px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 10, fontSize: 14, outline: "none", background: "#F4F4F2", fontFamily: "inherit", boxSizing: "border-box", width: "100%" };
 const TH = { padding: "8px 8px", fontSize: 11, fontWeight: 800, color: "#6E6862", textAlign: "left", whiteSpace: "nowrap", borderBottom: "1px solid rgba(44,42,40,.08)" };
 const TD = { padding: "6px 8px", fontSize: 13, borderBottom: "1px solid rgba(44,42,40,.05)", verticalAlign: "middle" };
+// Con qué se cubre cada día programado (la misma paleta en pantalla y en el PDF)
+export const COB_DIA = {
+  obra: { bg: "rgba(5,150,105,.13)", color: "#047857", txt: "Lo cubre lo que hay en obra" },
+  almacen: { bg: "rgba(31,79,140,.12)", color: "#1F4F8C", txt: "Lo cubre el almacén · hay que mandarlo" },
+  falta: { bg: "rgba(192,57,43,.14)", color: "#B03024", txt: "No alcanza · hay que comprar" },
+};
+const diaTxt = (iso) => iso ? `${diaCorto(iso).toLowerCase()} ${+iso.slice(8)}` : "";
+const leyendaCob = () => <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11.5, color: "#6E6862" }}>{Object.entries(COB_DIA).map(([k, c]) => <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><span style={{ width: 14, height: 14, borderRadius: 4, background: c.bg, boxShadow: `inset 0 0 0 1px ${c.color}33` }} />{c.txt}</span>)}</div>;
+const normU = (u) => sinAcentos(u).replace(/[^a-z0-9]/g, "").replace(/s$/, "");
+/** Partida de la receta del material: presupuesto, lo comprado y lo que queda (en cantidad). */
+export const recetaDeMaterial = (receta, short, m, pendiente) => {
+  if (!receta || !m?.partidaId) return null;
+  const pres = receta.presDe?.(short); const partida = (pres?.partidas || []).find(x => x.id === m.partidaId);
+  if (!partida) return null;
+  const sd = saldoDePartida({ partida, purchases: receta.purchases || [], solicitudes: receta.solicitudes || [] });
+  const misma = normU(partida.unidad) && normU(partida.unidad) === normU(m.unidad);
+  return { partida, ...sd, misma, pasa: misma && sd && !sd.sinCantidad ? Math.max(0, num(pendiente) - num(sd.saldo)) : 0 };
+};
 const MATERIALES_TIPICOS = [["Cemento GU", "Bolsa"], ["Arena", "m3"], ['Grava 3/8"', "m3"], ["Aditivo", "Galón"], ["Varilla", "Lance"]];
 
 // ── Datos compartidos (todo con getCloud) ──
@@ -68,7 +88,7 @@ const tituloProg = (p) => `Programación No. ${p.numero}`;
 const rangoProg = (p) => { const f = Object.keys(p.dias || {}).sort(); return f.length ? `${diaCorto(f[0])} ${fechaCorta(f[0])} – ${diaCorto(f[f.length - 1])} ${fechaCorta(f[f.length - 1])}` : "sin fechas todavía"; };
 
 // ═══════════════════════════ PLANIFICACIÓN ═══════════════════════════
-export function PlanificacionVista({ user, proyectos = [], puedeEditar, isMobile }) {
+export function PlanificacionVista({ user, proyectos = [], puedeEditar, isMobile, receta }) {
   const S = useSuministro();
   const [editando, setEditando] = useState(null);
   const [nuevo, setNuevo] = useState(false);
@@ -77,7 +97,7 @@ export function PlanificacionVista({ user, proyectos = [], puedeEditar, isMobile
   const opcionesProy = useMemo(() => [...proyectos].filter(p => p.short).sort((a, b) => (activos && activos.has(a.short) ? 0 : 1) - (activos && activos.has(b.short) ? 0 : 1) || String(a.short).localeCompare(String(b.short), "es", { numeric: true })), [proyectos, S.activos]); // eslint-disable-line react-hooks/exhaustive-deps
   const porProy = useMemo(() => { const m = {}; S.progs.filter(p => p && !p.anulada).forEach(p => { (m[p.projectCode] = m[p.projectCode] || []).push(p); }); Object.values(m).forEach(l => l.sort((a, b) => num(b.numero) - num(a.numero))); return m; }, [S.progs]);
 
-  if (editando) return <EditorProgramacion prog={editando} S={S} user={user} proyectos={proyectos} puedeEditar={puedeEditar} isMobile={isMobile} onVolver={() => { setEditando(null); S.cargar(); }} />;
+  if (editando) return <EditorProgramacion prog={editando} S={S} user={user} proyectos={proyectos} puedeEditar={puedeEditar} isMobile={isMobile} receta={receta} onVolver={() => { setEditando(null); S.cargar(); }} />;
 
   const crear = (short, base = null) => {
     const lunes = lunesDe(hoy);
@@ -134,7 +154,7 @@ function ElegirProyecto({ opciones, activos, onElegir, onClose }) {
   </div>;
 }
 
-function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, isMobile, onVolver }) {
+function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, isMobile, receta, onVolver }) {
   const [p, setP] = useState(inicial);
   const [sucio, setSucio] = useState(!!inicial._nueva);
   const [guardando, setGuardando] = useState(false);
@@ -142,6 +162,14 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
   const editable = puedeEditar;
   const up = (fn) => { setP(x => fn(x)); setSucio(true); };
   const semanas = semanasDe(p);
+  const hoy = hoyISO();
+  // Cobertura EN VIVO: cada vez que se escribe una cantidad se recalcula con lo
+  // que hay en obra y en almacén (24-nov-2026, Gerson: "que diga en almacén hay
+  // para cubrir hasta tal día").
+  const cob = useMemo(() => { const r = coberturaProyecto({ short: p.projectCode, prog: p, items: S.items, hoy }); const m = {}; r.filas.forEach(f => { if (f.matId) m[f.matId] = f; }); return m; }, [p, S.items, hoy]);
+  const pres = receta?.presDe?.(p.projectCode) || null;
+  const partidasRec = partidasPedibles(pres);
+  const pendienteDe = (matId) => Object.entries(p.dias || {}).filter(([f]) => f >= hoy).reduce((a, [, d]) => a + num(d?.[matId]), 0);
   const consumibles = useMemo(() => (S.items || []).filter(i => i && !i.eliminado && esConsumible(i)).map(i => ({ nombre: i.nombre, unidad: i.unidad || "" })), [S.items]);
   const sugeridos = [...new Map([...MATERIALES_TIPICOS.map(([n, u]) => ({ nombre: n, unidad: u })), ...consumibles].map(x => [sinAcentos(x.nombre), x])).values()];
   const agregarMat = () => {
@@ -167,6 +195,13 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
     } finally { setGuardando(false); }
   };
   const salir = () => { if (sucio && !confirm("Tenés cambios sin guardar. ¿Salir igual?")) return; onVolver(); };
+  const [generando, setGenerando] = useState(false);
+  const pdf = async () => {
+    setGenerando(true);
+    try { await pdfSuministro({ hoy, proyectos: [{ short: p.projectCode, nombre: nombreDe(proyectos, p.projectCode), prog: p, filas: coberturaProyecto({ short: p.projectCode, prog: p, items: S.items, hoy }).filas.map(f => ({ ...f, receta: f.matId ? recetaDeMaterial(receta, p.projectCode, p.materiales.find(m => m.id === f.matId), pendienteDe(f.matId)) : null })) }] }); }
+    catch (e) { console.error(e); alert("No se pudo armar el PDF: " + (e?.message || e)); }
+    finally { setGenerando(false); }
+  };
   const nombre = nombreDe(proyectos, p.projectCode);
   return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
     <div className="gt-vidrio" style={{ padding: isMobile ? 12 : 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -175,6 +210,7 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
         <div style={{ font: "800 17px/1.2 var(--display)", color: CHARCOAL }}>{p.projectCode} · {tituloProg(p)}</div>
         <div style={{ fontSize: 12, color: "#8A847D", marginTop: 3 }}>{nombre ? `${nombre} · ` : ""}{p.updatedAt ? `guardada por ${p.updatedBy} · ${fmtDT(p.updatedAt)}` : "sin guardar"}</div>
       </div>
+      <Btn variant="ghost" disabled={generando} onClick={pdf}>{generando ? "Armando PDF…" : "PDF"}</Btn>
       {editable && <Btn disabled={!sucio || guardando} onClick={guardar}>{guardando ? "Guardando…" : sucio ? "Guardar" : "Guardado"}</Btn>}
     </div>
 
@@ -191,6 +227,7 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
       <div style={{ flexBasis: "100%", fontSize: 11.5, color: "#8A847D" }}>Usá el mismo nombre que tiene en el inventario del proyecto (ej. "Cemento GU"): así se cruza solo con lo que cuenta el residente.</div>
     </div>}
 
+    {(p.materiales || []).length > 0 && <ResumenCobertura p={p} cob={cob} hoy={hoy} isMobile={isMobile} />}
     {(p.materiales || []).length === 0 ? <div className="gt-vidrio" style={{ padding: "30px 20px", textAlign: "center", color: "#8A847D", fontSize: 13.5 }}>Agregá los materiales que se programan (cemento, arena, grava…).</div>
       : semanas.map((lunes, si) => { const dias = diasDeSemana(lunes); return <div key={lunes} className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid rgba(44,42,40,.07)" }}>
@@ -201,11 +238,15 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr><th style={{ ...TH, minWidth: 150 }}>Material</th>{dias.map(f => <th key={f} style={{ ...TH, textAlign: "center", color: f === hoyISO() ? ORANGE_DARK : TH.color }}>{diaCorto(f)} {+f.slice(8)}</th>)}<th style={{ ...TH, textAlign: "right" }}>Total semana</th></tr></thead>
             <tbody>{p.materiales.map(m => <tr key={m.id}>
-              <td style={{ ...TD, fontWeight: 700 }}>{m.nombre} <span style={{ color: "#8A847D", fontWeight: 500 }}>({m.unidad})</span>{editable && si === 0 && <button type="button" onClick={() => quitarMat(m.id)} title="Quitar material" style={{ marginLeft: 6, border: "none", background: "none", color: "#B5AFA6", cursor: "pointer", fontSize: 13 }}>✕</button>}</td>
-              {dias.map(f => <td key={f} style={{ ...TD, textAlign: "center", padding: "4px 4px" }}>
-                {editable ? <input type="number" inputMode="decimal" min="0" step="any" value={cantidadDia(p, f, m.id) || ""} onChange={e => up(x => ({ ...x, dias: ponerCantidad(x.dias, f, m.id, e.target.value) }))} style={{ ...CTRL, width: isMobile ? 64 : 76, textAlign: "center", padding: "7px 4px", fontFamily: "var(--mono)", fontWeight: 700 }} />
-                  : <span style={{ fontFamily: "var(--mono)", fontWeight: 700 }}>{cantidadDia(p, f, m.id) ? fmtN(cantidadDia(p, f, m.id)) : ""}</span>}
-              </td>)}
+              <td style={{ ...TD, fontWeight: 700, minWidth: 190 }}>{m.nombre} <span style={{ color: "#8A847D", fontWeight: 500 }}>({m.unidad})</span>{editable && si === 0 && <button type="button" onClick={() => quitarMat(m.id)} title="Quitar material" style={{ marginLeft: 6, border: "none", background: "none", color: "#B5AFA6", cursor: "pointer", fontSize: 13 }}>✕</button>}
+                {si === 0 && <LineaCobertura f={cob[m.id]} hoy={hoy} />}
+                {si === 0 && <LineaReceta r={recetaDeMaterial(receta, p.projectCode, m, pendienteDe(m.id))} partidas={partidasRec} editable={editable} valor={m.partidaId || ""} onElegir={(v) => up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, partidaId: v } : y) }))} />}
+              </td>
+              {dias.map(f => { const e = cob[m.id]?.dias?.[f]; const c = e ? COB_DIA[e.estado] : null; return <td key={f} title={e ? `${c.txt}${e.falta ? ` · faltan ${fmtN(e.falta)} ${m.unidad} ese día` : ""}` : ""} style={{ ...TD, textAlign: "center", padding: "4px 4px" }}>
+                {editable ? <input type="number" inputMode="decimal" min="0" step="any" value={cantidadDia(p, f, m.id) || ""} onChange={e => up(x => ({ ...x, dias: ponerCantidad(x.dias, f, m.id, e.target.value) }))} style={{ ...CTRL, width: isMobile ? 64 : 76, textAlign: "center", padding: "7px 4px", fontFamily: "var(--mono)", fontWeight: 700, ...(c ? { background: c.bg, color: c.color, borderColor: `${c.color}40` } : {}) }} />
+                  : <span style={{ display: "inline-block", minWidth: 50, padding: "6px 4px", borderRadius: 8, fontFamily: "var(--mono)", fontWeight: 700, ...(c ? { background: c.bg, color: c.color } : {}) }}>{cantidadDia(p, f, m.id) ? fmtN(cantidadDia(p, f, m.id)) : ""}</span>}
+                {e?.estado === "falta" && e.falta < cantidadDia(p, f, m.id) && <div style={{ fontSize: 10, color: COB_DIA.falta.color, fontWeight: 700, marginTop: 2 }}>faltan {fmtN(e.falta)}</div>}
+              </td>; })}
               <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 800 }}>{fmtN(totalSemana(p, lunes, m.id))}</td>
             </tr>)}</tbody>
           </table>
@@ -224,8 +265,68 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
   </div>;
 }
 
+
+// ── Piezas de cobertura (a nivel de módulo) ──
+function LineaCobertura({ f, hoy }) {
+  if (!f) return null;
+  if (!f.enInventario) return <div style={{ fontSize: 11, color: "#8A847D", fontWeight: 500, marginTop: 3 }}>No está en GeoInventory (ni en obra ni en almacén)</div>;
+  const r = resumenDias(f.dias, f.porDia);
+  const a = f.almacen || {};
+  return <div style={{ fontSize: 11, fontWeight: 500, marginTop: 3, lineHeight: 1.45, color: "#6E6862" }}>
+    <div>Obra <b style={{ color: CHARCOAL }}>{fmtN(f.stock)}</b> · almacén <b style={{ color: CHARCOAL }}>{fmtN(a.total)}</b>{a.apartado ? ` (${fmtN(a.apartado)} apartadas para aquí)` : ""}{a.comprometidoOtros ? <span title="Comprometidas para otros proyectos: no cuentan"> · {fmtN(a.comprometidoOtros)} de otros</span> : ""}</div>
+    {r.hayProgramacion && <div>
+      <span style={{ color: COB_DIA.obra.color, fontWeight: 700 }}>{r.obraHasta ? `obra hasta ${diaTxt(r.obraHasta)}` : "la obra no cubre ni el primer día"}</span>
+      {r.totalHasta && r.totalHasta !== r.obraHasta && <span style={{ color: COB_DIA.almacen.color, fontWeight: 700 }}> · con almacén hasta {diaTxt(r.totalHasta)}</span>}
+      {r.faltaDesde && <span style={{ color: COB_DIA.falta.color, fontWeight: 700 }}> · falta desde {diaTxt(r.faltaDesde)}</span>}
+    </div>}
+  </div>;
+}
+
+function LineaReceta({ r, partidas, editable, valor, onElegir }) {
+  if (!partidas?.length && !r) return null;
+  return <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
+    {editable && partidas.length > 0 && <select value={valor} onChange={e => onElegir(e.target.value)} title="Partida del presupuesto (receta) de donde sale este material" style={{ ...CTRL, width: "auto", maxWidth: 260, padding: "4px 6px", fontSize: 11, fontWeight: 600, background: "rgba(44,42,40,.04)" }}>
+      <option value="">Partida de la receta…</option>
+      {partidas.map(x => <option key={x.id} value={x.id}>{x.solucion ? `${x.solucion} · ` : ""}{x.nombre}{x.unidad ? ` (${x.unidad})` : ""}</option>)}
+    </select>}
+    {r && <div style={{ fontSize: 11, fontWeight: 500, color: r.pasa > 0 ? C_ROJO.color : "#6E6862" }}>
+      {!editable && <>Receta: {r.partida.nombre} · </>}
+      {r.sinCantidad ? "la partida no trae cantidad" : !r.misma ? `${fmtN(r.presupuestada)} ${r.partida.unidad} presupuestados · unidad distinta, no se compara` : <>presupuesto <b>{fmtN(r.presupuestada)}</b> · comprado {fmtN(r.comprada)}{r.enSolicitudes ? ` · pedido ${fmtN(r.enSolicitudes)}` : ""} · <b>quedan {fmtN(r.saldo)}</b> {r.partida.unidad}</>}
+      {r.pasa > 0 && <div style={{ fontWeight: 700 }}>La programación pide {fmtN(r.pasa)} más de lo que queda en la receta</div>}
+    </div>}
+  </div>;
+}
+
+function ResumenCobertura({ p, cob, hoy, isMobile }) {
+  const filas = (p.materiales || []).map(m => ({ m, f: cob[m.id] })).filter(x => x.f);
+  return <div className="gt-vidrio" style={{ padding: isMobile ? 12 : 16, display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+      <span style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>¿Hasta cuándo estamos cubiertos?</span>
+      <span style={{ fontSize: 11.5, color: "#8A847D" }}>desde hoy {diaTxt(hoy)}, con lo que hay en obra y en almacén (lo comprometido para otro proyecto no cuenta)</span>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "repeat(auto-fill, minmax(260px, 1fr))", gap: 8 }}>
+      {filas.map(({ m, f }) => {
+        const r = resumenDias(f.dias, f.porDia);
+        const tono = !f.enInventario ? C_GRIS : !r.hayProgramacion ? C_GRIS : r.faltaDesde ? (f.semaforo === "rojo" ? C_ROJO : C_AMARILLO) : C_VERDE;
+        return <div key={m.id} style={{ borderRadius: 14, padding: "10px 12px", background: "rgba(255,255,255,.7)", boxShadow: `inset 3px 0 0 ${tono.color}`, display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ fontWeight: 800, fontSize: 13.5, color: CHARCOAL }}>{m.nombre} <span style={{ color: "#8A847D", fontWeight: 500, fontSize: 12 }}>({m.unidad})</span></div>
+          {!f.enInventario ? <div style={{ fontSize: 12, color: "#8A847D" }}>No está en GeoInventory: no se puede calcular.</div>
+            : !r.hayProgramacion ? <div style={{ fontSize: 12, color: "#8A847D" }}>Sin cantidades desde hoy.</div>
+            : <>
+              <div style={{ fontSize: 12.5, color: COB_DIA.obra.color, fontWeight: 700 }}>{r.obraHasta ? `La obra cubre hasta el ${diaTxt(r.obraHasta)}` : `En obra no alcanza ni para el ${diaTxt(r.primero)}`} <span style={{ fontWeight: 500, color: "#6E6862" }}>· hay {fmtN(f.stock)}</span></div>
+              {r.mandar > 0 && <div style={{ fontSize: 12.5, color: COB_DIA.almacen.color, fontWeight: 700 }}>Con el almacén, hasta el {diaTxt(r.totalHasta)} <span style={{ fontWeight: 500, color: "#6E6862" }}>· mandar {fmtN(r.mandar)}{(() => { const d = Object.keys(f.dias).sort().find(x => f.dias[x].estado !== "obra"); return d ? ` antes del ${diaTxt(d)}` : ""; })()}</span></div>}
+              {r.faltaDesde ? <div style={{ fontSize: 12.5, color: COB_DIA.falta.color, fontWeight: 800 }}>Falta desde el {diaTxt(r.faltaDesde)} · {fmtN(r.faltaTotal)} {m.unidad} por conseguir</div>
+                : <div style={{ fontSize: 12.5, color: C_VERDE.color, fontWeight: 700 }}>Cubre toda la programación</div>}
+            </>}
+        </div>;
+      })}
+    </div>
+    {leyendaCob()}
+  </div>;
+}
+
 // ═══════════════════════════ COBERTURA ═══════════════════════════
-export function CoberturaVista({ proyectos = [], isMobile, onIrPlanificacion }) {
+export function CoberturaVista({ proyectos = [], isMobile, onIrPlanificacion, receta }) {
   const S = useSuministro();
   const hoy = hoyISO();
   const [soloAlerta, setSoloAlerta] = useState(false);
@@ -241,6 +342,15 @@ export function CoberturaVista({ proyectos = [], isMobile, onIrPlanificacion }) 
       return { ...r, prog, activo: !S.activos || S.activos.includes(short), alDia: !!fechaC && conteoAlDia(fechaC, hoy), resp: (S.resp[short] || []).map(S.labelDe) };
     }).sort((a, b) => ({ rojo: 0, ambar: 1, verde: 2, sin_programa: 3 })[a.peor] - ({ rojo: 0, ambar: 1, verde: 2, sin_programa: 3 })[b.peor] || a.short.localeCompare(b.short, "es"));
   }, [S.items, S.progs, S.activos, S.resp, hoy]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [generando, setGenerando] = useState(false);
+  const pdfTodo = async () => {
+    setGenerando(true);
+    try {
+      const lista = datos.filter(d => d.prog).map(d => ({ short: d.short, nombre: nombreDe(proyectos, d.short), prog: d.prog, filas: d.filas.map(f => { const mat = d.prog.materiales?.find(m => m.id === f.matId); return { ...f, receta: mat ? recetaDeMaterial(receta, d.short, mat, Object.entries(f.porDia || {}).filter(([x]) => x >= hoy).reduce((a, [, n]) => a + num(n), 0)) : null }; }) }));
+      await pdfSuministro({ hoy, proyectos: lista });
+    } catch (e) { console.error(e); alert("No se pudo armar el PDF: " + (e?.message || e)); }
+    finally { setGenerando(false); }
+  };
   const nRojo = datos.filter(d => d.peor === "rojo").length, nAmbar = datos.filter(d => d.peor === "ambar").length;
   const sinConteo = datos.filter(d => d.filas.some(f => f.enInventario) && !d.alDia).length;
   const vis = soloAlerta ? datos.filter(d => d.peor === "rojo" || d.peor === "ambar" || !d.alDia) : datos;
@@ -251,9 +361,10 @@ export function CoberturaVista({ proyectos = [], isMobile, onIrPlanificacion }) 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 220 }}>
           <div style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL }}>Cobertura de material en obra</div>
-          <div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 4 }}>Meta: siempre entre {DIAS_ROJO} días y una semana adelante. Rojo = alcanza menos de {DIAS_ROJO} días · ámbar = menos de {DIAS_META}.</div>
+          <div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 4 }}>Meta: siempre entre {DIAS_ROJO} días y una semana adelante, contando lo que hay en obra y en almacén. Rojo = alcanza menos de {DIAS_ROJO} días · ámbar = menos de {DIAS_META}.</div>
         </div>
         <span role="button" title="Volver a leer de la nube" className="gt-circulo" onClick={S.cargar} style={{ width: 36, height: 36, fontSize: 15 }}>↻</span>
+        <Btn variant="ghost" disabled={generando || !datos.some(d => d.prog)} onClick={pdfTodo}>{generando ? "Armando PDF…" : "PDF"}</Btn>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {tile(nRojo, "proyectos en rojo", nRojo ? C_ROJO : null)}
@@ -281,12 +392,14 @@ export function CoberturaVista({ proyectos = [], isMobile, onIrPlanificacion }) 
         </div>
         {d.filas.length === 0 ? <div style={{ padding: "14px 18px", fontSize: 12.5, color: "#8A847D" }}>Sin materiales todavía: falta la programación o el inventario del proyecto.</div>
           : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={{ ...TH, paddingLeft: 18 }}>Material</th><th style={{ ...TH, textAlign: "right" }}>En obra</th><th style={{ ...TH, textAlign: "right" }}>Próx. 7 días</th><th style={TH}>Alcanza para</th><th style={{ ...TH, textAlign: "right" }}>Falta para la semana</th>{!isMobile && <th style={TH}>Contado</th>}</tr></thead>
-            <tbody>{d.filas.map(f => { const sm = SEMA[f.semaforo]; return <tr key={f.key}>
-              <td style={{ ...TD, paddingLeft: 18, fontWeight: 700 }}><span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: f.semaforo === "sin_programa" ? "#D8D2C8" : sm.c.color, marginRight: 8 }} />{f.nombre}{!f.enInventario && <div style={{ fontSize: 11, color: C_ROJO.color, fontWeight: 600, marginLeft: 17 }}>no está en el inventario del proyecto</div>}</td>
+            <thead><tr><th style={{ ...TH, paddingLeft: 18 }}>Material</th><th style={{ ...TH, textAlign: "right" }}>En obra</th><th style={{ ...TH, textAlign: "right" }}>En almacén</th><th style={{ ...TH, textAlign: "right" }}>Próx. 7 días</th><th style={TH}>La obra cubre</th><th style={TH}>Con almacén</th><th style={{ ...TH, textAlign: "right" }}>Falta para la semana</th>{!isMobile && <th style={TH}>Contado</th>}</tr></thead>
+            <tbody>{d.filas.map(f => { const sm = SEMA[f.semaforo]; const r = resumenDias(f.dias, f.porDia); const sinP = f.semaforo === "sin_programa" || f.semaforo === "sin_dato"; const mat = d.prog?.materiales?.find(m => m.id === f.matId); const rec = mat ? recetaDeMaterial(receta, d.short, mat, Object.entries(f.porDia || {}).filter(([x]) => x >= hoy).reduce((a, [, n]) => a + num(n), 0)) : null; return <tr key={f.key}>
+              <td style={{ ...TD, paddingLeft: 18, fontWeight: 700 }}><span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: sinP ? "#D8D2C8" : sm.c.color, marginRight: 8 }} />{f.nombre}{!f.enInventario && <div style={{ fontSize: 11, color: C_ROJO.color, fontWeight: 600, marginLeft: 17 }}>no está en el inventario</div>}{rec && <div style={{ marginLeft: 17 }}><LineaReceta r={rec} partidas={[]} /></div>}</td>
               <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 800 }}>{fmtN(f.stock)} <span style={{ fontFamily: "var(--sans)", fontWeight: 500, color: "#8A847D", fontSize: 11.5 }}>{f.unidad}</span></td>
-              <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)" }}>{f.semaforo === "sin_programa" ? "—" : fmtN(f.programado7)}</td>
-              <td style={{ ...TD, color: f.semaforo === "sin_programa" ? "#8A847D" : sm.c.color, fontWeight: 700 }}>{f.semaforo === "sin_programa" ? "Sin programación" : f.cubreTodo ? "Toda la programación" : f.alcanzaDias === 0 ? "Hoy no alcanza" : `${f.alcanzaDias} día${f.alcanzaDias === 1 ? "" : "s"} · falta el ${diaCorto(f.faltaDesde).toLowerCase()} ${+f.faltaDesde.slice(8)}`}</td>
+              <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 700 }} title={f.almacen?.comprometidoOtros ? `${fmtN(f.almacen.comprometidoOtros)} más están comprometidas para otros proyectos` : ""}>{fmtN(f.almacen?.total)}{f.almacen?.comprometidoOtros ? <div style={{ fontFamily: "var(--sans)", fontSize: 10.5, fontWeight: 600, color: ORANGE_DARK }}>+{fmtN(f.almacen.comprometidoOtros)} de otros</div> : null}</td>
+              <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)" }}>{sinP ? "—" : fmtN(f.programado7)}</td>
+              <td style={{ ...TD, color: sinP ? "#8A847D" : COB_DIA.obra.color, fontWeight: 700, whiteSpace: "nowrap" }}>{sinP ? (f.semaforo === "sin_dato" ? "—" : "Sin programación") : r.obraHasta ? (f.obra?.cubreTodo ? "Todo" : `hasta ${diaTxt(r.obraHasta)}`) : <span style={{ color: COB_DIA.falta.color }}>ni el {diaTxt(r.primero)}</span>}</td>
+              <td style={{ ...TD, color: sinP ? "#8A847D" : sm.c.color, fontWeight: 700, whiteSpace: "nowrap" }}>{sinP ? "—" : f.cubreTodo ? "Toda la programación" : r.totalHasta ? `hasta ${diaTxt(r.totalHasta)} · falta el ${diaTxt(r.faltaDesde)}` : `falta desde el ${diaTxt(r.faltaDesde)}`}{!sinP && r.mandar > 0 && <div style={{ fontSize: 10.5, fontWeight: 600, color: COB_DIA.almacen.color }}>mandar {fmtN(r.mandar)} del almacén</div>}</td>
               <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 800, color: f.faltanParaMeta > 0 ? C_ROJO.color : "#8A847D" }}>{f.faltanParaMeta > 0 ? `${fmtN(f.faltanParaMeta)} ${f.unidad}` : "—"}</td>
               {!isMobile && <td style={{ ...TD, fontSize: 11.5, color: "#8A847D", whiteSpace: "nowrap" }}>{f.conteo ? `${fmtDT(f.conteo.at)}${f.conteo.byName ? ` · ${String(f.conteo.byName).split(" ")[0]}` : ""}` : "—"}</td>}
             </tr>; })}</tbody>

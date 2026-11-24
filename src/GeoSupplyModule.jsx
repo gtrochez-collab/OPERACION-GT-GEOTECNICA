@@ -2260,8 +2260,8 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "8px 14px 20px 14px" : "12px 32px 28px 32px" }}>
         {isMobile && <TituloMovil>{(nav.find(x => x.id === secOk) || {}).label}</TituloMovil>}
-        {secOk === "cobertura" ? <CoberturaVista proyectos={proyectos} isMobile={isMobile} onIrPlanificacion={nav.some(x => x.id === "planificacion") ? () => setSec("planificacion") : null} />
-          : secOk === "planificacion" ? <PlanificacionVista proyectos={proyectos} isMobile={isMobile} user={{ username: userKey, nombre: userName }} puedeEditar={rolReal === "coordinador" || rolReal === "planificacion"} />
+        {secOk === "cobertura" ? <CoberturaVista proyectos={proyectos} isMobile={isMobile} receta={{ presDe, purchases, solicitudes }} onIrPlanificacion={nav.some(x => x.id === "planificacion") ? () => setSec("planificacion") : null} />
+          : secOk === "planificacion" ? <PlanificacionVista proyectos={proyectos} isMobile={isMobile} receta={{ presDe, purchases, solicitudes }} user={{ username: userKey, nombre: userName }} puedeEditar={rolReal === "coordinador" || rolReal === "planificacion"} />
           : secOk === "hoy" ? renderHoy() : secOk === "alertas" ? renderAlertas() : secOk === "almacen" ? renderAlmacen() : secOk === "compras" ? renderCompras() : secOk === "cotizaciones" ? renderCotizaciones() : secOk === "dashboard" ? renderDashboard() : secOk === "config" ? renderConfig() : renderSolicitudes()}
       </div>
     </div>
