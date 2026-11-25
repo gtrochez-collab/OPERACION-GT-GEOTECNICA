@@ -38,7 +38,7 @@ export const COB_DIA = {
   almacen: { bg: "rgba(31,79,140,.12)", color: "#1F4F8C", txt: "Lo cubre el almacén · hay que mandarlo" },
   falta: { bg: "rgba(192,57,43,.14)", color: "#B03024", txt: "No alcanza · hay que comprar" },
 };
-const COB_CORTO = { obra: "obra", almacen: "almacén", falta: "falta" };
+const COB_CORTO = { obra: "sale del proyecto", almacen: "sale del almacén", falta: "falta" };
 const leyendaChica = () => <div style={{ display: "flex", gap: 10, fontSize: 10.5, color: "#8A847D" }}>{Object.entries(COB_DIA).map(([k, c]) => <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: c.bg, boxShadow: `inset 0 0 0 1px ${c.color}33` }} />{COB_CORTO[k]}</span>)}</div>;
 const diaTxt = (iso) => iso ? `${diaCorto(iso).toLowerCase()} ${+iso.slice(8)}` : "";
 const normU = (u) => sinAcentos(u).replace(/[^a-z0-9]/g, "").replace(/s$/, "");
@@ -508,22 +508,29 @@ function RegistroCelda({ r, programado }) {
 }
 
 // ── Piezas de cobertura (a nivel de módulo) ──
-// Debajo del material: solo cuánto hay en obra y en almacén (24-nov-2026,
-// Gerson: "en obra hay tantos, en almacén tantos, ya, solo eso").
+// Debajo del material (25-nov-2026, Gerson: "cuánto hay en almacén, cuánto en
+// proyecto y hasta cuándo cubrimos"): Proyecto N · Almacén N y el día hasta el
+// que alcanza con los dos.
 function ExistenciaMat({ f }) {
   if (!f) return null;
   if (!f.enInventario) return <div style={{ fontSize: 10.5, color: "#A9A39B", fontWeight: 500, marginTop: 2 }}>no está en GeoInventory</div>;
-  return <div style={{ fontSize: 11, fontWeight: 500, marginTop: 2, color: "#6E6862" }}>En obra <b style={{ color: CHARCOAL }}>{fmtN(f.stock)}</b> · en almacén <b style={{ color: CHARCOAL }}>{fmtN(f.almacen?.total)}</b></div>;
+  const r = resumenDias(f.dias, f.porDia);
+  const cubre = !r.hayProgramacion ? null : !r.faltaDesde ? { txt: "Cubre toda la programación", c: C_VERDE.color }
+    : r.totalHasta ? { txt: `Cubre hasta el ${diaTxt(r.totalHasta)}`, c: "#B03024" } : { txt: "No cubre ni el primer día", c: "#B03024" };
+  return <div style={{ fontSize: 11, fontWeight: 500, marginTop: 2, color: "#6E6862", lineHeight: 1.45 }}>
+    <div>Proyecto <b style={{ color: CHARCOAL }}>{fmtN(f.stock)}</b> · Almacén <b style={{ color: CHARCOAL }}>{fmtN(f.almacen?.total)}</b></div>
+    {cubre && <div style={{ fontWeight: 700, color: cubre.c }}>{cubre.txt}</div>}
+  </div>;
 }
 
-// Al lado de la cajita del día: lo que quedaría en almacén después de ese día
-// (o lo que falta, en rojo).
+// Al lado de la cajita del día: lo que queda en total (proyecto + almacén)
+// después de ese día — un saldo que baja día a día — o lo que falta, en rojo.
 function QuedaAlmacen({ e }) {
   if (!e) return <span style={{ width: 40 }} />;
   const falta = e.estado === "falta";
-  return <span style={{ width: 40, textAlign: "left", lineHeight: 1.1 }}>
-    <span style={{ display: "block", fontSize: 9, fontWeight: 600, color: falta ? COB_DIA.falta.color : "#A9A39B" }}>{falta ? "faltan" : "almacén"}</span>
-    <span style={{ display: "block", fontSize: 11.5, fontWeight: 800, fontFamily: "var(--mono)", color: falta ? COB_DIA.falta.color : COB_DIA.almacen.color }}>{fmtN(falta ? e.falta : e.almQueda)}</span>
+  return <span title={falta ? "" : `Queda en proyecto ${fmtN(e.obraQueda)} · en almacén ${fmtN(e.almQueda)}`} style={{ width: 40, textAlign: "left", lineHeight: 1.1 }}>
+    <span style={{ display: "block", fontSize: 9, fontWeight: 600, color: falta ? COB_DIA.falta.color : "#A9A39B" }}>{falta ? "faltan" : "quedan"}</span>
+    <span style={{ display: "block", fontSize: 11.5, fontWeight: 800, fontFamily: "var(--mono)", color: falta ? COB_DIA.falta.color : CHARCOAL }}>{fmtN(falta ? e.falta : (e.obraQueda || 0) + (e.almQueda || 0))}</span>
   </span>;
 }
 
@@ -637,7 +644,7 @@ export function CoberturaVista({ proyectos = [], isMobile, onIrPlanificacion, re
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: sinP ? "#D8D2C8" : sm.c.color, flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{f.nombre} <span style={{ fontWeight: 500, color: "#8A847D", fontSize: 12 }}>{f.unidad}</span></div>
-                    <div style={{ fontSize: 11.5, color: "#8A847D", marginTop: 2 }}>{f.enInventario ? <>En obra <b style={{ color: CHARCOAL }}>{fmtN(f.stock)}</b> · almacén <b style={{ color: CHARCOAL }}>{fmtN(f.almacen?.total)}</b></> : "—"}{uso ? <> · se usaron <b style={{ color: CHARCOAL }}>{fmtN(uso.consumo)}</b> el {diaTxt(uso.fecha)}</> : ""}</div>
+                    <div style={{ fontSize: 11.5, color: "#8A847D", marginTop: 2 }}>{f.enInventario ? <>Proyecto <b style={{ color: CHARCOAL }}>{fmtN(f.stock)}</b> · almacén <b style={{ color: CHARCOAL }}>{fmtN(f.almacen?.total)}</b></> : "—"}{uso ? <> · se usaron <b style={{ color: CHARCOAL }}>{fmtN(uso.consumo)}</b> el {diaTxt(uso.fecha)}</> : ""}</div>
                   </div>
                   <div style={{ textAlign: "right", fontSize: 12, fontWeight: 700, color: sinP ? "#A39C92" : sm.c.color, flexShrink: 0 }}>
                     {estado}
