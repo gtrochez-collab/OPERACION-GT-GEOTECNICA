@@ -120,11 +120,13 @@ export const almacenParaProyecto = (item, short) => {
  * → {fecha: {estado "obra" | "almacen" | "falta", falta}} (falta = lo que no alcanza ESE día).
  */
 export const estadoPorDia = ({ obra = 0, almacen = 0, porDia = {}, hoy }) => {
-  const out = {}; let acum = 0;
+  const out = {}; let acum = 0, almPrev = num(almacen);
   Object.keys(porDia || {}).filter(f => f >= hoy && num(porDia[f]) > 0).sort().forEach(f => {
     const q = num(porDia[f]); const antes = acum; acum = r2(acum + q);
     // Lo que quedaría en obra y en almacén después de ese día (se gasta primero la obra).
-    const queda = { obraQueda: r2(Math.max(0, num(obra) - acum)), almQueda: r2(Math.max(0, num(almacen) - Math.max(0, acum - num(obra)))) };
+    const almQ = r2(Math.max(0, num(almacen) - Math.max(0, acum - num(obra))));
+    const queda = { obraQueda: r2(Math.max(0, num(obra) - acum)), almQueda: almQ, delAlmacen: r2(almPrev - almQ) };
+    almPrev = almQ;
     if (acum <= num(obra) + 1e-9) out[f] = { estado: "obra", falta: 0, ...queda };
     else if (acum <= num(obra) + num(almacen) + 1e-9) out[f] = { estado: "almacen", falta: 0, ...queda };
     else out[f] = { estado: "falta", falta: r2(Math.min(q, acum - num(obra) - num(almacen))), cubierto: r2(Math.max(0, num(obra) + num(almacen) - antes)), ...queda };
@@ -142,7 +144,8 @@ export const resumenDias = (dias = {}, porDia = {}) => {
   const totalHasta = fs.filter(f => dias[f].estado !== "falta").pop() || null;
   const faltaDesde = fs.find(f => dias[f].estado === "falta") || null;
   const faltaTotal = r2(fs.reduce((a, f) => a + num(dias[f].falta), 0));
-  const mandar = r2(fs.reduce((a, f) => a + (dias[f].estado === "almacen" ? num(porDia[f]) : dias[f].estado === "falta" ? num(dias[f].cubierto) : 0), 0));
+  // Lo que hay que MANDAR = lo que sale del almacén (nunca lo que ya cubre la obra).
+  const mandar = r2(fs.reduce((a, f) => a + num(dias[f].delAlmacen), 0));
   return { primero: fs[0] || null, obraHasta, totalHasta, faltaDesde, faltaTotal, mandar, hayProgramacion: fs.length > 0 };
 };
 /** Día anterior a `fecha` (el último que sí queda cubierto). */
@@ -206,3 +209,57 @@ export function coberturaProyecto({ short, prog = null, items = [], hoy }) {
   const peor = filas.find(f => f.semaforo === "rojo") ? "rojo" : filas.find(f => f.semaforo === "ambar") ? "ambar" : filas.find(f => f.semaforo === "verde") ? "verde" : "sin_programa";
   return { short, filas, ultimoConteo, peor };
 }
+
+// =====================================================================
+// REGISTRO DEL DÍA (25-nov-2026, Gerson: "con Neftalí todos los días vamos a
+// ver cuánto es el conteo al final del día; que diga lo consumido, que en la
+// planificación se refleje y que se ponga en verde si se entregó según la
+// planificación")
+// =====================================================================
+// Un registro por proyecto y fecha en `sp-cierres`:
+//   {id, projectCode, fecha, progId, materiales: {matId: {nombre, unidad,
+//    itemId, programado, llego, quedo, antes, consumo}}, nota, por, porNombre,
+//    at, updatedAt, historial[]}
+// consumo = lo que había (lo que quedó el registro anterior) + lo que llegó
+// − lo que quedó. Sin registro anterior se toma lo que decía GeoInventory.
+export const KEY_CIERRES = "sp-cierres";
+
+export const cierreDe = (cierres, short, fecha) => (cierres || []).find(c => c && c.projectCode === short && c.fecha === fecha) || null;
+export const cierresDe = (cierres, short) => (cierres || []).filter(c => c && c.projectCode === short).sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+/** Lo que quedó de ese material en el último registro ANTES de la fecha (null si no hay). */
+export const quedoAntesDe = (cierres, short, fecha, matId) => {
+  const prev = cierresDe(cierres, short).filter(c => c.fecha < fecha && c.materiales?.[matId] && c.materiales[matId].quedo !== "" && c.materiales[matId].quedo != null);
+  const u = prev[prev.length - 1];
+  return u ? { fecha: u.fecha, quedo: num(u.materiales[matId].quedo) } : null;
+};
+/** Consumo del día; null si no hay con qué comparar o no se contó. */
+export const consumoDia = ({ antes, llego, quedo }) => {
+  if (antes == null || quedo === "" || quedo == null) return null;
+  return r2(num(antes) + num(llego) - num(quedo));
+};
+/** ¿Llegó lo programado? cumplido · parcial · no_llego · extra (llegó sin estar programado) · null. */
+export const cumplimientoDia = (programado, llego) => {
+  const p = num(programado), l = num(llego);
+  if (p > 0) return l >= p - 1e-9 ? "cumplido" : l > 0 ? "parcial" : "no_llego";
+  return l > 0 ? "extra" : null;
+};
+/** Día de Honduras de un timestamp ISO. */
+export const diaHNDe = (iso) => { try { return new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Tegucigalpa" }); } catch { return String(iso || "").slice(0, 10); } };
+/**
+ * Movimientos de GeoInventory de UN artículo hacia/desde la ubicación del
+ * proyecto. `entradasDel(fecha)` = lo que ya entró ese día (salidas del almacén
+ * hacia el proyecto o entradas directas); `netoDespues(fecha)` = lo que cambió
+ * DESPUÉS de ese día (para no pisar lo de hoy al registrar un día anterior);
+ * `contadoDespues` = alguien contó después (entonces no se toca el stock).
+ */
+export const movimientosProyecto = (movs, itemId, short) => {
+  const ub = idUbicProyecto(short);
+  const del = (movs || []).filter(m => m && m.itemId === itemId && !m.deRegistroDia);
+  const signo = (m) => (m.accion === "entrada" || m.accion === "crear") && m.a === ub ? num(m.cantidad)
+    : m.accion === "salida" ? (m.a === ub ? num(m.cantidad) : 0) - (m.de === ub ? num(m.cantidad) : 0) : 0;
+  return {
+    entradasDel: (fecha) => r2(del.filter(m => diaHNDe(m.at) === fecha && ((m.accion === "entrada" && m.a === ub) || (m.accion === "salida" && m.a === ub))).reduce((a, m) => a + num(m.cantidad), 0)),
+    netoDespues: (fecha) => r2(del.filter(m => diaHNDe(m.at) > fecha).reduce((a, m) => a + signo(m), 0)),
+    contadoDespues: (fecha) => del.some(m => diaHNDe(m.at) > fecha && (m.accion === "conteo" || m.accion === "ajuste") && m.en === ub),
+  };
+};

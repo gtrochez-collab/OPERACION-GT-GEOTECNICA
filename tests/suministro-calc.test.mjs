@@ -88,7 +88,7 @@ test("permisos: el residente solo lo suyo y sin ajustar; planificación en todos
 
 // ── 24-nov-2026: comprometido en almacén + cobertura con almacén (caso San Miguel) ──
 import { disponibleEn, comprometidoEn } from "../src/geoinventory-calc.js";
-import { almacenParaProyecto, estadoPorDia, cubreHasta } from "../src/suministro-calc.js";
+import { almacenParaProyecto, estadoPorDia, cubreHasta, resumenDias } from "../src/suministro-calc.js";
 
 test("comprometer 130 para Torre Adobe deja 270 libres y la salida a Adobe lo consume", () => {
   let it = { id: "c", tipo: "cantidad", categoria: "materiales", nombre: "Cemento HE Argos", unidad: "Bolsa", stock: { almacen: 400, "proy:VILLA SAN MIGUEL": 200 } };
@@ -150,4 +150,47 @@ test("itemDeMaterial: una palabra genérica no se amarra (Cemento ≠ Cemento HE
   assert.equal(itemDeMaterial(items, { nombre: "Cemento" }), null);
   assert.equal(itemDeMaterial(items, { nombre: "Cemento GU" }), null);
   assert.equal(itemDeMaterial(items, { nombre: "Cemento HE" })?.id, "he");
+});
+
+// ── 25-nov-2026: registro del día (lo que llegó, lo que quedó, consumo) ──
+import { cierreDe, quedoAntesDe, consumoDia, cumplimientoDia, movimientosProyecto } from "../src/suministro-calc.js";
+test("registro del día: consumo = había + llegó − quedó, y cumplimiento contra lo programado", () => {
+  const cierres = [
+    { projectCode: "VSM", fecha: "2026-11-23", materiales: { cem: { quedo: 300 } } },
+    { projectCode: "VSM", fecha: "2026-11-24", materiales: { cem: { quedo: 180 } } },
+    { projectCode: "AUREA", fecha: "2026-11-24", materiales: { cem: { quedo: 5 } } },
+  ];
+  assert.deepEqual(quedoAntesDe(cierres, "VSM", "2026-11-25", "cem"), { fecha: "2026-11-24", quedo: 180 });
+  assert.equal(quedoAntesDe(cierres, "VSM", "2026-11-23", "cem"), null);
+  assert.equal(cierreDe(cierres, "VSM", "2026-11-24").materiales.cem.quedo, 180);
+  assert.equal(consumoDia({ antes: 180, llego: 200, quedo: 140 }), 240);
+  assert.equal(consumoDia({ antes: null, llego: 200, quedo: 140 }), null);
+  assert.equal(consumoDia({ antes: 180, llego: 0, quedo: "" }), null);
+  assert.equal(cumplimientoDia(200, 200), "cumplido");
+  assert.equal(cumplimientoDia(200, 80), "parcial");
+  assert.equal(cumplimientoDia(200, 0), "no_llego");
+  assert.equal(cumplimientoDia(0, 30), "extra");
+  assert.equal(cumplimientoDia(0, 0), null);
+});
+test("registro del día: lo que GeoInventory ya tiene del proyecto (por día de Honduras)", () => {
+  const movs = [
+    { itemId: "i", accion: "salida", de: "almacen", a: "proy:VSM", cantidad: 100, at: "2026-11-24T15:00:00Z" },
+    { itemId: "i", accion: "salida", de: "almacen", a: "proy:VSM", cantidad: 40, at: "2026-11-25T03:00:00Z" },   // 24-nov 9 p.m. en Honduras
+    { itemId: "i", accion: "entrada", a: "proy:VSM", cantidad: 60, at: "2026-11-25T16:00:00Z" },
+    { itemId: "i", accion: "salida", de: "proy:VSM", a: "proy:OTRO", cantidad: 10, at: "2026-11-25T18:00:00Z" },
+    { itemId: "i", accion: "entrada", a: "proy:VSM", cantidad: 999, at: "2026-11-25T18:00:00Z", deRegistroDia: true },
+  ];
+  const mp = movimientosProyecto(movs, "i", "VSM");
+  assert.equal(mp.entradasDel("2026-11-24"), 140);
+  assert.equal(mp.netoDespues("2026-11-24"), 50);
+  assert.equal(mp.contadoDespues("2026-11-24"), false);
+});
+test("mandar del almacén: solo lo que sale del almacén (no lo que cubre la obra)", () => {
+  const sinAlm = estadoPorDia({ obra: 80, almacen: 0, porDia: { "2026-11-25": 300 }, hoy: "2026-11-25" });
+  assert.equal(resumenDias(sinAlm, { "2026-11-25": 300 }).mandar, 0);
+  const porDia = { "2026-11-25": 200, "2026-11-26": 40, "2026-11-27": 260 };
+  const d = estadoPorDia({ obra: 0, almacen: 270, porDia, hoy: "2026-11-25" });
+  assert.equal(resumenDias(d, porDia).mandar, 270);
+  const d2 = estadoPorDia({ obra: 100, almacen: 50, porDia: { "2026-11-25": 120, "2026-11-26": 100 }, hoy: "2026-11-25" });
+  assert.equal(resumenDias(d2, {}).mandar, 50);
 });

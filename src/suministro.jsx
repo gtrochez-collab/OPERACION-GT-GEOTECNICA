@@ -14,10 +14,11 @@ import { hoyISO } from "./fechas.js";
 import { Btn, Chip, Modal, C_GRIS, C_VERDE, C_AMARILLO, C_NARANJA, uid } from "./geocost-ui.jsx";
 import { USERS } from "./users.js";
 import { UNIDADES } from "./geocost-calc.js";
-import { conteoAlDia, ultimoDiaConteo, esConsumible } from "./geoinventory-calc.js";
+import { conteoAlDia, ultimoDiaConteo, esConsumible, aplicarMovimiento, keyMovimientos, siguientesCodigos } from "./geoinventory-calc.js";
 import {
   KEY_PROGRAMACIONES, KEY_PROG_HIST, KEY_PROYECTOS_ACTIVOS, DIAS_ROJO, DIAS_META, num, sumarDias, lunesDe, diasDeSemana, diaCorto, fechaCorta,
   semanasDe, cantidadDia, totalSemana, totalMaterial, programacionVigente, siguienteNumero, ponerCantidad, itemDeMaterial, coberturaProyecto, sinAcentos, resumenDias,
+  KEY_CIERRES, cierreDe, cierresDe, quedoAntesDe, consumoDia, cumplimientoDia, movimientosProyecto, idUbicProyecto, stockEnProyecto,
 } from "./suministro-calc.js";
 import { saldoDePartida, partidasPedibles } from "./geosupply-calc.js";
 import { pdfSuministro } from "./suministro-reporte.js";
@@ -54,14 +55,15 @@ const MATERIALES_TIPICOS = [["Cemento GU", "Bolsa"], ["Arena", "m3"], ['Grava 3/
 
 // ── Datos compartidos (todo con getCloud) ──
 export function useSuministro() {
-  const [d, setD] = useState({ progs: [], items: [], activos: null, resp: {}, usuarios: [], cargando: true, error: "" });
+  const [d, setD] = useState({ cierres: [], progs: [], items: [], activos: null, resp: {}, usuarios: [], cargando: true, error: "" });
   const cargar = useCallback(async () => {
     try {
-      const [pg, it, ac, rp, us] = await Promise.all([
+      const [pg, it, ac, rp, us, ci] = await Promise.all([
         store.getCloud(KEY_PROGRAMACIONES), store.getCloud("inv-items"),
         store.getCloud(KEY_PROYECTOS_ACTIVOS).catch(() => null), store.getCloud("hr-jornal-responsables").catch(() => null), store.getCloud("gt-usuarios").catch(() => []),
+        store.getCloud(KEY_CIERRES).catch(() => []),
       ]);
-      setD({ progs: Array.isArray(pg) ? pg : [], items: Array.isArray(it) ? it : [], activos: ac && Array.isArray(ac.shorts) && ac.shorts.length ? ac.shorts : null, resp: rp && typeof rp === "object" ? rp : {}, usuarios: Array.isArray(us) ? us : [], cargando: false, error: "" });
+      setD({ cierres: Array.isArray(ci) ? ci : [], progs: Array.isArray(pg) ? pg : [], items: Array.isArray(it) ? it : [], activos: ac && Array.isArray(ac.shorts) && ac.shorts.length ? ac.shorts : null, resp: rp && typeof rp === "object" ? rp : {}, usuarios: Array.isArray(us) ? us : [], cargando: false, error: "" });
     } catch { setD(x => ({ ...x, cargando: false, error: "No se pudo leer la nube. Revisá la señal y tocá ↻." })); }
   }, []);
   useEffect(() => { cargar(); }, [cargar]);
@@ -94,7 +96,69 @@ export function useSuministro() {
     } catch { setD(x => ({ ...x, progs: next })); }
     return true;
   };
-  return { ...d, cargar, guardarProg, labelDe };
+  /**
+   * REGISTRO DEL DÍA (25-nov-2026): guarda en sp-cierres lo que llegó y lo que
+   * quedó de cada material, y deja GeoInventory igual: suma lo que llegó y no
+   * estaba registrado y pone el conteo (sin pisar lo que pasó después de esa
+   * fecha). `reg` = {projectCode, fecha, progId, materiales {matId: {...}}, nota}.
+   */
+  const registrarDia = async (reg, user, movsInv) => {
+    const at = new Date().toISOString();
+    // 1) el registro (la fuente de la planificación)
+    let lista;
+    try { lista = await store.getCloud(KEY_CIERRES); } catch { alert("No hay conexión con la nube: no se guardó. Probá otra vez."); return false; }
+    lista = Array.isArray(lista) ? lista : [];
+    const previo = cierreDe(lista, reg.projectCode, reg.fecha);
+    const rec = { ...(previo || {}), ...reg, id: previo?.id || uid(), por: user.username, porNombre: user.nombre, at: previo?.at || at, updatedAt: at,
+      historial: previo ? [...(previo.historial || []), { at: previo.updatedAt || previo.at, porNombre: previo.porNombre, materiales: previo.materiales, nota: previo.nota || "" }] : [] };
+    const next = previo ? lista.map(c => c.id === previo.id ? rec : c) : [...lista, rec];
+    if (!(await store.set(KEY_CIERRES, next))) { alert("La nube no aceptó el guardado. Probá otra vez."); return false; }
+    try { const v = await store.getCloud(KEY_CIERRES); if (!(Array.isArray(v) && v.some(c => c.id === rec.id && c.updatedAt === at))) { alert("Se guardó, pero no pude confirmarlo. Tocá ↻ en un momento."); return false; } setD(x => ({ ...x, cierres: v })); }
+    catch { setD(x => ({ ...x, cierres: next })); }
+    // 2) GeoInventory
+    const avisos = [];
+    try {
+      const arr0 = await store.getCloud("inv-items"); let arr = Array.isArray(arr0) ? [...arr0] : [];
+      const ub = idUbicProyecto(reg.projectCode), movsN = [], ids = [];
+      const quien = { by: user.username, byName: user.nombre };
+      Object.entries(reg.materiales || {}).forEach(([matId, r]) => {
+        if (r.quedo === "" || r.quedo == null) return;
+        let it = itemDeMaterial(arr.filter(i => !i.eliminado), { nombre: r.nombre, itemId: r.itemId });
+        if (!it) {
+          const codigo = siguientesCodigos(arr, "MAT", 1)[0];
+          it = { id: uid(), codigo, tipo: "cantidad", nombre: r.nombre, categoria: "materiales", unidad: r.unidad || "Unidad", stock: {}, notas: "", marca: "", modelo: "", serie: "", createdAt: at, createdBy: user.username, createdByNombre: user.nombre, updatedAt: at };
+          arr.push(it);
+          movsN.push({ id: uid(), at, ...quien, itemId: it.id, codigo, nombre: it.nombre, accion: "crear", a: ub, cantidad: 0, deRegistroDia: true });
+        }
+        const mp = movimientosProyecto(movsInv, it.id, reg.projectCode);
+        let cur = it;
+        const extra = Math.round((num(r.llego) - mp.entradasDel(reg.fecha)) * 100) / 100;
+        if (extra > 0) {
+          const e = aplicarMovimiento(cur, { accion: "entrada", a: ub, cantidad: extra, motivo: `Llegó el ${reg.fecha} (registro del día)` }, { ...quien, id: uid(), at });
+          if (!e.error) { cur = e.item; movsN.push({ ...e.mov, deRegistroDia: true }); }
+        }
+        if (mp.contadoDespues(reg.fecha)) { avisos.push(`${r.nombre}: alguien contó después del ${reg.fecha}; el inventario no se tocó.`); }
+        else {
+          const nuevo = Math.max(0, Math.round((num(r.quedo) + mp.netoDespues(reg.fecha)) * 100) / 100);
+          const c = aplicarMovimiento(cur, { accion: "conteo", en: ub, nuevo, motivo: `Registro del día ${reg.fecha}: quedaron ${num(r.quedo)}${r.consumo != null ? ` · se usaron ${r.consumo}` : ""}` }, { ...quien, id: uid(), at });
+          if (!c.error) { cur = c.item; movsN.push({ ...c.mov, deRegistroDia: true, fechaRegistro: reg.fecha }); }
+        }
+        cur = { ...cur, updatedAt: at };
+        arr = arr.map(x => x.id === cur.id ? cur : x); ids.push(cur.id);
+      });
+      if (ids.length) {
+        if (!(await store.set("inv-items", arr))) throw new Error("La nube no aceptó el inventario.");
+        const back = await store.getCloud("inv-items");
+        if (!(Array.isArray(back) && ids.every(id => back.some(x => x.id === id && x.updatedAt === at)))) throw new Error("La nube no confirmó el inventario.");
+        setD(x => ({ ...x, items: back }));
+        const porKey = {}; movsN.forEach(m => { const k = keyMovimientos(m.at); (porKey[k] = porKey[k] || []).push(m); });
+        for (const [k, l] of Object.entries(porKey)) { const c = await store.getCloud(k); const a = Array.isArray(c) ? c : []; const idsM = new Set(a.map(x => x.id)); await store.set(k, [...a, ...l.filter(x => !idsM.has(x.id))]); }
+      }
+    } catch (e) { console.warn("[Registro del día] inventario", e); avisos.push(`El registro quedó guardado, pero el inventario de GeoInventory no se pudo actualizar (${e?.message || e}). Volvé a guardar el registro en un momento.`); }
+    if (avisos.length) alert(avisos.join("\n"));
+    return true;
+  };
+  return { ...d, cargar, guardarProg, registrarDia, labelDe };
 }
 
 const nombreDe = (proyectos, s) => { const p = (proyectos || []).find(x => x.short === s); return p?.name && p.name !== s ? p.name : ""; };
@@ -174,6 +238,8 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
   const [respaldos, setRespaldos] = useState([]);
   const [verResp, setVerResp] = useState(false);
   const [viendo, setViendo] = useState(null);
+  const [registrando, setRegistrando] = useState(null);   // fecha del "Registrar el día"
+  const registroDe = (f, matId) => cierreDe(S.cierres, inicial.projectCode, f)?.materiales?.[matId] || null;
   const cargarResp = useCallback(async () => {
     if (respaldo || inicial._nueva) return;
     try { const h = await store.getCloud(KEY_PROG_HIST); setRespaldos((Array.isArray(h) ? h : []).filter(x => x.progId === inicial.id).sort((a, b) => String(b.reemplazadaAt).localeCompare(String(a.reemplazadaAt)))); } catch { /* best effort */ }
@@ -254,6 +320,7 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
         <div style={{ font: "800 17px/1.2 var(--display)", color: CHARCOAL }}>{p.projectCode} · {tituloProg(p)}</div>
         <div style={{ fontSize: 12, color: "#8A847D", marginTop: 3 }}>{nombre ? `${nombre} · ` : ""}{p.updatedAt ? `guardada por ${p.updatedBy} · ${fmtDT(p.updatedAt)}` : "sin guardar"}</div>
       </div>
+      {editable && !inicial._nueva && !respaldo && <Btn variant="dark" onClick={() => { if (sucio && !confirm("Tenés cambios sin guardar en la programación. ¿Registrar el día igual? (los cambios siguen acá)")) return; setRegistrando(hoyISO()); }}>Registrar el día</Btn>}
       {respaldos.length > 0 && <Btn variant="ghost" onClick={() => setVerResp(true)}>Respaldos ({respaldos.length})</Btn>}
       <Btn variant="ghost" disabled={generando} onClick={pdf}>{generando ? "Armando PDF…" : "PDF"}</Btn>
       {editable && <Btn disabled={!sucio || guardando} onClick={guardar}>{guardando ? "Guardando…" : sucio ? "Guardar" : "Guardado"}</Btn>}
@@ -286,11 +353,11 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
                 <ExistenciaMat f={cob[m.id]} />
                 {si === 0 && <RecetaChica r={recetaDeMaterial(receta, p.projectCode, m, pendienteDe(m.id))} partidas={partidasRec} editable={editable} valor={m.partidaId || ""} onElegir={(v) => up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, partidaId: v } : y) }))} />}
               </td>
-              {dias.map(f => { const e = cob[m.id]?.dias?.[f]; const c = e ? COB_DIA[e.estado] : null; return <td key={f} title={e ? `${c.txt}${e.falta ? ` · faltan ${fmtN(e.falta)} ${m.unidad} ese día` : ""}` : ""} style={{ ...TD, textAlign: "center", padding: "4px 4px" }}>
+              {dias.map(f => { const rg = registroDe(f, m.id); const cumR = rg ? cumplimientoDia(cantidadDia(p, f, m.id), rg.llego) : null; const e = rg ? null : cob[m.id]?.dias?.[f]; const c = rg ? (cumR ? CUM[cumR] : null) : e ? COB_DIA[e.estado] : null; return <td key={f} title={e ? `${c.txt}${e.falta ? ` · faltan ${fmtN(e.falta)} ${m.unidad} ese día` : ""}` : rg ? "Día registrado" : ""} style={{ ...TD, textAlign: "center", padding: "4px 4px" }}>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                 {editable ? <input type="number" inputMode="decimal" min="0" step="any" value={cantidadDia(p, f, m.id) || ""} onChange={e => up(x => ({ ...x, dias: ponerCantidad(x.dias, f, m.id, e.target.value) }))} style={{ ...CTRL, width: isMobile ? 58 : 64, textAlign: "center", padding: "6px 3px", fontFamily: "var(--mono)", fontWeight: 700, ...(c ? { background: c.bg, color: c.color, borderColor: `${c.color}40` } : {}) }} />
                   : <span style={{ display: "inline-block", minWidth: 50, padding: "6px 4px", borderRadius: 8, fontFamily: "var(--mono)", fontWeight: 700, ...(c ? { background: c.bg, color: c.color } : {}) }}>{cantidadDia(p, f, m.id) ? fmtN(cantidadDia(p, f, m.id)) : ""}</span>}
-                <QuedaAlmacen e={e} />
+                {rg ? <RegistroCelda r={rg} programado={cantidadDia(p, f, m.id)} /> : <QuedaAlmacen e={e} />}
                 </div>
               </td>; })}
               <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 800 }}>{fmtN(totalSemana(p, lunes, m.id))}</td>
@@ -308,6 +375,9 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
     <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 11.5, fontWeight: 700, color: "#6E6862" }}>Nota
       <textarea value={p.nota || ""} disabled={!editable} onChange={e => up(x => ({ ...x, nota: e.target.value }))} rows={2} placeholder="Ej. sale del Look Ahead del 23 nov; el cemento lo pone el cliente…" style={{ ...CTRL, resize: "vertical" }} />
     </label>
+    {registrando && <Modal title={`Registrar el día · ${p.projectCode}`} onClose={() => setRegistrando(null)} wide fondoCierra={false}>
+      <RegistroDiaImpl prog={p} S={S} user={user} fechaInicial={registrando} isMobile={isMobile} onClose={() => setRegistrando(null)} />
+    </Modal>}
     {verResp && <Modal title={`Respaldos · ${tituloProg(p)}`} onClose={() => setVerResp(false)}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ fontSize: 12.5, color: "#6E6862" }}>Cada vez que alguien cambia esta programación, la versión de antes queda guardada acá.</div>
@@ -324,6 +394,118 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
   </div>;
 }
 
+
+// ═══════════════════════ REGISTRO DEL DÍA (25-nov-2026) ═══════════════════════
+// Gerson: "con Neftalí todos los días vamos a ver cuánto es el conteo al final
+// del día; que diga lo consumido y que en la planificación se refleje". Por
+// material: lo que LLEGÓ ese día y lo que QUEDÓ al cierre → se usó = lo que
+// había + llegó − quedó. Guarda en sp-cierres y deja GeoInventory al día.
+const mesesDesde = (fecha, hoy) => { const out = []; let y = +fecha.slice(0, 4), m = +fecha.slice(5, 7); const yh = +hoy.slice(0, 4), mh = +hoy.slice(5, 7); while (y < yh || (y === yh && m <= mh)) { out.push(`inv-mov-${y}-${String(m).padStart(2, "0")}`); m++; if (m > 12) { m = 1; y++; } } return out; };
+function RegistroDiaImpl({ prog, S, user, fechaInicial, onClose, isMobile }) {
+  const hoy = hoyISO();
+  const short = prog.projectCode, ub = idUbicProyecto(short);
+  const [fecha, setFecha] = useState(fechaInicial || hoy);
+  const [movs, setMovs] = useState(null);
+  const [filas, setFilas] = useState({});
+  const [nota, setNota] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  useEffect(() => {
+    let vivo = true; setMovs(null);
+    Promise.all(mesesDesde(fecha, hoy).map(k => store.getCloud(k).catch(() => []))).then(r => { if (vivo) setMovs(r.flatMap(x => Array.isArray(x) ? x : [])); });
+    return () => { vivo = false; };
+  }, [fecha, hoy]);
+  const itemDe = (m) => itemDeMaterial(S.items, m);
+  const base = useMemo(() => {
+    const o = {};
+    (prog.materiales || []).forEach(m => {
+      const it = itemDe(m); const mp = it && movs ? movimientosProyecto(movs, it.id, short) : null;
+      const yaInv = mp ? mp.entradasDel(fecha) : 0;
+      const prev = quedoAntesDe(S.cierres, short, fecha, m.id);
+      const conInv = it && (it.stock?.[ub] != null || it.conteos?.[ub]);
+      const antes = prev ? prev.quedo : conInv && mp ? Math.max(0, Math.round((stockEnProyecto(it, short) - mp.netoDespues(fecha) - yaInv) * 100) / 100) : null;
+      o[m.id] = { it, yaInv, antes, antesDe: prev ? `quedaron el ${diaCorto(prev.fecha).toLowerCase()} ${fechaCorta(prev.fecha)}` : conInv ? "según GeoInventory" : "" };
+    });
+    return o;
+  }, [prog, S.items, S.cierres, movs, fecha]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Al cambiar de fecha: lo ya registrado ese día, o lo que el inventario ya sabe que llegó.
+  useEffect(() => {
+    if (!movs) return;
+    const ya = cierreDe(S.cierres, short, fecha);
+    const f = {};
+    (prog.materiales || []).forEach(m => { const r = ya?.materiales?.[m.id]; f[m.id] = r ? { llego: r.llego === "" || r.llego == null ? "" : String(r.llego), quedo: r.quedo === "" || r.quedo == null ? "" : String(r.quedo) } : { llego: base[m.id]?.yaInv ? String(base[m.id].yaInv) : "", quedo: "" }; });
+    setFilas(f); setNota(ya?.nota || "");
+  }, [fecha, movs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const yaHay = cierreDe(S.cierres, short, fecha);
+  const set = (id, k, v) => setFilas(x => ({ ...x, [id]: { ...(x[id] || {}), [k]: v } }));
+  const guardar = async () => {
+    const mats = {};
+    (prog.materiales || []).forEach(m => {
+      const f = filas[m.id] || {}; if (f.llego === "" && f.quedo === "") return;
+      const b = base[m.id] || {};
+      mats[m.id] = { nombre: m.nombre, unidad: m.unidad, itemId: b.it?.id || m.itemId || "", programado: cantidadDia(prog, fecha, m.id), llego: f.llego === "" ? 0 : num(f.llego), quedo: f.quedo === "" ? "" : num(f.quedo), antes: b.antes, consumo: consumoDia({ antes: b.antes, llego: f.llego, quedo: f.quedo }) };
+    });
+    if (!Object.keys(mats).length) { alert("Escribí al menos lo que llegó o lo que quedó de un material."); return; }
+    const neg = Object.values(mats).filter(r => r.consumo != null && r.consumo < 0);
+    if (neg.length && !confirm(`Ojo: ${neg.map(r => r.nombre).join(", ")} quedó con MÁS de lo que había más lo que llegó (se usaría ${neg.map(r => r.consumo).join(", ")}). ¿Guardar igual?`)) return;
+    setGuardando(true);
+    try { if (await S.registrarDia({ projectCode: short, fecha, progId: prog.id, materiales: mats, nota: nota.trim() }, user, movs || [])) onClose(); }
+    finally { setGuardando(false); }
+  };
+  const inp = { ...CTRL, width: isMobile ? 80 : 92, textAlign: "center", fontFamily: "var(--mono)", fontWeight: 700, padding: "8px 6px" };
+  return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 700, color: "#6E6862" }}>Día
+        <input type="date" value={fecha} max={hoy} onChange={e => e.target.value && setFecha(e.target.value)} style={{ ...CTRL, width: "auto" }} />
+      </label>
+      {[0, 1].map(n => { const f = sumarDias(hoy, -n); return <button key={f} type="button" onClick={() => setFecha(f)} style={{ minHeight: 34, padding: "6px 12px", borderRadius: 999, border: fecha === f ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: fecha === f ? ORANGE_DARK : "#fff", color: fecha === f ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{n ? "Ayer" : "Hoy"}</button>; })}
+      {yaHay && <span style={{ fontSize: 11.5, color: "#8A847D" }}>Ya registrado por {yaHay.porNombre} · {fmtDT(yaHay.updatedAt)} — lo podés corregir</span>}
+    </div>
+    {!movs ? <div style={{ fontSize: 13, color: "#8A847D" }}>Leyendo el inventario…</div> : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {!isMobile && <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.6fr) 80px 104px 104px 90px", gap: 10, padding: "0 10px", fontSize: 10.5, fontWeight: 800, color: "#8A847D", textTransform: "uppercase", letterSpacing: ".04em" }}><span>Material</span><span style={{ textAlign: "right" }}>Programado</span><span style={{ textAlign: "center" }}>Llegó</span><span style={{ textAlign: "center" }}>Quedó al cierre</span><span style={{ textAlign: "right" }}>Se usó</span></div>}
+      {(prog.materiales || []).map(m => {
+        const f = filas[m.id] || { llego: "", quedo: "" }, b = base[m.id] || {};
+        const prog0 = cantidadDia(prog, fecha, m.id), cons = consumoDia({ antes: b.antes, llego: f.llego, quedo: f.quedo });
+        const cum = f.llego === "" ? null : cumplimientoDia(prog0, f.llego);
+        const cC = cum === "cumplido" ? C_VERDE : cum === "parcial" ? C_AMARILLO : cum === "no_llego" ? C_ROJO : null;
+        return <div key={m.id} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "minmax(0,1.6fr) 80px 104px 104px 90px", gap: isMobile ? 8 : 10, alignItems: "center", padding: "10px", borderRadius: 12, background: "rgba(44,42,40,.035)" }}>
+          <div style={{ gridColumn: isMobile ? "1 / -1" : undefined, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: CHARCOAL }}>{m.nombre} <span style={{ fontWeight: 500, color: "#8A847D" }}>({m.unidad})</span></div>
+            <div style={{ fontSize: 11, color: "#8A847D", marginTop: 2 }}>{b.antes != null ? <>Había <b style={{ color: CHARCOAL }}>{fmtN(b.antes)}</b> · {b.antesDe}</> : "Primer registro: lo que quede hoy sirve de base"}{b.yaInv > 0 ? ` · ${fmtN(b.yaInv)} ya entraron por GeoInventory` : ""}</div>
+          </div>
+          {!isMobile && <div style={{ textAlign: "right", fontFamily: "var(--mono)", fontWeight: 700, color: prog0 ? CHARCOAL : "#C2BCB3" }}>{prog0 ? fmtN(prog0) : "—"}</div>}
+          <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, fontSize: 10.5, color: "#8A847D", fontWeight: 700 }}>{isMobile && `Llegó${prog0 ? ` (prog. ${fmtN(prog0)})` : ""}`}
+            <input type="number" inputMode="decimal" min="0" step="any" value={f.llego} onChange={e => set(m.id, "llego", e.target.value)} placeholder="0" style={{ ...inp, ...(cC ? { background: cC.bg, color: cC.color, borderColor: `${cC.color}55` } : {}) }} />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, fontSize: 10.5, color: "#8A847D", fontWeight: 700 }}>{isMobile && "Quedó al cierre"}
+            <input type="number" inputMode="decimal" min="0" step="any" value={f.quedo} onChange={e => set(m.id, "quedo", e.target.value)} placeholder="—" style={inp} />
+          </label>
+          <div style={{ gridColumn: isMobile ? "1 / -1" : undefined, textAlign: isMobile ? "left" : "right", fontFamily: "var(--mono)", fontWeight: 800, color: cons == null ? "#C2BCB3" : cons < 0 ? C_ROJO.color : CHARCOAL }}>{cons == null ? "—" : `${isMobile ? "Se usó " : ""}${fmtN(cons)}`}</div>
+        </div>;
+      })}
+    </div>}
+    <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 11.5, fontWeight: 700, color: "#6E6862" }}>Nota (opcional)
+      <input value={nota} onChange={e => setNota(e.target.value)} placeholder="Ej. no se coló por lluvia" style={CTRL} />
+    </label>
+    <div style={{ fontSize: 11.5, color: "#8A847D" }}>Al guardar, GeoInventory queda con lo que quedó en obra.</div>
+    <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+      <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
+      <Btn disabled={guardando || !movs} onClick={guardar}>{guardando ? "Guardando…" : "Guardar el día"}</Btn>
+    </div>
+  </div>;
+}
+
+// Junto a la cajita de un día YA registrado: lo que llegó (verde si llegó lo
+// programado) y lo que se usó.
+const CUM = { cumplido: C_VERDE, parcial: C_AMARILLO, no_llego: { color: "#B03024", bg: "rgba(192,57,43,.08)" }, extra: { color: "#1F4F8C", bg: "rgba(31,79,140,.08)" } };
+function RegistroCelda({ r, programado }) {
+  const cum = cumplimientoDia(programado, r.llego);
+  const c = cum ? CUM[cum] : null;
+  return <span style={{ width: 46, textAlign: "left", lineHeight: 1.1 }} title={`Llegó ${fmtN(r.llego)}${programado ? ` de ${fmtN(programado)} programadas` : ""}${r.quedo !== "" && r.quedo != null ? ` · quedaron ${fmtN(r.quedo)}` : ""}${r.consumo != null ? ` · se usaron ${fmtN(r.consumo)}` : ""}`}>
+    <span style={{ display: "block", fontSize: 9, fontWeight: 700, color: c ? c.color : "#A9A39B" }}>{cum === "cumplido" ? "✓ llegó" : cum === "no_llego" ? "no llegó" : "llegó"}</span>
+    <span style={{ display: "block", fontSize: 11, fontWeight: 800, fontFamily: "var(--mono)", color: c ? c.color : "#8A847D" }}>{fmtN(r.llego)}</span>
+    {r.consumo != null && <span style={{ display: "block", fontSize: 9, fontWeight: 600, color: "#6E6862", marginTop: 1 }}>usó {fmtN(r.consumo)}</span>}
+  </span>;
+}
 
 // ── Piezas de cobertura (a nivel de módulo) ──
 // Debajo del material: solo cuánto hay en obra y en almacén (24-nov-2026,
@@ -401,57 +583,71 @@ export function CoberturaVista({ proyectos = [], isMobile, onIrPlanificacion, re
   };
   const nRojo = datos.filter(d => d.peor === "rojo").length, nAmbar = datos.filter(d => d.peor === "ambar").length;
   const sinConteo = datos.filter(d => d.filas.some(f => f.enInventario) && !d.alDia).length;
-  const vis = soloAlerta ? datos.filter(d => d.peor === "rojo" || d.peor === "ambar" || !d.alDia) : datos;
+  const vis = soloAlerta ? datos.filter(d => d.peor === "rojo" || d.peor === "ambar" || (d.filas.some(f => f.enInventario) && !d.alDia)) : datos;
   const ult = ultimoDiaConteo(hoy);
-  const tile = (n, l, c) => <div style={{ flex: "1 1 120px", padding: "10px 14px", borderRadius: 14, background: c?.bg || "rgba(44,42,40,.04)" }}><div style={{ font: "800 24px/1 var(--display)", color: c?.color || CHARCOAL }}>{n}</div><div style={{ fontSize: 11.5, color: "#6E6862", marginTop: 4 }}>{l}</div></div>;
-  return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-    <div className="gt-vidrio" style={{ padding: isMobile ? 14 : 18, display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL }}>Cobertura de material en obra</div>
-          <div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 4 }}>Meta: siempre entre {DIAS_ROJO} días y una semana adelante, contando lo que hay en obra y en almacén. Rojo = alcanza menos de {DIAS_ROJO} días · ámbar = menos de {DIAS_META}.</div>
-        </div>
-        <span role="button" title="Volver a leer de la nube" className="gt-circulo" onClick={S.cargar} style={{ width: 36, height: 36, fontSize: 15 }}>↻</span>
-        <Btn variant="ghost" disabled={generando || !datos.some(d => d.prog)} onClick={pdfTodo}>{generando ? "Armando PDF…" : "PDF"}</Btn>
-      </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {tile(nRojo, "proyectos en rojo", nRojo ? C_ROJO : null)}
-        {tile(nAmbar, "en ámbar", nAmbar ? C_AMARILLO : null)}
-        {tile(sinConteo, `sin conteo desde el ${diaCorto(ult).toLowerCase()} ${fechaCorta(ult)}`, sinConteo ? C_ROJO : null)}
-        {tile(datos.length, "proyectos vigilados")}
-      </div>
-      <div style={{ display: "flex", gap: 6 }}>
-        {[[false, "Todos"], [true, "Solo lo que necesita atención"]].map(([v, l]) => <button key={l} type="button" onClick={() => setSoloAlerta(v)} style={{ minHeight: 34, padding: "6px 13px", borderRadius: 999, border: soloAlerta === v ? "1px solid transparent" : "1px solid rgba(44,42,40,.12)", background: soloAlerta === v ? ORANGE_DARK : "rgba(255,255,255,.75)", color: soloAlerta === v ? "#fff" : CHARCOAL, font: "700 12.5px/1 var(--sans)", cursor: "pointer" }}>{l}</button>)}
-      </div>
+  // Proyectos plegables (25-nov-2026, Gerson: "que se desplieguen para que no
+  // se vea tan cargada la pantalla"). Preferencia de pantalla → localStorage.
+  const [abiertos, setAbiertos] = useState(() => { try { return JSON.parse(localStorage.getItem("gt-cob-abiertos") || "[]"); } catch { return []; } });
+  const alternar = (sh) => setAbiertos(a => { const n = a.includes(sh) ? a.filter(x => x !== sh) : [...a, sh]; try { localStorage.setItem("gt-cob-abiertos", JSON.stringify(n)); } catch { /* sin storage */ } return n; });
+  const ultimoUso = (short, matId) => { const l = cierresDe(S.cierres, short).filter(c => c.materiales?.[matId]?.consumo != null); const u = l[l.length - 1]; return u ? { fecha: u.fecha, consumo: u.materiales[matId].consumo } : null; };
+  const pillR = (on, txt, c, onClick) => <button type="button" onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 30, padding: "4px 11px", borderRadius: 999, border: on ? "1px solid transparent" : "1px solid rgba(44,42,40,.10)", background: on ? CHARCOAL : "rgba(255,255,255,.7)", color: on ? "#fff" : "#5C5853", font: "700 12px/1 var(--sans)", cursor: "pointer" }}>{c && <span style={{ width: 7, height: 7, borderRadius: "50%", background: c }} />}{txt}</button>;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div className="gt-vidrio" style={{ padding: isMobile ? "10px 12px" : "10px 14px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <span style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL, marginRight: 4 }}>Cobertura</span>
+      {pillR(!soloAlerta, `Todos ${datos.length}`, null, () => setSoloAlerta(false))}
+      {pillR(false, `${nRojo} en rojo`, nRojo ? "#B03024" : "#D8D2C8", () => setSoloAlerta(true))}
+      {pillR(false, `${nAmbar} en ámbar`, nAmbar ? "#E8A33D" : "#D8D2C8", () => setSoloAlerta(true))}
+      {pillR(false, `${sinConteo} sin conteo`, sinConteo ? "#B03024" : "#D8D2C8", () => setSoloAlerta(true))}
+      {soloAlerta && pillR(true, "Solo lo que necesita atención ×", null, () => setSoloAlerta(false))}
+      <span style={{ flex: 1 }} />
+      <span role="button" title="Volver a leer de la nube" className="gt-circulo" onClick={S.cargar} style={{ width: 32, height: 32, fontSize: 14 }}>↻</span>
+      <Btn small variant="ghost" disabled={generando || !datos.some(d => d.prog)} onClick={pdfTodo}>{generando ? "Armando…" : "PDF"}</Btn>
     </div>
     {S.error && <div style={{ color: C_ROJO.color, fontSize: 13 }}>{S.error}</div>}
     {S.cargando ? <div style={{ fontSize: 13, color: "#8A847D" }}>Cargando…</div>
-      : vis.length === 0 ? <div className="gt-vidrio" style={{ padding: "36px 20px", textAlign: "center", color: "#8A847D", fontSize: 14 }}>{soloAlerta ? "Nada en rojo ni en ámbar. Todos al día." : "Todavía no hay proyectos con programación ni inventario de consumibles. Empezá cargando la programación y el inventario del proyecto en GeoInventory."}</div>
-      : vis.map(d => <div key={d.short} className="gt-vidrio" style={{ padding: 0, overflow: "hidden", boxShadow: d.peor === "rojo" ? "inset 3px 0 0 #B03024" : d.peor === "ambar" ? "inset 3px 0 0 #E8A33D" : undefined }}>
-        <div style={{ padding: isMobile ? "12px 14px" : "14px 18px", display: "flex", alignItems: "flex-start", gap: 10, flexWrap: "wrap", borderBottom: "1px solid rgba(44,42,40,.07)" }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL }}>{d.short}</div>
-            <div style={{ fontSize: 12, color: "#8A847D", marginTop: 3 }}>{d.resp.length ? d.resp.join(", ") : "sin residente asignado"}{nombreDe(proyectos, d.short) ? ` · ${nombreDe(proyectos, d.short)}` : ""}</div>
+      : vis.length === 0 ? <div className="gt-vidrio" style={{ padding: "30px 20px", textAlign: "center", color: "#8A847D", fontSize: 13.5 }}>{soloAlerta ? "Nada en rojo ni en ámbar. Todos al día." : "Todavía no hay proyectos con programación ni inventario de consumibles."}</div>
+      : vis.map(d => {
+        const abierto = abiertos.includes(d.short);
+        const conProg = d.filas.filter(f => f.semaforo !== "sin_programa" && f.semaforo !== "sin_dato");
+        const faltas = conProg.map(f => resumenDias(f.dias, f.porDia).faltaDesde).filter(Boolean).sort();
+        const color = d.peor === "rojo" ? "#B03024" : d.peor === "ambar" ? "#C98A1E" : d.peor === "verde" ? "#3E8E5A" : "#B8B1A8";
+        const resumen = !d.prog ? "Sin programación" : faltas.length ? `Falta material desde el ${diaTxt(faltas[0])}` : conProg.length ? "Cubierto" : "Sin datos del inventario";
+        const conteoTxt = !d.filas.some(f => f.enInventario) ? "" : d.alDia ? `contado ${fmtDT(d.ultimoConteo)}` : d.ultimoConteo ? `sin conteo desde ${fmtDT(d.ultimoConteo)}` : "nunca contado";
+        return <div key={d.short} className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
+          <div role="button" tabIndex={0} aria-expanded={abierto} onClick={() => alternar(d.short)} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); alternar(d.short); } }}
+            style={{ padding: isMobile ? "12px 14px" : "12px 16px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer", flexWrap: isMobile ? "wrap" : "nowrap" }}>
+            <span style={{ width: 10, height: 10, borderRadius: "50%", background: color, flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>{d.short}</div>
+              <div style={{ fontSize: 11.5, color: "#8A847D", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.resp.length ? d.resp.join(", ") : "sin residente asignado"}{d.prog ? ` · ${tituloProg(d.prog)}` : ""}</div>
+            </div>
+            <div style={{ textAlign: "right", flexShrink: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: faltas.length ? color : d.prog ? "#3E8E5A" : "#8A847D" }}>{resumen}</div>
+              {conteoTxt && <div style={{ fontSize: 11, color: d.alDia ? "#8A847D" : "#B03024", marginTop: 2 }}>{conteoTxt}</div>}
+            </div>
+            <span aria-hidden style={{ color: "#A39C92", fontSize: 13, transform: abierto ? "rotate(90deg)" : "none", transition: "transform .2s" }}>›</span>
           </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            {d.filas.some(f => f.enInventario) && <Chip c={d.alDia ? C_VERDE : C_ROJO} title={d.ultimoConteo ? `Último conteo ${fmtDT(d.ultimoConteo)}` : ""}>{d.alDia ? `Contado ${fmtDT(d.ultimoConteo)}` : d.ultimoConteo ? `No contó · último ${fmtDT(d.ultimoConteo)}` : "Nunca ha contado"}</Chip>}
-            {d.prog ? <Chip c={C_GRIS}>{tituloProg(d.prog)}</Chip> : <button type="button" onClick={onIrPlanificacion} style={{ border: "none", background: "rgba(44,42,40,.06)", borderRadius: 999, padding: "4px 10px", fontSize: 11.5, fontWeight: 700, color: "#6E6862", cursor: onIrPlanificacion ? "pointer" : "default", fontFamily: "inherit" }}>Sin programación</button>}
-          </div>
-        </div>
-        {d.filas.length === 0 ? <div style={{ padding: "14px 18px", fontSize: 12.5, color: "#8A847D" }}>Sin materiales todavía: falta la programación o el inventario del proyecto.</div>
-          : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={{ ...TH, paddingLeft: 18 }}>Material</th><th style={{ ...TH, textAlign: "right" }}>En obra</th><th style={{ ...TH, textAlign: "right" }}>En almacén</th><th style={{ ...TH, textAlign: "right" }}>Próx. 7 días</th><th style={TH}>La obra cubre</th><th style={TH}>Con almacén</th><th style={{ ...TH, textAlign: "right" }}>Falta para la semana</th>{!isMobile && <th style={TH}>Contado</th>}</tr></thead>
-            <tbody>{d.filas.map(f => { const sm = SEMA[f.semaforo]; const r = resumenDias(f.dias, f.porDia); const sinP = f.semaforo === "sin_programa" || f.semaforo === "sin_dato"; const mat = d.prog?.materiales?.find(m => m.id === f.matId); const rec = mat ? recetaDeMaterial(receta, d.short, mat, Object.entries(f.porDia || {}).filter(([x]) => x >= hoy).reduce((a, [, n]) => a + num(n), 0)) : null; return <tr key={f.key}>
-              <td style={{ ...TD, paddingLeft: 18, fontWeight: 700 }}><span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: sinP ? "#D8D2C8" : sm.c.color, marginRight: 8 }} />{f.nombre}{!f.enInventario && <div style={{ fontSize: 11, color: C_ROJO.color, fontWeight: 600, marginLeft: 17 }}>no está en el inventario</div>}{rec && <div style={{ marginLeft: 17 }}><LineaReceta r={rec} partidas={[]} /></div>}</td>
-              <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 800 }}>{fmtN(f.stock)} <span style={{ fontFamily: "var(--sans)", fontWeight: 500, color: "#8A847D", fontSize: 11.5 }}>{f.unidad}</span></td>
-              <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 700 }} title={f.almacen?.comprometidoOtros ? `${fmtN(f.almacen.comprometidoOtros)} más están comprometidas para otros proyectos` : ""}>{fmtN(f.almacen?.total)}</td>
-              <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)" }}>{sinP ? "—" : fmtN(f.programado7)}</td>
-              <td style={{ ...TD, color: sinP ? "#8A847D" : COB_DIA.obra.color, fontWeight: 700, whiteSpace: "nowrap" }}>{sinP ? (f.semaforo === "sin_dato" ? "—" : "Sin programación") : r.obraHasta ? (f.obra?.cubreTodo ? "Todo" : `hasta ${diaTxt(r.obraHasta)}`) : <span style={{ color: COB_DIA.falta.color }}>ni el {diaTxt(r.primero)}</span>}</td>
-              <td style={{ ...TD, color: sinP ? "#8A847D" : sm.c.color, fontWeight: 700, whiteSpace: "nowrap" }}>{sinP ? "—" : f.cubreTodo ? "Toda la programación" : r.totalHasta ? `hasta ${diaTxt(r.totalHasta)} · falta el ${diaTxt(r.faltaDesde)}` : `falta desde el ${diaTxt(r.faltaDesde)}`}{!sinP && r.mandar > 0 && <div style={{ fontSize: 10.5, fontWeight: 600, color: COB_DIA.almacen.color }}>mandar {fmtN(r.mandar)} del almacén</div>}</td>
-              <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 800, color: f.faltanParaMeta > 0 ? C_ROJO.color : "#8A847D" }}>{f.faltanParaMeta > 0 ? `${fmtN(f.faltanParaMeta)} ${f.unidad}` : "—"}</td>
-              {!isMobile && <td style={{ ...TD, fontSize: 11.5, color: "#8A847D", whiteSpace: "nowrap" }}>{f.conteo ? `${fmtDT(f.conteo.at)}${f.conteo.byName ? ` · ${String(f.conteo.byName).split(" ")[0]}` : ""}` : "—"}</td>}
-            </tr>; })}</tbody>
-          </table></div>}
-      </div>)}
+          {abierto && <div style={{ borderTop: "1px solid rgba(44,42,40,.07)", padding: isMobile ? "4px 14px 10px" : "4px 16px 12px" }}>
+            {d.filas.length === 0 ? <div style={{ padding: "10px 0", fontSize: 12.5, color: "#8A847D" }}>Sin materiales todavía.{!d.prog && onIrPlanificacion ? <> <button type="button" onClick={onIrPlanificacion} style={{ border: "none", background: "none", color: ORANGE_DARK, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5 }}>Hacer la programación</button></> : ""}</div>
+              : d.filas.map(f => {
+                const sinP = f.semaforo === "sin_programa" || f.semaforo === "sin_dato"; const r = resumenDias(f.dias, f.porDia); const sm = SEMA[f.semaforo];
+                const uso = f.matId ? ultimoUso(d.short, f.matId) : null;
+                const estado = f.semaforo === "sin_dato" ? "no está en GeoInventory" : f.semaforo === "sin_programa" ? "sin programación" : f.cubreTodo ? "cubre toda la programación" : r.faltaDesde ? `falta desde el ${diaTxt(r.faltaDesde)}` : "";
+                return <div key={f.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid rgba(44,42,40,.05)", flexWrap: isMobile ? "wrap" : "nowrap" }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: sinP ? "#D8D2C8" : sm.c.color, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{f.nombre} <span style={{ fontWeight: 500, color: "#8A847D", fontSize: 12 }}>{f.unidad}</span></div>
+                    <div style={{ fontSize: 11.5, color: "#8A847D", marginTop: 2 }}>{f.enInventario ? <>En obra <b style={{ color: CHARCOAL }}>{fmtN(f.stock)}</b> · almacén <b style={{ color: CHARCOAL }}>{fmtN(f.almacen?.total)}</b></> : "—"}{uso ? <> · se usaron <b style={{ color: CHARCOAL }}>{fmtN(uso.consumo)}</b> el {diaTxt(uso.fecha)}</> : ""}</div>
+                  </div>
+                  <div style={{ textAlign: "right", fontSize: 12, fontWeight: 700, color: sinP ? "#A39C92" : sm.c.color, flexShrink: 0 }}>
+                    {estado}
+                    {!sinP && f.faltanParaMeta > 0 && <div style={{ fontSize: 11, fontWeight: 600, color: "#B03024", marginTop: 2 }}>faltan {fmtN(f.faltanParaMeta)} para la semana</div>}
+                    {!sinP && r.mandar > 0 && <div style={{ fontSize: 11, fontWeight: 600, color: COB_DIA.almacen.color, marginTop: 2 }}>mandar {fmtN(r.mandar)} del almacén</div>}
+                  </div>
+                </div>;
+              })}
+          </div>}
+        </div>;
+      })}
   </div>;
 }
