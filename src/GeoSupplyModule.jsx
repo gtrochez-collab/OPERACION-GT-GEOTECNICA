@@ -292,7 +292,7 @@ function SolicitudFormImpl({ solicitud, proyectos, presDe, saldoDe, catalogo = [
                 onMouseEnter={e => { if (!enLista.length) e.currentTarget.style.background = "rgba(44,42,40,.04)"; }} onMouseLeave={e => { if (!enLista.length) e.currentTarget.style.background = "transparent"; }}>
                 <span aria-hidden style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 999, display: "grid", placeItems: "center", fontSize: 13, fontWeight: 800, background: enLista.length ? "#059669" : "rgba(44,42,40,.07)", color: enLista.length ? "#fff" : "var(--text-2)" }}>{enLista.length ? "✓" : "+"}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, lineHeight: 1.3 }}>{p.nombre}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: CHARCOAL, lineHeight: 1.3 }}>{p.nombre}{p.agregada && <span style={{ marginLeft: 6, padding: "1px 7px", borderRadius: 999, background: "#FEF3C7", color: "#92400E", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap" }}>Agregada después</span>}</div>
                   {enLista.length > 0 && <div style={{ fontSize: 11, color: C_VERDE.color, fontWeight: 700, marginTop: 1 }}>En tu pedido{enLista.some(l => num(l.cantidad) > 0) ? ` · ${enLista.map(l => `${fmtCant(num(l.cantidad))} ${l.unidad || ""}`).join(" + ")}` : " · poné la cantidad abajo"}</div>}
                 </div>
                 <div style={{ fontSize: 11.5, textAlign: "right", lineHeight: 1.35, flexShrink: 0 }}>

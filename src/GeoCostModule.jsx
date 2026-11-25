@@ -1091,7 +1091,7 @@ export default function GeoCostModule({ userRole, userName, onBack, onLogout }) 
               <div className="cc-fila" role="button" tabIndex={0} aria-expanded={abierta} onClick={toggle} onKeyDown={onKeyActivar(toggle)}
                 style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1.4fr) minmax(160px, 1fr) auto", gap: isMobile ? 8 : 18, alignItems: "center", padding: "10px 10px" }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{p.nombre}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{p.nombre}{p.agregada && <span title={`Se agregó al presupuesto después${p.agregada.at ? ` (${fmtFecha(p.agregada.at)})` : ""}${p.agregada.motivo ? ` · ${p.agregada.motivo}` : ""}`} style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 999, background: "#FEF3C7", color: "#92400E", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap", verticalAlign: "middle" }}>Agregada después{p.agregada.motivo ? ` · ${p.agregada.motivo}` : ""}</span>}</div>
                   {(sub || p.puRealUSD != null) && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 2 }}>{sub}{puReal(p, !!sub)}
                     {puedeEditarPresupuesto && (p.fabricada || p.puRealManual) && <button type="button" onClick={(e) => { e.stopPropagation(); setModal({ t: "costoReal", presId: pres.id, partidaId: p.id }); }} style={{ marginLeft: 8, padding: 0, border: "none", background: "none", color: ORANGE_DARK, fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit" }}>{p.puRealManual ? "Editar costo real" : "Poner costo real"}</button>}</div>}
                 </div>

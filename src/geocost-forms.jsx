@@ -207,7 +207,11 @@ export function PresupuestoForm({ pres, proyectos = [], machines = [], tasa = TA
       if (!nombre) return malas.push(`${i + 1}`);
       const solucion = multiSol ? String(r.solucion || "").trim() : "";
       if (multiSol && !solucion) sinSol.push(`${i + 1} (${nombre})`);
-      limpias.push({ id: r.id, ...(solucion ? { solucion } : {}), categoria: r.categoria || "Otros", nombre, unidad: (r.unidad || "").trim(), cantidad: num(r.cantidad), pu: num(r.pu), monto: round2(monto), modulo: r.modulo || "libre", nota: (r.nota || "").trim() });
+      // Lo que el form no edita (costo real a mano, "agregada después"…) se
+      // conserva de la partida original (24-nov-2026: antes se perdía al guardar).
+      const orig = (pres?.partidas || []).find(x => x.id === r.id) || {};
+      const { solucion: _s, categoria: _c, nombre: _n, unidad: _u, cantidad: _q, pu: _p, monto: _m, modulo: _mo, nota: _no, ...extra } = orig;
+      limpias.push({ ...extra, id: r.id, ...(solucion ? { solucion } : {}), categoria: r.categoria || "Otros", nombre, unidad: (r.unidad || "").trim(), cantidad: num(r.cantidad), pu: num(r.pu), monto: round2(monto), modulo: r.modulo || "libre", nota: (r.nota || "").trim() });
     });
     if (malas.length) return alert(`Falta el nombre en la partida ${malas.join(", ")}.`);
     if (sinSol.length) return alert(`Falta la solución en la partida ${sinSol.slice(0, 6).join(", ")}${sinSol.length > 6 ? "…" : ""}.`);

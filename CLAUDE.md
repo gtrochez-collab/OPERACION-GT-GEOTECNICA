@@ -1958,6 +1958,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   concreto = $161.90/m³ (ficha Fiori oct-2026). El 26-oct se corrigieron en
   la nube MAT-2026-0513/0579/0581 (decían 480/1/200 m³ de concreto; eran
   480/480/200 bolsas de cemento) → sustitutos, misma partida.
+  **PARTIDAS AGREGADAS DESPUÉS (25-nov-2026, Gerson)**: campo ADITIVO `partida.agregada {at, por, motivo}` → chip ámbar "Agregada después · <motivo>" en el detalle de GeoCost y "Agregada después" en la receta de GeoSupply. Torre Adobe: por cambio de diseño se sumaron Varilla No.9 lance de 6m (100) y No.11 lance de 12m (100), con P.U. sacado POR METRO del lance de 9 m de la misma varilla ($42.59 y $95.95, nota "confirmar con el PM"); el presupuesto pasó a $190,267.58. El form de presupuesto ahora CONSERVA lo que no edita de cada partida (`agregada`, `puRealManual`…; antes lo botaba al guardar).
   **Dashboard v4 (25-sep-2026)**: la columna del medio (una tarjeta con
   anillo POR proyecto, apiladas) no escalaba — "ahorita son 2 pero serán
   más" — y con nombres largos el título se encimaba con el anillo. La
