@@ -194,3 +194,16 @@ test("mandar del almacén: solo lo que sale del almacén (no lo que cubre la obr
   const d2 = estadoPorDia({ obra: 100, almacen: 50, porDia: { "2026-11-25": 120, "2026-11-26": 100 }, hoy: "2026-11-25" });
   assert.equal(resumenDias(d2, {}).mandar, 50);
 });
+
+test("consumo estándar por día: lo programado son entregas (caso VSM 25-nov)", async () => {
+  const { estadoConUso, coberturaDesdeDias } = await import("../src/suministro-calc.js");
+  const d = estadoConUso({ obra: 45, almacen: 170, entregas: { "2026-11-26": 40, "2026-11-27": 260, "2026-11-28": 260 }, uso: 240, fechas: ["2026-11-25", "2026-11-26", "2026-11-27", "2026-11-28"], hoy: "2026-11-26" });
+  assert.equal(d["2026-11-25"], undefined);
+  assert.deepEqual([d["2026-11-26"].estado, d["2026-11-26"].delAlmacen, d["2026-11-26"].obraQueda], ["almacen", 155, 0]);
+  assert.equal(d["2026-11-27"].obraQueda, 20);
+  assert.equal(d["2026-11-28"].obraQueda, 40);
+  const sin = estadoConUso({ obra: 0, almacen: 10, entregas: {}, uso: 100, fechas: ["2026-11-26"], hoy: "2026-11-26" });
+  assert.deepEqual([sin["2026-11-26"].estado, sin["2026-11-26"].delAlmacen, sin["2026-11-26"].falta], ["falta", 10, 90]);
+  assert.equal(coberturaDesdeDias(d, "2026-11-26", "obra").faltaDesde, "2026-11-26");
+  assert.equal(coberturaDesdeDias(d, "2026-11-26", "total").cubreTodo, true);
+});

@@ -125,13 +125,45 @@ export const estadoPorDia = ({ obra = 0, almacen = 0, porDia = {}, hoy }) => {
     const q = num(porDia[f]); const antes = acum; acum = r2(acum + q);
     // Lo que quedaría en obra y en almacén después de ese día (se gasta primero la obra).
     const almQ = r2(Math.max(0, num(almacen) - Math.max(0, acum - num(obra))));
-    const queda = { amanece: r2(Math.max(0, num(obra) - antes)), obraQueda: r2(Math.max(0, num(obra) - acum)), almQueda: almQ, delAlmacen: r2(almPrev - almQ) };
+    const queda = { usa: q, amanece: r2(Math.max(0, num(obra) - antes)), obraQueda: r2(Math.max(0, num(obra) - acum)), almQueda: almQ, delAlmacen: r2(almPrev - almQ) };
     almPrev = almQ;
     if (acum <= num(obra) + 1e-9) out[f] = { estado: "obra", falta: 0, ...queda };
     else if (acum <= num(obra) + num(almacen) + 1e-9) out[f] = { estado: "almacen", falta: 0, ...queda };
     else out[f] = { estado: "falta", falta: r2(Math.min(q, acum - num(obra) - num(almacen))), cubierto: r2(Math.max(0, num(obra) + num(almacen) - antes)), ...queda };
   });
   return out;
+};
+/**
+ * Con CONSUMO ESTÁNDAR por día (25-nov-2026, Gerson: "Allan necesita sí o sí
+ * 240 bolsas al día para trabajar; que se vaya alimentando con lo que queda al
+ * final de la jornada"). Lo programado son ENTREGAS; cada día de trabajo se
+ * usan `uso`. amanece + entra − usa = queda; si no alcanza, sale del almacén
+ * (mandar) y lo que tampoco hay ahí se compra.
+ */
+export const estadoConUso = ({ obra = 0, almacen = 0, entregas = {}, uso = 0, fechas = [], hoy, yaEnStock = null }) => {
+  const out = {}; let p = num(obra), alm = num(almacen);
+  [...new Set(fechas)].filter(f => f >= hoy).sort().forEach(f => {
+    // `yaEnStock`: HOY sin cierre — lo que ya llegó hoy está en el stock (se
+    // movió del almacén al proyecto); no se suma otra vez la entrega de hoy.
+    const amanece = r2(p); const entra = f === yaEnStock ? 0 : num(entregas?.[f]); const usa = num(uso);
+    let queda = r2(p + entra - usa), delAlmacen = 0, falta = 0;
+    if (queda < 0) { const d = -queda; delAlmacen = r2(Math.min(alm, d)); alm = r2(alm - delAlmacen); falta = r2(d - delAlmacen); queda = 0; }
+    p = queda;
+    out[f] = { estado: falta > 0 ? "falta" : delAlmacen > 0 ? "almacen" : "obra", amanece, entra, usa, obraQueda: queda, almQueda: alm, delAlmacen, falta };
+  });
+  return out;
+};
+/** Resumen tipo `coberturaMaterial` a partir de los días de `estadoConUso`. modo "obra" = solo el proyecto; "total" = con el almacén. */
+export const coberturaDesdeDias = (dias = {}, hoy, modo = "total", meta = DIAS_META) => {
+  const fs = Object.keys(dias).sort();
+  if (!fs.length) return { programado7: 0, alcanzaDias: null, faltaDesde: null, cubreTodo: false, faltanParaMeta: 0, semaforo: "sin_programa" };
+  const hasta = sumarDias(hoy, meta - 1);
+  const programado7 = r2(fs.filter(f => f <= hasta).reduce((a, f) => a + num(dias[f].usa), 0));
+  const faltanParaMeta = r2(fs.filter(f => f <= hasta).reduce((a, f) => a + num(dias[f].falta) + (modo === "obra" ? num(dias[f].delAlmacen) : 0), 0));
+  const faltaDesde = fs.find(f => modo === "obra" ? dias[f].estado !== "obra" : dias[f].estado === "falta") || null;
+  if (!faltaDesde) { const d = diasEntre(hoy, fs[fs.length - 1]) + 1; return { programado7, alcanzaDias: d, faltaDesde: null, cubreTodo: true, faltanParaMeta, semaforo: d < DIAS_ROJO ? "ambar" : "verde" }; }
+  const alcanzaDias = diasEntre(hoy, faltaDesde);
+  return { programado7, alcanzaDias, faltaDesde, cubreTodo: false, faltanParaMeta, semaforo: alcanzaDias < DIAS_ROJO ? "rojo" : alcanzaDias < meta ? "ambar" : "verde" };
 };
 /**
  * Resumen de `estadoPorDia`: hasta qué día cubre la obra, hasta cuál con el
@@ -196,11 +228,13 @@ export function coberturaProyecto({ short, prog = null, items = [], hoy: hoyReal
     const porDia = {}; Object.entries(prog.dias || {}).forEach(([f, d]) => { if (num(d?.[m.id]) > 0) porDia[f] = num(d[m.id]); });
     const stock = it ? stockEnProyecto(it, short) : 0;
     const alm = it ? almacenParaProyecto(it, short) : { libre: 0, apartado: 0, comprometidoOtros: 0, total: 0 };
-    const obra = coberturaMaterial({ stock, porDia, hoy });
-    const total = coberturaMaterial({ stock: stock + alm.total, porDia, hoy });
+    const uso = num(m.usoDiario);
+    const diasUso = it && uso > 0 ? estadoConUso({ obra: stock, almacen: alm.total, entregas: porDia, uso, fechas: semanasDe(prog).flatMap(diasDeSemana), hoy, yaEnStock: hoy === hoyReal ? hoyReal : null }) : null;
+    const obra = diasUso ? coberturaDesdeDias(diasUso, hoy, "obra") : coberturaMaterial({ stock, porDia, hoy });
+    const total = diasUso ? coberturaDesdeDias(diasUso, hoy, "total") : coberturaMaterial({ stock: stock + alm.total, porDia, hoy });
     filas.push({ key: m.id, matId: m.id, nombre: m.nombre || it?.nombre || "", unidad: m.unidad || it?.unidad || "", partidaId: m.partidaId || "", item: it, enInventario: !!it, stock, almacen: alm, conteo: it ? conteoEnProyecto(it, short) : null, programadoTotal: totalMaterial(prog, m.id), porDia,
       // Sin artículo en el inventario no se sabe cuánto hay: no se pinta nada (no es "falta").
-      obra, dias: it ? estadoPorDia({ obra: stock, almacen: alm.total, porDia, hoy }) : {}, ...total, ...(it ? {} : { semaforo: "sin_dato" }) });
+      usoDiario: uso, obra, dias: diasUso || (it ? estadoPorDia({ obra: stock, almacen: alm.total, porDia, hoy }) : {}), ...total, ...(it ? {} : { semaforo: "sin_dato" }) });
   });
   (items || []).filter(i => i && !i.eliminado && esConsumible(i) && !usados.has(i.id) && (num(i.stock?.[ubic]) > 0 || i.conteos?.[ubic])).forEach(it => {
     const alm = almacenParaProyecto(it, short);
