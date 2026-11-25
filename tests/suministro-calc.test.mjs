@@ -195,15 +195,13 @@ test("mandar del almacén: solo lo que sale del almacén (no lo que cubre la obr
   assert.equal(resumenDias(d2, {}).mandar, 50);
 });
 
-test("consumo estándar por día: lo programado son entregas (caso VSM 25-nov)", async () => {
+test("planificación automática: nunca amanecer con menos del uso diario (caso VSM 25-nov)", async () => {
   const { estadoConUso, coberturaDesdeDias } = await import("../src/suministro-calc.js");
-  const d = estadoConUso({ obra: 45, almacen: 170, entregas: { "2026-11-26": 40, "2026-11-27": 260, "2026-11-28": 260 }, uso: 240, fechas: ["2026-11-25", "2026-11-26", "2026-11-27", "2026-11-28"], hoy: "2026-11-26" });
-  assert.equal(d["2026-11-25"], undefined);
-  assert.deepEqual([d["2026-11-26"].estado, d["2026-11-26"].delAlmacen, d["2026-11-26"].obraQueda], ["almacen", 155, 0]);
-  assert.equal(d["2026-11-27"].obraQueda, 20);
-  assert.equal(d["2026-11-28"].obraQueda, 40);
-  const sin = estadoConUso({ obra: 0, almacen: 10, entregas: {}, uso: 100, fechas: ["2026-11-26"], hoy: "2026-11-26" });
-  assert.deepEqual([sin["2026-11-26"].estado, sin["2026-11-26"].delAlmacen, sin["2026-11-26"].falta], ["falta", 10, 90]);
-  assert.equal(coberturaDesdeDias(d, "2026-11-26", "obra").faltaDesde, "2026-11-26");
-  assert.equal(coberturaDesdeDias(d, "2026-11-26", "total").cubreTodo, true);
+  const d = estadoConUso({ obra: 285, almacen: 170, uso: 240, fechas: ["2026-11-24", "2026-11-25", "2026-11-26", "2026-11-27"], hoy: "2026-11-25" });
+  assert.equal(d["2026-11-24"], undefined);
+  assert.deepEqual([d["2026-11-25"].entrega, d["2026-11-25"].obraQueda], [0, 45]);
+  assert.deepEqual([d["2026-11-26"].amanece, d["2026-11-26"].entrega, d["2026-11-26"].delAlmacen, d["2026-11-26"].falta, d["2026-11-26"].estado], [45, 195, 170, 25, "falta"]);
+  assert.deepEqual([d["2026-11-27"].entrega, d["2026-11-27"].delAlmacen, d["2026-11-27"].falta], [240, 0, 240]);
+  assert.equal(coberturaDesdeDias(d, "2026-11-25", "obra").faltaDesde, "2026-11-26");
+  assert.equal(coberturaDesdeDias(d, "2026-11-25", "total").faltaDesde, "2026-11-26");
 });

@@ -134,22 +134,23 @@ export const estadoPorDia = ({ obra = 0, almacen = 0, porDia = {}, hoy }) => {
   return out;
 };
 /**
- * Con CONSUMO ESTÁNDAR por día (25-nov-2026, Gerson: "Allan necesita sí o sí
- * 240 bolsas al día para trabajar; que se vaya alimentando con lo que queda al
- * final de la jornada"). Lo programado son ENTREGAS; cada día de trabajo se
- * usan `uso`. amanece + entra − usa = queda; si no alcanza, sale del almacén
- * (mandar) y lo que tampoco hay ahí se compra.
+ * PLANIFICACIÓN AUTOMÁTICA con consumo estándar (25-nov-2026, Gerson: "Allan
+ * necesita sí o sí 240 bolsas al día; la planificación debería ser automática,
+ * que nunca baje de 240"). Cada día de trabajo tiene que AMANECER con al menos
+ * `uso`: si amanece con menos, la entrega de ese día es lo que falta (primero
+ * del almacén → mandar; lo que no hay ahí → comprar). queda = max(amanece, uso) − uso.
+ * HOY sin cierre: el stock ya es con lo que amaneció (incluye lo que llegó hoy).
+ * Los cierres de cada día corrigen el punto de partida.
  */
-export const estadoConUso = ({ obra = 0, almacen = 0, entregas = {}, uso = 0, fechas = [], hoy, yaEnStock = null }) => {
-  const out = {}; let p = num(obra), alm = num(almacen);
+export const estadoConUso = ({ obra = 0, almacen = 0, uso = 0, fechas = [], hoy }) => {
+  const out = {}; let p = num(obra), alm = num(almacen); const usa = num(uso);
   [...new Set(fechas)].filter(f => f >= hoy).sort().forEach(f => {
-    // `yaEnStock`: HOY sin cierre — lo que ya llegó hoy está en el stock (se
-    // movió del almacén al proyecto); no se suma otra vez la entrega de hoy.
-    const amanece = r2(p); const entra = f === yaEnStock ? 0 : num(entregas?.[f]); const usa = num(uso);
-    let queda = r2(p + entra - usa), delAlmacen = 0, falta = 0;
-    if (queda < 0) { const d = -queda; delAlmacen = r2(Math.min(alm, d)); alm = r2(alm - delAlmacen); falta = r2(d - delAlmacen); queda = 0; }
-    p = queda;
-    out[f] = { estado: falta > 0 ? "falta" : delAlmacen > 0 ? "almacen" : "obra", amanece, entra, usa, obraQueda: queda, almQueda: alm, delAlmacen, falta };
+    const amanece = r2(p);
+    const entrega = r2(Math.max(0, usa - amanece));
+    const delAlmacen = r2(Math.min(alm, entrega)); alm = r2(alm - delAlmacen);
+    const falta = r2(entrega - delAlmacen);
+    const queda = r2(amanece + entrega - usa); p = queda;
+    out[f] = { estado: falta > 0 ? "falta" : delAlmacen > 0 ? "almacen" : "obra", amanece, entrega, entra: entrega, usa, obraQueda: queda, almQueda: alm, delAlmacen, falta };
   });
   return out;
 };
@@ -229,7 +230,7 @@ export function coberturaProyecto({ short, prog = null, items = [], hoy: hoyReal
     const stock = it ? stockEnProyecto(it, short) : 0;
     const alm = it ? almacenParaProyecto(it, short) : { libre: 0, apartado: 0, comprometidoOtros: 0, total: 0 };
     const uso = num(m.usoDiario);
-    const diasUso = it && uso > 0 ? estadoConUso({ obra: stock, almacen: alm.total, entregas: porDia, uso, fechas: semanasDe(prog).flatMap(diasDeSemana), hoy, yaEnStock: hoy === hoyReal ? hoyReal : null }) : null;
+    const diasUso = it && uso > 0 ? estadoConUso({ obra: stock, almacen: alm.total, uso, fechas: semanasDe(prog).flatMap(diasDeSemana), hoy }) : null;
     const obra = diasUso ? coberturaDesdeDias(diasUso, hoy, "obra") : coberturaMaterial({ stock, porDia, hoy });
     const total = diasUso ? coberturaDesdeDias(diasUso, hoy, "total") : coberturaMaterial({ stock: stock + alm.total, porDia, hoy });
     filas.push({ key: m.id, matId: m.id, nombre: m.nombre || it?.nombre || "", unidad: m.unidad || it?.unidad || "", partidaId: m.partidaId || "", item: it, enInventario: !!it, stock, almacen: alm, conteo: it ? conteoEnProyecto(it, short) : null, programadoTotal: totalMaterial(prog, m.id), porDia,

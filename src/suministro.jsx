@@ -289,10 +289,16 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
     try {
       const at = new Date().toISOString();
       const { _nueva, ...limpio } = p;
-      const conItems = { ...limpio, semanas: semanasDe(p), materiales: p.materiales.map(m => ({ ...m, itemId: itemDeMaterial(S.items, m)?.id || m.itemId || "" })), updatedAt: at, updatedBy: user.nombre };
+      // Material con uso por día: las entregas de los días que vienen son las
+      // automáticas (lo que hace falta para amanecer con un día de trabajo).
+      const diasAuto = { ...(limpio.dias || {}) };
+      (p.materiales || []).filter(m => num(m.usoDiario) > 0 && cob[m.id]?.dias).forEach(m => Object.entries(cob[m.id].dias).forEach(([f, e]) => { diasAuto[f] = { ...(diasAuto[f] || {}) }; if (e.entrega > 0) diasAuto[f][m.id] = e.entrega; else delete diasAuto[f][m.id]; if (!Object.keys(diasAuto[f]).length) delete diasAuto[f]; }));
+      const conItems = { ...limpio, dias: diasAuto, semanas: semanasDe(p), materiales: p.materiales.map(m => ({ ...m, itemId: itemDeMaterial(S.items, m)?.id || m.itemId || "" })), updatedAt: at, updatedBy: user.nombre };
       if (await S.guardarProg(conItems)) { setP(conItems); setSucio(false); cargarResp(); }
     } finally { setGuardando(false); }
   };
+  // Las entregas automáticas cambian con cada cierre: si difieren de lo guardado, se puede guardar.
+  const autoPendiente = !respaldo && (p.materiales || []).some(m => num(m.usoDiario) > 0 && Object.entries(cob[m.id]?.dias || {}).some(([f, e]) => num(cantidadDia(p, f, m.id)) !== num(e.entrega)));
   const salir = () => { if (sucio && !confirm("Tenés cambios sin guardar. ¿Salir igual?")) return; onVolver(); };
   const [generando, setGenerando] = useState(false);
   const pdf = async () => {
@@ -323,7 +329,7 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
       {editable && !inicial._nueva && !respaldo && <Btn variant="dark" onClick={() => { if (sucio && !confirm("Tenés cambios sin guardar en la programación. ¿Registrar el día igual? (los cambios siguen acá)")) return; setRegistrando(hoyISO()); }}>Registrar el día</Btn>}
       {respaldos.length > 0 && <Btn variant="ghost" onClick={() => setVerResp(true)}>Respaldos ({respaldos.length})</Btn>}
       <Btn variant="ghost" disabled={generando} onClick={pdf}>{generando ? "Armando PDF…" : "PDF"}</Btn>
-      {editable && <Btn disabled={!sucio || guardando} onClick={guardar}>{guardando ? "Guardando…" : sucio ? "Guardar" : "Guardado"}</Btn>}
+      {editable && <Btn disabled={!(sucio || autoPendiente) || guardando} onClick={guardar}>{guardando ? "Guardando…" : sucio || autoPendiente ? "Guardar" : "Guardado"}</Btn>}
     </div>
 
     {editable && <div className="gt-vidrio" style={{ padding: isMobile ? 12 : 14, display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -351,17 +357,18 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
             <tbody>{p.materiales.map(m => <tr key={m.id}>
               <td style={{ ...TD, fontWeight: 700, minWidth: 170, padding: "6px 10px" }}>{editable ? <button type="button" title="Cambiar el nombre o la unidad" onClick={() => renombrarMat(m)} style={{ border: "none", background: "none", padding: 0, font: "inherit", color: "inherit", cursor: "pointer", textAlign: "left" }}>{m.nombre}</button> : m.nombre} <span style={{ color: "#8A847D", fontWeight: 500 }}>({m.unidad})</span>{editable && si === 0 && <button type="button" onClick={() => quitarMat(m.id)} title="Quitar material" style={{ marginLeft: 4, border: "none", background: "none", color: "#B5AFA6", cursor: "pointer", fontSize: 12 }}>✕</button>}
                 <ExistenciaMat f={cob[m.id]} />
-                {si === 0 && (editable || num(m.usoDiario) > 0) && <button type="button" disabled={!editable} title="Cuánto se usa en un día de trabajo. Con esto, lo programado son las ENTREGAS y cada día se descuenta este consumo." onClick={() => { const v = prompt(`¿Cuánto ${m.nombre} se usa en un día de trabajo? (${m.unidad}) — vacío para quitarlo`, m.usoDiario || ""); if (v === null) return; const n = num(String(v).replace(",", ".")); up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, usoDiario: n > 0 ? n : 0 } : y) })); }} style={{ display: "block", marginTop: 2, border: "none", background: "none", padding: 0, font: "600 11px/1.3 var(--sans)", color: num(m.usoDiario) > 0 ? CHARCOAL : "#A9A39B", cursor: editable ? "pointer" : "default", textAlign: "left" }}>{num(m.usoDiario) > 0 ? <>Usa <b style={{ fontFamily: "var(--mono)" }}>{fmtN(m.usoDiario)}</b> por día{editable ? " · cambiar" : ""}</> : "+ uso por día"}</button>}
+                {si === 0 && (editable || num(m.usoDiario) > 0) && <button type="button" disabled={!editable} title="Cuánto se usa en un día de trabajo. Con esto, lo programado son las ENTREGAS y cada día se descuenta este consumo." onClick={() => { const v = prompt(`¿Cuánto ${m.nombre} se usa en un día de trabajo? (${m.unidad}) — vacío para quitarlo`, m.usoDiario || ""); if (v === null) return; const n = num(String(v).replace(",", ".")); up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, usoDiario: n > 0 ? n : 0 } : y) })); }} style={{ display: "block", marginTop: 2, border: "none", background: "none", padding: 0, font: "600 11px/1.3 var(--sans)", color: num(m.usoDiario) > 0 ? CHARCOAL : "#A9A39B", cursor: editable ? "pointer" : "default", textAlign: "left" }}>{num(m.usoDiario) > 0 ? <>Usa <b style={{ fontFamily: "var(--mono)" }}>{fmtN(m.usoDiario)}</b> por día · automático{editable ? " · cambiar" : ""}</> : "+ uso por día"}</button>}
                 {si === 0 && <RecetaChica r={recetaDeMaterial(receta, p.projectCode, m, pendienteDe(m.id))} partidas={partidasRec} editable={editable} valor={m.partidaId || ""} onElegir={(v) => up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, partidaId: v } : y) }))} />}
               </td>
               {dias.map(f => { const rg = registroDe(f, m.id); const cumR = rg ? cumplimientoDia(cantidadDia(p, f, m.id), rg.llego) : null; const e = rg ? null : cob[m.id]?.dias?.[f]; const c = rg ? (cumR ? CUM[cumR] : null) : e ? COB_DIA[e.estado] : null; return <td key={f} title={e ? `${c.txt}${e.falta ? ` · faltan ${fmtN(e.falta)} ${m.unidad} ese día` : ""}` : rg ? "Día registrado" : ""} style={{ ...TD, textAlign: "center", padding: "4px 4px" }}>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                {editable ? <input type="number" inputMode="decimal" min="0" step="any" value={cantidadDia(p, f, m.id) || ""} onChange={e => up(x => ({ ...x, dias: ponerCantidad(x.dias, f, m.id, e.target.value) }))} style={{ ...CTRL, width: isMobile ? 58 : 64, textAlign: "center", padding: "6px 3px", fontFamily: "var(--mono)", fontWeight: 700, ...(c ? { background: c.bg, color: c.color, borderColor: `${c.color}40` } : {}) }} />
+                {num(m.usoDiario) > 0 && e ? <span title="Automático: lo que tiene que llegar para amanecer con un día de trabajo" style={{ display: "inline-block", minWidth: isMobile ? 58 : 64, boxSizing: "border-box", padding: "7px 3px", borderRadius: 10, fontFamily: "var(--mono)", fontWeight: 700, textAlign: "center", background: c.bg, color: c.color, boxShadow: `inset 0 0 0 1px ${c.color}33` }}>{e.entrega > 0 ? fmtN(e.entrega) : "—"}</span>
+                : editable ? <input type="number" inputMode="decimal" min="0" step="any" value={cantidadDia(p, f, m.id) || ""} onChange={e => up(x => ({ ...x, dias: ponerCantidad(x.dias, f, m.id, e.target.value) }))} style={{ ...CTRL, width: isMobile ? 58 : 64, textAlign: "center", padding: "6px 3px", fontFamily: "var(--mono)", fontWeight: 700, ...(c ? { background: c.bg, color: c.color, borderColor: `${c.color}40` } : {}) }} />
                   : <span style={{ display: "inline-block", minWidth: 50, padding: "6px 4px", borderRadius: 8, fontFamily: "var(--mono)", fontWeight: 700, ...(c ? { background: c.bg, color: c.color } : {}) }}>{cantidadDia(p, f, m.id) ? fmtN(cantidadDia(p, f, m.id)) : ""}</span>}
                 {rg ? <RegistroCelda r={rg} programado={cantidadDia(p, f, m.id)} /> : <QuedaAlmacen e={e} />}
                 </div>
               </td>; })}
-              <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 800 }}>{fmtN(totalSemana(p, lunes, m.id))}</td>
+              <td style={{ ...TD, textAlign: "right", fontFamily: "var(--mono)", fontWeight: 800 }}>{fmtN(num(m.usoDiario) > 0 ? dias.reduce((a, f) => a + (cob[m.id]?.dias?.[f] ? cob[m.id].dias[f].entrega : cantidadDia(p, f, m.id)), 0) : totalSemana(p, lunes, m.id))}</td>
             </tr>)}</tbody>
           </table>
         </div>
