@@ -58,9 +58,27 @@ export const validarAbono = (p, { monto, fecha, comprobante }) => {
 // SERVICIO DE PROVEEDOR (23-sep-2026): al quedar pagado se cierra solo, sin
 // ficha — mismo criterio que el pago normal. Solo si la entrega no avanzó:
 // nunca pisa una ficha adjunta ni una entrega del proveedor en curso.
+// GeoMachinery (25-nov-2026, Gerson: "desde que la Lic. pague, que pasen de
+// una a Accounting; Fernando coordina él solo, no ocupa logística"): TODA
+// compra MAQ- pagada se cierra igual, sin Por coordinar → `sinLogistica`.
+export const esCompraMaq = (p) => String(p?.codigo || "").toUpperCase().startsWith("MAQ-");
 export const cierreServicioAlPagar = (p, ahoraISO) => {
-  const esServicio = p?.tipoCompra === "servicio"
-    && (!p.deliveryStatus || p.deliveryStatus === "pendiente_entrega");
+  const pendiente = !p?.deliveryStatus || p.deliveryStatus === "pendiente_entrega";
+  if (pendiente && esCompraMaq(p) && p?.tipoCompra !== "servicio") {
+    return {
+      esServicio: false, sinLogistica: true,
+      deliveryStatus: "cerrado",
+      delivery: {
+        ...(p.delivery || {}),
+        cerradaSinFicha: true,
+        closingNotes: "GeoMachinery — la coordina Fernando, no pasa por logística",
+        closedBy: "Automático al pagar (GeoMachinery)",
+        closedAt: ahoraISO,
+        updatedAt: ahoraISO,
+      },
+    };
+  }
+  const esServicio = p?.tipoCompra === "servicio" && pendiente;
   if (!esServicio) {
     return { esServicio: false, deliveryStatus: p?.deliveryStatus || "pendiente_entrega", delivery: p?.delivery || {} };
   }
@@ -119,6 +137,7 @@ export const estadoTrasAbonos = (p, ahoraISO) => {
     },
     completo: true,
     esServicio: srv.esServicio,
+    sinLogistica: !!srv.sinLogistica,
     recienCompletada: !yaEstabaPagada,
   };
 };

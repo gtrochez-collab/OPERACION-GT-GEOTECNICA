@@ -10,6 +10,8 @@ import { hoyISO } from "./fechas.js";
 // encabezado, Dashboard, KPI's y Empleados).
 import { GT_CSS } from "./gt-ui.js";
 import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga } from "./movil.jsx";
+import { LOGO_EMPRESA } from "./reporte-estilo.js";
+import { descargarCarnets } from "./carnet-pdf.js";
 import { reporteHTML, descargarReporteDirecto, rKpis, rSeccion, rSeccionProyecto, rProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, escHTML, fmtLps, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 import { USERS, ROLE_LABEL, ROLES_ASIGNABLES, USUARIOS_DE_BAJA } from "./users.js";
 import { estadoLabel as estadoLabelInv, categoriaDe as categoriaInv } from "./geoinventory-calc.js";
@@ -274,7 +276,7 @@ const SUBTERRA_SNAPSHOT = [
 // Ej: David Hazar Mavet Cruz Valladares · 0801-2003-00715 → DC00715
 //     Marlen Liliana Ramos · 0816-1990-00288 → MR00288
 //     Daniel Alexander Lopez Servellon · 0801-1995-12345 → DL12345
-const genEmpCode = (fullName, dni) => {
+export const genEmpCode = (fullName, dni) => {
   if (!fullName || !dni) return "";
   const parts = String(fullName).trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "";
@@ -672,10 +674,10 @@ const curvasDe = (W, H, N, M, seed, niveles, nivelNaranja) => {
   };
   return { tenues: niveles.map(nivel).join(""), naranja: nivelNaranja != null ? nivel(nivelNaranja) : "", W, H };
 };
-const curvasPath = curvasDe(240, 70, 56, 17, 20261023, [.34, .40, .46, .52, .58, .64], .49);
+export const curvasPath = curvasDe(240, 70, 56, 17, 20261023, [.34, .40, .46, .52, .58, .64], .49);
 // Cuerpo blanco del carnet: las mismas curvas pero en NARANJA tenue, como el
 // resplandor del login (pedido de Gerson, 23-oct).
-const curvasCuerpo = curvasDe(240, 200, 60, 50, 20261024, [.30, .36, .42, .48, .54, .60, .66, .72], .51);
+export const curvasCuerpo = curvasDe(240, 200, 60, 50, 20261024, [.30, .36, .42, .48, .54, .60, .66, .72], .51);
 const CURVAS_CUERPO = (
   <svg viewBox={`0 0 ${curvasCuerpo.W} ${curvasCuerpo.H}`} preserveAspectRatio="xMidYMid slice" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
     <path d={curvasCuerpo.tenues} fill="none" stroke="rgba(232,118,45,.13)" strokeWidth=".6" strokeLinecap="round" />
@@ -1005,6 +1007,22 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   // en cloud (cp-file-<id>) despues del render inicial, para no bloquear el
   // primer paint del tab.
   const [photoCache, setPhotoCache] = useState({});
+  // Carnets para imprimir (25-nov-2026): uno o todos los de la lista, en PDF.
+  const [bajandoCarnets, setBajandoCarnets] = useState(false);
+  const bajarCarnets = async (lista, titulo) => {
+    if (bajandoCarnets || !lista.length) return;
+    if (lista.length > 1 && !confirm(`¿Bajar ${lista.length} carnets en un PDF (uno por hoja)?`)) return;
+    setBajandoCarnets(true);
+    try {
+      await descargarCarnets(lista.map(e => ({
+        nombre: e.fullName, cargo: e.position, codigo: genEmpCode(e.fullName, e.dni), departamento: e.department,
+        docLabel: DOC_ID, doc: e.dni, sexo: e.sexo === "femenino" ? "Femenino" : e.sexo === "masculino" ? "Masculino" : "",
+        foto: e.photo?.fileId ? photoCache[e.photo.fileId] || null : null,
+        logo: `${import.meta.env.BASE_URL}${LOGO_EMPRESA[e.company] || LOGO_EMPRESA.geotecnica}`, empresa: COMPANIES[e.company]?.name || "",
+      })), { curvasBanda: curvasPath, curvasCuerpo, titulo });
+    } catch (err) { console.error(err); alert("No se pudo armar el carnet: " + (err?.message || err)); }
+    finally { setBajandoCarnets(false); }
+  };
   const [empTipo, setEmpTipo] = useState("todos");
   const [carnet, setCarnet] = useState(null); // {id, rect} del carnet abierto
   // Planilla (16-oct-2026)
@@ -4300,6 +4318,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
         {pista([["todos", `Todos ${base.length}`], ...grupos.filter(([k]) => porTipo(k).length || empTipo === k).map(([k, l]) => [k, `${l} ${porTipo(k).length}`]), ...(hayJornales ? [["jornales", esSV ? "Contratistas" : "Jornales"]] : [])].map(([k, label]) => ({ k, label, on: empTipo === k || (k === "todos" && empTipo === "jornales" && !hayJornales), onClick: () => setEmpTipo(k) })))}
         <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
           <span role="button" title="Volver a leer de la nube" aria-label="Actualizar" className="gt-circulo" onClick={async () => { if (refreshing) return; setRefreshing(true); try { await loadAll(); } finally { setRefreshing(false); } }} style={{ width: 40, height: 40, fontSize: 16, opacity: refreshing ? .5 : 1 }}>↻</span>
+          {!verJornales && (() => { const lista = filtered.filter(x => x.status === "active"); return lista.length > 0 && <button className="gt-btn" disabled={bajandoCarnets} title="Un PDF con el carnet de cada colaborador activo de la lista (uno por hoja)" onClick={() => bajarCarnets(lista, `${COMPANIES[co]?.name || "GeoTeam"}${empDeptFilter ? `_${empDeptFilter}` : ""}`)} style={{ minHeight: 40, padding: "10px 16px", fontSize: 13.5 }}>{bajandoCarnets ? "Armando…" : `Carnets (${lista.length})`}</button>; })()}
           {!isPhotoOnly && !isReadOnly && !verJornales && <button className="gt-btn gt-btn-primario" onClick={() => setModal({ t: "en" })} style={{ minHeight: 40, padding: "10px 18px", fontSize: 13.5 }}>+ Nuevo</button>}
         </div>
       </div>
@@ -4383,10 +4402,11 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
           ]); })()}
           <div style={{ marginTop: 16 }}><EquipoAsignadoInv empId={e.id} /></div>
         </div>
-        {(puedeEditar || puedeBorrar) && <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", borderTop: "1px solid rgba(44,42,40,.07)", background: "rgba(249,249,248,.9)" }}>
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", borderTop: "1px solid rgba(44,42,40,.07)", background: "rgba(249,249,248,.9)" }}>
+          <button className="gt-btn" disabled={bajandoCarnets} onClick={() => bajarCarnets([e])} style={{ minHeight: 40, padding: "10px 16px", fontSize: 13.5 }}>{bajandoCarnets ? "Armando…" : "Descargar carnet"}</button>
           {puedeBorrar && <button onClick={() => { if (!confirm(`¿Eliminar a ${e.fullName} de ${COMPANIES[e.company]?.name}?\n\nSe borra su ficha completa. Para una salida normal usá la baja en Movimientos.`)) return; sE(emps.filter(x => x.id !== e.id)); setCarnet(null); }} style={{ border: "none", background: "transparent", color: "#B03024", font: "600 12.5px/1 var(--sans)", cursor: "pointer", padding: "8px 4px" }}>Eliminar</button>}
           {puedeEditar && <button className="gt-btn gt-btn-primario" onClick={() => { setCarnet(null); setModal({ t: "ee", d: e }); }} style={{ marginLeft: "auto", minHeight: 40, padding: "10px 20px", fontSize: 13.5 }}>Editar ficha</button>}
-        </div>}
+        </div>
       </div>} />;
   };
 

@@ -2569,6 +2569,7 @@ function PaymentFormImpl({ purchase, setModal, addAudit, updatePurchase }) {
             : `Pago ${f.paymentMethod} registrado sin comprobante`;
           let saved = addAudit(rec, "paid", note);
           if (esServicio) saved = addAudit(saved, "closed_no_ficha", "Servicio de proveedor: pasa directo a Por cerrar contable (no se coordina ni lleva ficha)");
+          if (srv.sinLogistica) saved = addAudit(saved, "closed_no_logistics", "GeoMachinery: pasa directo a Accounting al pagar (la coordina Fernando, sin logística)");
           console.log("Llamando updatePurchase...");
           const ok = await updatePurchase(saved);
           console.log("updatePurchase devolvio:", ok);
@@ -2649,7 +2650,7 @@ function AbonoFormImpl({ purchase, modo = "nuevo", setModal, addAudit, updatePur
       const abono = { id: uid(), monto, fecha: f.fecha, metodo: f.metodo, comprobante: ref, nota: f.nota.trim(), registradoPor: userName || "", registradoAt: ahora };
       // Lo pedido por Finanzas baja con el abono (si se cubrió, queda esperando el siguiente pedido).
       const conAbono = { ...base, abonos: [...todosLosAbonos(base), abono], ...(usaPagosParciales(base) ? { pagoSolicitado: solicitadoTrasAbono(base, monto) } : {}) };
-      const { rec, completo, esServicio, recienCompletada } = estadoTrasAbonos(conAbono, ahora);
+      const { rec, completo, esServicio, sinLogistica, recienCompletada } = estadoTrasAbonos(conAbono, ahora);
       const n = abonosVigentes(rec).length;
       const resumen = `abonado ${fmtL(totalAbonado(rec))} de ${fmtL(rec.amount)}${completo ? "" : ` — falta ${fmtL(saldoDe(rec))}`}`;
       let saved = addAudit(rec, convertir ? "pago_a_abonos" : "abono", convertir
@@ -2657,6 +2658,7 @@ function AbonoFormImpl({ purchase, modo = "nuevo", setModal, addAudit, updatePur
         : `Abono ${n} de ${fmtL(monto)} (${f.metodo}) — ${resumen}`);
       if (completo && recienCompletada) saved = addAudit(saved, "paid", `Pago completado con ${n} abono${n === 1 ? "" : "s"} — FINALIZADA`);
       if (completo && recienCompletada && esServicio) saved = addAudit(saved, "closed_no_ficha", "Servicio de proveedor: pasa directo a Por cerrar contable (no se coordina ni lleva ficha)");
+      if (completo && recienCompletada && sinLogistica) saved = addAudit(saved, "closed_no_logistics", "GeoMachinery: pasa directo a Accounting al pagar (la coordina Fernando, sin logística)");
 
       // 3) Guardado robusto (sP: getCloud + merge + verify)
       const ok = await updatePurchase(saved);

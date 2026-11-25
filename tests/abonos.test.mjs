@@ -157,3 +157,12 @@ test("sin pagos parciales todo sigue igual que antes", () => {
   assert.equal(aPagarAhoraDe(p), porPagarDe(p));
   assert.equal(esperandoPedidoDePago(p), false);
 });
+
+test("GeoMachinery: al pagar se cierra sola sin logística (25-nov-2026)", () => {
+  const r = cierreServicioAlPagar({ codigo: "MAQ-2026-0100", tipoCompra: "material", deliveryStatus: "pendiente_entrega" }, AHORA);
+  assert.equal(r.sinLogistica, true); assert.equal(r.deliveryStatus, "cerrado"); assert.equal(r.delivery.cerradaSinFicha, true);
+  const g = cierreServicioAlPagar({ codigo: "MAT-2026-0100", tipoCompra: "material", deliveryStatus: "pendiente_entrega" }, AHORA);
+  assert.equal(g.deliveryStatus, "pendiente_entrega"); assert.ok(!g.sinLogistica);
+  const ya = cierreServicioAlPagar({ codigo: "MAQ-2026-0101", deliveryStatus: "entrega_proveedor" }, AHORA);
+  assert.equal(ya.deliveryStatus, "entrega_proveedor");
+});
