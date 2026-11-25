@@ -41,7 +41,7 @@ import { num, UNIDADES, TASA_DEFAULT, movimientosCompras, VARILLAS, LARGOS_VARIL
 import { Input, Select, Textarea, Btn, Chip, Modal, C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, fmtL, fmtUSD, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
 import Geolito from "./geolito.jsx";
-import { PlanificacionVista, CoberturaVista, EnviosAlmacen } from "./suministro.jsx";
+import { PlanificacionVista, CoberturaVista, FilaEnvio, darSalidaEnvio } from "./suministro.jsx";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { leerPdf, parsearCotizacion, lineasSupplyDesdeLectura, lineaSupplyDe, memoriaDeCompras } from "./leer-cotizacion.js";
 import {
@@ -702,17 +702,16 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   const isMobile = useIsMobile();
   // Envíos del almacén que pide la planificación (hoy/mañana): cuentan en el
   // circulito de la pestaña Almacén aunque no se esté en ella.
-  const [nEnvios, setNEnvios] = useState(0);
-  useEffect(() => {
-    let vivo = true;
-    (async () => {
-      try {
-        const [pg, it, ci] = await Promise.all([store.getCloud("sp-programaciones"), store.getCloud("inv-items"), store.getCloud("sp-cierres").catch(() => [])]);
-        if (vivo) setNEnvios(enviosPendientes({ progs: Array.isArray(pg) ? pg : [], items: Array.isArray(it) ? it : [], cierres: Array.isArray(ci) ? ci : [], hoy: hoyISO() }).length);
-      } catch { /* sin nube: el circulito queda como estaba */ }
-    })();
-    return () => { vivo = false; };
-  }, []);
+  const [envios, setEnvios] = useState([]);
+  const [dandoEnvio, setDandoEnvio] = useState("");
+  const cargarEnvios = async () => {
+    try {
+      const [pg, it, ci] = await Promise.all([store.getCloud("sp-programaciones"), store.getCloud("inv-items"), store.getCloud("sp-cierres").catch(() => [])]);
+      setEnvios(enviosPendientes({ progs: Array.isArray(pg) ? pg : [], items: Array.isArray(it) ? it : [], cierres: Array.isArray(ci) ? ci : [], hoy: hoyISO() }));
+    } catch { /* sin nube: queda como estaba */ }
+  };
+  useEffect(() => { cargarEnvios(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const nEnvios = envios.length;
   // ── SIMULACIÓN (12-oct-2026, pedido de Gerson) ──
   // El Coordinador puede correr el proceso completo "viendo como" cada rol, en
   // keys PROPIAS (sp-sim-*): nada llega a GeoShopping, GeoCost ni a nadie. Los
@@ -1545,9 +1544,20 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       if (motivo == null) return;
       await accionLinea(x.s.id, x.l.id, "plantel_no_hay", { motivo }, `Plantel: no hay ${x.l.descripcion} — ${motivo}`);
     };
+    // ENVÍOS AUTOMÁTICOS de la planificación (25-nov-2026, Gerson: "dentro del
+    // proyecto que ya hay, en naranja, que vean estas alertas automáticas").
+    const enviosDe = (k) => envios.filter(e => e.short === k);
+    const filasEnvio = (k) => enviosDe(k).map(x => <FilaEnvio key={x.key} x={x} puedeDar={puede} dando={dandoEnvio} onDar={async () => { setDandoEnvio(x.key); try { if (await darSalidaEnvio(x, { username: userKey, nombre: userName })) await cargarEnvios(); } finally { setDandoEnvio(""); } }} />);
+    const chipEnvio = (k) => enviosDe(k).length > 0 && <Chip c={C_NARANJA}>Mandar {enviosDe(k).map(e => `${fmtCant(e.cantidad)} ${e.material}`).join(" · ")}</Chip>;
+    const enGrupoPl = new Set(gruposPl.map(g => g.k)), enGrupoRev = new Set(grupos.map(g => g.k));
+    const sueltos = [...new Set(envios.map(e => e.short))].filter(k => !enGrupoPl.has(k) && !enGrupoRev.has(k));
+    const bloqueEnvios = sueltos.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {sueltos.map(k => <Grupo key={"env-" + k} alerta titulo={nombreProy(k)} sub="Mandar según la planificación" abierto={!estaAbierto("envios-cerrado", k)} onToggle={() => toggleGrupo("envios-cerrado", k)}>{filasEnvio(k)}</Grupo>)}
+    </div>;
     const bloquePlantel = itemsPl.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="gt-label" style={{ color: "var(--text-3)", paddingLeft: 4 }}>Pedidos al plantel / taller</div>
-      {gruposPl.map(g => <Grupo key={"pl-" + g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("plantel", g.k)} onToggle={() => toggleGrupo("plantel", g.k)}>
+      {gruposPl.map(g => <Grupo key={"pl-" + g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("plantel", g.k)} onToggle={() => toggleGrupo("plantel", g.k)} derecha={chipEnvio(g.k)}>
+        {filasEnvio(g.k)}
         {porSolicitud(g.items, x => {
           const falta = pendientePlantel(x.l);
           const abierto = envioPl && envioPl.lineaId === x.l.id;
@@ -1569,7 +1579,6 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       </Grupo>)}
     </div>;
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <EnviosAlmacen user={{ username: userKey, nombre: userName }} proyectos={proyectos} puedeDar={puede} isMobile={isMobile} onCount={setNEnvios} />
       <div className="gt-vidrio gm-tira" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
         {stat(itemsPl.length, "pedidos al plantel", { c: itemsPl.length ? ORANGE_DARK : undefined })}
         {stat(items.length, "ítems por revisar", { c: items.length ? ORANGE_DARK : undefined })}
@@ -1579,12 +1588,14 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
           <div className="gt-label" style={{ color: "var(--text-3)", marginTop: 5, fontSize: 9 }}>revisión hasta {DIAS_CORTOS_[cfg.cortes.almacenHasta.dia]} {fmtHora(hAlm.hora)}</div>
         </div>
       </div>
+      {bloqueEnvios}
       {bloquePlantel}
       {itemsPl.length > 0 && items.length > 0 && <div className="gt-label" style={{ color: "var(--text-3)", paddingLeft: 4 }}>Revisión de solicitudes de compra</div>}
-      {items.length === 0 ? (itemsPl.length ? null : <Vacio>Nada por revisar en almacén.</Vacio>) : <>
+      {items.length === 0 ? (itemsPl.length || envios.length ? null : <Vacio>Nada por revisar en almacén.</Vacio>) : <>
         {barraGrupos("almacen", grupos)}
-        {grupos.map(g => <Grupo key={g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("almacen", g.k)} onToggle={() => toggleGrupo("almacen", g.k)}
+        {grupos.map(g => <Grupo key={g.k} alerta={!enGrupoPl.has(g.k) && enviosDe(g.k).length > 0} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"} · requerido desde ${fmtDiaCorto(g.minFecha)}`} abierto={estaAbierto("almacen", g.k)} onToggle={() => toggleGrupo("almacen", g.k)}
           derecha={puede && <Btn small variant="ghost" disabled={ocupado} onClick={async () => { if (!confirm(`¿Marcar "No hay" en los ${g.items.length} ítems de ${nombreProy(g.k)}? Pasan a Compras.`)) return; const porSol = {}; g.items.forEach(x => { (porSol[x.s.id] = porSol[x.s.id] || []).push(x.l.id); }); for (const [sid, ids] of Object.entries(porSol)) await accionLineas(sid, ids, "almacen_no_hay", {}, "Almacén: no hay (masivo del proyecto)"); }}>No hay nada de esto</Btn>}>
+          {!enGrupoPl.has(g.k) && filasEnvio(g.k)}
           {porSolicitud(g.items, x => filaLinea({ ...x, derecha: puede ? botonesAlmacen(x) : <Chip c={C_AZUL}>En revisión</Chip> }))}
         </Grupo>)}
       </>}
