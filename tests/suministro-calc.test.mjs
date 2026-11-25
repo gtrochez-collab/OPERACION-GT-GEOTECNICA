@@ -205,3 +205,16 @@ test("planificación automática: nunca amanecer con menos del uso diario (caso 
   assert.equal(coberturaDesdeDias(d, "2026-11-25", "obra").faltaDesde, "2026-11-26");
   assert.equal(coberturaDesdeDias(d, "2026-11-25", "total").faltaDesde, "2026-11-26");
 });
+
+test("envíos del almacén: lo que la planificación pide mandar hoy/mañana", async () => {
+  const { enviosPendientes, movimientosProyecto } = await import("../src/suministro-calc.js");
+  const prog = { id: "p1", projectCode: "VSM", numero: 1, semanas: ["2026-11-23"], materiales: [{ id: "m1", nombre: "Cemento HE", unidad: "Bolsa", itemId: "i1", usoDiario: 240 }], dias: {} };
+  const items = [{ id: "i1", codigo: "MAT-0001", nombre: "Cemento HE Argos", tipo: "cantidad", unidad: "Bolsa", stock: { almacen: 170, "proy:VSM": 115 } }];
+  const cierres = [{ projectCode: "VSM", fecha: "2026-11-25", materiales: {} }];
+  const l = enviosPendientes({ progs: [prog], items, cierres, hoy: "2026-11-25" });
+  assert.equal(l.length, 1);
+  assert.deepEqual([l[0].fecha, l[0].cantidad], ["2026-11-26", 125]);
+  const mp = movimientosProyecto([{ itemId: "i1", accion: "salida", de: "almacen", a: "proy:VSM", cantidad: 125, at: "2026-11-26T01:00:00Z", paraFecha: "2026-11-26" }], "i1", "VSM");
+  assert.equal(mp.entradasDel("2026-11-26"), 125);
+  assert.equal(mp.entradasDel("2026-11-25"), 0);
+});

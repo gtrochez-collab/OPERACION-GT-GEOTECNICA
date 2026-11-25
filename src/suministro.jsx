@@ -18,7 +18,7 @@ import { conteoAlDia, ultimoDiaConteo, esConsumible, aplicarMovimiento, keyMovim
 import {
   KEY_PROGRAMACIONES, KEY_PROG_HIST, KEY_PROYECTOS_ACTIVOS, DIAS_ROJO, DIAS_META, num, sumarDias, lunesDe, diasDeSemana, diaCorto, fechaCorta,
   semanasDe, cantidadDia, totalSemana, totalMaterial, programacionVigente, siguienteNumero, ponerCantidad, itemDeMaterial, coberturaProyecto, sinAcentos, resumenDias,
-  KEY_CIERRES, cierreDe, cierresDe, quedoAntesDe, consumoDia, cumplimientoDia, movimientosProyecto, idUbicProyecto, stockEnProyecto,
+  KEY_CIERRES, enviosPendientes, cierreDe, cierresDe, quedoAntesDe, consumoDia, cumplimientoDia, movimientosProyecto, idUbicProyecto, stockEnProyecto,
 } from "./suministro-calc.js";
 import { saldoDePartida, partidasPedibles } from "./geosupply-calc.js";
 import { pdfSuministro } from "./suministro-reporte.js";
@@ -670,5 +670,55 @@ export function CoberturaVista({ proyectos = [], isMobile, onIrPlanificacion, re
           </div>}
         </div>;
       })}
+  </div>;
+}
+
+// ═══════════════════════════ ENVÍOS DEL ALMACÉN ═══════════════════════════
+// 25-nov-2026, Gerson: "que a almacén le llegue automático que tiene que mandar
+// para mañana esas 125 bolsas". Sale arriba de la pestaña Almacén de GeoSupply
+// (y cuenta en el circulito). "Ya lo mandé" da la salida en GeoInventory
+// (almacén → proyecto) marcada `paraFecha`, así el registro del día siguiente
+// la cuenta como lo que llegó ese día.
+export function EnviosAlmacen({ user, proyectos = [], puedeDar, isMobile, onCount }) {
+  const S = useSuministro();
+  const hoy = hoyISO();
+  const lista = useMemo(() => S.cargando ? [] : enviosPendientes({ progs: S.progs, items: S.items, cierres: S.cierres, hoy }), [S.cargando, S.progs, S.items, S.cierres, hoy]);
+  useEffect(() => { onCount?.(lista.length); }, [lista.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [dando, setDando] = useState("");
+  if (S.cargando || !lista.length) return null;
+  const darSalida = async (x) => {
+    const n = prompt(`¿Cuántas ${x.unidad || ""} de ${x.material} salen del almacén hacia ${x.short} para el ${diaTxt(x.fecha)}?`, String(x.cantidad));
+    if (n === null) return; const q = num(String(n).replace(",", "."));
+    if (!(q > 0)) { alert("La cantidad debe ser mayor que 0."); return; }
+    setDando(x.key);
+    try {
+      const arr = await store.getCloud("inv-items"); if (!Array.isArray(arr)) throw new Error("sin nube");
+      const it = arr.find(i => i.id === x.itemId); const at = new Date().toISOString();
+      const r = aplicarMovimiento(it, { accion: "salida", de: "almacen", a: idUbicProyecto(x.short), cantidad: q, motivo: `Planificación: para el ${x.fecha}` }, { by: user.username, byName: user.nombre, id: uid(), at });
+      if (r.error) { alert(r.error); return; }
+      const next = arr.map(i => i.id === it.id ? { ...r.item, updatedAt: at } : i);
+      if (!(await store.set("inv-items", next))) throw new Error("La nube no aceptó el guardado.");
+      const back = await store.getCloud("inv-items");
+      if (!(Array.isArray(back) && back.some(i => i.id === it.id && i.updatedAt === at))) throw new Error("La nube no confirmó el guardado.");
+      const k = keyMovimientos(at); const c = await store.getCloud(k);
+      await store.set(k, [...(Array.isArray(c) ? c : []), { ...r.mov, paraFecha: x.fecha, dePlanificacion: true }]);
+      await S.cargar();
+    } catch (e) { alert(`No se pudo dar la salida: ${e?.message || e}. Probá otra vez.`); }
+    finally { setDando(""); }
+  };
+  const nombre = (s) => nombreDe(proyectos, s);
+  return <div className="gt-vidrio" style={{ padding: isMobile ? "12px 14px" : "14px 18px", display: "flex", flexDirection: "column", gap: 8, boxShadow: `inset 3px 0 0 ${COB_DIA.almacen.color}` }}>
+    <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+      <span style={{ font: "800 15px/1.2 var(--display)", color: CHARCOAL }}>Mandar a proyectos</span>
+      <span style={{ fontSize: 12, color: "#8A847D" }}>según la planificación</span>
+    </div>
+    {lista.map(x => <div key={x.key} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "8px 10px", borderRadius: 12, background: "rgba(44,42,40,.035)" }}>
+      <span style={{ font: "800 22px/1 var(--mono)", color: COB_DIA.almacen.color, minWidth: 64 }}>{fmtN(x.cantidad)}</span>
+      <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+        <div style={{ fontWeight: 800, fontSize: 14.5, color: CHARCOAL }}>{x.material} <span style={{ fontWeight: 500, color: "#8A847D" }}>({x.unidad})</span></div>
+        <div style={{ fontSize: 12, color: "#6E6862" }}>{x.short}{nombre(x.short) ? ` · ${nombre(x.short)}` : ""} · <b style={{ color: x.fecha <= hoy ? "#B03024" : CHARCOAL }}>{x.fecha === hoy ? "para HOY" : `para el ${diaTxt(x.fecha)}`}</b>{x.comprar > 0 ? <span style={{ color: "#B03024" }}> · faltan {fmtN(x.comprar)} que hay que comprar</span> : ""}</div>
+      </div>
+      {puedeDar && <Btn onClick={() => darSalida(x)} disabled={!!dando}>{dando === x.key ? "Guardando…" : "Ya lo mandé"}</Btn>}
+    </div>)}
   </div>;
 }

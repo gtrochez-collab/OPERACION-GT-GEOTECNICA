@@ -25,6 +25,8 @@ import MapaOperaciones from "./mapa-operaciones.jsx";
 import { OPERACION, OPERACION_ACTUAL, leerOperacion, guardarOperacion, operacionesDe } from "./operacion.js";
 // GeoSupply (2-oct-2026): contador de pendientes por rol en la tarjeta del Panel.
 import { contarPendientes, configEfectiva } from "./geosupply-calc.js";
+import { enviosPendientes } from "./suministro-calc.js";
+import { hoyISO } from "./fechas.js";
 
 // ── Modulos del sistema ──
 // Cada modulo tiene un acento de color distinto (complementarios al naranja de marca).
@@ -328,7 +330,15 @@ export default function App() {
       try {
         const [sol, cot, cf] = await Promise.all([store.getCloud("sp-solicitudes"), store.getCloud("sp-cotizaciones"), store.getCloud("sp-config")]);
         if (!vivo) return;
-        const n = contarPendientes({ solicitudes: Array.isArray(sol) ? sol : [], cotizaciones: Array.isArray(cot) ? cot : [], rol: user.role, username: user.username, cfg: configEfectiva(cf) });
+        let n = contarPendientes({ solicitudes: Array.isArray(sol) ? sol : [], cotizaciones: Array.isArray(cot) ? cot : [], rol: user.role, username: user.username, cfg: configEfectiva(cf) });
+        // Almacén y Coordinador: + lo que la planificación pide mandar hoy/mañana.
+        if (["logistica", "admin"].includes(user.role)) {
+          try {
+            const [pg, it, ci] = await Promise.all([store.getCloud("sp-programaciones"), store.getCloud("inv-items"), store.getCloud("sp-cierres").catch(() => [])]);
+            n += enviosPendientes({ progs: Array.isArray(pg) ? pg : [], items: Array.isArray(it) ? it : [], cierres: Array.isArray(ci) ? ci : [], hoy: hoyISO() }).length;
+          } catch { /* best effort */ }
+        }
+        if (!vivo) return;
         setBadges(b => ({ ...b, geosupply: n }));
       } catch (e) { console.warn("[panel] contador GeoSupply:", e?.message || e); }
     };

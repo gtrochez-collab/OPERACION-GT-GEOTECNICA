@@ -35,12 +35,13 @@ import { MOVIL_CSS, BarraMovil, BarraInferior, TituloMovil, PantallaCarga } from
 import { PROJECTS as CANONICAL_PROJECTS, admiteSolicitudes } from "./projects.js";
 import { USERS, ROLE_LABEL } from "./users.js";
 import { hoyISO } from "./fechas.js";
+import { enviosPendientes } from "./suministro-calc.js";
 import { MONEDA, TASA_FIJA, IMPUESTO, FACTOR_IMP } from "./operacion.js";
 import { num, UNIDADES, TASA_DEFAULT, movimientosCompras, VARILLAS, LARGOS_VARILLA, esPartidaVarillaPorPeso, cantidadDeVarilla, pesoLanceKg, nombreVarilla, kgPorUnidad } from "./geocost-calc.js";
 import { Input, Select, Textarea, Btn, Chip, Modal, C_GRIS, C_VERDE, C_AZUL, C_AMARILLO, C_NARANJA, fmtL, fmtUSD, uid, useIsMobile } from "./geocost-ui.jsx";
 import { VisorArchivo } from "./visor-archivo.jsx";
 import Geolito from "./geolito.jsx";
-import { PlanificacionVista, CoberturaVista } from "./suministro.jsx";
+import { PlanificacionVista, CoberturaVista, EnviosAlmacen } from "./suministro.jsx";
 import { safeDynamicImport } from "./lazyLoad.js";
 import { leerPdf, parsearCotizacion, lineasSupplyDesdeLectura, lineaSupplyDe, memoriaDeCompras } from "./leer-cotizacion.js";
 import {
@@ -699,6 +700,19 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
 // ═══════════════════════════════════════════════════════════════════════════
 export default function GeoSupplyModule({ userRole, userName, userKey, userProyectos = [], onBack, onLogout }) {
   const isMobile = useIsMobile();
+  // Envíos del almacén que pide la planificación (hoy/mañana): cuentan en el
+  // circulito de la pestaña Almacén aunque no se esté en ella.
+  const [nEnvios, setNEnvios] = useState(0);
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try {
+        const [pg, it, ci] = await Promise.all([store.getCloud("sp-programaciones"), store.getCloud("inv-items"), store.getCloud("sp-cierres").catch(() => [])]);
+        if (vivo) setNEnvios(enviosPendientes({ progs: Array.isArray(pg) ? pg : [], items: Array.isArray(it) ? it : [], cierres: Array.isArray(ci) ? ci : [], hoy: hoyISO() }).length);
+      } catch { /* sin nube: el circulito queda como estaba */ }
+    })();
+    return () => { vivo = false; };
+  }, []);
   // ── SIMULACIÓN (12-oct-2026, pedido de Gerson) ──
   // El Coordinador puede correr el proceso completo "viendo como" cada rol, en
   // keys PROPIAS (sp-sim-*): nada llega a GeoShopping, GeoCost ni a nadie. Los
@@ -1555,6 +1569,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
       </Grupo>)}
     </div>;
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <EnviosAlmacen user={{ username: userKey, nombre: userName }} proyectos={proyectos} puedeDar={puede} isMobile={isMobile} onCount={setNEnvios} />
       <div className="gt-vidrio gm-tira" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
         {stat(itemsPl.length, "pedidos al plantel", { c: itemsPl.length ? ORANGE_DARK : undefined })}
         {stat(items.length, "ítems por revisar", { c: items.length ? ORANGE_DARK : undefined })}
@@ -2220,7 +2235,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     </div>;
   };
 
-  const badge = { alertas: n.alertas, cotizaciones: esCoordinador ? n.cotizadas : rol === "compras" ? n.devueltas : 0, almacen: n.almacen, compras: n.porCotizar };
+  const badge = { alertas: n.alertas, cotizaciones: esCoordinador ? n.cotizadas : rol === "compras" ? n.devueltas : 0, almacen: n.almacen + nEnvios, compras: n.porCotizar };
 
   return <div className="gt-entra-modulo" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh", height: "100dvh", fontFamily: "inherit", background: "#F9F9F8", color: CHARCOAL }}>
     <style>{GT_CSS}</style>

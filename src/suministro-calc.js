@@ -293,11 +293,37 @@ export const diaHNDe = (iso) => { try { return new Date(iso).toLocaleDateString(
 export const movimientosProyecto = (movs, itemId, short) => {
   const ub = idUbicProyecto(short);
   const del = (movs || []).filter(m => m && m.itemId === itemId && !m.deRegistroDia);
+  // `paraFecha`: una salida del almacén mandada por la planificación cuenta
+  // como llegada del día para el que se mandó (aunque salga la noche antes).
+  const dia = (m) => m.paraFecha || diaHNDe(m.at);
   const signo = (m) => (m.accion === "entrada" || m.accion === "crear") && m.a === ub ? num(m.cantidad)
     : m.accion === "salida" ? (m.a === ub ? num(m.cantidad) : 0) - (m.de === ub ? num(m.cantidad) : 0) : 0;
   return {
-    entradasDel: (fecha) => r2(del.filter(m => diaHNDe(m.at) === fecha && ((m.accion === "entrada" && m.a === ub) || (m.accion === "salida" && m.a === ub))).reduce((a, m) => a + num(m.cantidad), 0)),
-    netoDespues: (fecha) => r2(del.filter(m => diaHNDe(m.at) > fecha).reduce((a, m) => a + signo(m), 0)),
-    contadoDespues: (fecha) => del.some(m => diaHNDe(m.at) > fecha && (m.accion === "conteo" || m.accion === "ajuste") && m.en === ub),
+    entradasDel: (fecha) => r2(del.filter(m => dia(m) === fecha && ((m.accion === "entrada" && m.a === ub) || (m.accion === "salida" && m.a === ub))).reduce((a, m) => a + num(m.cantidad), 0)),
+    netoDespues: (fecha) => r2(del.filter(m => dia(m) > fecha).reduce((a, m) => a + signo(m), 0)),
+    contadoDespues: (fecha) => del.some(m => dia(m) > fecha && (m.accion === "conteo" || m.accion === "ajuste") && m.en === ub),
   };
+};
+
+/**
+ * ENVÍOS DEL ALMACÉN (25-nov-2026, Gerson: "que le mande automático a almacén
+ * la notificación de que tiene que mandar para mañana esas 125 bolsas").
+ * De la programación vigente de cada proyecto: lo que la planificación dice que
+ * hay que MANDAR del almacén hoy o mañana. Se apaga solo al darle salida (el
+ * stock pasa al proyecto y la cobertura deja de pedirlo).
+ */
+export const enviosPendientes = ({ progs = [], items = [], cierres = [], hoy, hasta = null }) => {
+  const tope = hasta || sumarDias(hoy, 1);
+  const shorts = [...new Set((progs || []).filter(p => p && !p.anulada).map(p => p.projectCode))];
+  const out = [];
+  shorts.forEach(short => {
+    const prog = programacionVigente(progs, short); if (!prog) return;
+    coberturaProyecto({ short, prog, items, hoy, cierres }).filas.forEach(f => {
+      if (!f.matId || !f.item) return;
+      Object.entries(f.dias || {}).filter(([d, e]) => d <= tope && num(e.delAlmacen) > 0).sort().forEach(([d, e]) => {
+        out.push({ key: `${short}|${f.matId}|${d}`, short, matId: f.matId, material: f.nombre, unidad: f.unidad, itemId: f.item.id, codigo: f.item.codigo, fecha: d, cantidad: num(e.delAlmacen), comprar: num(e.falta) });
+      });
+    });
+  });
+  return out.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.short.localeCompare(b.short));
 };
