@@ -125,7 +125,7 @@ export const estadoPorDia = ({ obra = 0, almacen = 0, porDia = {}, hoy }) => {
     const q = num(porDia[f]); const antes = acum; acum = r2(acum + q);
     // Lo que quedaría en obra y en almacén después de ese día (se gasta primero la obra).
     const almQ = r2(Math.max(0, num(almacen) - Math.max(0, acum - num(obra))));
-    const queda = { obraQueda: r2(Math.max(0, num(obra) - acum)), almQueda: almQ, delAlmacen: r2(almPrev - almQ) };
+    const queda = { amanece: r2(Math.max(0, num(obra) - antes)), obraQueda: r2(Math.max(0, num(obra) - acum)), almQueda: almQ, delAlmacen: r2(almPrev - almQ) };
     almPrev = almQ;
     if (acum <= num(obra) + 1e-9) out[f] = { estado: "obra", falta: 0, ...queda };
     else if (acum <= num(obra) + num(almacen) + 1e-9) out[f] = { estado: "almacen", falta: 0, ...queda };
@@ -183,8 +183,11 @@ export function coberturaMaterial({ stock = 0, porDia = {}, hoy, meta = DIAS_MET
  * Cobertura de un proyecto: une los materiales de la programación vigente con
  * los consumibles que ya tiene en su inventario.
  */
-export function coberturaProyecto({ short, prog = null, items = [], hoy }) {
+export function coberturaProyecto({ short, prog = null, items = [], hoy: hoyReal, cierres = null }) {
   const ubic = idUbicProyecto(short);
+  // Con el cierre de hoy ya registrado, el stock del proyecto YA es lo que quedó:
+  // la proyección arranca mañana (si no, se restaría dos veces lo de hoy).
+  const hoy = cierres && cierreDe(cierres, short, hoyReal) ? sumarDias(hoyReal, 1) : hoyReal;
   const filas = [];
   const usados = new Set();
   (prog?.materiales || []).forEach(m => {

@@ -38,7 +38,7 @@ export const COB_DIA = {
   almacen: { bg: "rgba(31,79,140,.12)", color: "#1F4F8C", txt: "Lo cubre el almacén · hay que mandarlo" },
   falta: { bg: "rgba(192,57,43,.14)", color: "#B03024", txt: "No alcanza · hay que comprar" },
 };
-const COB_CORTO = { obra: "sale del proyecto", almacen: "sale del almacén", falta: "falta" };
+const COB_CORTO = { obra: "lo cubre el proyecto", almacen: "mandar del almacén", falta: "comprar" };
 const leyendaChica = () => <div style={{ display: "flex", gap: 10, fontSize: 10.5, color: "#8A847D" }}>{Object.entries(COB_DIA).map(([k, c]) => <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: c.bg, boxShadow: `inset 0 0 0 1px ${c.color}33` }} />{COB_CORTO[k]}</span>)}</div>;
 const diaTxt = (iso) => iso ? `${diaCorto(iso).toLowerCase()} ${+iso.slice(8)}` : "";
 const normU = (u) => sinAcentos(u).replace(/[^a-z0-9]/g, "").replace(/s$/, "");
@@ -255,7 +255,7 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
   // Cobertura EN VIVO: cada vez que se escribe una cantidad se recalcula con lo
   // que hay en obra y en almacén (24-nov-2026, Gerson: "que diga en almacén hay
   // para cubrir hasta tal día").
-  const cob = useMemo(() => { const r = coberturaProyecto({ short: p.projectCode, prog: p, items: S.items, hoy }); const m = {}; r.filas.forEach(f => { if (f.matId) m[f.matId] = f; }); return m; }, [p, S.items, hoy]);
+  const cob = useMemo(() => { const r = coberturaProyecto({ short: p.projectCode, prog: p, items: S.items, hoy, cierres: S.cierres }); const m = {}; r.filas.forEach(f => { if (f.matId) m[f.matId] = f; }); return m; }, [p, S.items, S.cierres, hoy]);
   const pres = receta?.presDe?.(p.projectCode) || null;
   const partidasRec = partidasPedibles(pres);
   const pendienteDe = (matId) => Object.entries(p.dias || {}).filter(([f]) => f >= hoy).reduce((a, [, d]) => a + num(d?.[matId]), 0);
@@ -297,7 +297,7 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
   const [generando, setGenerando] = useState(false);
   const pdf = async () => {
     setGenerando(true);
-    try { await pdfSuministro({ hoy, proyectos: [{ short: p.projectCode, nombre: nombreDe(proyectos, p.projectCode), prog: p, filas: coberturaProyecto({ short: p.projectCode, prog: p, items: S.items, hoy }).filas.map(f => ({ ...f, receta: f.matId ? recetaDeMaterial(receta, p.projectCode, p.materiales.find(m => m.id === f.matId), pendienteDe(f.matId)) : null })) }] }); }
+    try { await pdfSuministro({ hoy, proyectos: [{ short: p.projectCode, nombre: nombreDe(proyectos, p.projectCode), prog: p, filas: coberturaProyecto({ short: p.projectCode, prog: p, items: S.items, hoy, cierres: S.cierres }).filas.map(f => ({ ...f, receta: f.matId ? recetaDeMaterial(receta, p.projectCode, p.materiales.find(m => m.id === f.matId), pendienteDe(f.matId)) : null })) }] }); }
     catch (e) { console.error(e); alert("No se pudo armar el PDF: " + (e?.message || e)); }
     finally { setGenerando(false); }
   };
@@ -508,29 +508,35 @@ function RegistroCelda({ r, programado }) {
 }
 
 // ── Piezas de cobertura (a nivel de módulo) ──
-// Debajo del material (25-nov-2026, Gerson: "cuánto hay en almacén, cuánto en
-// proyecto y hasta cuándo cubrimos"): Proyecto N · Almacén N y el día hasta el
-// que alcanza con los dos.
+// Debajo del material (25-nov-2026, Gerson: "con las 285 que amanecieron hoy
+// hace 2 pilotes y amanece con 45 mañana; ¿cuándo necesito más bolsas?"):
+// Proyecto N · Almacén N, desde cuándo hay que MANDAR del almacén y desde
+// cuándo hay que COMPRAR.
 function ExistenciaMat({ f }) {
   if (!f) return null;
   if (!f.enInventario) return <div style={{ fontSize: 10.5, color: "#A9A39B", fontWeight: 500, marginTop: 2 }}>no está en GeoInventory</div>;
-  const r = resumenDias(f.dias, f.porDia);
-  const cubre = !r.hayProgramacion ? null : !r.faltaDesde ? { txt: "Cubre toda la programación", c: C_VERDE.color }
-    : r.totalHasta ? { txt: `Cubre hasta el ${diaTxt(r.totalHasta)}`, c: "#B03024" } : { txt: "No cubre ni el primer día", c: "#B03024" };
+  const fs = Object.keys(f.dias || {}).sort();
+  const mandar = fs.find(x => f.dias[x].delAlmacen > 0);
+  const cubreTodo = fs.length > 0 && fs.every(x => f.dias[x].estado === "obra");
+  const comprar = fs.find(x => f.dias[x].estado === "falta");
   return <div style={{ fontSize: 11, fontWeight: 500, marginTop: 2, color: "#6E6862", lineHeight: 1.45 }}>
     <div>Proyecto <b style={{ color: CHARCOAL }}>{fmtN(f.stock)}</b> · Almacén <b style={{ color: CHARCOAL }}>{fmtN(f.almacen?.total)}</b></div>
-    {cubre && <div style={{ fontWeight: 700, color: cubre.c }}>{cubre.txt}</div>}
+    {cubreTodo && <div style={{ fontWeight: 700, color: C_VERDE.color }}>El proyecto cubre todo</div>}
+    {mandar && <div style={{ fontWeight: 700, color: COB_DIA.almacen.color }}>Mandar del almacén el {diaTxt(mandar)}</div>}
+    {comprar && <div style={{ fontWeight: 700, color: "#B03024" }}>Comprar para el {diaTxt(comprar)}</div>}
   </div>;
 }
 
-// Al lado de la cajita del día: lo que queda en total (proyecto + almacén)
-// después de ese día — un saldo que baja día a día — o lo que falta, en rojo.
+// Al lado de la cajita del día: con qué amanece el proyecto (tooltip) y
+// queda N (lo cubre el proyecto) · mandar N (del almacén) · comprar N.
 function QuedaAlmacen({ e }) {
-  if (!e) return <span style={{ width: 40 }} />;
-  const falta = e.estado === "falta";
-  return <span title={falta ? "" : `Queda en proyecto ${fmtN(e.obraQueda)} · en almacén ${fmtN(e.almQueda)}`} style={{ width: 40, textAlign: "left", lineHeight: 1.1 }}>
-    <span style={{ display: "block", fontSize: 9, fontWeight: 600, color: falta ? COB_DIA.falta.color : "#A9A39B" }}>{falta ? "faltan" : "quedan"}</span>
-    <span style={{ display: "block", fontSize: 11.5, fontWeight: 800, fontFamily: "var(--mono)", color: falta ? COB_DIA.falta.color : CHARCOAL }}>{fmtN(falta ? e.falta : (e.obraQueda || 0) + (e.almQueda || 0))}</span>
+  if (!e) return <span style={{ width: 44 }} />;
+  const t = e.estado === "obra" ? { l: "queda", n: e.obraQueda, c: CHARCOAL } : e.estado === "almacen" ? { l: "mandar", n: e.delAlmacen, c: COB_DIA.almacen.color } : { l: "comprar", n: e.falta, c: COB_DIA.falta.color };
+  return <span title={`Amanece con ${fmtN(e.amanece)} en el proyecto · se usan ${fmtN(e.amanece - e.obraQueda + e.delAlmacen + e.falta)}`} style={{ width: 44, textAlign: "left", lineHeight: 1.1 }}>
+    {e.estado === "falta" && e.delAlmacen > 0 && <><span style={{ display: "block", fontSize: 9, fontWeight: 600, color: COB_DIA.almacen.color }}>mandar</span>
+    <span style={{ display: "block", fontSize: 11.5, fontWeight: 800, fontFamily: "var(--mono)", color: COB_DIA.almacen.color, marginBottom: 2 }}>{fmtN(e.delAlmacen)}</span></>}
+    <span style={{ display: "block", fontSize: 9, fontWeight: 600, color: e.estado === "obra" ? "#A9A39B" : t.c }}>{t.l}</span>
+    <span style={{ display: "block", fontSize: 11.5, fontWeight: 800, fontFamily: "var(--mono)", color: t.c }}>{fmtN(t.n)}</span>
   </span>;
 }
 
@@ -574,7 +580,7 @@ export function CoberturaVista({ proyectos = [], isMobile, onIrPlanificacion, re
     const shorts = [...new Set([...(S.activos || []), ...conProg, ...conInv])];
     return shorts.map(short => {
       const prog = programacionVigente(S.progs, short);
-      const r = coberturaProyecto({ short, prog, items: S.items, hoy });
+      const r = coberturaProyecto({ short, prog, items: S.items, hoy, cierres: S.cierres });
       const fechaC = r.ultimoConteo ? new Date(r.ultimoConteo).toLocaleDateString("en-CA", { timeZone: "America/Tegucigalpa" }) : "";
       return { ...r, prog, activo: !S.activos || S.activos.includes(short), alDia: !!fechaC && conteoAlDia(fechaC, hoy), resp: (S.resp[short] || []).map(S.labelDe) };
     }).sort((a, b) => ({ rojo: 0, ambar: 1, verde: 2, sin_programa: 3 })[a.peor] - ({ rojo: 0, ambar: 1, verde: 2, sin_programa: 3 })[b.peor] || a.short.localeCompare(b.short, "es"));
