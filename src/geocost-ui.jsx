@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { useState, useEffect } from "react";
 import { MONEDA } from "./operacion.js";
+import { createPortal } from "react-dom";
 
 export const ORANGE = "#E8762D";
 export const ORANGE_DARK = "#C75F1F";
@@ -105,7 +106,10 @@ export const Chip = ({ children, c = C_GRIS, style: sx, title }) => <span title=
 // del panel tiraba las 14 partidas tipeadas sin confirm (revisión adversarial 9-sep).
 // En el celular la ventana sube como HOJA desde abajo, a todo el ancho.
 const esTel = () => typeof window !== "undefined" && window.innerWidth < 768;
-export const Modal = ({ title, onClose, children, wide, size, fondoCierra = true }) => <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,.38)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", alignItems: esTel() ? "flex-end" : "center", justifyContent: "center", zIndex: 1000, padding: esTel() ? 0 : 12 }} onClick={fondoCierra ? onClose : undefined}>
+// Va en un portal a <body>: dentro de un módulo con capas (GeoSupply: contenido zIndex 1,
+// encabezado zIndex 2) el encabezado y las pestañas se montaban encima de la ventana.
+export const Modal = (props) => typeof document === "undefined" ? <ModalCaja {...props} /> : createPortal(<ModalCaja {...props} />, document.body);
+const ModalCaja = ({ title, onClose, children, wide, size, fondoCierra = true }) => <div style={{ position: "fixed", inset: 0, background: "rgba(44,42,40,.38)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", alignItems: esTel() ? "flex-end" : "center", justifyContent: "center", zIndex: 1000, padding: esTel() ? 0 : 12 }} onClick={fondoCierra ? onClose : undefined}>
   <div style={{ background: "#fff", borderRadius: esTel() ? "22px 22px 0 0" : 22, padding: esTel() ? "18px 16px calc(20px + env(safe-area-inset-bottom))" : "24px 26px", width: esTel() ? "100vw" : size === "xl" ? "96vw" : wide ? "min(980px, 94vw)" : 600, maxWidth: esTel() ? "100vw" : "98vw", maxHeight: esTel() ? "94dvh" : "94vh", boxSizing: "border-box", overflowY: "auto", boxShadow: "0 24px 70px rgba(44,42,40,.28)", color: CHARCOAL }} onClick={e => e.stopPropagation()}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 12 }}>
       <h3 style={{ margin: 0, font: "800 19px/1.2 var(--display)", letterSpacing: "-.01em" }}>{title}</h3>
