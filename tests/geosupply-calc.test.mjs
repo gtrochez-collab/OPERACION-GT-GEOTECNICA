@@ -467,3 +467,22 @@ test("cotización con flete: cuadra con ítems + flete, sin tocar el semáforo, 
   assert.equal(purchase.lineas.reduce((a, l) => a + l.monto, 0), 2750); // el flete no es un ítem
   assert.match(purchase.description, /Flete: L 500\.00/);
 });
+
+test("historial de gestión: quién hizo cada paso y cuánto esperó en cada área", async () => {
+  const { historialGestion, duracionTexto } = await import("../src/geosupply-calc.js");
+  const sols = [{ folio: "SUP-1", urgente: true, audit: [
+    { action: "creada", at: "2026-11-18T16:00:00Z", by: "Johan" }, { action: "enviada", at: "2026-11-18T16:00:01Z", by: "Johan" },
+    { action: "aprobar_coord", at: "2026-11-18T19:00:00Z", by: "Gerson", lineaId: "a" }, { action: "aprobar_coord", at: "2026-11-18T19:00:05Z", by: "Gerson", lineaId: "b" },
+    { action: "aprobar_coord", at: "2026-11-18T19:00:07Z", by: "Gerson", lineaId: "OTRA" },
+    { action: "almacen_no_hay", at: "2026-11-19T19:00:05Z", by: "Oscar", lineaId: "a" } ] }];
+  const cot = { lineas: [{ requestLineId: "a" }, { requestLineId: "b" }], audit: [
+    { action: "creada", at: "2026-11-24T22:00:00Z", by: "Ana" }, { action: "enviada", at: "2026-11-24T22:00:05Z", by: "Ana" },
+    { action: "aprobada", at: "2026-11-25T15:00:05Z", by: "Gerson" } ] };
+  const h = historialGestion({ purchase: { createdAt: "2026-11-25T15:00:05Z", origenSupply: { aprobadoAt: "2026-11-25T15:00:05Z" } }, cot, sols, ahora: "2026-11-27T15:00:05Z" });
+  assert.deepEqual(h.pasos.map(p => p.area), ["ingeniero", "coordinador", "almacen", "compras", "coordinador"]);
+  assert.equal(h.pasos[1].nota, "2 ítems");                 // el ítem de otra cotización no cuenta
+  assert.equal(h.pasos[3].espero, "5 días");                // Compras tardó 5 días en cotizar
+  assert.equal(h.enFinanzas, "2 días");
+  assert.equal(h.areas[0].area, "compras");                 // donde más esperó
+  assert.equal(duracionTexto(30 * 60000), "menos de 1 h");
+});

@@ -891,3 +891,74 @@ export const contarPendientes = ({ solicitudes = [], cotizaciones = [], rol, use
     default:                  return 0;
   }
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CÓMO SE GESTIONÓ una compra (27-nov-2026, Gerson: "si miro algo del corte 4
+// sin enviar podría pensar que es problema de Christian… ocupo el historial
+// para encontrar responsables"). Arma la línea de tiempo de un borrador de
+// GeoShopping desde la solicitud del ingeniero hasta hoy: quién hizo cada
+// paso, cuándo y cuánto ESPERÓ en cada etapa.
+// ═══════════════════════════════════════════════════════════════════════════
+const PASO_SOL = {
+  aprobar_coord: ["coordinador", "El Coordinador aprobó los ítems"],
+  almacen_no_hay: ["almacen", "Almacén revisó: no hay"],
+  almacen_hay: ["almacen", "Almacén revisó: hay"],
+  almacen_parcial: ["almacen", "Almacén revisó: hay una parte"],
+  postergar: ["coordinador", "Se pasó a otro corte"],
+  devuelta_finanzas: ["finanzas", "Finanzas devolvió la compra a Compras"],
+};
+const PASO_COT = {
+  enviada: ["compras", "Compras envió la cotización"],
+  reenviada: ["compras", "Compras corrigió y reenvió la cotización"],
+  aprobada: ["coordinador", "El Coordinador aprobó la cotización"],
+  devuelta: ["coordinador", "El Coordinador devolvió la cotización"],
+  rechazada: ["coordinador", "El Coordinador rechazó la cotización"],
+};
+export const AREA_GESTION = { ingeniero: "Ingeniero", coordinador: "Coordinador", almacen: "Almacén", compras: "Compras", finanzas: "Finanzas" };
+/** De quién era la pelota ANTES de cada paso (la espera se le anota a esa área). */
+const ESPERA_DE = { ingeniero: "", coordinador: "coordinador", almacen: "almacen", compras: "compras", finanzas: "finanzas" };
+export const duracionTexto = (ms) => {
+  if (!(ms > 0)) return "";
+  const h = ms / 3600000;
+  if (h < 1) return "menos de 1 h";
+  if (h < 24) return `${Math.round(h)} h`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "1 día" : `${d} días`;
+};
+export const historialGestion = ({ purchase, cot, sols = [], ahora = new Date().toISOString() }) => {
+  const ev = [];
+  const lineasCot = new Set((cot?.lineas || []).map(l => l.requestLineId).filter(Boolean));
+  sols.forEach(s => {
+    const aud = s.audit || [];
+    const env = aud.find(a => a && a.action === "enviada");
+    if (env) ev.push({ at: env.at, area: "ingeniero", principal: s.id === purchase?.origenSupply?.requestId, titulo: "El ingeniero envió la solicitud", quien: env.by, nota: `${s.folio || ""}${s.urgente ? " · urgente" : ""}`.trim() });
+    // Los pasos por ítem (aprobación, almacén) se juntan: uno por acción, con la hora del último ítem.
+    const porAccion = new Map();
+    aud.forEach(a => { if (!a || !PASO_SOL[a.action] || (a.lineaId && lineasCot.size && !lineasCot.has(a.lineaId))) return; if (a.action === "devuelta_finanzas") return; const k = a.action + "|" + String(a.at).slice(0, 13); const p = porAccion.get(k); if (!p || a.at > p.at) porAccion.set(k, { ...a, n: (p?.n || 0) + 1 }); else p.n++; });
+    porAccion.forEach(a => ev.push({ at: a.at, area: PASO_SOL[a.action][0], titulo: PASO_SOL[a.action][1], quien: a.by, nota: a.n > 1 ? `${a.n} ítems` : "" }));
+  });
+  let envios = 0;
+  (cot?.audit || []).forEach(a => {
+    if (!a || !PASO_COT[a.action]) return;
+    let [area, titulo] = PASO_COT[a.action];
+    if (a.action === "enviada" && envios++ > 0) titulo = PASO_COT.reenviada[1];
+    ev.push({ at: a.at, area, titulo, quien: a.by, nota: a.action === "devuelta" || a.action === "rechazada" ? String(a.note || "").replace(/^Devuelta[^:]*:\s*/i, "") : "" });
+  });
+  (cot?.devolucionesFinanzas || []).forEach(d => ev.push({ at: d.at, area: "finanzas", titulo: "Finanzas devolvió la compra a Compras", quien: d.por, nota: d.motivo || "" }));
+  ev.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  // Sin repetir el mismo paso pegado (aprobar la cotización escribe dos entradas).
+  const pasos = ev.filter((e, i) => !(i && ev[i - 1].titulo === e.titulo && Math.abs(Date.parse(e.at) - Date.parse(ev[i - 1].at)) < 60000));
+  // Una cotización puede juntar ítems de varias solicitudes: el envío de cada una arranca su propio reloj.
+  pasos.forEach((e, i) => { e.esperaMs = i && e.area !== "ingeniero" ? Math.max(0, Date.parse(e.at) - Date.parse(pasos[i - 1].at)) : 0; e.espero = duracionTexto(e.esperaMs); e.esperaDe = i ? ESPERA_DE[e.area] : ""; });
+  // Hoy: sigue en Finanzas desde que nació el borrador.
+  const desde = purchase?.origenSupply?.aprobadoAt || purchase?.createdAt || (pasos[pasos.length - 1] || {}).at;
+  const enFinanzasMs = desde ? Math.max(0, Date.parse(ahora) - Date.parse(desde)) : 0;
+  const inicio = pasos.find(e => e.principal) || pasos[0];
+  const totalMs = inicio ? Math.max(0, Date.parse(ahora) - Date.parse(inicio.at)) : 0;
+  // Cuánto estuvo con cada área (lo que esperó antes de cada paso + lo que lleva en Finanzas).
+  const porArea = {};
+  pasos.forEach(e => { if (e.esperaDe) porArea[e.esperaDe] = (porArea[e.esperaDe] || 0) + e.esperaMs; });
+  porArea.finanzas = (porArea.finanzas || 0) + enFinanzasMs;
+  const areas = Object.entries(porArea).filter(([, ms]) => ms > 0).map(([area, ms]) => ({ area, ms, texto: duracionTexto(ms), pct: totalMs ? ms / totalMs : 0 })).sort((a, b) => b.ms - a.ms);
+  return { pasos, enFinanzasMs, enFinanzas: duracionTexto(enFinanzasMs), totalMs, total: duracionTexto(totalMs), areas };
+};

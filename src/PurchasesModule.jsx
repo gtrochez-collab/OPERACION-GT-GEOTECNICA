@@ -20,7 +20,7 @@ import { hoyISO, diaHN } from "./fechas.js";
 import { leerPdf, parsearCotizacion, ajusteAlTotal, lineasPresupuestoDesdeLectura, memoriaDeCompras, cambiarSolucionLineas } from "./leer-cotizacion.js";
 // GeoSupply (2-oct-2026): los borradores que nacen de una cotización aprobada
 // llevan `origenSupply`; acá solo se rotula su corte.
-import { etiquetaCorte, puPresupuestoUSD, semaforoVariacion, revertirCompraEnSolicitud } from "./geosupply-calc.js";
+import { etiquetaCorte, puPresupuestoUSD, semaforoVariacion, revertirCompraEnSolicitud, historialGestion, AREA_GESTION, duracionTexto } from "./geosupply-calc.js";
 import { reporteHTML, descargarReporteDirecto, rKpis, rSeccion, rSeccionProyecto, pastelesDe, rTabla, rChip, rBarra, rDona, colorPaleta, RP, PDF_TEMA, pdfCabecera, pdfPie, latin1, libroExcel, hojaExcel, descargarExcel } from "./reporte-estilo.js";
 // Abonos (17-oct-2026): pagos parciales con su comprobante; la solicitud se
 // cierra solo cuando la suma de abonos cubre el total. Lógica pura y probada.
@@ -2266,6 +2266,36 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], p
         </div>)}
       </div>
     </div>
+
+    {/* CÓMO SE GESTIONÓ (27-nov-2026): quién hizo cada paso y cuánto esperó en cada área. */}
+    {!sup.cargando && (() => {
+      const h = historialGestion({ purchase, cot: sup.cot, sols: sup.sols });
+      if (!h.pasos.length) return null;
+      const peor = h.areas[0];
+      return <details style={{ ...CAJA, display: "block" }}>
+        <summary style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", listStyle: "none" }}>
+          <span style={TIT}>Cómo se gestionó</span>
+          <span style={{ fontSize: 13, color: CHARCOAL }}><b>{h.total}</b> desde que se pidió · lleva <b>{h.enFinanzas || "menos de 1 h"}</b> en Finanzas</span>
+          {peor && <span style={{ fontSize: 12, color: "#6E6862" }}>· donde más esperó: <b style={{ color: CHARCOAL }}>{AREA_GESTION[peor.area]}</b> ({peor.texto})</span>}
+          <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: "#A94E16" }}>Ver paso a paso</span>
+        </summary>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "12px 0 4px" }}>
+          {h.areas.map(a => <span key={a.area} style={{ padding: "5px 11px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: a === peor ? "rgba(232,118,45,.14)" : "rgba(44,42,40,.06)", color: a === peor ? "#A94E16" : "#5C5853" }}>{AREA_GESTION[a.area]} · {a.texto}</span>)}
+        </div>
+        <div style={{ marginTop: 8 }}>
+          {h.pasos.map((e, i) => <div key={i} style={{ display: "grid", gridTemplateColumns: tel ? "minmax(0,1fr)" : "150px minmax(0,1fr) auto", gap: tel ? 2 : 14, padding: "9px 0", borderTop: "1px solid rgba(44,42,40,.07)", alignItems: "baseline" }}>
+            <span style={{ fontSize: 12, color: "#8A847D", whiteSpace: "nowrap" }}>{new Date(e.at).toLocaleString("es-HN", { timeZone: "America/Tegucigalpa", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
+            <span style={{ minWidth: 0 }}><span style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{e.titulo}</span><span style={{ fontSize: 12.5, color: "#6E6862" }}> · {e.quien || "—"}{e.nota ? ` · ${e.nota}` : ""}</span></span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: e.esperaMs >= 2 * 86400000 ? "#B03024" : "#8A847D", whiteSpace: "nowrap" }}>{e.espero ? `${e.espero} después` : ""}</span>
+          </div>)}
+          <div style={{ display: "grid", gridTemplateColumns: tel ? "minmax(0,1fr)" : "150px minmax(0,1fr) auto", gap: tel ? 2 : 14, padding: "9px 0", borderTop: "1px solid rgba(44,42,40,.07)", alignItems: "baseline" }}>
+            <span style={{ fontSize: 12, color: "#8A847D" }}>Hoy</span>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>Sigue como borrador en Finanzas</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: h.enFinanzasMs >= 2 * 86400000 ? "#B03024" : "#8A847D", whiteSpace: "nowrap" }}>{h.enFinanzas ? `lleva ${h.enFinanzas}` : ""}</span>
+          </div>
+        </div>
+      </details>;
+    })()}
 
     {/* DATOS PARA LA TRANSFERENCIA (19-nov-2026): grandes, con copiar y editables. */}
     <div style={{ ...CAJA, gap: 12, border: cuenta ? "1px solid rgba(44,42,40,.09)" : "1px solid rgba(138,90,0,.3)", background: cuenta ? "#fff" : "rgba(251,239,196,.3)" }}>
@@ -9153,7 +9183,7 @@ export default function PurchasesModule({ userRole, userName, userKey, onBack, o
               <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 800, fontSize: 11.5, color: CHARCOAL }}>{p.codigo}</span>
               <div style={{ flex: 1, minWidth: 200 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: CHARCOAL }}>{p.provider}</div>
-                <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{(p.lineas || []).length} {(p.lineas || []).length === 1 ? "ítem" : "ítems"} · {o.folioSolicitud} · {o.folioCotizacion} · aprobó {o.aprobadoPor || "—"} {o.aprobadoAt ? fmt(o.aprobadoAt) : ""}</div>
+                <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{(p.lineas || []).length} {(p.lineas || []).length === 1 ? "ítem" : "ítems"} · {o.folioSolicitud} · {o.folioCotizacion} · aprobó {o.aprobadoPor || "—"} {o.aprobadoAt ? fmt(o.aprobadoAt) : ""}{(() => { const ms = Date.now() - Date.parse(o.aprobadoAt || p.createdAt || ""); return ms >= 86400000 ? <b style={{ color: ms >= 2 * 86400000 ? "#B03024" : "#6E6862" }}> · lleva {duracionTexto(ms)} en Finanzas</b> : null; })()}</div>
                 {(() => { const rv = revs[p.id]; if (!rv) return null; const parts = rv.impacto.map(x => x.pa?.nombre).filter(Boolean); return <div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 2, display: "flex", gap: 12, flexWrap: "wrap" }}>
                   <span>Partida: <b>{parts.length ? parts[0] : rv.pres ? "sin partida" : "sin receta en GeoCost"}</b>{parts.length > 1 ? ` +${parts.length - 1}` : ""}</span>
                   {p.bacAccount && <span>{p.providerBank || "Banco"} · <span style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>···{String(p.bacAccount).replace(/\s/g, "").slice(-4)}</span>{rv.prov && !rv.coincideMaestro ? <b style={{ color: C_AMARILLO.color }}> · no coincide con el maestro</b> : ""}</span>}

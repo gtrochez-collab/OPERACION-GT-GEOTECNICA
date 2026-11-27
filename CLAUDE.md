@@ -2226,6 +2226,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   "Finanzas corrigió los datos bancarios". "Usar esta" de las otras cuentas
   del maestro sigue ahí. La caja Proveedor quedó con RTN, contacto, constancia
   y cotización.
+  **CÓMO SE GESTIONÓ (27-nov-2026, Gerson: "si algo del corte 4 sigue sin enviar podría pensar que es problema de Christian; ocupo el historial para encontrar responsables")**: `historialGestion({purchase, cot, sols})` (geosupply-calc, con prueba) arma la línea de tiempo del borrador desde las bitácoras: el ingeniero envió → Coordinador aprobó ítems → Almacén revisó → Compras envió la cotización (y reenvíos) → devoluciones → Coordinador aprobó → hoy sigue en Finanzas; cada paso con quién, cuándo y cuánto ESPERÓ (en rojo de 2 días para arriba), más el total por área (`areas`, la que más tardó resaltada). Caja plegable "Cómo se gestionó" en `BorradorSupplyFormImpl`, debajo de la revisión rápida; la fila de Borradores dice "lleva N días en Finanzas" desde 1 día. La tira de cifras de Borradores se QUEDA (Gerson).
   **DEVOLVER A COMPRAS desde el borrador (23-nov-2026, Gerson: "que
   Christian pueda regresar los borradores con justificación hasta Ana, ej.
   si identificó un proveedor más barato; que no se queden acumulados")**:
