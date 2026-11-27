@@ -280,7 +280,7 @@ const LiquidarForm = ({ caja, onGuardar, onVer, onClose }) => {
 // ═══════════════════════════════════════════════════════════════════════════
 export default function GeoFinanceModule({ userRole, userName, userKey, onBack, onLogout }) {
   const isMobile = useIsMobile();
-  const perm = permisosFinance(userRole);
+  const perm = permisosFinance(userRole, userKey);
   const quien = { username: userKey, nombre: userName, rol: userRole };
 
   const [cajas, _setCajas] = useState(null);
@@ -389,8 +389,8 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
   const pend = pendientesFinance({ cajas, rol: userRole, username: userKey });
   const nav = [
     perm.pide && { id: "mis", label: "Mis cajas", badge: pend.observados },
-    perm.aprueba && (userRole === "costos" || pend.aprobar > 0) && { id: "aprobar", label: "Por aprobar", badge: pend.aprobar },
-    perm.acredita && { id: "acreditar", label: "Por acreditar", badge: pend.acreditar },
+    perm.aprueba && (userRole === "costos" || perm.super || pend.aprobar > 0) && { id: "aprobar", label: "Por aprobar", badge: pend.aprobar },
+    perm.acredita && { id: "acreditar", label: "Por acreditar", badge: perm.super ? cajas.filter(c => c.estado === "aprobada").length : pend.acreditar },
     perm.valida && { id: "facturas", label: "Facturas", badge: pend.facturas + pend.cerrar },
     perm.veTodo && { id: "todas", label: "Todas las cajas" },
   ].filter(Boolean);

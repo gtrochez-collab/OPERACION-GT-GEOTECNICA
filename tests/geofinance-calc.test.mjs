@@ -57,7 +57,9 @@ test("gasto: la factura es obligatoria", () => {
 test("aprobar: solo Christian; la de él la aprueba el administrador", () => {
   const c = { estado: "solicitada", solicitante: { username: "allan", rol: "residente" } };
   assert.equal(puedeAprobar("costos", "christian", c), true);
-  assert.equal(puedeAprobar("admin", "administrador", c), false);
+  assert.equal(puedeAprobar("admin", "raul.flores", c), false);
+  assert.equal(puedeAprobar("admin", "administrador", c), true);   // Gerson puede hacer todos los pasos para probar
+  assert.deepEqual([permisosFinance("admin", "administrador").acredita, permisosFinance("admin", "administrador").valida, permisosFinance("admin", "raul.flores").acredita], [true, true, false]);
   assert.equal(puedeAprobar("tesoreria", "carolina", c), false);
   const suya = { estado: "solicitada", solicitante: { username: "christian", rol: "costos" } };
   assert.equal(puedeAprobar("costos", "christian", suya), false);

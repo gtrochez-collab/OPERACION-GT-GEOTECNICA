@@ -42,16 +42,22 @@ export const PASOS_CAJA = ["Solicitada", "Aprobada", "Acreditada", "Liquidada", 
 // facturas Contabilidad. Ven todo: Gerson, el Dr. Flores (admin), la Lic.
 // Carolina, Christian y Contabilidad.
 export const ROLES_FINANCE = ["admin", "tesoreria", "costos", "contabilidad", "residente", "coordinador_maquinas", "logistica"];
-export const permisosFinance = (rol) => ({
+// Gerson (usuario "administrador") puede hacer TODOS los pasos — aprobar,
+// acreditar, validar y cerrar — para probar y seguir el flujo completo.
+export const SUPER_FINANCE = ["administrador"];
+export const esSuperFinance = (username) => SUPER_FINANCE.includes(username);
+export const permisosFinance = (rol, username = "") => ({
   pide: ["residente", "coordinador_maquinas", "logistica", "costos", "admin"].includes(rol),
   aprueba: rol === "costos" || rol === "admin",
-  acredita: rol === "tesoreria",
-  valida: rol === "contabilidad",
+  acredita: rol === "tesoreria" || esSuperFinance(username),
+  valida: rol === "contabilidad" || esSuperFinance(username),
+  super: esSuperFinance(username),
   veTodo: ["admin", "tesoreria", "costos", "contabilidad"].includes(rol),
 });
 // Christian aprueba todas menos la suya; la de él la aprueba el administrador.
 export const puedeAprobar = (rol, username, caja) => {
   if (!caja || caja.estado !== "solicitada") return false;
+  if (esSuperFinance(username)) return true;
   const propia = caja.solicitante?.username === username;
   if (rol === "costos") return !propia;
   if (rol === "admin") return caja.solicitante?.rol === "costos" && !propia;
