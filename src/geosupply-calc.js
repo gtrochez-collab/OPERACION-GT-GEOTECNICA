@@ -622,12 +622,18 @@ export const evaluarCotizacion = ({ cotizacion, tasa, cfg, partidaDe = () => nul
     }
     if (l.semaforo === "rojo" && String(l.justificacion || "").trim().length < 5) errores.push(`${n}: está en rojo — justificá la variación de precio.`);
   });
-  const suma = round2(ls.reduce((s, l) => s + l.subtotal, 0));
+  // Flete (27-nov-2026, pedido de Ana): la cotización trae los mismos ítems
+  // y además un cobro de flete. Va aparte de los ítems (no ensucia el P.U. ni
+  // el semáforo) y se suma para cuadrar contra el total.
+  const flete = cotizacion?.traeFlete ? round2(num(cotizacion.flete)) : 0;
+  if (cotizacion?.traeFlete && !(flete > 0)) errores.push("Marcaste que trae flete: poné cuánto es.");
+  const sumaItems = round2(ls.reduce((s, l) => s + l.subtotal, 0));
+  const suma = round2(sumaItems + flete);
   const diferencia = round2(suma - total);
   const cuadra = total > 0 && Math.abs(diferencia) <= num(c.toleranciaTotalL);
-  if (total > 0 && ls.length && !cuadra) errores.push(`La suma de los ítems (${MONEDA} ${suma.toLocaleString("es-HN", { minimumFractionDigits: 2 })}) no cuadra con el total (${MONEDA} ${total.toLocaleString("es-HN", { minimumFractionDigits: 2 })}). ${MSG_ISV}`);
+  if (total > 0 && ls.length && !cuadra) errores.push(`La suma de los ítems${flete > 0 ? " + flete" : ""} (${MONEDA} ${suma.toLocaleString("es-HN", { minimumFractionDigits: 2 })}) no cuadra con el total (${MONEDA} ${total.toLocaleString("es-HN", { minimumFractionDigits: 2 })}). ${MSG_ISV}`);
   const peor = peorSemaforo(ls.map(l => l.semaforo));
-  return { lineas: ls, suma, total, diferencia, cuadra, errores, ok: errores.length === 0, peor, todasVerdes: ls.length > 0 && ls.every(l => l.semaforo === "verde" || l.semaforo === "sin_base") };
+  return { lineas: ls, sumaItems, flete, suma, total, diferencia, cuadra, errores, ok: errores.length === 0, peor, todasVerdes: ls.length > 0 && ls.every(l => l.semaforo === "verde" || l.semaforo === "sin_base") };
 };
 
 // ── Folios ─────────────────────────────────────────────────────────────────
@@ -678,6 +684,9 @@ export const borradorDesdeCotizacion = ({ cotizacion, evaluacion, solicitud, pro
   const fechaPagoRequerida = solicitud?.fechaRequeridaObra ? ymdSumar(solicitud.fechaRequeridaObra, -2) : "";
   const destinoPago = destinoSugerido({ condicionPago, fechaRequeridaObra: solicitud?.fechaRequeridaObra, urgente: !!solicitud?.urgente, hoy });
   const lineasEval = (evaluacion?.lineas || []);
+  // El flete no es un ítem: entra en el monto y GeoCost lo reparte entre las
+  // partidas en proporción, igual que el ISV o un descuento.
+  const fleteL = cotizacion?.traeFlete ? round2(num(cotizacion.flete)) : 0;
   const lineas = lineasEval.map(l => ({
     id: l.requestLineId || l.id,
     partidaId: l.partidaId || null,
@@ -705,7 +714,8 @@ export const borradorDesdeCotizacion = ({ cotizacion, evaluacion, solicitud, pro
     quoteNumber: cotizacion.numeroProveedor || "",
     quoteFile: cotizacion.pdfFile || null,
     amount: num(cotizacion.totalDeclarado),
-    description: descripcionDeCotizacion(lineasEval),
+    description: [descripcionDeCotizacion(lineasEval), fleteL > 0 ? `Flete: ${MONEDA} ${fleteL.toLocaleString("es-HN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ""].filter(Boolean).join("\n"),
+    ...(fleteL > 0 ? { flete: fleteL } : {}),
     detalleExtra: "",
     tipoCompra: cotizacion.tipoCompra || "material",
     condicionPago,

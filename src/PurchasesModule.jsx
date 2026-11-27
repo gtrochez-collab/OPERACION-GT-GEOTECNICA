@@ -2098,8 +2098,9 @@ const revisionBorrador = ({ purchase, presupuestos = [], providers = [], purchas
   const add = (k, ok, titulo, detalle, nivel) => checks.push({ k, nivel: nivel || (ok ? "ok" : "ojo"), titulo, detalle });
   add("aprobada", !!o.aprobadoPor, o.aprobadoPor ? `Aprobada por ${o.aprobadoPor}` : "Sin aprobación registrada", o.aprobadoAt ? fmtDT(o.aprobadoAt) : "");
   add("cotizacion", !!purchase?.quoteFile, purchase?.quoteFile ? `Cotización adjunta${purchase.quoteNumber ? ` · N° ${purchase.quoteNumber}` : ""}` : "Falta el PDF de la cotización", "");
-  const cuadra = !filas.length || Math.abs(sumaLineas - amount) <= 1;
-  add("cuadra", cuadra, cuadra ? "El total cuadra con los ítems" : "El total no cuadra con los ítems", cuadra ? fmtL(amount) : `Ítems ${fmtL(sumaLineas)} · total ${fmtL(amount)}`);
+  const fleteB = num(purchase?.flete);
+  const cuadra = !filas.length || Math.abs(sumaLineas + fleteB - amount) <= 1;
+  add("cuadra", cuadra, cuadra ? (fleteB > 0 ? "El total cuadra con los ítems + flete" : "El total cuadra con los ítems") : "El total no cuadra con los ítems", cuadra ? (fleteB > 0 ? `${fmtL(amount)} · flete ${fmtL(fleteB)}` : fmtL(amount)) : `Ítems ${fmtL(sumaLineas)}${fleteB > 0 ? ` + flete ${fmtL(fleteB)}` : ""} · total ${fmtL(amount)}`);
   if (!cuentaCompleta) add("banco", false, "Datos bancarios incompletos", cuentasMaestro.length ? "El maestro sí tiene cuenta: usala abajo" : "El maestro tampoco tiene cuenta");
   else if (!prov) add("banco", true, "Datos bancarios completos", "El proveedor no está en el maestro", "info");
   else if (!coincideMaestro) add("banco", false, "La cuenta no coincide con el maestro", "Revisá cuál es la buena abajo");
@@ -2378,6 +2379,7 @@ function BorradorSupplyFormImpl({ purchase, presupuestos = [], providers = [], p
       {!rv.filas.length && <div style={{ fontSize: 12.5, color: "#6E6862", whiteSpace: "pre-line" }}>{purchase.description}</div>}
       {rv.filas.length > 0 && <div style={{ display: "flex", justifyContent: "flex-end", gap: 16, fontSize: 12.5, borderTop: "1px solid rgba(44,42,40,.12)", paddingTop: 8 }}>
         <span style={{ color: "#6E6862" }}>Suma de ítems <b style={{ color: CHARCOAL }}>{fmtL(rv.sumaLineas)}</b></span>
+        {num(purchase.flete) > 0 && <span style={{ color: "#6E6862" }}>Flete <b style={{ color: CHARCOAL }}>{fmtL(purchase.flete)}</b></span>}
         <span style={{ color: "#6E6862" }}>Total a pagar <b style={{ color: CHARCOAL, fontSize: 14 }}>{fmtL(purchase.amount)}</b></span>
       </div>}
     </div>

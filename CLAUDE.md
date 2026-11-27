@@ -2247,6 +2247,7 @@ prueba sin limpiarlos después. Verificaciones destructivas: usar períodos dumm
   Coordinador la aprueba otra vez (su ventana muestra "Finanzas la devolvió…")
   y nace un borrador NUEVO: `aprobarCotizacion` ignora los de
   `borradoresDevueltos(cot)`. Probado el 23-nov con datos ZZ (borrados).
+  **FLETE en la cotización (27-nov-2026, pedido de Ana)**: hay cotizaciones con los mismos ítems más un cobro de flete. `CotizacionFormImpl` trae la casilla **"Trae flete"** + monto (con ISV, tal cual la cotización); campos ADITIVOS `traeFlete`, `flete` en sp-cotizaciones. `evaluarCotizacion` devuelve `sumaItems`, `flete` y `suma` = ítems + flete (lo que se compara contra el total); el flete NO toca el P.U. ni el semáforo, y marcado sin monto bloquea. `borradorDesdeCotizacion`: `amount` = total (incluye flete), `flete` aditivo en cp-purchases, `description` suma el renglón "Flete: L X"; NO es una línea — GeoCost lo reparte entre las partidas en proporción (`repartirLineas`). La aprobación muestra "incluye flete L X"; en GeoShopping la revisión rápida del borrador cuadra con ítems + flete y la caja Ítems muestra el flete. El lector de PDF todavía no detecta el flete solo (se marca a mano).
   **GeoCost**: `estadoCompraCosto` cuenta `borrador + origenSupply` como
   comprometido; al validarse sigue comprometido y al pagarse ejecutado — mismo
   registro, sin doble conteo (verificado 2-oct: $1,057.41 comprometido → tras

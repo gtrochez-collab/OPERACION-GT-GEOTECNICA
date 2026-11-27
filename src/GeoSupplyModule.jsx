@@ -546,7 +546,7 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
     if (enviar && !ev.ok) return alert(ev.errores.join("\n"));
     if (!enviar && !String(f.provider || "").trim()) return alert("Elegí el proveedor.");
     setSaving(true);
-    try { await (enviar === "aprobar" ? onEnviarYAprobar : enviar ? onEnviar : onGuardar)({ ...f, totalDeclarado: num(f.totalDeclarado), lineas: f.lineas.map(l => ({ ...l, cantidad: num(l.cantidad), puLps: num(l.puLps), ...(l.lances !== undefined ? { lances: num(l.lances), puLance: num(l.puLance) } : {}) })) }, ev); }
+    try { await (enviar === "aprobar" ? onEnviarYAprobar : enviar ? onEnviar : onGuardar)({ ...f, totalDeclarado: num(f.totalDeclarado), traeFlete: !!f.traeFlete, flete: f.traeFlete ? num(f.flete) : 0, lineas: f.lineas.map(l => ({ ...l, cantidad: num(l.cantidad), puLps: num(l.puLps), ...(l.lances !== undefined ? { lances: num(l.lances), puLance: num(l.puLance) } : {}) })) }, ev); }
     finally { setSaving(false); }
   };
   const CTRL = { padding: "8px 10px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 10, fontSize: 13, outline: "none", background: "#F4F4F2", fontFamily: "inherit", boxSizing: "border-box" };
@@ -668,8 +668,9 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12, alignItems: "end" }}>
       <Input label={`Total de la cotización, con ${IMPUESTO.nombre} (${MONEDA}) *`} type="number" min="0" step="any" value={f.totalDeclarado} onChange={e => u("totalDeclarado", e.target.value)} />
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <label style={{ fontSize: 11, fontWeight: 700, color: "#6E6862" }}>Suma de los ítems</label>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 38 }}><b style={{ fontSize: 15 }}>{fmtL(ev.suma)}</b>{sumaChip}</div>
+        <label style={{ fontSize: 11, fontWeight: 700, color: "#6E6862" }}>{ev.flete > 0 ? "Ítems + flete" : "Suma de los ítems"}</label>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 38, flexWrap: "wrap" }}><b style={{ fontSize: 15 }}>{fmtL(ev.suma)}</b>{sumaChip}</div>
+        {ev.flete > 0 && <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{fmtL(ev.sumaItems)} + flete {fmtL(ev.flete)}</div>}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         <label style={{ fontSize: 11, fontWeight: 700, color: "#6E6862" }}>PDF de la cotización *</label>
@@ -680,6 +681,14 @@ function CotizacionFormImpl({ cotizacion, projectCode, nombreProy, candidatas, p
             <input type="file" accept="application/pdf,image/*" style={{ display: "none" }} disabled={subiendo} onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; if (!f.lineas.length && esPdfF(file)) return subirYLeer(file); setSubiendo(true); try { const ref = await subirPdf(file); if (ref) u("pdfFile", ref); } finally { setSubiendo(false); } }} />
           </label>}
       </div>
+    </div>
+    {/* Flete (27-nov-2026, Ana): mismos ítems + un cobro de flete aparte. */}
+    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "10px 14px", borderRadius: 12, background: f.traeFlete ? "rgba(232,118,45,.06)" : "var(--superficie-2, #F4F3F1)" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: CHARCOAL, cursor: "pointer" }}><input type="checkbox" checked={!!f.traeFlete} onChange={e => u("traeFlete", e.target.checked)} /> Trae flete</label>
+      {f.traeFlete && <>
+        <input type="number" min="0" step="any" value={f.flete ?? ""} onChange={e => u("flete", e.target.value)} placeholder={`Monto del flete, con ${IMPUESTO.nombre} (${MONEDA})`} autoFocus style={{ ...CTRL, width: isMobile ? "100%" : 260, textAlign: "right", fontWeight: 700 }} />
+        <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>Se suma al total y se reparte entre las partidas</span>
+      </>}
     </div>
     {!ev.cuadra && ev.total > 0 && ev.lineas.length > 0 && <div style={{ padding: "10px 14px", borderRadius: 12, background: C_ROJO.bg, color: C_ROJO.color, fontSize: 12.5 }}>
       {(lectura?.sinPareja || []).length > 0
@@ -1093,15 +1102,15 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
   // ── Compras: cotizaciones ──
   const guardarCotizacion = async (f, ev, enviar) => {
     const ahoraISO = new Date().toISOString();
-    const marcar = (q) => enviar ? { ...q, estado: "enviada", enviadaAt: ahoraISO, evaluacion: { lineas: ev.lineas, suma: ev.suma, peor: ev.peor, todasVerdes: ev.todasVerdes }, audit: [...(q.audit || []), auditEntry("enviada", "Enviada a aprobación del Coordinador")], devueltaPor: null } : q;
+    const marcar = (q) => enviar ? { ...q, estado: "enviada", enviadaAt: ahoraISO, evaluacion: { lineas: ev.lineas, suma: ev.suma, flete: ev.flete, peor: ev.peor, todasVerdes: ev.todasVerdes }, audit: [...(q.audit || []), auditEntry("enviada", "Enviada a aprobación del Coordinador")], devueltaPor: null } : q;
     let rec;
     if (f.id) {
       rec = await actualizarCotizacion(f.id, (q) => {
         if (q.estado !== "borrador" && q.estado !== "devuelta") { alert("Esta cotización ya no se puede editar."); return null; }
-        return marcar({ ...q, provider: f.provider, providerId: f.providerId || "", numeroProveedor: f.numeroProveedor || "", condicionPago: f.condicionPago || "contado", incluyeISV: f.incluyeISV !== false, totalDeclarado: f.totalDeclarado, pdfFile: f.pdfFile || null, notas: f.notas || "", lineas: f.lineas, audit: [...(q.audit || []), auditEntry("editada", "Cotización editada")] });
+        return marcar({ ...q, provider: f.provider, providerId: f.providerId || "", numeroProveedor: f.numeroProveedor || "", condicionPago: f.condicionPago || "contado", incluyeISV: f.incluyeISV !== false, totalDeclarado: f.totalDeclarado, traeFlete: !!f.traeFlete, flete: f.traeFlete ? num(f.flete) : 0, pdfFile: f.pdfFile || null, notas: f.notas || "", lineas: f.lineas, audit: [...(q.audit || []), auditEntry("editada", "Cotización editada")] });
       });
     } else {
-      rec = await crearEn(K.cot, setCotizaciones, (arr) => marcar({ id: uid(), folio: siguienteFolio(arr, "CTZ", new Date(ahoraISO).getFullYear()), requestId: f.lineas[0]?.requestId || "", projectCode: f.projectCode, provider: f.provider, providerId: f.providerId || "", numeroProveedor: f.numeroProveedor || "", condicionPago: f.condicionPago || "contado", incluyeISV: f.incluyeISV !== false, totalDeclarado: f.totalDeclarado, pdfFile: f.pdfFile || null, notas: f.notas || "", lineas: f.lineas, estado: "borrador", createdAt: ahoraISO, creadaPor: userKey, audit: [auditEntry("creada", "Borrador de cotización")] }));
+      rec = await crearEn(K.cot, setCotizaciones, (arr) => marcar({ id: uid(), folio: siguienteFolio(arr, "CTZ", new Date(ahoraISO).getFullYear()), requestId: f.lineas[0]?.requestId || "", projectCode: f.projectCode, provider: f.provider, providerId: f.providerId || "", numeroProveedor: f.numeroProveedor || "", condicionPago: f.condicionPago || "contado", incluyeISV: f.incluyeISV !== false, totalDeclarado: f.totalDeclarado, traeFlete: !!f.traeFlete, flete: f.traeFlete ? num(f.flete) : 0, pdfFile: f.pdfFile || null, notas: f.notas || "", lineas: f.lineas, estado: "borrador", createdAt: ahoraISO, creadaPor: userKey, audit: [auditEntry("creada", "Borrador de cotización")] }));
     }
     if (!rec) return;
     // Al ENVIAR, las líneas de la solicitud pasan a "cotizada" (por solicitud, una escritura cada una).
@@ -1220,7 +1229,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         if (!okS) { alert(`El borrador ${purchase.codigo} se creó pero la solicitud no se actualizó. Volvé a aprobar: no se duplica.`); return false; }
       }
       // 3) La cotización: aprobada, con la tasa usada y el borrador que generó.
-      const cot2 = { ...cot, estado: "aprobada", aprobadoPor: userName, aprobadoAt: ahoraISO, comentario: comentario || "", tasaCambioUsada: tasaC, purchaseId: purchase.id, purchaseCodigo: purchase.codigo, evaluacion: { lineas: ev.lineas, suma: ev.suma, peor: ev.peor, todasVerdes: ev.todasVerdes }, avisos: purchase.origenSupply?.avisos || [], audit: [...(cot.audit || []), auditEntry("aprobada", `Aprobada → borrador ${purchase.codigo} en GeoShopping${comentario ? ` · ${comentario}` : ""}`)], updatedAt: ahoraISO };
+      const cot2 = { ...cot, estado: "aprobada", aprobadoPor: userName, aprobadoAt: ahoraISO, comentario: comentario || "", tasaCambioUsada: tasaC, purchaseId: purchase.id, purchaseCodigo: purchase.codigo, evaluacion: { lineas: ev.lineas, suma: ev.suma, flete: ev.flete, peor: ev.peor, todasVerdes: ev.todasVerdes }, avisos: purchase.origenSupply?.avisos || [], audit: [...(cot.audit || []), auditEntry("aprobada", `Aprobada → borrador ${purchase.codigo} en GeoShopping${comentario ? ` · ${comentario}` : ""}`)], updatedAt: ahoraISO };
       const frescoC = await store.getCloud(K.cot); const baseCot = Array.isArray(frescoC) ? frescoC : [];
       marcarMutacion();
       const okC = await store.set(K.cot, baseCot.map(x => x.id === cot.id ? cot2 : x));
@@ -1923,7 +1932,7 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
         <span style={{ fontSize: 13, color: "var(--text-2)" }}><b>{q.provider}</b> · {nombreProy(q.projectCode)} · {s?.folio} · pidió {quien(s?.residente)}{q.numeroProveedor ? ` · cot. ${q.numeroProveedor}` : ""}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
           {q.pdfFile ? <Btn small variant="info" onClick={() => verArchivo(q.pdfFile)}>Ver PDF</Btn> : <Chip c={C_ROJO}>Sin PDF</Chip>}
-          <div style={{ textAlign: "right" }}><div style={{ fontSize: 18, fontWeight: 800, color: CHARCOAL }}>{fmtL(q.totalDeclarado)}</div><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>total con {IMPUESTO.nombre} · {ev.cuadra ? "cuadra" : `dif. ${fmtL(ev.diferencia)}`}</div></div>
+          <div style={{ textAlign: "right" }}><div style={{ fontSize: 18, fontWeight: 800, color: CHARCOAL }}>{fmtL(q.totalDeclarado)}</div><div className="gt-label" style={{ color: "var(--text-3)", fontSize: 9 }}>total con {IMPUESTO.nombre} · {ev.cuadra ? "cuadra" : `dif. ${fmtL(ev.diferencia)}`}</div>{ev.flete > 0 && <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--naranja-tinta)", marginTop: 2 }}>incluye flete {fmtL(ev.flete)}</div>}</div>
         </div>
       </div>
       {/* Lo que escribió el residente (6-nov-2026): sin esto el Coordinador

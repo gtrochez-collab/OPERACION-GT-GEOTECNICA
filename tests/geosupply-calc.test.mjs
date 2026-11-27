@@ -451,3 +451,19 @@ test("Finanzas devuelve el borrador a Compras: lo comprado vuelve a por cotizar,
   // No resta más de lo comprado
   assert.equal(aplicarAccionLinea({ estado: "comprada", cantidadComprada: 2 }, "revertir_compra", { cantidad: 5 }).ok, false);
 });
+
+test("cotización con flete: cuadra con ítems + flete, sin tocar el semáforo, y entra al borrador", () => {
+  const base = { provider: "Ferretería X", pdfFile: { fileId: "f" }, totalDeclarado: 2750 + 500, lineas: [{ requestLineId: "L1", cantidad: 10, puLps: 275 }] };
+  assert.equal(ev(base).cuadra, false);                        // sin marcar el flete no cuadra
+  const r = ev({ ...base, traeFlete: true, flete: 500 });
+  assert.equal(r.cuadra, true); assert.equal(r.ok, true, r.errores.join(" | "));
+  assert.equal(r.sumaItems, 2750); assert.equal(r.flete, 500); assert.equal(r.suma, 3250);
+  assert.equal(r.lineas[0].semaforo, "verde");                 // el P.U. no se ensucia con el flete
+  assert.ok(ev({ ...base, traeFlete: true, flete: "" }).errores.some(e => /flete/.test(e)));
+  assert.equal(ev({ ...base, traeFlete: false, flete: 500 }).flete, 0); // desmarcado no cuenta
+  const cot = { ...base, traeFlete: true, flete: 500, id: "q", folio: "CTZ-1" };
+  const { purchase } = borradorDesdeCotizacion({ cotizacion: cot, evaluacion: r, solicitud: { id: "s", projectCode: "ZZ" }, proveedor: { name: "Ferretería X" }, proyecto: {}, aprobadoPor: "G", tasa: 27, hoy: "2026-11-27", ahoraISO: "x", id: "i", codigo: "c" });
+  assert.equal(purchase.amount, 3250); assert.equal(purchase.flete, 500);
+  assert.equal(purchase.lineas.reduce((a, l) => a + l.monto, 0), 2750); // el flete no es un ítem
+  assert.match(purchase.description, /Flete: L 500\.00/);
+});
