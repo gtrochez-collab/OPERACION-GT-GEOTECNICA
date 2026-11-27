@@ -49,8 +49,16 @@ const RUN = (t) => `<w:r><w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w
 const celdaCon = (tc, texto) => tc.replace(/(<w:p(?: [^>]*)?>)(<w:pPr>.*?<\/w:pPr>)?(?:(?!<\/w:p>).)*<\/w:p>/s, (_m, abre, ppr) => `${abre}${ppr || ""}${texto ? RUN(texto) : ""}</w:p>`);
 const filaCon = (tr, celdas) => { let i = 0; return tr.replace(/<w:tc>.*?<\/w:tc>/gs, (tc) => { const t = celdas[i++]; return t === undefined ? tc : celdaCon(tc, t); }); };
 
-/** altas: [{dni, nombre, puesto, salario, fecha}] · mes "2026-11" · empresa subterra|geotecnica */
-export const docxAltasIHSS = async (plantillaBytes, { altas, mes, empresa }, JSZip) => {
+// Una imagen en línea (JPEG) de `ancho` pulgadas.
+const EMU = 914400;
+const imagenXml = (rid, n, w, h, ancho) => { const cx = Math.round(ancho * EMU), cy = Math.round(cx * h / w);
+  return `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${9000 + n}" name="Identidad ${n}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${9000 + n}" name="identidad${n}.jpeg"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`; };
+
+/**
+ * altas: [{dni, nombre, puesto, salario, fecha}] · mes "2026-11" · empresa subterra|geotecnica
+ * identidades (opcional): [{nombre, dni, imagenes: [{bytes (JPEG), w, h}]}] — van en hojas aparte, frente y reverso lado a lado.
+ */
+export const docxAltasIHSS = async (plantillaBytes, { altas, mes, empresa, identidades = [] }, JSZip) => {
   const zip = await JSZip.loadAsync(plantillaBytes);
   let xml = await zip.file("word/document.xml").async("string");
   const p = PATRONOS_IHSS[empresa] || PATRONOS_IHSS.subterra;
@@ -64,6 +72,24 @@ export const docxAltasIHSS = async (plantillaBytes, { altas, mes, empresa }, JSZ
   const nuevas = Array.from({ length: n }, (_, i) => filaCon(cuerpo[i] || molde, [String(i + 1), ...(altas[i] ? filaAltaIHSS(altas[i]) : ["", "", "", "", ""])]));
   tabla = tabla.slice(0, tabla.indexOf(filas[1])) + nuevas.join("");
   xml = xml.slice(0, t0) + tabla + xml.slice(t1);
+  const conFoto = identidades.filter(p => (p.imagenes || []).length);
+  if (conFoto.length) {
+    let rels = await zip.file("word/_rels/document.xml.rels").async("string"), n = 0, cuerpo = "";
+    conFoto.forEach((p, i) => {
+      const salto = i % 2 === 0 ? `<w:r><w:br w:type="page"/></w:r>` : "";
+      cuerpo += `<w:p><w:pPr><w:spacing w:before="${i % 2 ? 360 : 0}" w:after="120"/></w:pPr>${salto}<w:r><w:rPr><w:b/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr><w:t xml:space="preserve">${esc(String(p.nombre || "").toUpperCase())}${p.dni ? "  ·  " + esc(p.dni) : ""}</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr>`;
+      p.imagenes.forEach((im, j) => {
+        n++; const rid = `rIdIdent${n}`;
+        zip.file(`word/media/identidad${n}.jpeg`, im.bytes);
+        rels = rels.replace("</Relationships>", `<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/identidad${n}.jpeg"/></Relationships>`);
+        cuerpo += (j ? `<w:r><w:t xml:space="preserve">      </w:t></w:r>` : "") + imagenXml(rid, n, im.w, im.h, 4.1);
+      });
+      cuerpo += "</w:p>";
+    });
+    const fin = xml.lastIndexOf("<w:sectPr");
+    xml = xml.slice(0, fin) + cuerpo + xml.slice(fin);
+    zip.file("word/_rels/document.xml.rels", rels);
+  }
   zip.file("word/document.xml", xml);
   return zip.generateAsync({ type: "uint8array", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", compression: "DEFLATE" });
 };
