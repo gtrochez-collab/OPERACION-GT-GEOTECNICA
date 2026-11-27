@@ -702,7 +702,7 @@ function PanelControl({ user, availableModules, syncOk, onOpen, onLogout, onVolv
       {/* Footer */}
       {!esHero && (
         <footer className="gt-aparece" style={{ position: "relative", zIndex: 1, maxWidth: 1240, width: "100%", margin: "0 auto", padding: "clamp(6px,1.4vh,20px) 28px clamp(8px,2vh,26px)", boxSizing: "border-box", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, color: "var(--text-3)", fontSize: 12 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }}><GeoCoreSello size={20} fontSize={13} /><span>© Grupo Geotecnica</span></div>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }}><GeoCoreSello size={20} fontSize={13} /><span>© Grupo Geotecnica</span><span style={{ color: "#B8B2AA" }}>·</span><span>by <b style={{ fontWeight: 700, color: "#5C5853" }}>Lic. Gerson Trochez</b></span></div>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: syncOk ? "#059669" : BRAND.red }} />
             {syncOk ? "Sincronizado" : "Sin sincronizar"} · v2.0
