@@ -1619,36 +1619,57 @@ export default function GeoSupplyModule({ userRole, userName, userKey, userProye
     // Filtro por corte del ÍTEM (un ítem pasado al siguiente corte cae ahí).
     const idCorte = (x) => { const c = corteDeLinea(x.l, x.s); return c ? etiquetaCorte(c).id : ""; };
     const cortesItems = [...new Map(items.filter(idCorte).map(x => [idCorte(x), corteDeLinea(x.l, x.s)])).entries()].sort((a, b) => (a[1].anio - b[1].anio) || (a[1].semana - b[1].semana));
+    const devueltas = cotizaciones.filter(q => q.estado === "devuelta");
+    // "Devueltas" es una vista más del filtro (27-nov-2026, Gerson: sin la caja de arriba).
+    const verDev = compCorte === "__dev__" && devueltas.length > 0;
     const filtro = cortesItems.some(([k]) => k === compCorte) ? compCorte : "";
     const itemsTodos = items;
     const visibles = filtro ? items.filter(x => idCorte(x) === filtro) : items;
     const corteFiltro = filtro ? cortesItems.find(([k]) => k === filtro)[1] : null;
     const puedePasar = esCoordinador;
     const grupos = porProyecto(visibles);
-    const devueltas = cotizaciones.filter(q => q.estado === "devuelta");
     const borr = cotizaciones.filter(q => q.estado === "borrador");
     return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div className="gt-vidrio gm-tira" style={{ padding: "12px 10px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
         {stat(items.length, "ítems por cotizar", { c: items.length ? ORANGE_DARK : undefined })}
         {items.some(x => x.l.prioridad) && stat(visibles.filter(x => x.l.prioridad).length, "con prioridad !", { c: ORANGE_DARK })}
         {stat(grupos.length, "proyectos")}
-        {stat(devueltas.length, "devueltas", { c: devueltas.length ? C_AMARILLO.color : undefined, onClick: () => { setCotVista("devuelta"); setSec("cotizaciones"); } })}
+        {stat(devueltas.length, "devueltas", { c: devueltas.length ? C_AMARILLO.color : undefined, onClick: devueltas.length ? () => setCompCorte("__dev__") : undefined })}
         {stat(borr.length, "cotizaciones en borrador", { onClick: () => { setCotVista("borrador"); setSec("cotizaciones"); } })}
       </div>
-      {devueltas.length > 0 && <div className="gt-vidrio" style={{ padding: "12px 16px", borderLeft: `3px solid ${C_AMARILLO.color}`, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div className="gt-label" style={{ color: C_AMARILLO.color }}>Devueltas · volver a cotizar</div>
-        {devueltas.map(q => <div key={q.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700 }}>{q.folio}</span><b style={{ fontSize: 13 }}>{q.provider}</b><span style={{ fontSize: 12, color: "var(--text-2)" }}>{nombreProy(q.projectCode)}</span>
-          <span style={{ fontSize: 12.5, color: C_AMARILLO.color, flex: 1 }}><b style={{ fontStyle: "normal" }}>{q.devueltaPor === "finanzas" ? `Finanzas${q.devolucionesFinanzas?.length ? ` · ${q.devolucionesFinanzas[q.devolucionesFinanzas.length - 1].por}` : ""}` : "Coordinador"}:</b> <i>"{q.comentario}"</i></span>
-          {puede && <Btn small onClick={() => setModal({ t: "cotizacion", q })}>Corregir</Btn>}
-        </div>)}
+      {(cortesItems.length > 0 || devueltas.length > 0) && <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {pillBtn("Todos los cortes", !filtro && !verDev, () => setCompCorte(""), { n: itemsTodos.length })}
+        {cortesItems.map(([k, c]) => pillBtn(etiquetaCorte(c).titulo, filtro === k && !verDev, () => setCompCorte(k), { n: itemsTodos.filter(x => idCorte(x) === k).length }))}
+        {devueltas.length > 0 && <button type="button" onClick={() => setCompCorte(verDev ? "" : "__dev__")} aria-pressed={verDev} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8, padding: "7px 14px", borderRadius: 999, border: `1px solid ${verDev ? "transparent" : "rgba(138,90,0,.28)"}`, background: verDev ? C_AMARILLO.color : C_AMARILLO.bg, color: verDev ? "#fff" : C_AMARILLO.color, font: "700 12.5px/1 var(--sans)", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>Devueltas<span style={{ minWidth: 18, height: 18, padding: "0 5px", borderRadius: 999, background: verDev ? "rgba(255,255,255,.25)" : "rgba(138,90,0,.16)", fontSize: 11, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{devueltas.length}</span></button>}
+        {!verDev && puedePasar && corteFiltro && <div style={{ marginLeft: devueltas.length ? 0 : "auto" }}><Btn small variant="ghost" disabled={ocupado} onClick={() => postergarItems(visibles.filter(x => !esPedidoPlantel(x.s) && !(x.l.quoteIds || []).length), corteSiguiente(corteFiltro))}>Pasar los {visibles.filter(x => !esPedidoPlantel(x.s) && !(x.l.quoteIds || []).length).length} al {etiquetaCorte(corteSiguiente(corteFiltro)).titulo}</Btn></div>}
       </div>}
-      {cortesItems.length > 0 && <div className="gt-vidrio" style={{ padding: isMobile ? "10px 14px" : "10px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        {pillBtn("Todos los cortes", !filtro, () => setCompCorte(""), { n: itemsTodos.length })}
-        {cortesItems.map(([k, c]) => pillBtn(etiquetaCorte(c).titulo, filtro === k, () => setCompCorte(k), { n: itemsTodos.filter(x => idCorte(x) === k).length }))}
-        {puedePasar && corteFiltro && <div style={{ marginLeft: "auto" }}><Btn small variant="ghost" disabled={ocupado} onClick={() => postergarItems(visibles.filter(x => !esPedidoPlantel(x.s) && !(x.l.quoteIds || []).length), corteSiguiente(corteFiltro))}>Pasar los {visibles.filter(x => !esPedidoPlantel(x.s) && !(x.l.quoteIds || []).length).length} al {etiquetaCorte(corteSiguiente(corteFiltro)).titulo}</Btn></div>}
-      </div>}
-      {visibles.length === 0 ? <Vacio>Nada por cotizar.</Vacio> : <>
+      {verDev ? devueltas.map(q => {
+        const quien = q.devueltaPor === "finanzas" ? `Finanzas${q.devolucionesFinanzas?.length ? ` · ${q.devolucionesFinanzas[q.devolucionesFinanzas.length - 1].por}` : ""}` : "Coordinador";
+        const ls = q.lineas || [];
+        return <div key={q.id} className="gt-vidrio" style={{ padding: isMobile ? "16px 16px" : "18px 22px", display: "grid", gap: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ font: "800 17px/1.25 var(--display)", color: CHARCOAL }}>{q.provider || "Sin proveedor"}</div>
+              <div style={{ fontSize: 13, color: "var(--text-3)", marginTop: 4 }}><span style={{ fontFamily: "var(--mono)" }}>{q.folio}</span> · {nombreProy(q.projectCode)}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              {num(q.totalDeclarado) > 0 && <div style={{ font: "800 17px/1 var(--display)", color: CHARCOAL, whiteSpace: "nowrap" }}>{fmtL(q.totalDeclarado)}</div>}
+              {puede && <Btn onClick={() => setModal({ t: "cotizacion", q })}>Corregir</Btn>}
+            </div>
+          </div>
+          <div style={{ padding: "12px 14px", borderRadius: 14, background: C_AMARILLO.bg, color: C_AMARILLO.color }}>
+            <div className="gt-label" style={{ color: C_AMARILLO.color, marginBottom: 6 }}>{quien} la devolvió</div>
+            <div style={{ fontSize: 14.5, lineHeight: 1.45 }}>{q.comentario || "Sin comentario."}</div>
+          </div>
+          {ls.length > 0 && <div style={{ borderRadius: 14, border: "1px solid rgba(44,42,40,.08)", overflow: "hidden" }}>
+            {ls.map((l, i) => <div key={l.requestLineId || i} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto auto", gap: 16, padding: "10px 14px", borderTop: i ? "1px solid rgba(44,42,40,.07)" : "none", alignItems: "baseline", fontSize: 13.5 }}>
+              <span style={{ color: CHARCOAL, minWidth: 0 }}>{l.descripcion || "Ítem"}</span>
+              <span style={{ color: "var(--text-3)", whiteSpace: "nowrap" }}>{num(l.cantidad).toLocaleString("es-HN")} {l.unidad || ""}</span>
+              <span style={{ fontFamily: "var(--mono)", fontWeight: 600, whiteSpace: "nowrap" }}>{num(l.puLps) > 0 ? fmtL(l.puLps) : "—"}</span>
+            </div>)}
+          </div>}
+        </div>;
+      }) : visibles.length === 0 ? <Vacio>Nada por cotizar.</Vacio> : <>
         {barraGrupos("compras", grupos)}
         {grupos.map(g => <Grupo key={g.k} titulo={nombreProy(g.k)} sub={`${g.items.length} ${g.items.length === 1 ? "ítem" : "ítems"}${g.prioridades ? ` · ${g.prioridades} con prioridad !` : ""} · requerido desde ${fmtDiaCorto(g.minFecha)}`} alerta={g.prioridades > 0} abierto={estaAbierto("compras", g.k)} onToggle={() => toggleGrupo("compras", g.k)}
           derecha={puede && <Btn small onClick={() => setModal({ t: "cotizacion", projectCode: g.k })}>Cotizar ({g.items.length})</Btn>}>
