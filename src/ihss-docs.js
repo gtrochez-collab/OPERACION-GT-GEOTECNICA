@@ -56,7 +56,7 @@ const imagenXml = (rid, n, w, h, ancho) => { const cx = Math.round(ancho * EMU),
 
 /**
  * altas: [{dni, nombre, puesto, salario, fecha}] · mes "2026-11" · empresa subterra|geotecnica
- * identidades (opcional): [{nombre, dni, imagenes: [{bytes (JPEG), w, h}]}] — van en hojas aparte, frente y reverso lado a lado.
+ * identidades (opcional): [{nombre, dni, imagenes: [{bytes (JPEG), w, h}]}] — UNA hoja por persona: nombre e identidad arriba, frente y reverso lado a lado.
  */
 export const docxAltasIHSS = async (plantillaBytes, { altas, mes, empresa, identidades = [] }, JSZip) => {
   const zip = await JSZip.loadAsync(plantillaBytes);
@@ -76,13 +76,13 @@ export const docxAltasIHSS = async (plantillaBytes, { altas, mes, empresa, ident
   if (conFoto.length) {
     let rels = await zip.file("word/_rels/document.xml.rels").async("string"), n = 0, cuerpo = "";
     conFoto.forEach((p, i) => {
-      const salto = i % 2 === 0 ? `<w:r><w:br w:type="page"/></w:r>` : "";
-      cuerpo += `<w:p><w:pPr><w:spacing w:before="${i % 2 ? 360 : 0}" w:after="120"/></w:pPr>${salto}<w:r><w:rPr><w:b/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr><w:t xml:space="preserve">${esc(String(p.nombre || "").toUpperCase())}${p.dni ? "  ·  " + esc(p.dni) : ""}</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr>`;
+      const salto = `<w:r><w:br w:type="page"/></w:r>`;   // UNA hoja por persona
+      cuerpo += `<w:p><w:pPr><w:spacing w:before="0" w:after="360"/><w:jc w:val="center"/></w:pPr>${salto}<w:r><w:rPr><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr><w:t xml:space="preserve">${esc(String(p.nombre || "").toUpperCase())}${p.dni ? "  ·  " + esc(p.dni) : ""}</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr>`;
       p.imagenes.forEach((im, j) => {
         n++; const rid = `rIdIdent${n}`;
         zip.file(`word/media/identidad${n}.jpeg`, im.bytes);
         rels = rels.replace("</Relationships>", `<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/identidad${n}.jpeg"/></Relationships>`);
-        cuerpo += (j ? `<w:r><w:t xml:space="preserve">      </w:t></w:r>` : "") + imagenXml(rid, n, im.w, im.h, 4.1);
+        cuerpo += (j ? `<w:r><w:t xml:space="preserve">    </w:t></w:r>` : "") + imagenXml(rid, n, im.w, im.h, 5.2);
       });
       cuerpo += "</w:p>";
     });
