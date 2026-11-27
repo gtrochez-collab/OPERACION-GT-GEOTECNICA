@@ -218,3 +218,20 @@ test("envíos del almacén: lo que la planificación pide mandar hoy/mañana", a
   assert.equal(mp.entradasDel("2026-11-26"), 125);
   assert.equal(mp.entradasDel("2026-11-25"), 0);
 });
+
+test("otras marcas: el material suma el almacén de varios artículos y el envío se reparte", async () => {
+  const { coberturaProyecto, enviosPendientes, itemsDeMaterial } = await import("../src/suministro-calc.js");
+  const items = [
+    { id: "a", nombre: "Cemento HE Argos", tipo: "cantidad", categoria: "materiales", unidad: "Bolsa", stock: { almacen: 45, "proy:VSM": 115 } },
+    { id: "b", nombre: "Cemento Estructural Cenosa", tipo: "cantidad", categoria: "materiales", unidad: "Bolsa", stock: { almacen: 640 } },
+  ];
+  const m = { id: "m1", nombre: "Cemento HE", unidad: "Bolsa", itemId: "a", itemsExtra: ["b"], usoDiario: 240 };
+  assert.deepEqual(itemsDeMaterial(items, m).map(x => x.id), ["a", "b"]);
+  const prog = { projectCode: "VSM", numero: 1, semanas: ["2026-11-23"], materiales: [m], dias: {} };
+  const f = coberturaProyecto({ short: "VSM", prog, items, hoy: "2026-11-27" }).filas[0];
+  assert.equal(f.stock, 115); assert.equal(f.almacen.total, 685);
+  assert.equal(f.dias["2026-11-27"].delAlmacen, 125);      // amanece con 115, ocupa 240
+  assert.equal(f.dias["2026-11-28"].falta, 0);            // el sábado ya alcanza con las 640
+  const env = enviosPendientes({ progs: [prog], items, hoy: "2026-11-27" });
+  assert.deepEqual(env.map(e => [e.itemId, e.fecha, e.cantidad]), [["b", "2026-11-27", 125], ["b", "2026-11-28", 240]]);
+});

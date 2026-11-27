@@ -17,7 +17,7 @@ import { UNIDADES } from "./geocost-calc.js";
 import { conteoAlDia, ultimoDiaConteo, esConsumible, aplicarMovimiento, keyMovimientos, siguientesCodigos } from "./geoinventory-calc.js";
 import {
   KEY_PROGRAMACIONES, KEY_PROG_HIST, KEY_PROYECTOS_ACTIVOS, DIAS_ROJO, DIAS_META, num, sumarDias, lunesDe, diasDeSemana, diaCorto, fechaCorta,
-  semanasDe, cantidadDia, totalSemana, totalMaterial, programacionVigente, siguienteNumero, ponerCantidad, itemDeMaterial, coberturaProyecto, sinAcentos, resumenDias,
+  semanasDe, cantidadDia, totalSemana, totalMaterial, programacionVigente, siguienteNumero, ponerCantidad, itemDeMaterial, itemsDeMaterial, coberturaProyecto, sinAcentos, resumenDias,
   KEY_CIERRES, enviosPendientes, cierreDe, cierresDe, quedoAntesDe, consumoDia, cumplimientoDia, movimientosProyecto, idUbicProyecto, stockEnProyecto,
 } from "./suministro-calc.js";
 import { saldoDePartida, partidasPedibles } from "./geosupply-calc.js";
@@ -130,7 +130,10 @@ export function useSuministro() {
           arr.push(it);
           movsN.push({ id: uid(), at, ...quien, itemId: it.id, codigo, nombre: it.nombre, accion: "crear", a: ub, cantidad: 0, deRegistroDia: true });
         }
-        const mp = movimientosProyecto(movsInv, it.id, reg.projectCode);
+        const otras = (r.itemsExtra || []).map(id => arr.find(i => i.id === id && !i.eliminado)).filter(x => x && x.id !== it.id);
+        const mps = [it, ...otras].map(x => movimientosProyecto(movsInv, x.id, reg.projectCode));
+        const mp = { entradasDel: (f) => mps.reduce((a, q) => a + q.entradasDel(f), 0), netoDespues: (f) => mps.reduce((a, q) => a + q.netoDespues(f), 0), contadoDespues: (f) => mps.some(q => q.contadoDespues(f)) };
+        const enOtras = otras.reduce((a, x) => a + stockEnProyecto(x, reg.projectCode), 0);
         let cur = it;
         const extra = Math.round((num(r.llego) - mp.entradasDel(reg.fecha)) * 100) / 100;
         if (extra > 0) {
@@ -139,7 +142,7 @@ export function useSuministro() {
         }
         if (mp.contadoDespues(reg.fecha)) { avisos.push(`${r.nombre}: alguien contó después del ${reg.fecha}; el inventario no se tocó.`); }
         else {
-          const nuevo = Math.max(0, Math.round((num(r.quedo) + mp.netoDespues(reg.fecha)) * 100) / 100);
+          const nuevo = Math.max(0, Math.round((num(r.quedo) + mp.netoDespues(reg.fecha) - enOtras) * 100) / 100);
           const c = aplicarMovimiento(cur, { accion: "conteo", en: ub, nuevo, motivo: `Registro del día ${reg.fecha}: quedaron ${num(r.quedo)}${r.consumo != null ? ` · se usaron ${r.consumo}` : ""}` }, { ...quien, id: uid(), at });
           if (!c.error) { cur = c.item; movsN.push({ ...c.mov, deRegistroDia: true, fechaRegistro: reg.fecha }); }
         }
@@ -357,6 +360,7 @@ function EditorProgramacion({ prog: inicial, S, user, proyectos, puedeEditar, is
             <tbody>{p.materiales.map(m => <tr key={m.id}>
               <td style={{ ...TD, fontWeight: 700, minWidth: 170, padding: "6px 10px" }}>{editable ? <button type="button" title="Cambiar el nombre o la unidad" onClick={() => renombrarMat(m)} style={{ border: "none", background: "none", padding: 0, font: "inherit", color: "inherit", cursor: "pointer", textAlign: "left" }}>{m.nombre}</button> : m.nombre} <span style={{ color: "#8A847D", fontWeight: 500 }}>({m.unidad})</span>{editable && si === 0 && <button type="button" onClick={() => quitarMat(m.id)} title="Quitar material" style={{ marginLeft: 4, border: "none", background: "none", color: "#B5AFA6", cursor: "pointer", fontSize: 12 }}>✕</button>}
                 <ExistenciaMat f={cob[m.id]} />
+                {si === 0 && <OtrasMarcas m={m} f={cob[m.id]} items={S.items} editable={editable} onCambiar={(ids) => up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, itemsExtra: ids } : y) }))} />}
                 {si === 0 && (editable || num(m.usoDiario) > 0) && <button type="button" disabled={!editable} title="Cuánto se usa en un día de trabajo. Con esto, lo programado son las ENTREGAS y cada día se descuenta este consumo." onClick={() => { const v = prompt(`¿Cuánto ${m.nombre} se usa en un día de trabajo? (${m.unidad}) — vacío para quitarlo`, m.usoDiario || ""); if (v === null) return; const n = num(String(v).replace(",", ".")); up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, usoDiario: n > 0 ? n : 0 } : y) })); }} style={{ display: "block", marginTop: 2, border: "none", background: "none", padding: 0, font: "600 11px/1.3 var(--sans)", color: num(m.usoDiario) > 0 ? CHARCOAL : "#A9A39B", cursor: editable ? "pointer" : "default", textAlign: "left" }}>{num(m.usoDiario) > 0 ? <>Usa <b style={{ fontFamily: "var(--mono)" }}>{fmtN(m.usoDiario)}</b> por día · automático{editable ? " · cambiar" : ""}</> : "+ uso por día"}</button>}
                 {si === 0 && <RecetaChica r={recetaDeMaterial(receta, p.projectCode, m, pendienteDe(m.id))} partidas={partidasRec} editable={editable} valor={m.partidaId || ""} onElegir={(v) => up(x => ({ ...x, materiales: x.materiales.map(y => y.id === m.id ? { ...y, partidaId: v } : y) }))} />}
               </td>
@@ -426,11 +430,13 @@ function RegistroDiaImpl({ prog, S, user, fechaInicial, onClose, isMobile }) {
   const base = useMemo(() => {
     const o = {};
     (prog.materiales || []).forEach(m => {
-      const it = itemDe(m); const mp = it && movs ? movimientosProyecto(movs, it.id, short) : null;
+      const its = itemsDeMaterial(S.items, m), it = its[0] || null;
+      const mps = movs ? its.map(x => movimientosProyecto(movs, x.id, short)) : null;
+      const mp = it && mps ? { entradasDel: (f) => mps.reduce((a, q) => a + q.entradasDel(f), 0), netoDespues: (f) => mps.reduce((a, q) => a + q.netoDespues(f), 0) } : null;
       const yaInv = mp ? mp.entradasDel(fecha) : 0;
       const prev = quedoAntesDe(S.cierres, short, fecha, m.id);
       const conInv = it && (it.stock?.[ub] != null || it.conteos?.[ub]);
-      const antes = prev ? prev.quedo : conInv && mp ? Math.max(0, Math.round((stockEnProyecto(it, short) - mp.netoDespues(fecha) - yaInv) * 100) / 100) : null;
+      const antes = prev ? prev.quedo : conInv && mp ? Math.max(0, Math.round((its.reduce((a, x) => a + stockEnProyecto(x, short), 0) - mp.netoDespues(fecha) - yaInv) * 100) / 100) : null;
       o[m.id] = { it, yaInv, antes, antesDe: prev ? `quedaron el ${diaCorto(prev.fecha).toLowerCase()} ${fechaCorta(prev.fecha)}` : conInv ? "según GeoInventory" : "" };
     });
     return o;
@@ -450,7 +456,7 @@ function RegistroDiaImpl({ prog, S, user, fechaInicial, onClose, isMobile }) {
     (prog.materiales || []).forEach(m => {
       const f = filas[m.id] || {}; if (f.llego === "" && f.quedo === "") return;
       const b = base[m.id] || {};
-      mats[m.id] = { nombre: m.nombre, unidad: m.unidad, itemId: b.it?.id || m.itemId || "", programado: cantidadDia(prog, fecha, m.id), llego: f.llego === "" ? 0 : num(f.llego), quedo: f.quedo === "" ? "" : num(f.quedo), antes: b.antes, consumo: consumoDia({ antes: b.antes, llego: f.llego, quedo: f.quedo }) };
+      mats[m.id] = { nombre: m.nombre, unidad: m.unidad, itemId: b.it?.id || m.itemId || "", itemsExtra: m.itemsExtra || [], programado: cantidadDia(prog, fecha, m.id), llego: f.llego === "" ? 0 : num(f.llego), quedo: f.quedo === "" ? "" : num(f.quedo), antes: b.antes, consumo: consumoDia({ antes: b.antes, llego: f.llego, quedo: f.quedo }) };
     });
     if (!Object.keys(mats).length) { alert("Escribí al menos lo que llegó o lo que quedó de un material."); return; }
     const neg = Object.values(mats).filter(r => r.consumo != null && r.consumo < 0);
@@ -532,6 +538,30 @@ function ExistenciaMat({ f }) {
     {cubreTodo && <div style={{ fontWeight: 700, color: C_VERDE.color }}>El proyecto cubre todo</div>}
     {mandar && <div style={{ fontWeight: 700, color: COB_DIA.almacen.color }}>Mandar del almacén el {diaTxt(mandar)}</div>}
     {comprar && <div style={{ fontWeight: 700, color: "#B03024" }}>Comprar para el {diaTxt(comprar)}</div>}
+  </div>;
+}
+
+// Otras marcas del mismo material (27-nov-2026): "también cuenta" otros
+// artículos del inventario; cada uno con su existencia y una ✕.
+function OtrasMarcas({ m, f, items, editable, onCambiar }) {
+  const [abierto, setAbierto] = useState(false);
+  const ids = m.itemsExtra || [];
+  const principal = f?.item?.id;
+  const extras = (f?.almacenes || []).filter(a => a.item.id !== principal);
+  const candidatos = (items || []).filter(i => i && !i.eliminado && esConsumible(i) && i.id !== principal && !ids.includes(i.id)).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es"));
+  if (!editable && !extras.length) return null;
+  return <div style={{ marginTop: 3, fontSize: 10.5, fontWeight: 500, color: "#6E6862", lineHeight: 1.5 }}>
+    {f?.item && extras.length > 0 && <div style={{ color: "#8A847D" }}>{f.item.nombre} + {extras.length === 1 ? "otra marca" : `${extras.length} marcas más`}</div>}
+    {extras.map(a => <div key={a.item.id} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+      <span>+ {a.item.nombre} · almacén <b style={{ color: CHARCOAL }}>{fmtN(a.total)}</b></span>
+      {editable && <button type="button" title="Que ya no cuente" onClick={() => onCambiar(ids.filter(x => x !== a.item.id))} style={{ border: "none", background: "none", color: "#A9A39B", cursor: "pointer", padding: 0, fontSize: 11 }}>✕</button>}
+    </div>)}
+    {editable && (abierto
+      ? <select autoFocus defaultValue="" onBlur={() => setAbierto(false)} onChange={e => { if (e.target.value) onCambiar([...ids, e.target.value]); setAbierto(false); }} style={{ maxWidth: 170, fontSize: 11, padding: "2px 4px", borderRadius: 6, border: "1px solid rgba(44,42,40,.15)", background: "#fff", color: CHARCOAL, fontFamily: "inherit" }}>
+          <option value="">Artículo del inventario…</option>
+          {candidatos.map(i => <option key={i.id} value={i.id}>{i.nombre}{i.unidad ? ` (${i.unidad})` : ""}</option>)}
+        </select>
+      : <button type="button" onClick={() => setAbierto(true)} title="Sumar otro artículo del inventario (otra marca) a este material" style={{ border: "none", background: "none", padding: 0, color: "#A94E16", fontWeight: 700, fontSize: 10.5, cursor: "pointer", fontFamily: "inherit" }}>+ otra marca</button>)}
   </div>;
 }
 

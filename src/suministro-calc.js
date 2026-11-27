@@ -99,6 +99,18 @@ export const itemDeMaterial = (items, mat) => {
   const cand = vivos.filter(i => { const b = pal(i.nombre); const [chico, grande] = a.length <= b.length ? [a, b] : [b, a]; return chico.length >= 2 && chico.every(w => grande.includes(w)); });
   return cand.length === 1 ? cand[0] : null;
 };
+/**
+ * OTRAS MARCAS (27-nov-2026, Gerson: "entraron 640 bolsas de cemento estructural
+ * de otra marca; ¿cómo se proyecta que ya hay 640 más en el almacén?"): un
+ * material de la programación puede sumar otros artículos del inventario
+ * (`material.itemsExtra: [itemId]`). Proyecto y almacén se cuentan con todos.
+ */
+export const itemsDeMaterial = (items, mat) => {
+  const principal = itemDeMaterial(items, mat);
+  const vivos = (items || []).filter(i => i && !i.eliminado && esConsumible(i));
+  const extras = (mat?.itemsExtra || []).map(id => vivos.find(i => i.id === id)).filter(i => i && i.id !== principal?.id);
+  return principal ? [principal, ...extras] : extras;
+};
 export const stockEnProyecto = (item, short) => num(item?.stock?.[idUbicProyecto(short)]);
 /**
  * Lo que hay en ALMACÉN (todas las ubicaciones que no son proyectos) para este
@@ -224,16 +236,17 @@ export function coberturaProyecto({ short, prog = null, items = [], hoy: hoyReal
   const filas = [];
   const usados = new Set();
   (prog?.materiales || []).forEach(m => {
-    const it = itemDeMaterial(items, m);
-    if (it) usados.add(it.id);
+    const its = itemsDeMaterial(items, m), it = its[0] || null;
+    its.forEach(x => usados.add(x.id));
     const porDia = {}; Object.entries(prog.dias || {}).forEach(([f, d]) => { if (num(d?.[m.id]) > 0) porDia[f] = num(d[m.id]); });
-    const stock = it ? stockEnProyecto(it, short) : 0;
-    const alm = it ? almacenParaProyecto(it, short) : { libre: 0, apartado: 0, comprometidoOtros: 0, total: 0 };
+    const stock = r2(its.reduce((a, x) => a + stockEnProyecto(x, short), 0));
+    const alms = its.map(x => ({ item: x, ...almacenParaProyecto(x, short) }));
+    const alm = alms.reduce((a, x) => ({ libre: r2(a.libre + x.libre), apartado: r2(a.apartado + x.apartado), comprometidoOtros: r2(a.comprometidoOtros + x.comprometidoOtros), total: r2(a.total + x.total) }), { libre: 0, apartado: 0, comprometidoOtros: 0, total: 0 });
     const uso = num(m.usoDiario);
     const diasUso = it && uso > 0 ? estadoConUso({ obra: stock, almacen: alm.total, uso, fechas: semanasDe(prog).flatMap(diasDeSemana), hoy }) : null;
     const obra = diasUso ? coberturaDesdeDias(diasUso, hoy, "obra") : coberturaMaterial({ stock, porDia, hoy });
     const total = diasUso ? coberturaDesdeDias(diasUso, hoy, "total") : coberturaMaterial({ stock: stock + alm.total, porDia, hoy });
-    filas.push({ key: m.id, matId: m.id, nombre: m.nombre || it?.nombre || "", unidad: m.unidad || it?.unidad || "", partidaId: m.partidaId || "", item: it, enInventario: !!it, stock, almacen: alm, conteo: it ? conteoEnProyecto(it, short) : null, programadoTotal: totalMaterial(prog, m.id), porDia,
+    filas.push({ key: m.id, matId: m.id, nombre: m.nombre || it?.nombre || "", unidad: m.unidad || it?.unidad || "", partidaId: m.partidaId || "", item: it, items: its, almacenes: alms, enInventario: !!it, stock, almacen: alm, conteo: it ? conteoEnProyecto(it, short) : null, programadoTotal: totalMaterial(prog, m.id), porDia,
       // Sin artículo en el inventario no se sabe cuánto hay: no se pinta nada (no es "falta").
       usoDiario: uso, obra, dias: diasUso || (it ? estadoPorDia({ obra: stock, almacen: alm.total, porDia, hoy }) : {}), ...total, ...(it ? {} : { semaforo: "sin_dato" }) });
   });
@@ -320,8 +333,16 @@ export const enviosPendientes = ({ progs = [], items = [], cierres = [], hoy, ha
     const prog = programacionVigente(progs, short); if (!prog) return;
     coberturaProyecto({ short, prog, items, hoy, cierres }).filas.forEach(f => {
       if (!f.matId || !f.item) return;
+      // Con varias marcas, lo que hay que mandar se reparte: primero de la que más hay en el almacén.
+      const libres = (f.almacenes || [{ item: f.item, total: f.almacen?.total || 0 }]).map(a => ({ item: a.item, queda: num(a.total) })).sort((a, b) => b.queda - a.queda);
       Object.entries(f.dias || {}).filter(([d, e]) => d <= tope && num(e.delAlmacen) > 0).sort().forEach(([d, e]) => {
-        out.push({ key: `${short}|${f.matId}|${d}`, short, matId: f.matId, material: f.nombre, unidad: f.unidad, itemId: f.item.id, codigo: f.item.codigo, fecha: d, cantidad: num(e.delAlmacen), comprar: num(e.falta) });
+        let falta = num(e.delAlmacen);
+        libres.forEach((a, i) => {
+          const q = i === libres.length - 1 ? falta : Math.min(falta, a.queda);
+          if (!(q > 0)) return;
+          a.queda = r2(a.queda - q); falta = r2(falta - q);
+          out.push({ key: `${short}|${f.matId}|${d}${libres.length > 1 ? "|" + a.item.id : ""}`, short, matId: f.matId, material: libres.length > 1 ? a.item.nombre : f.nombre, unidad: f.unidad, itemId: a.item.id, codigo: a.item.codigo, fecha: d, cantidad: q, comprar: num(e.falta) });
+        });
       });
     });
   });
