@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   semanaSugerida, cierreDeSemana, fueraDeCorte, lunesDe, textoSemana, totalesCaja, siguienteFolio,
-  validarSolicitud, validarGasto, opcionesSemana, totalItems, puedeAprobar, puedeRegistrarGasto, puedeEditarGasto, puedeCerrar, pendientesFinance, permisosFinance,
+  validarSolicitud, validarGasto, opcionesSemana, totalItems, pendienteDeCierre, porCerrarPorPersona, puedeCerrarUsuario, puedeAprobar, puedeRegistrarGasto, puedeEditarGasto, puedeCerrar, pendientesFinance, permisosFinance,
 } from "../src/geofinance-calc.js";
 
 test("semana y corte: se pide a más tardar el jueves para el lunes siguiente", () => {
@@ -88,8 +88,25 @@ test("pendientes por rol y permisos", () => {
   assert.equal(pendientesFinance({ cajas, rol: "costos", username: "christian" }).total, 1);
   assert.equal(pendientesFinance({ cajas, rol: "tesoreria", username: "carolina" }).total, 1);
   const conta = pendientesFinance({ cajas, rol: "contabilidad", username: "liliana" });
-  assert.deepEqual([conta.facturas, conta.cerrar], [1, 1]);
+  assert.deepEqual([conta.facturas, conta.cerrar], [1, 0]);   // Ariel o cualquier otro de Contabilidad valida, no cierra
+  assert.equal(pendientesFinance({ cajas, rol: "contabilidad", username: "liliana.ramos" }).cerrar, 1);
+  assert.deepEqual([puedeCerrarUsuario("liliana.ramos"), puedeCerrarUsuario("ariel.zambrano"), puedeCerrarUsuario("administrador")], [true, false, true]);
   assert.equal(pendientesFinance({ cajas, rol: "residente", username: "allan" }).observados, 1);
   assert.equal(permisosFinance("gerencia").veTodo, false);
   assert.equal(permisosFinance("contabilidad").pide, false);
+});
+
+test("por cerrar: de quién depende cada caja y qué no ha cerrado cada persona", () => {
+  const val = { monto: 100, validacion: { estado: "validada" } };
+  const a = { id: "a", estado: "acreditada", semana: "2026-12-07", monto: 1000, solicitante: { username: "allan", nombre: "Allan" } };
+  const b = { id: "b", estado: "liquidada", semana: "2026-12-14", monto: 500, solicitante: { username: "allan", nombre: "Allan" }, gastos: [val] };
+  const c = { id: "c", estado: "liquidada", semana: "2026-12-14", monto: 800, solicitante: { username: "oscarpaz", nombre: "Oscar" }, gastos: [{ monto: 5, validacion: { estado: "observada" } }] };
+  const d = { id: "d", estado: "cerrada", semana: "2026-12-07", monto: 9, solicitante: { username: "oscarpaz" } };
+  assert.equal(pendienteDeCierre(d, "2026-12-20"), null);
+  assert.deepEqual(pendienteDeCierre(a, "2026-12-10"), { paso: "liquidar", de: "ingeniero", dias: 0, atrasada: false });   // su semana no ha terminado
+  assert.deepEqual(pendienteDeCierre(a, "2026-12-16"), { paso: "liquidar", de: "ingeniero", dias: 4, atrasada: true });    // terminó el sábado 12
+  assert.equal(pendienteDeCierre(b, "2026-12-16").paso, "cerrar");
+  assert.equal(pendienteDeCierre(c, "2026-12-16").paso, "corregir");
+  const g = porCerrarPorPersona([a, b, c, d], "2026-12-16");
+  assert.deepEqual(g.map(x => [x.username, x.cajas.length, x.atrasadas, x.suyas, x.monto]), [["allan", 2, 1, 1, 1500], ["oscarpaz", 1, 0, 1, 800]]);
 });

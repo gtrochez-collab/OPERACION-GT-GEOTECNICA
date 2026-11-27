@@ -46,12 +46,17 @@ export const ROLES_FINANCE = ["admin", "tesoreria", "costos", "contabilidad", "r
 // acreditar, validar y cerrar — para probar y seguir el flujo completo.
 export const SUPER_FINANCE = ["administrador"];
 export const esSuperFinance = (username) => SUPER_FINANCE.includes(username);
+// El CIERRE de la caja lo da Liliana (Contabilidad). Ariel valida facturas
+// pero no cierra. Gerson también puede, para probar.
+export const CIERRAN_FINANCE = ["liliana.ramos"];
+export const puedeCerrarUsuario = (username) => CIERRAN_FINANCE.includes(username) || esSuperFinance(username);
 export const permisosFinance = (rol, username = "") => ({
   pide: ["residente", "coordinador_maquinas", "logistica", "costos", "admin"].includes(rol),
   aprueba: rol === "costos" || rol === "admin",
   acredita: rol === "tesoreria" || esSuperFinance(username),
   valida: rol === "contabilidad" || esSuperFinance(username),
   super: esSuperFinance(username),
+  cierra: puedeCerrarUsuario(username),
   veTodo: ["admin", "tesoreria", "costos", "contabilidad"].includes(rol),
 });
 // Christian aprueba todas menos la suya; la de él la aprueba el administrador.
@@ -164,11 +169,38 @@ export const pendientesFinance = ({ cajas = [], rol, username }) => {
     aprobar: cajas.filter(c => puedeAprobar(rol, username, c)).length,
     acreditar: rol === "tesoreria" ? cajas.filter(c => c.estado === "aprobada").length : 0,
     facturas: rol === "contabilidad" ? cajas.filter(c => VIVAS.has(c.estado) && c.estado !== "cerrada").reduce((s, c) => s + totalesCaja(c).porValidar, 0) : 0,
-    cerrar: rol === "contabilidad" ? cajas.filter(puedeCerrar).length : 0,
+    cerrar: puedeCerrarUsuario(username) ? cajas.filter(puedeCerrar).length : 0,
     observados: mias.filter(c => c.estado !== "cerrada" && VIVAS.has(c.estado)).reduce((s, c) => s + totalesCaja(c).observados, 0),
   };
   r.total = r.aprobar + r.acreditar + r.facturas + r.cerrar + r.observados;
   return r;
+};
+
+// ── POR CERRAR: toda caja ya acreditada que no está cerrada, y de quién depende ──
+export const finDeSemana = (semana) => sumarDias(semana, 5);   // sábado
+export const estaPorCerrar = (c) => c?.estado === "acreditada" || c?.estado === "liquidada";
+/** paso: liquidar | corregir (del ingeniero) · validar | cerrar (de Contabilidad). dias = días desde que terminó su semana. */
+export const pendienteDeCierre = (c, hoy) => {
+  if (!estaPorCerrar(c)) return null;
+  const t = totalesCaja(c);
+  const paso = c.estado === "acreditada" ? "liquidar" : t.observados ? "corregir" : t.porValidar ? "validar" : "cerrar";
+  const fin = finDeSemana(c.semana);
+  const dias = hoy > fin ? Math.round((Date.parse(hoy + "T00:00:00Z") - Date.parse(fin + "T00:00:00Z")) / 86400000) : 0;
+  return { paso, de: paso === "liquidar" || paso === "corregir" ? "ingeniero" : "contabilidad", dias, atrasada: dias > 0 };
+};
+export const TEXTO_PASO = { liquidar: "Falta liquidar", corregir: "Tiene facturas por corregir", validar: "Contabilidad valida facturas", cerrar: "Lista para cerrar" };
+/** Qué cajas no ha cerrado cada persona (las más atrasadas primero). */
+export const porCerrarPorPersona = (cajas = [], hoy) => {
+  const m = new Map();
+  cajas.filter(estaPorCerrar).forEach(c => {
+    const k = c.solicitante?.username || "?";
+    if (!m.has(k)) m.set(k, { username: k, nombre: c.solicitante?.nombre || k, cajas: [], monto: 0, atrasadas: 0, suyas: 0, maxDias: 0 });
+    const g = m.get(k), p = pendienteDeCierre(c, hoy);
+    g.cajas.push({ caja: c, ...p }); g.monto = r2(g.monto + totalesCaja(c).base);
+    if (p.atrasada) g.atrasadas++; if (p.de === "ingeniero") g.suyas++; g.maxDias = Math.max(g.maxDias, p.dias);
+  });
+  return [...m.values()].map(g => ({ ...g, cajas: g.cajas.sort((a, b) => b.dias - a.dias || String(a.caja.semana).localeCompare(String(b.caja.semana))) }))
+    .sort((a, b) => b.maxDias - a.maxDias || b.cajas.length - a.cajas.length || a.nombre.localeCompare(b.nombre, "es"));
 };
 
 export const entradaAudit = (accion, por, extra = {}) => ({ accion, por, at: new Date().toISOString(), ...extra });

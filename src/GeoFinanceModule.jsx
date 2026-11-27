@@ -21,7 +21,7 @@ import { ROLE_LABEL } from "./users.js";
 import {
   KEY_CAJAS, TIPOS_CAJA, ESTADOS_CAJA, PASOS_CAJA, permisosFinance, puedeAprobar, num, r2, semanaSugerida, cierreDeSemana, fueraDeCorte,
   opcionesSemana, textoSemana, gastosVigentes, estadoGasto, totalesCaja, siguienteFolio, validarSolicitud, validarGasto, puedeRegistrarGasto,
-  puedeEditarGasto, puedeLiquidar, puedeCerrar, puedeCancelar, pendientesFinance, entradaAudit, RUBROS_VARIAS, conceptoItem, itemsValidos, totalItems,
+  puedeEditarGasto, puedeLiquidar, puedeCerrar, puedeCancelar, pendientesFinance, entradaAudit, RUBROS_VARIAS, conceptoItem, itemsValidos, totalItems, estaPorCerrar, pendienteDeCierre, porCerrarPorPersona, TEXTO_PASO,
 } from "./geofinance-calc.js";
 
 const C_ROJO = { color: "#B03024", bg: "rgba(192,57,43,.08)" };
@@ -362,7 +362,7 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
   const quitarGasto = (id, g) => actualizar(id, c => { const x = (c.gastos || []).find(y => y.id === g.id); exigir(x && puedeEditarGasto(c, x), "Esa compra ya no se puede quitar."); return { ...c, gastos: c.gastos.map(y => y.id === g.id ? { ...y, anulado: true, anuladoPor: userName, anuladoAt: new Date().toISOString() } : y), audit: conAudit(c, "compra_quitada", { gastoId: g.id, monto: g.monto }) }; });
   const validar = (id, g, estado, nota = "") => actualizar(id, c => { exigir(perm.valida && c.estado !== "cerrada", "Esa caja ya está cerrada."); return { ...c, gastos: (c.gastos || []).map(y => y.id === g.id ? { ...y, validacion: { estado, nota, por: userName, at: new Date().toISOString() } } : y), audit: conAudit(c, estado === "validada" ? "factura_validada" : "factura_observada", { gastoId: g.id, nota }) }; });
   const liquidar = (id, devolucion) => actualizar(id, c => { exigir(c.solicitante?.username === userKey && puedeLiquidar(c), "Esa caja ya no se puede liquidar."); const t = totalesCaja(c); return { ...c, estado: "liquidada", liquidacion: { por: userName, at: new Date().toISOString(), gastado: t.gastado, sobrante: t.sobra, faltante: t.falta, devolucion }, audit: conAudit(c, "liquidada", { gastado: t.gastado, sobrante: t.sobra, faltante: t.falta }) }; });
-  const cerrar = (id) => actualizar(id, c => { exigir(perm.valida && puedeCerrar(c), "Todavía hay facturas sin validar."); return { ...c, estado: "cerrada", cierre: { por: userName, at: new Date().toISOString() }, audit: conAudit(c, "cerrada") }; });
+  const cerrar = (id) => actualizar(id, c => { exigir(perm.cierra && puedeCerrar(c), "Todavía hay facturas sin validar."); return { ...c, estado: "cerrada", cierre: { por: userName, at: new Date().toISOString() }, audit: conAudit(c, "cerrada") }; });
   const cancelar = (id) => actualizar(id, c => { exigir(c.solicitante?.username === userKey && puedeCancelar(c), "Esa caja ya no se puede cancelar."); return { ...c, estado: "cancelada", audit: conAudit(c, "cancelada") }; });
 
   const ver = async (ref) => { try { const f = await bajarArchivo(ref); if (f) setVisor(f); else alert("No se pudo cargar el archivo desde la nube."); } catch { alert("No se pudo cargar el archivo desde la nube."); } };
@@ -391,7 +391,8 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
     perm.pide && { id: "mis", label: "Mis cajas", badge: pend.observados },
     perm.aprueba && (userRole === "costos" || perm.super || pend.aprobar > 0) && { id: "aprobar", label: "Por aprobar", badge: pend.aprobar },
     perm.acredita && { id: "acreditar", label: "Por acreditar", badge: perm.super ? cajas.filter(c => c.estado === "aprobada").length : pend.acreditar },
-    perm.valida && { id: "facturas", label: "Facturas", badge: pend.facturas + pend.cerrar },
+    perm.valida && { id: "facturas", label: "Facturas", badge: pend.facturas },
+    perm.veTodo && { id: "porcerrar", label: "Por cerrar", badge: pend.cerrar },
     perm.veTodo && { id: "todas", label: "Todas las cajas" },
   ].filter(Boolean);
   const secOk = nav.some(x => x.id === sec) ? sec : (nav.find(x => x.badge > 0) || nav[0])?.id;
@@ -425,6 +426,7 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
           {c.fueraDeCorte && <Chip c={C_AMARILLO}>Fuera de tiempo</Chip>}
           {t.porValidar > 0 && perm.valida && <Chip c={C_NARANJA}>{t.porValidar} por validar</Chip>}
           {t.observados > 0 && <Chip c={C_AMARILLO}>{t.observados} observada{t.observados > 1 ? "s" : ""}</Chip>}
+          {(() => { const p = pendienteDeCierre(c, hoyISO()); return p ? <Chip c={p.atrasada ? C_ROJO : C_GRIS} title={TEXTO_PASO[p.paso]}>Por cerrar{p.atrasada ? ` · ${p.dias} d` : ""}</Chip> : null; })()}
           <Chip c={C_ESTADO[c.estado]}>{ESTADOS_CAJA[c.estado].label}</Chip>
         </div>
       </div>}
@@ -448,6 +450,11 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
       <div style={{ fontSize: 13, color: "var(--text-3)" }}>Se piden a más tardar el jueves, para toda la semana siguiente. Toca pedir la del {textoSemana(semanaSugerida(hoyISO())).replace("Semana del ", "")}.</div>
       <Btn onClick={() => setModal({ t: "pedir" })}>+ Pedir caja</Btn>
     </div>
+    {(() => { const ps = mias.map(c => ({ c, p: pendienteDeCierre(c, hoyISO()) })).filter(x => x.p); if (!ps.length) return null; const suyas = ps.filter(x => x.p.de === "ingeniero"), atr = ps.filter(x => x.p.atrasada);
+      return <div className="gt-vidrio" style={{ padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: atr.length ? C_ROJO.bg : undefined }}>
+        <b style={{ font: "800 15px/1.2 var(--display)", color: atr.length ? C_ROJO.color : CHARCOAL }}>{ps.length} {ps.length === 1 ? "caja por cerrar" : "cajas por cerrar"}</b>
+        <span style={{ fontSize: 13, color: "var(--text-3)" }}>{suyas.length ? `${suyas.length} ${suyas.length === 1 ? "depende" : "dependen"} de vos` : "Están con Contabilidad"}{atr.length ? ` · ${atr.length} de una semana que ya terminó` : ""}</span>
+      </div>; })()}
     {lista(mias, "Todavía no has pedido ninguna caja.")}
   </>;
   const renderTodas = () => {
@@ -508,13 +515,45 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <Chip c={C_ESTADO[c.estado]}>{ESTADOS_CAJA[c.estado].label}</Chip>
-            {puedeCerrar(c) && <Btn small onClick={() => { if (confirm(`¿Cerrar la caja ${c.folio}? Todas sus facturas están validadas.`)) cerrar(c.id); }}>Cerrar caja</Btn>}
+            {perm.cierra && puedeCerrar(c) && <Btn small onClick={() => { if (confirm(`¿Cerrar la caja ${c.folio}? Todas sus facturas están validadas.`)) cerrar(c.id); }}>Cerrar caja</Btn>}
             <Btn small variant="ghost" onClick={() => setAbierta(c.id)}>Abrir</Btn>
           </div>
         </div>
         {ps.map((g, i) => filaGasto(c, g, i))}
       </div>;
     });
+  };
+
+  // Qué cajas no ha cerrado cada persona.
+  const renderPorCerrar = () => {
+    const hoy = hoyISO(), gs = porCerrarPorPersona(cajas, hoy);
+    if (!gs.length) return <div className="gt-vidrio" style={{ padding: "34px 20px", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>No hay cajas por cerrar.</div>;
+    const todas = gs.flatMap(g => g.cajas);
+    return <>
+      <div className="gt-vidrio" style={{ padding: isMobile ? "14px 16px" : "16px 22px", display: "grid", gridTemplateColumns: `repeat(${isMobile ? 2 : 4}, minmax(0,1fr))`, gap: 16 }}>
+        {cifra("Cajas por cerrar", todas.length)}{cifra("Personas", gs.length)}{cifra("De semanas ya terminadas", todas.filter(x => x.atrasada).length, todas.some(x => x.atrasada) ? C_ROJO.color : undefined)}{cifra("Listas para cerrar", todas.filter(x => x.paso === "cerrar").length, "#A94E16")}
+      </div>
+      {gs.map(g => <div key={g.username} className="gt-vidrio" style={{ padding: isMobile ? "14px 16px" : "16px 22px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
+          <div style={{ font: "800 16.5px/1.25 var(--display)" }}>{g.nombre}</div>
+          <div style={{ fontSize: 13, color: g.atrasadas ? C_ROJO.color : "var(--text-3)", fontWeight: g.atrasadas ? 700 : 400 }}>{g.cajas.length} sin cerrar · {fmtL(g.monto)}{g.atrasadas ? ` · ${g.atrasadas} atrasada${g.atrasadas > 1 ? "s" : ""}` : ""}</div>
+        </div>
+        {g.cajas.map((x, i) => { const c = x.caja; return <div key={c.id} role="button" tabIndex={0} onClick={() => setAbierta(c.id)} onKeyDown={e => { if (e.key === "Enter") setAbierta(c.id); }}
+          style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) auto" : "minmax(0,1.4fr) minmax(0,1fr) auto auto", gap: 12, alignItems: "center", padding: "11px 0", borderTop: i ? "1px solid rgba(44,42,40,.07)" : "1px solid rgba(44,42,40,.07)", cursor: "pointer" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ font: "600 14px/1.3 var(--sans)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.projectCode} · {TIPOS_CAJA[c.tipo]?.corto}</div>
+            <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 2 }}><span style={{ fontFamily: "var(--mono)" }}>{c.folio}</span> · {textoSemana(c.semana)}</div>
+          </div>
+          {!isMobile && <div style={{ fontSize: 13, color: x.de === "ingeniero" ? CHARCOAL : "var(--text-3)" }}>{TEXTO_PASO[x.paso]}</div>}
+          {!isMobile && <b style={{ fontFamily: "var(--mono)", fontSize: 13.5, whiteSpace: "nowrap" }}>{fmtL(totalesCaja(c).base)}</b>}
+          <div style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" }}>
+            {x.atrasada && <Chip c={C_ROJO}>{x.dias} d</Chip>}
+            {isMobile && <Chip c={x.paso === "cerrar" ? C_NARANJA : C_GRIS}>{TEXTO_PASO[x.paso]}</Chip>}
+            {perm.cierra && x.paso === "cerrar" && <Btn small onClick={(e) => { e.stopPropagation(); if (confirm(`¿Cerrar la caja ${c.folio}? Todas sus facturas están validadas.`)) cerrar(c.id); }}>Cerrar</Btn>}
+          </div>
+        </div>; })}
+      </div>)}
+    </>;
   };
 
   const renderDetalle = (c) => {
@@ -557,7 +596,7 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
           {puedeAprobar(userRole, userKey, c) && <Btn onClick={() => setModal({ t: "decidir", caja: c })}>Aprobar o rechazar</Btn>}
           {perm.acredita && c.estado === "aprobada" && <Btn onClick={() => setModal({ t: "acreditar", caja: c })}>Acreditar</Btn>}
           {esDueno && puedeLiquidar(c) && <Btn variant="dark" onClick={() => setModal({ t: "liquidar", caja: c })}>Liquidar caja</Btn>}
-          {perm.valida && puedeCerrar(c) && <Btn onClick={() => { if (confirm(`¿Cerrar la caja ${c.folio}?`)) cerrar(c.id); }}>Cerrar caja</Btn>}
+          {perm.cierra && puedeCerrar(c) && <Btn onClick={() => { if (confirm(`¿Cerrar la caja ${c.folio}?`)) cerrar(c.id); }}>Cerrar caja</Btn>}
           {c.acreditacion?.comprobante && <Btn variant="ghost" onClick={() => ver(c.acreditacion.comprobante)}>Comprobante de transferencia</Btn>}
           {c.liquidacion?.devolucion?.comprobante && <Btn variant="ghost" onClick={() => ver(c.liquidacion.devolucion.comprobante)}>Comprobante de devolución</Btn>}
           {(gs.length > 0 || c.acreditacion) && <Btn variant="ghost" disabled={ocupado} onClick={() => bajarPdf(c)}>{ocupado ? "Generando…" : "Liquidación PDF"}</Btn>}
@@ -587,6 +626,7 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
     : secOk === "aprobar" ? lista(cajas.filter(c => puedeAprobar(userRole, userKey, c)), "No hay cajas por aprobar.")
     : secOk === "acreditar" ? lista(cajas.filter(c => c.estado === "aprobada"), "No hay cajas por acreditar.")
     : secOk === "facturas" ? renderFacturas()
+    : secOk === "porcerrar" ? renderPorCerrar()
     : renderTodas();
 
   const mc = modal?.caja ? (cajas.find(x => x.id === modal.caja.id) || modal.caja) : null;
