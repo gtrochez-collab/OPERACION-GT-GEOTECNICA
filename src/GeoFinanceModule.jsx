@@ -21,7 +21,7 @@ import { ROLE_LABEL } from "./users.js";
 import {
   KEY_CAJAS, TIPOS_CAJA, ESTADOS_CAJA, PASOS_CAJA, permisosFinance, puedeAprobar, num, r2, semanaSugerida, cierreDeSemana, fueraDeCorte,
   opcionesSemana, textoSemana, gastosVigentes, estadoGasto, totalesCaja, siguienteFolio, validarSolicitud, validarGasto, puedeRegistrarGasto,
-  puedeEditarGasto, puedeLiquidar, puedeCerrar, puedeCancelar, pendientesFinance, entradaAudit,
+  puedeEditarGasto, puedeLiquidar, puedeCerrar, puedeCancelar, pendientesFinance, entradaAudit, RUBROS_VARIAS, conceptoItem, itemsValidos, totalItems,
 } from "./geofinance-calc.js";
 
 const C_ROJO = { color: "#B03024", bg: "rgba(192,57,43,.08)" };
@@ -92,33 +92,81 @@ const Pie = ({ children }) => <div style={{ display: "flex", justifyContent: "fl
 const GRID2 = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 12 };
 const pillS = (activo) => ({ padding: "8px 14px", borderRadius: 999, border: `1px solid ${activo ? "transparent" : "rgba(44,42,40,.12)"}`, background: activo ? CHARCOAL : "#fff", color: activo ? "#fff" : "#5C5853", font: "700 12.5px/1 var(--sans)", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" });
 
-// ── Pedir una caja ──
-const SolicitudForm = ({ proyectos, cajas, userKey, proyectoInicial, onGuardar, onClose }) => {
+// ── Pedir una caja: SIEMPRE desglosada (en qué se va a usar) ──
+const CTRL_IT = { padding: "10px 10px", border: "1px solid rgba(44,42,40,.12)", borderRadius: 11, fontSize: 14, outline: "none", background: "#F4F4F2", color: CHARCOAL, fontFamily: "inherit", width: "100%", boxSizing: "border-box", minWidth: 0 };
+const opcionesEquipos = (equipos) => [["vehiculo", "Vehículos"], ["maquina", "Máquinas"]].map(([t, g]) => ({ group: g, options: equipos.filter(e => e.tipo === t).map(e => ({ value: e.id, label: e.nombre })) })).filter(g => g.options.length);
+const SolicitudForm = ({ proyectos, cajas, equipos, userKey, proyectoInicial, onGuardar, onClose }) => {
   const hoy = hoyISO();
-  const [f, setF] = useState({ tipo: "varias", projectCode: proyectoInicial || "", semana: semanaSugerida(hoy), monto: "", detalle: "" });
+  const vacio = () => ({ id: uid(), rubro: "", equipoId: "", monto: "", nota: "" });
+  const [f, setF] = useState({ tipo: "varias", projectCode: proyectoInicial || "", semana: semanaSugerida(hoy), detalle: "" });
+  const [items, setItems] = useState(() => ({ varias: [vacio()], combustible: [vacio()] }));
   const [err, setErr] = useState([]); const [ocupado, setOcupado] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const comb = f.tipo === "combustible", lista = items[f.tipo];
+  const setLista = (fn) => setItems(p => ({ ...p, [f.tipo]: fn(p[f.tipo]) }));
+  const ui = (id, k, v) => setLista(l => l.map(x => x.id === id ? { ...x, [k]: v } : x));
+  const armados = lista.map(it => { const e = comb ? equipos.find(x => x.id === it.equipoId) : null; return comb ? { id: it.id, equipoId: it.equipoId, equipoTipo: e?.tipo || "", equipoNombre: e?.nombre || "", monto: r2(it.monto), nota: String(it.nota || "").trim() } : { id: it.id, rubro: it.rubro, monto: r2(it.monto), nota: String(it.nota || "").trim() }; });
+  const total = totalItems(armados);
   const tarde = f.semana && fueraDeCorte(f.semana, hoy);
+  const semanas = opcionesSemana(hoy);
   const enviar = async () => {
-    const e = validarSolicitud(f, cajas, userKey); setErr(e); if (e.length) return;
-    setOcupado(true); const ok = await onGuardar({ ...f, monto: r2(f.monto), detalle: f.detalle.trim() }); setOcupado(false); if (ok) onClose();
+    const datos = { ...f, items: armados };
+    const e = validarSolicitud(datos, cajas, userKey); setErr(e); if (e.length) return;
+    const its = itemsValidos(armados);
+    setOcupado(true); const ok = await onGuardar({ ...f, items: its, monto: totalItems(its), detalle: f.detalle.trim() }); setOcupado(false); if (ok) onClose();
   };
   return <Modal title="Pedir caja chica" onClose={onClose} fondoCierra={false}>
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        {Object.values(TIPOS_CAJA).map(t => <button key={t.id} type="button" onClick={() => u("tipo", t.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 14px", borderRadius: 16, border: `1.5px solid ${f.tipo === t.id ? ORANGE : "rgba(44,42,40,.12)"}`, background: f.tipo === t.id ? "rgba(232,118,45,.08)" : "#fff", color: f.tipo === t.id ? "#A94E16" : CHARCOAL, font: "700 14px/1.2 var(--sans)", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}><IconoTipo tipo={t.id} />{t.label}</button>)}
+        {Object.values(TIPOS_CAJA).map(t => <button key={t.id} type="button" onClick={() => { u("tipo", t.id); setErr([]); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 14px", borderRadius: 16, border: `1.5px solid ${f.tipo === t.id ? ORANGE : "rgba(44,42,40,.12)"}`, background: f.tipo === t.id ? "rgba(232,118,45,.08)" : "#fff", color: f.tipo === t.id ? "#A94E16" : CHARCOAL, font: "700 14px/1.2 var(--sans)", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}><IconoTipo tipo={t.id} />{t.label}</button>)}
       </div>
-      <Select label="Proyecto" value={f.projectCode} onChange={e => u("projectCode", e.target.value)} emptyLabel="Elegí el proyecto" options={proyectos.map(p => ({ value: p.short, label: p.short }))} />
       <div style={GRID2}>
-        <Select label="Para la semana" value={f.semana} onChange={e => u("semana", e.target.value)} emptyLabel="—" options={opcionesSemana(hoy).map(s => ({ value: s, label: textoSemana(s).replace("Semana del ", "") }))} />
-        <Input label="Monto (L)" type="number" inputMode="decimal" min="0" step="0.01" value={f.monto} onChange={e => u("monto", e.target.value)} placeholder="0.00" />
+        <Select label="Proyecto" value={f.projectCode} onChange={e => u("projectCode", e.target.value)} emptyLabel="Elegí el proyecto" options={proyectos.map(p => ({ value: p.short, label: p.short }))} />
+        {semanas.length > 1
+          ? <Select label="Para la semana completa" value={f.semana} onChange={e => u("semana", e.target.value)} emptyLabel="—" options={semanas.map(x => ({ value: x, label: textoSemana(x).replace("Semana del ", "") }))} />
+          : <div style={{ display: "flex", flexDirection: "column", gap: 5 }}><label style={{ fontSize: 11, fontWeight: 700, color: "#6E6862", letterSpacing: ".02em" }}>Para la semana completa</label><div style={{ ...CTRL_IT, fontWeight: 600 }}>{textoSemana(f.semana).replace("Semana del ", "")}</div></div>}
       </div>
-      <Textarea label={f.tipo === "combustible" ? "Para qué vehículos o equipos" : "Para qué es"} value={f.detalle} onChange={e => u("detalle", e.target.value)} placeholder={f.tipo === "combustible" ? "Ej. diésel de la BG-20 y el pick-up" : "Ej. ferretería menor, agua, copias"} />
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#6E6862", letterSpacing: ".02em" }}>{comb ? "Para qué vehículos y máquinas" : "En qué se va a usar"}</label>
+          <span style={{ fontSize: 12, color: "#8A847D" }}>{comb ? "Un renglón por vehículo o máquina" : "Un renglón por rubro"}</span>
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {lista.map((it, i) => <div key={it.id} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.5fr) minmax(0,.8fr) auto", gap: 8, alignItems: "center", padding: "8px", borderRadius: 14, background: "rgba(44,42,40,.035)" }}>
+            {comb
+              ? <select value={it.equipoId} onChange={e => ui(it.id, "equipoId", e.target.value)} style={CTRL_IT} aria-label={`Vehículo o máquina ${i + 1}`}><option value="">Vehículo o máquina</option>{opcionesEquipos(equipos).map(g => <optgroup key={g.group} label={g.group}>{g.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</optgroup>)}</select>
+              : <select value={it.rubro} onChange={e => ui(it.id, "rubro", e.target.value)} style={CTRL_IT} aria-label={`Rubro ${i + 1}`}><option value="">Rubro</option>{RUBROS_VARIAS.map(r => <option key={r} value={r}>{r}</option>)}</select>}
+            <input type="number" inputMode="decimal" min="0" step="0.01" value={it.monto} onChange={e => ui(it.id, "monto", e.target.value)} placeholder="Monto L" style={{ ...CTRL_IT, textAlign: "right" }} aria-label={`Monto ${i + 1}`} />
+            <button type="button" onClick={() => setLista(l => l.length > 1 ? l.filter(x => x.id !== it.id) : [vacio()])} aria-label={`Quitar renglón ${i + 1}`} style={{ width: 32, height: 32, borderRadius: "50%", border: "none", background: "rgba(44,42,40,.06)", color: "#6E6862", cursor: "pointer", fontSize: 13 }}>✕</button>
+            <input value={it.nota} onChange={e => ui(it.id, "nota", e.target.value)} placeholder={comb ? "Nota (opcional)" : it.rubro === "Otro" ? "Qué es" : "Detalle (opcional)"} style={{ ...CTRL_IT, gridColumn: "1 / -1", background: "#fff", fontSize: 13.5 }} aria-label={`Nota ${i + 1}`} />
+          </div>)}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, gap: 12 }}>
+          <Btn small variant="ghost" onClick={() => setLista(l => [...l, vacio()])}>+ Agregar renglón</Btn>
+          <div style={{ textAlign: "right" }}><span style={{ fontSize: 12, color: "#8A847D", marginRight: 8 }}>Total de la caja</span><b style={{ font: "800 19px/1 var(--display)", color: CHARCOAL }}>{fmtL(total)}</b></div>
+        </div>
+      </div>
+      <Textarea label="Notas generales" value={f.detalle} onChange={e => u("detalle", e.target.value)} placeholder="Opcional" style={{ minHeight: 48 }} />
       {tarde && <div style={{ padding: "10px 12px", borderRadius: 12, background: C_AMARILLO.bg, color: C_AMARILLO.color, fontSize: 13 }}>Las cajas de esa semana se pedían a más tardar el {fechaCorta(cierreDeSemana(f.semana))}. Se envía igual, marcada como fuera de tiempo.</div>}
       <Errores lista={err} />
-      <Pie><Btn variant="ghost" onClick={onClose}>Cancelar</Btn><Btn onClick={enviar} disabled={ocupado}>{ocupado ? "Enviando…" : "Enviar solicitud"}</Btn></Pie>
+      <Pie><Btn variant="ghost" onClick={onClose}>Cancelar</Btn><Btn onClick={enviar} disabled={ocupado}>{ocupado ? "Enviando…" : `Enviar solicitud · ${fmtL(total)}`}</Btn></Pie>
     </div>
   </Modal>;
+};
+
+// El desglose de la caja: en qué se va a usar cada lempira.
+const Desglose = ({ caja }) => {
+  const its = itemsValidos(caja.items);
+  if (!its.length) return caja.detalle ? <div style={{ fontSize: 14, color: "#5C5853", lineHeight: 1.5 }}>{caja.detalle}</div> : null;
+  return <div>
+    <div style={{ borderRadius: 14, border: "1px solid rgba(44,42,40,.08)", overflow: "hidden", background: "rgba(255,255,255,.6)" }}>
+      {its.map((it, i) => <div key={it.id || i} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "9px 14px", borderTop: i ? "1px solid rgba(44,42,40,.07)" : "none", alignItems: "baseline" }}>
+        <div style={{ minWidth: 0 }}><span style={{ font: "600 14px/1.3 var(--sans)", color: CHARCOAL }}>{conceptoItem(it)}</span>{it.equipoTipo === "maquina" && <span style={{ fontSize: 11.5, color: "#8A847D", marginLeft: 8 }}>máquina</span>}{it.nota && <div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 2 }}>{it.nota}</div>}</div>
+        <b style={{ font: "700 14px/1.3 var(--mono)", color: CHARCOAL, whiteSpace: "nowrap" }}>{fmtL(it.monto)}</b>
+      </div>)}
+    </div>
+    {caja.detalle && <div style={{ fontSize: 13, color: "#6E6862", lineHeight: 1.5, marginTop: 8 }}>{caja.detalle}</div>}
+  </div>;
 };
 
 // ── Aprobar / rechazar (Christian) ──
@@ -131,7 +179,8 @@ const DecisionForm = ({ caja, onAprobar, onRechazar, onClose }) => {
   };
   return <Modal title={`${caja.folio} · ${TIPOS_CAJA[caja.tipo].label}`} onClose={onClose}>
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ fontSize: 13.5, color: "#5C5853", lineHeight: 1.5 }}><b style={{ color: CHARCOAL }}>{caja.solicitante?.nombre}</b> pide <b style={{ color: CHARCOAL }}>{fmtL(caja.monto)}</b> para {caja.projectCode}. {caja.detalle}</div>
+      <div style={{ fontSize: 13.5, color: "#5C5853", lineHeight: 1.5 }}><b style={{ color: CHARCOAL }}>{caja.solicitante?.nombre}</b> pide <b style={{ color: CHARCOAL }}>{fmtL(caja.monto)}</b> para {caja.projectCode}, {textoSemana(caja.semana).toLowerCase()}.</div>
+      <Desglose caja={caja} />
       <div style={{ display: "flex", gap: 8 }}>{[["aprobar", "Aprobar"], ["rechazar", "Rechazar"]].map(([id, l]) => <button key={id} type="button" style={pillS(modo === id)} onClick={() => { setModo(id); setErr([]); }}>{l}</button>)}</div>
       {modo === "aprobar" && <Input label="Monto aprobado (L)" type="number" inputMode="decimal" value={monto} onChange={e => setMonto(e.target.value)} />}
       <Textarea label={modo === "aprobar" ? "Comentario (opcional)" : "Motivo"} value={nota} onChange={e => setNota(e.target.value)} />
@@ -164,14 +213,14 @@ const AcreditarForm = ({ caja, onGuardar, onVer, onClose }) => {
 };
 
 // ── Registrar una compra en la cajita ──
-const GastoForm = ({ caja, gasto, vehiculos, onGuardar, onVer, onClose }) => {
+const GastoForm = ({ caja, gasto, equipos, onGuardar, onVer, onClose }) => {
   const esComb = caja.tipo === "combustible";
-  const [f, setF] = useState(() => gasto ? { ...gasto, monto: String(gasto.monto), galones: gasto.galones ? String(gasto.galones) : "", km: gasto.km ? String(gasto.km) : "" } : { fecha: hoyISO(), proveedor: "", descripcion: esComb ? "Diésel" : "", numFactura: "", monto: "", factura: null, vehicleId: "", galones: "", km: "" });
+  const [f, setF] = useState(() => gasto ? { ...gasto, monto: String(gasto.monto), galones: gasto.galones ? String(gasto.galones) : "", km: gasto.km ? String(gasto.km) : "" } : { fecha: hoyISO(), proveedor: "", descripcion: esComb ? "Diésel" : "", rubro: "", numFactura: "", monto: "", factura: null, vehicleId: (esComb && itemsValidos(caja.items).length === 1 && itemsValidos(caja.items)[0].equipoId) || "", galones: "", km: "" });
   const [err, setErr] = useState([]); const [ocupado, setOcupado] = useState(false);
   const u = (k, v) => setF(p => ({ ...p, [k]: v }));
   const ir = async () => {
-    const veh = vehiculos.find(v => v.id === f.vehicleId);
-    const g = { ...f, proveedor: f.proveedor.trim(), descripcion: f.descripcion.trim(), numFactura: String(f.numFactura || "").trim(), monto: r2(f.monto), galones: esComb ? r2(f.galones) : 0, km: esComb ? num(f.km) : 0, vehicleId: esComb ? f.vehicleId : "", placa: esComb ? (veh?.plate || "") : "" };
+    const veh = equipos.find(v => v.id === f.vehicleId);
+    const g = { ...f, proveedor: f.proveedor.trim(), descripcion: f.descripcion.trim(), numFactura: String(f.numFactura || "").trim(), monto: r2(f.monto), galones: esComb ? r2(f.galones) : 0, km: esComb ? num(f.km) : 0, vehicleId: esComb ? f.vehicleId : "", placa: esComb ? (veh?.corto || "") : "", equipoTipo: esComb ? (veh?.tipo || "") : "" };
     const e = validarGasto(g); setErr(e); if (e.length) return;
     setOcupado(true); const ok = await onGuardar(g); setOcupado(false); if (ok) onClose();
   };
@@ -189,7 +238,7 @@ const GastoForm = ({ caja, gasto, vehiculos, onGuardar, onVer, onClose }) => {
       </div>
       <Input label={esComb ? "Qué se cargó" : "Qué se compró"} value={f.descripcion} onChange={e => u("descripcion", e.target.value)} />
       {esComb && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 130px), 1fr))", gap: 12 }}>
-        <Select label="Vehículo o equipo" value={f.vehicleId} onChange={e => u("vehicleId", e.target.value)} emptyLabel="Otro / no aplica" options={vehiculos.map(v => ({ value: v.id, label: [v.plate, v.brand, v.model].filter(Boolean).join(" · ") }))} />
+        <Select label="Vehículo o máquina" value={f.vehicleId} onChange={e => u("vehicleId", e.target.value)} emptyLabel="Otro / no aplica" options={opcionesEquipos(equipos)} />
         <Input label="Galones" hint="opcional" type="number" inputMode="decimal" value={f.galones} onChange={e => u("galones", e.target.value)} />
         <Input label="Kilometraje" hint="opcional" type="number" inputMode="numeric" value={f.km} onChange={e => u("km", e.target.value)} />
       </div>}
@@ -248,9 +297,12 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
 
   const cargar = async (todo) => {
     try {
-      const [c, p, v] = await Promise.all([store.getCloud(KEY_CAJAS), todo ? store.getCloud("cp-projects").catch(() => null) : null, todo ? store.getCloud("lg-vehicles").catch(() => null) : null]);
+      const [c, p, v, mq] = await Promise.all([store.getCloud(KEY_CAJAS), todo ? store.getCloud("cp-projects").catch(() => null) : null, todo ? store.getCloud("lg-vehicles").catch(() => null) : null, todo ? store.getCloud("mq-machines").catch(() => null) : null]);
       if (Date.now() - mutRef.current > 8000) _setCajas(Array.isArray(c) ? c : []);
-      if (todo) { setCustom(Array.isArray(p) ? p : []); setVehiculos(Array.isArray(v) ? v.filter(x => x && x.plate) : []); }
+      if (todo) { setCustom(Array.isArray(p) ? p : []); setVehiculos([
+        ...(Array.isArray(v) ? v : []).filter(x => x && x.plate).map(x => ({ id: x.id, tipo: "vehiculo", corto: x.plate, nombre: [x.plate, x.brand, x.model].filter(Boolean).join(" · ") })),
+        ...(Array.isArray(mq) ? mq : []).filter(x => x && x.nombre && !x.eliminado).map(x => ({ id: x.id, tipo: "maquina", corto: x.nombre, nombre: x.nombre })).sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { numeric: true })),
+      ]); }
     } catch { _setCajas(prev => prev || []); }
   };
   useEffect(() => {
@@ -292,7 +344,7 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
   const crearCaja = (f) => escribir((base) => {
     const e = validarSolicitud(f, base, userKey); exigir(!e.length, e[0]);
     const ahora = new Date().toISOString(), hoy = hoyISO();
-    const caja = { id: uid(), folio: siguienteFolio(base, hoy.slice(0, 4)), tipo: f.tipo, projectCode: f.projectCode, semana: f.semana, fueraDeCorte: fueraDeCorte(f.semana, hoy), monto: f.monto, detalle: f.detalle, solicitante: quien, estado: "solicitada", gastos: [], audit: [entradaAudit("solicitada", userName)], createdAt: ahora, updatedAt: ahora };
+    const caja = { id: uid(), folio: siguienteFolio(base, hoy.slice(0, 4)), tipo: f.tipo, projectCode: f.projectCode, semana: f.semana, fueraDeCorte: fueraDeCorte(f.semana, hoy), monto: f.monto, items: f.items, detalle: f.detalle, solicitante: quien, estado: "solicitada", gastos: [], audit: [entradaAudit("solicitada", userName)], createdAt: ahora, updatedAt: ahora };
     try { localStorage.setItem(`gt-fn-proy-${userKey}`, f.projectCode); } catch { /* preferencia */ }
     return { lista: [...base, caja], caja };
   });
@@ -393,7 +445,7 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
 
   const renderMis = () => <>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-      <div style={{ fontSize: 13, color: "var(--text-3)" }}>Se piden a más tardar el jueves para la semana siguiente.</div>
+      <div style={{ fontSize: 13, color: "var(--text-3)" }}>Se piden a más tardar el jueves, para toda la semana siguiente. Toca pedir la del {textoSemana(semanaSugerida(hoyISO())).replace("Semana del ", "")}.</div>
       <Btn onClick={() => setModal({ t: "pedir" })}>+ Pedir caja</Btn>
     </div>
     {lista(mias, "Todavía no has pedido ninguna caja.")}
@@ -402,7 +454,7 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
     const ABIERTAS = ["solicitada", "aprobada", "acreditada", "liquidada"];
     const q = filtro.q.trim().toLowerCase();
     const cs = visibles.filter(c => (filtro.estado === "abiertas" ? ABIERTAS.includes(c.estado) : filtro.estado === "todas" ? true : c.estado === filtro.estado) && (!filtro.tipo || c.tipo === filtro.tipo)
-      && (!q || [c.folio, c.projectCode, c.solicitante?.nombre, c.detalle].some(x => String(x || "").toLowerCase().includes(q))));
+      && (!q || [c.folio, c.projectCode, c.solicitante?.nombre, c.detalle, ...(c.items || []).map(conceptoItem)].some(x => String(x || "").toLowerCase().includes(q))));
     const ab = visibles.filter(c => ABIERTAS.includes(c.estado));
     const tot = ab.reduce((s, c) => { const t = totalesCaja(c); return { base: s.base + t.base, gastado: s.gastado + t.gastado, porValidar: s.porValidar + t.porValidar }; }, { base: 0, gastado: 0, porValidar: 0 });
     return <>
@@ -489,7 +541,7 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
             <div style={{ fontSize: isMobile ? 10 : 11.5, fontWeight: i === paso ? 800 : 600, color: i <= paso ? CHARCOAL : "#A39C92", marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>
           </div>)}
         </div>}
-        <div style={{ fontSize: 14, color: "#5C5853", lineHeight: 1.5 }}>{c.detalle}</div>
+        <Desglose caja={c} />
         <div style={{ display: "grid", gridTemplateColumns: `repeat(${isMobile ? 2 : 4}, minmax(0,1fr))`, gap: 16 }}>
           {cifra("Pedido", fmtL(t.pedido))}
           {cifra(c.acreditacion ? "Acreditado" : "Aprobado", c.acreditacion ? fmtL(t.acreditado) : c.aprobacion ? fmtL(t.aprobado) : "—", c.acreditacion ? C_VERDE.color : undefined)}
@@ -574,10 +626,10 @@ export default function GeoFinanceModule({ userRole, userName, userKey, onBack, 
         {cuerpo}
       </div>
     </div>
-    {modal?.t === "pedir" && <SolicitudForm proyectos={proyectos} cajas={cajas} userKey={userKey} proyectoInicial={(() => { let p = ""; try { p = localStorage.getItem(`gt-fn-proy-${userKey}`) || ""; } catch { /* sin preferencia */ } if (!p && userRole === "logistica") p = "PLAN-TALLER"; return proyectos.some(x => x.short === p) ? p : ""; })()} onGuardar={async (f) => { const c = await crearCaja(f); if (c) setAbierta(c.id); return !!c; }} onClose={() => setModal(null)} />}
+    {modal?.t === "pedir" && <SolicitudForm proyectos={proyectos} cajas={cajas} equipos={vehiculos} userKey={userKey} proyectoInicial={(() => { let p = ""; try { p = localStorage.getItem(`gt-fn-proy-${userKey}`) || ""; } catch { /* sin preferencia */ } if (!p && userRole === "logistica") p = "PLAN-TALLER"; return proyectos.some(x => x.short === p) ? p : ""; })()} onGuardar={async (f) => { const c = await crearCaja(f); if (c) setAbierta(c.id); return !!c; }} onClose={() => setModal(null)} />}
     {modal?.t === "decidir" && mc && <DecisionForm caja={mc} onAprobar={(m, n) => aprobar(mc.id, m, n)} onRechazar={(n) => rechazar(mc.id, n)} onClose={() => setModal(null)} />}
     {modal?.t === "acreditar" && mc && <AcreditarForm caja={mc} onGuardar={(d) => acreditar(mc.id, d)} onVer={ver} onClose={() => setModal(null)} />}
-    {modal?.t === "gasto" && mc && <GastoForm caja={mc} gasto={modal.gasto} vehiculos={vehiculos} onGuardar={(g) => guardarGasto(mc.id, g)} onVer={ver} onClose={() => setModal(null)} />}
+    {modal?.t === "gasto" && mc && <GastoForm caja={mc} gasto={modal.gasto} equipos={vehiculos} onGuardar={(g) => guardarGasto(mc.id, g)} onVer={ver} onClose={() => setModal(null)} />}
     {modal?.t === "liquidar" && mc && <LiquidarForm caja={mc} onGuardar={(d) => liquidar(mc.id, d)} onVer={ver} onClose={() => setModal(null)} />}
     {visor && <VisorArchivo archivo={visor} onClose={() => setVisor(null)} />}
   </div>;

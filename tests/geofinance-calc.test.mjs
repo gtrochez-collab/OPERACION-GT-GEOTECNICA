@@ -2,12 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   semanaSugerida, cierreDeSemana, fueraDeCorte, lunesDe, textoSemana, totalesCaja, siguienteFolio,
-  validarSolicitud, validarGasto, puedeAprobar, puedeRegistrarGasto, puedeEditarGasto, puedeCerrar, pendientesFinance, permisosFinance,
+  validarSolicitud, validarGasto, opcionesSemana, totalItems, puedeAprobar, puedeRegistrarGasto, puedeEditarGasto, puedeCerrar, pendientesFinance, permisosFinance,
 } from "../src/geofinance-calc.js";
 
 test("semana y corte: se pide a más tardar el jueves para el lunes siguiente", () => {
   assert.equal(lunesDe("2026-11-27"), "2026-11-23");            // viernes 27 → lunes 23
-  assert.equal(semanaSugerida("2026-11-26"), "2026-11-30");      // jueves → lunes 30
+  assert.equal(semanaSugerida("2026-11-27"), "2026-12-07");      // arranque: la primera semana es la del 7 dic
+  assert.equal(semanaSugerida("2026-12-03"), "2026-12-07");      // jueves 3 → lunes 7
+  assert.equal(semanaSugerida("2026-12-10"), "2026-12-14");
+  assert.deepEqual(opcionesSemana("2026-11-27"), ["2026-12-07"]);
+  assert.deepEqual(opcionesSemana("2026-12-03"), ["2026-12-07", "2026-12-14"]);
   assert.equal(cierreDeSemana("2026-11-30"), "2026-11-26");
   assert.equal(fueraDeCorte("2026-11-30", "2026-11-26"), false); // el jueves todavía entra
   assert.equal(fueraDeCorte("2026-11-30", "2026-11-27"), true);  // el viernes ya no
@@ -31,9 +35,13 @@ test("folio correlativo por año", () => {
 });
 
 test("solicitud: campos y sin duplicar la misma caja de la semana", () => {
-  const f = { tipo: "combustible", projectCode: "PLAN-TALLER", semana: "2026-11-30", monto: 6000, detalle: "Combustible de la flota" };
+  const f = { tipo: "combustible", projectCode: "PLAN-TALLER", semana: "2026-11-30", items: [{ equipoNombre: "HDA5248 · MACK", monto: 4000 }, { equipoNombre: "BG20H", monto: 2000 }] };
   assert.deepEqual(validarSolicitud(f, [], "oscarpaz"), []);
-  assert.equal(validarSolicitud({ ...f, monto: 0 }, [], "oscarpaz").length, 1);
+  assert.equal(totalItems(f.items), 6000);
+  assert.equal(validarSolicitud({ ...f, items: [] }, [], "oscarpaz").length, 1);                                    // no se pide "en bulto"
+  assert.equal(validarSolicitud({ ...f, items: [...f.items, { equipoNombre: "BG11A", monto: 0 }] }, [], "oscarpaz").length, 1);
+  assert.equal(validarSolicitud({ ...f, tipo: "varias", items: [{ rubro: "Otro", monto: 500 }] }, [], "oscarpaz").length, 1);
+  assert.deepEqual(validarSolicitud({ ...f, tipo: "varias", items: [{ rubro: "Otro", monto: 500, nota: "Candados" }, { rubro: "", monto: "" }] }, [], "oscarpaz"), []);
   const ya = [{ id: "a", estado: "aprobada", tipo: "combustible", projectCode: "PLAN-TALLER", semana: "2026-11-30", solicitante: { username: "oscarpaz" } }];
   assert.equal(validarSolicitud(f, ya, "oscarpaz").length, 1);
   assert.deepEqual(validarSolicitud({ ...f, tipo: "varias" }, ya, "oscarpaz"), []);   // la de varias es OTRA caja

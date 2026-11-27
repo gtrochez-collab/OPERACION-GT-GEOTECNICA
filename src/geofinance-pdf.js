@@ -32,7 +32,7 @@ export async function pdfLiquidacionCaja({ caja, proyecto, bajar }) {
   dato("Liquidó", caja.liquidacion ? `${caja.liquidacion.por} · ${fechaC(caja.liquidacion.at)}` : "—", M + col * 2, y);
   y += 12;
   doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...T.texto2);
-  const det = doc.splitTextToSize(latin1(`Para: ${caja.detalle || ""}`), W - M * 2); doc.text(det, M, y); y += det.length * 4.2 + 3;
+  const det = doc.splitTextToSize(latin1(`Para: ${[(caja.items || []).filter(it => (it.equipoNombre || it.rubro) && it.monto > 0).map(it => `${it.equipoNombre || it.rubro}${it.nota ? ` (${it.nota})` : ""} ${fmtLps(it.monto)}`).join("  ·  "), caja.detalle].filter(Boolean).join("  ·  ")}`), W - M * 2); doc.text(det, M, y); y += det.length * 4.2 + 3;
 
   const kw = (W - M * 2 - 9) / 4;
   pdfKpi(doc, M, y, kw, 16, "Acreditado", fmtLps(t.acreditado || t.aprobado || t.pedido));

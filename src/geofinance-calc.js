@@ -66,12 +66,22 @@ const aUTC = (ymd) => new Date(ymd + "T00:00:00Z");
 const deUTC = (d) => d.toISOString().slice(0, 10);
 export const sumarDias = (ymd, n) => { const d = aUTC(ymd); d.setUTCDate(d.getUTCDate() + n); return deUTC(d); };
 export const lunesDe = (ymd) => { const d = aUTC(ymd); return sumarDias(ymd, -((d.getUTCDay() + 6) % 7)); };
-/** La caja que se pide hoy es para la semana que ARRANCA el lunes siguiente. */
-export const semanaSugerida = (hoy) => sumarDias(lunesDe(hoy), 7);
+// La primera semana que se pide en el sistema es la del 7 al 12 de diciembre
+// de 2026 (se pide el jueves 3). Antes de eso no se ofrece ninguna.
+export const PRIMERA_SEMANA = "2026-12-07";
+/** La caja que se pide hoy es para la semana COMPLETA que arranca el lunes siguiente. */
+export const semanaSugerida = (hoy) => { const s = sumarDias(lunesDe(hoy), 7); return s < PRIMERA_SEMANA ? PRIMERA_SEMANA : s; };
 /** Se pide a más tardar el JUEVES anterior al lunes de la semana. */
 export const cierreDeSemana = (semana) => sumarDias(semana, -4);
 export const fueraDeCorte = (semana, hoy) => hoy > cierreDeSemana(semana);
-export const opcionesSemana = (hoy) => { const l = lunesDe(hoy); return [l, sumarDias(l, 7), sumarDias(l, 14)]; };
+export const opcionesSemana = (hoy) => { const l = lunesDe(hoy); const o = [l, sumarDias(l, 7), sumarDias(l, 14)].filter(x => x >= PRIMERA_SEMANA); return o.length ? o : [PRIMERA_SEMANA]; };
+
+// ── Desglose: la caja no se pide "en bulto", cada renglón dice en qué se va a usar ──
+// Varias: rubro + monto. Combustible: vehículo o máquina + monto.
+export const RUBROS_VARIAS = ["Ferretería y herramienta menor", "Materiales menores", "Repuestos y mantenimiento menor", "Alimentación y agua", "Transporte, fletes y encomiendas", "Peajes y parqueo", "Papelería, copias e impresiones", "Servicios (soldadura, torno, llantera)", "Limpieza y aseo", "Imprevistos", "Otro"];
+export const conceptoItem = (it) => String(it?.equipoNombre || it?.rubro || "").trim();
+export const itemsValidos = (items) => (items || []).filter(it => conceptoItem(it) && num(it.monto) > 0);
+export const totalItems = (items) => r2(itemsValidos(items).reduce((s, it) => s + num(it.monto), 0));
 const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const dm = (ymd) => { const d = aUTC(ymd); return `${d.getUTCDate()} ${MESES[d.getUTCMonth()]}`; };
 export const textoSemana = (semana) => semana ? `Semana del ${dm(semana)} al ${dm(sumarDias(semana, 5))}` : "Sin semana";
@@ -113,8 +123,10 @@ export const validarSolicitud = (f, cajas = [], username = "", editandoId = null
   if (!TIPOS_CAJA[f?.tipo]) e.push("Elegí si es de compras varias o de combustible.");
   if (!String(f?.projectCode || "").trim()) e.push("Elegí el proyecto.");
   if (!f?.semana) e.push("Elegí la semana.");
-  if (!(num(f?.monto) > 0)) e.push("Poné el monto que necesitás.");
-  if (String(f?.detalle || "").trim().length < 5) e.push("Escribí para qué es la caja.");
+  const comb = f?.tipo === "combustible", its = f?.items || [];
+  if (!itemsValidos(its).length) e.push(comb ? "Agregá al menos un vehículo o máquina con su monto." : "Agregá al menos un rubro con su monto.");
+  else if (its.some(it => (conceptoItem(it) || num(it.monto) > 0 || String(it.nota || "").trim()) && !(conceptoItem(it) && num(it.monto) > 0))) e.push(comb ? "Cada renglón lleva el vehículo o máquina y su monto." : "Cada renglón lleva el rubro y su monto.");
+  else if (its.some(it => it.rubro === "Otro" && String(it.nota || "").trim().length < 3)) e.push("En el rubro Otro escribí qué es.");
   if (!e.length && cajas.some(c => c.id !== editandoId && VIVAS.has(c.estado) && c.solicitante?.username === username && c.projectCode === f.projectCode && c.tipo === f.tipo && c.semana === f.semana))
     e.push(`Ya pediste una caja de ${TIPOS_CAJA[f.tipo].label.toLowerCase()} para ese proyecto en esa semana.`);
   return e;
