@@ -27,6 +27,7 @@ import { FichasJornales, AsistenciaCampo, AsistenciaJornales, EMPRESA_JORNALES, 
 import { ContratistasSV, estimacionPDF, estimacionExcel } from "./contratistas.jsx";
 import { KEY_CONTRATISTAS, keyAsistContrat, estimacionQuincena } from "./contratistas-calc.js";
 import { proyectosDeResponsable } from "./jornales-calc.js";
+import { SeguroSocialImpl } from "./ihss.jsx";
 import { PortalRRHH, BandejaRRHH, SolicitudFormImpl, SolicitudDetalleImpl, ModalHub, ICO as ICO_HUB, GenerarConstanciaImpl, pdfDeRegistroConstancia } from "./rrhh-hub.jsx";
 
 // ── GeoInventory → GeoTeam (13-oct-2026): "Equipo asignado" ────────────────
@@ -997,6 +998,7 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
   const [ctFiltro, setCtFiltro] = useState(""); // vencidos | pronto | vigentes | sin
   const [ctAbiertos, setCtAbiertos] = useState({}); // {empId: true} filas desplegadas
   const [movsQ, setMovsQ] = useState(""); // buscador de Altas y bajas
+  const [ihssAbierto, setIhssAbierto] = useState(false); // Seguro Social (IHSS): planilla con bajas + Word de altas
   const [movsVista, setMovsVista] = useState(""); // "" | altas | bajas
   const [costosAbiertos, setCostosAbiertos] = useState({}); // {short: true} proyectos desplegados en Costos
   // Filtros del tab Empleados — al nivel del padre para no perder foco en el
@@ -6023,12 +6025,14 @@ export default function HRModule({ userRole = "admin", userName, userKey, userEm
     </div>;
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {ihssAbierto && <SeguroSocialImpl emps={emps} movs={movs} onClose={() => setIhssAbierto(false)} />}
       <div className="gt-vidrio" style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <input type="month" aria-label="Mes" value={filterPer} onChange={e => setMovsFilter(s => ({ ...s, periodo: e.target.value }))} style={{ ...CTRL_H, width: 170 }} />
         {pista([{ k: "", label: "Todo el mes" }, { k: "1Q", label: "1Q" }, { k: "2Q", label: "2Q" }].map(o => ({ ...o, on: filterQ === o.k, onClick: () => setMovsFilter(s => ({ ...s, quincena: o.k })) })))}
         <input type="search" placeholder="Buscar nombre, DNI, cargo…" value={movsQ} onChange={e => setMovsQ(e.target.value)} style={{ ...CTRL_H, flex: "1 1 200px", minWidth: 0 }} />
         {(filterPer || filterQ || movsQ) && btnH("Limpiar", () => { setMovsFilter({ periodo: "", quincena: "" }); setMovsQ(""); }, { chico: true })}
         <div style={{ flex: isMobile ? "0 0 100%" : "0 0 auto", display: "flex", gap: 8, marginLeft: isMobile ? 0 : "auto" }}>
+          {(userRole === "admin" || userRole === "tesoreria") && !esSV && btnH("Seguro Social", () => setIhssAbierto(true))}
           {btnH("+ Alta", () => setModal({ t: "mn" }), { c: ORANGE, lleno: true })}
           {btnH("+ Baja", () => setModal({ t: "mb" }), { c: "#B03024" })}
         </div>
