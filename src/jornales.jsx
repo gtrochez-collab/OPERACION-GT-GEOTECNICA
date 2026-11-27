@@ -871,7 +871,7 @@ export function AsistenciaJornales({ user, rol, proyectos = [], onVolver }) {
                     </span>
                   </div>
                 </td>
-                {hayPrevia && <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: "#A94E16" }}>{f.hePrevia ? `+${fmtN(f.hePrevia)}` : ""}</td>}
+                {hayPrevia && <td style={{ ...TD_H, textAlign: "center", fontWeight: 700, color: "#A94E16" }}>{f.hePrevia ? `+${fmtN(f.hePrevia)} h` : ""}</td>}
                 {dd.map(d => {
                   if (f.soloHePrevia) return <td key={d.fecha} style={{ ...TD_H, border: "1px solid rgba(44,42,40,.06)" }} />;
                   const v = local.dias?.[f.id]?.[d.fecha], h = num(local.he?.[f.id]?.[d.fecha]);
