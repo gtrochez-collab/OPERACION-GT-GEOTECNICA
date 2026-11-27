@@ -211,3 +211,45 @@ export const ultimosMeses = (hoy, n = 6) => {
   }
   return out;
 };
+
+// ═════════════ BITÁCORA DEL CARRO (26-nov-2026) ═════════════
+// Óscar Paz: "como el marcaje de la tablet: que el motorista, al montarse al
+// carro, registre el kilometraje y cómo está, y al pararlo, cómo queda".
+// Key `lg-bitacora` [{id, vehicleId, plate, empId, motorista, username,
+// salida {at, km, combustible, estado "bien"|"detalle", nota, fotoId},
+// llegada {…} | null, recorrido, salto, createdAt, updatedAt}].
+export const NIVELES_COMBUSTIBLE = ["Vacío", "1/4", "1/2", "3/4", "Lleno"];
+/** El uso abierto (salió y no ha registrado la llegada) de un carro o de un motorista. */
+export const usoAbierto = (bitacora = [], { vehicleId = null, empId = null, username = null } = {}) =>
+  (bitacora || []).filter(b => b && !b.anulado && !b.llegada
+    && (!vehicleId || b.vehicleId === vehicleId)
+    && (!empId || b.empId === empId)
+    && (!username || b.username === username))
+    .sort((a, b) => String(b.salida?.at || "").localeCompare(String(a.salida?.at || "")))[0] || null;
+/** El último kilometraje que quedó registrado de un carro (llegada o, si no, salida). */
+export const ultimoKmBitacora = (bitacora = [], vehicleId) => {
+  const l = (bitacora || []).filter(b => b && !b.anulado && b.vehicleId === vehicleId)
+    .sort((a, b) => String(b.salida?.at || "").localeCompare(String(a.salida?.at || "")))[0];
+  if (!l) return null;
+  return num(l.llegada?.km) || num(l.salida?.km) || null;
+};
+/**
+ * Valida la salida: km obligatorio y nunca menor al último registrado.
+ * `salto` = km de diferencia contra la última llegada (el carro se movió sin registro).
+ */
+export const validarSalida = ({ km, vehiculo, bitacora = [] }) => {
+  const k = num(km);
+  if (!(k > 0)) return { error: "Escribí el kilometraje que marca el tablero." };
+  const ultimo = ultimoKmBitacora(bitacora, vehiculo?.id) ?? (num(vehiculo?.kmActual) || null);
+  if (ultimo != null && k < ultimo) return { error: `El carro ya tenía ${ultimo.toLocaleString("es-HN")} km registrados. Revisá el número del tablero.` };
+  const salto = ultimo != null ? Math.round((k - ultimo) * 10) / 10 : 0;
+  return { ok: true, km: k, salto: salto > 0 ? salto : 0, ultimo };
+};
+/** Valida la llegada contra la salida del mismo uso. */
+export const validarLlegada = ({ km, uso }) => {
+  const k = num(km);
+  if (!(k > 0)) return { error: "Escribí el kilometraje que marca el tablero." };
+  const s = num(uso?.salida?.km);
+  if (k < s) return { error: `Salió con ${s.toLocaleString("es-HN")} km: la llegada no puede ser menor.` };
+  return { ok: true, km: k, recorrido: Math.round((k - s) * 10) / 10 };
+};

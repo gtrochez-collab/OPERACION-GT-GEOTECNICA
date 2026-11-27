@@ -38,6 +38,7 @@ import {
   diasEntre, rendimientoCombustible, gastoCombustiblePorMes, estadoPreventivo, ORDEN_URGENCIA, proximoKmSugerido,
   intervaloKmDe, vencimiento, parsePendientes, quitarLinea, alertasVehiculo, listaMotoristas, urgenciaDespacho,
   vistaDeDespacho, entregasPorMes, ultimosMeses,
+  NIVELES_COMBUSTIBLE, usoAbierto, ultimoKmBitacora, validarSalida, validarLlegada,
 } from "./logistica-calc.js";
 
 const C_ROJO = { color: "#B03024", bg: "rgba(192,57,43,.10)" };
@@ -530,8 +531,123 @@ function MotoristaForm({ mot, emps, vehicles, extras, onCancel, onSave }) {
 }
 
 // ═════════════════════════════ MÓDULO ═════════════════════════════
-export default function LogisticsModule({ userRole, userName, onBack, onLogout }) {
+// ═════════════════ MI CARRO — bitácora del motorista (26-nov-2026) ═════════════════
+// Óscar Paz: "como el marcaje de asistencia de la tablet: que cada motorista,
+// al montarse al carro, registre el kilometraje y cómo está, y al pararlo cómo
+// queda". Pantalla pensada para el teléfono: un solo paso a la vez, botones grandes.
+const horaCorta = (iso) => { try { return new Date(iso).toLocaleTimeString("es-HN", { hour: "numeric", minute: "2-digit", timeZone: "America/Tegucigalpa" }); } catch { return ""; } };
+const fechaHora = (iso) => { try { return new Date(iso).toLocaleString("es-HN", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "America/Tegucigalpa" }); } catch { return ""; } };
+function CampoFotoTablero({ archivo, onArchivo }) {
+  const ref = useRef(null);
+  const [prev, setPrev] = useState(null);
+  useEffect(() => { if (!archivo) { setPrev(null); return; } const u = URL.createObjectURL(archivo); setPrev(u); return () => URL.revokeObjectURL(u); }, [archivo]);
+  return <div>
+    <input ref={ref} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) onArchivo(f); e.target.value = ""; }} />
+    <button type="button" onClick={() => ref.current?.click()} style={{ width: "100%", minHeight: 120, borderRadius: 16, border: prev ? "none" : "1.5px dashed rgba(44,42,40,.25)", background: prev ? "#000" : "rgba(44,42,40,.03)", padding: 0, overflow: "hidden", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#6E6862", font: "700 14px/1.3 var(--sans)" }}>
+      {prev ? <img src={prev} alt="Tablero" style={{ width: "100%", maxHeight: 220, objectFit: "contain", display: "block" }} /> : <span>Tomar foto del tablero<br /><span style={{ fontWeight: 500, fontSize: 12 }}>que se vea el kilometraje y la aguja del combustible</span></span>}
+    </button>
+    {prev && <button type="button" onClick={() => ref.current?.click()} style={{ marginTop: 6, border: "none", background: "none", color: "var(--naranja-texto-chico)", font: "700 12.5px/1 var(--sans)", cursor: "pointer", padding: 0 }}>Tomar otra</button>}
+  </div>;
+}
+function FormUso({ tipo, vehiculo, uso, bitacora, onCancel, onGuardar }) {
+  const ultimo = tipo === "salida" ? ultimoKmBitacora(bitacora, vehiculo.id) ?? (Number(vehiculo.kmActual) || null) : Number(uso?.salida?.km) || null;
+  const [km, setKm] = useState("");
+  const [comb, setComb] = useState("");
+  const [estado, setEstado] = useState("bien");
+  const [nota, setNota] = useState("");
+  const [foto, setFoto] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+  const v = tipo === "salida" ? validarSalida({ km, vehiculo, bitacora }) : validarLlegada({ km, uso });
+  const listo = v.ok && comb && foto && (estado === "bien" || nota.trim().length >= 3);
+  const lbl = { fontSize: 12.5, fontWeight: 700, color: "#6E6862", marginBottom: 6, display: "block" };
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div>
+      <span style={lbl}>Kilometraje del tablero</span>
+      <input inputMode="numeric" value={km} onChange={e => setKm(e.target.value.replace(/[^0-9.]/g, ""))} placeholder={ultimo ? `último: ${nf0(ultimo)}` : "ej. 125300"} style={{ width: "100%", boxSizing: "border-box", padding: "14px 16px", borderRadius: 14, border: "1px solid rgba(44,42,40,.15)", font: "800 26px/1 var(--mono)", textAlign: "center", color: CHARCOAL, background: "#fff" }} />
+      {km && v.error && <div style={{ marginTop: 6, fontSize: 12.5, color: C_ROJO.color, fontWeight: 600 }}>{v.error}</div>}
+      {km && v.ok && tipo === "salida" && v.salto > 0 && <div style={{ marginTop: 6, fontSize: 12.5, color: ORANGE_DARK, fontWeight: 600 }}>{nf0(v.salto)} km más que la última vez que se registró este carro.</div>}
+      {km && v.ok && tipo === "llegada" && <div style={{ marginTop: 6, fontSize: 13, color: "#177243", fontWeight: 700 }}>Recorriste {nf0(v.recorrido)} km</div>}
+    </div>
+    <div>
+      <span style={lbl}>Combustible</span>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>{NIVELES_COMBUSTIBLE.map(n => <button key={n} type="button" onClick={() => setComb(n)} style={{ padding: "12px 0", borderRadius: 12, border: comb === n ? "none" : "1px solid rgba(44,42,40,.12)", background: comb === n ? CHARCOAL : "#fff", color: comb === n ? "#fff" : CHARCOAL, font: "800 13.5px/1 var(--sans)", cursor: "pointer" }}>{n}</button>)}</div>
+    </div>
+    <div>
+      <span style={lbl}>Foto del tablero</span>
+      <CampoFotoTablero archivo={foto} onArchivo={setFoto} />
+    </div>
+    <div>
+      <span style={lbl}>{tipo === "salida" ? "¿Cómo está el carro?" : "¿Cómo queda el carro?"}</span>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        {[["bien", "Bien"], ["detalle", "Tiene algo"]].map(([k, l]) => <button key={k} type="button" onClick={() => setEstado(k)} style={{ padding: "13px 0", borderRadius: 12, border: estado === k ? "none" : "1px solid rgba(44,42,40,.12)", background: estado === k ? (k === "bien" ? "#177243" : ORANGE_DARK) : "#fff", color: estado === k ? "#fff" : CHARCOAL, font: "800 14px/1 var(--sans)", cursor: "pointer" }}>{l}</button>)}
+      </div>
+      {(estado === "detalle" || nota) && <textarea value={nota} onChange={e => setNota(e.target.value)} rows={3} placeholder={estado === "detalle" ? "¿Qué tiene? (llanta baja, golpe, luz encendida…)" : "Nota (opcional)"} style={{ marginTop: 8, width: "100%", boxSizing: "border-box", padding: "11px 13px", borderRadius: 12, border: "1px solid rgba(44,42,40,.15)", font: "500 15px/1.4 var(--sans)", resize: "vertical" }} />}
+      {estado === "bien" && !nota && <button type="button" onClick={() => setNota(" ")} style={{ marginTop: 6, border: "none", background: "none", color: "#8A847D", font: "600 12.5px/1 var(--sans)", cursor: "pointer", padding: 0 }}>+ Agregar una nota</button>}
+    </div>
+    <div style={{ display: "flex", gap: 10 }}>
+      <Btn variant="ghost" onClick={onCancel} disabled={guardando}>Cancelar</Btn>
+      <button type="button" disabled={!listo || guardando} onClick={async () => { setGuardando(true); try { await onGuardar({ km: v.km, combustible: comb, estado, nota: nota.trim(), foto, salto: v.salto || 0, recorrido: v.recorrido }); } finally { setGuardando(false); } }} style={{ flex: 1, padding: "16px 0", borderRadius: 16, border: "none", background: listo ? ORANGE : "rgba(44,42,40,.12)", color: listo ? "#fff" : "#8A847D", font: "800 16px/1 var(--sans)", cursor: listo ? "pointer" : "default" }}>{guardando ? "Guardando…" : tipo === "salida" ? "Registrar salida" : "Registrar llegada"}</button>
+    </div>
+    {!listo && <div style={{ fontSize: 12, color: "#8A847D", textAlign: "center", marginTop: -6 }}>Falta: {[!v.ok && "kilometraje", !comb && "combustible", !foto && "foto del tablero", estado === "detalle" && nota.trim().length < 3 && "qué tiene el carro"].filter(Boolean).join(" · ")}</div>}
+  </div>;
+}
+function MiCarroImpl({ user, vehicles, bitacora, emps, onRegistrar }) {
+  const abierto = usoAbierto(bitacora, { username: user.username });
+  const [elegido, setElegido] = useState(null);
+  const [hecho, setHecho] = useState(null);
+  const vehAbierto = abierto ? vehicles.find(v => v.id === abierto.vehicleId) : null;
+  const disponibles = vehicles.filter(v => v.estado !== "fuera" && v.estado !== "baja");
+  const mios = disponibles.filter(v => user.empId && v.motoristaEmpId === user.empId);
+  const otros = disponibles.filter(v => !mios.includes(v)).sort((a, b) => String(a.plate).localeCompare(String(b.plate)));
+  const misUsos = (bitacora || []).filter(b => b.username === user.username && !b.anulado).sort((a, b) => String(b.salida?.at).localeCompare(String(a.salida?.at))).slice(0, 8);
+  const tituloVeh = (v) => <><span style={{ font: "800 17px/1.2 var(--mono)", color: CHARCOAL }}>{v.plate || "Sin placa"}</span> <span style={{ fontSize: 13.5, color: "#6E6862", fontWeight: 600 }}>{[v.brand, v.model].filter(Boolean).join(" ")}</span></>;
+  const caja = { padding: 18, display: "flex", flexDirection: "column", gap: 14 };
+  if (hecho) return <div className="gt-vidrio" style={{ ...caja, alignItems: "center", textAlign: "center", padding: "36px 20px" }}>
+    <div style={{ width: 72, height: 72, borderRadius: "50%", background: "#177243", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, fontWeight: 900 }}>✓</div>
+    <div style={{ font: "800 21px/1.25 var(--display)", color: CHARCOAL }}>{hecho.tipo === "salida" ? "Salida registrada" : "Llegada registrada"}</div>
+    <div style={{ fontSize: 14, color: "#6E6862" }}>{hecho.plate} · {nf0(hecho.km)} km{hecho.recorrido != null ? ` · recorriste ${nf0(hecho.recorrido)} km` : ""}</div>
+    <Btn onClick={() => setHecho(null)}>Listo</Btn>
+  </div>;
+  return <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 560, margin: "0 auto", width: "100%" }}>
+    {abierto ? <div className="gt-vidrio" style={caja}>
+      <div className="gt-label" style={{ color: ORANGE_DARK }}>Estás usando</div>
+      <div>{vehAbierto ? tituloVeh(vehAbierto) : abierto.plate}</div>
+      <div style={{ fontSize: 13.5, color: "#6E6862" }}>Salió {fechaHora(abierto.salida.at)} con <b style={{ color: CHARCOAL }}>{nf0(abierto.salida.km)} km</b> · tanque {abierto.salida.combustible}</div>
+      <div style={{ borderTop: "1px solid rgba(44,42,40,.08)", paddingTop: 14 }}>
+        <div style={{ font: "800 16px/1.2 var(--display)", color: CHARCOAL, marginBottom: 12 }}>Registrar llegada</div>
+        <FormUso tipo="llegada" vehiculo={vehAbierto || { id: abierto.vehicleId }} uso={abierto} bitacora={bitacora} onCancel={() => {}} onGuardar={async (d) => { if (await onRegistrar("llegada", { uso: abierto, ...d })) setHecho({ tipo: "llegada", plate: abierto.plate, km: d.km, recorrido: d.recorrido }); }} />
+      </div>
+    </div>
+    : elegido ? <div className="gt-vidrio" style={caja}>
+      <div className="gt-label" style={{ color: ORANGE_DARK }}>Salida</div>
+      <div>{tituloVeh(elegido)}</div>
+      <FormUso tipo="salida" vehiculo={elegido} bitacora={bitacora} onCancel={() => setElegido(null)} onGuardar={async (d) => { if (await onRegistrar("salida", { vehiculo: elegido, ...d })) { setHecho({ tipo: "salida", plate: elegido.plate, km: d.km }); setElegido(null); } }} />
+    </div>
+    : <div className="gt-vidrio" style={caja}>
+      <div style={{ font: "800 18px/1.2 var(--display)", color: CHARCOAL }}>¿Qué carro vas a usar?</div>
+      {[["Tu carro", mios], [mios.length ? "Otros carros" : "Carros", otros]].filter(([, l]) => l.length).map(([t, l]) => <div key={t} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className="gt-label" style={{ color: "var(--text-3)" }}>{t}</div>
+        {l.map(v => { const otro = usoAbierto(bitacora, { vehicleId: v.id }); return <button key={v.id} type="button" disabled={!!otro} onClick={() => setElegido(v)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 14, border: "1px solid rgba(44,42,40,.1)", background: otro ? "rgba(44,42,40,.04)" : "#fff", cursor: otro ? "default" : "pointer", textAlign: "left", fontFamily: "inherit", opacity: otro ? .6 : 1 }}>
+          <div style={{ width: 52, height: 40, borderRadius: 10, overflow: "hidden", background: "rgba(44,42,40,.06)", flexShrink: 0 }}><Foto fileId={v.foto?.fileId} style={{ width: 52, height: 40 }} /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>{tituloVeh(v)}<div style={{ fontSize: 12, color: otro ? ORANGE_DARK : "#8A847D", marginTop: 2 }}>{otro ? `En uso · ${otro.motorista}` : (() => { const k = ultimoKmBitacora(bitacora, v.id) ?? Number(v.kmActual); return k > 0 ? `${nf0(k)} km` : "sin kilometraje registrado"; })()}</div></div>
+          {!otro && <span style={{ color: ORANGE_DARK, fontWeight: 800 }}>›</span>}
+        </button>; })}
+      </div>)}
+    </div>}
+    {misUsos.length > 0 && <div className="gt-vidrio" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="gt-label" style={{ color: "var(--text-3)" }}>Tus últimos registros</div>
+      {misUsos.map(b => <div key={b.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, borderTop: "1px solid rgba(44,42,40,.06)", paddingTop: 8 }}>
+        <span><b style={{ fontFamily: "var(--mono)" }}>{b.plate}</b> · {fechaHora(b.salida.at)}</span>
+        <span style={{ color: b.llegada ? CHARCOAL : ORANGE_DARK, fontWeight: 700 }}>{b.llegada ? `${nf0(b.recorrido)} km` : "en uso"}</span>
+      </div>)}
+    </div>}
+  </div>;
+}
+
+export default function LogisticsModule({ userRole, userName, userKey, userEmpId, onBack, onLogout }) {
   const isAdmin = userRole === "admin";
+  // Motorista (26-nov-2026): solo ve "Mi carro" — su salida y llegada del carro.
+  const isMotorista = userRole === "motorista";
   const canEdit = isAdmin || userRole === "logistica" || userRole === "recepcion";
   const isMobile = useIsMobile();
   const hoy = hoyISO();
@@ -545,6 +661,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   const [maintenances, setMaintenances] = useState([]);
   const [cargas, setCargas] = useState([]);
   const [motExtras, setMotExtras] = useState([]);
+  const [bitacora, setBitacora] = useState([]);
   const [emps, setEmps] = useState([]);
   const [purchases, setPurchases] = useState([]);
   const [mqPurchases, setMqPurchases] = useState([]);
@@ -585,6 +702,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       if (Array.isArray(cps)) setCustomProjects(cps);
       if (Array.isArray(mqp)) setMqPurchases(mqp);
       if (Array.isArray(e)) setEmps(e);
+      try { const b = await store.getCloud("lg-bitacora"); if (Array.isArray(b)) setBitacora(b); } catch { /* sin nube: queda vacía */ }
       setLoaded(true);
     })();
   }, []);
@@ -599,6 +717,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         if (Array.isArray(d)) _setDespachosRaw(d);
         if (Array.isArray(p)) setPurchases(p);
         if (Array.isArray(mqp)) setMqPurchases(mqp);
+        try { const b = await store.getCloud("lg-bitacora"); if (Array.isArray(b) && Date.now() - lastLocalMutAtRef.current >= 8000) setBitacora(b); } catch { /* */ }
       } catch (err) { console.warn("Auto-refresh falló:", err?.message || err); }
     };
     const onVis = () => { if (document.visibilityState === "visible") refresh(); };
@@ -647,6 +766,43 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     return !!r;
   };
   const patchVehicle = async (id, patch) => !!(await guardarLista("lg-vehicles", setVehicles, (base) => base.map(x => x.id === id ? { ...x, ...(typeof patch === "function" ? patch(x) : patch), updatedAt: new Date().toISOString() } : x)));
+  // ── Bitácora del carro: salida / llegada del motorista ──
+  // La foto del tablero se sube PRIMERO (sin foto no se registra, como GeoClock);
+  // el uso se escribe sobre la nube FRESCA: si el carro ya está en uso por otro
+  // (o el motorista ya tiene uno abierto), no se registra.
+  const registrarUso = async (tipo, d) => {
+    lastLocalMutAtRef.current = Date.now();
+    let fotoId;
+    try {
+      const dataUrl = await comprimirImagen(d.foto, 1000);
+      fotoId = uid();
+      const okF = await store.set(`cp-file-${fotoId}`, { name: `tablero-${tipo}.jpg`, type: "image/jpeg", size: Math.round(dataUrl.length * 0.75), dataUrl });
+      if (!okF) throw new Error("La nube no aceptó la foto.");
+      FOTOS.set(fotoId, dataUrl);
+    } catch (e) { alert(`No se pudo subir la foto del tablero (${e?.message || e}). No se registró nada; probá otra vez.`); return false; }
+    const at = new Date().toISOString();
+    const marca = { at, km: d.km, combustible: d.combustible, estado: d.estado, nota: d.nota || "", fotoId };
+    let problema = "";
+    let vehicleId;
+    const r = await guardarLista("lg-bitacora", setBitacora, (base) => {
+      if (tipo === "salida") {
+        vehicleId = d.vehiculo.id;
+        const otro = usoAbierto(base, { vehicleId });
+        if (otro) { problema = `Ese carro ya está en uso por ${otro.motorista} desde ${fechaHora(otro.salida.at)}.`; return base; }
+        const mio = usoAbierto(base, { username: userKey });
+        if (mio) { problema = `Ya tenés abierto el ${mio.plate}: registrá su llegada primero.`; return base; }
+        return [...base, { id: uid(), vehicleId, plate: d.vehiculo.plate || "", empId: userEmpId || null, motorista: userName || userKey, username: userKey, salida: marca, llegada: null, salto: d.salto || 0, recorrido: null, createdAt: at, updatedAt: at }];
+      }
+      vehicleId = d.uso.vehicleId;
+      const cur = base.find(x => x.id === d.uso.id);
+      if (!cur || cur.llegada) { problema = "Ese uso ya tenía la llegada registrada."; return base; }
+      return base.map(x => x.id === d.uso.id ? { ...x, llegada: marca, recorrido: d.recorrido, updatedAt: at } : x);
+    });
+    if (problema) { alert(problema); store.remove(`cp-file-${fotoId}`, { quiet: true }); return false; }
+    if (!r) return false;
+    await patchVehicle(vehicleId, (v) => ({ kmActual: Math.max(Number(v.kmActual) || 0, d.km) }));
+    return true;
+  };
   const deleteVehicle = async (id) => !!(await guardarLista("lg-vehicles", setVehicles, (base) => base.filter(x => x.id !== id)));
 
   const saveMaintenance = async (rec, rawLine) => {
@@ -1206,7 +1362,8 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
       <div style={{ font: "800 22px/1.1 var(--display)", color: c || CHARCOAL, marginTop: 8, letterSpacing: "-.02em" }}>{val}</div>
       {sub && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 5 }}>{sub}</div>}
     </div>;
-    const TABS = [["mant", "Mantenimientos", mants.length], ["comb", "Combustible", cargasV.length], ["pend", "Pendientes", pend.length], ["desp", "Despachos", despV.length]];
+    const usosV = bitacora.filter(b => b.vehicleId === v.id && !b.anulado).sort((a, b) => String(b.salida?.at).localeCompare(String(a.salida?.at)));
+    const TABS = [["bit", "Bitácora", usosV.length], ["mant", "Mantenimientos", mants.length], ["comb", "Combustible", cargasV.length], ["pend", "Pendientes", pend.length], ["desp", "Despachos", despV.length]];
     const fila = (children, key, extra = {}) => <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 14, background: "rgba(255,255,255,.65)", border: "1px solid rgba(44,42,40,.06)", ...extra }}>{children}</div>;
     let cuerpo;
     if (fichaTab === "mant") cuerpo = <>
@@ -1235,6 +1392,22 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
         <div style={{ textAlign: "right", flexShrink: 0 }}><div style={{ font: "800 13.5px/1 var(--sans)", color: CHARCOAL }}>{c.monto ? fmtL(c.monto) : "—"}</div>{canEdit && <div style={{ marginTop: 6 }}>{linkBtn("Borrar", () => { if (confirm("¿Borrar esta carga?")) deleteCarga(c.id); }, "#B03024")}</div>}</div>
       </>, c.id))}
     </>;
+    else if (fichaTab === "bit") cuerpo = usosV.length === 0 ? <div style={{ fontSize: 13, color: "var(--text-3)", padding: 10 }}>Ningún motorista ha registrado este carro todavía. Lo hacen desde su teléfono en GeoLogistics → Mi carro.</div> : usosV.slice(0, 60).map(b => fila(<>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, color: CHARCOAL, fontWeight: 700 }}>{b.motorista} <span style={{ fontWeight: 500, color: "var(--text-3)", fontSize: 12 }}>· {fechaHora(b.salida.at)}{b.llegada ? ` → ${horaCorta(b.llegada.at)}` : ""}</span></div>
+        <div style={{ fontSize: 12.5, color: "#6E6862", marginTop: 3, fontFamily: "var(--mono)" }}>{nf0(b.salida.km)} → {b.llegada ? nf0(b.llegada.km) : "…"} km · tanque {b.salida.combustible}{b.llegada ? ` → ${b.llegada.combustible}` : ""}</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
+          {!b.llegada && <Chip c={C_NARANJA} style={{ fontSize: 10.5, padding: "3px 8px" }}>En uso</Chip>}
+          {b.salto > 0 && <Chip c={C_ROJO} style={{ fontSize: 10.5, padding: "3px 8px" }}>{nf0(b.salto)} km sin registro antes de esta salida</Chip>}
+          {[["salida", b.salida], ["llegada", b.llegada]].filter(([, m]) => m && (m.estado === "detalle" || m.nota)).map(([t, m]) => <Chip key={t} c={m.estado === "detalle" ? C_AMARILLO : C_GRIS} style={{ fontSize: 10.5, padding: "3px 8px" }}>{t === "salida" ? "Al salir" : "Al llegar"}: {m.nota || "tiene algo"}</Chip>)}
+        </div>
+      </div>
+      <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+        <span style={{ font: "800 15px/1 var(--sans)", color: CHARCOAL }}>{b.llegada ? `${nf0(b.recorrido)} km` : "—"}</span>
+        <span style={{ display: "flex", gap: 8 }}>{[["Foto salida", b.salida.fotoId], ["Foto llegada", b.llegada?.fotoId]].filter(([, id]) => id).map(([t, id]) => <span key={t}>{linkBtn(t, async () => { const f = FOTOS.has(id) ? { dataUrl: FOTOS.get(id), type: "image/jpeg", name: `${t}.jpg` } : await store.get(`cp-file-${id}`); if (f?.dataUrl) setVisorFicha(f); else alert("No se encontró la foto."); })}</span>)}</span>
+        {canEdit && <span>{linkBtn("Anular", async () => { const m = prompt("¿Por qué se anula este registro?"); if (!m || m.trim().length < 3) return; await guardarLista("lg-bitacora", setBitacora, base => base.map(x => x.id === b.id ? { ...x, anulado: true, anuladoPor: userName, anuladoAt: new Date().toISOString(), motivoAnulacion: m.trim() } : x)); }, "#B03024")}</span>}
+      </div>
+    </>, b.id));
     else if (fichaTab === "pend") cuerpo = <>
       {pend.length === 0 ? <div style={{ fontSize: 13, color: "var(--text-3)", padding: 10 }}>Sin pendientes.</div> : pend.map(p => fila(<>
         <span style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE, flexShrink: 0 }} />
@@ -1550,7 +1723,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
   };
 
   // ═══════════════════════════ LAYOUT ═══════════════════════════
-  const nav = [
+  const nav = isMotorista ? [{ id: "micarro", label: "Mi carro" }] : [
     { id: "dashboard", label: "Dashboard" },
     { id: "rutas", label: "Despachos" },
     { id: "flota", label: "Flota" },
@@ -1558,8 +1731,8 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     { id: "motoristas", label: "Motoristas" },
   ];
   if (!loaded) return <PantallaCarga titulo="GeoLogistics" />;
-  const secOk = nav.some(n => n.id === sec) ? sec : "dashboard";
-  const rol = canEdit ? (ROLE_LABEL[userRole] || userRole) : "Solo lectura";
+  const secOk = nav.some(n => n.id === sec) ? sec : nav[0].id;
+  const rol = canEdit || isMotorista ? (ROLE_LABEL[userRole] || userRole) : "Solo lectura";
   return <div className="gt-root gt-entra-modulo" style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "var(--bg)", position: "relative", overflow: "hidden" }}>
     <style>{GT_CSS}</style>
     <div className="gt-brillo gt-brillo-a" aria-hidden />
@@ -1589,7 +1762,7 @@ export default function LogisticsModule({ userRole, userName, onBack, onLogout }
     <div style={{ position: "relative", zIndex: 1, flex: 1, overflow: "auto" }}>
       <div style={{ padding: isMobile ? "10px 12px 24px" : "18px 32px 32px", maxWidth: 1500, margin: "0 auto" }}>
         {isMobile && !fichaId && <TituloMovil>{(nav.find(n => n.id === secOk) || {}).label}</TituloMovil>}
-        {secOk === "dashboard" ? renderDashboard() : secOk === "rutas" ? renderRutas() : secOk === "flota" ? renderFlota() : secOk === "mant" ? renderMant() : renderMotoristas()}
+        {secOk === "micarro" ? <MiCarroImpl user={{ username: userKey, nombre: userName, empId: userEmpId }} vehicles={vehicles} bitacora={bitacora} emps={emps} onRegistrar={registrarUso} /> : secOk === "dashboard" ? renderDashboard() : secOk === "rutas" ? renderRutas() : secOk === "flota" ? renderFlota() : secOk === "mant" ? renderMant() : renderMotoristas()}
       </div>
     </div>
     {renderModal()}

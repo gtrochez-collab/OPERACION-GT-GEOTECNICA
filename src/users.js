@@ -76,13 +76,17 @@ export const ROLE_LABEL = {
   // Suministro a obra (24-nov-2026): Neftalí, PMO. Carga la programación de
   // entregas, vigila la cobertura y que los residentes cuenten su inventario.
   planificacion:      "Planificación (PMO)",
+  // Bitácora del carro (26-nov-2026, pedido de Óscar Paz): cada motorista
+  // registra desde su teléfono la salida y la llegada del carro (km, tanque,
+  // foto del tablero, cómo está). Solo ve GeoLogistics → Mi carro y Mi RRHH.
+  motorista:          "Motorista",
 };
 
 // Roles que puede asignar Gerson al dar acceso desde GeoTeam. Admin NO: el
 // administrador se agrega a mano en este archivo.
 // `operaciones` (9-nov-2026): países a los que entra el usuario (hn · sv). Sin el
 // campo = solo Honduras. Con más de uno, al entrar elige en el mapa.
-export const ROLES_ASIGNABLES = ["residente", "planificacion", "gerencia", "visor_compras", "recepcion", "logistica", "asistente_compras", "compras_ops", "costos", "tesoreria", "cierre_conta"];
+export const ROLES_ASIGNABLES = ["residente", "planificacion", "gerencia", "visor_compras", "recepcion", "logistica", "asistente_compras", "compras_ops", "costos", "tesoreria", "cierre_conta", "motorista"];
 
 // Color para el avatar de cada usuario (rotativo segun el username)
 export const userColor = (username) => {

@@ -78,3 +78,19 @@ test("urgencia de despacho y meses", () => {
   assert.deepEqual(ultimosMeses("2026-02-10", 4), ["2025-11", "2025-12", "2026-01", "2026-02"]);
   assert.deepEqual(entregasPorMes([{ estado: "entregado", fechaEjecutada: "2026-11-02" }, { estado: "cerrado", fechaEjecutada: "2026-11-05" }, { estado: "pendiente", fechaEjecutada: "2026-11-05" }]), { "2026-11": 2 });
 });
+
+test("bitácora del carro: salida, llegada y km sin registro", async () => {
+  const { usoAbierto, ultimoKmBitacora, validarSalida, validarLlegada } = await import("../src/logistica-calc.js");
+  const veh = { id: "v1", kmActual: 1000 };
+  assert.equal(validarSalida({ km: "", vehiculo: veh, bitacora: [] }).error.length > 0, true);
+  assert.ok(validarSalida({ km: 990, vehiculo: veh, bitacora: [] }).error);
+  assert.deepEqual([validarSalida({ km: 1000, vehiculo: veh, bitacora: [] }).salto], [0]);
+  const b = [{ id: "a", vehicleId: "v1", username: "dennis", salida: { at: "2026-11-26T13:00:00Z", km: 1000 }, llegada: { at: "2026-11-26T20:00:00Z", km: 1080 } }];
+  assert.equal(ultimoKmBitacora(b, "v1"), 1080);
+  assert.equal(validarSalida({ km: 1100, vehiculo: veh, bitacora: b }).salto, 20);
+  const abierto = { id: "b", vehicleId: "v1", username: "elvin", salida: { at: "2026-11-27T13:00:00Z", km: 1100 }, llegada: null };
+  assert.equal(usoAbierto([...b, abierto], { vehicleId: "v1" }).id, "b");
+  assert.equal(usoAbierto([...b, abierto], { username: "dennis" }), null);
+  assert.ok(validarLlegada({ km: 1050, uso: abierto }).error);
+  assert.equal(validarLlegada({ km: 1160, uso: abierto }).recorrido, 60);
+});

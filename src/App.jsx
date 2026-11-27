@@ -49,7 +49,7 @@ const MODULES = [
     // Hub de RRHH (20-oct-2026): TODOS los usuarios entran (menos la tablet de
     // marcaje). Los que no son de RRHH ven SOLO su portal "Mi RRHH" (su
     // asistencia de GeoClock y sus solicitudes); el recorte vive en HRModule.
-    roles: ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica", "gerencia", "coordinador", "coordinador_maquinas", "compras_ops", "residente", "visor_compras", "almacenista", "almacen_visor", "planificacion"],
+    roles: ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica", "gerencia", "coordinador", "coordinador_maquinas", "compras_ops", "residente", "visor_compras", "almacenista", "almacen_visor", "planificacion", "motorista"],
   },
   {
     id: "compras-operaciones",
@@ -126,7 +126,7 @@ const MODULES = [
     icon: "🚛",
     desc: "Flota, rutas y despachos.",
     accent: "#2D4A6B",
-    roles: ["admin", "logistica", "recepcion"],
+    roles: ["admin", "logistica", "recepcion", "motorista"],
   },
   {
     id: "geoclock",
