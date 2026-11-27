@@ -9,6 +9,8 @@ import GeoCostModule from "./GeoCostModule.jsx";
 import TasksModule from "./TasksModule.jsx";
 import GeoSupplyModule from "./GeoSupplyModule.jsx";
 import GeoInventoryModule from "./GeoInventoryModule.jsx";
+import GeoFinanceModule from "./GeoFinanceModule.jsx";
+import { ROLES_FINANCE, pendientesFinance } from "./geofinance-calc.js";
 import { ROLES_INVENTARIO } from "./geoinventory-calc.js";
 // GeoChat: desactivado temporalmente (jun 2026). El polling y los mensajes
 // en localStorage estaban presionando el cache. Cuando lo retomemos, sera
@@ -49,7 +51,7 @@ const MODULES = [
     // Hub de RRHH (20-oct-2026): TODOS los usuarios entran (menos la tablet de
     // marcaje). Los que no son de RRHH ven SOLO su portal "Mi RRHH" (su
     // asistencia de GeoClock y sus solicitudes); el recorte vive en HRModule.
-    roles: ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica", "gerencia", "coordinador", "coordinador_maquinas", "compras_ops", "residente", "visor_compras", "almacenista", "almacen_visor", "planificacion", "motorista"],
+    roles: ["admin", "tesoreria", "asistente", "costos", "recepcion", "asistente_compras", "logistica", "gerencia", "coordinador", "coordinador_maquinas", "compras_ops", "residente", "visor_compras", "almacenista", "almacen_visor", "planificacion", "motorista", "contabilidad"],
   },
   {
     id: "compras-operaciones",
@@ -106,6 +108,17 @@ const MODULES = [
     // movilizaciones; gerencia solo lectura. 16-sep-2026: Arturo (compras_ops)
     // entra SOLO para cargar/editar presupuestos de proyecto (ver GeoCostModule).
     roles: ["admin", "costos", "tesoreria", "gerencia", "compras_ops"],
+  },
+  {
+    // GeoFinance (27-nov-2026): cajas chicas de compras varias y combustible.
+    // El ingeniero pide, Christian aprueba, la Lic. Carolina acredita y
+    // Contabilidad valida las facturas. Solo Honduras por ahora.
+    id: "geofinance",
+    name: "GeoFinance",
+    icon: "💵",
+    desc: "Cajas chicas: pedirlas, acreditarlas y liquidarlas.",
+    accent: "#C75F1F",
+    roles: ROLES_FINANCE,
   },
   {
     id: "geosafety",
@@ -353,8 +366,18 @@ export default function App() {
         setBadges(b => ({ ...b, rrhh: n }));
       } catch (e) { console.warn("[panel] contador RRHH:", e?.message || e); }
     };
-    leer(); leerRRHH();
-    const f = () => { if (document.visibilityState === "visible") { leer(); leerRRHH(); } };
+    // GeoFinance: cajas por aprobar (Christian), por acreditar (Lic. Carolina),
+    // facturas por validar (Contabilidad) u observadas (quien pidió la caja).
+    const leerFinance = async () => {
+      if (!ROLES_FINANCE.includes(user.role) || OPERACION !== "hn") return;
+      try {
+        const cj = await store.getCloud("fn-cajas");
+        if (!vivo) return;
+        setBadges(b => ({ ...b, geofinance: pendientesFinance({ cajas: Array.isArray(cj) ? cj : [], rol: user.role, username: user.username }).total }));
+      } catch (e) { console.warn("[panel] contador GeoFinance:", e?.message || e); }
+    };
+    leer(); leerRRHH(); leerFinance();
+    const f = () => { if (document.visibilityState === "visible") { leer(); leerRRHH(); leerFinance(); } };
     window.addEventListener("focus", f);
     return () => { vivo = false; window.removeEventListener("focus", f); };
   }, [user, activeModule]);
@@ -524,6 +547,7 @@ export default function App() {
   if (activeModule === "tareas") return conEntrada(<TasksModule {...moduleProps} />);
   if (activeModule === "geosupply") return conEntrada(<GeoSupplyModule {...moduleProps} />);
   if (activeModule === "geoinventory") return conEntrada(<GeoInventoryModule {...moduleProps} />);
+  if (activeModule === "geofinance") return conEntrada(<GeoFinanceModule {...moduleProps} />);
   // GeoChat desactivado temporalmente — ver comentario al inicio del archivo.
 
 
@@ -821,6 +845,7 @@ function IconoModulo({ id, fallback, size = 26 }) {
     "geodrill-vault": <><rect x="2" y="3" width="20" height="5" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></>,
     // Caja abierta con flecha hacia arriba: el material que SALE a obra.
     geoinventory: <><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5v-9Z" /><path d="M3 7.5 12 12l9-4.5" /><path d="M12 12v9" /><path d="M7.5 5.25 16.5 9.75" /></>,
+    geofinance: <><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1" /><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" /></>,
     geosupply: <><path d="M12 3v8" /><path d="m8.5 6.5 3.5-3.5 3.5 3.5" /><path d="M3.3 9.8 12 13.8l8.7-4" /><path d="M4 9.8v7.4a1 1 0 0 0 .55.9L12 21.5l7.45-3.4a1 1 0 0 0 .55-.9V9.8" /><path d="M12 13.8v7.7" /></>,
   }[id];
   if (!trazos) return <span style={{ fontSize: 25 }} aria-hidden>{fallback}</span>;
