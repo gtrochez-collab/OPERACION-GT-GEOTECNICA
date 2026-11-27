@@ -24,7 +24,8 @@
 // TODA escritura: getCloud → cambio sobre lo fresco → set → verify.
 // =====================================================================
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { store } from "./supabase.js";
 import Logo from "./Logo.jsx";
 import { GT_CSS } from "./gt-ui.js";
@@ -181,6 +182,42 @@ const descargarFichaCompra = async (purchase, allProjects) => {
   const [hydrated] = await restoreFiles([purchase]);
   await generateFichaPDF(hydrated || purchase, proj, companyName);
 };
+
+// ── VUELO DEL CARNET (27-nov-2026, Gerson: "el efecto de GeoTeam, que la ficha
+// se viene de la pantalla a la foto"). El carnet chico vuela desde su lugar en
+// la flota hasta el carnet grande de la ficha girando sobre su eje (frente =
+// el carnet chico, dorso = el grande), como CarnetVolteo de GeoTeam. Al volver
+// hace el viaje al revés. Sin backdrop-filter mientras viaja (era el tirón en
+// GeoTeam) y respeta prefers-reduced-motion.
+const VUELO_CSS = `.lg-viaje .gt-vidrio{-webkit-backdrop-filter:none!important;backdrop-filter:none!important;background:#fff!important;box-shadow:none!important}
+@keyframes lgFichaEntra{from{opacity:0;transform:translateY(14px)}}
+.lg-ficha-entra{animation:lgFichaEntra 620ms cubic-bezier(.22,1,.36,1) 260ms backwards}
+@media (prefers-reduced-motion:reduce){.lg-ficha-entra{animation:none}}`;
+const prefiereQuieto = () => { try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
+function VueloCarnet({ desde, hasta, frente, dorso, alReves = false, onFin }) {
+  const [listo, setListo] = useState(false);
+  useEffect(() => {
+    // setTimeout y no requestAnimationFrame: con la pestaña en segundo plano el rAF se pausa y el carnet quedaba quieto.
+    const t0 = setTimeout(() => setListo(true), 34);
+    const t = setTimeout(onFin, alReves ? 880 : 980);
+    return () => { clearTimeout(t0); clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const W = hasta.width, s = desde.width / W;
+  const enOrigen = alReves ? listo : !listo;
+  const curva = alReves ? "cubic-bezier(.65,0,.35,1)" : "cubic-bezier(.22,1,.36,1)";
+  const dur = alReves ? 800 : 900;
+  const cara = { position: "absolute", left: 0, top: 0, width: W, backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", borderRadius: 22, overflow: "hidden", background: "#fff", boxShadow: "0 30px 80px rgba(28,26,24,.26), 0 0 0 1px rgba(44,42,40,.07)" };
+  return createPortal(<div className="lg-viaje" style={{ position: "fixed", inset: 0, zIndex: 900, pointerEvents: "none" }}>
+    <style>{GT_CSS}{VUELO_CSS}</style>
+    <div style={{ position: "absolute", left: hasta.left, top: hasta.top, width: W, height: enOrigen ? desde.height / s : hasta.height, transformOrigin: "top left", transform: enOrigen ? `translate(${desde.left - hasta.left}px, ${desde.top - hasta.top}px) scale(${s})` : "none", transition: `transform ${dur}ms ${curva}, height ${dur}ms ${curva}`, perspective: 1600, willChange: "transform" }}>
+      <div style={{ position: "relative", width: "100%", height: "100%", transformStyle: "preserve-3d", transform: enOrigen ? "rotateY(0deg)" : "rotateY(180deg)", transition: `transform ${dur + 60}ms ${curva}`, willChange: "transform" }}>
+        <div style={{ ...cara, height: "100%" }}>{frente}</div>
+        <div style={{ ...cara, height: "100%", transform: "rotateY(180deg)" }}>{dorso}</div>
+      </div>
+    </div>
+  </div>, document.body);
+}
 
 // Foto JPEG comprimida (≤ maxPx) — como GeoInventory
 const comprimirImagen = (file, maxPx = 900) => new Promise((resolve, reject) => {
@@ -674,6 +711,28 @@ export default function LogisticsModule({ userRole, userName, userKey, userEmpId
   const [sec, _setSec] = useState(() => { try { return sessionStorage.getItem("gt-lg-sec") || "dashboard"; } catch { return "dashboard"; } });
   const setSec = (s) => { _setSec(s); setFichaId(null); try { sessionStorage.setItem("gt-lg-sec", s); } catch { /* */ } };
   const [fichaId, setFichaId] = useState(null);
+  // Vuelo del carnet: {id, fase: "abrir"|"cerrar", desde?, hasta?}
+  const [vuelo, setVuelo] = useState(null);
+  const fotoDe = (sel) => { const el = document.querySelector(sel); return el ? el.outerHTML.replace(/visibility: ?hidden/g, "visibility: visible") : ""; };
+  const rectDe = (sel) => { const el = document.querySelector(sel); if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
+  useLayoutEffect(() => {
+    if (!vuelo || (vuelo.desde && vuelo.hasta)) return;
+    if (vuelo.fase === "abrir") {
+      const h = rectDe(`[data-ficha-carnet="${vuelo.id}"]`);
+      if (!h) { setVuelo(null); return; }
+      setVuelo(x => x && { ...x, hasta: h, dorso: fotoDe(`[data-ficha-carnet="${vuelo.id}"]`) });
+    } else {
+      const el = document.querySelector(`[data-veh="${vuelo.id}"]`);
+      if (!el) { setVuelo(null); return; }
+      el.scrollIntoView({ block: "nearest" });
+      setVuelo(x => x && { ...x, desde: rectDe(`[data-veh="${vuelo.id}"]`), frente: fotoDe(`[data-veh="${vuelo.id}"]`) });
+    }
+  }, [vuelo, fichaId]);
+  const volverAFlota = () => {
+    const id = fichaId, h = rectDe(`[data-ficha-carnet="${id}"]`);
+    if (id && h && !prefiereQuieto()) setVuelo({ id, fase: "cerrar", hasta: h, dorso: fotoDe(`[data-ficha-carnet="${id}"]`) });
+    setFichaId(null);
+  };
   const [fichaTab, setFichaTab] = useState("mant");
   const [flota, setFlota] = useState({ q: "", estado: "", tipo: "" });
   const [mantSub, setMantSub] = useState("programa");
@@ -1290,7 +1349,8 @@ export default function LogisticsModule({ userRole, userName, userKey, userEmpId
     const e = estadoCfg(v.estado);
     const al = alertasVehiculo(v, hoy);
     const mot = v.motoristaEmpId ? emps.find(x => x.id === v.motoristaEmpId) : null;
-    return <div key={v.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={() => abrirFicha(v)} onKeyDown={ev => { if (ev.key === "Enter") abrirFicha(v); }} style={{ padding: 0, overflow: "hidden", cursor: "pointer", display: "flex", flexDirection: "column" }}>
+    const abrirConVuelo = (ev) => { const r = ev.currentTarget.getBoundingClientRect(); if (!prefiereQuieto()) setVuelo({ id: v.id, fase: "abrir", desde: { left: r.left, top: r.top, width: r.width, height: r.height }, frente: ev.currentTarget.outerHTML }); abrirFicha(v); };
+    return <div key={v.id} data-veh={v.id} className="gt-vidrio gt-vidrio-hover" role="button" tabIndex={0} onClick={abrirConVuelo} onKeyDown={ev => { if (ev.key === "Enter") abrirConVuelo(ev); }} style={{ padding: 0, overflow: "hidden", cursor: "pointer", display: "flex", flexDirection: "column", visibility: vuelo && vuelo.id === v.id && vuelo.fase === "cerrar" ? "hidden" : "visible" }}>
       <div style={{ position: "relative", height: 58, background: "linear-gradient(135deg,#2C2A28 0%,#3A3633 100%)", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         {CURVAS_FRANJA}
         <span style={{ position: "relative", font: "700 9px/1 var(--mono)", letterSpacing: ".16em", color: "rgba(255,255,255,.85)", textTransform: "uppercase" }}>{String(v.owner || "").replace(" Soluciones", "").replace(" Honduras", "")}</span>
@@ -1426,12 +1486,12 @@ export default function LogisticsModule({ userRole, userName, userKey, userEmpId
 
     return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <button type="button" className="gt-circulo" onClick={() => setFichaId(null)} aria-label="Volver a la flota" style={{ width: 36, height: 36, fontSize: 15 }}>←</button>
+        <button type="button" className="gt-circulo" onClick={volverAFlota} aria-label="Volver a la flota" style={{ width: 36, height: 36, fontSize: 15 }}>←</button>
         <span style={{ font: "700 13px/1 var(--sans)", color: "var(--text-3)" }}>Flota</span><Ico d={ICO.flecha} size={13} color="rgba(44,42,40,.35)" /><span style={{ font: "800 13px/1 var(--sans)", color: CHARCOAL }}>{v.plate}</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "330px minmax(0,1fr)", gap: 14, alignItems: "start" }}>
         {/* Columna izquierda: el carnet grande + datos */}
-        <div className="gt-vidrio" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="gt-vidrio" data-ficha-carnet={v.id} style={{ padding: 0, overflow: "hidden", visibility: vuelo && vuelo.id === v.id && vuelo.fase === "abrir" ? "hidden" : "visible" }}>
           <div style={{ position: "relative", height: 74, background: "linear-gradient(135deg,#2C2A28 0%,#3A3633 100%)", padding: "12px 16px", display: "flex", justifyContent: "space-between" }}>
             {CURVAS_FRANJA}
             <span style={{ position: "relative", font: "700 9.5px/1 var(--mono)", letterSpacing: ".16em", color: "rgba(255,255,255,.85)", textTransform: "uppercase" }}>{v.owner}</span>
@@ -1467,7 +1527,7 @@ export default function LogisticsModule({ userRole, userName, userKey, userEmpId
           </div>
         </div>
         {/* Columna derecha */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+        <div className={vuelo && vuelo.id === v.id && vuelo.fase === "abrir" ? "lg-ficha-entra" : ""} style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(4,minmax(0,1fr))", gap: 12 }}>
             {kpi("Kilometraje", v.kmActual ? nf0(v.kmActual) : "—", canEdit ? <button type="button" onClick={async () => { const n = prompt("Kilometraje actual del odómetro:", v.kmActual || ""); if (n == null) return; const k = Number(String(n).replace(/[^\d.]/g, "")); if (!(k > 0)) return; await patchVehicle(v.id, { kmActual: k }); }} style={{ background: "none", border: "none", padding: 0, color: "var(--naranja-texto-chico)", font: "700 11.5px/1 var(--sans)", cursor: "pointer" }}>Actualizar</button> : "km")}
             <div className="gt-vidrio" style={{ padding: "14px 16px", minWidth: 0 }}>
@@ -1767,5 +1827,7 @@ export default function LogisticsModule({ userRole, userName, userKey, userEmpId
     </div>
     {renderModal()}
     {visorFicha && <VisorArchivo archivo={visorFicha} onClose={() => setVisorFicha(null)} />}
+    {vuelo && vuelo.desde && vuelo.hasta && <VueloCarnet key={vuelo.id + vuelo.fase} desde={vuelo.desde} hasta={vuelo.hasta} alReves={vuelo.fase === "cerrar"}
+      frente={<div dangerouslySetInnerHTML={{ __html: vuelo.frente || "" }} />} dorso={<div dangerouslySetInnerHTML={{ __html: vuelo.dorso || "" }} />} onFin={() => setVuelo(null)} />}
   </div>;
 }
